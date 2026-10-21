@@ -36,7 +36,7 @@ type GradientEndpoints = { from: Point; to: Point };
  * same gradient twice and then has to be cleared again on commit and on cancel. `tempUpdateLayer`
  * is also the only writer of `previewLayersRef`, which is what lets `commitDirtyTool` promote the
  * preview into a real layer with a history entry; a preview that only ever touched the overlay
- * would be an un-undoable fill. `src/hooks/usePaintStroke.ts:146-159` documents that contract.
+ * would be an un-undoable fill. `usePaintStroke()` documents that contract.
  *
  * `overlayCtxRef` is therefore accepted and unused: the mount signature in
  * `src/components/Main/Main.tsx` passes both contexts to every tool area, and declining one is
@@ -46,7 +46,7 @@ type GradientEndpoints = { from: Point; to: Point };
  *
  * Every other tool area in this directory spells out
  * `documentFrame ?? documentFrameFromSize(totalSize)`, and this one deliberately does not:
- * `usePaintStroke` resolves the frame itself (`src/hooks/usePaintStroke.ts:141-145`) and
+ * `usePaintStroke()` resolves the frame itself and
  * converts every pointer sample through it before any callback here runs. A second resolution
  * would be a second place for the crop offset to be got wrong, and it would be dead — the value
  * would never be read.
@@ -61,7 +61,7 @@ type GradientEndpoints = { from: Point; to: Point };
  * here rather than in the processor because this is the only place that knows the layer's `pos`,
  * and it is deterministic: the rebased numbers are what the history entry retains, and replay
  * feeds them back to this processor over the same layer-local buffer
- * (`src/contexts/useHistory.ts:169`), so a replay reproduces the same fill.
+ * (`resetHistoryTo()`), so a replay reproduces the same fill.
  * `src/util/layer-space.ts` states the two spaces; the stroke tools
  * that were missing this rebase are `EraserToolArea`, `SmudgeToolArea`, `DodgeToolArea` and
  * `BurnToolArea`.

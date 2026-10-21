@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextEditOverlay } from '../TextEditOverlay.tsx';
-import { insertPlainTextAtCaret, selectAllIn } from '../../../util/contenteditable-text.ts';
+import { insertPlainTextAtCaret, selectAllIn, textOffsetAt } from '../../../util/contenteditable-text.ts';
 import { calculateNewRect } from '../../../util/rect.ts';
 
 type Rect = { x1: number; y1: number; x2: number; y2: number };
@@ -17,6 +17,8 @@ type TextArgs = {
   text?: string;
   rect: Rect | null;
   toolName: 'text';
+  angle?: number;
+  editingLayerId?: string;
 };
 
 /**
@@ -32,6 +34,12 @@ const DOCUMENT_SIZE = { width: 100, height: 100 };
 
 const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
+  consumeTextEditFocusRequest: vi.fn(),
+  textEditFocusRequest: null as null | {
+    id: number;
+    target:
+      { kind: 'select-all'; layerId: string } | { kind: 'point'; layerId: string; clientX: number; clientY: number };
+  },
   dispatch: vi.fn(),
   commitDirtyTool: vi.fn(),
   toolName: 'text' as string,
@@ -48,6 +56,7 @@ const h = vi.hoisted(() => ({
   totalSize: { width: 100, height: 100 },
   containerRef: { current: null as HTMLDivElement | null },
   toolOverlayRef: { current: null as HTMLCanvasElement | null },
+  layers: {} as Record<string, unknown>,
 }));
 
 let toolArgs: TextArgs;
@@ -67,6 +76,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       get toolName() {
         return h.toolName;
       },
+      get layers() {
+        return h.layers;
+      },
     },
     h.dispatch,
   ],
@@ -79,6 +91,12 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
     },
     get setToolArgs() {
       return h.setToolArgs;
+    },
+    get textEditFocusRequest() {
+      return h.textEditFocusRequest;
+    },
+    get consumeTextEditFocusRequest() {
+      return h.consumeTextEditFocusRequest;
     },
   }),
 }));
@@ -244,10 +262,13 @@ const readSelection = (): SelectionReading => {
 describe('TextEditOverlay', () => {
   beforeEach(() => {
     h.setToolArgs.mockReset();
+    h.consumeTextEditFocusRequest.mockReset();
+    h.textEditFocusRequest = null;
     h.dispatch.mockReset();
     h.commitDirtyTool.mockReset();
     h.toolName = 'text';
     h.toolOverlayRef.current = document.createElement('canvas');
+    h.layers = {};
     containerOf(200, 200);
     toolArgs = makeTextArgs({ text: PLACEHOLDER });
     vi.mocked(calculateNewRect).mockReset();
@@ -288,6 +309,60 @@ describe('TextEditOverlay', () => {
   });
 
   describe('the element itself', () => {
+    it("triple-click selects the visual line instead of Chromium's paragraph default", () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta\nGamma delta' });
+      const original = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect');
+      Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+        configurable: true,
+        value: function (this: Range) {
+          const offset = textOffsetAt(overlay(), this.startContainer, this.startOffset) ?? 0;
+          const top = offset >= 11 ? 20 : 0;
+          return {
+            x: 0,
+            y: top,
+            left: 0,
+            right: 5,
+            top,
+            bottom: top + 10,
+            width: 5,
+            height: 10,
+            toJSON: () => ({}),
+          } as DOMRect;
+        },
+      });
+
+      try {
+        renderOverlay();
+        const cancelled = fireEvent.click(overlay(), { detail: 3, clientY: 25 });
+
+        expect(cancelled).toBe(false);
+        expect(readSelection()).toMatchObject({ string: 'Gamma delta', collapsed: false });
+      } finally {
+        if (original) Object.defineProperty(Range.prototype, 'getBoundingClientRect', original);
+        else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
+      }
+    });
+
+    it('quadruple-click selects the hard-break paragraph containing the click', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta\nGamma delta\nLast line' });
+      const original = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+      Object.defineProperty(document, 'caretPositionFromPoint', {
+        configurable: true,
+        value: () => ({ offsetNode: overlay().firstChild!, offset: 13 }),
+      });
+
+      try {
+        renderOverlay();
+        const cancelled = fireEvent.click(overlay(), { detail: 4, clientX: 40, clientY: 25 });
+
+        expect(cancelled).toBe(false);
+        expect(readSelection()).toMatchObject({ string: 'Gamma delta', collapsed: false });
+      } finally {
+        if (original) Object.defineProperty(document, 'caretPositionFromPoint', original);
+        else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+      }
+    });
+
     it('renders a contenteditable textbox carrying the test id and aria-multiline for a draft that has both halves', () => {
       const { container } = renderOverlay();
       const el = overlay();
@@ -371,7 +446,225 @@ describe('TextEditOverlay', () => {
     });
   });
 
+  describe('affine transform — the overlay mirrors a transformed layer', () => {
+    it('applies no CSS transform when the layer has no affine and no text angle', () => {
+      containerOf(200, 200);
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT });
+
+      renderOverlay();
+      const el = overlay();
+
+      expect(el.style.transform).toBe('');
+      expect(el.style.transformOrigin).toBe('center center');
+    });
+
+    it('applies a CSS matrix for a layer with a 2x scale affine op, scaling e/f by fit scale', () => {
+      // Container 200x200 against a 100x100 document = `scale` 2, gap 0.
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      const sourceRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 100, height: 50 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: sourceRect },
+            pos: { x: 10, y: 20, width: 100, height: 50 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      toolArgs = makeTextArgs({
+        text: PLACEHOLDER,
+        rect: { x1: 10, y1: 20, x2: 110, y2: 70 },
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+      const el = overlay();
+
+      // The affine's e/f (10, 20) × fit scale 2 = (20, 40). The linear part is dimensionless.
+      expect(el.style.transform).toBe('matrix(2,0,0,2,20,40)');
+      expect(el.style.transformOrigin).toBe('0 0');
+    });
+
+    it('applies only rotate(angle) when there is no affine op', () => {
+      containerOf(200, 200);
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT, angle: 45 });
+
+      renderOverlay();
+      const el = overlay();
+
+      expect(el.style.transform).toBe('rotate(45deg)');
+      expect(el.style.transformOrigin).toBe('center center');
+    });
+
+    it('composes angle rotation under the affine matrix into a single CSS matrix', () => {
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      const sourceRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 100, height: 50 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: sourceRect, angle: 90 },
+            pos: { x: 10, y: 20, width: 100, height: 50 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      toolArgs = makeTextArgs({
+        text: PLACEHOLDER,
+        rect: { x1: 10, y1: 20, x2: 110, y2: 70 },
+        angle: 90,
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+      const el = overlay();
+
+      // 90° rotation around rect centre (35, 45) gives {a:0,b:1,c:-1,d:0,...}.
+      // Composed under scale-2: multiplyAffineTransforms(scale2x, rotate90)
+      // = {a:0, b:2, c:-2, d:0, e:...}. e/f scaled by 2 for fit.
+      expect(el.style.transformOrigin).toBe('0 0');
+      const matrixMatch = el.style.transform.match(/matrix\(([^)]+)\)/);
+      expect(matrixMatch).not.toBeNull();
+      const vals = matrixMatch![1].split(',').map(Number);
+      // Rotating the local rect around (50,25) then applying scale/translation produces e/f
+      // (160,-30); the fit scale doubles those translations in CSS pixels.
+      expect(vals[0]).toBeCloseTo(0, 5);
+      expect(vals[1]).toBeCloseTo(2, 5);
+      expect(vals[2]).toBeCloseTo(-2, 5);
+      expect(vals[3]).toBeCloseTo(0, 5);
+      expect(vals[4]).toBeCloseTo(320, 5);
+      expect(vals[5]).toBeCloseTo(-60, 5);
+    });
+
+    it('pivots text angle around the current edit rect rather than the original source rect', () => {
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      const sourceRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 100, height: 50 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: sourceRect, angle: 90 },
+            pos: { x: 10, y: 20, width: 100, height: 50 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      // The current text grew after re-entry: the edit rect is 200x80 in canvas space, while the
+      // retained source rect is still 100x50 in layer-local space.
+      toolArgs = makeTextArgs({
+        text: 'a much longer edit',
+        rect: { x1: 10, y1: 20, x2: 210, y2: 100 },
+        angle: 90,
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+      const match = overlay().style.transform.match(/matrix\(([^)]+)\)/);
+      expect(match).not.toBeNull();
+      const values = match![1].split(',').map(Number);
+
+      // Current local rect center (100,40) -> rotated translation (140,-60), then scale-2 affine
+      // and 2x contain-fit produce e/f of (580,-200). The old source rect center would yield (320,-60).
+      expect(values[0]).toBeCloseTo(0, 5);
+      expect(values[1]).toBeCloseTo(2, 5);
+      expect(values[2]).toBeCloseTo(-2, 5);
+      expect(values[3]).toBeCloseTo(0, 5);
+      expect(values[4]).toBeCloseTo(580, 5);
+      expect(values[5]).toBeCloseTo(-200, 5);
+    });
+
+    it('conjugates the affine translation to a nonzero text-box origin', () => {
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 150, height: 80 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: { x1: 20, y1: 10, x2: 120, y2: 60 } },
+            pos: { x: 10, y: 20, width: 150, height: 80 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      toolArgs = makeTextArgs({
+        text: PLACEHOLDER,
+        rect: { x1: 30, y1: 30, x2: 130, y2: 80 },
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+
+      expect(overlay().style.transform).toBe('matrix(2,0,0,2,60,60)');
+      expect(overlay().style.transformOrigin).toBe('0 0');
+    });
+  });
+
   describe('entry', () => {
+    it('places the caret at the browser hit-test position for a canvas re-entry request', () => {
+      toolArgs = makeTextArgs({ text: 'alpha beta', rect: RECT, editingLayerId: 'text-1' });
+      h.textEditFocusRequest = {
+        id: 1,
+        target: { kind: 'point', layerId: 'text-1', clientX: 43, clientY: 57 },
+      };
+      const original = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+      const caretPositionFromPoint = vi.fn(() => ({ offsetNode: overlay().firstChild!, offset: 6 }));
+      Object.defineProperty(document, 'caretPositionFromPoint', {
+        configurable: true,
+        value: caretPositionFromPoint,
+      });
+
+      try {
+        renderOverlay();
+
+        expect(caretPositionFromPoint).toHaveBeenCalledWith(43, 57);
+        expect(readSelection()).toMatchObject({ string: '', collapsed: true, startOffset: 6, endOffset: 6 });
+        expect(document.activeElement).toBe(overlay());
+        expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+      } finally {
+        if (original) Object.defineProperty(document, 'caretPositionFromPoint', original);
+        else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+      }
+    });
+
+    it('selects all on an explicit layer-panel request even when the text is unchanged', () => {
+      toolArgs = makeTextArgs({ text: 'same text', rect: RECT, editingLayerId: 'text-1' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+      placeCaret(el, 2);
+      h.textEditFocusRequest = { id: 1, target: { kind: 'select-all', layerId: 'text-1' } };
+
+      rerender(<TextEditOverlay />);
+
+      expect(readSelection()).toMatchObject({ string: 'same text', collapsed: false });
+      expect(document.activeElement).toBe(el);
+      expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+    });
+
+    it('consumes but ignores a focus request for a different editing layer', () => {
+      toolArgs = makeTextArgs({ text: 'same text', rect: RECT, editingLayerId: 'text-1' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+      placeCaret(el, 2);
+      h.textEditFocusRequest = { id: 1, target: { kind: 'select-all', layerId: 'text-2' } };
+
+      rerender(<TextEditOverlay />);
+
+      expect(readSelection()).toMatchObject({ string: '', collapsed: true, startOffset: 2, endOffset: 2 });
+      expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+    });
+
     it('seeds the element with the draft text and focuses it on entry', () => {
       renderOverlay();
       const el = overlay();
@@ -672,6 +965,48 @@ describe('TextEditOverlay', () => {
   });
 
   describe("keydown — Enter breaks the line and the other three commit, which is Adobe's split", () => {
+    it('extends the selection by one word with Command+Shift+ArrowRight on macOS', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 0);
+
+      const notCancelled = fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+
+      expect(notCancelled).toBe(false);
+      expect(readSelection().string).toBe('Alpha');
+    });
+
+    it('extends the selection by one word with Control+Shift+ArrowLeft on Windows/Linux', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 'Alpha beta'.length);
+
+      fireEvent.keyDown(el, { key: 'ArrowLeft', ctrlKey: true, shiftKey: true });
+
+      expect(readSelection().string).toBe('beta');
+    });
+
+    it('extends a reverse selection through its anchor and continues forward', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      const node = el.firstChild as Text;
+      const selection = window.getSelection()!;
+      selection.setBaseAndExtent(node, 5, node, 0);
+
+      fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+      expect(selection.isCollapsed).toBe(true);
+      expect(selection.anchorOffset).toBe(5);
+      expect(selection.focusOffset).toBe(5);
+
+      fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+      expect(selection.toString()).toBe(' beta');
+      expect(selection.anchorOffset).toBe(5);
+      expect(selection.focusOffset).toBe(10);
+    });
+
     it('inserts a single newline at the caret for a bare Enter, and does not commit', () => {
       renderOverlay();
       const el = overlay();
@@ -758,6 +1093,18 @@ describe('TextEditOverlay', () => {
       expect(h.commitDirtyTool).not.toHaveBeenCalled();
       expect(h.setToolArgs).not.toHaveBeenCalled();
     });
+  });
+
+  it('selects all text on the fifth click in the editor', () => {
+    toolArgs = makeTextArgs({ text: 'Alpha beta' });
+    renderOverlay();
+    const el = overlay();
+    placeCaret(el, 2);
+
+    fireEvent.click(el, { detail: 5 });
+
+    expect(readSelection().string).toBe('Alpha beta');
+    expect(readSelection().collapsed).toBe(false);
   });
 
   describe('paste', () => {

@@ -237,9 +237,9 @@ function assemblePresentation(
  * The validating evaluation, and the default for every caller whose answer is read.
  *
  * `getAffineBounds` throws on a degenerate, non-finite, over-coordinate or over-area
- * transform, which is the right answer for all three: `materialization.ts:213` and
- * `useLayer.ts:150` size an allocated surface from `localBounds`, and `rasterizeBounds`
- * (`affine-transform.ts:125`) refuses the same numbers a second time.
+ * transform, which is the right answer for all three: `materializeLayer()` and the live tool
+ * path size an allocated surface from `localBounds` with `rasterizeBounds()`, while
+ * `normalizeTransformHistoryArgs()` refuses the same numbers a second time.
  */
 export function evaluatePresentation(input: PresentationEvaluationInput): PresentationEvaluation {
   const affine = getPresentationAffine(input.operations);
@@ -251,7 +251,7 @@ export function evaluatePresentation(input: PresentationEvaluationInput): Presen
  * path where the raster caps are protection for an allocation that never happens.
  *
  * `drawEvaluatedPresentation` with a `document` target reads only `filter`, `affine`,
- * `position`, `sourceSize` and the frame — `presentation-evaluator.ts:274-292` — and never
+ * `position`, `sourceSize` and the frame in `evaluatePresentation()` — and never
  * `localBounds` or `bounds`, so no value of them is observable there. Meanwhile the two
  * callers that DO size a surface from `localBounds` are exactly the ones that keep
  * validation, and the 64 Mpx cap is the correct answer for them.
@@ -272,7 +272,7 @@ export function evaluatePresentation(input: PresentationEvaluationInput): Presen
  * The worst case it now permits is therefore an unbounded SOURCE, drawn with the same single
  * `drawImage` into the same document-sized canvas it always used: no per-layer buffer, and
  * no arithmetic this module performs grows a canvas. What it costs in exchange is the
- * accident this replaced — `useApp.ts:159` caps nothing on the open path, so a plain 9000x9000
+ * accident this replaced — the open path in `useApp` caps nothing, so a plain 9000x9000
  * (81 Mpx) JPEG made `getAffineBounds` throw for EVERY layer of the document and
  * `drawLayersToCanvas` published nothing at all. Photoshop's own limit is far above 64 Mpx,
  * so the cap was a bound on a buffer, not on a document.

@@ -52,8 +52,8 @@ const extent = (value: number): number => (Number.isFinite(value) ? Math.max(0, 
  *
  * A disc's bounding box is the cheaper filter — one `tipAlphaAt` per covered pixel rather
  * than one per pixel in the square. This is the same span as the private `dabSpan` in
- * `src/tools/smudge.ts:62-68` and `src/tools/eraser.ts:38-45` and the private
- * `stampClampedDab` span in `src/util/brush-engine.ts:252-256`; it is spelled out again
+ * `src/tools/smudge.ts` and `src/tools/eraser.ts` and the private
+ * `stampClampedDab` span in `src/util/brush-engine.ts`; it is spelled out again
  * rather than imported because all three are private, and a shared home for it is a change
  * to `pixels.ts` that this file does not own.
  */
@@ -136,7 +136,7 @@ const cloneOffset = (source: Point, points: Point[], aligned: boolean): Point =>
  * disc by different amounts, so the disc would no longer be a disc.
  *
  * **`clampPointToSize` on the READ is the same choice the Smudge makes**
- * (`src/tools/smudge.ts:149`): a dab whose footprint hangs over an edge samples the nearest
+ * (`smudgeStroke()`): a dab whose footprint hangs over an edge samples the nearest
  * real texel rather than reading out of range, and `clampPointToSize` also guarantees the
  * integer coordinate `readRgba` needs. It clamps against `raster`, the reduced document
  * extents, which is what keeps a `Size` that disagrees with the buffer from wrapping a read
@@ -255,7 +255,7 @@ const cloneStroke = (
  * the tool has to carry: with no source there is nothing to copy FROM, so stamping is a
  * no-op and NOT a fill-everything. The source raster has already been drawn into the
  * returned canvas by the caller, so the no-op is the source unchanged rather than a blank
- * layer — `tempUpdateLayer` (`src/contexts/useLayer.ts:560`) assigns the result straight to
+ * layer — `tempUpdateLayer()` assigns the result straight to
  * `layer.tmpCanvas`, so returning an un-drawn canvas would blank the preview.
  *
  * The returned canvas is always FULL DOCUMENT SIZE and always freshly allocated, even for
@@ -273,7 +273,7 @@ export const cloneStamp =
     if (!source || points.length === 0) return [canvas];
 
     // The reduced-canvas guard the raster processors already use
-    // (`src/tools/smudge.ts:249`): with no read-back there is no raster to copy texels
+    // (the readback-capability guard in `smudgeStroke()`): with no read-back there is no raster to copy texels
     // through, and the source already drawn above is the honest answer rather than a throw.
     if (typeof ctx.getImageData !== 'function' || typeof ctx.putImageData !== 'function') return [canvas];
 

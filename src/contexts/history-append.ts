@@ -12,14 +12,17 @@ import {
 import { isValidDocumentFrame, type DocumentFrame } from './document-frame.ts';
 import { getAssetRegistry, type AssetRegistry } from './asset-registry.ts';
 import {
+  asLegacyLayerSource,
   deriveRemoveLayerEntry,
   deriveReplaceLayerSourceEntry,
   deriveSetDocumentFrameEntry,
   deriveSetLayerPropertiesEntry,
   deriveSetSelectionEntry,
+  durableSourceKindForTool,
   editableSourceReplacementFromEntry,
   isSetLayerPropertiesAction,
   isEntryEnabled,
+  legacyLayerSourceFromItem,
   layerPropertyKeyFor,
   operationForTool,
   sourceToRuntimeLayer,
@@ -33,6 +36,7 @@ import {
   type AssetId,
   type DurableDocument,
   type DurableHistoryEntry,
+  type DurableLayerSource,
   type DurableLayerSnapshot,
   type DurableOperation,
   type ReplaceLayerSourceOperation,
@@ -158,10 +162,309 @@ function unavailableFromError(entry: HistoryItem, error: unknown): AppendBoundar
 }
 
 function sourceFromEntry(entry: HistoryItem): LayerSource | undefined {
-  const candidate = entry.layerSource ?? entry.args;
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
-  const kind = (candidate as { kind?: unknown }).kind;
-  return kind === 'blank' || kind === 'image' || kind === 'tool' ? (candidate as LayerSource) : undefined;
+  return legacyLayerSourceFromItem(entry);
+}
+
+function hasCanonicalDataKeys(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = []
+): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const allowed = new Set([...required, ...optional]);
+  const keys = Reflect.ownKeys(value);
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    keys.every((key) => {
+      if (typeof key !== 'string' || !allowed.has(key)) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return !!descriptor?.enumerable && Object.hasOwn(descriptor, 'value');
+    })
+  );
+}
+
+function hasPlainDataProperties(value: unknown, seen = new Set<object>()): boolean {
+  if (typeof value === 'function') return true;
+  if (!value || typeof value !== 'object' || seen.has(value)) return true;
+  const prototype = Object.getPrototypeOf(value);
+  if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    if (Array.isArray(value) && key === 'length') continue;
+    if (typeof key !== 'string') return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) return false;
+    if (!hasPlainDataProperties(descriptor.value, seen)) return false;
+  }
+  return true;
+}
+
+function hasOwnDataRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  return Reflect.ownKeys(value).every((key) => {
+    if (typeof key !== 'string') return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return !!descriptor?.enumerable && Object.hasOwn(descriptor, 'value');
+  });
+}
+
+function hasSafeLegacyEntryData(value: unknown): value is HistoryItem {
+  if (!hasOwnDataRecord(value)) return false;
+  const layerSource = Object.getOwnPropertyDescriptor(value, 'layerSource');
+  if (layerSource && (!layerSource.enumerable || !Object.hasOwn(layerSource, 'value'))) return false;
+  if (
+    layerSource &&
+    layerSource.value !== undefined &&
+    layerSource.value !== null &&
+    !legacyLayerSourceFromItem(value as HistoryItem)
+  ) {
+    return false;
+  }
+
+  const args = Object.getOwnPropertyDescriptor(value, 'args');
+  if (args && (!args.enumerable || !Object.hasOwn(args, 'value'))) return false;
+  const argsSource = args?.value !== undefined && args.value !== null ? asLegacyLayerSource(args.value) : undefined;
+  return !(
+    args &&
+    args.value !== undefined &&
+    args.value !== null &&
+    !argsSource &&
+    !hasPlainDataProperties(args.value)
+  );
+}
+
+function durableEntryShapeProblem(value: unknown): string | null {
+  const malformed = 'the planned durable history operation is missing or malformed';
+  if (!hasCanonicalDataKeys(value, ['id', 'schemaVersion', 'enabled', 'operation'], ['provenance'])) return malformed;
+  if (
+    typeof value.id !== 'string' ||
+    typeof value.schemaVersion !== 'number' ||
+    !Number.isInteger(value.schemaVersion) ||
+    typeof value.enabled !== 'boolean'
+  ) {
+    return malformed;
+  }
+  const operationValue = value.operation;
+  if (!operationValue || typeof operationValue !== 'object' || Array.isArray(operationValue)) return malformed;
+  const operation = operationValue;
+  const kindDescriptor = Object.getOwnPropertyDescriptor(operation, 'kind');
+  if (!kindDescriptor?.enumerable || !Object.hasOwn(kindDescriptor, 'value')) return malformed;
+
+  let requiredOperationKeys: readonly string[];
+  let optionalOperationKeys: readonly string[] = [];
+  let operationShapeReason: string;
+  switch (kindDescriptor.value) {
+    case 'create-layer':
+      requiredOperationKeys = ['kind', 'layer'];
+      operationShapeReason = 'the durable create-layer operation does not have the canonical shape';
+      break;
+    case 'remove-layer':
+      requiredOperationKeys = ['kind', 'layerId'];
+      operationShapeReason = 'the durable remove-layer operation does not have the canonical shape';
+      break;
+    case 'set-layer-properties':
+      requiredOperationKeys = ['kind', 'layerId', 'patch'];
+      operationShapeReason = 'the durable layer-property operation does not have the canonical shape';
+      break;
+    case 'reposition-layer':
+      requiredOperationKeys = ['kind', 'layerId'];
+      optionalOperationKeys = ['move', 'resize'];
+      operationShapeReason = 'the durable reposition operation does not have the canonical shape';
+      break;
+    case 'reorder-layers':
+      requiredOperationKeys = ['kind', 'orderByLayerId'];
+      operationShapeReason = 'the durable layer-order operation does not have the canonical shape';
+      break;
+    case 'apply-filter':
+      requiredOperationKeys = ['kind', 'layerId', 'filter'];
+      operationShapeReason = 'the durable apply-filter operation does not have the canonical shape';
+      break;
+    case 'apply-affine-transform':
+      requiredOperationKeys = ['kind', 'layerId', 'transform'];
+      operationShapeReason = 'the durable apply-affine-transform operation does not have the canonical shape';
+      break;
+    case 'apply-raster-processor':
+      requiredOperationKeys = ['kind', 'layerId', 'processorId', 'version', 'args'];
+      operationShapeReason = 'the durable apply-raster-processor operation does not have the canonical shape';
+      break;
+    case 'set-document-frame':
+      requiredOperationKeys = ['kind', 'previous', 'next'];
+      operationShapeReason = 'the durable set-document-frame operation does not have the canonical shape';
+      break;
+    case 'transform-document':
+      requiredOperationKeys = ['kind', 'previous', 'next', 'transform'];
+      operationShapeReason = 'the durable transform-document operation does not have the canonical shape';
+      break;
+    case 'replace-layer-source':
+      requiredOperationKeys = ['kind', 'layerId', 'source', 'pos'];
+      operationShapeReason = 'the durable replace-layer-source operation does not have the canonical shape';
+      break;
+    case 'merge-document':
+      requiredOperationKeys = ['kind', 'result', 'removedLayerIds'];
+      operationShapeReason = 'the durable merge-document operation does not have the canonical shape';
+      break;
+    case 'set-selection':
+      requiredOperationKeys = ['kind', 'before', 'after'];
+      operationShapeReason = 'the durable set-selection operation does not have the canonical shape';
+      break;
+    default:
+      return malformed;
+  }
+  if (!hasCanonicalDataKeys(operation, requiredOperationKeys, optionalOperationKeys)) return operationShapeReason;
+
+  if (
+    operation.kind === 'reposition-layer' &&
+    ((operation.move !== undefined && !hasCanonicalFiniteNumberKeys(operation.move, ['x', 'y'])) ||
+      (operation.resize !== undefined &&
+        !hasCanonicalFiniteNumberKeys(operation.resize, ['x', 'y', 'width', 'height'])))
+  ) {
+    return operationShapeReason;
+  }
+  if (
+    (operation.kind === 'apply-affine-transform' && !hasCanonicalAffineTransform(operation.transform)) ||
+    (operation.kind === 'apply-filter' && !hasCanonicalDurableFilter(operation.filter)) ||
+    (operation.kind === 'set-document-frame' &&
+      (!hasCanonicalDocumentFrame(operation.previous) || !hasCanonicalDocumentFrame(operation.next))) ||
+    (operation.kind === 'transform-document' &&
+      (!hasCanonicalDocumentFrame(operation.previous) ||
+        !hasCanonicalDocumentFrame(operation.next) ||
+        !hasCanonicalAffineTransform(operation.transform))) ||
+    (operation.kind === 'replace-layer-source' &&
+      (!hasCanonicalDurableSourceKeys(operation.source) ||
+        !hasCanonicalFiniteNumberKeys(operation.pos, ['x', 'y', 'width', 'height'])))
+  ) {
+    if (operation.kind === 'apply-filter' && !hasCanonicalDurableFilter(operation.filter)) {
+      return 'the durable filter does not have the canonical shape';
+    }
+    if (operation.kind === 'replace-layer-source' && !hasCanonicalDurableSourceKeys(operation.source)) {
+      return 'the durable replacement source does not have the canonical shape';
+    }
+    return operationShapeReason;
+  }
+
+  if (Object.hasOwn(value, 'provenance')) {
+    const provenance = value.provenance;
+    if (
+      !hasCanonicalDataKeys(provenance, ['actionName'], ['toolName']) ||
+      typeof provenance.actionName !== 'string' ||
+      (provenance.toolName !== undefined && typeof provenance.toolName !== 'string')
+    ) {
+      return malformed;
+    }
+  }
+  return null;
+}
+
+function hasCanonicalFiniteNumberKeys(value: unknown, keys: readonly string[]): boolean {
+  return (
+    hasCanonicalDataKeys(value, keys) &&
+    keys.every((key) => typeof value[key] === 'number' && Number.isFinite(value[key]))
+  );
+}
+
+function hasCanonicalDocumentFrame(value: unknown): value is DocumentFrame {
+  return (
+    hasCanonicalDataKeys(value, ['x', 'y', 'width', 'height']) &&
+    ['x', 'y', 'width', 'height'].every((key) => typeof value[key] === 'number')
+  );
+}
+
+function hasCanonicalAffineTransform(value: unknown): boolean {
+  return (
+    hasCanonicalDataKeys(value, ['a', 'b', 'c', 'd', 'e', 'f']) &&
+    ['a', 'b', 'c', 'd', 'e', 'f'].every((key) => typeof value[key] === 'number')
+  );
+}
+
+function hasCanonicalDurableFilter(value: unknown): boolean {
+  if (!hasCanonicalDataKeys(value, ['toolName', 'version', 'args'])) return false;
+  const argsPrototype = value.args && typeof value.args === 'object' ? Object.getPrototypeOf(value.args) : undefined;
+  return (
+    typeof value.toolName === 'string' &&
+    typeof value.version === 'number' &&
+    !!value.args &&
+    typeof value.args === 'object' &&
+    !Array.isArray(value.args) &&
+    (argsPrototype === Object.prototype || argsPrototype === null) &&
+    hasPlainDataProperties(value.args)
+  );
+}
+
+function isCanonicalSelectionMetadata(value: unknown): boolean {
+  const metadataKeys = ['copiedAtVersion', 'movedAtVersion', 'featherRadius', 'magneticLasso', 'magicWand'];
+  if (!hasCanonicalDataKeys(value, [], metadataKeys)) return false;
+
+  const numericKeys = ['copiedAtVersion', 'movedAtVersion', 'featherRadius'];
+  if (
+    !numericKeys.every(
+      (key) => !Object.hasOwn(value, key) || (typeof value[key] === 'number' && Number.isFinite(value[key]))
+    )
+  ) {
+    return false;
+  }
+
+  if (Object.hasOwn(value, 'magneticLasso')) {
+    const magneticLasso = value.magneticLasso;
+    const magneticNumberKeys = ['width', 'contrast', 'frequency', 'snapStrength', 'smoothing', 'pathPointCount'];
+    if (
+      !hasCanonicalDataKeys(magneticLasso, [...magneticNumberKeys, 'antiAlias']) ||
+      !magneticNumberKeys.every(
+        (key) => typeof magneticLasso[key] === 'number' && Number.isFinite(magneticLasso[key])
+      ) ||
+      typeof magneticLasso.antiAlias !== 'boolean'
+    ) {
+      return false;
+    }
+  }
+
+  if (Object.hasOwn(value, 'magicWand')) {
+    const magicWand = value.magicWand;
+    const magicNumberKeys = ['tolerance', 'smoothing', 'selectedPixelCount', 'boundaryPointCount'];
+    if (
+      !hasCanonicalDataKeys(magicWand, [...magicNumberKeys, 'seed', 'sampleColor']) ||
+      !magicNumberKeys.every((key) => typeof magicWand[key] === 'number' && Number.isFinite(magicWand[key])) ||
+      !hasCanonicalFiniteNumberKeys(magicWand.seed, ['x', 'y']) ||
+      !hasCanonicalFiniteNumberKeys(magicWand.sampleColor, ['r', 'g', 'b', 'a'])
+    ) {
+      return false;
+    }
+  }
+
+  return isJsonValue(value);
+}
+
+function hasCanonicalDurableSourceKeys(source: unknown): source is DurableLayerSource {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return false;
+  const kindDescriptor = Object.getOwnPropertyDescriptor(source, 'kind');
+  if (!kindDescriptor?.enumerable || !Object.hasOwn(kindDescriptor, 'value')) return false;
+  let sourceKeys: readonly string[];
+  let optionalKeys: readonly string[] = ['isBedrock'];
+  switch (kindDescriptor.value) {
+    case 'blank':
+      sourceKeys = ['color', 'opacity', 'size'];
+      break;
+    case 'raster':
+      sourceKeys = ['assetId', 'width', 'height'];
+      optionalKeys = ['name', 'isBedrock'];
+      break;
+    case 'vector':
+    case 'text':
+    case 'paint':
+      sourceKeys = ['toolName', 'args', 'size', 'sourcePos'];
+      break;
+    case 'legacy-tool':
+      sourceKeys = ['toolName', 'args', 'size'];
+      break;
+    default:
+      return false;
+  }
+  return hasCanonicalDataKeys(source, ['kind', ...sourceKeys], optionalKeys);
 }
 
 function compareRuntimeLayerToSnapshot(runtime: Layer, snapshot: DurableLayerSnapshot): string | null {
@@ -173,11 +476,18 @@ function compareRuntimeLayerToSnapshot(runtime: Layer, snapshot: DurableLayerSna
   if (runtime.locked !== snapshot.locked) return 'the durable layer lock state does not match the legacy source';
   if (runtime.blendMode !== snapshot.blendMode) return 'the durable layer blend mode does not match the legacy source';
   if (!sameJsonValue(runtime.pos, snapshot.pos)) return 'the durable layer position does not match the legacy source';
+  if (runtime.order !== snapshot.order) return 'the durable layer order does not match the legacy source';
   return null;
 }
 
 function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayerSnapshot): string | null {
-  const durableSource = durable.source;
+  const sourceDescriptor = Object.getOwnPropertyDescriptor(durable, 'source');
+  if (!sourceDescriptor?.enumerable || !Object.hasOwn(sourceDescriptor, 'value')) {
+    return 'the durable layer source does not have the canonical shape';
+  }
+  const durableSource = sourceDescriptor.value;
+  if (!hasCanonicalDurableSourceKeys(durableSource))
+    return 'the durable layer source does not have the canonical shape';
   if (source.kind === 'blank') {
     if (durableSource.kind !== 'blank') return 'the durable layer source kind does not match the legacy source';
     if (
@@ -203,14 +513,8 @@ function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayer
     ) {
       return 'the durable raster layer source does not match the legacy source';
     }
-    // The SHAPE of the asset id, and nothing else. Whether the registry can
-    // actually resolve it is a different question that this function cannot
-    // answer — it holds no registry — so it is asked by the caller through
-    // `registryResolvesAsset`. The message this replaced ("the durable raster
-    // layer source has no registered asset") named a check that existed nowhere
-    // on `main`, so a plan naming an asset that was never registered, or that was
-    // registered and then disposed, validated clean here and published a durable
-    // document whose raster threw at materialization time instead.
+    // This checks only descriptor shape and dimensions. The caller checks that
+    // the id is live and is registered from this exact legacy bitmap object.
     return typeof durableSource.assetId === 'string' && durableSource.assetId.length > 0
       ? null
       : 'the durable raster layer source names no asset id';
@@ -219,7 +523,8 @@ function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayer
   if (durableSource.kind === 'legacy-tool') {
     return `The tool ${source.args.toolName} has no durable source representation`;
   }
-  if (durableSource.kind !== 'text' && durableSource.kind !== 'vector' && durableSource.kind !== 'paint') {
+  const expectedKind = durableSourceKindForTool(source.args.toolName);
+  if (!expectedKind || durableSource.kind !== expectedKind) {
     return 'the durable layer source kind does not match the legacy source';
   }
   if (
@@ -283,6 +588,14 @@ function translate(
     return { entry, durableEntry, diagnostics: [] };
   }
 
+  if (entry.documentSource) {
+    return unavailable(
+      entry,
+      'A document source can only establish the initial baseline; appended entries cannot carry one.',
+      'document-replacement'
+    );
+  }
+
   if (entry.actionName === SELECTION_ACTION) {
     const durableEntry = deriveSetSelectionEntry(entry, currentSelections);
     if (!durableEntry) {
@@ -315,7 +628,7 @@ function translate(
     // Layer presence is deliberately not a precondition here or in validation:
     // conversion and both replay models retain unknown removals as no-ops, and
     // `replayHistory` filters the id out of the layer record rather than
-    // refusing the entry (`history-replay.ts:158`). The derivation is the parity
+    // refusing the entry (`replayHistory`'s `REMOVE_ACTION` arm filters the id). The derivation is the parity
     // path, so it has no refusal to make for a layer the document never held.
     // This guard is therefore a narrowing guard, not a check: the derivation
     // returns null only for an action that is not a removal, which this arm has
@@ -508,14 +821,14 @@ export type SourceBackedEntryContext = Readonly<{
   documentId: string;
   registry: AssetRegistry;
   preLayers: ReadonlyMap<LayerId, DurableLayerSnapshot>;
-  /** Runtime layer record used for merge removal ids; durable snapshots remain the order oracle. */
+  /** Legacy runtime witness for authored name/order and merge membership. */
   liveLayers?: Readonly<Record<LayerId, Layer>>;
 }>;
 
 function durableLayerForSource(item: HistoryItem, context: SourceBackedEntryContext): DurableLayerSnapshot | null {
   const source = sourceFromEntry(item);
   if (!source) return null;
-  const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, new Map(context.preLayers));
+  const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, context.liveLayers ?? new Map(context.preLayers));
   const layer = convertLayer(runtimeLayer, context.documentId, context.registry);
   if (layer.source.kind === 'legacy-tool') {
     throw new UnsupportedHistoryFeatureError(
@@ -659,13 +972,15 @@ export type DurableAppendInput = Readonly<{
    * but cannot prove a merge's complete removal set.
    */
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null;
+  /** Legacy runtime layer orders used to verify source-backed create metadata. */
+  liveLayers?: Readonly<Record<LayerId, Layer>> | null;
   /**
-   * The asset registry, for the raster liveness question only.
+   * The asset registry, for raster liveness and source-identity validation.
    *
    * A source-backed plan naming a raster registers its asset inside the store's
    * document asset transaction, so nothing about the plan itself proves the asset
-   * resolves. This is the independent copy of that fact, and it is what turns
-   * `registryResolvesAsset` from an absent predicate into a check.
+   * resolves or was registered from the legacy bitmap. This independently checks
+   * both facts without mutating registry ownership.
    *
    * Omitted, it defaults to the process registry — the same singleton the store
    * registers the asset in and the same default `legacyHistoryToDurable` converts
@@ -698,29 +1013,138 @@ function sameFrame(left: unknown, right: unknown): boolean {
  * compares shape and values only, and never throws on an unexpected value: a
  * disagreement is reported, not raised.
  */
+function sameDenseArray(
+  left: readonly unknown[],
+  right: readonly unknown[],
+  sameItem: (left: unknown, right: unknown) => boolean
+): boolean {
+  if (left.length !== right.length) return false;
+  if (Object.getPrototypeOf(left) !== Array.prototype || Object.getPrototypeOf(right) !== Array.prototype) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (!Object.hasOwn(left, index) || !Object.hasOwn(right, index)) return false;
+    const leftDescriptor = Object.getOwnPropertyDescriptor(left, String(index));
+    const rightDescriptor = Object.getOwnPropertyDescriptor(right, String(index));
+    if (
+      !leftDescriptor?.enumerable ||
+      !Object.hasOwn(leftDescriptor, 'value') ||
+      !rightDescriptor?.enumerable ||
+      !Object.hasOwn(rightDescriptor, 'value') ||
+      !sameItem(leftDescriptor.value, rightDescriptor.value)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isJsonValue(value: unknown, ancestors = new WeakSet<object>()): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object' || ancestors.has(value)) return false;
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) return false;
+      const ownKeys = Reflect.ownKeys(value);
+      if (ownKeys.length !== value.length + 1 || !ownKeys.includes('length')) return false;
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.hasOwn(value, index)) return false;
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) return false;
+        if (!isJsonValue(descriptor.value, ancestors)) return false;
+      }
+      return true;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string') return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) return false;
+      // JSON omits undefined-valued object properties; keeping them valid here
+      // lets append and replay projections agree on serialized tool args.
+      if (descriptor.value !== undefined && !isJsonValue(descriptor.value, ancestors)) return false;
+    }
+    return true;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
 function sameJsonValue(left: unknown, right: unknown): boolean {
+  try {
+    return sameJsonValueUnchecked(left, right);
+  } catch {
+    return false;
+  }
+}
+
+function sameJsonValueUnchecked(left: unknown, right: unknown): boolean {
+  if (!isJsonValue(left) || !isJsonValue(right)) return false;
   if (left === right) return true;
   if (Array.isArray(left) || Array.isArray(right)) {
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((item, index) => sameJsonValue(item, right[index]))
-    );
+    return Array.isArray(left) && Array.isArray(right) && sameDenseArray(left, right, sameJsonValue);
   }
-  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
   const leftRecord = left as Record<string, unknown>;
   const rightRecord = right as Record<string, unknown>;
-  const leftKeys = Object.keys(leftRecord);
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined);
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined);
   return (
-    leftKeys.length === Object.keys(rightRecord).length &&
-    leftKeys.every((key) => key in rightRecord && sameJsonValue(leftRecord[key], rightRecord[key]))
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => Object.hasOwn(rightRecord, key) && sameJsonValue(leftRecord[key], rightRecord[key]))
+  );
+}
+
+function isCanonicalSelection(value: unknown): value is Record<string, unknown> {
+  if (
+    !hasCanonicalDataKeys(
+      value,
+      ['id', 'points', 'isActive', 'pos'],
+      ['lifecycle', 'geometry', 'sourceTool', 'metadata']
+    )
+  ) {
+    return false;
+  }
+  const selection = value;
+  const sourceTools = [
+    'polygonal-lasso',
+    'freehand-lasso',
+    'feather-magnetic-lasso',
+    'magic-wand',
+    'rectangular-selection',
+  ];
+  const geometry = selection.geometry;
+  const sourceTool = selection.sourceTool;
+  return (
+    typeof selection.id === 'string' &&
+    typeof selection.isActive === 'boolean' &&
+    (selection.lifecycle === undefined || selection.lifecycle === 'committed') &&
+    (geometry === undefined || geometry === 'polygon' || geometry === 'rectangle') &&
+    (sourceTool === undefined || (typeof sourceTool === 'string' && sourceTools.includes(sourceTool))) &&
+    Array.isArray(selection.points) &&
+    isJsonValue(selection.points) &&
+    selection.points.every((point) => hasCanonicalFiniteNumberKeys(point, ['x', 'y']) && isJsonValue(point)) &&
+    hasCanonicalFiniteNumberKeys(selection.pos, ['x', 'y', 'width', 'height']) &&
+    isJsonValue(selection.pos) &&
+    (selection.metadata === undefined || isCanonicalSelectionMetadata(selection.metadata))
+  );
+}
+
+function isCanonicalSelectionSnapshot(value: unknown): value is Record<string, unknown> {
+  if (!hasCanonicalDataKeys(value, ['selections'], ['activeSelectionId'])) return false;
+  const selections = value.selections;
+  const activeSelectionId = value.activeSelectionId;
+  return (
+    (activeSelectionId === undefined || activeSelectionId === null || typeof activeSelectionId === 'string') &&
+    Array.isArray(selections) &&
+    sameDenseArray(selections, selections, isCanonicalSelection)
   );
 }
 
 function sameSelection(left: unknown, right: unknown): boolean {
+  if (!isCanonicalSelection(left) || !isCanonicalSelection(right)) return false;
   if (left === right) return true;
-  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
   const leftSelection = left as Record<string, unknown>;
   const rightSelection = right as Record<string, unknown>;
   return (
@@ -731,7 +1155,8 @@ function sameSelection(left: unknown, right: unknown): boolean {
     leftSelection.sourceTool === rightSelection.sourceTool &&
     sameJsonValue(leftSelection.points, rightSelection.points) &&
     sameJsonValue(leftSelection.pos, rightSelection.pos) &&
-    sameJsonValue(leftSelection.metadata, rightSelection.metadata)
+    ((leftSelection.metadata === undefined && rightSelection.metadata === undefined) ||
+      sameJsonValue(leftSelection.metadata, rightSelection.metadata))
   );
 }
 
@@ -741,21 +1166,20 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * the two deep-copied it is.
  *
  * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory` (`history-replay.ts:122`) read a key-absent id as `null`.
+ * and `replayHistory`'s `SELECTION_ACTION` arm read a key-absent id as `null`.
  * A strict `!==` would report a mismatch between a legacy arg that omits the key
  * and the normalized planned entry, degrading a correct append to reconversion.
  */
 function sameSelectionSnapshot(left: unknown, right: unknown): boolean {
+  if (!isCanonicalSelectionSnapshot(left) || !isCanonicalSelectionSnapshot(right)) return false;
   if (left === right) return true;
-  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
   const leftSnapshot = left as { selections?: unknown; activeSelectionId?: unknown };
   const rightSnapshot = right as { selections?: unknown; activeSelectionId?: unknown };
   if ((leftSnapshot.activeSelectionId ?? null) !== (rightSnapshot.activeSelectionId ?? null)) return false;
   if (!Array.isArray(leftSnapshot.selections) || !Array.isArray(rightSnapshot.selections)) return false;
   const leftSelections = leftSnapshot.selections;
   const rightSelections = rightSnapshot.selections;
-  if (leftSelections.length !== rightSelections.length) return false;
-  return leftSelections.every((selection, index) => sameSelection(selection, rightSelections[index]));
+  return sameDenseArray(leftSelections, rightSelections, sameSelection);
 }
 
 function sameOrderMap(left: Readonly<Record<LayerId, number>>, right: Readonly<Record<LayerId, number>>): boolean {
@@ -766,7 +1190,7 @@ function sameOrderMap(left: Readonly<Record<LayerId, number>>, right: Readonly<R
 
 /** Two layer sequences are equal when they name the same ids in the same order. */
 function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]): boolean {
-  return left.length === right.length && left.every((id, index) => id === right[index]);
+  return sameDenseArray(left, right, (leftId, rightId) => leftId === rightId);
 }
 
 /**
@@ -788,8 +1212,8 @@ export function registryResolvesAsset(registry: AssetRegistryProbe | null | unde
   return registry ? !!registry.getRecord(assetId) : false;
 }
 
-/** The only registry capability the boundary asks for. */
-export type AssetRegistryProbe = Pick<AssetRegistry, 'getRecord'>;
+/** The registry capabilities needed to verify a planned raster source. */
+export type AssetRegistryProbe = Pick<AssetRegistry, 'getRecord' | 'matchesRegisteredSource'>;
 
 type RetainedToolOperationKind =
   'apply-filter' | 'apply-affine-transform' | 'apply-raster-processor' | 'reposition-layer';
@@ -1148,13 +1572,21 @@ function replaceLayerSourceProblem(
  * `decideDurableAppend` rather than as a writer defect here. See
  * `registryResolvesAsset`.
  */
-export function validatePlannedDurableEntry(
+function validatePlannedDurableEntryUnchecked(
   entry: HistoryItem,
   planned: DurableHistoryEntry,
   preLayerOrder?: readonly LayerId[] | null,
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null,
-  registry?: AssetRegistryProbe | null
+  registry?: AssetRegistryProbe | null,
+  documentId?: string,
+  liveLayers?: Readonly<Record<LayerId, Layer>> | null
 ): string | null {
+  if (!hasSafeLegacyEntryData(entry)) return 'the legacy history entry is malformed';
+  if (!hasPlainDataProperties(planned)) {
+    return 'the planned durable history operation is missing or malformed';
+  }
+  const shapeProblem = durableEntryShapeProblem(planned);
+  if (shapeProblem) return shapeProblem;
   if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
   if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
   if (planned.enabled !== isEntryEnabled(entry)) return 'the durable enabled state does not match the legacy entry';
@@ -1171,6 +1603,9 @@ export function validatePlannedDurableEntry(
   })();
 
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
+    if (entry.documentSource) {
+      return 'a document frame change cannot carry a document replacement; use REPLACE_DOCUMENT';
+    }
     if (planned.operation.kind !== 'set-document-frame' && planned.operation.kind !== 'transform-document') {
       return `a document frame change produced a "${planned.operation.kind}" operation`;
     }
@@ -1195,10 +1630,16 @@ export function validatePlannedDurableEntry(
     if (!isValidDocumentFrame(planned.operation.next)) {
       return 'the durable next frame is not a document frame';
     }
+    if (!isValidDocumentFrame(planned.operation.previous)) {
+      return 'the durable previous frame is not a document frame';
+    }
     if (!sameFrame(planned.operation.next, args.nextFrame))
       return 'the durable next frame does not match the legacy entry';
-    if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
-      return 'the durable previous frame does not match the legacy entry';
+    if (args.previousFrame) {
+      if (!isValidDocumentFrame(args.previousFrame)) return 'the legacy previous frame is not a document frame';
+      if (!sameFrame(planned.operation.previous, args.previousFrame)) {
+        return 'the durable previous frame does not match the legacy entry';
+      }
     }
     if (args.transform !== undefined) {
       let expectedTransform: AffineTransform;
@@ -1232,6 +1673,8 @@ export function validatePlannedDurableEntry(
     }
     return provenanceMismatch;
   }
+
+  if (entry.documentSource) return 'an appended history entry cannot carry a document replacement';
 
   if (entry.actionName === SELECTION_ACTION) {
     if (planned.operation.kind !== 'set-selection') {
@@ -1376,12 +1819,16 @@ export function validatePlannedDurableEntry(
     }
     if (snapshot.id !== entry.layerId) return 'the durable result layer id does not match the legacy entry';
 
-    // `sourceToRuntimeLayer` is the adapter's source-to-runtime rule. Grade the
-    // fields that rule owns, but not `order`: the store's pre-append layer set
-    // determines that number and is supplied only by the source-backed planner.
+    // Source-backed validation needs pre-state to prove canonical order and removals.
+    if (!preLayers) {
+      return isCreate
+        ? 'the durable create-layer order cannot be verified without the pre-append layer set'
+        : 'the durable merge order and removal set cannot be verified without the pre-append layer set';
+    }
+    // The adapter's source-to-runtime rule determines the canonical layer metadata.
     let runtime: Layer;
     try {
-      runtime = sourceToRuntimeLayer(entry.layerId, source, new Map(preLayers ?? []));
+      runtime = sourceToRuntimeLayer(entry.layerId, source, liveLayers ?? new Map(preLayers));
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
@@ -1390,20 +1837,39 @@ export function validatePlannedDurableEntry(
     const sourceProblem = compareDurableSourceToLegacy(source, snapshot);
     if (sourceProblem) return sourceProblem;
 
-    if (snapshot.source.kind === 'raster' && registry && !registryResolvesAsset(registry, snapshot.source.assetId)) {
-      return `the durable raster layer source names asset ${snapshot.source.assetId}, which the asset registry cannot resolve`;
+    if (snapshot.source.kind === 'raster') {
+      if (source.kind !== 'image') return 'the durable raster layer source has no matching legacy image source';
+      if (!registry) {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which cannot be verified without the asset registry`;
+      }
+      if (!registryResolvesAsset(registry, snapshot.source.assetId)) {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which the asset registry cannot resolve`;
+      }
+      if (typeof documentId !== 'string') {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which cannot be verified for a document without its id`;
+      }
+      if (!registry.matchesRegisteredSource(snapshot.source.assetId, source.bitmap, documentId)) {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which is not owned by this document and registered from the legacy source bitmap`;
+      }
     }
 
     if (operation.kind === 'merge-document') {
       const removedLayerIds = operation.removedLayerIds;
+      if (
+        !Array.isArray(removedLayerIds) ||
+        !isJsonValue(removedLayerIds) ||
+        !removedLayerIds.every((id) => typeof id === 'string')
+      ) {
+        return 'the durable merge-document removal set is malformed';
+      }
       if (new Set(removedLayerIds).size !== removedLayerIds.length) {
         return 'the durable merge-document removal set contains duplicate layer ids';
       }
       if (removedLayerIds.includes(snapshot.id))
         return 'the durable merge-document removal set removes its result layer';
       if (preLayers) {
-        const expectedRemoved = [...preLayers.keys()].filter((id) => id !== snapshot.id);
-        if (!sameJsonValue(removedLayerIds, expectedRemoved)) {
+        const expectedRemoved = new Set([...preLayers.keys()].filter((id) => id !== snapshot.id));
+        if (removedLayerIds.length !== expectedRemoved.size || removedLayerIds.some((id) => !expectedRemoved.has(id))) {
           return 'the durable merge-document removal set does not match the pre-append layer set';
         }
       }
@@ -1443,7 +1909,31 @@ export function validatePlannedDurableEntry(
   return `no durable translation is published for "${entry.actionName}" yet`;
 }
 
-export function decideDurableAppend({
+export function validatePlannedDurableEntry(
+  entry: HistoryItem,
+  planned: DurableHistoryEntry,
+  preLayerOrder?: readonly LayerId[] | null,
+  preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null,
+  registry?: AssetRegistryProbe | null,
+  documentId?: string,
+  liveLayers?: Readonly<Record<LayerId, Layer>> | null
+): string | null {
+  try {
+    return validatePlannedDurableEntryUnchecked(
+      entry,
+      planned,
+      preLayerOrder,
+      preLayers,
+      registry,
+      documentId,
+      liveLayers
+    );
+  } catch {
+    return 'the planned durable history entry is malformed';
+  }
+}
+
+function decideDurableAppendUnchecked({
   documentId,
   base,
   prior,
@@ -1454,9 +1944,18 @@ export function decideDurableAppend({
   preLayerOrder,
   durableLayerOrder,
   preLayers,
+  liveLayers: suppliedLiveLayers,
   registry: suppliedRegistry,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
+  if (!hasSafeLegacyEntryData(entry)) {
+    return { outcome: 'mismatch', reason: 'the legacy history entry is malformed' };
+  }
+  if (!hasPlainDataProperties(planned)) {
+    return { outcome: 'mismatch', reason: 'the planned durable history operation is missing or malformed' };
+  }
+  const shapeProblem = durableEntryShapeProblem(planned);
+  if (shapeProblem) return { outcome: 'mismatch', reason: shapeProblem };
   if (prior.entries.some((candidate) => candidate.id === entry.id)) {
     return {
       outcome: 'preconditions',
@@ -1538,29 +2037,22 @@ export function decideDurableAppend({
     }
   }
 
-  // A raster source is the one thing a planned entry cannot be self-consistent
-  // about: it names an asset that lives in the runtime registry, so nothing in the
-  // entry proves the asset resolves. A store that explicitly withheld its registry
-  // cannot answer, which is the same class of refusal as the reorder arm's three and
-  // is reported as a precondition for the same reason — a store that cannot check is
-  // not a writer that answered wrongly, and the reconversion that replaces it
-  // registers the asset itself.
   const registry = suppliedRegistry === null ? null : (suppliedRegistry ?? getAssetRegistry());
-  const plannedSnapshot =
-    planned.operation.kind === 'create-layer'
-      ? planned.operation.layer
-      : planned.operation.kind === 'merge-document'
-        ? planned.operation.result
-        : null;
-  if (plannedSnapshot?.source.kind === 'raster' && !registry) {
-    return {
-      outcome: 'preconditions',
-      reason: `the planned durable raster layer names asset ${plannedSnapshot.source.assetId}, which cannot be verified without the asset registry`,
-    };
+  const problem = validatePlannedDurableEntry(
+    entry,
+    planned,
+    preLayerOrder,
+    preLayers,
+    registry,
+    documentId,
+    suppliedLiveLayers
+  );
+  if (problem) {
+    if (!registry && problem.includes('cannot be verified without the asset registry')) {
+      return { outcome: 'preconditions', reason: problem };
+    }
+    return { outcome: 'mismatch', reason: problem };
   }
-
-  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder, preLayers, registry);
-  if (problem) return { outcome: 'mismatch', reason: problem };
 
   const cursor = base.history.length;
   // The durable cursor is the legacy-to-durable map of the appended entry, and a
@@ -1582,6 +2074,14 @@ export function decideDurableAppend({
       durableRevision: base.durableRevision + 1,
     }),
   };
+}
+
+export function decideDurableAppend(input: DurableAppendInput): DurableAppendDecision {
+  try {
+    return decideDurableAppendUnchecked(input);
+  } catch {
+    return { outcome: 'mismatch', reason: 'the planned durable history entry is malformed' };
+  }
 }
 
 export function durableAppendDiagnostic(entry: HistoryItem, reason: string): MigrationDiagnostic {

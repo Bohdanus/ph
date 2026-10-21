@@ -124,12 +124,12 @@ export function replayHistory(
       // A document replacement means to be a WHOLE new document, so it is honoured
       // only as the first entry, which is how one is ever written: the single
       // production producer is `REPLACE_DOCUMENT` with `history: [entry]`
-      // (`useApp.ts:120`, `useLayer.ts:195`). Carried mid-history it would replace
+      // from the document-replacement path in `useApp`. Carried mid-history it would replace
       // the layer record and resize the canvas from anywhere in the timeline, which
       // is the same class of defect as the mid-history bedrock source below, so it is
       // refused — the durable converter already refuses it, reporting
       // `document-replacement` and holding the previous state
-      // (`history-adapter.ts:640`). Unreachable in production today, so this is a
+      // through `history-adapter`. Unreachable in production today, so this is a
       // parity repair rather than a fix for something a user can see.
       if (index === 0) {
         layers = cloneLayers(documentSource.layers);
@@ -332,7 +332,7 @@ export function replayHistory(
         try {
           requireCanvasFilter(toolArgs.toolName);
         } catch (error) {
-          // The commit gate at `useLayer.ts:356` refuses the same tool and logs it
+          // The `tempUpdateLayer()` canvas-filter gate refuses the same tool and logs it
           // there, before any `TOOL_ACTION` exists, so this catch is a backstop for
           // a timeline that arrived some other way. It records rather than logs,
           // because replay repeats: see `ReplayDiagnostic`.
@@ -381,7 +381,7 @@ export function replayHistory(
         // one loses a real edit: `getTransformFromHistoryArgs` validates the affine
         // against `layer.pos` AS IT IS NOW, while it was validated at commit time
         // against the pos the layer had then (`normalizeCommittedToolArgs` at
-        // `useLayer.ts:74-79` writes the retained transform into the committed
+        // `normalizeCommittedToolArgs()` writes the retained transform into the committed
         // args), so a transform valid when committed can fail a bounds check here
         // after the layer moved. Recorded, not logged — see `ReplayDiagnostic`.
         diagnostics.push({

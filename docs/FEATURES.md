@@ -3,8 +3,8 @@
 What this app can do, system-wide, measured against Photoshop.
 
 **This is not a per-tool document.** That is [`TOOLS.md`](TOOLS.md) — generated,
-44 sections, one per tool or per Adobe command the rail carries, with an options-bar
-table and Adobe citations. Four of the 44 are not Tools-panel tools — the Shape group
+54 tool-level sections, one per implemented tool or Adobe command, with an options-bar
+table and Adobe citations. Four of the 54 are not Tools-panel tools — the Shape group
 placeholder, Free Transform, Levels and Black & White are named for what Adobe calls
 them. This
 page is the capability level: documents, formats, selection, layers, history,
@@ -223,17 +223,18 @@ rename and delete
 (`LayersTab.tsx` — its `layers-list` rows). Desktop rows also render a 48x32 `LayerThumbnail`
 through the shared `drawLayerSource()` presentation path; the tablet drawer currently has no preview.
 Selecting a matching tool layer hydrates its arguments, and selecting text can re-enter text editing
-(`textLayerEditTarget()` / `beginTextLayerEdit()`). Desktop and tablet expose the single opacity field;
-desktop also exposes `Layer from Background` for the lone backing layer.
+(`textLayerEditTarget()` / `beginTextLayerEdit()`), including for retained affine operations. Layers
+with filter operations remain outside that overlay path. Desktop and tablet expose opacity, the
+supported blend-mode menu, and one full-layer lock control; desktop also exposes `Layer from
+Background` for the lone backing layer.
 
 **Status:** `partial`
 
 **Gap:** No groups or nesting, no layer masks, no clipping masks, no adjustment
-or smart-object layers. **No panel control for blend mode or locking** — those
-fields exist in the model and round-trip through PSD, but nothing in the UI sets
-them. Desktop and tablet opacity have basic sliders, but Photoshop's separate Fill
-opacity and preset drop-down remain absent. The app's single `locked` flag is stricter
-than Photoshop's four independent lock protections; see [`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates).
+or smart-object layers. The blend-mode menu supports a subset of Photoshop's modes, and the single
+`locked` flag implements a strict full-layer lock rather than Photoshop's four independent lock
+protections. Photoshop's separate Fill opacity and preset drop-down remain absent. See
+[`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates).
 
 ## History
 
@@ -342,10 +343,12 @@ absent. The implementation deliberately caps the options-bar zoom control at
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 45. Thirty-six registrations in
+**This app:** 58 `useKeyDownShortcut` call sites: 49 in
 `AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
 `useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
+These are hook call sites, not a count of unique key chords; modifiers and enabled states share the
+same registration path.
 
 **Status:** `partial`
 

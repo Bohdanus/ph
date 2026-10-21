@@ -4,6 +4,7 @@ import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { canvasToDocumentPos, documentFrameFromSize } from '../../../contexts/document-frame.ts';
+import { isValidTextLayerGeometry, isValidTextRect } from '../../../contexts/text-layer-edit.ts';
 import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
 import {
@@ -49,6 +50,19 @@ const Text: React.FC<{}> = () => {
   const { text = '', rect = null, color } = toolArgs;
   /** A placed box remains an edit session even after the user deletes every character. */
   const editing = Boolean(rect);
+  const emptyEditLayer = toolArgs.editingLayerId ? layers[toolArgs.editingLayerId] : undefined;
+  const emptyEditArgs =
+    emptyEditLayer?.source?.kind === 'tool' && isTextToolArgs(emptyEditLayer.source.args)
+      ? emptyEditLayer.source.args
+      : null;
+  const emptyEditRect = emptyEditArgs?.rect ?? null;
+  const canCommitEmptyEdit = Boolean(
+    editing &&
+    toolArgs.editingLayerId &&
+    !text &&
+    emptyEditLayer &&
+    isValidTextLayerGeometry(emptyEditRect, emptyEditLayer.pos)
+  );
 
   /**
    * Publishing a style change and the rectangle it implies as ONE call.
@@ -179,29 +193,51 @@ const Text: React.FC<{}> = () => {
    * this function was the odd one out rather than the rule being wrong somewhere.
    */
   const applyText = () => {
-    if (!editing || !text || !rect) return;
+    if (!editing || !rect || (!text && !canCommitEmptyEdit)) return;
     if (appliedArgsRef.current === toolArgs) return;
-    const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
     const editingLayerId = toolArgs.editingLayerId;
     const activeLayer = editingLayerId ? layers[editingLayerId] : activeLayerId ? layers[activeLayerId] : undefined;
+    if (
+      editingLayerId &&
+      (!activeLayer || activeLayer.source?.kind !== 'tool' || activeLayer.source.args.toolName !== 'text')
+    ) {
+      clear();
+      return;
+    }
+    const activeTextArgs =
+      activeLayer?.source?.kind === 'tool' && isTextToolArgs(activeLayer.source.args) ? activeLayer.source.args : null;
+    const activeTextLayer = activeTextArgs && activeLayer ? activeLayer : null;
+    const originalRect = canCommitEmptyEdit ? (activeTextArgs?.rect ?? null) : null;
+    if (canCommitEmptyEdit && (!activeTextLayer || !isValidTextLayerGeometry(originalRect, activeTextLayer.pos))) {
+      return;
+    }
+
+    const measuredRect = canCommitEmptyEdit ? originalRect : (calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect);
+    if (!isValidTextRect(measuredRect)) return;
     const localPos = sortedRectToPos(sortRect(measuredRect));
-    const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+    const pos =
+      canCommitEmptyEdit && activeTextLayer
+        ? activeTextLayer.pos
+        : canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
     const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
     const committedArgs = { ...persistedArgs, placeholderUntouched: false, rect: measuredRect };
     const editsActiveLayer =
-      activeLayer?.source?.kind === 'tool' &&
-      activeLayer.source.args.toolName === 'text' &&
-      (Boolean(editingLayerId) || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y));
-    if (editsActiveLayer && activeLayer) {
+      activeTextLayer !== null &&
+      (Boolean(editingLayerId) || (pos.x === activeTextLayer.pos.x && pos.y === activeTextLayer.pos.y));
+    if (editsActiveLayer && activeLayer && activeTextLayer) {
       // Layer-LOCAL rect, as the create arm stores it and as the creator renders it: the raster is
       // built at `pos` size and the type is drawn at the rect's own coordinates. An unreduced
       // canvas-space rect therefore renders an EMPTY layer as soon as the document frame is not the
-      // origin. `commitDirtyTool`'s replace arm reduces for the same reason.
-      replaceLayerSource(activeLayer.id, {
+      // origin. Existing empty edits are the exception: their source rect is already layer-local,
+      // so preserve it with the original position rather than reducing it a second time.
+      const replacementRect = canCommitEmptyEdit ? originalRect : reduceRect(sortRect(measuredRect), pos);
+      if (!isValidTextLayerGeometry(replacementRect, pos)) return;
+      const replaced = replaceLayerSource(activeLayer.id, {
         kind: 'tool',
-        args: { ...persistedArgs, ...committedArgs, rect: reduceRect(sortRect(measuredRect), pos) },
+        args: { ...persistedArgs, ...committedArgs, rect: replacementRect },
         pos,
       });
+      if (replaced === null) return;
     } else {
       // The re-entrancy guard is armed AFTER the create, not before it. Armed before, a throw from
       // `createLayerFromTool` left it armed against a `toolArgs` identity nothing has changed, so
@@ -481,7 +517,7 @@ const Text: React.FC<{}> = () => {
            * open — the `disabled={!text || !rect}` this replaces was the old half-gate, and it was
            * reachable only because the field could be emptied, which it no longer can.
            */}
-          <button className={PRIMARY_BUTTON} disabled={!editing || !text} onClick={applyText}>
+          <button className={PRIMARY_BUTTON} disabled={!editing || (!text && !canCommitEmptyEdit)} onClick={applyText}>
             Commit
           </button>
           <button className={SECONDARY_BUTTON} disabled={!editing} onClick={clear}>

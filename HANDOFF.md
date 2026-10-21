@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-231 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -27,10 +27,10 @@ and the verification is `git log`, not this file.
 been deleted rather than left as an unimported coordination layer that a later surface could
 mount by accident. The two durable modules that remain:
 
-| module                            | non-test importing files                                              |
-| --------------------------------- | --------------------------------------------------------------------- |
-| `src/contexts/materialization.ts` | 1 — `durable-compositor.ts`                                           |
-| `src/contexts/durable-replay.ts`  | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
+| module                            | non-test importing files                                                                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/contexts/materialization.ts` | 2 — `durable-compositor.ts`, `durable-render-projection.ts`                                                                                                                          |
+| `src/contexts/durable-replay.ts`  | 8 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts`, `useCurrentTool.tsx`, `useFile.tsx`, `export-canvas.ts`, `durable-render-projection.ts`, `DevStatusStrip.tsx` |
 
 Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
 `useHistory.ts`) for logical navigation and compatibility state. `StoreContext.tsx` now composes
@@ -42,13 +42,20 @@ frame-changing commits remain legacy until their ownership or frame-parity gates
 legacy layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
-inside that function. Two production components read the fields from `useStore()` —
-`DevStatusStripContents` in `DevStatusStrip.tsx` and `ErrorBoundaryFallback` in
-`ErrorBoundary.tsx` — so this entry's earlier claim that they are "read by nothing outside that
-file" was false and is withdrawn. Neither reader runs on a normal production load, so the
-conclusion below still stands: `DevStatusStrip` gates its body on `import.meta.env.DEV`, and
-`ErrorBoundary`'s `useStore()` call is inside `ErrorBoundaryFallback`, which renders only after
-a region has thrown (`ErrorBoundary.render`). The
+inside that function. Production readers of the durable fields from `useStore()`:
+
+- `useCurrentTool.tsx` — reads `durableDocument` and `durableStatus` in `CurrentToolProvider`;
+  this is a production reader on every load (the provider wraps the entire app) and uses them
+  to hydrate tool args for the active layer when `durableStatus === 'current'`.
+- `DevStatusStripContents` in `DevStatusStrip.tsx` — gates its body on `import.meta.env.DEV`.
+- `ErrorBoundaryFallback` in `ErrorBoundary.tsx` — renders only after a region has thrown (`ErrorBoundary.render`).
+
+The earlier claim that the fields are "read by nothing outside that file" was false and is
+withdrawn. The two DEV/thrown-gated readers remain non-production in practice; the
+`CurrentToolProvider` reader is live on every load but only consumes the document when
+`durableStatus === 'current'` (i.e. a durable plan already exists), so the migration remains
+staged: the legacy `replayHistory` is still the primary path and durable hydration is a
+conditional supplement. The
 `it('no longer exposes replayCoordinator, presentationMaterialization or getReplayRevisionToken')`
 case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — it asserts that
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
@@ -77,15 +84,19 @@ global affine, and both `replayHistory()` and `replayDurableDocument()` apply it
 layer. `e2e/crop-history.spec.ts` verifies the imported red/blue fixture rotates correctly and one
 undo/redo restores the exact pixels. Its direct browser differentials now prove byte-identical
 legacy/durable composition for a 90-degree single-raster crop (materialized bounds `0,0,64,64`), a
-non-quarter 37-degree crop with two differently positioned raster layers, and a 37-degree text-source
-crop. Both 37-degree frames have non-zero origins. Exact quarter-turn matrices avoid a phantom edge
-from `cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the
-90-degree case pins exact materialized bounds. The text and two-layer 37-degree cases assert source
-pixels and materialized-layer presence but not exact fractional bounds. They do not close the general
-frame gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: other angles, vector,
-blank and paint sources, other text geometries, and frame-transition cases remain unproven, and
-retained affine operations remain unapproved. The UI test intentionally continues to observe legacy
-presentation on commit and renderer-incompatible fallback on redo.
+non-quarter 37-degree crop with two differently positioned raster layers, Arial point text, serif
+paragraph text, non-centered right-aligned monospace point text, blank, vector-shape, and Draw paint
+sources, plus a three-transition mixed-source sequence. The sequence checks every durable cursor
+against its corresponding legacy composition: a 37-degree frame transform, a frame-only transition,
+and a -17-degree frame transform. The text cases cover left, center and right alignment; the rotated
+fixtures use non-zero frame origins. Exact quarter-turn matrices avoid a phantom edge from
+`cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the 90-degree
+case pins exact materialized bounds. The remaining parity cases assert source pixels and
+materialized-layer presence but not exact fractional bounds. They do not close the general frame
+gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: additional angles, vector
+tool variants, blank opacities, paint tools, text styling/rotation combinations and frame sequences
+remain unproven, and retained affine operations remain unapproved. The UI test intentionally
+continues to observe legacy presentation on commit and renderer-incompatible fallback on redo.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
@@ -100,7 +111,8 @@ pinned by tests, and nested `args.enabled` parity is explicit; previews still ne
 retiring the compatibility replay.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
-`src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
+`src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,
+`src/contexts/useCurrentTool.tsx`
 
 ---
 
@@ -115,9 +127,15 @@ and the legacy replay start from the same snapshot, which is the parity property
 extracted this rule to own.
 
 Bounding the lookup by replay target looks like a correctness fix, but it would reintroduce a
-data-loss bug. A selection can be created by a gesture that writes no history entry, so bounding
-the lookup at the replay target makes undoing a tool-switch deselect a silent visual no-op. Two tests
-pin the unbounded behaviour as load-bearing:
+data-loss bug. A `SELECTION_ACTION` entry's `previousSelectionState` carries the selection that
+existed _before_ that action — which may have been created by a gesture whose own history entry is
+at or after the replay target. Bounding the lookup at the replay target would make that baseline
+inaccessible when replaying before the first selection entry, turning an undo of a tool-switch
+deselect into a silent visual no-op. (The original framing — "a selection can be created by a
+gesture that writes no history entry" — was accurate before `00a170dc` routed selections through
+committed history entries, but the unbounded lookup is still required: it is the
+`previousSelectionState` on a later `SELECTION_ACTION` that supplies the baseline, and that action
+can sit after the replay target.) Two tests pin the unbounded behaviour as load-bearing:
 
 - The `it('restores a cleared selection when undoing the tool-switch history entry')` case in
   `useHistory.test.tsx` — "restores a cleared selection when undoing the
@@ -179,7 +197,7 @@ replay authority.
 
 ---
 
-## 45. The codecs' raster ceilings disagree, and two of seven have no budget at all
+## 45. The codecs' raster ceilings disagree, and 80 MP AVIF export is an explicit limit
 
 **What this entry is about.** A document between 80 MP and 100 MP **cannot be saved as AVIF at
 all** — `saveImageToDisk` throws with the budget message and `useFile.tsx` — `handleImageSave()` logs
@@ -207,13 +225,13 @@ and a page nowhere near this figure can still exceed it.
 
 **Five ceilings exist and three are below what the dialog can create:**
 
-| ceiling                             | value       | where                                              |
-| ----------------------------------- | ----------- | -------------------------------------------------- |
-| largest document the app can create | 100,000,000 | `MAX_CREATABLE_DOCUMENT_PIXELS` in `tiff-utils.ts` |
-| affine transform                    | 67,108,864  | `MAX_AFFINE_PIXELS` in `affine-transform.ts`       |
-| PSD                                 | 67,108,864  | `maxPixels` in `psd-utils.ts`                      |
-| AVIF, open and save                 | 80,000,000  | `MAX_AVIF_PIXELS` in `avif-utils.ts`               |
-| TIFF, open and save                 | 200,000,000 | `MAX_TIFF_PIXELS` in `tiff-utils.ts`               |
+| ceiling                             | value       | where                                                |
+| ----------------------------------- | ----------- | ---------------------------------------------------- |
+| largest document the app can create | 100,000,000 | `MAX_CREATABLE_DOCUMENT_PIXELS` in `raster-utils.ts` |
+| affine transform                    | 67,108,864  | `MAX_AFFINE_PIXELS` in `affine-transform.ts`         |
+| PSD                                 | 67,108,864  | `maxPixels` in `psd-utils.ts`                        |
+| AVIF, open and save                 | 80,000,000  | `MAX_AVIF_PIXELS` in `avif-utils.ts`                 |
+| TIFF, open and save                 | 200,000,000 | `MAX_TIFF_PIXELS` in `tiff-utils.ts`                 |
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
@@ -221,21 +239,53 @@ as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** cons
 consolidation remains an open decision; the BMP encoder now uses the existing 100 MP document cap
 without changing any other codec ceiling.
 
-**The GIF loader and SVG encoder use the document ceiling; the SVG loader remains unbounded.**
+**The GIF and SVG loaders preflight intrinsic dimensions against the document ceiling.**
 
-| codec | loader budget | encoder budget | check before the allocation it bounds?     |
-| ----- | ------------- | -------------- | ------------------------------------------ |
-| avif  | yes           | yes            | yes                                        |
-| tiff  | yes           | yes            | yes                                        |
-| bmp   | 100 MP        | 100 MP         | yes — before pixel readback and allocation |
-| gif   | 100 MP        | 65535/axis     | yes — before data-URL encoding and decode  |
-| ico   | 256/axis      | 1..256/axis    | yes, on both                               |
-| svg   | **none**      | 100 MP         | yes — before PNG readback                  |
-| psd   | yes           | yes            | yes — the reference implementation         |
+| codec | loader budget          | encoder budget         | check before the allocation it bounds?        |
+| ----- | ---------------------- | ---------------------- | --------------------------------------------- |
+| avif  | yes                    | yes                    | yes                                           |
+| tiff  | yes                    | yes                    | yes                                           |
+| bmp   | 100 MP                 | 100 MP                 | yes — before pixel readback and allocation    |
+| gif   | 100 MP                 | 65535/axis             | yes — before data-URL encoding and decode     |
+| ico   | 256/axis               | 1..256/axis            | yes, on both                                  |
+| svg   | 100 MP / 64 MiB source | 100 MP / 64 MiB source | yes — before data URL and native image decode |
+| psd   | yes                    | yes                    | yes — the reference implementation            |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
-`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
-rather than an exception to it. What the table leaves open is the loader column for `svg`.
+`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against,
+rather than an exception to it. SVG files are limited to 64 MiB before buffering, and intrinsic
+dimensions are checked against the document ceiling before data-URL creation and native image
+decoding. `encodeSvg()` also refuses the browser's `data:,` canvas failure sentinel and exported SVG
+source strings over 64 MiB, so every successful flattened export fits the import source limit. The
+importer has one bounded embedded-raster path matching this app's `encodeSvg()` output: a single
+direct PNG data image whose PNG signature, IHDR CRC, IHDR dimensions, root dimensions, and image
+viewport all agree. It extracts that PNG and loads it directly instead of asking the SVG renderer to
+decode a nested image. Before `FileReader`, the preflight refuses nested data-URL image/document
+references outside that wrapper, `<feImage>`, SVG `<foreignObject>`, resource references scoped by a
+`data:` `xml:base`, animated `href` changes on image-like elements, and data URLs in CSS
+`url()`/`image()`/`image-set()` resources. External non-data references are left to secure SVG
+image-mode rules, which treat them as network errors and prevent fetching. Image-element fragment
+references are refused because they can recurse through the complete SVG document; same-document
+`<use>` and paint-server references remain allowed. Unsupported relative units, sizing expressions,
+and stylesheets that could affect root dimensions are refused; decoded-image validation remains the
+final guard for auto/percentage dimensions resolved by the browser. This is intentionally narrower
+than the SVG format: embedded JPEG/other raster formats and foreign HTML content are not imported
+through this path. CSS custom-property values are analyzed as a bounded, global may-flow graph across
+stylesheets, inline styles, presentation attributes, and animation values. Unused and inert-only
+custom properties are allowed; resource-capable properties, `@import`, and unknown properties that
+use `var()` are sinks. Alias and fallback references are followed without resolving selectors,
+cascade, inheritance, `@scope`, or media conditions, so impossible flows can still be refused. Malformed
+CSS and analysis-limit exhaustion fail closed. This follows the dependency semantics in [CSS Variables
+Level 1 §2.3](https://www.w3.org/TR/css-variables-1/#cycles) (sourced), with conservative resource
+sinks grounded in [CSS Images Level 4](https://www.w3.org/TR/css-images-4/), [CSS Masking Level
+1](https://www.w3.org/TR/css-masking-1/), [Motion Path Level 1](https://www.w3.org/TR/motion-1/),
+and [SVG 2 painting](https://www.w3.org/TR/SVG2/painting.html) (sourced). URL scheme checks use the
+[WHATWG URL Standard](https://url.spec.whatwg.org/#concept-basic-url-parser) parser so ASCII tab and
+newline normalization occurs before classifying `data:` URLs (sourced).
+Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
+APNG frame chunks are rejected before decode in both the standalone PNG and flattened-SVG paths.
+Standalone JPEG and WebP still rely on post-decode dimension validation and need separate
+format-specific preflight work.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -255,9 +305,6 @@ previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from i
 output buffer. `encodeSvg()` applies the same cap before `canvas.toDataURL('image/png')` reads back
 and base64-encodes the raster embedded in the SVG. The GIF loader checks its 13-byte header and
 logical screen descriptor before wrapping the file in a data URL or invoking the browser decoder.
-
-**Still unbounded:** `image-load-save-utils.ts` — SVG files still pass through `loadImageFile()`
-without a pixel ceiling before the whole file is base64-encoded and handed to `new Image()`.
 
 **Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
 `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
@@ -409,19 +456,30 @@ returns, which is a product decision rather than a test one.
 
 ---
 
-## 74. The toolbar is a Photoshop clone, and 45 of 49 rail entries are wrong
+## 74. Photoshop toolbar roster: current implementation and unresolved default target
 
-**Not a defect — a standing product requirement, recorded with its cost.** `AGENTS.md` now carries
-"The toolbar is a Photoshop clone — HARD REQUIREMENT". This entry is the implementable target, the
-corrections to the research behind it, and the sequencing.
+**Not a defect — a standing product requirement, recorded with its cost.** `AGENTS.md` carries
+"The toolbar is a Photoshop clone — HARD REQUIREMENT". This entry records the source-backed roster
+evidence, the implementation count, and the remaining uncertainty about Adobe's restored default
+panel.
 
-**The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, same rendered
-names, same groups, same letters. A tool Photoshop does not have is **deleted, not relabelled** —
-the app already has the Brush, which is `draw`'s nearest. Adjustments and transforms are
-`Image ▸ Adjustments` and `Edit ▸ Transform` commands and leave the rail entirely. The registry
-identifier stays free (`reposition` for the Move tool is fine); the **rendered label** does not.
+**The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, rendered names,
+groups, and letters. An invented Photoshop tool is not relabelled into existence. `Draw` is the
+explicit app-only **OVR-2 override** and is preserved; exclude it from Photoshop roster counts.
+`color`, `levels`, and `transform` are `Image ▸ Adjustments` / `Edit ▸ Transform` commands, not rail
+tools. The registry identifier stays free (`reposition` for the Move tool is fine); the rendered
+label does not.
 
-**Shape of the work: 41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete.**
+**Current code counts, which use different units.** `toolbar-mapping.ts` has **50 rendered entries**:
+49 Adobe-named tools plus Draw, across 21 groups and four source sections. `SidebarLeft` lays those
+groups out in one or two columns. The entries use 45 distinct rail `ToolName` identifiers because
+flyout figures share the `shape` identifier. `availableTools`
+has 53 registry IDs, including five shape aliases and the three command IDs; `ToolIconName` and its
+hand-copied test roster each contain 59 icon names. None of these counts is a Photoshop default
+panel total. `docs/TOOLS-INVENTORY.md` now lists 22 non-preview tool-panel candidates not mapped
+to the rail (with default visibility unverified for some groups) and one separate default-off
+Technology Preview. Adobe publishes no complete numbered default roster, so the historical
+41/70/36/34 arithmetic is not a verified current target.
 
 **Four corrections to the inventory in `AGENTS.md`, from a second research pass. Read these before
 building the target list — the list as written ships a rail that is still not a clone.**
@@ -440,73 +498,57 @@ enumeration). And the trap that produced the Clone Source false positive: **Adob
 a panel** (`Window ▸ Clone Source`), not a Tools-panel entry. A name appearing in a panel's title is
 how a tool gets miscounted.
 
-**Group order is a hypothesis, and the requirement says so.** Adobe publishes no page that
-enumerates the Tools panel top-to-bottom. The 21-tile order is reconstructed from two independent
-third-party 2026 diagrams, cross-checked against Adobe for **membership only**. Four placements are
-unresolved and a screenshot of a restored PS 27.x default workspace settles all four: the Frame
-tool's separator (its own tile, but does it close the Crop band or open Measurement?);
-Content-Aware Tracing's slot inside the Pen flyout; **Line before Star or Star before Line** in the
-Shape flyout (one line, and a line a user's hand learns); and whether Note and Count are in the
-default panel or sitting in Extra Tools.
+**Group order remains a hypothesis, and the requirement says so.** Adobe publishes no page that
+enumerates the Tools panel top-to-bottom. The 21-group order is reconstructed from third-party 2026
+diagrams and cross-checked against Adobe for membership and named flyout families. Adobe now places
+Note and Count in the Eyedropper family, Artboard in the Move group, and Content-Aware Move with Spot
+Healing; Content-Aware Tracing is a default-off Technology Preview in the Pen group when enabled.
+Still unresolved: the Frame separator; **Line before Star or Star before Line** in the Shape flyout;
+Adjustment Brush's default group/visibility; and Content-Aware Tracing's exact Pen-flyout slot if the
+preview is enabled. Note/Count default visibility and the total default roster still need a restored
+Photoshop default-workspace reference.
 
-**`toolbar-mapping.ts` — the doc comment above `toolbarMap` says "Unsupported Photoshop tools are
-intentionally omitted rather
-than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx` — the module-level `const toolbarGroups =
-toolbarMap.flat()` discards the
-map's section boundaries entirely, so the five current sections are not Photoshop's separators and
-the new layout has to decide deliberately whether a section concept survives at all.
+**`toolbar-mapping.ts` documents unsupported Adobe tools as omitted and calls out Draw as the OVR-2
+exception.** Keep that exception; Draw is not a Photoshop tool, but it must not be removed. The map
+contains four source sections and 21 group arrays. `SidebarLeft.tsx` renders the groups in one or two
+columns; the exact full-panel order and separator model remain hypotheses until checked against a
+restored Photoshop default workspace.
 
-**Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands, and their
-processors are reused unchanged — but this is **not** the pure routing change with "the history and
-durable paths untouched" that this line used to claim, and the claim was refuted before it shipped:
-`'color' | 'levels'` are a **durable schema type** (`src/contexts/history-model.ts` — `DurableFilter`,
-`src/contexts/layer-types.ts` — `LayerOperationArgs`), so every already-committed operation of either
-crosses the durable
-boundary whether or not the surface it was minted from moves. `shape` dissolves into the five figure
-`ToolName`s that
-already have processors and are already dispatched. `draw` is last and is the expensive one: it is
-the suite's default way to make a mark, **25 call sites across 14 e2e specs**, and
-`e2e/pen-types.spec.ts` is specifically about it and dies with the tool. Its engine does not die —
-`brush`, `pencil` and `color-replacement` are all built on `buildDrawArgs` and `draw()` — only the
-tool goes, and the engine should be renamed to stop pretending to be one.
+**Current routing state.** `color`, `levels`, and `transform` are already absent from the toolbar map
+and remain available as command IDs in `extraTools`; do not delete their processors or durable types
+as part of a rail change. The `shape` flyout still maps six rendered entries through the `shape`
+name and a `figure` value; registry aliases are a separate type-system count, not six additional map
+names. `draw` remains as the explicit OVR-2 override. Its painting implementation may continue to
+share the `buildDrawArgs` engine with Brush/Pencil; it is not a deletion candidate.
 
-**Cheapest real additions**, and they are parallelisable because they touch disjoint files: Single
-Row and Single Column Marquee (SHIPPED 2026-10-01, `src/tools/singleRowColumnMarquee.ts`; the
-phrase "two lines of geometry reusing `rectangularSelection`" held up), Sponge, Red
-Eye, and Star (a new `FigureType` member plus a star-ratio branch). Next cheapest architecturally
-is the measurement band — Color Sampler, Note, Count — because these are `PIXEL_FREE_TOOLS` like
-the Eyedropper and the Ruler, committing no pixels and needing no durable operation. **The Ruler is
-built**: `src/tools/ruler.ts` for the arithmetic, `src/components/Main/RulerToolArea.tsx` for the
-gesture and the nonprinting overlay, and `src/components/ToolbarsRight/Ruler/Ruler.tsx` for the
-readout bar. What it still lacks is the `Image ▸ Analysis` measurement scale, which is a menu
-command rather than a tool and belongs with the menu gaps rather than here.
+**Already implemented from the earlier low-cost list:** Single Row and Single Column Marquee,
+Sponge, Red Eye, Star, Color Sampler, Ruler, Hand, Zoom, and Rotate View. They are not additions
+remaining for this task. The measurement-family gaps are Note and Count; Adobe places them in the
+Eyedropper family, and they are pixel-free like the existing Eyedropper/Ruler tools. The `Image ▸
+Analysis` measurement scale remains a menu command, not a rail tool.
 
-**Largest, and they need a primitive the app does not have:** Object Selection, Spot Healing,
-Content-Aware Move, Remove (a generative backend), History Brush and Art History Brush (a read-out
-across the whole history array, which touches the replay boundary), Vertical Type and its two
-masks (glyph→selection rasterisation), Path Selection and Direct Selection (a path model absent
-from `src/tools/shape.ts` entirely), and Artboard and Frame (layer kinds the app has no type for).
+**The remaining inventory still contains architectural gaps:** Object/Selection Brush tools and
+Content-Aware Move/Remove need selection or retouch primitives; History and Art History Brush need
+retained-raster history; Type Mask tools need glyph-to-selection rasterization; Path Selection and
+Direct Selection need a path model; Artboard and Frame need layer kinds the app does not have. The
+current candidate list and its evidence live in `docs/TOOLS-INVENTORY.md`; Content-Aware Tracing is
+separate because Adobe marks it default-off.
 
-**One step is a baseline hazard and belongs on its own branch:** Hand, Zoom and Rotate View. The
-app's zoom state is commented out (`StoreContext.tsx` — the commented-out `// zoom data` block;
-`ZoomData` survives only as a
-type), so the seam exists and the state does not. It is small in lines and large in blast radius,
-because it touches the renderer and every e2e screenshot baseline.
+**View tools are implemented.** Hand, Zoom, and Rotate View now have dedicated rail mappings and
+view state; Ruler is also implemented. They should not be counted as missing Photoshop tools. Any
+future view-gesture or screenshot-baseline work is separate from the roster reconciliation.
 
-**The first step is the highest-value thing in the plan and it is not a feature:** land the target
-as data, and add a test asserting the **set of rail labels** equals the target set — not the order,
-not the tiles. Any future invented tool fails it. It is cheap, and it is the tripwire that makes the
-other eight steps safe.
+**The first step remains a source-backed target set, not a guessed number:** once the restored
+default roster is established, encode its label set and test it separately from flyout order and
+layout. Adobe does not publish a full numbered default list, so the old 70/72 target cannot be used
+as an oracle. Preserve the Draw override in its own explicit expected-set entry.
 
-**What this costs in tests, before a single tool is added.** The hand-copied lists are the expense,
-and they are already drifted: `toolIcons.test.tsx` — `toolIconNames` holds a 46-name union by hand;
-`tool-processors.test.ts`
-carries four separate 41-name and 10-name rosters; `SidebarLeft.rendering.test.tsx` — the
-`it('renders the available tools in Photoshop-inspired order')` title pins
-the exact 16-tile order by name; and `toolbar-mapping.test.ts` — the `it('lists the shape flyout in
-the exact expected order and shape')` title compares a hand-copied
-expected shape flyout with `toEqual`, so **an added key on any shape entry breaks it**.
+**Current roster-test coverage.** `toolIcons.test.tsx` now carries a 59-name icon union; the
+`ToolIconName` type and test stay in sync. `tool-processors.test.ts` derives the processor and
+pixel-free sets from registered tools, and checks its hand-copied icon/shape tables against those
+sets. `SidebarLeft.rendering.test.tsx` pins the current primary-tile order; `toolbar-mapping.test.ts`
+pins the shape flyout's six rendered entries. Neither currently asserts the exact source-verified
+Adobe default label set, which remains blocked on the missing default-roster evidence.
 `AppKeyboardShortcuts.tsx` — the doc comment above `brushGroup` asserts in prose that its cycle
 groups match the mapping's groups;
 **one of its seven does not** — the Pen tile is six wide and its cycle is three. Nothing tests that
@@ -581,8 +623,8 @@ lines are quoted in (c) below
 Two `it.fails` tests in `src/hooks/__tests__/usePolylineAnts.animation.test.tsx` were **deleted
 and the behaviour pinned as working**, because both were pinned to a defect that a rAF mock
 manufactured rather than to a real one. That conclusion is right. What is left behind is not:
-**the production comment those two tripwires were written against still asserts the opposite, and
-the test suite now contradicts it.**
+**the production comment those two tripwires were written against has since been corrected, and
+the claim that it still contradicts the test suite is now false.**
 
 **(a) The handles were an artefact of the mock, not a defect.** The mock counted frame handles
 from `0`. HTML Standard §8.12 (Animation frames) defines the handle as a pre-increment: the target
@@ -621,8 +663,8 @@ The last sentence is the claim the `it('stops the loop when paused before the fi
 **falsifies**: that test asserts that pausing before the first frame has run _does_ stop the loop, and
 its own comment cites the `isPaused` effect cleanup's `if (animationIdRef.current)` — the very guard
 this comment
-describes. The repo currently holds a production comment
-saying the loop does not stop and a test saying it does, and only one of them can be right.
+describes. The production comment saying the loop does not stop has **since been corrected**;
+the test now agrees with it.
 
 **When production is next touched, the stale comment above `usePolylineAnts.ts`'s `isPaused` effect
 must be corrected or deleted**, and
@@ -1003,223 +1045,7 @@ in a browser, so nothing there could produce a message for it to catch.)
 `src/App.tsx` — the two `ErrorBoundary` mounts,
 `src/util/selection.ts` — `getSelectionCanvasContext()` and `SelectionCanvasContextError`.
 
-## 99. Every `history-replay.ts` line citation past the `documentSource` arm's gate is off by twenty
-
-**Problem.** The bedrock-frame assignment in `replayHistory` is now wrapped in `if (index === 0)`
-(`history-replay.ts` — `replayHistory()`, at its `index === 0` bedrock block), which turned a five-line
-block into a thirteen-line one, and the
-`documentSource` arm above it grew a gate of its own (that same `documentSource` arm). Every cited
-line up to the top of the `documentSource` arm still
-points where it did; **every citation past that point is now twenty lines early**, and the shift in
-between
-is not uniform (the rest of the `documentSource` arm moved eleven, its trailing lines twelve, the
-whole arm nineteen). The citations were all
-correct before the gates and are all wrong after them, so nothing here is pre-existing rot — it is
-drift this change introduced.
-
-**Why it matters.** These are references a session follows instead of reading, and `history-replay.ts`
-runs past two hundred lines, so a twenty-line miss lands inside the neighbouring arm rather than past
-the file. The
-sites this entry listed in other documents have been re-pointed; the ones left are in the history
-tests, which still quote the bedrock block as a line range
-(the fixture comment in `history-adapter.branches.test.ts` — the
-`it('reports the omission through the safe entry point while keeping the shadow available')` and
-`it('leaves the durable frame at the pre-add size when a bedrock layer is added mid-history')` titles
-— and `useHistory.test.tsx` — the `it.each(...)('replays image sources for %s without saving null
-canvases')` case), the document-frame
-arm as a line range (the `it('keeps a disabled remove entry in history without removing the layer')`
-title in `history-adapter.branches.test.ts`) and the document-source arm as a line range (that same
-file's `it('reports the omission through the safe entry point while keeping the shadow available')`
-title). Entry 96 in this file is the same genre of defect for the same reason.
-
-**Fix.** Re-point each site by reading the file, not by arithmetic — the shift is not uniform below
-the `documentSource` arm's gate. For reference, past that gate the two gates together moved everything
-twenty lines down: the
-bedrock block is `replayHistory()`'s `index === 0` block, the document-frame arm its
-`SET_DOCUMENT_FRAME_ACTION` arm, the layer arms its `NEW_LAYER_ACTION`/`TOOL_ACTION` handling, the
-`layer-operation` test its `processor.commit === 'layer-operation'` arm and the `document-operation`
-`continue` its `processor.commit === 'document-operation'` guard. Already correct, and
-re-verified against the working tree: the `set-document-frame` comment in
-`history-adapter.ts` — the one inside `legacyHistoryToDurable()`'s `SET_DOCUMENT_FRAME_ACTION` arm,
-which now names `frameFromFirstEntryBedrock` and cites
-the bedrock block by line — plus that file's `deriveSetDocumentFrameEntry()` and its `legacyHistoryToDurable()`,
-and `history-append.ts` — `compareDurableSourceToLegacy()` and `deriveReorderLayersEntry()`. The four
-sites in this file are re-pointed too. Sites still stale:
-
-- `src/contexts/__tests__/history-adapter.branches.test.ts` — the
-  `it('keeps a disabled remove entry in history without removing the layer')` title (the document-frame
-  arm), the `it('reports the omission through the safe entry point while keeping the shadow available')`
-  title (the document-source arm), the
-  `it('a disabled first entry replays as the empty state legacy replays')` and `it('leaves the durable
-frame at the pre-add size when a bedrock layer is added mid-history')` titles (the bedrock block),
-  and the `it('keeps recording a property action for a layer an earlier entry removed')` title (the
-  layer arms)
-- `src/contexts/__tests__/useHistory.test.tsx` — the
-  `it.each(...)('replays image sources for %s without saving null canvases')` case (the bedrock
-  block)
-
-**Files.** `src/contexts/history-replay.ts`
-
-The append-boundary test citations were a separate drift cluster, not part of this file's
-`history-replay.ts` arithmetic. They were resolved with the §87-§89 fixes and are no longer
-outstanding.
-
 ---
-
-## 108. `.skills/photoshop-tool-creation.md` carries ~200 source citations it last verified two days before `main` moved, and it does not know which are dead
-
-The skill's own header says every `file:line` was "last re-verified on 2026-09-28", and `main` has
-moved since. The four worst instances were confirmed stale, each quoted here as it stood:
-
-```
-:492         quotes e2e/README.md:30 for "npm run test:e2e is headless by default. Keep it that way."
-:3774-3779   asserts e2e/README.md:401-411 still says the `e2e` job is `continue-on-error: true`
-:3137        says the pass/skip count lives in e2e/OPEN_PROBLEMS.md:41-42
-:3207-3208   cites e2e/README.md:243-263 for `testInfo.snapshotDir`
-```
-
-The first named the wrong `e2e/README.md` line — the headless sentence is in the README's own
-commands section, and the cited line was the "Counts are deliberately absent…" line instead. The same
-paragraph claimed the README was "415 lines" and it was **580**. The second is the damaging one: the
-README's history section already read "It **was** `continue-on-error`", and the skill still instructed
-the reader that "the README is the stale one — fix it in the same commit", so it **instructed an agent
-to "fix" a correct document.** The third pointed at two lines of `e2e/OPEN_PROBLEMS.md` that are blank
-and the `## Observed failures` heading, while `grep -c '97 pass\|skipped by declaration'
-e2e/OPEN_PROBLEMS.md` returned **0**; the count had moved into `AGENTS.md` and nothing in the skill
-said so. The fourth cited a twenty-line `e2e/README.md` range for `testInfo.snapshotDir`, which sits
-somewhere else entirely.
-
-**Why this is filed as one entry rather than five.** The individual fixes are mechanical and were
-deliberately **not** made here: a bulk re-derivation of a 4,455-line document's citations is its own
-job, and doing it in a change whose subject was orchestration rules would hide the diff. The defect
-worth recording is the **shape**: the skill asserts verified citations over `src/`, `e2e/` and
-`scripts/`, has no way to know which half are dead, and its phase 9 rule ("verify every citation
-before you commit the handoff") is scoped to the handoff the skill writes rather than to the skill
-itself. A skill that carries hundreds of line-numbered claims about a moving tree needs either a
-dated re-verification pass recorded per section, or citations that name a **symbol** rather than a
-line — which its own header already recommends and its own body does not follow.
-
-**Fix.** Run the re-derivation as its own change: for every `file:line` in the skill, check the
-line, and where it has moved, replace it with `file:symbol` rather than a new number. Then record
-the date the pass covered. Fix the `e2e/README.md` `continue-on-error` instruction **first**, since
-it is the one that causes an agent to make the tree worse.
-
-**Files.** `.skills/photoshop-tool-creation.md` — its "last re-verified" header, the phase table's
-phase 9 row, and the four quoted bodies above; `e2e/README.md` — its commands section and its history
-section; `e2e/OPEN_PROBLEMS.md` — the `## Observed failures` section; `AGENTS.md` — its known-failures
-section
-
-## 109. `.skills/hard-merge.md` cites eight source locations that have moved, three of them inside a paragraph that tells the reader to re-derive
-
-`.skills/hard-merge.md` has the strongest evidentiary discipline of any document here — it names the
-tree it was read against, and Appendix F is entirely about not trusting a citation. These were the
-ones that did not get re-derived, each row naming the `.skills/hard-merge.md` section whose citation
-was wrong on the left and what it actually resolved to on the right:
-
-| section                                                  | claimed                                                             | actually                                                                                         |
-| -------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| §"Preview without touching anything"                     | a range in `git.mjs` is `mergeConflict`                             | `mergeConflict()` in `git.mjs`                                                                   |
-| §"Preview without touching anything"                     | "JSDoc at" a range in `git.mjs`                                     | the JSDoc on `mergeConflict()`                                                                   |
-| §"Preview without touching anything"                     | `return { conflict: null, … }` at a range                           | two returns inside `mergeConflict()`, not one range                                              |
-| §"Preview without touching anything"                     | `'toolbar-overflow'` present on `main` at a line                    | the `'toolbar-overflow'` entry in `curated.mjs`                                                  |
-| the merge-commit corpus section                          | "of the last 200 merge commits on `main`, 50 carry a body"          | re-running the document's own command returns **62**                                             |
-| §"1. Union — the default", §"2. Graft, do not duplicate" | "matches 83"; "78 times … and 5 in `HANDOFF.md`"                    | 92 uncorrected today: 79 in this skill, 7 in `HANDOFF.md`                                        |
-| §"Corrected rather than deleted"                         | quotes `ef85d3ab`'s subject                                         | the real subject ends "**and shorten it**"; quoted with no ellipsis                              |
-| the expired-lease section                                | "See a range in `docs/ORCHESTRATION.md`" for the expired-lease trap | that range is the `mustNotPrune` paragraph; the lease material is elsewhere in the same document |
-
-The load-bearing claim — that the **corrected** pattern has **0** occurrences — still holds, so the
-rule the numbers support is intact. What is broken is every number a reader would copy.
-
-**Fix.** Correct the eight, and prefer the symbol over the line everywhere in this file, because
-Appendix F's own argument is that a line number is a property of a moment.
-
-**Files.** `.skills/hard-merge.md` — the eight sections named above;
-`scripts/lib/worktree-inventory/git.mjs` — `mergeConflict()`,
-`scripts/lib/worktree-inventory/curated.mjs` — the `'toolbar-overflow'` entry;
-`docs/ORCHESTRATION.md` — the `mustNotPrune` paragraph and the expired-lease material
-
-## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
-
-`docs/TOOLS-TOO-HARD.md` §"The Pen family":
-
-> "`AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
-> Photoshop grouping and naming are the specification, and the stub bar is the debt."
-
-`grep -rn "grouping and naming are the specification" --include='*.md'` returns three hits — the
-same paragraph in `docs/TOOLS-TOO-HARD.md` §"The Pen family" and `docs/PHOTOSHOP-UX.md` §"Open
-violations", plus this entry's own quotation of it. `AGENTS.md` states no such policy:
-`grep -cE 'specification|grouping|stub bar' AGENTS.md` is **0**, its two `_placeholder_` matches
-being the `‹line›` placeholder wording of the citation rule rather than a placeholder-tool policy,
-and the whole file is short enough to read (`wc -l AGENTS.md` — 256 lines at the time of writing),
-so this is an absent policy rather than one the grep missed.
-
-The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md` §"Open violations" — _"A
-tool the
-app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
-because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
-— the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
-specification; the stub bar is the debt."_
-
-**Why this matters beyond a citation.** Six of the seven placeholder tools were audited for
-deletion this week and every one came back "keep" **because of that policy**. An agent
-reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
-conclusion from a missing policy is that no policy was ever written down.
-
-**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md` §"Open violations" in that one sentence.
-
-**Files.** `docs/TOOLS-TOO-HARD.md` §"The Pen family", `docs/PHOTOSHOP-UX.md` §"Open violations"
-
-## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
-
-`toolbar-mapping.ts` — its five `shape`-named toolbox entries — gives the toolbox entries
-`name: 'shape'` plus a `figure`, never the key:
-
-```ts
-{ label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
-{ label: 'Ellipse Tool',    name: 'shape', figure: 'oval' },
-{ label: 'Line Tool',       name: 'shape', figure: 'line' },
-{ label: 'Triangle Tool',   name: 'shape', figure: 'triangle' },
-{ label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
-```
-
-All four activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
-equivalent in `Mobile/mobile-tools.ts`, the `Image`/`Edit` menu dispatch in `DesktopHeader.tsx`, and
-the keyboard map in `AppKeyboardShortcuts.tsx` — and `useApp.ts` holds the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx` records that dispatching the
-key directly was a **bug they fixed**: it mounted the Shape panel where the
-`toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
-red and the shape committed black.
-
-So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
-(its `rectangle`, `ellipse`, `triangle`, `polygon` and `line` variants in `tool-types.ts`), a
-per-figure settings bucket (the five figure buckets in `settings.ts`),
-a description record (`shape.ts` — its per-figure `sources` entries) and doc sections.
-`docs/PHOTOSHOP-UX.md` §"Open violations" names them as _"registry ids the rail never names"_ and
-frames the
-rail-naming decision around them.
-
-**What is not stated anywhere is whether they are forward-scaffolding or residue**, and one fact
-would settle it: **can a durable document or a replayed history item carry
-`toolName: 'rectangle'`?** `toolProcessors.ts` registers all five as
-`{ creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape }`,
-so a committed shape carries its tool name into history. The dispatch path is closed in the
-running app, but document import and the durable `ToolArgs` deserialiser were **not** audited
-for a persisted figure-key `toolName`. If one can arrive, these keys are load-bearing for
-existing documents and deleting them is a data-loss change; if none can, they are pure residue
-and the `ToolArgs` union is carrying five variants nothing constructs.
-
-**Fix.** Audit the import and durable-replay path for a persisted figure-key `toolName`, then
-either state in `docs/PHOTOSHOP-UX.md` that the five ids exist to keep historical documents
-replayable, or delete them together with their `ToolArgs` variants, settings buckets and
-descriptions. Whichever it is, the `rectangle` entry in `ToolbarPlaceholder.test.tsx`'s
-unreachable-config list changes and that test moves with it.
-
-**Files.** `toolbar-mapping.ts` — the five `shape`-named toolbox entries,
-`src/tools/toolsMap.ts` — its five `Shape`-component entries,
-`src/tools/toolProcessors.ts` — the five figure registrations,
-`src/contexts/tool-types.ts` — the five figure `ToolArgs` variants,
-`src/tools/settings.ts` — the five figure settings buckets, `docs/PHOTOSHOP-UX.md` §"Open violations",
-`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named in §112
 
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
 
@@ -1869,69 +1695,6 @@ scheduling changes, or it is a tripwire for a defect that cannot occur.
 `src/components/SidebarLeft/SidebarLeft.tsx` — `twoColumnEntries`,
 `react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
 runs on a concurrent render that yielded — neither is a pre-paint refit).
-
----
-
-## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
-
-**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
-the root cause anywhere in the tree. `toolbar-mapping.ts` (repo root) has no `hand`, `zoom` or
-`rotate` entry. The store's view state is entirely commented out:
-
-- `StoreContext.tsx` — `StoreData`'s commented-out `zoomDataRef` / `setZoomData` members, with only
-  the type left live.
-- `StoreContext.tsx` — `StoreProvider`'s whole commented zoom block, `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest.
-- `general-types.ts` — `export type ZoomData = { dx, dy, zoom }` is still a live export with
-  **zero** live consumers. A type with no consumer is the residue of the removal.
-
-**The `'zoom'` default is a trap, and it is the half nobody has written down.**
-`Main.tsx` initialises `let interactionMode = 'zoom'` and the string `'zoom'`
-is assigned by **no branch** in the file — the `if`/`else if` chain that assigns `interactionMode`
-runs from its first `else if` to the `else EventHandler = DummyToolArea` that terminates it. So
-`'zoom'` is not a mode anything enters; it is the value every tool without its own arm falls through
-to, and it lands on a `display: none` div with no handlers. `Main.tsx` still carries the matching
-`// transform: translate(${dx}px, ${dy}px) scale(${zoom})` on the `.zoom-container` div, and
-`Main.scss`'s `.zoom-container` rule sets `transform-origin` with no `transform` to anchor.
-
-**A second, smaller finding in the same cause.** `src/components/SidebarLeft/SidebarLeft.tsx`
-has exactly one `<hr>`, and the comment above that `<hr>` justifies it by describing a
-commented-out Zoom control: "The second `<hr>` this replaces stood between the colour cluster and
-NOTHING — the commented-out Zoom control that followed it was deleted with it". The control it
-reasons about is not in the file.
-
-**Why it is not a wiring bug.** There is no view transform to wire. `usePointerPosition` maps
-client coordinates to image pixels through a `scale` supplied by the host rather than owning a
-transform of its own.
-
-**Fix — start with the scope, not the Hand tool.** Three separate features each want one, and they
-want the same one: pan/zoom, the space-drag temporary-pan every tool inherits, and tool cursors that
-track the view (a brush tip circle is a screen-space circle). A `DocumentViewScope` owning
-`{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image conversion reading from it,
-is the shape the commented-out code was reaching for. Do not begin with a Hand tool; begin with the
-scope and the three tools fall out of it.
-
-Two smaller fixes that can land independently, and are cheap:
-
-1. Replace the `'zoom'` default with something honest — `DummyToolArea` itself, or an explicitly
-   named `UNHANDLED` — so the fallthrough is a decision rather than an accident that reads as a
-   feature. As written, a reader must diff the whole chain to learn that `'zoom'` is never assigned.
-2. Delete or reword the `<hr>` comment in `SidebarLeft.tsx`; the control it cites is gone.
-
-**Why this is being refiled.** `4833e740` deleted the entry that carried it on the grounds that it
-was "already carried by a tracked document". It is not. `docs/TOOLS-INVENTORY.md`'s "Navigation and
-measuring" table has catalogue rows for the three names, and its "Zoom deserves one note of
-accuracy" note records "The app has a zoom **interaction mode** on the canvas and **no Zoom tool**"
-— a description, not a filed defect. `docs/TOOLS-TOO-HARD.md`'s "The Adobe tools the rail omits"
-section repeats that one sentence. `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section
-lists the three only as "not Adobe-table-confirmed". The one surviving mention of the root cause is
-`HANDOFF.md` §74, framed as a roadmap step ("belongs on its own branch"), which never names the
-`'zoom'` fallthrough or the stale comment. Verified against `main@cf41f642`.
-
-**Files.** `toolbar-mapping.ts` (repo root), `src/contexts/StoreContext.tsx` (`StoreData` and
-`StoreProvider`), `src/contexts/general-types.ts` (`ZoomData`),
-`src/components/Main/Main.tsx` (`interactionMode`, the `EventHandler` chain, the `.zoom-container`
-div), `src/components/Main/Main.scss` (`.zoom-container`), `src/components/SidebarLeft/SidebarLeft.tsx`
-(the single `<hr>` and the comment above it), `src/hooks/usePointerPosition.ts`
 
 ---
 
@@ -2879,58 +2642,50 @@ The operator's own rule releases a chat's write ownership when its branch is mer
 this automatic on a landing — so the gap is a chat that finishes work it will never land: an
 abandoned feature, or one folded into another branch.
 
-## 218. The no-line-numbers gate covers three markdown documents, and 1,932 citations live outside it
+## 218. Point-in-time Markdown exclusions retain legacy line citations outside the maintained-doc scan
 
-**Problem.** `scripts/__tests__/agents-citations.test.mjs` enumerates `git ls-files '*.md'`, and
-`LINE_NUMBER_GATED` names exactly three paths. Everything else is caught only while it is _dirty_,
-by the assertion that the maintained corpus carries no citation — which means **a migrated document
-can regress silently the moment it reaches zero**.
+**Problem.** The maintained-document scan is already permanent: `lineNumberCitationsByDocument`
+checks the named gated set, and `ungatedDocumentsWithLineNumbers(readMaintainedDocuments())` rejects
+citations in every other maintained document. The prior claim that a clean document could regress
+silently was incorrect.
 
-Two verified consequences. **`docs/LAYERS-PANEL.md` was migrated by hand, is in the maintained
-corpus, and is not in `LINE_NUMBER_GATED`**, so it has zero citations today and nothing would report
-a re-added one — the same state as `HANDOFF.md`, `docs/TESTING.md` and `TEST-FLAKES.md`. And
-**`MIGRATION_NEXT_STEPS_SUNDAY.md` carries 139 citations while being excluded outright**, because
-`docs/README.md` lists it as a point-in-time report. That exclusion is right for the retired-symbol
-leg, whose mentions in such a document are all true. It is **wrong for the line-number leg**, where
-139 unswept coordinates are residue no assertion reports.
+The actual remaining gap was **new prose in tracked Markdown excluded from the maintained-document
+scan**, notably point-in-time reports. `MIGRATION_NEXT_STEPS_SUNDAY.md` still has historical
+citations, and `docs/OVERRIDES.md` is operator-owned. A pre-commit guard now rejects new citations in
+tracked Markdown prose and source comments, while exempting generated `docs/TOOLS.md`; it does not
+migrate that existing historical residue.
 
-Extending the gate to source files is **a 271-file migration, not a scope change**: 1,932 citations
-across 740 tracked non-markdown files, 459 of them in `e2e/*.spec.ts` and 42 in
-`scripts/__tests__/*.mjs`. Two thirds sit in `src/tools/descriptions/*.ts` and in e2e comments.
+Human-written source comments follow the same ban. Structured `implementationRefs` in tool-description
+data are separate machine-readable metadata and require a separate migration decision.
 
-**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `trackedMarkdown()`,
-`LINE_NUMBER_GATED`, `DOCUMENTS_NOT_CHECKED`. `docs/README.md` — the point-in-time table.
+**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `DOCUMENTS_NOT_CHECKED` and the
+maintained-document citation legs. `scripts/check-new-line-citations.mjs` — the pre-commit guard.
+`docs/README.md` — the point-in-time document index.
 
-**What would close it.** Decide, and write the reason into the document either way: either widen
-`LINE_NUMBER_GATED` to every maintained document, so a clean one is pinned rather than merely quiet,
-or state that the gate is a migration's to-do list and not a permanent invariant. The source-file
-question is separate and larger, and the honest answer may be that comments in `.ts` are not prose
-and the rule should not reach them.
+**What would close it.** Migrate the existing citations out of point-in-time reports that remain
+tracked and agent-editable. Leave operator-owned `docs/OVERRIDES.md` to its owner, and keep generated
+`docs/TOOLS.md` under its generator. Decide separately whether structured `implementationRefs`
+should migrate to symbol anchors.
 
-## 219. Nothing stops a test from asserting on a path another process owns, and all three repairs are prose
+## 219. Test resource isolation has no repository-wide write-boundary guard
 
-**Problem.** Every existing instance of this defect was repaired **by hand, with a comment describing
-the repair rather than a check**. `scripts/__tests__/e2e-run.test.mjs` asserted
-`isPortFree(await findFreePort())` — two binds with the port released in the gap — which
-`scripts/e2e-run.mjs` explicitly disclaims. `reservePort`, the production mechanism that exists
-_because_ one pick is not a guarantee, had **zero** test references. The repair was hardened,
-mutation-proved green, and 0 losses were observed in 10,250 find→check→bind cycles — so it declined
-to assert a trigger it had not seen and said so in the file.
+**Problem.** The e2e-run suite now has checks for its own resource boundaries: it exercises
+`reservePort`, gives the runner a temporary board with `AGENT_BOARD_DIR`, sends each run record to
+a temporary path, and reads the live worktree record only as a tripwire. Those checks are local to
+that suite. No repository-wide rule prevents another test from writing a path owned by a concurrent
+process, and no derived inventory of tests that write shared paths exists.
 
-That honesty is the right call and it leaves the class open. `node_modules` walking up to the parent
-checkout, `.kilo/e2e-last-run.json`, the e2e queue sentinel and the board database are all shared,
-and nothing enforces it. A scan that claimed three live siblings in that file was wrong within a day
-of the repair, which is this repository's own failure class and the reason the class needs a check
-rather than a fourth repair.
+`node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e queue sentinel, and the board database
+can all be shared across tests or worktrees. The suite-budgets inventory derives process-spawning
+tests only; it does not discover file writes or establish an allowlist for them.
 
 **Affected.** `scripts/__tests__/e2e-run.test.mjs`; `scripts/lib/**` for the shared-path helpers;
-`node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e queue sentinel, `board.db`.
+the wider `scripts/__tests__` tree; `node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e
+queue sentinel, `board.db`.
 
-**What would close it.** A rule with a check behind it: a test in this repository may not **write** a
-path outside a per-test temp directory, and the machine-shared paths get an explicit allowlist for
-reads. `scripts/__tests__/suite-budgets.test.mjs` already derives every spawning suite from the tree
-and asserts the derived set against a hard-coded list, so the mechanism for a derived inventory
-exists here already.
+**What would close it.** A check that inventories test writes and fails when a test writes outside
+its per-test temporary directory, plus an explicit allowlist for machine-shared reads. Derive the
+inventory from the test tree rather than maintaining a list that can silently omit a new writer.
 
 ## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
 

@@ -134,8 +134,8 @@ export async function captureCanvasScreenshot(
     //     the test, so the reader had to find the call site to learn what failed;
     //   - `data` present and non-empty as a string but decoding to zero bytes, which was
     //     written, attached and RETURNED as a successful capture. Nothing here noticed,
-    //     so the fault surfaced at the far end of the pipeline instead, in `loadImageData`
-    //     (`canvas-helpers.ts:541`), which raised a decode error about the FILE and named
+    //     so the fault surfaced at the far end of the pipeline instead, in `loadImageData`,
+    //     which raised a decode error about the FILE and named
     //     the consumer rather than the capture that had produced nothing.
     //
     // The condition tests the DECODED length, not `typeof data`, because the second case

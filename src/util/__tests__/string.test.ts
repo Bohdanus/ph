@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { charLength, deleteLastChar, deleteCharAt, ellipsify, graphemes } from '../string.ts';
+import { charLength, deleteLastChar, deleteCharAt, ellipsify, graphemes, wordBoundaryOffset } from '../string.ts';
 
 /**
  * `String.prototype.isWellFormed` is ES2024 and this project compiles against the ES2022
@@ -104,6 +104,46 @@ describe('graphemes', () => {
     expect(result).toHaveLength(10000);
     expect(result[0]).toBe('a');
     expect(result[result.length - 1]).toBe('a');
+  });
+});
+
+describe('wordBoundaryOffset', () => {
+  it('advances one word at a time and skips separators as destinations', () => {
+    expect(wordBoundaryOffset('Gamma delta', 0, 'forward')).toBe(5);
+    expect(wordBoundaryOffset('Gamma delta', 5, 'forward')).toBe(11);
+    expect(wordBoundaryOffset('Gamma delta', 6, 'forward')).toBe(11);
+  });
+
+  it('moves backward to word starts and skips separators as destinations', () => {
+    expect(wordBoundaryOffset('Gamma delta', 11, 'backward')).toBe(6);
+    expect(wordBoundaryOffset('Gamma delta', 6, 'backward')).toBe(0);
+    expect(wordBoundaryOffset('Gamma delta', 5, 'backward')).toBe(0);
+  });
+
+  it('keeps punctuation and whitespace inside the selected range between words', () => {
+    const text = 'one,  two\nthree';
+    expect(wordBoundaryOffset(text, 0, 'forward')).toBe(3);
+    expect(wordBoundaryOffset(text, 3, 'forward')).toBe(9);
+    expect(text.slice(0, wordBoundaryOffset(text, 3, 'forward')!)).toBe('one,  two');
+    expect(wordBoundaryOffset(text, 10, 'backward')).toBe(6);
+  });
+
+  it('uses UTF-16 offsets while keeping combining marks within a word', () => {
+    const text = 'cafe\u0301 next';
+    expect(wordBoundaryOffset(text, 0, 'forward')).toBe(5);
+    expect(wordBoundaryOffset(text, 5, 'forward')).toBe(10);
+    expect(wordBoundaryOffset(text, 10, 'backward')).toBe(6);
+  });
+
+  it('returns null at the text edge and when there is no word-like segment', () => {
+    expect(wordBoundaryOffset('Alpha beta', 0, 'backward')).toBeNull();
+    expect(wordBoundaryOffset('Alpha beta', 10, 'forward')).toBeNull();
+    expect(wordBoundaryOffset(' ,\n ', 2, 'forward')).toBeNull();
+  });
+
+  it('clamps out-of-range offsets', () => {
+    expect(wordBoundaryOffset('Alpha', -10, 'forward')).toBe(5);
+    expect(wordBoundaryOffset('Alpha', 100, 'backward')).toBe(0);
   });
 });
 

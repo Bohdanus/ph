@@ -455,10 +455,9 @@ const Main = () => {
         )}
         {/*
          * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so
-         * the last child paints on top. The in-place editor has to receive the pointer, because
-         * placing a caret is a click INSIDE the box — which is the `absolute inset-0` tool area's
-         * territory — so it cannot sit below `EventHandler`. It covers exactly the type box and
-         * nothing else, so every canvas gesture outside it still reaches the tool area.
+         * the last child paints on top. Its full-size coordinate plane mirrors the canvas's view
+         * transform; only the contenteditable child receives pointers, so clicks outside the type
+         * box still reach `EventHandler`.
          *
          * Gated on the text mode for the same reason `EventHandler` gates the tool areas: the
          * editor reads `useCurrentTool`, and a hook that throws outside its provider takes the whole
@@ -466,7 +465,15 @@ const Main = () => {
          * fit for every one of the twenty-odd tools would also be work no tool but this one needs.
          * See `TextEditOverlay.tsx`.
          */}
-        {interactionMode === 'text' && <TextEditOverlay />}
+        {interactionMode === 'text' && (
+          <div
+            data-testid="text-edit-view-transform"
+            className="pointer-events-none absolute inset-0"
+            style={{ transform: viewTransform, transformOrigin: 'center center' }}
+          >
+            <TextEditOverlay />
+          </div>
+        )}
       </div>
     );
   };

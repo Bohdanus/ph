@@ -131,7 +131,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
  * on the shared shape-family state path rather than special-casing this menu.
  *
  * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
- * figure is `oval`, exactly as `toolbar-mapping.ts:77` spells it.
+ * figure is `oval`, exactly as the toolbar mapping defines it.
  */
 const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
   rectangle: 'rectangle',
@@ -303,16 +303,16 @@ const DesktopHeader = () => {
     const figure = FIGURE_TOOLS[toolName];
     // Select first, then patch — deliberately *not* the order
     // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
-    // OUTGOING tool (`useApp.ts:167`), and `patchToolArgs` writes straight into the
-    // live `currentArgsRef` (`useCurrentTool.tsx:61`). Patching first would leave the
-    // text branch at `useLayer.ts:394` reading shape args — no `.text`, no `.rect` —
+    // OUTGOING tool through `goToTool()`, and `patchToolArgs()` writes straight into the
+    // live `currentArgsRef`. Patching first would leave the
+    // text branch in `commitDirtyTool()` reading shape args — no `.text`, no `.rect` —
     // so it early-returns and an unapplied text layer is dropped with nothing to undo.
     // Selecting first lets that commit read the text args it is meant to read.
     if (figure !== undefined) {
-      goToTool('shape');
+      if (goToTool('shape') === false) return;
       patchToolArgs('shape', { figure });
     } else {
-      goToTool(toolName);
+      if (goToTool(toolName) === false) return;
     }
     closeMenus();
   };
@@ -362,12 +362,12 @@ const DesktopHeader = () => {
 
   // Escape closes whatever is open, and the listener exists only while something is. With
   // no menu open the key belongs to whoever else handles it — the Transform panel cancels a
-  // pending transform on Escape (`Transform.tsx:41`, on `window`) — so this must not consume
+  // pending transform on Escape in `Transform` — so this must not consume
   // it. It does consume it while a menu IS open, because `stopPropagation` on `document`
   // stops the event reaching a `window` listener: the menu is the topmost thing open, so it
   // takes the first press and the panel takes the second. The dropdowns had no keyboard
   // dismissal at all before this, while the rail's flyout closes the same way
-  // (`SidebarLeft.tsx:554-564`).
+  // (`SidebarLeft`).
   useEffect(() => {
     if (openMenu === null) return;
     const handleEscape = (event: KeyboardEvent) => {
@@ -462,6 +462,7 @@ const DesktopHeader = () => {
                       flushSync(() => {
                         exportLayers = commitDirtyTool();
                       });
+                      if (exportLayers === null) return;
                       const data = await openSaveImageDialog({
                         fileName,
                         layers: exportLayers,

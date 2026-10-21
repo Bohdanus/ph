@@ -109,7 +109,7 @@ export const drawLine = (params: DrawStrokeParams) => {
   } = params;
 
   // Smoothing is a filter over the sampled path, applied once here so the live
-  // overlay (src/components/Main/DrawToolArea.tsx:39-43), the committed stroke and
+  // overlay in `DrawToolArea`, the committed stroke and
   // every replay of it all smooth identically. It runs before the renderer choice
   // because both renderers consume the same point list, and it leaves the call
   // counts of a single-path pen stroke untouched.

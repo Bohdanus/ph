@@ -2,6 +2,7 @@ import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { slugifyToolLabel, toolbarMap } from '../toolbar-mapping.ts';
+import { FONT_FAMILIES } from '../src/tools/text.ts';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
@@ -383,7 +384,7 @@ test.describe('Tool option popovers are not clipped', () => {
   // reaches the fifteenth. And because what is under test here is the OPTION ROW's overflow, not
   // the rail. A popover that cannot be opened is not a popover that is not clipped.
   test('the text tool font list opens fully and every font is clickable', async ({ page }) => {
-    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS * 2);
     await open(page, DESKTOP);
 
     await selectToolFromMenu(page, 'text');
@@ -396,22 +397,31 @@ test.describe('Tool option popovers are not clipped', () => {
 
     const listBox = await list.boundingBox();
     expect(listBox, 'the font list must have a box').not.toBeNull();
-    // A clipped popup renders as a sliver. The list shows 14 options at ~37px each and
-    // caps at 240px, so anything under 100px means the ancestor clipped it.
+    // A clipped popup renders as a sliver. The shared family list is taller than the 240px cap,
+    // so anything under 100px means an ancestor clipped it instead of leaving the list scrollable.
     expect(listBox!.height, 'the font list must not be clipped to a sliver').toBeGreaterThan(100);
     expect(listBox!.y, 'the font list must open below its trigger, not off-screen').toBeGreaterThan(0);
     expect(listBox!.y + listBox!.height, 'the font list must fit in the window').toBeLessThanOrEqual(DESKTOP.height);
 
     // Every option is inside the list's own box, i.e. actually rendered.
     const options = list.locator('> button');
-    await expect(options).toHaveCount(14);
-    const firstOption = await options.first().boundingBox();
-    expect(firstOption!.height, 'each font option must be clickable').toBeGreaterThan(20);
+    await expect(options).toHaveCount(FONT_FAMILIES.length);
 
-    // And selecting one works, which it could not if the list were clipped.
-    await options.nth(6).click();
-    await expect(list).toBeHidden();
-    await expect(trigger).toContainText(/\w/);
+    // Exercise every source entry so a present-but-clipped button cannot satisfy the contract.
+    for (const [index, font] of FONT_FAMILIES.entries()) {
+      if (index > 0) {
+        await trigger.click();
+        await expect(list).toBeVisible();
+      }
+      const option = options.nth(index);
+      await option.scrollIntoViewIfNeeded();
+      await expect(option).toBeVisible();
+      const optionBox = await option.boundingBox();
+      expect(optionBox?.height ?? 0, `${font} must have a clickable option box`).toBeGreaterThan(20);
+      await option.click();
+      await expect(list).toBeHidden();
+      await expect(trigger).toContainText(font);
+    }
   });
 
   test('the font list opens upward when the toolbar sits near the window bottom', async ({ page }) => {

@@ -732,7 +732,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
       await expect(
         materializeLayer(layer, {
           documentId: 'document-a',
-          baselineAssetGeneration: 0,
+          baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
           operationSetRevision: 0,
           assetRegistry: registry,
         })
@@ -797,7 +797,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
     await expect(
       materializeLayer(layer, {
         documentId: 'document-a',
-        baselineAssetGeneration: 0,
+        baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
         operationSetRevision: 0,
         assetRegistry: registry,
       })

@@ -72,6 +72,7 @@ const FIXTURE_SPLIT_BAND = { min: 0.48, max: 0.52 } as const;
 const ROUNDTRIP_TEST_TIMEOUT_MS = INTEGRATION_TEST_TIMEOUT_MS;
 
 const PNG_FORMAT: ExportFormat = { label: 'PNG', extension: '.png', verification: 'browser-pixels' };
+const SVG_FORMAT: ExportFormat = { label: 'SVG (flattened)', extension: '.svg', verification: 'browser-pixels' };
 
 /** The stroke colour the round trip puts on the canvas and reads back. */
 const STROKE_HEX = '#ff0000';
@@ -347,6 +348,7 @@ test.describe('File round trip', () => {
     const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
     await download.saveAs(savedPath);
     await expect(saveDialogTitle, 'the Save dialog unmounted once the download completed').toHaveCount(0);
+    await expect(saveDialogTitle, 'and that heading is no longer on screen, the dialog fully gone').toBeHidden();
     const savedBytes = await readFile(savedPath);
     expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
 
@@ -382,6 +384,75 @@ test.describe('File round trip', () => {
     expect(after.red, 'the reopened stroke should be the red that was drawn').toBeGreaterThan(180);
     expect(after.green, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
     expect(after.blue, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
+  });
+
+  test('an app-generated flattened SVG reopens to the same pixels', async ({ page }, testInfo) => {
+    test.setTimeout(ROUNDTRIP_TEST_TIMEOUT_MS);
+
+    await openDocumentViaFileMenu(page, path.join(testInfo.config.rootDir, FIXTURE_PATH_FROM_ROOT));
+    const canvas = getWorkspaceCanvas(page);
+    const sourceBox = await canvas.boundingBox();
+    if (!sourceBox) throw new Error('Canvas not found after opening the source fixture');
+    const sourceContent = integralClip(documentContentRect(sourceBox, FIXTURE_DOCUMENT_SIZE));
+    await waitForCanvasPixels(page, canvasRedrawClip(sourceContent), fixtureHalvesRendered, {
+      description: 'source fixture pixels before SVG export',
+    });
+    const sourceCapture = await captureCanvasScreenshot(
+      page,
+      sourceBox,
+      testInfo,
+      'svg-roundtrip-source',
+      sourceContent
+    );
+    const sourcePixels = await loadImageData(sourceCapture);
+
+    await openSaveDialog(page);
+    await fillSaveDialog(page, 'svg-roundtrip', SVG_FORMAT.label);
+    const download = await submitSaveDialogForDownload(page, SVG_FORMAT);
+    const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
+    await download.saveAs(savedPath);
+
+    const svg = await readFile(savedPath, 'utf8');
+    expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">');
+    const embeddedPng = /<image href="data:image\/png;base64,([^"\s]+)" width="64" height="64" \/>/.exec(svg)?.[1];
+    expect(embeddedPng, 'the app export should have one canonical flattened PNG').toBeDefined();
+    const pngBytes = Buffer.from(embeddedPng!, 'base64');
+    expect([...pngBytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(pngBytes.readUInt32BE(16), 'the embedded PNG width should match the document').toBe(64);
+    expect(pngBytes.readUInt32BE(20), 'the embedded PNG height should match the document').toBe(64);
+
+    await page.reload();
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await openDocumentViaFileMenu(page, savedPath);
+
+    await expect(page.getByTestId('footer-dimensions')).toHaveText('Dimensions: 64 × 64 px');
+    const reopenedCanvas = getWorkspaceCanvas(page);
+    const reopenedBox = await reopenedCanvas.boundingBox();
+    if (!reopenedBox) throw new Error('Canvas not found after reopening the flattened SVG');
+    const reopenedContent = integralClip(documentContentRect(reopenedBox, FIXTURE_DOCUMENT_SIZE));
+    await waitForCanvasPixels(page, canvasRedrawClip(reopenedContent), fixtureHalvesRendered, {
+      description: 'the source fixture pixels reopened from SVG',
+    });
+
+    const reopened = await captureCanvasScreenshot(
+      page,
+      reopenedBox,
+      testInfo,
+      'svg-roundtrip-reopened',
+      reopenedContent
+    );
+    const reopenedPixels = await loadImageData(reopened);
+    expect(reopenedPixels.width).toBe(sourcePixels.width);
+    expect(reopenedPixels.height).toBe(sourcePixels.height);
+    expect(reopenedPixels.data).toEqual(sourcePixels.data);
+    expect(
+      isExactly(await sampleFixtureColor(reopened, FIXTURE_LEFT_SAMPLE_X, FIXTURE_SAMPLE_Y), FIXTURE_LEFT_RGB)
+    ).toBe(true);
+    expect(
+      isExactly(await sampleFixtureColor(reopened, FIXTURE_RIGHT_SAMPLE_X, FIXTURE_SAMPLE_Y), FIXTURE_RIGHT_RGB)
+    ).toBe(true);
+    expect(await measureFixtureSplit(reopened)).toBeGreaterThan(FIXTURE_SPLIT_BAND.min);
+    expect(await measureFixtureSplit(reopened)).toBeLessThan(FIXTURE_SPLIT_BAND.max);
   });
 
   test('the open input accepts every format loadDocumentFile can open', async ({ page }) => {

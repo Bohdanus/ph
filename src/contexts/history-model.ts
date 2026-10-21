@@ -3,6 +3,7 @@ import type { Selection, Size } from './general-types.ts';
 import type { AffineTransform } from './affine-transform.ts';
 import type { LayerId } from './layer-types.ts';
 import type { ActionType } from '../util/constants.ts';
+import type { VectorToolName } from './tool-types.ts';
 
 /** An id is only meaningful through the runtime asset registry. */
 export type AssetId = string & { readonly __assetId: unique symbol };
@@ -29,7 +30,7 @@ export type DurableLayerSource =
     }>
   | Readonly<{
       kind: 'vector';
-      toolName: string;
+      toolName: VectorToolName;
       args: PlainObject;
       size: Size;
       sourcePos: Readonly<{ x: number; y: number; width: number; height: number }>;

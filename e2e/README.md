@@ -610,8 +610,9 @@ PLAYWRIGHT_CHANNEL=msedge npm run test:e2e
 
 ## CI
 
-`.github/workflows/ci.yml` has five jobs — `ci`, `e2e-unit`, and
-`e2e` (a cross-platform matrix on Linux, Windows and macOS).
+`.github/workflows/ci.yml` declares four jobs — `ci`, `e2e-unit`, `audit`, and
+`e2e`. The `e2e` job expands into three platform runs (Linux, Windows and macOS),
+for six job executions in total.
 
 `e2e-unit` is the **blocking** gate for this directory: it runs
 `npm run test:e2e:unit`, then `npm run test:e2e:unit:coverage`, and uploads
@@ -630,9 +631,10 @@ skipped that way. It carries no type-check step of its own: the `ci` job's
 `npm run tsc` is `tsc -b`, which builds `tsconfig.e2e.json` along with the app and
 node projects, so a second scoped run here could only repeat it.
 
-`ci` is the pre-existing app pipeline: lint, high-severity audit, type-check, an
-assertion that every tracked `.ts`/`.tsx` is inside some project's `include`,
-unit tests, and the production build. `tsc -b` is what also builds `tsconfig.e2e.json`.
+`ci` is the app pipeline: lint, type-check, an assertion that every tracked `.ts`/`.tsx`
+is inside some project's `include`, unit tests, and the production build. `tsc -b` is
+what also builds `tsconfig.e2e.json`. The separate `audit` job runs `npm audit
+--audit-level=high`; it is non-blocking.
 
 `e2e` is a **blocking** matrix gate that runs the headless Playwright suite on
 Linux, Windows, and macOS. It was `continue-on-error` on the stated grounds that a

@@ -94,24 +94,33 @@ export function LayerBlendModeSelect({
 export function LayerLockToggle({
   layer,
   updateLayer,
+  textEditActive = false,
   className = '',
 }: {
   layer: Layer;
   updateLayer: UpdateLayer;
+  textEditActive?: boolean;
   className?: string;
 }) {
   const action = layer.locked ? UNLOCK_LAYER_ACTION : LOCK_LAYER_ACTION;
+  const lockDisabled = layer.isBedrock || (!layer.locked && textEditActive);
 
   return (
     <button
       type="button"
       aria-label={`${layer.locked ? 'Unlock' : 'Lock'} ${layer.name}`}
       aria-pressed={layer.locked}
-      disabled={layer.isBedrock}
-      title={layer.locked ? 'Unlock layer' : 'Lock all layer properties'}
+      disabled={lockDisabled}
+      title={
+        layer.locked
+          ? 'Unlock layer'
+          : textEditActive
+            ? 'Finish text editing before locking layers'
+            : 'Lock all layer properties'
+      }
       onClick={(event) => {
         event.stopPropagation();
-        if (!layer.isBedrock) updateLayer(layer.id, { locked: !layer.locked }, action);
+        if (!lockDisabled) updateLayer(layer.id, { locked: !layer.locked }, action);
       }}
       className={`inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700 ${className}`}
     >
@@ -124,9 +133,10 @@ export function LayerLockToggle({
 type LayerOpacityControlProps = {
   layer: Layer;
   updateLayer: ReturnType<typeof useLayers>['updateLayer'];
+  textEditActive: boolean;
 };
 
-function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
+function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacityControlProps) {
   const [draftPercent, setDraftPercent] = useState<number | null>(null);
   const opacityPercent = draftPercent ?? Math.round(layer.opacity * 100);
 
@@ -177,7 +187,7 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
       </div>
       <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-white">
         <span>Lock:</span>
-        <LayerLockToggle layer={layer} updateLayer={updateLayer} />
+        <LayerLockToggle layer={layer} updateLayer={updateLayer} textEditActive={textEditActive} />
       </div>
     </div>
   );
@@ -193,8 +203,11 @@ export default function LayersTab() {
     updateLayer,
     convertBedrockLayer,
     beginTextLayerEdit,
+    commitDirtyTool,
   } = useLayers();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, requestTextEditFocus } = useCurrentTool();
+  const textEditActive = toolArgs.toolName === 'text' && Boolean(toolArgs.rect);
+  const textEditingLayerId = textEditActive && toolArgs.toolName === 'text' ? (toolArgs.editingLayerId ?? null) : null;
   const { goToTool } = useApp();
 
   const isMovableLayer = (layerId: LayerId | null): layerId is LayerId => {
@@ -227,14 +240,23 @@ export default function LayersTab() {
   const [isExpanding, setIsExpanding] = useState(false);
 
   const selectLayer = (id: LayerId) => {
+    let layersAfterCommit = layers;
+    if (textEditActive && toolArgs.toolName === 'text') {
+      if (toolArgs.editingLayerId === id) return;
+      const committedLayers = commitDirtyTool();
+      if (committedLayers === null) return;
+      layersAfterCommit = committedLayers;
+    }
     setActiveLayer(id);
-    const source = layers[id]?.source;
+    const selectedLayer = layersAfterCommit[id];
+    const source = selectedLayer?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
       if (source.args.toolName === 'text') {
-        const target = textLayerEditTarget(layers[id], documentFrame ?? documentFrameFromSize(totalSize));
+        const target = textLayerEditTarget(selectedLayer, documentFrame ?? documentFrameFromSize(totalSize));
         if (target) {
           beginTextLayerEdit(target.layerId);
           setToolArgs(target.args);
+          requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
         }
       } else {
         setToolArgs(source.args);
@@ -245,12 +267,21 @@ export default function LayersTab() {
   const enterTextLayer = (id: LayerId) => {
     const layer = layers[id];
     if (!layer) return;
-    const target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
+    let target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
     if (!target) return;
-    if (toolArgs.toolName !== 'text') goToTool('text');
+    if (textEditActive && toolArgs.toolName === 'text') {
+      if (toolArgs.editingLayerId === id) return;
+      const committedLayers = commitDirtyTool();
+      if (committedLayers === null) return;
+      target = textLayerEditTarget(committedLayers[id], documentFrame ?? documentFrameFromSize(totalSize));
+      if (!target) return;
+    } else if (toolArgs.toolName !== 'text' && goToTool('text') === false) {
+      return;
+    }
     setActiveLayer(id);
     beginTextLayerEdit(target.layerId);
     setToolArgs(target.args);
+    requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
   };
 
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
@@ -341,6 +372,7 @@ export default function LayersTab() {
   }
 
   function handleConfirmRemove(layerId: LayerId) {
+    if (textEditingLayerId === layerId) return;
     // todo: draw a "undo" button that disappears in few seconds
     removeLayer(layerId);
   }
@@ -427,7 +459,14 @@ export default function LayersTab() {
 
   return (
     <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
-      {activeLayer && <LayerOpacityControl key={activeLayer.id} layer={activeLayer} updateLayer={updateLayer} />}
+      {activeLayer && (
+        <LayerOpacityControl
+          key={activeLayer.id}
+          layer={activeLayer}
+          updateLayer={updateLayer}
+          textEditActive={textEditActive}
+        />
+      )}
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
@@ -622,9 +661,14 @@ export default function LayersTab() {
                       e.stopPropagation();
                       handleConfirmRemove(layer.id);
                     }}
+                    disabled={textEditingLayerId === layer.id}
                     className={DELETE_BUTTON_ICON}
                     aria-label="Remove layer"
-                    title="Remove layer"
+                    title={
+                      textEditingLayerId === layer.id
+                        ? 'Finish text editing before removing this layer'
+                        : 'Remove layer'
+                    }
                   >
                     <TrashIcon />
                   </button>

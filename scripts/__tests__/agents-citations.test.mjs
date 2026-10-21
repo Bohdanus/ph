@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import * as citationPatterns from '../lib/citations/resolve.mjs';
+import {
+  citationsInAddedComments,
+  citationsInAddedMarkdown,
+  addedLinesByFile,
+} from '../lib/citations/added-comments.mjs';
 import { deadNumbers } from '../lib/agent-board/handoff-import.mjs';
 
 /**
@@ -551,6 +556,63 @@ const ungatedDocumentsWithLineNumbers = (documents) =>
     .map(({ path }) => path);
 
 describe("maintained guidance's code claims resolve against the program", () => {
+  it('keeps the no-line-number rule explicit for prose and source comments', () => {
+    const documentation = readFileSync(resolve(REPO_ROOT, 'docs/DOCUMENTATION.md'), 'utf8');
+    expect(readAgentsMd()).toContain('human-written source comments');
+    expect(documentation).toContain('human-written comments in source and tests');
+  });
+
+  it('finds new comment citations from staged diff lines, not code or unchanged comments', () => {
+    const diff = [
+      'diff --git a/src/example.ts b/src/example.ts',
+      '--- a/src/example.ts',
+      '+++ b/src/example.ts',
+      '@@ -1 +1,2 @@',
+      ' const x = "unchanged.ts:1";',
+      '+// See `other.ts:22` and the continuation `:96-105` for the old behavior.',
+      '+const y = "not-a-comment.ts:3";',
+    ].join('\n');
+    const additions = addedLinesByFile(diff);
+    expect(
+      citationsInAddedComments(
+        '// old.ts:1\n// See `other.ts:22` and the continuation `:96-105` for the old behavior.\nconst y = "not-a-comment.ts:3";',
+        'src/example.ts',
+        additions.get('src/example.ts')
+      )
+    ).toEqual([
+      { fileName: 'src/example.ts', line: 2, citation: 'other.ts:22' },
+      { fileName: 'src/example.ts', line: 2, citation: '`:96-105`' },
+    ]);
+    expect(citationsInAddedComments('const y = "not-a-comment.ts:3";', 'src/example.ts', new Set([1]))).toEqual([]);
+  });
+
+  it('finds new citations in excluded Markdown while leaving fenced examples alone', () => {
+    const diff = [
+      'diff --git a/MIGRATION_NEXT_STEPS_SUNDAY.md b/MIGRATION_NEXT_STEPS_SUNDAY.md',
+      '--- a/MIGRATION_NEXT_STEPS_SUNDAY.md',
+      '+++ b/MIGRATION_NEXT_STEPS_SUNDAY.md',
+      '@@ -1 +1,5 @@',
+      ' historical citation `old.ts:11` remains unchanged',
+      '+New prose citation `new.ts:22` and continuation `:23`.',
+      '+```ts',
+      '+// Quoted example `sample.ts:44` is fenced.',
+      '+```',
+    ].join('\n');
+    const additions = addedLinesByFile(diff);
+    expect(
+      citationsInAddedMarkdown(
+        'historical citation `old.ts:11` remains unchanged\n' +
+          'New prose citation `new.ts:22` and continuation `:23`.\n' +
+          '```ts\n// Quoted example `sample.ts:44` is fenced.\n```',
+        'MIGRATION_NEXT_STEPS_SUNDAY.md',
+        additions.get('MIGRATION_NEXT_STEPS_SUNDAY.md')
+      )
+    ).toEqual([
+      { fileName: 'MIGRATION_NEXT_STEPS_SUNDAY.md', line: 2, citation: 'new.ts:22' },
+      { fileName: 'MIGRATION_NEXT_STEPS_SUNDAY.md', line: 2, citation: '`:23`' },
+    ]);
+  });
+
   it('cites no backticked call that the program does not contain in AGENTS.md or HANDOFF.md', () => {
     expect(staleCallForms(readAgentsMd())).toEqual([]);
     expect(staleCallForms(readFileSync(resolve(REPO_ROOT, 'HANDOFF.md'), 'utf8'), HANDOFF_SOURCE_CORPUS)).toEqual([]);

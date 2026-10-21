@@ -236,25 +236,6 @@ exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps
 covered too. Add a dark-theme case that pins the direction this depends on, so the
 latent wrong-pass has a tripwire of its own rather than resting on a config default.
 
-## P3 — 10 orphaned committed baselines (2.1 MB)
-
-`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
-
-The directory holds 17 files. Seven are read — the formats whose `verification` is
-`browser-pixels` in `e2e/export/helpers.ts`, each read through
-`baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
-
-- the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
-  `.avif`, and `drawing-icon.ico`) — no code writes or reads them any more, and
-  `drawing.bmp` alone is most of the 2.1 MB
-- `drawing-icon.ico.png` (256x256) — the ICO spec compares the export against the
-  source canvas in-browser via `CHANGED_CHANNEL_THRESHOLD_ICO` and never calls
-  `baselineFile()`
-- `source-baseline.png` (300x100, exactly `CANVAS_REDRAW_CLIP`)
-
-A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
-were left in place because deleting committed baselines was not authorized.
-
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
 `@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
@@ -672,9 +653,11 @@ change an agent makes.**
 
 ## P3 — no mobile or HiDPI project, and no touch anywhere
 
-`playwright.config.ts` declares one project. `isMobile`, `hasTouch` and `touchscreen` have
-zero occurrences under `e2e/`. `mobile-shell.spec.ts` resizes a viewport on a desktop
-project, which is not the same thing — no touch, no mobile UA, no HiDPI.
+`playwright.config.ts` declares one project, and no project configures mobile emulation
+or touch input. `mobile-shell.spec.ts` only resizes a viewport on that desktop project;
+it does not enable touch or a mobile UA. Separately, `check-dpr.spec.ts` has test-scoped
+coverage at device scale factors 1 and 2, but the full suite is not 2x-clean as described
+below.
 
 This was raised against the review with a precondition attached: enabling a 2x project
 before `getStrokeAnalysis` was DPI-relative "trades a coverage gain for three new failure
@@ -691,9 +674,8 @@ does nothing — verified by printing `window.devicePixelRatio`): **256 pass, 6 
 skipped.** The failures are
 
 - `e2e/helpers/cdp-helpers.spec.ts` — the
-  `describe('captureCanvasScreenshot at an emulated deviceScaleFactor of 2')` block, the expected
-  one. `playwright.config.ts` already records that a `deviceScaleFactor: 2` block fails
-  differently from the default mode, and this is that block.
+  `describe('captureCanvasScreenshot at an emulated deviceScaleFactor of 2')` block, which
+  exercises capture behavior under an emulated 2x device scale factor.
 - `e2e/helpers/color-helpers.spec.ts` — `verifies swatch color when verifySwatch is true`; the
   swatch `toHaveCSS` is compared against a literal CSS colour on a 2x surface.
 - `e2e/erase-fill-eyedropper.spec.ts` — `the eyedropper sample size averages the clicked block`;
@@ -707,21 +689,18 @@ rather than a single defect, which is why it is still open: adding a project mul
 every run's cost, and the mobile/HiDPI specs this would exercise do not exist yet. It is
 not a one-line change to `playwright.config.ts`.
 
-**One more gap this entry did not name.** Nothing in the suite can detect a change to a canvas
-_backing store_. `CSS_POSITION_TOLERANCE` in `e2e/check-dpr.spec.ts` asserts a drawn line lands
-within 25 CSS px of the cursor, and its `imageBoundsToCss` is scale-agnostic by construction, so that
-file passes identically whether the store is 1x, 2x or 8x — the one spec named for DPR is the least
-able to catch a DPR change. Nor does any other spec compare `canvas.width` against a bounding box:
-the two that read the store — `the export is independent of the shell layout` in
+`e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
+width and height equal the document dimensions multiplied by the expected device scale
+factor, at both 1x and 2x. Its `toleranceFor` assertion checks that a drawn line lands near
+the cursor using `imageBoundsToCss`, which is scale-agnostic by construction;
+the backing-store assertions, not the screenshot mapping, detect a mismatch at those two
+tested scale factors. The two export checks that read the store — `the export is independent
+of the shell layout` in
 `e2e/export/visual-regression.spec.ts`, and `setupExportTest()`'s backing-store read in
 `e2e/export/helpers.ts` — assert it is the DOCUMENT size, which is the correct invariant for
-export and says nothing about presentation.
-
-So a 2x project would raise the floor of what fails, but on its own it would not _pin_ backing
-store resolution; that needs its own assertion — a `canvas.width === box.width × dpr` check that
-exists nowhere today. (It would also have to be the binding axis of the contain fit, not the
-width axis: the workspace canvas is `object-contain`, so at 1280x720 the fit is height-limited and
-the naive width form is red today.) The app side, and the app work that has to land first, is in
+export and says nothing about presentation. Broader high-DPI coverage remains open: these
+checks do not make the full suite 2x-clean, nor do they exercise mobile/touch input. The
+app side, and the app work that has to land first, is in
 `CANVAS-RESOLUTION-PLAN.md`. The display/export decoupling that used to gate raising the display
 resolution is done: export renders its own surface from `(layers, size, documentFrame)` in
 `src/contexts/export-canvas.ts` and no longer reads the visible canvas.
@@ -802,7 +781,8 @@ The open question is a product one, not a defect report: a tool bar with 969px o
 overflow needs either a visible scroll affordance or a different layout — the tool sheet
 already exists as `MobileToolSheet`, and wrapping is the other obvious answer. What keeps
 it undecided is coverage, recorded in the `P3 — no mobile or HiDPI project, and no touch
-anywhere` entry below: `e2e/` has zero `hasTouch`, zero `isMobile` and zero `touchscreen`.
+anywhere` entry below: no Playwright project configures `hasTouch` or `isMobile`, and the
+suite does not exercise `page.touchscreen` input.
 `mobile-shell.spec.ts` does run at a device width (it sets `test.use({ viewport: { width:
 390, height: 844 } })`) and it drives the bar with `page.mouse`, so what is missing is
 touch emulation and a reachability assertion — not a device width, which it already has.

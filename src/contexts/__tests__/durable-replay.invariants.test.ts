@@ -198,13 +198,13 @@ describe('replayDurableDocument invariants (P1.7)', () => {
     // This test used to call `replayDurableDocument` — the entry point that does
     // NOT clone — and discard the result, so the name described a guarantee the
     // body never exercised and `cloneDurableDocument` inside `replayDurableAtCursor`
-    // (`durable-replay.ts:170`) was invisible to the suite.
+    // was invisible to the suite.
     //
     // Assertions (b) and (c) are both load-bearing for the clone, and (c) is the
     // one that regresses if `replayDurableAtCursor` ever becomes a bare
-    // delegation. The reducer pushes `entry.operation` BY REFERENCE
-    // (`durable-replay.ts:119`), so a direct `replayDurableDocument` hands back
-    // the source document's own operation object. `replayDurableAtCursor` only
+    // delegation. `replayDurableDocument` retains the source operation object in
+    // the replay layer's operations, so the source document's operation is what
+    // direct replay returns. `replayDurableAtCursor` only
     // returns a different object because it cloned first, and the
     // `directOperation` identity assertion in (c) makes that premise explicit:
     // it proves the two replays differ because of the clone, and not because the

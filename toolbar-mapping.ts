@@ -30,8 +30,8 @@ export const slugifyToolLabel = (label: string): string => label.toLowerCase().r
 /**
  * Photoshop-inspired toolbar map in the canonical one-column order.
  *
- * Each nested array is one flyout menu. Unsupported Photoshop tools are
- * intentionally omitted rather than represented by placeholder values.
+ * Each nested array is one flyout menu. Unsupported Photoshop tools are omitted rather than
+ * represented by placeholder values; the app-only Draw entry is the explicit OVR-2 exception.
  * The two-column layout is derived from this order by SidebarLeft.
  */
 export const toolbarMap = [
@@ -74,13 +74,10 @@ export const toolbarMap = [
     // marquee groups above do, so the letter belongs to the tile and the Ruler is reached by the
     // cycle rather than by a second binding on the same key.
     //
-    // The three members Photoshop cycles to that this app does not have are absent rather than
-    // represented by placeholder values, per the rule the doc comment above states. Adobe prints no
-    // order for the cycle, and the three that exist keep the Eyedropper first because it is the
-    // tile's identity: a tile's name is its first entry, so leading with anything else would rename
-    // the tile and move every `tool-button-eyedropper` selector with it. The Color Sampler sits
-    // between the two because it is the one that reads a PIXEL, which is what makes it read as
-    // belonging beside the Eyedropper rather than beside the Ruler.
+    // Note and Count are not implemented, so only the three available members appear here. Adobe
+    // places Note in the Eyedropper group and Count beneath the Eyedropper; it does not publish the
+    // cycle order. Eyedropper stays first because it is the tile identity, and Color Sampler sits
+    // between it and Ruler because it reads a pixel rather than measuring the document.
     [
       { label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' },
       { label: 'Color Sampler Tool', name: 'color-sampler' },
