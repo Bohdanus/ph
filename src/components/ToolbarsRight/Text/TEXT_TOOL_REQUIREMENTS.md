@@ -1353,12 +1353,15 @@ asymmetry rather than an accident.
 
 `TextToolArgs.angle` is applied by `renderText` around the text box's centre. The committed layer
 source keeps that value; after Apply, implicit commit, cancellation, or draft discard, the active
-tool args clear it to `0`. Failed/no-op commits leave the draft unchanged. Re-entering a committed
-text layer hydrates its source angle for editing, so resetting active tool state cannot rotate or
-unrotate the existing layer.
+tool args clear it through `clearTextDraftArgs()`, which uses `NEUTRAL_TEXT_ANGLE`. Failed/no-op
+commits leave the draft unchanged.
+Re-entering a committed text layer hydrates its source angle for editing, so resetting active tool
+state cannot rotate or unrotate the existing layer. Edit-entry handlers publish args from
+`textLayerEditTarget`, which spreads the committed source args; `beginTextLayerEdit` only begins the
+layer preview.
 
 `angle` is excluded from `TextToolSettings` and `saveLastSettings`; `defaultSettings.text` seeds it
-to `0`. Font family, size, style, color, leading, tracking, alignment, caps, underline, and
+to `NEUTRAL_TEXT_ANGLE` (`0`). Font family, size, style, color, leading, tracking, alignment, caps, underline, and
 strikethrough remain persistent tool choices. Photoshop's UXP [`TextItem`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem)
 and [`CharacterStyle`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle)
 references model character formatting separately from layer properties, but do not state the Type
@@ -1368,7 +1371,7 @@ app requirement for the per-layer transform supported here.
 
 The behavior is pinned by `Text.test.tsx`'s
 `it('resets only the active angle after Apply, keeping the committed angle and typography')`,
-`useLayer.text.test.tsx`'s `it('keeps a committed layer angle but clears angle from the next text draft')`,
+`useLayer.text.test.tsx`'s `it('keeps a committed layer angle through re-entry but clears the next draft angle')`,
 and `settings.test.ts`'s `it('persists the text character attributes verbatim, and invents none of them')`.
 
 ---

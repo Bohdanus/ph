@@ -76,6 +76,7 @@ export const TRACKING_MAX = 1000;
  * the default reproduces the 120% and the semantics stay divergent.
  */
 export const AUTO_LEADING = 1.2;
+export const NEUTRAL_TEXT_ANGLE = 0;
 
 /**
  * The leading range the options bar offers, and the bounds a corrupt record is folded into.
@@ -349,6 +350,16 @@ export function resolveTextKind(args: TextToolArgs): TextKind {
  * A committed source retains its own angle; each subsequent draft starts at zero.
  */
 export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect' | 'kind' | 'angle'>;
+
+export function clearTextDraftArgs<T extends object>(
+  args: T
+): Omit<T, 'text' | 'rect' | 'angle'> & { text: string; rect: null; angle: number } {
+  return { ...args, text: '', rect: null, angle: NEUTRAL_TEXT_ANGLE } as Omit<T, 'text' | 'rect' | 'angle'> & {
+    text: string;
+    rect: null;
+    angle: number;
+  };
+}
 
 /**
  * The CSS font shorthand, with style and weight BEFORE the size.

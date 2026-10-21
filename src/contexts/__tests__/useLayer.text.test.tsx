@@ -204,7 +204,7 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(draft.rect).toBeNull();
   });
 
-  it('keeps a committed layer angle but clears angle from the next text draft', () => {
+  it('keeps a committed layer angle through re-entry but clears the next draft angle', () => {
     const result = setupTextTool();
     const args = makeTextArgs({ angle: 37, fontSize: 48, tracking: 120, color: '#123456' });
 
@@ -223,6 +223,20 @@ describe('useLayers text commit idempotency boundary', () => {
       tracking: 120,
       color: '#123456',
     });
+
+    if (!layer) throw new Error('the committed text layer is missing');
+    act(() => result.current.layers.beginTextLayerEdit(layer.id));
+    const editingArgs = editArgsForExistingLayer(layer);
+    expect(editingArgs.angle).toBe(37);
+
+    act(() => {
+      result.current.store.currentArgs.current = { ...editingArgs, text: 'Edited' };
+      result.current.layers.commitDirtyTool();
+    });
+
+    const replacedLayer = Object.values(result.current.store.layers)[0];
+    expect(replacedLayer?.source).toMatchObject({ kind: 'tool', args: { angle: 37, text: 'Edited' } });
+    expect(result.current.store.currentArgs.current).toMatchObject({ text: '', rect: null, angle: 0 });
   });
 
   it('creates only one layer when commitDirtyTool fires after a direct Apply commit', () => {

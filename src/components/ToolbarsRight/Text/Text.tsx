@@ -12,6 +12,7 @@ import {
   FONT_SIZE_MIN,
   MAX_LINE_HEIGHT,
   MIN_LINE_HEIGHT,
+  clearTextDraftArgs,
   TRACKING_MAX,
   TRACKING_MIN,
   resolveTextKind,
@@ -248,13 +249,13 @@ const Text: React.FC<{}> = () => {
       createLayerFromTool({ args: committedArgs });
     }
     appliedArgsRef.current = toolArgs;
-    onChange({ ...persistedArgs, text: '', rect: null, angle: 0 });
+    onChange(clearTextDraftArgs(persistedArgs));
   };
 
   const clear = () => {
     if (toolArgs.editingLayerId) cancelLayerPreview(toolArgs.editingLayerId);
     const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
-    onChange({ ...persistedArgs, text: '', rect: null, angle: 0 });
+    onChange(clearTextDraftArgs(persistedArgs));
   };
 
   return (
