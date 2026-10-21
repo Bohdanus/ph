@@ -7,6 +7,7 @@ import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.
 import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
 import { MAX_AFFINE_PIXELS } from '../affine-transform.ts';
 import type { AssetId, DurableLayerSnapshot, DurableLayerSource, DurableOperation } from '../history-model.ts';
+import type { VectorToolName } from '../tool-types.ts';
 import { createMaterializationKey, materializeDocument, materializeLayer } from '../materialization.ts';
 import type { MaterializationRequest } from '../materialization.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
@@ -577,11 +578,11 @@ describe('materialization source kinds', () => {
       'layer-1',
       Object.freeze({
         kind: 'vector' as const,
-        toolName: 'freeform-pen',
+        toolName: 'freeform-pen' as VectorToolName,
         args: Object.freeze({ toolName: 'freeform-pen' }),
         size: { width: 10, height: 10 },
         sourcePos: Object.freeze({ x: 0, y: 0, width: 10, height: 10 }),
-      }),
+      }) as DurableLayerSource,
       { x: 0, y: 0, width: 10, height: 10 }
     );
 

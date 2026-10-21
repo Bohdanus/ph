@@ -36,7 +36,7 @@ import {
   type ToolLayerSource,
 } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
-import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
+import type { NewBedrockSize, ToolArgs, VectorToolName } from './tool-types.ts';
 import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
 import {
   getTransformFromHistoryArgs,
@@ -267,12 +267,12 @@ function convertToolSource(source: ToolLayerSource, layer: Layer): DurableLayerS
   }
   return Object.freeze({
     kind,
-    toolName: source.args.toolName,
+    toolName: source.args.toolName as VectorToolName,
     args,
     size,
     sourcePos: Object.freeze({ ...layer.pos }),
     isBedrock,
-  });
+  }) as DurableLayerSource;
 }
 
 function convertSource(
