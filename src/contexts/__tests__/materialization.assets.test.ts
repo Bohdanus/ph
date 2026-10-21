@@ -1054,6 +1054,77 @@ describe('materialization document frame presentation', () => {
     expect(recordedBitmaps[1].close).toHaveBeenCalledTimes(1);
   });
 
+  it('closes an owned presentation when frame-surface creation fails', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };
+    const layer = makeLayer('layer-1', blankSource(30, 20), { x: 0, y: 0, width: 30, height: 20 });
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class extends RecordingOffscreenCanvas {
+        constructor(width: number, height: number) {
+          if (width === frame.width && height === frame.height) throw new Error('frame surface failed');
+          super(width, height);
+        }
+      }
+    );
+
+    await expect(materializeLayer(layer, makeRequest(registry, { frame }))).rejects.toThrow('frame surface failed');
+
+    const presentation = recordedBitmaps.at(-1);
+    expect(presentation).toBeDefined();
+    expect(presentation?.close).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
+  it('closes an owned presentation when frame context acquisition fails', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };
+    const layer = makeLayer('layer-1', blankSource(30, 20), { x: 0, y: 0, width: 30, height: 20 });
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class extends RecordingOffscreenCanvas {
+        constructor(width: number, height: number) {
+          super(width, height, width !== frame.width || height !== frame.height);
+        }
+      }
+    );
+
+    await expect(materializeLayer(layer, makeRequest(registry, { frame }))).rejects.toThrow(
+      'A 2D canvas context is required for materialization'
+    );
+
+    expect(recordedBitmaps.at(-1)?.close).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
+  it('closes an owned presentation when frame drawing fails', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };
+    const layer = makeLayer('layer-1', blankSource(30, 20), { x: 0, y: 0, width: 30, height: 20 });
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class extends RecordingOffscreenCanvas {
+        getContext(): OffscreenCanvasRenderingContext2D | null {
+          const context = super.getContext();
+          if (this.width === frame.width && this.height === frame.height && context) {
+            Object.defineProperty(context, 'drawImage', {
+              configurable: true,
+              value: () => {
+                throw new Error('frame draw failed');
+              },
+            });
+          }
+          return context;
+        }
+      }
+    );
+
+    await expect(materializeLayer(layer, makeRequest(registry, { frame }))).rejects.toThrow('frame draw failed');
+
+    expect(recordedBitmaps.at(-1)?.close).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
   it('leaves the presentation bounds unframed when the request carries no frame', async () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-1', blankSource(30, 20), { x: 7, y: 9, width: 30, height: 20 }, [

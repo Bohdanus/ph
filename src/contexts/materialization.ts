@@ -356,29 +356,32 @@ export async function materializeLayer(
           return { bitmap: presentation, metadata: bounds };
         }
 
-        const frameSurface = createCanvas(request.frame.width, request.frame.height);
-        const frameContext = context2d(frameSurface);
-        const frameEvaluation = evaluatePresentation({
-          position: bounds,
-          sourceSize: { width: bounds.width, height: bounds.height },
-          operations: [],
-          frame: request.frame,
-          mode: 'frame-bounds',
-        });
-        drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
-          kind: 'document',
-          frame: request.frame,
-        });
-        if (presentationIsOwned) closeOwnedBitmap(presentation);
-        return {
-          bitmap: await toOwnedBitmap(frameSurface),
-          metadata: {
-            x: request.frame.x,
-            y: request.frame.y,
-            width: request.frame.width,
-            height: request.frame.height,
-          },
-        };
+        try {
+          const frameSurface = createCanvas(request.frame.width, request.frame.height);
+          const frameContext = context2d(frameSurface);
+          const frameEvaluation = evaluatePresentation({
+            position: bounds,
+            sourceSize: { width: bounds.width, height: bounds.height },
+            operations: [],
+            frame: request.frame,
+            mode: 'frame-bounds',
+          });
+          drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
+            kind: 'document',
+            frame: request.frame,
+          });
+          return {
+            bitmap: await toOwnedBitmap(frameSurface),
+            metadata: {
+              x: request.frame.x,
+              y: request.frame.y,
+              width: request.frame.width,
+              height: request.frame.height,
+            },
+          };
+        } finally {
+          if (presentationIsOwned) closeOwnedBitmap(presentation);
+        }
       } finally {
         source.release();
         if (ownsBitmap) closeOwnedBitmap(bitmap);

@@ -120,7 +120,7 @@ export class AssetRegistry {
   private readonly assets = new Map<AssetId, AssetEntry>();
   private readonly externalIds = new WeakMap<object, AssetId>();
   private readonly documentGenerations = new Map<string, number>();
-  private readonly documentDisposalEpochs = new Map<string, number>();
+  private readonly documentInvalidationEpochs = new Map<string, number>();
   private readonly disposedDocuments = new Set<string>();
   private readonly cache = new Map<string, CacheEntry>();
   private readonly pendingMaterializations = new Map<string, Promise<CacheEntry>>();
@@ -248,8 +248,7 @@ export class AssetRegistry {
     const existing = existingId ? this.assets.get(existingId) : undefined;
     if (existing && !existing.disposed) return this.registerBaseline(documentId, bitmap, options);
 
-    const generation = this.getDocumentGeneration(documentId);
-    const disposalEpoch = this.documentDisposalEpochs.get(documentId) ?? 0;
+    const invalidationEpoch = this.documentInvalidationEpochs.get(documentId) ?? 0;
     const create = globalThis.createImageBitmap;
     if (!create) throw new Error('createImageBitmap is required to adopt a mutable raster source');
     const immutable = await create(bitmap as never);
@@ -257,12 +256,9 @@ export class AssetRegistry {
       disposeOwnedBitmap(immutable);
       throw new DOMException('Baseline registration invalidated by asset registry shutdown', 'AbortError');
     }
-    if (
-      generation !== this.getDocumentGeneration(documentId) ||
-      disposalEpoch !== (this.documentDisposalEpochs.get(documentId) ?? 0)
-    ) {
+    if (invalidationEpoch !== (this.documentInvalidationEpochs.get(documentId) ?? 0)) {
       disposeOwnedBitmap(immutable);
-      throw new DOMException('Baseline registration invalidated by document disposal', 'AbortError');
+      throw new DOMException('Baseline registration invalidated by document state change', 'AbortError');
     }
 
     const concurrentId = this.externalIds.get(external);
@@ -454,7 +450,7 @@ export class AssetRegistry {
   }
 
   disposeDocument(documentId: string): void {
-    this.documentDisposalEpochs.set(documentId, (this.documentDisposalEpochs.get(documentId) ?? 0) + 1);
+    this.documentInvalidationEpochs.set(documentId, (this.documentInvalidationEpochs.get(documentId) ?? 0) + 1);
     if (this.disposedDocuments.has(documentId)) return;
     this.disposedDocuments.add(documentId);
     for (const entry of this.assets.values()) {
@@ -478,6 +474,7 @@ export class AssetRegistry {
    * complete replayable history, not just the active cursor projection.
    */
   reconcileDocumentAssets(documentId: string, reachableAssetIds: ReadonlySet<AssetId>): void {
+    this.documentInvalidationEpochs.set(documentId, (this.documentInvalidationEpochs.get(documentId) ?? 0) + 1);
     let changed = false;
     for (const entry of this.assets.values()) {
       if (!entry.baselineDocuments.has(documentId) || reachableAssetIds.has(entry.record.id)) continue;

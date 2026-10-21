@@ -240,14 +240,25 @@ type RepositionOperation = Extract<ToolOperation, { kind: 'reposition-layer' }>;
 
 /** A plan carrying only the given kind, borrowed from a retainable append. */
 function operationOfKind(kind: ToolOperation['kind']): DurableHistoryEntry {
-  return rewriteOperation(
-    { toolName: 'reposition', move: { x: 1, y: 2 } },
-    () =>
-      ({
+  let operation: ToolOperation;
+  switch (kind) {
+    case 'apply-filter':
+      operation = {
         kind,
         layerId: 'layer-1',
-      }) as ToolOperation
-  );
+        filter: { toolName: 'blur', version: 1, args: { toolName: 'blur', radius: 4 } },
+      };
+      break;
+    case 'apply-affine-transform':
+      operation = { kind, layerId: 'layer-1', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } };
+      break;
+    case 'reposition-layer':
+      operation = { kind, layerId: 'layer-1', move: { x: 1, y: 2 } };
+      break;
+    default:
+      throw new Error(`operationOfKind does not handle ${kind}`);
+  }
+  return rewriteOperation({ toolName: 'reposition', move: { x: 1, y: 2 } }, () => operation);
 }
 
 describe('decideDurableAppend: retained tool operations', () => {
@@ -271,6 +282,10 @@ describe('decideDurableAppend: retained tool operations', () => {
     const decision = decide(args);
 
     expect(decision.outcome).toBe('published');
+  });
+
+  it('publishes object arguments with own undefined fields using JSON omission semantics', () => {
+    expect(decide({ toolName: 'color', grayscale: 0.5, optional: undefined }).outcome).toBe('published');
   });
 
   /**

@@ -1,3 +1,22 @@
+declare module 'css-tree' {
+  export type CssNode = {
+    type: string;
+    [key: string]: any;
+  };
+  export interface GenerateOptions {
+    [key: string]: unknown;
+  }
+  export interface ParseOptions {
+    [key: string]: unknown;
+  }
+  export type EnterOrLeaveFn = (node: CssNode) => void;
+  export interface WalkOptions {
+    enter?: (node: CssNode) => void;
+    leave?: (node: CssNode) => void;
+    [key: string]: unknown;
+  }
+}
+
 declare module 'css-tree/generator' {
   import type { CssNode, GenerateOptions } from 'css-tree';
 

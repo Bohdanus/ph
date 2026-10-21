@@ -109,6 +109,27 @@ describe('tool layer source conversion', () => {
     expect((created.layer.source as { args: unknown }).args).not.toBe(args);
   });
 
+  it('ignores the runtime FullArgs canvas while converting a tool source', () => {
+    const registry = new AssetRegistry();
+    const args = { toolName: 'text', text: 'layer text' } as unknown as ToolArgs;
+    const canvas = globalThis.document.createElement('canvas');
+    const layerSource = { ...toolSource('text', args), canvas } as ToolLayerSource & { canvas: HTMLCanvasElement };
+
+    const { document, diagnostics } = convert(registry, {
+      id: 'create-text-with-runtime-canvas',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'tool-text-with-runtime-canvas',
+      layerSource,
+    });
+
+    expect(diagnostics).toEqual([]);
+    const created = document.history[0]?.operation;
+    if (created?.kind !== 'create-layer') throw new Error('expected a create-layer operation');
+    expect(created.layer.source.kind).toBe('text');
+    expect(created.layer.source).not.toHaveProperty('canvas');
+    expect(layerSource.canvas).toBe(canvas);
+  });
+
   it('converts a creator paint source with its placement', () => {
     const registry = new AssetRegistry();
 

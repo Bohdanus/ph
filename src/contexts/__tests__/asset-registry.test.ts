@@ -89,6 +89,63 @@ describe('AssetRegistry ownership', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it('allows concurrent registrations of distinct mutable sources in one document', async () => {
+    const registry = new AssetRegistry();
+    const firstSource = document.createElement('canvas');
+    const secondSource = document.createElement('canvas');
+    const firstCopy = deferred<ImageBitmap>();
+    const secondCopy = deferred<ImageBitmap>();
+    const first = createOwnedBitmap(10, 10);
+    const second = createOwnedBitmap(10, 10);
+    vi.stubGlobal('createImageBitmap', (source: HTMLCanvasElement) =>
+      source === firstSource ? firstCopy.promise : secondCopy.promise
+    );
+
+    const firstRegistration = registry.registerBaselineAsync('document-a', firstSource);
+    const secondRegistration = registry.registerBaselineAsync('document-a', secondSource);
+    firstCopy.resolve(first.bitmap);
+    secondCopy.resolve(second.bitmap);
+
+    const [firstId, secondId] = await Promise.all([firstRegistration, secondRegistration]);
+
+    expect(firstId).not.toBe(secondId);
+    expect(registry.getRecord(firstId)).toBeDefined();
+    expect(registry.getRecord(secondId)).toBeDefined();
+    expect(registry.getDocumentGeneration('document-a')).toBe(2);
+
+    registry.disposeDocument('document-a');
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(second.close).toHaveBeenCalledOnce();
+  });
+
+  it('deduplicates concurrent registrations of the same mutable source and closes the redundant copy', async () => {
+    const registry = new AssetRegistry();
+    const source = document.createElement('canvas');
+    const firstCopy = deferred<ImageBitmap>();
+    const secondCopy = deferred<ImageBitmap>();
+    const first = createOwnedBitmap(10, 10);
+    const redundant = createOwnedBitmap(10, 10);
+    const createCopy = vi.fn().mockReturnValueOnce(firstCopy.promise).mockReturnValueOnce(secondCopy.promise);
+    vi.stubGlobal('createImageBitmap', createCopy);
+
+    const firstRegistration = registry.registerBaselineAsync('document-a', source);
+    const secondRegistration = registry.registerBaselineAsync('document-a', source);
+    firstCopy.resolve(first.bitmap);
+    const firstId = await firstRegistration;
+    secondCopy.resolve(redundant.bitmap);
+    const secondId = await secondRegistration;
+
+    expect(firstId).toBe(secondId);
+    expect(createCopy).toHaveBeenCalledTimes(2);
+    expect(registry.getDocumentGeneration('document-a')).toBe(1);
+    expect(first.close).not.toHaveBeenCalled();
+    expect(redundant.close).toHaveBeenCalledOnce();
+
+    registry.disposeDocument('document-a');
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(redundant.close).toHaveBeenCalledOnce();
+  });
+
   it('closes an async raster snapshot when its document is disposed before registration completes', async () => {
     const registry = new AssetRegistry();
     const source = document.createElement('canvas');
@@ -103,6 +160,27 @@ describe('AssetRegistry ownership', () => {
     await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
     expect(close).toHaveBeenCalledOnce();
     expect(registry.getDocumentGeneration('document-a')).toBe(1);
+  });
+
+  it('closes a pending async baseline when authoritative reconciliation changes document assets', async () => {
+    const registry = new AssetRegistry();
+    const existing = createOwnedBitmap(10, 10);
+    const existingId = registry.registerBaseline('document-a', existing.bitmap, { ownership: 'adopt' });
+    const source = document.createElement('canvas');
+    const pending = deferred<ImageBitmap>();
+    const { bitmap, close } = createOwnedBitmap(10, 10);
+    vi.stubGlobal('createImageBitmap', () => pending.promise);
+
+    const registration = registry.registerBaselineAsync('document-a', source);
+    registry.reconcileDocumentAssets('document-a', new Set());
+    expect(registry.getRecord(existingId)).toBeUndefined();
+    expect(existing.close).toHaveBeenCalledOnce();
+    pending.resolve(bitmap);
+
+    await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
+    expect(close).toHaveBeenCalledOnce();
+    expect(registry.getDocumentGeneration('document-a')).toBe(2);
+    registry.shutdown();
   });
 
   it('keeps a disposed scope tombstoned when mutable baseline copying fails', () => {

@@ -1778,6 +1778,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         planned: plannedEntry,
         documentRevision: currentState.documentRevision,
         preLayers: sourceContext?.preLayers,
+        liveLayers: sourceContext?.liveLayers,
       });
       const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
       const publishPlanned = planned.outcome === 'published' && !boundaryHasError;
