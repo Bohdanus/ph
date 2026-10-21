@@ -144,16 +144,17 @@ if a scanner reports a raw score, retain the score and derive the classification
 | `useAnts.test.tsx`       | 5     | Gold           | 5+ tests, canvas call assertions, verified accurate per source                                          |
 | `rect.test.ts`           | 5     | Gold           | 5+ tests, exact assertion matches `trimRect`                                                            |
 | `draw.test.ts`           | 5     | Gold           | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
-| `DesktopHeader.test.tsx` | 6     | Solid          | 67 tests, menu toggles, confirm dialogs, error paths                                                    |
+| `DesktopHeader.test.tsx` | 6     | Gold           | 67 tests, menu toggles, confirm dialogs, error paths                                                    |
 | `Draw.test.tsx`          | 5     | Gold           | 38 tests, controls and interaction paths                                                                |
 | `Transform.test.tsx`     | 5     | Gold           | 38 cases, 36 passing and 2 expected fail, controls and interaction paths                                |
 | `Levels.test.tsx`        | 5     | Gold           | 26 tests, controls and interaction paths                                                                |
 | `MagicWand.test.tsx`     | 5     | Gold           | 28 tests, controls and interaction paths                                                                |
 
-**Every score and count in this table and in **Gold-Standard Files** is a dated snapshot.**
+**Scores and counts in this table and in **Gold-Standard Files** are historical examples, not a
+current triage.**
 Re-derive with the rubric above — it is the only thing that classifies a file. `Draw`,
 `Transform`, `Levels` and `MagicWand` were reclassified from `Shallow` to `Gold` because the
-rubric scores them above 5, not because their coverage was judged better.
+rubric scores them at the 5+ threshold, not because their coverage was judged better.
 
 ### GTD Enforcement
 
