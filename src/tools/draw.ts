@@ -23,7 +23,7 @@ export type DrawToolArgs = {
    * Erase instead of paint: the stroke subtracts alpha from whatever is already there.
    *
    * `setupDrawCtx` is the only function that configures both the live preview overlay
-   * (`src/components/Main/DrawToolArea.tsx:51`) and the committed raster (`draw`, below), so this
+   * (`src/components/Main/DrawToolArea.tsx:95`) and the committed raster (`draw`, below), so this
    * is the only place both paths can read. Absent on every args object that predates the eraser,
    * and the absent case writes `source-over` — the canvas default — so a legacy stroke renders
    * exactly as it did before, which is what keeps the `e2e/export/visual-regression.spec.ts`
