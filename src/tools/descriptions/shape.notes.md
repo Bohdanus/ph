@@ -455,16 +455,18 @@ the centre, Spacebar to reposition while drawing. The app implements all three
 
 App verdict: **partial**. Live and committing, not a placeholder, but Path mode is not a path,
 Pixels mode is identical to Shape mode, there is no separate Fill/Stroke swatch pair, and the
-app's fly-out is six entries where Photoshop's group is seven.
+app's fly-out is seven entries where Photoshop's group is also seven.
 
-**The missing Star tool is the app's gap, and it is recorded in `shape`'s `appNotes` rather than
-left to be inferred.** The app's fly-out is `toolbar-mapping.ts` — `toolbarMap`'s shapes fly-out —
-Rectangle, Ellipse,
-Line, Triangle, Polygon, Custom Shape — and there is no `star` `ToolName`, no `FigureType` for it
-(`src/tools/shape.ts` — `FigureType`), and no gear menu in which its points and radii could be set. The
-`polygon` `appNotes` used to read "the star is not this tool's to draw in the current release, so
-there is nothing here to compare a star Ratio against", which stated an app limitation in the voice
-of a Photoshop fact; it now says the app has no Star tool. See the `polygon` section below.
+The Star tool is implemented in this app and records itself on the `shape` entry's `appNotes`
+rather than being left to be inferred. The app's fly-out is `toolbar-mapping.ts` — `toolbarMap`'s
+shapes fly-out — Rectangle, Ellipse, Line, Triangle, Polygon, Star and Custom Shape. Star renders
+via the shared `shape` processor with `figure: 'star'`, and `FigureType` in `src/tools/shape.ts`
+includes `'star'`. The only absent shape-tool entry is Custom Shape, which stays behind
+`commit: 'unimplemented'` (see the `custom-shape` section below). The `polygon` `appNotes` used to
+read "the star is not this tool's to draw in the current release, so there is nothing here to
+compare a star Ratio against", which stated an app limitation in the voice of a Photoshop fact;
+it now describes the Star's implementation through the shared processor. See the `star` section
+above.
 
 Sources:
 
@@ -803,17 +805,17 @@ exist at runtime: `src/tools/shape.ts` — `drawShape()`'s
 three-way one the data file's `appNotes` called it. The substance was right and the description was
 not, so `appNotes` now says "two-branch ternary" and quotes the declaration.
 
-**The app has no Star tool, and that is the app's gap rather than a fact about Photoshop.** The
-polygon's `appNotes` used to close with "the star is not this tool's to draw in the current release,
-so there is nothing here to compare a star Ratio against", which put a missing capability in the
-voice of a Photoshop statement — a reader could take it for a claim that 26.10 moved the control and
-not for a note that this app cannot draw a star at all. It now says the app has no Star tool. The
-absence is recorded on the `shape` entry as well, because that is where the group's membership lives
-(`toolbar-mapping.ts` — `toolbarMap`'s shapes fly-out, six entries against Photoshop's seven); see
-the `shape` section above.
+The Star tool arrived in this app and is recorded on the `shape` entry's `appNotes` rather than
+left to be inferred. The polygon's `appNotes` used to close with "the star is not this tool's to
+draw in the current release, so there is nothing here to compare a star Ratio against", which put a
+missing capability in the voice of a Photoshop statement — a reader could take it for a claim
+that 26.10 moved the control and not for a note that this app cannot draw a star at all. It now
+describes the Star as implemented through the shared shape processor. The Star entry is present
+in the app's seven-entry shapes fly-out (`toolbar-mapping.ts`); see the `shape` section above.
 
 App verdict: **partial**. The drag-defined model is right; the side count and the rotation are not
-there, and the app has no Star tool to compare a star Radius against.
+there, and the Star's point/radius controls are the app's own implementation detail rather than
+a Photoshop gap.
 
 Sources:
 
@@ -985,19 +987,19 @@ Sources:
 
 ## Keyboard
 
-| Keys      | Photoshop                                                                | App                                                                                                           | App site                                                                                |
-| --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`   | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
-| `Shift+U` | cycle through the whole group                                            | walks the flyout's six entries in the rail's order and closes the group; how it closes is the wrap note below | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
-| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                          | `AppKeyboardShortcuts.tsx` — the `useKeyDownShortcut` registrations for `'['` and `']'` |
-| `Space`   | reposition while drawing                                                 | implemented                                                                                                   | `ShapeToolArea.tsx` — `ShapeToolArea()`'s Space key listeners                           |
+| Keys      | Photoshop                                                                | App                                                                                                             | App site                                                                                |
+| --------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`     | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
+| `Shift+U` | cycle through the whole group                                            | walks the flyout's seven entries in the rail's order and closes the group; how it closes is the wrap note below | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
+| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                            | `AppKeyboardShortcuts.tsx` — the `useKeyDownShortcut` registrations for `'['` and `']'` |
+| `Space`   | reposition while drawing                                                 | implemented                                                                                                     | `ShapeToolArea.tsx` — `ShapeToolArea()`'s Space key listeners                           |
 
 The `Shift+U` cycle WAS the gap, and is closed: `orderedFigures` in
 `src/components/Common/AppKeyboardShortcuts.tsx` — `selectShapeTool()` listed four entries
 against the flyout's six, so `triangle` and `polygon` indexed to `-1` and
 `orderedFigures[(-1 + 1) % 4]` was the rectangle — **a restart, not a freeze**. The list now
-holds all five `FigureType` values in the rail's order and the modulus spans six entries, the
-sixth being the Custom Shape tool, which carries its own `toolName` rather than a `figure`. The
+holds all six `FigureType` values in the rail's order and the modulus spans seven entries, the
+seventh being the Custom Shape tool, which carries its own `toolName` rather than a `figure`. The
 `-1 + 1 === 0` branch is still what a stored value outside the group takes, so it lands on the
 rectangle.
 
