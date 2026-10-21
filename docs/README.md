@@ -7,15 +7,16 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Read this first
 
-|                                                      |                                                                                            |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`DOCUMENTATION.md`](DOCUMENTATION.md)               | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
-| [`OVERRIDES.md`](OVERRIDES.md)                       | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
-| [`FEATURES.md`](FEATURES.md)                         | What the app can and cannot do, system-wide, against Photoshop                             |
-| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)             | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)                 | What the code is and how it fits together                                                  |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)       | Durable-history requirements, sequencing, and operator gates                               |
-| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md) | Fetched Adobe evidence and processed Layers/History panel summary                          |
+|                                                          |                                                                                            |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`DOCUMENTATION.md`](DOCUMENTATION.md)                   | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
+| [`OVERRIDES.md`](OVERRIDES.md)                           | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
+| [`FEATURES.md`](FEATURES.md)                             | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                 | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                     | What the code is and how it fits together                                                  |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)           | Durable-history requirements, sequencing, and operator gates                               |
+| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md) | Restart guide: current status contract, loose ends, and next migration sequence            |
+| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)     | Fetched Adobe evidence and processed Layers/History panel summary                          |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -56,6 +57,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | Document                                                                                               | Its one job                                                                                 |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                               |
+| [`../MODELS.md`](../MODELS.md)                                                                         | The model/provider catalog, rankings, and failure patterns for agent delegation             |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                 |
 | [`INCOMING_COMMITS.md`](INCOMING_COMMITS.md)                                                           | Records incoming commits from `git pull`/`git fetch` on the main worktree                   |
 | [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                   |
@@ -107,9 +109,9 @@ Three homes for an open defect, split by what broke. A defect goes in one of the
 
 Six root-level files are point-in-time reports: an investigation of one tree on
 one date, or a disposition record for documents that were stashed and recovered.
-Two more recovered from that same stash sit in this directory. They are **not
-current**, nothing in the live set depends on them, and they are not part of this
-hierarchy.
+The hardening harvest handoff is another dated report. Two more files recovered
+from a stash sit in this directory. These documents are **not current**, nothing
+in the live set depends on them, and they are not part of this hierarchy.
 
 | File                                     | What it is                                                                                                   |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -120,6 +122,7 @@ hierarchy.
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
 | `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                  |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
+| `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
 | `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                  |
 | `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it            |
 

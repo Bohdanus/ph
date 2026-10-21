@@ -254,6 +254,62 @@ describe('normalizeSelectionPoints', () => {
     expect(result!.pos).toEqual({ x: -11, y: -6, width: 8, height: 8 });
     expect(result!.points[0]).toEqual({ x: 1, y: 1 });
   });
+
+  it('propagates non-finite coordinates without clamping or guarding', () => {
+    // `normalizeSelectionPoints` has no NaN/Infinity guard: `pointsBoundingPos` reads them
+    // straight through `getPointExtents`, whose `<`/`>` compares are all false for NaN, so
+    // the pos and every normalized point inherit the non-finite values verbatim rather than
+    // being coerced to a finite fallback. Callers that build a selection from a traced path
+    // are expected to have already rejected non-finite input upstream.
+    const nanResult = normalizeSelectionPoints([
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+    ]);
+
+    expect(nanResult!.pos).toEqual({ x: NaN, y: NaN, width: NaN, height: NaN });
+    expect(nanResult!.points).toEqual([
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+    ]);
+
+    // Infinity is handled the same way: `Infinity - 1` stays Infinity for pos.x/pos.y, but
+    // `Infinity - Infinity` in the width/height extents and in the per-point subtraction
+    // both collapse to NaN, leaving the normalized points NaN even though the origin is finite.
+    const infResult = normalizeSelectionPoints([
+      { x: Infinity, y: Infinity },
+      { x: Infinity, y: Infinity },
+      { x: Infinity, y: Infinity },
+    ]);
+
+    expect(infResult!.pos).toEqual({ x: Infinity, y: Infinity, width: NaN, height: NaN });
+    expect(infResult!.points).toEqual([
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+    ]);
+  });
+
+  it('accepts three coincident points as a degenerate polygon', () => {
+    // The only guard is the length check; three identical points pass it. The bounds are
+    // non-zero because `pointsBoundingPos` applies a default lineWidth of 1, so the
+    // normalized points collapse to (1,1) relative to the padded origin. This is a point,
+    // not a real polygon — `isPointInPolygon` reports no interior for it — but nothing here
+    // rejects it, so a click that commits before any real drag reaches this path.
+    const result = normalizeSelectionPoints([
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+    ]);
+
+    expect(result!.pos).toEqual({ x: 4, y: 4, width: 2, height: 2 });
+    expect(result!.points).toEqual([
+      { x: 1, y: 1 },
+      { x: 1, y: 1 },
+      { x: 1, y: 1 },
+    ]);
+  });
 });
 
 describe('createCommittedPolygonSelection', () => {
@@ -683,6 +739,120 @@ describe('isPointInPolygon', () => {
     ];
     expect(isPointInPolygon({ x: 2, y: 8 }, lShape)).toBe(true);
     expect(isPointInPolygon({ x: 8, y: 8 }, lShape)).toBe(false);
+  });
+
+  it('reports false for a point whose coordinates are non-finite', () => {
+    // NaN and ±Infinity in the probed point make every `pi.y > point.y` comparison false
+    // (for any finite vertex), so the straddle term `false !== false` is always false and
+    // no ray crossing is ever counted — the point reads as outside regardless of polygon.
+    expect(isPointInPolygon({ x: NaN, y: NaN }, square)).toBe(false);
+    expect(isPointInPolygon({ x: Infinity, y: Infinity }, square)).toBe(false);
+    expect(isPointInPolygon({ x: -Infinity, y: -Infinity }, square)).toBe(false);
+  });
+
+  it('reports false for polygons whose vertices carry non-finite coordinates', () => {
+    // A NaN y makes `pi.y > point.y` false; an Infinity y makes the x-intersection
+    // `((pj.x - pi.x) * (point.y - pi.y)) / (pj.y - pi.y) + pi.x` resolve to NaN
+    // (Infinity / Infinity) for at least one operand, and `point.x < NaN` is always
+    // false. No crossing is counted, so the point reads as outside.
+    expect(isPointInPolygon({ x: 5, y: 5 }, [{ x: NaN, y: NaN }, ...square.slice(0, 2)])).toBe(false);
+    expect(isPointInPolygon({ x: 5, y: 5 }, [{ x: Infinity, y: Infinity }, ...square.slice(0, 2)])).toBe(false);
+    expect(isPointInPolygon({ x: 5, y: 5 }, [{ x: -Infinity, y: -Infinity }, ...square.slice(0, 2)])).toBe(false);
+  });
+
+  it('handles a self-intersecting (bowtie) polygon without throwing', () => {
+    // A bowtie: (0,0)→(10,10)→(10,0)→(0,10)→(0,0). The two lobes share only the crossing
+    // point, and the ray-cast crossing-count rule does not know about winding, so a point
+    // inside one lobe but not the other reads as outside — and the crossing point itself
+    // reads as inside. The contract pinned here is that the function returns a boolean and
+    // never throws on a self-intersecting input.
+    const bowtie: Point[] = [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+      { x: 10, y: 0 },
+      { x: 0, y: 10 },
+    ];
+
+    expect(isPointInPolygon({ x: 5, y: 5 }, bowtie)).toBe(true);
+    expect(isPointInPolygon({ x: 2, y: 2 }, bowtie)).toBe(false);
+    expect(isPointInPolygon({ x: 15, y: 15 }, bowtie)).toBe(false);
+  });
+
+  it('handles very large coordinate magnitudes without precision loss', () => {
+    // Ray-casting is magnitude-agnostic: the same `>` and `<` comparisons run unchanged
+    // at 1e9 as at 1. This pins that no overflow or float wraparound silently flips a
+    // point that is genuinely inside to outside, or vice versa.
+    const largeSquare: Point[] = [
+      { x: 1e9, y: 1e9 },
+      { x: 1e9 + 10, y: 1e9 },
+      { x: 1e9 + 10, y: 1e9 + 10 },
+      { x: 1e9, y: 1e9 + 10 },
+    ];
+
+    expect(isPointInPolygon({ x: 1e9 + 5, y: 1e9 + 5 }, largeSquare)).toBe(true);
+    expect(isPointInPolygon({ x: 1e9 + 15, y: 1e9 + 5 }, largeSquare)).toBe(false);
+  });
+
+  it('puts a triangle vertex on the inclusive side or the exclusive side of the half-open rule', () => {
+    // The rule is edge-driven, not vertex-driven: a vertex shared by an inclusive edge and
+    // an exclusive edge reads as inside, while a vertex on two exclusive edges reads as
+    // outside. Triangle here is (2,2)→(8,2)→(8,8): the (2,2) corner sits on the inclusive
+    // left/top edges — same as the square's (0,0) — while (8,2) and (8,8) sit on the
+    // exclusive right/bottom edges.
+    const tri = triangle();
+
+    expect(isPointInPolygon(tri[0], tri)).toBe(true);
+    expect(isPointInPolygon(tri[1], tri)).toBe(false);
+    expect(isPointInPolygon(tri[2], tri)).toBe(false);
+  });
+
+  it('treats a point on a diagonal edge by the same half-open rule as an axis-aligned edge', () => {
+    // Triangle (2,2)→(8,2)→(8,8). The diagonal edge (2,2)→(8,8) carries the inclusive
+    // side: its midpoint (5,5) reads as inside, just as the square's left-edge midpoint
+    // (0,5) does. The vertical edge (8,2)→(8,8) carries the exclusive side: its midpoint
+    // (8,5) reads as outside, matching the square's right-edge midpoint (10,5).
+    const tri = triangle();
+
+    expect(isPointInPolygon({ x: 5, y: 5 }, tri)).toBe(true);
+    expect(isPointInPolygon({ x: 8, y: 5 }, tri)).toBe(false);
+  });
+});
+
+describe('getSelectionRect', () => {
+  it('collapses to a zero-area rect when the selection pos has no extent', () => {
+    // `getSelectionRect` is a pure pos-to-rect conversion: it never re-derives bounds from
+    // the points array. A selection built from a single click (or from three coincident
+    // points) gets a pos with width=0, height=0, and the rect it returns has x1===x2 and
+    // y1===y2 — a degenerate rectangle that the copy path will refuse.
+    expect(getSelectionRect(selection({ pos: { x: 0, y: 0, width: 0, height: 0 } }))).toEqual({
+      x1: 0,
+      y1: 0,
+      x2: 0,
+      y2: 0,
+    });
+  });
+
+  it('returns the same zero-area rect for a single-point selection regardless of its offset', () => {
+    // Even with a non-zero origin the width/height are still zero, so the rect is a single
+    // point in document space — not a zero rect at the origin.
+    expect(getSelectionRect(selection({ pos: { x: 42, y: 17, width: 0, height: 0 } }))).toEqual({
+      x1: 42,
+      y1: 17,
+      x2: 42,
+      y2: 17,
+    });
+  });
+
+  it('does not consult the selection points, so an empty point list still yields the pos rect', () => {
+    // The points array may be empty (every lasso tool seeds `points: []`), but as long as
+    // the pos carries real dimensions the rect is well-defined. This pins that the two
+    // halves of a Selection stay independent at this seam.
+    expect(getSelectionRect(selection({ points: [], pos: { x: 10, y: 10, width: 30, height: 20 } }))).toEqual({
+      x1: 10,
+      y1: 10,
+      x2: 40,
+      y2: 30,
+    });
   });
 });
 

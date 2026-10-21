@@ -2,6 +2,7 @@ import type { BitmapSource } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import type { DurableReplayResult } from './durable-replay.ts';
 import { materializeDocument, type MaterializationRequest, type MaterializedLayer } from './materialization.ts';
+import { toOwnedBitmap } from './materialization-bitmap.ts';
 
 export type DurableCompositorRequest = Omit<MaterializationRequest, 'frame'> &
   Readonly<{
@@ -61,11 +62,6 @@ function context2d(
   return context as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 }
 
-async function toOwnedBitmap(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<BitmapSource> {
-  if (globalThis.createImageBitmap) return globalThis.createImageBitmap(canvas);
-  return canvas;
-}
-
 function closeOwnedBitmap(bitmap: BitmapSource): void {
   if (typeof (bitmap as { close?: unknown }).close === 'function') {
     (bitmap as ImageBitmap).close();
@@ -78,7 +74,12 @@ function orderedLayers(replay: DurableReplayResult): readonly string[] {
     .map((layer) => layer.snapshot.id);
 }
 
-function requireVisibleLayerCoverage(
+/**
+ * A durable presentation is publishable only when every visible replay layer
+ * materialized. Callers that adapt a composite into runtime records reuse this
+ * check so a partial document can never be staged as durable.
+ */
+export function requireVisibleLayerCoverage(
   replay: DurableReplayResult,
   materialized: Readonly<Record<string, MaterializedLayer>>
 ): void {

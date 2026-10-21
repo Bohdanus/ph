@@ -350,6 +350,98 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
     expect(reported).toContain('PUBLISH_RUNTIME_PRESENTATION carries presentation caches only');
     expect(reported).toContain('Offending layer ids: edited');
   });
+
+  it('accepts an identity affine transform preview in commitDirtyTool without logging an error', async () => {
+    const raster = new OffscreenCanvas(40, 20);
+    const storedLayer = makeLayer('edited', 0);
+    const previewLayer = {
+      ...storedLayer,
+      operations: [
+        {
+          id: 'identity-scale',
+          kind: 'affine-transform' as const,
+          transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+      tmpCanvas: raster as unknown as Layer['tmpCanvas'],
+    };
+    const processor = vi.spyOn(toolProcessors.transform, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: storedLayer }, activeLayerId: 'edited' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // Stage the preview with identity affine operation and tmpCanvas.
+    act(() => {
+      result.current.store.previewLayers.current = {
+        edited: { layer: previewLayer, toolArgs: { toolName: 'transform' } as ToolArgs },
+      };
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    // No error logged for identity affine.
+    expect(consoleError).not.toHaveBeenCalled();
+    // Preview cleared, cache promoted, identity operation removed from durable state.
+    expect(store.previewLayers.current).toEqual({});
+    expect(store.layers.edited!.tmpCanvas).toBeNull();
+    expect(store.layers.edited!.bitmap).not.toBeNull();
+    expect(store.layers.edited!.operations).toEqual([]);
+    expect(store.history).toEqual([]);
+    processor.mockRestore();
+  });
+
+  it('refuses a non-identity affine transform preview in commitDirtyTool and logs an error', async () => {
+    const raster = new OffscreenCanvas(80, 20);
+    const storedLayer = makeLayer('edited', 0);
+    const previewLayer = {
+      ...storedLayer,
+      operations: [
+        {
+          id: 'scale-affine',
+          kind: 'affine-transform' as const,
+          transform: { a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+      tmpCanvas: raster as unknown as Layer['tmpCanvas'],
+    };
+    const processor = vi.spyOn(toolProcessors.transform, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: storedLayer }, activeLayerId: 'edited' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // Stage the preview with non-identity affine operation and tmpCanvas.
+    act(() => {
+      result.current.store.previewLayers.current = {
+        edited: { layer: previewLayer, toolArgs: { toolName: 'transform' } as ToolArgs },
+      };
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    // Error logged for non-identity affine.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const reported = consoleError.mock.calls[0][0] as string;
+    expect(reported).toContain('PUBLISH_RUNTIME_PRESENTATION carries presentation caches only');
+    expect(reported).toContain('Offending layer ids: edited');
+    // Preview cleared but publication refused: stored layer unchanged, no cache promoted.
+    expect(store.layers.edited!.operations).toEqual([]);
+    expect(store.layers.edited!.tmpCanvas).toBeNull();
+    expect(store.layers.edited!.bitmap).toEqual({ width: 40, height: 20 } as ImageBitmap);
+    expect(store.history).toEqual([]);
+    processor.mockRestore();
+  });
 });
 
 describe('useLayers commitDirtyTool history boundary', () => {
@@ -404,7 +496,7 @@ describe('useLayers commitDirtyTool history boundary', () => {
       });
     });
 
-    let returned: LayersRecord | undefined;
+    let returned: LayersRecord | null | undefined;
     act(() => {
       returned = result.current.layers.commitDirtyTool(true);
     });
@@ -413,7 +505,7 @@ describe('useLayers commitDirtyTool history boundary', () => {
     });
 
     // A deferred commit returns the merged record for the caller's own dispatch.
-    expect(Object.keys(returned!)).toEqual(['edited']);
+    expect(Object.keys(returned ?? {})).toEqual(['edited']);
     expect(result.current.store.history).toEqual([]);
     expect(result.current.store.previewLayers.current).toEqual({});
     processor.mockRestore();
@@ -498,12 +590,11 @@ describe('useLayers deferred commit ownership', () => {
   });
 
   it('leaves a dirty cache it does not own staged, which is the only way the promotion loop stays inside the scope', async () => {
-    // The second loop detaches ONE dirty cache so its promotion can be requested, and it breaks on
-    // the first hit. Ordered with the unowned cache FIRST, because `Object.values` walks the
-    // record's insertion order: a scoped commit reaches the owned layer's own cache only by
-    // declining this one, and an unscoped commit detaches it instead and never looks at the owned
-    // layer. That is the whole difference the `ownedLayerId` check makes here, so the assertion is
-    // on the CACHE and not on the record — a promotion is the only thing this loop can cause.
+    // The fallback scan must skip the unowned cache rather than promoting it. Ordered with the
+    // unowned cache FIRST because `Object.values` walks the record's insertion order: a scoped
+    // commit reaches the owned layer's own cache only by declining this one. That is the whole
+    // difference the `ownedLayerId` check makes here, so the assertion is on the CACHE and not on
+    // the record — a promotion is the only thing this loop can cause.
     const foreignCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
     const { result } = setup({
       layers: { foreign: makeLayer('foreign', 0, { tmpCanvas: foreignCache }), owned: makeLayer('owned', 1) },
@@ -531,6 +622,35 @@ describe('useLayers deferred commit ownership', () => {
     expect(result.current.store.layers.owned!.tmpCanvas).toBeNull();
     expect(result.current.store.layers.foreign!.tmpCanvas).toBe(foreignCache);
     processor.mockRestore();
+  });
+
+  it('promotes every dirty committed cache during an unscoped commit', async () => {
+    const firstCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
+    const secondCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
+    const firstBitmap = { width: 1, height: 1 } as ImageBitmap;
+    const secondBitmap = { width: 1, height: 1 } as ImageBitmap;
+    const { result } = setup({
+      layers: {
+        first: makeLayer('first', 0, { bitmap: firstBitmap, tmpCanvas: firstCache }),
+        second: makeLayer('second', 1, { bitmap: secondBitmap, tmpCanvas: secondCache }),
+      },
+      activeLayerId: 'first',
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    expect(store.layers.first!.tmpCanvas).toBeNull();
+    expect(store.layers.second!.tmpCanvas).toBeNull();
+    expect(store.layers.first!.bitmap).not.toBe(firstBitmap);
+    expect(store.layers.second!.bitmap).not.toBe(secondBitmap);
+    expect(store.history).toEqual([]);
   });
 
   it('a real undo replays the timeline, and the layer the commit did not own comes back as the record it published', async () => {
@@ -599,7 +719,7 @@ describe('useLayers text commit boundary', () => {
     act(() => {
       result.current.store.currentArgs.current = { toolName: 'text', text: '' } as ToolArgs;
       const returned = result.current.layers.commitDirtyTool();
-      expect(Object.keys(returned)).toEqual([]);
+      expect(returned).toEqual({});
     });
 
     expect(result.current.store.history).toEqual([]);
@@ -615,7 +735,7 @@ describe('useLayers text commit boundary', () => {
     act(() => {
       result.current.store.currentArgs.current = { toolName: 'text', text: 'Hello', rect: null } as ToolArgs;
       const returned = result.current.layers.commitDirtyTool();
-      expect(Object.keys(returned)).toEqual([]);
+      expect(returned).toEqual({});
     });
 
     // The stale text survives in the shared draft: the guard is the cleared rect,

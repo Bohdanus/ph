@@ -6,6 +6,7 @@ import {
   legacyHistoryToDurable,
   UnsupportedHistoryFeatureError,
 } from '../history-adapter.ts';
+import { deriveCreateLayerEntry } from '../history-append.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, ToolLayerSource } from '../layer-types.ts';
@@ -260,6 +261,26 @@ describe('raster tool conversion', () => {
     expect(document.history).toEqual([]);
   });
 
+  it('keeps legacy-tool source conversion distinct from append publication', () => {
+    const registry = new AssetRegistry();
+    const item: HistoryItem = {
+      id: 'create-eraser',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'tool-eraser',
+      layerSource: toolSource('eraser', { toolName: 'eraser' } as unknown as ToolArgs),
+    };
+
+    const converted = convert(registry, item);
+    expect(converted.diagnostics).toEqual([]);
+    const operation = converted.document.history[0]?.operation;
+    if (operation?.kind !== 'create-layer') throw new Error('expected a create-layer operation');
+    expect(operation.layer.source.kind).toBe('legacy-tool');
+
+    expect(() =>
+      deriveCreateLayerEntry(item, { documentId: 'tool-conversion', registry, preLayers: new Map() })
+    ).toThrow(/no durable source representation/);
+  });
+
   it('rejects a transform that carries both a trapezoid and retained affine values', () => {
     const registry = new AssetRegistry();
 
@@ -427,7 +448,7 @@ describe('baseline layer materialization', () => {
       UnsupportedHistoryFeatureError
     );
 
-    const attempt = convertLegacyHistorySafely(history, { registry });
+    const attempt = convertLegacyHistorySafely(history, { documentId: 'unmaterialized', registry });
     expect(attempt.status).toBe('unavailable');
     expect(attempt.document).toBeNull();
     expect(attempt.diagnostics).toStrictEqual([

@@ -234,4 +234,92 @@ describe('useMarchingAnts', () => {
 
     expect(alphaAtStroke).toEqual([1, 1]);
   });
+
+  it('does not throw on NaN coordinates and propagates non-finite bounds into the erase', () => {
+    const { result, ctx } = setup();
+    expect(() =>
+      act(() =>
+        result.current.drawPoints([
+          { x: Number.NaN, y: Number.NaN },
+          { x: 40, y: 25 },
+        ])
+      )
+    ).not.toThrow();
+    frame();
+    frame();
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledWith(Number.NaN, Number.NaN, Number.NaN, Number.NaN);
+  });
+
+  it('does not throw on Infinity coordinates and propagates them through the erase padding', () => {
+    const { result, ctx } = setup();
+    expect(() =>
+      act(() =>
+        result.current.drawPoints([
+          { x: 10, y: 20 },
+          { x: Infinity, y: 25 },
+        ])
+      )
+    ).not.toThrow();
+    frame();
+    frame();
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledWith(9, 19, Infinity, 7);
+  });
+
+  it('animates zero-size bounds (identical endpoints) without throwing', () => {
+    const { result, ctx } = setup();
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 10, y: 20 },
+      ])
+    );
+    frame();
+    frame();
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledWith(9, 19, 2, 2);
+  });
+
+  it('does not throw and stops animating when the overlay is detached before the first frame', () => {
+    const { result, ctx, overlayRef } = setup();
+    overlayRef.current = null;
+    act(() =>
+      result.current.drawPoints([
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+      ])
+    );
+    frame();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.clearRect).not.toHaveBeenCalled();
+    expect(rafMocks.frames.size).toBe(0);
+  });
+
+  // Tripwires: the hook currently accepts degenerate geometry and animates it forever.
+  // Flip to a passing assertion once `schedule`/`drawPoints` reject it, which makes
+  // `it.fails` turn red and flags the regression.
+  it.fails('abandons the animation when the outline bounds are non-finite', () => {
+    const { result } = setup();
+    act(() =>
+      result.current.drawPoints([
+        { x: Number.NaN, y: 20 },
+        { x: 40, y: 25 },
+      ])
+    );
+    frame();
+    expect(rafMocks.frames.size).toBe(0);
+  });
+
+  it.fails('abandons the animation for zero-area bounds', () => {
+    const { result } = setup();
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 10, y: 20 },
+      ])
+    );
+    frame();
+    expect(rafMocks.frames.size).toBe(0);
+  });
 });

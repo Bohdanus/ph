@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { buildTipLut } from '../brush-tip.ts';
-import { DEFAULT_SPACING_PCT, dabStep, sampleTip } from '../brush-types.ts';
+import {
+  DEFAULT_SPACING_PCT,
+  dabStep,
+  sampleTip,
+  MIN_TIP_SIZE,
+  MAX_TIP_SIZE,
+  MIN_TIP_ASPECT,
+  MAX_TIP_ASPECT,
+} from '../brush-types.ts';
 import type { TipParams } from '../brush-types.ts';
 
 const radial = (t: number, hardness: number, gamma = 2, smoothstep = true): number => {
@@ -401,5 +409,273 @@ describe('dabStep', () => {
     expect(dabStep(20, 250)).toBe(dabStep(20, 100));
     expect(dabStep(20, 250)).toBe(2 * 20);
     expect(dabStep(20, 50)).toBe(20);
+  });
+});
+
+describe('buildTipLut non-finite params', () => {
+  it('clamps non-finite size to MIN_TIP_SIZE (clamp returns lo for non-finite)', () => {
+    const ref = buildTipLut({ size: MIN_TIP_SIZE });
+    for (const size of [NaN, Infinity, -Infinity, -1, 0, 0.5, 0.99]) {
+      const lut = buildTipLut({ size });
+      expect(lut.radius).toBe(ref.radius);
+      expect(lut.halfX).toBe(ref.halfX);
+      expect(lut.halfY).toBe(ref.halfY);
+      expect(lut.lutX.length).toBe(ref.lutX.length);
+    }
+  });
+
+  it('clamps non-finite hardness to 0 (clamp returns lo for non-finite)', () => {
+    const ref = buildTipLut({ size: 20, hardness: 0 });
+    for (const hardness of [NaN, Infinity, -Infinity, -0.01, -1]) {
+      const lut = buildTipLut({ size: 20, hardness });
+      expect(lut.hard).toBe(false);
+      expect(lut.lutX.length).toBe(ref.lutX.length);
+      for (let i = 0; i < lut.lutX.length; i++) {
+        expect(lut.lutX[i]).toBeCloseTo(ref.lutX[i], 7);
+      }
+      for (let i = 0; i < lut.lutY.length; i++) {
+        expect(lut.lutY[i]).toBeCloseTo(ref.lutY[i], 7);
+      }
+    }
+  });
+
+  it('clamps non-finite aspect to MIN_TIP_ASPECT (clamp returns lo for non-finite)', () => {
+    const ref = buildTipLut({ size: 40, aspect: MIN_TIP_ASPECT });
+    for (const aspect of [NaN, Infinity, -Infinity, -1, 0, 0.01, 0.049]) {
+      const lut = buildTipLut({ size: 40, aspect });
+      expect(lut.radiusX).toBeCloseTo(ref.radiusX, 10);
+      expect(lut.radiusY).toBeCloseTo(ref.radiusY, 10);
+    }
+  });
+
+  it('clamps non-finite wetEdges to 0 (clamp returns lo for non-finite)', () => {
+    for (const wetEdges of [NaN, Infinity, -Infinity, -1]) {
+      const lut = buildTipLut({ size: 20, hardness: 0.5, wetEdges });
+      expect(lut.wetEdges).toBe(0);
+    }
+  });
+
+  it('clamps non-finite powerGamma to 0.01 under power falloff', () => {
+    const ref = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 0.01 });
+    for (const powerGamma of [NaN, Infinity, -Infinity, -1]) {
+      const lut = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma });
+      for (let i = 0; i < lut.lutX.length; i++) {
+        expect(lut.lutX[i]).toBeCloseTo(ref.lutX[i], 7);
+      }
+    }
+  });
+
+  it('produces finite [0,1] samples for all clamped non-finite params at the default angle', () => {
+    const lut = buildTipLut({
+      size: NaN,
+      hardness: Infinity,
+      aspect: -Infinity,
+      wetEdges: NaN,
+      powerGamma: NaN,
+    });
+    for (let d = -10; d <= 10; d++) {
+      const a = sampleTip(lut, d, d);
+      expect(Number.isFinite(a)).toBe(true);
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('buildTipLut boundary sizes and hardness', () => {
+  it('supports MIN_TIP_SIZE = 1 exactly', () => {
+    const lut = buildTipLut({ size: 1 });
+    expect(lut.radius).toBe(0.5);
+    expect(lut.halfX).toBe(1);
+    expect(lut.halfY).toBe(1);
+    expect(lut.lutX.length).toBe(3);
+    expect(lut.lutY.length).toBe(3);
+  });
+
+  it('clamps size 0, negative, and sub-1 sizes to MIN_TIP_SIZE', () => {
+    for (const size of [0, -1, -5, -1e6, 0.5, 0.99]) {
+      const lut = buildTipLut({ size });
+      expect(lut.radius).toBe(0.5);
+      expect(lut.lutX.length).toBe(3);
+    }
+  });
+
+  it('supports MAX_TIP_SIZE = 4096 exactly', () => {
+    const lut = buildTipLut({ size: 4096 });
+    expect(lut.radius).toBe(2048);
+    expect(lut.halfX).toBe(2048);
+    expect(lut.halfY).toBe(2048);
+    expect(lut.lutX.length).toBe(4097);
+    expect(lut.lutY.length).toBe(4097);
+  });
+
+  it('clamps oversized size to MAX_TIP_SIZE', () => {
+    const ref = buildTipLut({ size: MAX_TIP_SIZE });
+    for (const size of [4097, 5000, 1e6]) {
+      const lut = buildTipLut({ size });
+      expect(lut.radius).toBe(ref.radius);
+      expect(lut.halfX).toBe(ref.halfX);
+      expect(lut.lutX.length).toBe(ref.lutX.length);
+    }
+  });
+
+  it('treats hardness exactly 0 as soft with a zero-coverage rim', () => {
+    const lut = buildTipLut({ size: 20, hardness: 0 });
+    expect(lut.hard).toBe(false);
+    expect(lut.lutX[lut.halfX]).toBeCloseTo(1, 10);
+    expect(lut.lutX[0]).toBeCloseTo(0, 10);
+    expect(lut.lutY[0]).toBeCloseTo(0, 10);
+  });
+
+  it('treats hardness exactly 1 as a hard edge', () => {
+    expect(buildTipLut({ size: 20, hardness: 1 }).hard).toBe(true);
+  });
+
+  it('treats hardness just below 1 (0.999) as soft', () => {
+    expect(buildTipLut({ size: 20, hardness: 0.999 }).hard).toBe(false);
+  });
+
+  it('clamps hardness above 1 to a hard edge', () => {
+    for (const h of [1.001, 1.5, 2, 1e6]) {
+      expect(buildTipLut({ size: 20, hardness: h }).hard).toBe(true);
+    }
+  });
+
+  it('clamps hardness below 0 to a soft edge', () => {
+    for (const h of [-0.001, -0.5, -1, -1e6]) {
+      const lut = buildTipLut({ size: 20, hardness: h });
+      expect(lut.hard).toBe(false);
+      expect(lut.lutX[lut.halfX]).toBeCloseTo(1, 10);
+      expect(lut.lutX[0]).toBeCloseTo(0, 10);
+    }
+  });
+
+  it('clamps wetEdges to [0, 1]', () => {
+    expect(buildTipLut({ size: 20, wetEdges: -1 }).wetEdges).toBe(0);
+    expect(buildTipLut({ size: 20, wetEdges: 0 }).wetEdges).toBe(0);
+    expect(buildTipLut({ size: 20, wetEdges: 1 }).wetEdges).toBe(1);
+    expect(buildTipLut({ size: 20, wetEdges: 2 }).wetEdges).toBe(1);
+  });
+
+  it('squares opacity at wetEdges 1 (a*(1-1+1*a) === a*a)', () => {
+    const dry = buildTipLut({ size: 20, hardness: 0.3, wetEdges: 0 });
+    const wet = buildTipLut({ size: 20, hardness: 0.3, wetEdges: 1 });
+    expect(wet.wetEdges).toBe(1);
+    for (let d = -10; d <= 10; d++) {
+      expect(sampleTip(wet, d, 0)).toBeCloseTo(sampleTip(dry, d, 0) ** 2, 7);
+    }
+  });
+
+  it('clamps powerGamma to [0.01, 64] under power falloff', () => {
+    const refLow = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 0.01 });
+    const low = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 0 });
+    for (let i = 0; i < low.lutX.length; i++) {
+      expect(low.lutX[i]).toBeCloseTo(refLow.lutX[i], 7);
+    }
+    const refHigh = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 64 });
+    const high = buildTipLut({ size: 20, hardness: 0, falloff: 'power', powerGamma: 1e6 });
+    for (let i = 0; i < high.lutX.length; i++) {
+      expect(high.lutX[i]).toBeCloseTo(refHigh.lutX[i], 7);
+    }
+  });
+
+  it('supports MIN_TIP_ASPECT = 0.05 exactly', () => {
+    const lut = buildTipLut({ size: 20, aspect: MIN_TIP_ASPECT });
+    expect(lut.radiusX).toBeCloseTo(10 * Math.sqrt(MIN_TIP_ASPECT), 10);
+    expect(lut.radiusY).toBeCloseTo(10 / Math.sqrt(MIN_TIP_ASPECT), 10);
+    expect(lut.radiusX * lut.radiusY).toBeCloseTo(100, 9);
+  });
+
+  it('clamps aspect to [MIN_TIP_ASPECT, MAX_TIP_ASPECT]', () => {
+    const refLow = buildTipLut({ size: 20, aspect: MIN_TIP_ASPECT });
+    const low = buildTipLut({ size: 20, aspect: 0 });
+    expect(low.radiusX).toBeCloseTo(refLow.radiusX, 10);
+    expect(low.radiusY).toBeCloseTo(refLow.radiusY, 10);
+    const refHigh = buildTipLut({ size: 20, aspect: MAX_TIP_ASPECT });
+    const high = buildTipLut({ size: 20, aspect: 1e6 });
+    expect(high.radiusX).toBeCloseTo(refHigh.radiusX, 10);
+    expect(high.radiusY).toBeCloseTo(refHigh.radiusY, 10);
+  });
+});
+
+describe('sampleTip monotonicity across configurations', () => {
+  const expectMonotonic = (lut: Lut) => {
+    for (let k = 0; k < 72; k += 3) {
+      const theta = (k / 72) * Math.PI * 2;
+      let prev = Infinity;
+      for (let d = 0; d <= 20; d++) {
+        const a = sampleTip(lut, Math.cos(theta) * d, Math.sin(theta) * d);
+        expect(Number.isFinite(a)).toBe(true);
+        expect(a).toBeGreaterThanOrEqual(0);
+        expect(a).toBeLessThanOrEqual(1);
+        expect(a).toBeLessThanOrEqual(prev + 1e-7);
+        prev = a;
+      }
+    }
+  };
+
+  it('is non-increasing along every ray for a hard round tip', () => {
+    expectMonotonic(buildTipLut({ size: 20, hardness: 1 }));
+  });
+
+  it('is non-increasing along every ray for a hard square tip', () => {
+    expectMonotonic(buildTipLut({ size: 20, hardness: 1, shape: 'square' }));
+  });
+
+  it('is non-increasing along every ray for a soft square tip', () => {
+    expectMonotonic(buildTipLut({ size: 20, hardness: 0.3, shape: 'square' }));
+  });
+
+  it('is non-increasing along every ray for an elliptical soft tip (rotated)', () => {
+    expectMonotonic(buildTipLut({ size: 40, hardness: 0.3, aspect: 3, angle: 0.7 }));
+  });
+
+  it('is non-increasing along every ray for a very soft tip', () => {
+    expectMonotonic(buildTipLut({ size: 20, hardness: 0 }));
+  });
+
+  it('is non-increasing along every ray for a near-hard tip (0.999)', () => {
+    expectMonotonic(buildTipLut({ size: 30, hardness: 0.999 }));
+  });
+
+  it('LUTs are symmetric and non-increasing from centre outward', () => {
+    for (const hardness of [0, 0.1, 0.3, 0.5, 0.9, 1]) {
+      const lut = buildTipLut({ size: 20, hardness });
+      for (let i = 0; i <= lut.halfX; i++) {
+        expect(lut.lutX[lut.halfX - i]).toBeCloseTo(lut.lutX[lut.halfX + i], 7);
+      }
+      for (let i = 0; i <= lut.halfY; i++) {
+        expect(lut.lutY[lut.halfY - i]).toBeCloseTo(lut.lutY[lut.halfY + i], 7);
+      }
+      expect(lut.lutX[lut.halfX]).toBeCloseTo(1, 10);
+      expect(lut.lutY[lut.halfY]).toBeCloseTo(1, 10);
+      for (let i = 1; i <= lut.halfX; i++) {
+        expect(lut.lutX[lut.halfX + i]).toBeLessThanOrEqual(lut.lutX[lut.halfX + i - 1] + 1e-7);
+      }
+      for (let i = 1; i <= lut.halfY; i++) {
+        expect(lut.lutY[lut.halfY + i]).toBeLessThanOrEqual(lut.lutY[lut.halfY + i - 1] + 1e-7);
+      }
+      if (!lut.hard) {
+        expect(lut.lutX[0]).toBeCloseTo(0, 6);
+        expect(lut.lutY[0]).toBeCloseTo(0, 6);
+      }
+    }
+  });
+});
+
+describe('tripwires (it.fails: known gaps that should fail until fixed)', () => {
+  it.fails('clamps a non-finite angle in buildTipLut so sampleTip stays finite (src/util/brush-tip.ts)', () => {
+    const lut = buildTipLut({ size: 20, hardness: 0.5, angle: NaN });
+    for (let d = 0; d <= 10; d++) {
+      expect(Number.isFinite(sampleTip(lut, d, 0))).toBe(true);
+    }
+  });
+
+  it.fails('clamps a non-finite radius to the pixel minimum in dabStep (src/util/brush-types.ts)', () => {
+    expect(dabStep(NaN, 25)).toBe(1);
+  });
+
+  it.fails('treats non-finite spacing as 100% (maximum) rather than 0% in dabStep (src/util/brush-types.ts)', () => {
+    expect(dabStep(20, Infinity)).toBe(dabStep(20, 100));
   });
 });

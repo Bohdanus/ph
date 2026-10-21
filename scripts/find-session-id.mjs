@@ -19,7 +19,9 @@ import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
  *   2. Otherwise, fall back to the single most recent top-level session.
  *
  * Design goals:
- *   - Quick: one read-only SQLite query, exits immediately.
+ *   - Quick: one read-only SQLite query, exits immediately. Phrase searches are
+ *     time-bounded (default 7 days, override with `FIND_SESSION_DAYS`) so they
+ *     do not scan the full multi-gigabyte `part` table on production databases.
  *   - Robust: built-in `node:sqlite` only — no dependency on node_modules.
  *     `openDb` guards the constructor; `main()` catches query errors.
  *   - Safe: opens the database read-only with `PRAGMA query_only = 1`.
@@ -32,6 +34,8 @@ import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
  */
 
 const dbPath = resolveSessionDb(homedir());
+
+const DEFAULT_WINDOW_DAYS = 7;
 
 /**
  * Escape `%` and `_` (SQLite LIKE wildcards) and `\` in a search phrase so they
@@ -69,6 +73,7 @@ const PHRASE_QUERY = `
   JOIN message m ON m.session_id = s.id
   JOIN part p ON p.message_id = m.id
   WHERE s.parent_id IS NULL
+    AND s.time_updated >= :sinceMs
     AND json_extract(p.data, '$.type') = 'text'
     AND lower(json_extract(p.data, '$.text')) LIKE :phrase ESCAPE '\\'
   ORDER BY s.time_updated DESC
@@ -89,12 +94,16 @@ const LATEST_QUERY = `
  * When `phrase` is non-empty, joins `session`/`message`/`part` to find
  * sessions whose text parts contain the phrase (case-insensitive, LIKE).
  * When `phrase` is empty, returns the single most recent top-level session.
+ *
+ * `sinceMs` bounds the phrase search to sessions updated at or after this
+ * timestamp (milliseconds). Defaults to 0 (no bound) so callers that pass
+ * no value scan every session; `main()` supplies a 7-day cutoff.
  * @returns {Array<{id:string,title:string,directory:string,parent_id:null,updated:string}>}
  */
-export function find(db, phrase) {
+export function find(db, phrase, sinceMs = 0) {
   if (phrase) {
     const stmt = db.prepare(PHRASE_QUERY);
-    return stmt.all({ phrase: `%${escapeLike(phrase)}%` });
+    return stmt.all({ phrase: `%${escapeLike(phrase)}%`, sinceMs });
   }
   const stmt = db.prepare(LATEST_QUERY);
   return stmt.all();
@@ -102,6 +111,9 @@ export function find(db, phrase) {
 
 function main() {
   const phrase = process.argv[2] || '';
+  const rawDays = parseInt(process.env.FIND_SESSION_DAYS || '', 10);
+  const days = Number.isFinite(rawDays) && rawDays > 0 ? rawDays : DEFAULT_WINDOW_DAYS;
+  const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
 
   const db = openDb(dbPath);
   if (!db) {
@@ -118,7 +130,7 @@ function main() {
 
   let rows;
   try {
-    rows = find(db, phrase);
+    rows = find(db, phrase, phrase ? sinceMs : 0);
   } catch (e) {
     console.error(`find-session-id: query failed: ${e.message}`);
     process.exitCode = 1;

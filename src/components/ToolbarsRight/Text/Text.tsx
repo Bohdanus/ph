@@ -184,6 +184,13 @@ const Text: React.FC<{}> = () => {
     const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
     const editingLayerId = toolArgs.editingLayerId;
     const activeLayer = editingLayerId ? layers[editingLayerId] : activeLayerId ? layers[activeLayerId] : undefined;
+    if (
+      editingLayerId &&
+      (!activeLayer || activeLayer.source?.kind !== 'tool' || activeLayer.source.args.toolName !== 'text')
+    ) {
+      clear();
+      return;
+    }
     const localPos = sortedRectToPos(sortRect(measuredRect));
     const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
     const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
@@ -197,11 +204,12 @@ const Text: React.FC<{}> = () => {
       // built at `pos` size and the type is drawn at the rect's own coordinates. An unreduced
       // canvas-space rect therefore renders an EMPTY layer as soon as the document frame is not the
       // origin. `commitDirtyTool`'s replace arm reduces for the same reason.
-      replaceLayerSource(activeLayer.id, {
+      const replaced = replaceLayerSource(activeLayer.id, {
         kind: 'tool',
         args: { ...persistedArgs, ...committedArgs, rect: reduceRect(sortRect(measuredRect), pos) },
         pos,
       });
+      if (replaced === null) return;
     } else {
       // The re-entrancy guard is armed AFTER the create, not before it. Armed before, a throw from
       // `createLayerFromTool` left it armed against a `toolArgs` identity nothing has changed, so

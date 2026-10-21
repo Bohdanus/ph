@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures/extended-test';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * `src/components/Common/ErrorBoundary.tsx` in a browser, which is the only environment where
@@ -109,6 +110,7 @@ const throwOnToolOverlayTwoDimensionalContext = () => {
 };
 
 test.describe('ErrorBoundary: a throw from the canvas region', () => {
+  test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
   test('publishes nothing at all while the canvas region is healthy', async ({ page }) => {
     // The negative case first, and it is not a formality. Every assertion below is about markup
     // that appears only after a catch, and markup that appears only after a catch is trivially
@@ -264,13 +266,21 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
 
     await expect(
       page.getByTestId('error-boundary-diagnostics'),
-      'the diagnostics list is conditional on a non-empty diagnostic list, so it must be absent here'
+      'the diagnostics list is conditional on a non-empty diagnostic list, so it must be absent and hidden here'
     ).toHaveCount(0);
+    await expect(
+      page.getByTestId('error-boundary-diagnostics'),
+      'the diagnostics list is not visible, so the fallback below is read against a real conditional branch rather than an empty shell'
+    ).toBeHidden();
     await expect(
       page.locator('[data-testid^="error-boundary-diagnostic-"]'),
       'and no per-code item is rendered under any code, which is the only part of the list this app can ' +
         'reach without a store mock'
     ).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid^="error-boundary-diagnostic-"]'),
+      'and no per-code item exists or is visible under any code, which no rename can dodge'
+    ).toBeHidden();
 
     // The two assertions above are both stated in terms of `data-testid` strings, and a testid is
     // a name a component is free to change. If `ErrorBoundary` were to render the list and its

@@ -1,6 +1,8 @@
 import { expect, test } from './fixtures/extended-test';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 import {
   drawLine,
+  documentToCanvasOffset,
   getDarkPixelBounds,
   LINE_END_X,
   LINE_START_X,
@@ -9,6 +11,7 @@ import {
   type BoundingBox,
   type ClipOptions,
 } from './helpers/canvas-helpers';
+import { setForegroundColor } from './helpers/color-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
 /**
@@ -100,6 +103,7 @@ async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): P
 }
 
 test.describe('Transform tool', () => {
+  test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
   // The canvas is laid out to a fixed aspect ratio and overflows the default 1280x720
   // viewport: the workspace canvas box is 974x840 starting at y=100, so its bottom 220
   // pixels sit below the fold. A bar drawn low on the layer would then be outside every
@@ -408,5 +412,69 @@ test.describe('Transform tool', () => {
       Math.abs(undone!.width / undone!.height - originalRatio) / originalRatio,
       'one undo returns the original horizontal bar, so the whole drag was one entry'
     ).toBeLessThan(0.15);
+  });
+
+  test('mirrors an asymmetric black squiggle horizontally and vertically', async ({ page }, testInfo) => {
+    await page.goto('/');
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#000000', true);
+    await page.locator('#size-slider').fill('18');
+
+    // Selecting Draw can scroll the page, so measure the canvas after selecting it.
+    const canvasBox = await page.getByTestId('workspace-canvas').boundingBox();
+    expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
+    const canvas = canvasBox!;
+    const clip: Required<ClipOptions> = {
+      x: Math.floor(canvas.x),
+      y: Math.floor(canvas.y),
+      width: Math.floor(canvas.width),
+      height: Math.floor(canvas.height),
+    };
+
+    // The uneven squiggle makes both mirrors visible: a pentagon is horizontally symmetric and
+    // cannot prove that the left-to-right mirror button did anything.
+    const squiggle = [
+      { x: 150, y: 160 },
+      { x: 290, y: 170 },
+      { x: 365, y: 230 },
+      { x: 415, y: 300 },
+      { x: 430, y: 185 },
+      { x: 505, y: 190 },
+      { x: 560, y: 185 },
+      { x: 580, y: 200 },
+      { x: 565, y: 225 },
+      { x: 530, y: 250 },
+      { x: 520, y: 270 },
+      { x: 540, y: 290 },
+      { x: 610, y: 295 },
+    ].map(({ x, y }) => documentToCanvasOffset(canvas, x, y));
+    await page.mouse.move(canvas.x + squiggle[0].x, canvas.y + squiggle[0].y);
+    await page.mouse.down();
+    for (const point of squiggle.slice(1)) {
+      await page.mouse.move(canvas.x + point.x, canvas.y + point.y, { steps: 10 });
+    }
+    await page.mouse.up();
+    await waitForCanvasRedraw(page, canvas, { clip });
+
+    await page.getByTestId('header-edit-menu-button').click();
+    await page.getByTestId('edit-menu-free-transform-button').click();
+    let previous = await takeLineScreenshot(page, canvas, 'squiggle-before-mirrors', testInfo, clip);
+
+    for (const step of [
+      { name: 'squiggle-mirror-right-to-left', button: 'Mirror Horizontal' },
+      { name: 'squiggle-mirror-bottom-to-top', button: 'Mirror Vertical' },
+    ]) {
+      await page.getByTitle(step.button).click();
+      await expect
+        .poll(async () => !(await page.screenshot({ clip })).equals(previous), {
+          message: `${step.name} should change the previous canvas image`,
+        })
+        .toBe(true);
+
+      const current = await takeLineScreenshot(page, canvas, step.name, testInfo, clip);
+      expect(current.equals(previous), `${step.name} should differ from the previous screenshot`).toBe(false);
+      previous = current;
+    }
   });
 });

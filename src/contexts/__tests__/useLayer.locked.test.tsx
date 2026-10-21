@@ -8,18 +8,11 @@ import { createPixelCanvasContext } from '../../test/setup.ts';
 import { defaultSettings } from '../../tools/settings.ts';
 import type { ToolArgs } from '../tool-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
+import { LOCK_LAYER_ACTION } from '../../util/constants.ts';
 
 /**
- * `layer.locked` is read from an imported PSD (`src/util/psd-utils.ts:160`) and written back out
- * as composite + position protection (`:267-268`), and it is set true in exactly one place: that
- * import walk. Every other construction path writes `false`, and no panel renders a lock control —
- * so this is an IMPORTED-file defect, and the honest shape of the test is a layer that arrived
- * locked rather than one the UI locked.
- *
- * The claim being pinned is that `commit: 'raster'` no longer overwrites it. The guard has to live
- * in the ONE raster path rather than in each tool area, because there are thirteen raster tools
- * and each one would need its own copy of the check — and `isBedrock` is already refused per area
- * in some of them and not in others.
+ * Imported and panel-locked layers share the same full-lock guard. It must cover every raster tool
+ * at the common mutation boundary rather than relying on individual tool areas to refuse writes.
  */
 
 const drawLayersToCanvas = vi.hoisted(() => vi.fn(() => true));
@@ -140,6 +133,60 @@ describe('a locked layer refuses the raster commit path', () => {
     expect(replaced).toBeNull();
     expect(locked.result.current.store.layers.text?.source).toEqual(source);
     expect(historyLength(locked.result)).toBe(0);
+  });
+
+  it('does not start a preview edit for a locked text layer', () => {
+    const source = {
+      kind: 'tool' as const,
+      args: { toolName: 'text', text: 'Original' } as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    };
+    const locked = setup({ text: makeLayer('text', 0, { locked: true, source }) });
+
+    act(() => locked.result.current.layers.beginTextLayerEdit('text'));
+
+    expect(previewIds(locked.result)).toEqual([]);
+  });
+
+  it('refuses Lock All while a text edit is active', () => {
+    const editing = setup({ photo: makeLayer('photo', 0) });
+    act(() => {
+      editing.result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
+      editing.result.current.store.currentArgs.current = {
+        toolName: 'text',
+        text: 'Draft',
+        rect: { x1: 2, y1: 2, x2: 30, y2: 18 },
+      } as ToolArgs;
+    });
+
+    act(() => editing.result.current.layers.updateLayer('photo', { locked: true }, LOCK_LAYER_ACTION));
+
+    expect(editing.result.current.store.layers.photo?.locked).toBe(false);
+    expect(historyLength(editing.result)).toBe(0);
+  });
+
+  it('keeps the text layer being edited when a remove action is requested', () => {
+    const source = {
+      kind: 'tool' as const,
+      args: { toolName: 'text', text: 'Original' } as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    };
+    const editing = setup({ text: makeLayer('text', 0, { source }) });
+    act(() => {
+      editing.result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
+      editing.result.current.store.currentArgs.current = {
+        toolName: 'text',
+        text: 'Draft',
+        rect: { x1: 2, y1: 2, x2: 30, y2: 18 },
+        editingLayerId: 'text',
+      } as ToolArgs;
+    });
+
+    act(() => editing.result.current.layers.removeLayer('text'));
+
+    expect(editing.result.current.store.layers.text).toBeDefined();
+    expect(editing.result.current.store.layers.text?.source).toEqual(source);
+    expect(historyLength(editing.result)).toBe(0);
   });
 
   it('writes no live pixels for it, where the same stroke on an unlocked layer does', () => {

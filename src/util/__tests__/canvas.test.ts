@@ -12,6 +12,20 @@ function createSpyCanvas(width: number, height: number) {
   const size = { width, height };
   const widthWrites: number[] = [];
   const heightWrites: number[] = [];
+  const attributes = new Map<string, string>();
+
+  // Mock transform state
+  let currentTransform = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+
+  const mockContext = {
+    getTransform: vi.fn(() => currentTransform),
+    setTransform: vi.fn((a, b, c, d, e, f) => {
+      currentTransform = { a, b, c, d, e, f };
+    }),
+    scale: vi.fn((x, y) => {
+      currentTransform = { a: x, b: 0, c: 0, d: y, e: 0, f: 0 };
+    }),
+  };
 
   const canvas = {
     get width() {
@@ -28,9 +42,13 @@ function createSpyCanvas(width: number, height: number) {
       heightWrites.push(value);
       size.height = value;
     },
+    getAttribute: (name: string) => attributes.get(name) ?? null,
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+    removeAttribute: (name: string) => attributes.delete(name),
+    getContext: vi.fn(() => mockContext),
   } as unknown as HTMLCanvasElement;
 
-  return { canvas, widthWrites, heightWrites };
+  return { canvas, widthWrites, heightWrites, mockContext, getTransform: () => currentTransform };
 }
 
 describe('resizeCanvas', () => {
@@ -95,6 +113,223 @@ describe('resizeCanvas', () => {
     expect(widthWrites).toEqual([2]);
     expect(heightWrites).toEqual([2]);
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces a skewed or translated transform with the requested scale', () => {
+    const { canvas, mockContext, getTransform } = createSpyCanvas(200, 100);
+    getTransform().b = 1;
+    getTransform().e = 4;
+
+    resizeCanvas(canvas, 100, 50, 2);
+
+    expect(mockContext.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+    expect(getTransform()).toEqual({ a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 });
+  });
+
+  // Non-finite / degenerate dimensions — documents that resizeCanvas currently
+  // forwards these values verbatim to the canvas. A defensive Number.isFinite
+  // guard would change this behaviour; the tripwires below declare what such a
+  // guard ought to guarantee before it lands.
+
+  it('passes NaN dimensions through to the canvas', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, NaN, NaN);
+
+    expect(widthWrites).toEqual([NaN]);
+    expect(heightWrites).toEqual([NaN]);
+    expect(canvas.width).toBeNaN();
+    expect(canvas.height).toBeNaN();
+  });
+
+  it('passes -Infinity dimensions through to the canvas', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, -Infinity, -Infinity);
+
+    expect(widthWrites).toEqual([-Infinity]);
+    expect(heightWrites).toEqual([-Infinity]);
+    expect(canvas.width).toBe(-Infinity);
+    expect(canvas.height).toBe(-Infinity);
+  });
+
+  it('passes Infinity dimensions through to the canvas', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, Infinity, Infinity);
+
+    expect(widthWrites).toEqual([Infinity]);
+    expect(heightWrites).toEqual([Infinity]);
+    expect(canvas.width).toBe(Infinity);
+    expect(canvas.height).toBe(Infinity);
+  });
+
+  it('passes Infinity width through even when a HiDPI ratio is applied', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, Infinity, 200, 2);
+
+    expect(widthWrites).toEqual([Infinity]);
+    expect(heightWrites).toEqual([400]);
+  });
+
+  it('applies zero width without touching height', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 0, 50);
+
+    expect(widthWrites).toEqual([0]);
+    expect(heightWrites).toEqual([]);
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(50);
+  });
+
+  it('applies zero height without touching width', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 100, 0);
+
+    expect(widthWrites).toEqual([]);
+    expect(heightWrites).toEqual([0]);
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(0);
+  });
+
+  it('applies both zero dimensions', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 0, 0);
+
+    expect(widthWrites).toEqual([0]);
+    expect(heightWrites).toEqual([0]);
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+  });
+
+  it('applies negative dimensions without clamping', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, -100, -200);
+
+    expect(widthWrites).toEqual([-100]);
+    expect(heightWrites).toEqual([-200]);
+    expect(canvas.width).toBe(-100);
+    expect(canvas.height).toBe(-200);
+  });
+
+  it('applies negative width without clamping height', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, -50, 50);
+
+    expect(widthWrites).toEqual([-50]);
+    expect(heightWrites).toEqual([]);
+    expect(canvas.width).toBe(-50);
+    expect(canvas.height).toBe(50);
+  });
+
+  it('applies very large dimensions', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 1_000_000, 2_000_000);
+
+    expect(widthWrites).toEqual([1_000_000]);
+    expect(heightWrites).toEqual([2_000_000]);
+    expect(canvas.width).toBe(1_000_000);
+    expect(canvas.height).toBe(2_000_000);
+  });
+
+  it('scales very large dimensions with a HiDPI ratio', () => {
+    const { canvas, widthWrites, heightWrites } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 500_000, 1_000_000, 2);
+
+    expect(widthWrites).toEqual([1_000_000]);
+    expect(heightWrites).toEqual([2_000_000]);
+    expect(canvas.width).toBe(1_000_000);
+    expect(canvas.height).toBe(2_000_000);
+  });
+});
+
+describe('resizeCanvas fail-closed tripwires (known gaps this hardens)', () => {
+  // Each block below asserts the behaviour we WANT from a missing input guard.
+  // It is wrapped in `it.fails` so it stays green while the gap is open; the
+  // moment the guard lands and the assertion starts passing, `it.fails` flips
+  // and the tripwire reports an unexpected pass, which is the signal to delete it.
+
+  it.fails('guards against NaN width by leaving the canvas untouched', () => {
+    // `Math.round(NaN * ratio)` is NaN, and `canvas.width !== NaN` is always
+    // true, so the NaN is written unconditionally. A missing Number.isFinite
+    // guard should leave the canvas at its current width and height.
+    const { canvas } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, NaN, 50);
+
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(50);
+  });
+
+  it.fails('guards against NaN height by leaving the canvas untouched', () => {
+    // Same gap on the vertical axis: NaN height is written verbatim.
+    const { canvas } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 100, NaN);
+
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(50);
+  });
+
+  it.fails('guards against Infinity width by leaving the canvas untouched', () => {
+    // `Math.round(Infinity * ratio)` is Infinity; browsers clamp this to an
+    // internal maximum, but resizeCanvas forwards it raw to the spy. A guard
+    // should leave the canvas at its current width.
+    const { canvas } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, Infinity, 50);
+
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(50);
+  });
+
+  it.fails('guards against Infinity height by leaving the canvas untouched', () => {
+    const { canvas } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 100, Infinity);
+
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(50);
+  });
+
+  it.fails('guards against -Infinity width by leaving the canvas untouched', () => {
+    // -Infinity is equally non-finite; the guard should treat it the same as
+    // NaN and +Infinity.
+    const { canvas } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, -Infinity, 50);
+
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(50);
+  });
+
+  it.fails('guards against -Infinity height by leaving the canvas untouched', () => {
+    const { canvas } = createSpyCanvas(100, 50);
+
+    resizeCanvas(canvas, 100, -Infinity);
+
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(50);
+  });
+
+  it.fails('does not redundantly rewrite a canvas that already has NaN width', () => {
+    // The `!==` comparison used for `needsResize` can never be false when either
+    // operand is NaN (NaN !== NaN is always true), so a canvas already at NaN
+    // width is rewritten every call. A guard that rejects NaN would also fix
+    // this redundant write.
+    const { canvas, widthWrites } = createSpyCanvas(NaN, 50);
+
+    resizeCanvas(canvas, NaN, 50);
+
+    expect(widthWrites).toEqual([]);
   });
 });
 

@@ -147,6 +147,7 @@ export const resetMocks = (): void => {
   goToToolMock.mockReset();
   patchToolArgsMock.mockClear();
   storeState.dispatch.mockClear();
+  window.localStorage.clear();
   Object.assign(storeState, {
     hasImage: true,
     toolName: 'draw',

@@ -355,6 +355,50 @@ export function documentStrokeBoundaryMargin(
   );
 }
 
+/**
+ * Half of the Draw tool's default `lineWidth`, which is 10 DOCUMENT pixels
+ * (`src/tools/settings.ts:38`, `pen: { alpha: 0.9, lineWidth: 10 }`, spread into the `draw`
+ * args at `:68-74`). A stroke's painted extent therefore runs half a stroke WIDER than the
+ * point that was asked for on each side, and `getDarkPixelBounds` reports the whole painted
+ * extent rather than its centre line. That is the entire legitimate reason a stroke's edge
+ * is not at the cursor, and it is why the bound below is a function of the fit scale rather
+ * than a constant: the same 10 document pixels scale to more CSS pixels in a wider window
+ * and fewer in a narrower one, so any single constant is either loose or tight depending on
+ * the viewport.
+ */
+export const DRAW_HALF_WIDTH_DOC_PX = 5;
+
+/**
+ * What is left after the geometric half-width: the faint antialiased fringe of the round
+ * cap, and the one-image-pixel convention of `imageBoundsToCss`, which maps an inclusive
+ * pixel index to the CENTRE of that pixel (see its JSDoc, `screenshot-scale.ts:153-176`) and
+ * so under-reports a covered span by half a CSS pixel on a 1:1 capture. `getDarkPixelBounds`
+ * also applies a DARK THRESHOLD, so it discards the faintest fringe pixels entirely, which
+ * is why the measured deviation lands a little UNDER `DRAW_HALF_WIDTH_DOC_PX * scale` rather
+ * than on it. 2px covers both; the measured slack over it is a margin and not a fit.
+ */
+export const ANTIALIASED_FLANGE_CSS_PX = 2;
+
+/**
+ * How far the stroke's painted edge may sit from the cursor point that asked for it: the
+ * brush's own half-width converted to CSS by the app's contain fit, plus the fringe above.
+ *
+ * Derived from `containFit`, which is the suite's single implementation of the app's fit and
+ * is asserted equal to the app's own published `data-fit-*` at more than one rect size by
+ * `e2e/export/visual-regression.spec.ts`. So the bound moves WITH the viewport instead of
+ * being a constant that happened to hold.
+ *
+ * What it does NOT absorb is any mapping error, and that is the load-bearing property. A
+ * contain-scale mismatch (the `drawLine` coordinate gap) is worth tens of CSS pixels: the
+ * difference between painting the document stretched across the box and painting it
+ * contained is the box's letterbox margin on each axis. A tolerance of this magnitude still
+ * catches that with an order of magnitude to spare, so this number can absorb the stroke's
+ * own width and nothing else.
+ */
+export function toleranceFor(box: BoundingBox): number {
+  return DRAW_HALF_WIDTH_DOC_PX * containFit(box, DEFAULT_DOCUMENT_SIZE).scale + ANTIALIASED_FLANGE_CSS_PX;
+}
+
 /** `[ms]` — the shared default timeout of every redraw wait below. Not a coordinate. */
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 /** `[ms]` — the shared default poll interval of every redraw wait below. */
@@ -620,9 +664,24 @@ function clamp(value: number, min: number, max: number): number {
  * reports success — and because "the page does not scroll" is a property of the current
  * layout rather than of the helper's contract. If a future change reintroduces an
  * overflowing page, the read below degrades to working instead of to a false negative.
+ *
+ * WHAT THIS FUNCTION WILL NOT DO, AND WHY IT IS CHECKED FIRST. A clip whose HEIGHT exceeds
+ * the viewport's cannot be photographed whole: `page.screenshot` trims the clip against the
+ * viewport and returns the intersection without saying so, so a 900px clip in a 720px
+ * window comes back 720px tall at exit 0. The scroll below moves the region's ORIGIN, and
+ * it deliberately does not move its EXTENT — nothing here bounds `clip.height`, and the
+ * `clamp` at the top of this file bounds the scroll TARGET, not the clip. An over-tall clip
+ * therefore takes the scroll path, keeps its full height, and is photographed short. See
+ * `HANDOFF.md` §242. Refusing is the only honest answer: the caller asked for a region the
+ * page cannot render, and a smaller image is a wrong answer wearing a plausible shape.
  */
 async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
   const viewport = await readPageViewport(page);
+  if (clip.height > viewport.height) {
+    throw new Error(
+      `onScreenClip: a screenshot clip cannot be taller than the viewport: requested ${clip.height}px in a ${viewport.height}px window`
+    );
+  }
   const pageRect = viewportRectToPageRect(clip, { x: viewport.scrollX, y: viewport.scrollY });
   const alreadyVisible =
     pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height;
@@ -645,13 +704,17 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
 }
 
 /**
- * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the only
- * export here that is read out of the live page rather than derived from a box.
+ * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the
+ * only export here that reads from the live page rather than deriving geometry from a
+ * box. (Note: `onScreenClip` in this file also calls `page.evaluate` for scroll, so the
+ * "only export" qualifier is scoped to the page-read of scroll state.)
  *
- * The one place in the helpers that reads page state rather than deriving geometry from a
- * box: a page function, read at the call site. Caching it would be wrong rather than merely
- * stale — `clickToolButton` scrolls the window by 440px in this build, so an offset read
- * once is wrong by a different amount before and after any tool click.
+ * Caching it would be wrong rather than merely stale — the scroll offset can change
+ * between captures, so an offset read once is wrong before and after any scroll-changing
+ * interaction. `clickToolButton` holds scroll steady via `preservingScroll`, but the
+ * offset itself originates from explicit scrolls (`onScreenClip`, test helpers like
+ * `scrollToTop`), not from the preserve/restore. See `e2e/OPEN_PROBLEMS.md` for why the
+ * app no longer scrolls at document level.
  */
 export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
@@ -908,6 +971,47 @@ export async function drawLine(
     await page.mouse.move(box.x + endX, box.y + endY, { steps: interpolationSteps(options.steps) });
   }
   await page.mouse.up();
+}
+
+/**
+ * Draws a straight stroke on the canvas at DOCUMENT coordinates. `[DOCUMENT]` endpoints,
+ * converted through the app's contain fit before they reach `page.mouse`.
+ *
+ * This is the contain-aware companion to `drawLine`, and the two differ on purpose. `drawLine`
+ * takes box-relative offsets and applies no contain scale — `e2e/OPEN_PROBLEMS.md` records
+ * that as a P2: a document point reaches `page.mouse` as `(x / scale, (y - offsetY) / scale)`
+ * once the box origin is added, and a spec that asserts a specific document row is tens of
+ * pixels off. The arithmetic is `documentToCanvasOffset`, which is the single place the fit
+ * rule lives, so this helper cannot drift from the app's own mapping.
+ *
+ * It is NOT a replacement for `drawLine`. Every spec that calls `drawLine` today is written
+ * around box-relative coordinates and survives only because its strokes need to land
+ * SOMEWHERE, not where they were asked to land; changing `drawLine`'s meaning would break all
+ * of them at once. This helper exists for the callers that need document precision — the
+ * export fixture, which asserts a specific row against a committed baseline, and any future
+ * spec that names a pixel position.
+ *
+ * `documentSize` defaults to the seeded document; pass the measured backing store when you
+ * have it. `documentFrame` defaults to the origin and no current caller passes it.
+ *
+ * The gesture itself is delegated to `drawLine`, so every behaviour pinned by
+ * `canvas-interaction.unit.test.ts` — the `steps` normalisation, the zero-size box, the
+ * negative box origin — carries over unchanged rather than being re-derived here.
+ */
+export async function drawLineFromDocument(
+  page: Page,
+  box: BoundingBox,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  options: DrawLineOptions = {},
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE,
+  documentFrame: DocumentFrameOrigin = ZERO_DOCUMENT_FRAME
+): Promise<void> {
+  const start = documentToCanvasOffset(box, startX, startY, documentSize, documentFrame);
+  const end = documentToCanvasOffset(box, endX, endY, documentSize, documentFrame);
+  await drawLine(page, box, start.x, start.y, end.x, end.y, options);
 }
 
 /**

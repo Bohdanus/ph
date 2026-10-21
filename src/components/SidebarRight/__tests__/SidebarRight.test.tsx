@@ -88,9 +88,8 @@ const renderWithLayout = (children: ReactNode, stored: Record<string, unknown> =
 };
 
 /**
- * jsdom lays nothing out, so the dock reports 0px tall and the document 0px wide. Two gestures
- * genuinely need those numbers — the reorder threshold is the column's middle, and the re-dock
- * zone is a fraction of the viewport — and both are right to refuse on a zero measurement. The
+ * jsdom lays nothing out, so the dock reports 0px tall. The reorder threshold is the column's
+ * middle and is right to refuse on a zero measurement. The
  * numbers are stubbed rather than the branches weakened, which is the same split AGENTS.md
  * draws for `AnchoredOverlay`: geometry by stub, arithmetic pinned here.
  */
@@ -238,7 +237,7 @@ describe('SidebarRight', () => {
     expect(aside.querySelector(':scope > .overflow-hidden')).not.toBeNull();
   });
 
-  it('pins the dock to the right edge and exposes no panel relocation gesture', () => {
+  it('pins the dock to the right edge while exposing in-dock panel reordering', () => {
     seed();
     const { container } = renderWithLayout(<SidebarRight />);
     const aside = container.querySelector('aside')!;
@@ -247,7 +246,7 @@ describe('SidebarRight', () => {
     expect(container.querySelector('[data-testid="panel-drop-line"]')).toBeNull();
     expect(container.querySelector('[data-testid="dock-edge-line"]')).toBeNull();
     for (const id of ['history', 'layers']) {
-      expect(container.querySelector(`[data-testid="panel-header-${id}"]`)).not.toHaveAttribute(
+      expect(container.querySelector(`[data-testid="panel-header-${id}"]`)).toHaveAttribute(
         'title',
         expect.stringMatching(/drag/i)
       );
@@ -395,12 +394,12 @@ describe('SidebarRight', () => {
 
       const before = shares();
 
-      // UP by 100px of a 600px column, which is a sixth of the column: the top panel's share
+      // DOWN by 100px of a 600px column, which is a sixth of the column: the top panel's share
       // rises by exactly that and the bottom one's falls by the same amount, because they
       // share one divider. "All groups that share the divider are resized."
       const splitter = container.querySelector('[data-testid="dock-splitter"]') as HTMLElement;
       fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 300 });
-      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 200 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 400 });
       fireEvent.pointerUp(document, { pointerId: 1 });
 
       const after = shares();

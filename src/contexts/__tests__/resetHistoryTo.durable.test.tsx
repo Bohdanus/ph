@@ -92,7 +92,7 @@ describe('resetHistoryTo durable authority', () => {
     });
 
     expect(ref.current!.store.historyIndex).toBe(1);
-    expect(ref.current!.store.durableStatus).toBe('unavailable');
+    expect(ref.current!.store.durableStatus).toBe('partial');
     expect(ref.current!.store.durablePresentation.status).toBe('unpublished');
   });
 });

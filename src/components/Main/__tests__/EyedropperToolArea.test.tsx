@@ -21,7 +21,9 @@ const SamplerProbe = () => {
 const dispatchMock = vi.hoisted(() => vi.fn());
 const workspaceCanvas = vi.hoisted(() => document.createElement('canvas'));
 const storeState = vi.hoisted(
-  (): { documentFrame: { x: number; y: number; width: number; height: number } | null } => ({ documentFrame: null })
+  (): { documentFrame: { x: number; y: number; width: number; height: number } | null } => ({
+    documentFrame: { x: 0, y: 0, width: 4, height: 4 },
+  })
 );
 const toolState = vi.hoisted(
   (): { toolArgs: { sampleSize: 1 | 3 | 5 | 11 | 31 | 51 | 101; sampleAllLayers: boolean; toolName: string } } => ({
@@ -149,7 +151,7 @@ describe('EyedropperToolArea', () => {
 
   beforeEach(() => {
     dispatchMock.mockClear();
-    storeState.documentFrame = null;
+    storeState.documentFrame = { x: 0, y: 0, width: 4, height: 4 };
     toolState.toolArgs = { sampleSize: 1, sampleAllLayers: false, toolName: 'eyedropper' };
     composited = createCompositedImageData(4, 4);
     workspaceCanvas.width = 4;
@@ -303,6 +305,29 @@ describe('EyedropperToolArea', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * REGRESSION CHECK for a bounds error in the Sample Size > 1 path.
+   *
+   * With `sampleSize === 1` the `right <= left` / `bottom <= top` guard catches every
+   * out-of-bounds centre pixel. But with a larger sample size the CLIPPED block can be
+   * non-empty while the centre pixel is still outside the canvas — e.g. `centerX = -1`,
+   * `sampleSize = 3`, `half = 1`: `left = 0`, `right = 2`, so the block has two pixels,
+   * but `centerX - left = -1` indexes the wrong byte in the pixel array and the average
+   * silently includes padding. This test pins the early return that guards the array index.
+   */
+  it('ignores out-of-bounds clicks with a Sample Size larger than 1', () => {
+    toolState.toolArgs = { ...toolState.toolArgs, sampleSize: 3 };
+    const toolArea = renderArea();
+
+    // centerX = -1: the block clips to [0, 2) but the centre is outside.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: -1, clientY: 0 });
+
+    // centerX = 4 (== canvas.width): the block clips to [3, 4) but the centre is outside.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 4, clientY: 0 });
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
   it('ignores non-primary mouse buttons', () => {
     const toolArea = renderArea();
 
@@ -429,6 +454,7 @@ describe('EyedropperToolArea', () => {
       { sampleSize: 101, left: 14, sampled: '#818181' },
     ];
 
+    storeState.documentFrame = { x: 0, y: 0, width: 128, height: 128 };
     composited = createSplitField(128);
     workspaceCanvas.width = 128;
     workspaceCanvas.height = 128;
@@ -470,7 +496,7 @@ describe('EyedropperToolArea Shift-click, which places a color sampler', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     resetColorSamplersForTest();
-    storeState.documentFrame = null;
+    storeState.documentFrame = { x: 0, y: 0, width: 4, height: 4 };
     toolState.toolArgs = { sampleSize: 1, sampleAllLayers: false, toolName: 'eyedropper' };
     composited = createCompositedImageData(4, 4);
     workspaceCanvas.width = 4;

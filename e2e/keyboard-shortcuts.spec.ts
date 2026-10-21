@@ -225,34 +225,18 @@ test.describe('Keyboard shortcuts', () => {
       });
     }
 
-    test('E selects the eraser, and the brush tile is the one that lights for it', async ({ page }) => {
-      // The eraser is a secondary member of the brush group, so the tile it lights is the
-      // brush's. Asserting the tile alone would pass for the brush too, which is why the
-      // eraser bar's own control is the assertion that carries the meaning here.
-      //
-      // WHICH tile that is depends on the window, and the rule is the same either way: the
-      // brush group keeps a tile of its own while the rail can show it, and becomes a row of
-      // the three-dots tile's flyout once it cannot. At the suite's viewport it is already
-      // the latter, so this resolves the tile rather than assuming the brush's own.
-      //
-      // `V` first, and that keystroke is part of the test rather than setup. The rail starts
-      // on a tool that has been folded away, so the tile that represents the brush group is
-      // ALREADY lit when the test begins and pressing `E` cannot make it change state — the
-      // light would prove nothing. Selecting the Move tool first puts the rail in a state
-      // where that tile is dark, which is what turns "this tile lit" back into the
-      // observation it was before the collapse: a tile that was not lit lights for a member
-      // of the brush group that is not the group's own identity.
+    test('E selects the eraser tile', async ({ page }) => {
       await page.keyboard.press('v');
-      await expectToolSelected(page, 'brush', false);
+      await expectToolSelected(page, 'eraser', false);
 
       await page.keyboard.press('e');
-      await expectToolSelected(page, 'brush');
+      await expectToolSelected(page, 'eraser');
       await expect(page.locator('#eraser-mode')).toBeVisible();
       await expect(page.locator('#brush-size'), 'the paint bar is not the one on screen').toHaveCount(0);
     });
 
     test('B selects the brush, and Shift+B cycles the whole brush family and wraps', async ({ page }) => {
-      // The cycle is `brush -> pencil -> color-replacement -> eraser -> brush`
+      // The cycle is `brush -> pencil -> color-replacement -> brush`
       // (`brushGroup` in AppKeyboardShortcuts). The paint bar mints its control ids from
       // the tool name (`${toolName}-size`), and Color Replacement and the Eraser each render
       // a real bar of their own (`color-replacement-*` / `eraser-*` ids), so every step of the
@@ -275,10 +259,18 @@ test.describe('Keyboard shortcuts', () => {
       await expect(page.locator('#pencil-size')).toHaveCount(0);
 
       await page.keyboard.press('Shift+b');
-      await expect(page.locator('#eraser-mode'), 'color replacement -> eraser').toBeVisible();
+      await expect(page.locator('#brush-size'), 'color replacement -> brush wrap').toBeVisible();
+    });
 
-      await page.keyboard.press('Shift+b');
-      await expect(page.locator('#brush-size'), 'the cycle wraps back to the brush').toBeVisible();
+    test('Shift+E cycles the eraser family', async ({ page }) => {
+      await page.keyboard.press('e');
+      await expect(page.locator('#eraser-mode')).toBeVisible();
+
+      await page.keyboard.press('Shift+e');
+      await expect(page.locator('#magic-eraser-tolerance')).toBeVisible();
+
+      await page.keyboard.press('Shift+e');
+      await expect(page.locator('#eraser-mode'), 'the eraser family wraps').toBeVisible();
     });
 
     test('G selects the paint bucket and Shift+G the gradient', async ({ page }) => {
@@ -457,7 +449,7 @@ test.describe('Keyboard shortcuts', () => {
       // flips it, and that flip does not focus: the first click enters edit mode and the
       // second is what the browser focuses.
       const row = page.getByTitle('Drag to reorder').first();
-      const name = row.locator('div.flex-1 > span');
+      const name = row.getByTestId('layer-name');
       await name.click();
       await name.click();
       await page.keyboard.type('v');

@@ -40,8 +40,8 @@ const RectangularSelection: React.FC<{}> = () => {
   const fixedHeight = args.fixedHeight ?? 100;
 
   const handleStyleChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const style = event.target.value;
-    if (isMarqueeStyle(style)) patchToolArgs('rectangular-selection', { style });
+    const nextStyle = event.target.value;
+    if (isMarqueeStyle(nextStyle)) patchToolArgs('rectangular-selection', { style: nextStyle });
   };
 
   const handleNumberChange = (key: 'fixedRatio' | 'fixedWidth' | 'fixedHeight', value: string) => {
@@ -68,9 +68,9 @@ const RectangularSelection: React.FC<{}> = () => {
       <label htmlFor="rectangular-selection-style" className={FIELD_CLASS}>
         Style
         <select id="rectangular-selection-style" className={SELECT_CLASS} value={style} onChange={handleStyleChange}>
-          {MARQUEE_STYLES.map((style) => (
-            <option key={style.value} value={style.value}>
-              {style.label}
+          {MARQUEE_STYLES.map((marqueeStyle) => (
+            <option key={marqueeStyle.value} value={marqueeStyle.value}>
+              {marqueeStyle.label}
             </option>
           ))}
         </select>

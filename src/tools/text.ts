@@ -5,6 +5,49 @@ import type { CreatorToolParams } from './toolProcessors.ts';
 import type { Ctx2D, RectXYSorted } from '../contexts/general-types.ts';
 import type { LayerId } from '../contexts/layer-types.ts';
 
+/** The app's explicit Type font choices, shared by the picker and its tests. */
+export const FONT_FAMILIES = [
+  'Arial',
+  'Helvetica',
+  'Times New Roman',
+  'Courier New',
+  'Verdana',
+  'Georgia',
+  'Palatino',
+  'Garamond',
+  'Comic Sans MS',
+  'Roboto',
+  'Impact',
+  'Trebuchet MS',
+  'Tahoma',
+  'Brush Script MT',
+  'Inter',
+  'Poppins',
+  'Montserrat',
+  'Open Sans',
+  'Lato',
+  'Source Sans Pro',
+  'Nunito',
+  'Merriweather',
+  'Playfair Display',
+  'Raleway',
+  'Oswald',
+  'Roboto Slab',
+  'Ubuntu',
+  'PT Sans',
+  'Work Sans',
+  'Muli',
+  'Quicksand',
+  'DM Sans',
+  'Space Grotesk',
+  'Outfit',
+  'Plus Jakarta Sans',
+  'Manrope',
+  'Instrument Sans',
+  'Syne',
+  'Clash Display',
+] as const;
+
 /**
  * Adobe's `CharacterStyle.size` is `0.01..1296` "in pixels for a 72ppi document"
  * (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle). The bound
@@ -154,6 +197,8 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
+  /** Rotation of the text box in degrees, around its centre. */
+  angle?: number;
   /** True only for a newly placed placeholder that has not received user input yet. */
   placeholderUntouched?: boolean;
   /** Present only while re-entering this committed layer; never persisted in source settings. */
@@ -778,6 +823,12 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOp
   // the only context-touching function left open, and it is the one that runs most often.
   ctx.save();
   try {
+    if (args.angle) {
+      const center = { x: (rect.x1 + rect.x2) / 2, y: (rect.y1 + rect.y2) / 2 };
+      ctx.translate(center.x, center.y);
+      ctx.rotate((args.angle * Math.PI) / 180);
+      ctx.translate(-center.x, -center.y);
+    }
     renderTextInto(ctx, style, kind, text, rect, options);
   } finally {
     ctx.restore();
@@ -882,14 +933,19 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
   // overlay wearing the Type tool's typography every time a box was recomputed. This is the same
   // leak `resetOverlayAlpha` exists for, and unlike that helper it was not closed.
   return withTextStyle(ctx as Ctx2D, style, () => {
-    const spacing = trackingPx(style);
-    // The widest WRAPPED line for a paragraph box, and the widest explicit line for a point box —
-    // which is the same number as before this revision, because an infinite wrap width leaves the
-    // layout a plain split on hard breaks.
-    const wrapWidth = kind === 'paragraph' && args.rect ? textWrapWidth(args.rect) : Infinity;
-    const { lines } = layoutText(ctx as Ctx2D, style, args.text ?? '', wrapWidth);
+    // The overlay context may be DPR-scaled (ctx.scale(dpr, dpr)). Reset transform to identity
+    // so measureText returns document-pixel widths, not device-pixel widths.
+    const currentTransform = ctx.getTransform();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    try {
+      const spacing = trackingPx(style);
+      const wrapWidth = kind === 'paragraph' && args.rect ? textWrapWidth(args.rect) : Infinity;
+      const { lines } = layoutText(ctx as Ctx2D, style, args.text ?? '', wrapWidth);
 
-    return lines.reduce((widest, line) => Math.max(widest, inkWidth(ctx as Ctx2D, line, spacing)), 0);
+      return lines.reduce((widest, line) => Math.max(widest, inkWidth(ctx as Ctx2D, line, spacing)), 0);
+    } finally {
+      ctx.setTransform(currentTransform);
+    }
   });
 }
 
@@ -1067,13 +1123,50 @@ export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTe
   };
 }
 
+const textRasterCache = new Map<string, OffscreenCanvas>();
+
+export function clearTextRasterCache(): void {
+  textRasterCache.clear();
+}
+
+function textCacheKey(size: { width: number; height: number }, args: TextToolArgs): string {
+  return JSON.stringify({
+    size,
+    text: args.text ?? '',
+    kind: args.kind ?? 'point',
+    align: args.align,
+    bold: args.bold,
+    color: args.color,
+    fontFamily: args.fontFamily,
+    fontSize: args.fontSize,
+    italic: args.italic,
+    lineHeight: args.lineHeight,
+    allCaps: args.allCaps ?? false,
+    smallCaps: args.smallCaps ?? false,
+    strikethrough: args.strikethrough ?? false,
+    tracking: args.tracking ?? 0,
+    underline: args.underline ?? false,
+    angle: args.angle ?? 0,
+    rect: args.rect ?? null,
+  });
+}
+
 export const text =
   ({ size }: CreatorToolParams) =>
   (args: TextToolArgs) => {
+    const key = textCacheKey(size, args);
+    const cached = textRasterCache.get(key);
+    if (cached) return [cached];
+
     const canvas = new OffscreenCanvas(size.width, size.height);
-    const ctx = canvas.getContext('2d')!;
+    // A platform may expose OffscreenCanvas without a usable 2D context. Returning the allocated
+    // blank canvas keeps the creator total and lets the caller preserve the layer rather than
+    // throwing from a force-unwrap during replay or export.
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return [canvas];
 
     renderText(ctx, args);
 
+    textRasterCache.set(key, canvas);
     return [canvas];
   };

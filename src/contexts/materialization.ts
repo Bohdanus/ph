@@ -14,6 +14,7 @@ import {
   scaleVectorArgs,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
+import { toOwnedBitmap } from './materialization-bitmap.ts';
 
 export type MaterializationRequest = Readonly<{
   documentId: string;
@@ -176,11 +177,6 @@ async function sourceBitmap(
   }
 }
 
-async function toOwnedBitmap(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<BitmapSource> {
-  if (globalThis.createImageBitmap) return globalThis.createImageBitmap(canvas);
-  return canvas;
-}
-
 /**
  * An unevaluated copy of `bitmap` at `size`, owned by the caller.
  *
@@ -214,9 +210,6 @@ export function createMaterializationKey(layer: DurableReplayLayer, request: Mat
     operationSetRevision: request.operationSetRevision,
     operations,
     pos: layer.snapshot.pos,
-    opacity: layer.snapshot.opacity,
-    blendMode: layer.snapshot.blendMode,
-    visible: layer.snapshot.visible,
     affineRevision: operations.filter(
       (operation) => (operation as { kind?: string }).kind === 'apply-affine-transform'
     ),

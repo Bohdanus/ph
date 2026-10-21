@@ -11,9 +11,11 @@ import {
 } from '../StoreContext.tsx';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
+import * as durableCompositor from '../durable-compositor.ts';
 import { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION, type ActionType } from '../../util/constants.ts';
 import type { DurableDocument, DurableOperation } from '../history-model.ts';
 import { getAssetRegistry } from '../asset-registry.ts';
+import type { ToolArgs } from '../tool-types.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -101,7 +103,7 @@ function renderWithProbe() {
 }
 
 describe('StoreContext durable conversion boundary', () => {
-  it('dispatching an unsupported tool does not throw and marks the durable state unavailable', () => {
+  it('dispatching an unsupported tool does not throw and marks the durable state partial', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     const baseline = baselineItem();
@@ -142,10 +144,10 @@ describe('StoreContext durable conversion boundary', () => {
 
     expect(threw).toBe(false);
     const after = getProbe().store;
-    // The failed conversion explicitly marks the durable state unavailable
+    // The failed conversion explicitly marks the durable state partial
     // rather than silently presenting a partially converted document as current.
     expect(after.durableDocument).toBeNull();
-    expect(after.durableStatus).toBe('unavailable');
+    expect(after.durableStatus).toBe('partial');
     expect(after.durableDiagnostics).toHaveLength(1);
     expect(after.durableDiagnostics[0]).toMatchObject({
       historyId: 'pen-edit',
@@ -154,6 +156,64 @@ describe('StoreContext durable conversion boundary', () => {
       code: 'unsupported-history-feature',
     });
     expect(after.durableDiagnostics[0]?.message).toMatch(/pen/);
+  });
+
+  it('marks an enabled duplicate-id edit partial instead of publishing a false-current shadow', () => {
+    const { getProbe, dispatch } = renderWithProbe();
+
+    act(() => {
+      withSilencedConsole(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: {
+            documentId: 'doc-duplicate',
+            updates: {},
+            history: [
+              baselineItem(),
+              toolItem('shared-id', 'blur', { radius: 4 }),
+              toolItem('shared-id', 'color', { grayscale: 0.5 }),
+              toolItem('after-duplicate', 'color', { grayscale: 0.25 }),
+            ],
+          },
+        });
+      });
+    });
+
+    const store = getProbe().store;
+    expect(store.durableStatus).toBe('partial');
+    expect(store.durableDocument).toBeNull();
+    expect(store.durableDiagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'error', code: 'invalid-history-entry' }),
+    ]);
+  });
+
+  it('keeps disabled unsupported rows non-blocking at the StoreContext boundary', () => {
+    const { getProbe, dispatch } = renderWithProbe();
+    const baseline = baselineItem();
+    const disabledPen = { ...toolItem('disabled-pen', 'pen'), disabled: true };
+    const blur = toolItem('after-disabled', 'blur', { radius: 4 });
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-disabled-row',
+          history: [baseline, disabledPen, blur],
+          updates: {},
+        },
+      });
+    });
+
+    const store = getProbe().store;
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument?.history.map((entry) => entry.id)).toEqual(['after-disabled']);
+    expect(store.durableDiagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'disabled-pen',
+        severity: 'error',
+        code: 'unsupported-history-feature',
+      }),
+    ]);
   });
 
   it('recovers durable conversion via a subsequent valid document replacement', () => {
@@ -233,9 +293,9 @@ describe('StoreContext durable conversion boundary', () => {
     expect(threw).toBe(false);
     const store = getProbe().store;
     // The malformed entry produces a diagnostic and is skipped, which marks
-    // the durable state unavailable rather than presenting a partial document.
+    // the durable state partial rather than presenting a partial document.
     expect(store.durableDocument).toBeNull();
-    expect(store.durableStatus).toBe('unavailable');
+    expect(store.durableStatus).toBe('partial');
     expect(store.durableDiagnostics).toHaveLength(1);
     expect(store.durableDiagnostics[0]).toMatchObject({
       historyId: 'malformed-edit',
@@ -244,6 +304,88 @@ describe('StoreContext durable conversion boundary', () => {
       code: 'invalid-history-entry',
     });
     expect(store.durableDiagnostics[0]?.message).toMatch(/Non-plain/);
+  });
+});
+
+describe('StoreContext durable presentation publication', () => {
+  it('refuses durable presentation as a whole when the converted document carries a legacy-tool source', async () => {
+    const { disposalsFor, restore } = trackDisposals();
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    let unmount: (() => void) | undefined;
+
+    try {
+      const rendered = renderWithProbe();
+      const { getProbe, dispatch, store } = rendered;
+      unmount = rendered.unmount;
+
+      const penLayer = {
+        ...createBlankLayer(layerId),
+        source: {
+          kind: 'tool' as const,
+          args: { toolName: 'pen' } as ToolArgs,
+          pos: { x: 0, y: 0, width: 100, height: 80 },
+        },
+      };
+      const baseline = {
+        ...baselineItem('baseline-pen'),
+        documentSource: { layers: { [layerId]: penLayer }, size: initialSize, frame: defaultFrame },
+      };
+
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: {
+            documentId: 'doc-pen',
+            history: [baseline],
+            historyIndex: 0,
+            updates: { totalSize: initialSize },
+          },
+        });
+      });
+
+      const converted = getProbe().store;
+      expect(converted.durableStatus).toBe('current');
+      expect(converted.durableDocument).not.toBeNull();
+      expect((converted.durableDocument as DurableDocument).baseline.layers[0]?.source.kind).toBe('legacy-tool');
+
+      act(() => {
+        dispatch()({
+          type: 'APPLY_HISTORY_REPLAY',
+          payload: {
+            updates: {},
+            timeline: { entries: [baseline], cursor: 0, branchRevision: 0 },
+          },
+        });
+      });
+
+      expect(getProbe().store.renderSelector.source).toBe('pending');
+
+      let outcome: Awaited<ReturnType<StoreData['publishDurableNavigationPresentation']>>;
+      await act(async () => {
+        outcome = await store().publishDurableNavigationPresentation();
+      });
+
+      expect(outcome!).toMatchObject({ status: 'legacy-fallback', reason: 'unsupported-source', cursor: -1 });
+
+      const after = getProbe().store;
+      expect(after.durableStatus).toBe('current');
+      expect(after.durablePresentation).toMatchObject({
+        status: 'legacy-fallback',
+        reason: 'unsupported-source',
+        cursor: -1,
+      });
+      expect(after.renderSelector.source).toBe('legacy');
+      expect(after.durableRenderProjection).toBeNull();
+      expect(compose).not.toHaveBeenCalled();
+
+      unmount();
+      unmount = undefined;
+      expect(disposalsFor('doc-pen')).toBe(1);
+    } finally {
+      unmount?.();
+      compose.mockRestore();
+      restore();
+    }
   });
 });
 
@@ -601,11 +743,16 @@ describe('StoreContext removed durable replay publication surface', () => {
 
 describe('StoreContext DurableDocumentStatus contract', () => {
   // A `Record` keyed by the union, not `satisfies DurableDocumentStatus[]`. The array form is a
-  // ONE-WAY check: it rejects a member that is not in the union, but adding a fourth member to the
+  // ONE-WAY check: it rejects a member that is not in the union, but adding another member to the
   // union leaves this suite silently non-exhaustive and green. Keying by the union makes that a
   // COMPILE error, which is the property the deleted exhaustiveness test only promised — and unlike
   // a `toEqual` on this object, it cannot be satisfied by editing the expectation to match.
-  const ALL_STATUSES: Record<DurableDocumentStatus, true> = { current: true, stale: true, unavailable: true };
+  const ALL_STATUSES: Record<DurableDocumentStatus, true> = {
+    current: true,
+    partial: true,
+    stale: true,
+    unavailable: true,
+  };
   const statuses = Object.keys(ALL_STATUSES) as DurableDocumentStatus[];
 
   it.each(statuses)('stores structured diagnostics for the %s status', (status) => {
@@ -682,7 +829,7 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     expect(store.durableDocument).toBe(durableDocument);
   });
 
-  it('keeps unavailable rather than downgrading to stale when a selection commits after a failure', () => {
+  it('keeps partial rather than downgrading to stale when a selection commits after a conversion diagnostic', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     act(() => {
@@ -691,7 +838,7 @@ describe('StoreContext DurableDocumentStatus contract', () => {
         payload: { historyItem: toolItem('pen-edit', 'pen') },
       });
     });
-    expect(getProbe().store.durableStatus).toBe('unavailable');
+    expect(getProbe().store.durableStatus).toBe('partial');
 
     act(() => {
       dispatch()({
@@ -713,7 +860,7 @@ describe('StoreContext DurableDocumentStatus contract', () => {
       });
     });
 
-    expect(getProbe().store.durableStatus).toBe('unavailable');
+    expect(getProbe().store.durableStatus).toBe('partial');
   });
 });
 

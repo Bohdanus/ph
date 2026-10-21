@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { BurnToolArea } from '../BurnToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { DodgeBurnToolArgs } from '../../../tools/dodgeBurn.ts';
+import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
@@ -155,6 +156,7 @@ type ToolLayerCall = { id?: string; toolArgs: { points: { x: number; y: number }
 
 describe('BurnToolArea', () => {
   beforeEach(() => {
+    resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
     createLayerFromToolMock.mockClear();

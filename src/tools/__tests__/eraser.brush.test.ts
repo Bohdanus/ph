@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { eraser, ERASER_HARDNESS_DEFAULT, type EraserToolArgs } from '../eraser.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
-import { BRUSH_HARDNESS_MAX, tipAlphaAt } from '../../util/brush-engine.ts';
+import {
+  BRUSH_HARDNESS_DEFAULT,
+  BRUSH_HARDNESS_MAX,
+  BRUSH_HARDNESS_MIN,
+  BRUSH_OPACITY_DEFAULT,
+  BRUSH_SIZE_DEFAULT,
+  BRUSH_SPACING_DEFAULT,
+  tipAlphaAt,
+} from '../../util/brush-engine.ts';
 import { defaultSettings } from '../settings.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
 import type { Point } from '../../contexts/general-types.ts';
@@ -185,7 +193,7 @@ describe('the Brush eraser tip', () => {
       return originalGetContext.call(this);
     });
 
-    let alpha = new Uint8ClampedArray(0) as ReturnType<typeof erasedAlpha>;
+    let alpha: ReturnType<typeof erasedAlpha>;
     try {
       alpha = erasedAlpha(
         eraserArgs({
@@ -287,5 +295,195 @@ describe('the seeded eraser defaults', () => {
     expect(seeded.hardness).toBe(ERASER_HARDNESS_DEFAULT);
     expect(ERASER_HARDNESS_DEFAULT).toBeLessThan(100);
     expect(partial(diameter(alpha)).length).toBeGreaterThan(2);
+  });
+});
+
+describe('the Brush eraser tip across the Hardness range', () => {
+  // `diameter` reads the horizontal slice through the click's centre: the first sample is the dead
+  // centre and the last is past the tip radius, so every hardness below shares one probe row.
+
+  it('erases the centre and leaves the far rim untouched at every Hardness 0–100', () => {
+    // The eraser multiplies straight-alpha, so at Opacity 1 the centre always reaches 0 and the
+    // half-open disc always stops before the buffer edge. The file pinned this only at 50 and 100;
+    // sampling the whole range pins it as a property of the falloff, not of two lucky numbers.
+    for (let hardness = BRUSH_HARDNESS_MIN; hardness <= BRUSH_HARDNESS_MAX; hardness += 5) {
+      const alpha = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: 21, hardness, alpha: 1 }));
+      expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(0);
+      expect(alphaAt(alpha, CENTRE + Math.ceil(21 / 2), CENTRE)).toBe(255);
+    }
+  });
+
+  it('shrinks the partial-alpha rim monotonically as Hardness rises 0 → 100, never growing it', () => {
+    // The gap this closes: the file only asserted softness at 50 and 100. Sampling the whole range
+    // proves the soft band is `tipAlphaAt` and not noise — more hardness means fewer partial pixels,
+    // and the count can only step down as the hard core steals them from the falloff band.
+    const counts: number[] = [];
+    for (let hardness = BRUSH_HARDNESS_MIN; hardness <= BRUSH_HARDNESS_MAX; hardness += 5) {
+      const alpha = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: 21, hardness, alpha: 1 }));
+      counts.push(partial(diameter(alpha)).length);
+    }
+
+    expect(counts[0]).toBeGreaterThan(0);
+    expect(counts[counts.length - 1]).toBe(0);
+    for (let i = 1; i < counts.length; i++) {
+      expect(counts[i]).toBeLessThanOrEqual(counts[i - 1]);
+    }
+  });
+
+  it('reads fully soft at Hardness 0 and fully hard at Hardness 100, the controls a control', () => {
+    const soft = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: 21, hardness: BRUSH_HARDNESS_MIN, alpha: 1 }));
+    const hard = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: 21, hardness: BRUSH_HARDNESS_MAX, alpha: 1 }));
+
+    // 0% hardness has no hard core: every covered pixel is falloff except the dead centre.
+    expect(alphaAt(soft, CENTRE, CENTRE)).toBe(0);
+    expect(partial(diameter(soft)).length).toBeGreaterThan(0);
+
+    // 100% hardness is the control: the disc is solid, so no pixel on the diameter is in-between.
+    expect(partial(diameter(hard)).length).toBe(0);
+  });
+
+  it('agrees with the shared falloff at Hardness 0 and 100, not only at 50', () => {
+    const tip = 21;
+    const radius = tip / 2;
+    for (const hardness of [BRUSH_HARDNESS_MIN, BRUSH_HARDNESS_MAX]) {
+      const alpha = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: tip, hardness, alpha: 1 }));
+
+      for (let offset = 0; offset <= Math.floor(tip / 2); offset++) {
+        const expected = 255 * (1 - tipAlphaAt(offset, radius, hardness));
+        expect(alphaAt(alpha, CENTRE + offset, CENTRE)).toBeCloseTo(expected, 0);
+      }
+    }
+  });
+});
+
+describe('non-finite slider inputs are sanitised to Photoshop defaults', () => {
+  // `clampBrushTipSettings` is the engine's floor for non-finite values: NaN and Infinity collapse to
+  // the Photoshop default rather than poisoning the pixel loop with `Math.max(NaN)`, which would
+  // silently stamp nothing — a tool that looks broken instead of one that throws. Brush mode is the
+  // contrast to the legacy paths pinned as `it.fails` below: here the sanitiser runs, so a non-finite
+  // slider must produce a buffer byte-for-byte identical to its explicit fallback.
+
+  it('sanitises a non-finite lineWidth to the engine default size', () => {
+    for (const value of [Number.NaN, Infinity, -Infinity]) {
+      const sanitised = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: value }));
+      const fallback = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: BRUSH_SIZE_DEFAULT }));
+
+      expect(Array.from(sanitised)).toEqual(Array.from(fallback));
+      expect(alphaAt(sanitised, CENTRE, CENTRE)).toBe(0);
+      expect(alphaAt(sanitised, CENTRE + Math.ceil(21 / 2), CENTRE)).toBe(255);
+    }
+  });
+
+  it('sanitises a non-finite Opacity to the engine default', () => {
+    for (const value of [Number.NaN, Infinity, -Infinity]) {
+      const sanitised = erasedAlpha(eraserArgs({ mode: 'brush', alpha: value }));
+      const fallback = erasedAlpha(eraserArgs({ mode: 'brush', alpha: BRUSH_OPACITY_DEFAULT }));
+
+      expect(Array.from(sanitised)).toEqual(Array.from(fallback));
+    }
+  });
+
+  it('sanitises a non-finite Hardness to the engine default', () => {
+    for (const value of [Number.NaN, Infinity, -Infinity]) {
+      const sanitised = erasedAlpha(eraserArgs({ mode: 'brush', hardness: value }));
+      const fallback = erasedAlpha(eraserArgs({ mode: 'brush', hardness: BRUSH_HARDNESS_DEFAULT }));
+
+      expect(Array.from(sanitised)).toEqual(Array.from(fallback));
+    }
+  });
+
+  it('sanitises a non-finite Spacing to the engine default', () => {
+    // Spacing only moves dabs along a path, so this needs a stroke long enough to hold more than one
+    // dab — a lone click collapses to a single centre regardless of spacing.
+    const points = [
+      { x: 4, y: CENTRE },
+      { x: 20, y: CENTRE },
+      { x: 36, y: CENTRE },
+    ];
+    for (const value of [Number.NaN, Infinity, -Infinity]) {
+      const sanitised = erasedAlpha(eraserArgs({ mode: 'brush', points, spacing: value }));
+      const fallback = erasedAlpha(eraserArgs({ mode: 'brush', points, spacing: BRUSH_SPACING_DEFAULT }));
+
+      expect(Array.from(sanitised)).toEqual(Array.from(fallback));
+    }
+  });
+});
+
+describe('zero-opacity and zero-size brush tips', () => {
+  it('is a no-op at Opacity 0 and short-circuits before reading the raster', () => {
+    const alpha = erasedAlpha(eraserArgs({ mode: 'brush', alpha: 0, lineWidth: 21, hardness: 50 }));
+
+    // `!(opacity > 0)` bails out before `getImageData`, so the layer is left exactly as it came in —
+    // a real no-op on the alpha channel, not a zero-coverage stamp that still touches the buffer.
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(255);
+    expect(alphaAt(alpha, CENTRE + Math.ceil(21 / 2), CENTRE)).toBe(255);
+    expect(RecordingOffscreenCanvas.instances.at(-1)!.ctx.getImageData).not.toHaveBeenCalled();
+  });
+
+  it('floors a zero lineWidth to a one-pixel tip rather than vanishing', () => {
+    const alpha = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: 0, hardness: 50, alpha: 1 }));
+
+    // `clampBrushTipSettings` floors size at BRUSH_SIZE_MIN (1), so a zero tip still stamps exactly one
+    // pixel at its centre and covers no neighbour — the disc collapses to a point, not to nothing.
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(0);
+    expect(alphaAt(alpha, CENTRE + 1, CENTRE)).toBe(255);
+  });
+});
+
+describe('a single-point stroke (click behaviour)', () => {
+  it('lays down one bounded dab, not a canvas-filling zero-length stroke', () => {
+    const alpha = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: 21, hardness: 50, alpha: 1 }));
+
+    // `brushDabCenters` emits one centre for one point, so a click is a single 21px stamp: the tip
+    // covers the centre and the opposite corners of the document are untouched — the legacy
+    // `ctx.stroke()` could draw both or neither, never exactly the disc.
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(0);
+    expect(alphaAt(alpha, 0, 0)).toBe(255);
+    expect(alphaAt(alpha, SIZE.width - 1, SIZE.height - 1)).toBe(255);
+  });
+
+  it('matches a degenerate two-point drag whose points never travel', () => {
+    // A click and a drag whose start equals its end collapse to the same single centre through
+    // `brushDabCenters`, which skips duplicate points — two samples of input, one pixel of erase.
+    const click = erasedAlpha(
+      eraserArgs({ mode: 'brush', lineWidth: 21, hardness: 50, alpha: 1, points: [{ x: CENTRE, y: CENTRE }] })
+    );
+    const stalled = erasedAlpha(
+      eraserArgs({
+        mode: 'brush',
+        lineWidth: 21,
+        hardness: 50,
+        alpha: 1,
+        points: [
+          { x: CENTRE, y: CENTRE },
+          { x: CENTRE, y: CENTRE },
+        ],
+      })
+    );
+
+    expect(Array.from(click)).toEqual(Array.from(stalled));
+  });
+});
+
+describe('known limitations (it.fails tripwires)', () => {
+  it.fails('sanitises a non-finite Opacity in Pencil mode, as Brush mode does', () => {
+    erasedAlpha(eraserArgs({ mode: 'pencil', alpha: Number.NaN, lineWidth: 21 }));
+    const ctx = RecordingOffscreenCanvas.instances.at(-1)!.ctx as unknown as { globalAlpha: number };
+
+    // Brush mode clamps opacity through `clampBrushTipSettings` before any multiplier runs; Pencil
+    // mode forwards it straight to `ctx.globalAlpha`, where a real canvas clamps NaN to 0 and the
+    // stroke vanishes. It should fall back to a finite opacity instead.
+    expect(Number.isFinite(ctx.globalAlpha)).toBe(true);
+  });
+
+  it.fails('floors a non-finite Size in Block mode to a finite stamp, as Brush mode does', () => {
+    erasedAlpha(eraserArgs({ mode: 'block', alpha: 1, lineWidth: Number.NaN }));
+    const ctx = RecordingOffscreenCanvas.instances.at(-1)!.ctx as unknown as { fillRect: ReturnType<typeof vi.fn> };
+
+    // `drawBlockStamps` floors size with `Math.max(1, args.lineWidth)`, but `Math.max(1, NaN)` is NaN,
+    // so a non-finite size stamps nothing. It should floor to a finite, 1px-safe value.
+    const [, , width, height] = ctx.fillRect.mock.calls[0] as [number, number, number, number];
+    expect(Number.isFinite(width)).toBe(true);
+    expect(Number.isFinite(height)).toBe(true);
   });
 });

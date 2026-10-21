@@ -54,8 +54,13 @@ const INJECTED_TEXT = 'Injected fault: 2D context unavailable';
 
 interface Harness {
   police: ConsolePolice;
-  emitConsole: (type: 'error' | 'warning', text: string, location?: { url: string; lineNumber: number }) => void;
+  emitConsole: (
+    type: 'error' | 'warning' | 'log' | 'info',
+    text: string,
+    location?: { url: string; lineNumber: number }
+  ) => void;
   emitPageError: (error: Error) => void;
+  emitRequestFailed: (url: string, errorText: string | null, failureIsNull?: boolean) => void;
 }
 
 /**
@@ -87,6 +92,13 @@ function harness(): Harness {
     },
     emitPageError: (error) => {
       for (const handler of listeners['pageerror'] ?? []) handler(error as never);
+    },
+    emitRequestFailed: (url, errorText, failureIsNull = false) => {
+      const request = {
+        url: () => url,
+        failure: () => (failureIsNull ? null : { errorText }),
+      };
+      for (const handler of listeners['requestfailed'] ?? []) handler(request as never);
     },
   };
 }
@@ -138,6 +150,12 @@ describe('isAcceptedConsoleError', () => {
     ).toBe(true);
     expect(isAcceptedConsoleError({ text, location: APP_JS })).toBe(false);
   });
+
+  it('rejects a urlPattern rule when the entry has no location, since a locationless match cannot claim a URL', () => {
+    const text = 'Failed to load resource: the server responded with a status of 404 (Not Found)';
+    expect(isAcceptedConsoleError({ text })).toBe(false);
+    expect(isAcceptedConsoleError({ text, location: { url: 'http://localhost:5173/', lineNumber: 0 } })).toBe(false);
+  });
 });
 
 describe('ACCEPTED_CONSOLE_ERRORS', () => {
@@ -157,6 +175,12 @@ describe('ACCEPTED_CONSOLE_ERRORS', () => {
       'Failed to load resource: the server responded with a status of 404 (Not Found)',
       'color-sampler-cap-reached',
     ]);
+  });
+
+  it('has no duplicate match strings, since a duplicate is an unaccounted widening', () => {
+    const matches = ACCEPTED_CONSOLE_ERRORS.map((e) => e.match);
+    const unique = new Set(matches);
+    expect(unique.size).toBe(matches.length);
   });
 });
 
@@ -252,5 +276,262 @@ describe('ConsolePolice.assertClean', () => {
     const info = testInfo();
     expect(() => police.assertClean(info)).toThrow();
     expect(info.attach).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * P3 — page errors record no location. The `pageerror` event hands Back a real
+   * `Error` whose `.stack` carries URL and line number, but the handler at
+   * `console-police.ts:206` calls `record(target, String(error))` with no location
+   * argument. Console errors get a `{ url, lineNumber }` pair; page errors get
+   * `undefined`. This is a diagnostic gap: a console error names its call site,
+   * a page error names only its text.
+   *
+   * This test pins the current behaviour so that a future change which starts
+   * extracting location from the stack cannot silently do only half the job —
+   * it has to update this assertion too, and the gap gets reviewed rather than
+   * carried forward.
+   *
+   * The fixture error deliberately carries a stack string so the test fails if
+   * the source starts reading it: `String(error)` stays the bare message.
+   */
+  it('records a page error without a location in the report, unlike a console error', () => {
+    const { police, emitPageError } = harness();
+    const error = new Error('page boom');
+    error.stack = 'Error: page boom\n    at http://localhost:5173/src/app.tsx:42:17';
+    emitPageError(error);
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+
+    // The report is attached BEFORE the assertions throw, so it is readable even
+    // on a failure path.
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      pageErrors: Array<{ text: string; location?: { url: string; lineNumber: number } }>;
+    };
+    const pageError = report.pageErrors[0];
+    expect(pageError).toBeDefined();
+    expect(pageError.text).toBe('Error: page boom');
+    expect(pageError).not.toHaveProperty('location');
+
+    // Contrast with a console error: its location IS recorded. A non-allowlisted
+    // text makes `assertClean` throw (so the report is only on the attach mock,
+    // not as a resolved value), but the report itself is still written first.
+    const { police: police2, emitConsole } = harness();
+    emitConsole('error', 'console boom', { url: 'http://localhost:5173/src/app.tsx', lineNumber: 42 });
+    const info2 = testInfo();
+    expect(() => police2.assertClean(info2)).toThrow();
+
+    const attach2 = info2.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report2 = JSON.parse(attach2.mock.calls[0][1].body) as {
+      consoleErrors: Array<{ text: string; location?: { url: string; lineNumber: number } }>;
+    };
+    expect(report2.consoleErrors[0]).toBeDefined();
+    expect(report2.consoleErrors[0].location).toEqual({
+      url: 'http://localhost:5173/src/app.tsx',
+      lineNumber: 42,
+    });
+  });
+
+  it('deduplicates page errors by message alone, since they carry no location', () => {
+    // `entryKey` keys on text + location + lineNumber. Page errors have no
+    // location, so two identical page errors collapse to one entry with count 2
+    // — the same deduplication console errors get when their location is absent.
+    // This pins that page errors cannot be split by location, since there is none.
+    const { police, emitPageError } = harness();
+    emitPageError(new Error('same page error'));
+    emitPageError(new Error('same page error'));
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      pageErrors: Array<{ text: string; count: number; location?: unknown }>;
+    };
+    expect(report.pageErrors).toEqual([{ text: 'Error: same page error', count: 2 }]);
+  });
+
+  it('FAILS when both a console error and a page error occur during the same test', () => {
+    const { police, emitConsole, emitPageError } = harness();
+    emitConsole('error', 'console defect', APP_JS);
+    emitPageError(new Error('page defect'));
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      consoleErrors: { text: string; count: number; location: { url: string; lineNumber: number } }[];
+      pageErrors: { text: string; count: number }[];
+    };
+    expect(report.consoleErrors).toEqual([{ text: 'console defect', count: 1, location: APP_JS }]);
+    expect(report.pageErrors).toEqual([{ text: 'Error: page defect', count: 1 }]);
+  });
+
+  it('records a console error with no URL as an entry without a location', () => {
+    const { police, emitConsole } = harness();
+    emitConsole('error', 'a defect with no url');
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      consoleErrors: Array<{ text: string; location?: unknown }>;
+    };
+    expect(report.consoleErrors[0].text).toBe('a defect with no url');
+    expect(report.consoleErrors[0]).not.toHaveProperty('location');
+  });
+
+  it('truncates console error text to 300 chars', () => {
+    const { police, emitConsole } = harness();
+    const longText = 'A'.repeat(500);
+    emitConsole('error', longText, APP_JS);
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      consoleErrors: Array<{ text: string }>;
+    };
+    expect(report.consoleErrors[0].text).toHaveLength(300);
+    expect(report.consoleErrors[0].text).toBe('A'.repeat(300));
+  });
+
+  it('truncates page error text to 300 chars', () => {
+    const { police, emitPageError } = harness();
+    emitPageError(new Error('B'.repeat(800)));
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      pageErrors: Array<{ text: string }>;
+    };
+    expect(report.pageErrors[0].text).toHaveLength(300);
+    expect(report.pageErrors[0].text).toBe('Error: ' + 'B'.repeat(293));
+  });
+
+  it('truncates the request failure URL to 160 chars', () => {
+    const { police, emitRequestFailed } = harness();
+    const longUrl = 'http://localhost:5173/' + 'a'.repeat(200);
+    emitRequestFailed(longUrl, 'net::ERR_ABORTED');
+
+    const info = testInfo();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      police.assertClean(info);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(failures).toEqual([]);
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      requestFailures: Array<{ text: string }>;
+    };
+    expect(report.requestFailures).toHaveLength(1);
+    expect(report.requestFailures[0].text).toBe(`${longUrl.slice(0, 160)} :: net::ERR_ABORTED`);
+  });
+
+  it('deduplicates console warnings by text + location and counts them', () => {
+    const { police, emitConsole } = harness();
+    const warningLocation = { url: 'http://localhost:5173/src/app.tsx', lineNumber: 5 };
+    emitConsole('warning', 'deprecation: foo', warningLocation);
+    emitConsole('warning', 'deprecation: foo', warningLocation);
+    emitConsole('warning', 'deprecation: foo', warningLocation);
+
+    const info = testInfo();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      police.assertClean(info);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(failures).toEqual([]);
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      consoleWarnings: Array<{ text: string; count: number; location: { url: string; lineNumber: number } }>;
+    };
+    expect(report.consoleWarnings).toEqual([{ text: 'deprecation: foo', count: 3, location: warningLocation }]);
+  });
+
+  it('records and reports request failures without failing the test', () => {
+    const { police, emitRequestFailed } = harness();
+    emitRequestFailed('http://localhost:5173/api/data', 'net::ERR_CONNECTION_REFUSED');
+
+    const info = testInfo();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      police.assertClean(info);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(failures).toEqual([]);
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      requestFailures: Array<{ text: string }>;
+    };
+    expect(report.requestFailures).toHaveLength(1);
+    expect(report.requestFailures[0].text).toBe('http://localhost:5173/api/data :: net::ERR_CONNECTION_REFUSED');
+  });
+
+  it('uses "unknown" as errorText when request.failure() returns null', () => {
+    const { police, emitRequestFailed } = harness();
+    emitRequestFailed('http://localhost:5173/api/missing', null, true);
+
+    const info = testInfo();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      police.assertClean(info);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(failures).toEqual([]);
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      requestFailures: Array<{ text: string }>;
+    };
+    expect(report.requestFailures[0].text).toBe('http://localhost:5173/api/missing :: unknown');
+  });
+
+  it('ignores console messages of type log and info, recording neither as errors nor warnings', () => {
+    const { police, emitConsole } = harness();
+    emitConsole('log', 'a log message', APP_JS);
+    emitConsole('info', 'an info message', APP_JS);
+    emitConsole('error', 'a real error', APP_JS);
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      consoleErrors: Array<{ text: string }>;
+      consoleWarnings: unknown[];
+    };
+    expect(report.consoleWarnings).toEqual([]);
+    expect(report.consoleErrors).toEqual([{ text: 'a real error', count: 1, location: APP_JS }]);
+  });
+
+  it('keeps same text + same URL but different line numbers as separate entries', () => {
+    const { police, emitConsole } = harness();
+    const url = 'http://localhost:5173/src/app.ts';
+    emitConsole('error', 'same error', { url, lineNumber: 10 });
+    emitConsole('error', 'same error', { url, lineNumber: 20 });
+    emitConsole('error', 'same error', { url, lineNumber: 10 });
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      consoleErrors: Array<{ text: string; count: number; location: { url: string; lineNumber: number } }>;
+    };
+    expect(report.consoleErrors).toEqual([
+      { text: 'same error', count: 2, location: { url, lineNumber: 10 } },
+      { text: 'same error', count: 1, location: { url, lineNumber: 20 } },
+    ]);
   });
 });

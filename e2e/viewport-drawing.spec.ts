@@ -7,6 +7,7 @@ import {
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
+  toleranceFor,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
@@ -14,18 +15,27 @@ import { imageBoundsToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
-import {
-  DELIBERATE_OVERFLOW_CSS_PX,
-  LEGACY_FIXED_SLACK_CSS_PX,
-  MAX_BOX_DRIFT_CSS_PX,
-  toleranceFor,
-} from './helpers/viewport-tolerance';
 
 const VIEWPORTS = [
   { name: 'normal', width: 1280, height: 720 },
   { name: 'wide', width: 1600, height: 900 },
   { name: 'narrow', width: 900, height: 700 },
 ] as const;
+
+/**
+ * The fixed constant this test used before, kept ONLY as a ceiling the derived tolerance is
+ * asserted against. It is not the tolerance; see `expect(toleranceFor(...)).toBeLessThan`
+ * below. It is here so that a future edit which replaces the derived bound with a literal
+ * fails loudly instead of quietly re-widening the gate.
+ */
+const LEGACY_FIXED_SLACK_CSS_PX = 25;
+
+/**
+ * How far the canvas box may drift between the gesture and the capture that photographs it.
+ * Nothing: the two have to describe the same rectangle, and layout here is pixel-quantised,
+ * so anything above sub-pixel noise means the page was re-laid-out in between.
+ */
+const MAX_BOX_DRIFT_CSS_PX = 0.5;
 
 interface ViewportMeasurement {
   name: string;
@@ -186,7 +196,7 @@ test.describe('Viewport Drawing', () => {
    * NOT known: whether the remaining red runs are all that same drift, or a second
    * cause. The chain from screenshot to verdict is `waitForCanvasRedraw` (polls a
    * CDP screenshot for ink) then `getDarkPixelBounds` (thresholds that screenshot)
-   * then this file's derived `toleranceFor(box)` — 6.7-8.4px across the three
+   * then `toleranceFor(box)` — 6.7-8.4px across the three
    * windows, NOT the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
    * derived bound is asserted *against* and is never applied to anything. Nothing in
    * the chain records which step gave, so a red run does not yet say.
@@ -294,16 +304,16 @@ test.describe('Viewport Drawing', () => {
     // ---- NON-VACUITY CONTROL for the COMPARISON ITSELF. ----
     // A derived bound can be wrong in the direction that matters: too large, or computed
     // from a term that evaluates to zero. So the exact expression each assertion below uses
-    // is run against a stroke displaced by `DELIBERATE_OVERFLOW_CSS_PX` — 5x the widest
-    // tolerance above, and well past any plausible fit failure — and must reject it. This is the same shape as
+    // is run against a stroke displaced by 40 CSS px — 5x the widest tolerance above, and
+    // well past any plausible fit failure — and must reject it. This is the same shape as
     // the deliberate-overflow control in `e2e/no-document-overflow.spec.ts`: prove the
     // numbers notice, because "found nothing" and "measured nothing" are otherwise the
     // same result.
     for (const measurement of measurements) {
       const tolerance = toleranceFor(measurement.box);
       expect(
-        Math.abs(DELIBERATE_OVERFLOW_CSS_PX) > tolerance,
-        `${measurement.name}: the comparison cannot detect a ${DELIBERATE_OVERFLOW_CSS_PX}px displacement (tolerance ${tolerance.toFixed(2)}px)`
+        Math.abs(40) > tolerance,
+        `${measurement.name}: the comparison cannot detect a 40px displacement (tolerance ${tolerance.toFixed(2)}px)`
       ).toBe(true);
     }
 

@@ -7,8 +7,11 @@ import {
   applyHomography,
   differentiateHomography,
   homographyDeterminant,
+  homographyMagnitude,
   invertHomography,
   isInvertibleHomography,
+  projectiveDenominator,
+  projectiveRowScale,
   solveHomography,
   type Homography,
 } from '../homography.ts';
@@ -266,6 +269,234 @@ describe('homography', () => {
         dvDx: 0,
         dvDy: 1,
       });
+    });
+  });
+
+  describe('non-finite point coordinates', () => {
+    it('applyHomography returns null for NaN and ±Infinity coordinates', () => {
+      expect(applyHomography(IDENTITY_HOMOGRAPHY, { x: Number.NaN, y: 0 })).toBeNull();
+      expect(applyHomography(IDENTITY_HOMOGRAPHY, { x: 2, y: Number.NaN })).toBeNull();
+      expect(applyHomography(IDENTITY_HOMOGRAPHY, { x: Number.POSITIVE_INFINITY, y: 0 })).toBeNull();
+      expect(applyHomography(IDENTITY_HOMOGRAPHY, { x: 0, y: Number.NEGATIVE_INFINITY })).toBeNull();
+      expect(applyHomography(IDENTITY_HOMOGRAPHY, { x: Number.NaN, y: Number.POSITIVE_INFINITY })).toBeNull();
+    });
+
+    it('differentiateHomography returns null for NaN and ±Infinity coordinates', () => {
+      expect(differentiateHomography(IDENTITY_HOMOGRAPHY, { x: Number.NaN, y: 3 })).toBeNull();
+      expect(differentiateHomography(IDENTITY_HOMOGRAPHY, { x: 7, y: Number.POSITIVE_INFINITY })).toBeNull();
+      expect(differentiateHomography(IDENTITY_HOMOGRAPHY, { x: Number.NEGATIVE_INFINITY, y: 0 })).toBeNull();
+    });
+
+    it('projectiveDenominator returns null for non-finite coordinates', () => {
+      expect(projectiveDenominator(IDENTITY_HOMOGRAPHY, Number.NaN, 0)).toBeNull();
+      expect(projectiveDenominator(IDENTITY_HOMOGRAPHY, 0, Number.POSITIVE_INFINITY)).toBeNull();
+      expect(projectiveDenominator(IDENTITY_HOMOGRAPHY, Number.NEGATIVE_INFINITY, Number.NaN)).toBeNull();
+    });
+
+    it('projectiveDenominator returns null for non-finite coordinates even with a projective matrix', () => {
+      const projective: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: 0.001, h: 0.002, i: 1 };
+      expect(projectiveDenominator(projective, Number.POSITIVE_INFINITY, 10)).toBeNull();
+      expect(projectiveDenominator(projective, 10, Number.NaN)).toBeNull();
+    });
+
+    it('solveHomography rejects non-finite source coordinates', () => {
+      const rect = rectCorners({ width: 10, height: 10 });
+      expect(solveHomography([{ x: Number.NaN, y: 0 }, ...rect.slice(1)], rect)).toBeNull();
+      expect(solveHomography([{ x: Number.POSITIVE_INFINITY, y: 0 }, ...rect.slice(1)], rect)).toBeNull();
+      expect(solveHomography([...rect.slice(0, 3), { x: 0, y: Number.NEGATIVE_INFINITY }], rect)).toBeNull();
+    });
+  });
+
+  describe('NaN and Infinity in matrix values', () => {
+    const nanMatrix: Homography = { a: Number.NaN, b: 0, c: 0, d: 0, e: 1, f: 0, g: 0, h: 0, i: 1 };
+    const infinityMatrix: Homography = {
+      a: Number.POSITIVE_INFINITY,
+      b: 0,
+      c: 0,
+      d: 0,
+      e: 1,
+      f: 0,
+      g: 0,
+      h: 0,
+      i: 1,
+    };
+    const nanGMatrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: Number.NaN, h: 0, i: 1 };
+    const infinityGMatrix: Homography = {
+      a: 1,
+      b: 0,
+      c: 0,
+      d: 0,
+      e: 1,
+      f: 0,
+      g: Number.POSITIVE_INFINITY,
+      h: 0,
+      i: 1,
+    };
+
+    it('homographyDeterminant propagates non-finite values to a non-finite result', () => {
+      expect(Number.isFinite(homographyDeterminant(nanMatrix))).toBe(false);
+      expect(Number.isFinite(homographyDeterminant(infinityMatrix))).toBe(false);
+    });
+
+    it('homographyMagnitude propagates non-finite values to a non-finite result', () => {
+      expect(Number.isFinite(homographyMagnitude(nanMatrix))).toBe(false);
+      expect(Number.isFinite(homographyMagnitude(infinityMatrix))).toBe(false);
+    });
+
+    it('isInvertibleHomography rejects matrices with NaN or Infinity entries', () => {
+      expect(isInvertibleHomography(nanMatrix)).toBe(false);
+      expect(isInvertibleHomography(infinityMatrix)).toBe(false);
+      expect(isInvertibleHomography(nanGMatrix)).toBe(false);
+      expect(isInvertibleHomography(infinityGMatrix)).toBe(false);
+    });
+
+    it('invertHomography returns null for matrices with NaN or Infinity entries', () => {
+      expect(invertHomography(nanMatrix)).toBeNull();
+      expect(invertHomography(infinityMatrix)).toBeNull();
+      expect(invertHomography(nanGMatrix)).toBeNull();
+      expect(invertHomography(infinityGMatrix)).toBeNull();
+    });
+
+    it('applyHomography returns null for matrices with non-finite entries', () => {
+      expect(applyHomography(nanMatrix, { x: 3, y: 4 })).toBeNull();
+      expect(applyHomography(infinityMatrix, { x: 3, y: 4 })).toBeNull();
+      expect(applyHomography(nanGMatrix, { x: 3, y: 4 })).toBeNull();
+      expect(applyHomography(infinityGMatrix, { x: 3, y: 4 })).toBeNull();
+    });
+
+    it('differentiateHomography returns null for matrices with non-finite entries', () => {
+      expect(differentiateHomography(nanMatrix, { x: 3, y: 4 })).toBeNull();
+      expect(differentiateHomography(infinityMatrix, { x: 3, y: 4 })).toBeNull();
+      expect(differentiateHomography(nanGMatrix, { x: 3, y: 4 })).toBeNull();
+      expect(differentiateHomography(infinityGMatrix, { x: 3, y: 4 })).toBeNull();
+    });
+
+    it('projectiveDenominator returns null for matrices with non-finite g, h, or i', () => {
+      expect(projectiveDenominator(nanGMatrix, 3, 4)).toBeNull();
+      expect(projectiveDenominator(infinityGMatrix, 3, 4)).toBeNull();
+    });
+
+    it('projectiveRowScale propagates non-finite g, h, or i without sanitizing', () => {
+      expect(Number.isFinite(projectiveRowScale(nanGMatrix))).toBe(false);
+      expect(Number.isFinite(projectiveRowScale(infinityGMatrix))).toBe(false);
+    });
+  });
+
+  describe('collinear and degenerate point sets', () => {
+    it('rejects a source set with three collinear points', () => {
+      const collinearSrc = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 200, y: 0 },
+        { x: 0, y: 100 },
+      ];
+      expect(solveHomography(collinearSrc, rectCorners({ width: 100, height: 100 }))).toBeNull();
+    });
+
+    it('rejects a source set with all four points collinear (zero-area quad)', () => {
+      const lineSrc = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 200, y: 0 },
+        { x: 300, y: 0 },
+      ];
+      expect(solveHomography(lineSrc, rectCorners({ width: 100, height: 100 }))).toBeNull();
+    });
+
+    it('rejects a destination set with all four points collinear', () => {
+      const dest = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 200, y: 0 },
+        { x: 300, y: 0 },
+      ];
+      expect(solveHomography(rectCorners({ width: 100, height: 100 }), dest)).toBeNull();
+    });
+
+    it('rejects a source set where all four points coincide (degenerate point)', () => {
+      const point: Point = { x: 50, y: 50 };
+      const degenerateSrc = [point, point, point, point];
+      expect(solveHomography(degenerateSrc, rectCorners({ width: 100, height: 100 }))).toBeNull();
+    });
+
+    it('rejects a source set forming a degenerate triangle (three points coincide)', () => {
+      const p0: Point = { x: 0, y: 0 };
+      const p1: Point = { x: 100, y: 0 };
+      const p2: Point = { x: 0, y: 100 };
+      const degenerate = [p0, p0, p1, p2];
+      expect(solveHomography(degenerate, rectCorners({ width: 100, height: 100 }))).toBeNull();
+    });
+
+    it('rejects a destination set forming a degenerate triangle (three points coincide)', () => {
+      const p0: Point = { x: 0, y: 0 };
+      const p1: Point = { x: 100, y: 0 };
+      const p2: Point = { x: 0, y: 100 };
+      const degenerate = [p0, p0, p1, p2];
+      expect(solveHomography(rectCorners({ width: 100, height: 100 }), degenerate)).toBeNull();
+    });
+
+    it('rejects a source set with only two distinct points (zero-area quadrilateral)', () => {
+      const p0: Point = { x: 0, y: 0 };
+      const p1: Point = { x: 100, y: 100 };
+      const degenerate = [p0, p1, p0, p1];
+      expect(solveHomography(degenerate, rectCorners({ width: 100, height: 100 }))).toBeNull();
+    });
+  });
+
+  describe('known limitations (it.fails tripwires)', () => {
+    const nanDeterminantMatrix: Homography = {
+      a: Number.NaN,
+      b: 0,
+      c: 0,
+      d: 0,
+      e: 1,
+      f: 0,
+      g: 0,
+      h: 0,
+      i: 1,
+    };
+    const infinityDeterminantMatrix: Homography = {
+      a: Number.POSITIVE_INFINITY,
+      b: 0,
+      c: 0,
+      d: 0,
+      e: 1,
+      f: 0,
+      g: 0,
+      h: 0,
+      i: 1,
+    };
+
+    it.fails('solves an over-determined correspondence set (5+ points) via least squares', () => {
+      const size: Size = { width: 100, height: 50 };
+      const source = rectCorners(size);
+      const destination = getTrapezoidQuad(size, 50);
+      const source5: Point[] = [...source, { x: size.width / 2, y: size.height / 2 }];
+      const destination5: Point[] = [
+        ...destination,
+        applyHomography(solveHomography(source, destination)!, { x: size.width / 2, y: size.height / 2 })!,
+      ];
+
+      const matrix = solveHomography(source5, destination5);
+
+      expect(matrix).not.toBeNull();
+      expect(isInvertibleHomography(matrix!)).toBe(true);
+    });
+
+    it.fails('homographyMagnitude returns a finite magnitude for a matrix with a NaN entry', () => {
+      expect(Number.isFinite(homographyMagnitude(nanDeterminantMatrix))).toBe(true);
+    });
+
+    it.fails('homographyMagnitude returns a finite magnitude for a matrix with an Infinity entry', () => {
+      expect(Number.isFinite(homographyMagnitude(infinityDeterminantMatrix))).toBe(true);
+    });
+
+    it.fails('homographyDeterminant returns a finite determinant for a matrix with a NaN entry', () => {
+      expect(Number.isFinite(homographyDeterminant(nanDeterminantMatrix))).toBe(true);
+    });
+
+    it.fails('homographyDeterminant returns a finite determinant for a matrix with an Infinity entry', () => {
+      expect(Number.isFinite(homographyDeterminant(infinityDeterminantMatrix))).toBe(true);
     });
   });
 });

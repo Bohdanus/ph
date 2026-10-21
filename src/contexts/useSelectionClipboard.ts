@@ -3,6 +3,8 @@ import { useStore } from './StoreContext.tsx';
 import { useLayers } from './useLayer.ts';
 import { cloneBitmapToCanvas, copySelectionToCanvas, getActiveSelection } from '../util/selection.ts';
 import { canvasToDocumentPos, documentFrameFromSize, documentToCanvasPos } from './document-frame.ts';
+import { assertWithinDocumentPixelBudget } from './raster-utils.ts';
+import { readImageFromClipboard } from '../util/clipboard.ts';
 
 const SELECTION_LAYER_NAME = 'Selection copy';
 
@@ -70,6 +72,7 @@ export const useSelectionClipboard = () => {
     try {
       const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
       const height = selectionClipboard.pos.height || selectionClipboard.bitmap.height;
+      assertWithinDocumentPixelBudget({ width, height }, 'Clipboard image');
       // `createLayerFromBitmap` reaches `createLayerSource` with a non-bedrock source, which
       // copies `pos` onto the layer verbatim — so `pos` is DOCUMENT space and the centre must
       // be computed there. Adding the frame origin here would offset the layer twice, since
@@ -87,6 +90,29 @@ export const useSelectionClipboard = () => {
       });
     } catch (error) {
       console.error('Unable to paste selection clipboard', error);
+      return false;
+    }
+
+    return true;
+  }
+
+  async function pasteSystemClipboardImage(): Promise<boolean> {
+    const image = await readImageFromClipboard();
+    if (!image) return false;
+
+    try {
+      const { bitmap } = image;
+      assertWithinDocumentPixelBudget({ width: bitmap.width, height: bitmap.height }, 'Clipboard image');
+      const pos = {
+        x: Math.max(0, Math.round((totalSize.width - bitmap.width) / 2)),
+        y: Math.max(0, Math.round((totalSize.height - bitmap.height) / 2)),
+        width: bitmap.width,
+        height: bitmap.height,
+      };
+      await createLayerFromBitmap({ bitmap, name: getNextLayerName(Object.values(layers)), pos });
+    } catch (error) {
+      image.bitmap.close();
+      console.error('Unable to paste system clipboard image', error);
       return false;
     }
 
@@ -124,6 +150,7 @@ export const useSelectionClipboard = () => {
     hasSelectionClipboard: !!selectionClipboard,
     layerViaCopy,
     pasteSelectionClipboard,
+    pasteSystemClipboardImage,
     selectionClipboard,
   };
 };

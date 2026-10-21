@@ -460,6 +460,58 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(orderMap(store)).toEqual({ bottom: 0, top: 1, middle: 2 });
   });
 
+  // FAILS WITHOUT THE CHANGE: the durable projection would omit the runtime-only layer.
+  it('does not publish durable presentation when a reorder leaves a runtime-only layer', async () => {
+    const result = setupWithDocument({ ...makeLayers(), extra: runtimeOnlyLayer() }, makeLayers());
+
+    reorder(result.current.dispatch, 'top', 'bottom');
+    await vi.waitFor(() => {
+      expect(result.current.store.durablePresentation.status).toBe('legacy-fallback');
+    });
+
+    const store = result.current.store;
+    expect(store.renderSelector.source).toBe('legacy');
+    expect(store.durablePresentation).toMatchObject({ status: 'legacy-fallback', reason: 'renderer-incompatible' });
+    expect(store.durableRenderProjection).toBeNull();
+  });
+
+  // FAILS WITHOUT THE CHANGE: navigation would accept a projection with the wrong order.
+  it('rejects durable navigation when the runtime layer order differs from replay', async () => {
+    const durable = makeLayers();
+    const runtime = Object.fromEntries(
+      Object.entries(durable).map(([id, layer], index) => [id, { ...layer, order: (index + 1) % 3 }])
+    ) as LayersRecord;
+    const result = setupWithDocument(runtime, durable);
+
+    const before = result.current.store;
+    act(() => {
+      result.current.dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { layers: runtime, deletedLayers: {}, activeLayerId: null },
+          timeline: {
+            entries: before.history,
+            cursor: before.historyIndex,
+            branchRevision: before.branchRevision,
+          },
+        },
+      });
+    });
+
+    let outcome: Awaited<ReturnType<StoreData['publishDurableNavigationPresentation']>>;
+    await act(async () => {
+      outcome = await result.current.store.publishDurableNavigationPresentation();
+    });
+
+    expect(outcome!).toMatchObject({ status: 'legacy-fallback', reason: 'renderer-incompatible' });
+    expect(result.current.store.durablePresentation).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'renderer-incompatible',
+    });
+    expect(result.current.store.renderSelector.source).toBe('legacy');
+    expect(result.current.store.durableRenderProjection).toBeNull();
+  });
+
   it('publishes a self-anchored reorder without desynchronizing the next append', () => {
     const result = setupWithDocument();
     const before = result.current.store.durableDocument!;

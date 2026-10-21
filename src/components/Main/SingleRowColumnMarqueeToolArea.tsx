@@ -258,12 +258,12 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
    * switch tools — the claim refuses the document-mutating shortcuts — so this is a
    * belt-and-braces read rather than a reachable case, and it costs one field.
    */
-  function releaseDocumentClaim() {
+  const releaseDocumentClaim = useCallback(() => {
     const kind = claimedKindRef.current ?? (isColumn ? 'single-column-marquee' : 'single-row-marquee');
     releaseDocumentGesture(kind, claimedPointerIdRef.current);
     claimedKindRef.current = null;
     claimedPointerIdRef.current = null;
-  }
+  }, [isColumn]);
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -453,7 +453,7 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }
     };
-  }, [overlayCtxRef]);
+  }, [overlayCtxRef, releaseDocumentClaim]);
 
   return (
     <div

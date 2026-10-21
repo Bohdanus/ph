@@ -1,6 +1,7 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
+  type ClipOptions,
   canvasRedrawClip,
   drawLine,
   getWorkspaceCanvas,
@@ -54,7 +55,7 @@ import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout }
  *   (`src/components/Main/DrawToolArea.tsx:23,51,81`).
  * - Measured with the foreground set to `#ff0000` and the swatch verified as `#ff0000`:
  *   the widest channel spread anywhere in the stroke is **0**, i.e. the pixels are exactly
- *   neutral. Brush and Pencil peak at `rgb(26, 26, 26)` — black at their `alpha: 0.9`
+ *   neutral. Brush and Pencil peak at `rgb(0, 0, 0)` — black at their `alpha: 1`
  *   composited over the white document. The Draw tool on the same gesture and the same
  *   swatch measures `rgb(255, 26, 26)`, a channel spread of 229, which is the control that
  *   says the measurement would see red if the red were there.
@@ -204,16 +205,32 @@ async function selectPaintTool(page: Page, tool: { name: string; label: string }
   return box;
 }
 
+/**
+ * The image-space scale of the clip, derived from the decoded capture: device pixels per
+ * CSS pixel. Used to convert `measureStroke` results back to CSS pixels so assertions hold
+ * at any DPR.
+ */
+async function imageScale(screenshot: Buffer, clip: Required<ClipOptions>): Promise<number> {
+  const { height } = await loadImageData(screenshot);
+  return height / clip.height;
+}
+
 /** Draws the shared gesture, waits for ink in the clip, then measures that clip. */
-async function drawAndMeasure(page: Page, toolName: string, box: BoundingBox): Promise<Stroke> {
+async function drawAndMeasure(
+  page: Page,
+  toolName: string,
+  box: BoundingBox
+): Promise<{ stroke: Stroke; scale: number }> {
   await drawLine(page, box, LINE_START_X, STROKE_Y, LINE_END_X, LINE_END_Y, { steps: 20 });
   const clip = canvasRedrawClip(box);
   // The measurement below is a one-shot capture, so synchronize with the backing store
   // first or a slow frame silently weakens the assertions.
   await waitForCanvasPixels(page, clip, hasInk, { description: `ink from the ${toolName} stroke` });
-  const measured = await measureStroke(await page.screenshot({ clip }));
+  const screenshot = await page.screenshot({ clip });
+  const measured = await measureStroke(screenshot);
   if (!measured) throw new Error(`drawAndMeasure: the clip is empty after ${toolName} ink was observed`);
-  return measured;
+  const scale = await imageScale(screenshot, clip);
+  return { stroke: measured, scale };
 }
 
 const PAINT_TOOLS = [
@@ -235,7 +252,7 @@ for (const tool of PAINT_TOOLS) {
     // the defect rather than the behaviour.
     await setForegroundColor(page, '#ff0000', true);
 
-    const stroke = await drawAndMeasure(page, tool.name, box);
+    const { stroke, scale } = await drawAndMeasure(page, tool.name, box);
 
     // The stroke starts at or before the gesture's start and ends at or after its end, so
     // the tool tracked the whole drag instead of dropping a single mark. Brush measured
@@ -251,9 +268,10 @@ for (const tool of PAINT_TOOLS) {
     expect(stroke.edge.width).toBeGreaterThanOrEqual(LINE_END_X - LINE_START_X);
 
     // It is a stroke rather than a fill: the clip is 100px tall and the gesture
-    // 200px wide, and both tools measured 15px and 7px tall.
-    expect(stroke.edge.height).toBeGreaterThanOrEqual(3);
-    expect(stroke.edge.height, `${tool.name} should stroke a line, not flood the clip`).toBeLessThan(30);
+    // 200px wide, and both tools measured 15px and 7px tall. The assertion is on
+    // CSS pixels, so divide the image-space height by the capture scale.
+    expect(stroke.edge.height / scale).toBeGreaterThanOrEqual(3);
+    expect(stroke.edge.height / scale, `${tool.name} should stroke a line, not flood the clip`).toBeLessThan(30);
 
     // And it straddles the line the pointer travelled along.
     expect(stroke.edge.top).toBeLessThanOrEqual(CLIP_STROKE_Y);
@@ -309,7 +327,8 @@ test('brush lays a measurably wider stroke than pencil for the same gesture', as
   const measure = async (tool: { name: string; label: string }): Promise<Stroke> => {
     const box = await selectPaintTool(page, tool);
     await setForegroundColor(page, '#ff0000', true);
-    return drawAndMeasure(page, tool.name, box);
+    const { stroke } = await drawAndMeasure(page, tool.name, box);
+    return stroke;
   };
 
   // A fresh document per tool: the option panel reflows the workspace, and a box measured

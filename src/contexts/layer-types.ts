@@ -4,6 +4,31 @@ import type { AffineTransform } from './affine-transform.ts';
 
 export type LayerId = string;
 
+export const LAYER_BLEND_MODES = [
+  { value: 'source-over', label: 'Normal', psd: 'normal' },
+  { value: 'darken', label: 'Darken', psd: 'darken' },
+  { value: 'multiply', label: 'Multiply', psd: 'multiply' },
+  { value: 'color-burn', label: 'Color Burn', psd: 'color burn' },
+  { value: 'lighten', label: 'Lighten', psd: 'lighten' },
+  { value: 'screen', label: 'Screen', psd: 'screen' },
+  { value: 'color-dodge', label: 'Color Dodge', psd: 'color dodge' },
+  { value: 'overlay', label: 'Overlay', psd: 'overlay' },
+  { value: 'soft-light', label: 'Soft Light', psd: 'soft light' },
+  { value: 'hard-light', label: 'Hard Light', psd: 'hard light' },
+  { value: 'difference', label: 'Difference', psd: 'difference' },
+  { value: 'exclusion', label: 'Exclusion', psd: 'exclusion' },
+  { value: 'hue', label: 'Hue', psd: 'hue' },
+  { value: 'saturation', label: 'Saturation', psd: 'saturation' },
+  { value: 'color', label: 'Color', psd: 'color' },
+  { value: 'luminosity', label: 'Luminosity', psd: 'luminosity' },
+] as const satisfies readonly { value: GlobalCompositeOperation; label: string; psd: string }[];
+
+export type LayerBlendMode = (typeof LAYER_BLEND_MODES)[number]['value'];
+
+export function isLayerBlendMode(value: unknown): value is LayerBlendMode {
+  return LAYER_BLEND_MODES.some((mode) => mode.value === value);
+}
+
 // SOURCES
 
 export type BlankLayerSource = {

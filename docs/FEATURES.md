@@ -3,8 +3,8 @@
 What this app can do, system-wide, measured against Photoshop.
 
 **This is not a per-tool document.** That is [`TOOLS.md`](TOOLS.md) — generated,
-44 sections, one per tool or per Adobe command the rail carries, with an options-bar
-table and Adobe citations. Four of the 44 are not Tools-panel tools — the Shape group
+54 tool-level sections, one per implemented tool or Adobe command, with an options-bar
+table and Adobe citations. Four of the 54 are not Tools-panel tools — the Shape group
 placeholder, Free Transform, Levels and Black & White are named for what Adobe calls
 them. This
 page is the capability level: documents, formats, selection, layers, history,
@@ -220,15 +220,21 @@ and opacity and blend mode are applied at draw time
 `Record<LayerId, Layer>` (`layer-types.ts` — the `Layer` record and the
 `LayersRecord` map) with no `parentId`, and the panel offers visibility, reorder,
 rename and delete
-(`LayersTab.tsx` — its `layers-list` rows).
+(`LayersTab.tsx` — its `layers-list` rows). Desktop rows also render a 48x32 `LayerThumbnail`
+through the shared `drawLayerSource()` presentation path; the tablet drawer currently has no preview.
+Selecting a matching tool layer hydrates its arguments, and selecting text can re-enter text editing
+(`textLayerEditTarget()` / `beginTextLayerEdit()`), including for retained affine operations. Layers
+with filter operations remain outside that overlay path. Desktop and tablet expose opacity, the
+supported blend-mode menu, and one full-layer lock control; desktop also exposes `Layer from
+Background` for the lone backing layer.
 
 **Status:** `partial`
 
 **Gap:** No groups or nesting, no layer masks, no clipping masks, no adjustment
-or smart-object layers. **No panel control for blend mode or locking** — those
-fields exist in the model and round-trip through PSD, but nothing in the UI sets
-them. Desktop opacity has a basic slider; its Adobe-documented preset drop-down
-is still absent because the preset values are unverified.
+or smart-object layers. The blend-mode menu supports a subset of Photoshop's modes, and the single
+`locked` flag implements a strict full-layer lock rather than Photoshop's four independent lock
+protections. Photoshop's separate Fill opacity and preset drop-down remain absent. See
+[`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates).
 
 ## History
 
@@ -264,8 +270,8 @@ Swatches, Styles, Character, Paragraph, Brush presets, Navigator, Info, Histogra
 Actions, Measurement Log — dockable, with panel groups.
 
 **This app:** exactly two dockable panels, `PanelId = 'history' | 'layers'`
-(`PanelLayout.tsx` — `PanelId`). They dock, drag-reorder, resize, collapse to
-icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
+(`PanelLayout.tsx` — `PanelId`). They remain pinned to the window edges, resize by
+width and shared split, collapse to icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
 plus `PanelGroup.tsx`), and Window has Reset Workspace
 (`DesktopHeader.tsx` — its `handleResetWorkspace`).
 
@@ -337,10 +343,12 @@ absent. The implementation deliberately caps the options-bar zoom control at
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 45. Thirty-six registrations in
+**This app:** 58 `useKeyDownShortcut` call sites: 49 in
 `AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
 `useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
+These are hook call sites, not a count of unique key chords; modifiers and enabled states share the
+same registration path.
 
 **Status:** `partial`
 
@@ -405,7 +413,7 @@ metadata option; no WebP, AVIF, GIF or TIFF encoder settings.
 ## Tablet Touch (Not Handheld Phone)
 
 **Hard boundary:** this product supports desktop and tablet-sized touch devices, including Retina/high-DPI
-tablets. It does **not** support handheld phone layouts such as iPhone-sized screens. “Mobile” component
+tablets. It does **not** support handheld phone layouts such as iPhone-sized screens. "Mobile" component
 names are historical and mean the tablet touch surface here; they are not a phone product.
 
 **Photoshop:** a touch-optimised workspace with one-finger draw, two-finger pan and
@@ -429,6 +437,8 @@ through Pointer Events with single-pointer capture, so drawing works on touch
 
 **Gap:** No pinch-zoom and no two-finger pan — inherited from the absence of zoom
 and pan entirely, not a mobile-specific omission.
+
+**Retina/High-DPI Status:** Pointer mapping is DPR-correct (tested at 3×). Paint tools are DPR-proof — all geometry paths are document-pixel invariant. Option-bar thumbnails and display surfaces (workspace canvas and overlays) use DPR-scaled backing stores while retaining document-pixel coordinates. Export remains decoupled from display resolution, and the marching-ants clear path uses logical frame bounds.
 
 **Priority:** tablet touch and Retina/high-DPI behavior are supported product surfaces. Handheld phone
 layouts and phone-only gestures remain explicitly out of scope.

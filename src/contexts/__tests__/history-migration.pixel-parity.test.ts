@@ -4,11 +4,9 @@ import { renderHook } from '@testing-library/react';
 import { AssetRegistry } from '../asset-registry.ts';
 import { composeDurableDocument, type DurableComposite } from '../durable-compositor.ts';
 import { replayDurableAtCursor, type DurableReplayResult } from '../durable-replay.ts';
-import { renderExportCanvas } from '../export-canvas.ts';
+import { durableExportRecords, renderExportCanvas } from '../export-canvas.ts';
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { createLayerSource } from '../layer-utils.ts';
-import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
-import type { Size } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { LayersRecord } from '../layer-types.ts';
 import { durablePresentationIsRendererIdentical } from '../StoreContext.tsx';
@@ -44,8 +42,8 @@ import {
  * `history-replay.parity.test.ts` proves the two replay MODELS agree on ids, orders, names,
  * booleans and kind labels. It cannot see a colour: it normalises both sides away from pixels
  * and it stubs `applyRasterTool` to identity, so the whole raster half of both authorities is
- * outside its reach. This file is the other half — the same twelve scenarios at the same cursors
- * plus a thirteenth carrying a real raster processor, compared as BYTES.
+ * outside its reach. This file is the other half — the same thirteen scenarios at the same cursors
+ * plus a fourteenth carrying a real raster processor, compared as BYTES.
  *
  * ## WHAT IS COMPARED, PER (SCENARIO, CURSOR)
  *
@@ -211,60 +209,6 @@ type RenderedPair = {
   accepted: string[];
   declined: string[];
   filters: string[];
-};
-
-/**
- * Builds the export-side layer records FROM THE DURABLE SIDE ALONE.
- *
- * The previous version started from the legacy records and swapped only `tmpCanvas`, which made
- * the export comparison structurally incapable of failing: `renderExportCanvas()` places by
- * `layer.pos`, reads `visible`/`opacity`/`blendMode` and re-evaluates `layer.operations`, and every
- * one of those was still the LEGACY value on both sides. Worse, the mount's own accept rule
- * requires `isEqual(bounds, existing.pos)` and no retained operations, so the bitmap it accepted
- * was a byte-identical copy of the legacy record's own — 30 accepted mounts, 0 differing bytes, on
- * every cursor. A 7px durable misplacement turned the runtime axis red and left the export axis at
- * zero.
- *
- * So nothing here is read off the legacy replay. Position, visibility, opacity, blend mode, order,
- * name and frame all come from the durable composition and the durable replay's own snapshot, and
- * `operations` is empty because the retained presentation is already baked into the bitmap. Two
- * authorities that disagree about placement, ordering or frame now disagree HERE.
- */
-const durableExportRecords = (
-  replay: DurableReplayResult,
-  composite: DurableComposite
-): { layers: LayersRecord; size: Size; frame: DocumentFrame; missing: string[] } => {
-  const layers: LayersRecord = {};
-  const missing: string[] = [];
-  for (const [layerId, materialized] of Object.entries(composite.layers)) {
-    const replayLayer = replay.layers[layerId];
-    if (!replayLayer) {
-      missing.push(layerId);
-      continue;
-    }
-    const snapshot = replayLayer.snapshot;
-    layers[layerId] = {
-      id: layerId,
-      name: snapshot.name,
-      isBedrock: snapshot.isBedrock,
-      pos: { ...snapshot.pos },
-      bitmap: null,
-      tmpCanvas: materialized.bitmap,
-      presentationBounds: materialized.bounds,
-      visible: snapshot.visible,
-      opacity: snapshot.opacity,
-      locked: snapshot.locked,
-      blendMode: snapshot.blendMode,
-      order: snapshot.order,
-      operations: [],
-    };
-  }
-  return {
-    layers,
-    size: documentFrameSize(replay.frame),
-    frame: replay.frame,
-    missing,
-  };
 };
 
 const mountDurablePresentation = (
@@ -578,6 +522,21 @@ describe('legacy/durable pixel parity', () => {
     ).toThrow(/extents differ/);
   });
 
+  it('accepts a zero-operation vector source through the durable runtime and export parity path', async () => {
+    resetUnresolvableDraws();
+    resetFilterAssignments();
+    const scenario = replayParityScenarios.find((entry) => entry.name === 'vector source')!;
+    const pair = await renderPair(scenario, scenario.history.length - 1);
+
+    expect(drainRefusals(), `${pair.label}: console.error refusals`).toEqual([]);
+    expect(unresolvableDraws(), `${pair.label}: drawImage sources the fixture could not resolve`).toEqual([]);
+
+    expect(pair.declined, `${pair.label}: durable mount declined`).toEqual([]);
+
+    assertIdentical(pair.legacyRuntime, pair.durableRuntime, `${pair.label} runtime presentation`);
+    assertIdentical(pair.legacyExport, pair.durableExport, `${pair.label} export bytes`);
+  });
+
   it.fails(
     'sees the pixels a filter chain produces — jsdom applies no ctx.filter, so both authorities draw unfiltered',
     async () => {
@@ -630,6 +589,27 @@ describe('legacy/durable pixel parity', () => {
   );
 
   it.fails(
+    'sees the pixels a vector source produces — jsdom records but does not rasterize canvas paths, so both authorities draw an empty surface',
+    async () => {
+      const scenario = replayParityScenarios.find((entry) => entry.name === 'vector source')!;
+      const pair = await renderPair(scenario, scenario.history.length - 1);
+      expect(drainRefusals()).toEqual([]);
+
+      // FAILS today: the shape tool reaches `PixelContext.beginPath()`, `moveTo()` and
+      // `stroke()`, which are recorded and rasterize nothing, so the figure a shape layer
+      // is made of contributes no pixel. Both authorities agree on that absence, which is
+      // why the runtime axis above is green here and is worth nothing about vector shapes.
+      // It passes on a host that rasterizes paths — `OffscreenCanvas` in a browser.
+      const unmodified = await renderPair({ name: 'vector source baseline', history: scenario.history.slice(0, 1) }, 0);
+      expect(
+        compareRasters(unmodified.durableRuntime, pair.durableRuntime).differing,
+        'the shape layer composited at least one pixel the unshaped document does not carry'
+      ).toBeGreaterThan(0);
+    },
+    120_000
+  );
+
+  it.fails(
     'mounts every composed layer — durablePresentationIsRendererIdentical() accepts only the unfiltered raster/blank subset',
     async () => {
       const declined: string[] = [];
@@ -641,7 +621,7 @@ describe('legacy/durable pixel parity', () => {
         }
       }
       // FAILS today, and it is the divergence list S1 exists to produce: the mount's own rule is
-      // "no retained operations, matching bounds, and a raster or blank source", so every
+      // "no retained operations, matching bounds, and a raster, blank or vector source", so every
       // filtered, transformed and text layer composes correctly on the durable side and is then
       // refused by the mount — leaving the export axis comparing the legacy presentation against
       // itself for exactly the layers worth comparing. `reposition and affine transform` and

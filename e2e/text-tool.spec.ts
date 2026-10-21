@@ -15,7 +15,8 @@ import {
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { imageBoundsToCss } from './helpers/screenshot-scale';
+import { imageBoundsToCss, imagePointToCss } from './helpers/screenshot-scale';
+import { clickToolButton } from './helpers/toolbar-helpers';
 
 /**
  * The Text tool had no end-to-end coverage: `e2e/color.spec.ts` is a single test about
@@ -40,6 +41,7 @@ import { imageBoundsToCss } from './helpers/screenshot-scale';
  * and it leaves room for a dev-server cold start and font rasterisation on CI's runner.
  */
 const TEXT_TOOL_TIMEOUT_MS = 60_000;
+const TEXT_RESIZE_HANDLE_OFFSET = 4;
 
 /**
  * The rail's measured width, in CSS px.
@@ -1428,6 +1430,194 @@ test.describe('Text tool', () => {
     expect.soft(inkCss.bottom, 'ink escaped the bottom of the dragged rectangle').toBeLessThanOrEqual(rect.bottom);
   });
 
+  test('resizing a committed text layer rerenders glyphs from its retained text source', async ({ page }, testInfo) => {
+    test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    const canvasClip = toClip({
+      left: box.x,
+      top: box.y,
+      right: box.x + box.width,
+      bottom: box.y + box.height,
+    });
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box);
+    await replaceDraftText(page, 'MMMM');
+    await commitButton(page).click();
+    await expect(draftOverlay(page)).toHaveCount(0);
+    await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN)), hasRedPixels, {
+      description: 'committed text before resize',
+    });
+
+    const beforeCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-before-layer-resize');
+    const beforeInk = await scanPixelsForBounds(await loadImageData(beforeCapture), isRedInk);
+    expect(beforeInk.found, 'committed text was not visible before resizing').toBe(true);
+
+    await clickToolButton(page, 'reposition');
+    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
+    await page.mouse.move(box.x + 300, box.y + 250);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 302, box.y + 252, { steps: 2 });
+    await page.mouse.up();
+    await waitForCanvasPixels(page, canvasClip, async (png) => (await getSelectionBounds(png)) !== null, {
+      description: 'the text layer transform frame',
+    });
+
+    const selectedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-selected-for-resize');
+    const selectedFrame = await getSelectionBounds(selectedCapture);
+    expect(selectedFrame, 'the committed text layer has no transform handles').toBeTruthy();
+    const handle = imagePointToCss({ width: selectedFrame!.imageWidth, height: selectedFrame!.imageHeight }, box, {
+      x: selectedFrame!.right - TEXT_RESIZE_HANDLE_OFFSET,
+      y: selectedFrame!.bottom - TEXT_RESIZE_HANDLE_OFFSET,
+    });
+    await page.mouse.move(handle.x, handle.y);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + 100, handle.y + 60, { steps: 8 });
+    await page.mouse.up();
+    await waitForCanvasPixels(
+      page,
+      canvasClip,
+      async (png) => {
+        const current = await getSelectionBounds(png);
+        return (
+          current !== null &&
+          current.right - current.left > selectedFrame!.right - selectedFrame!.left &&
+          current.bottom - current.top > selectedFrame!.bottom - selectedFrame!.top
+        );
+      },
+      { description: 'the expanded text layer transform frame' }
+    );
+
+    const resizedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-resized');
+    const resizedImage = await loadImageData(resizedCapture);
+    const resizedInk = await scanPixelsForBounds(resizedImage, isRedInk);
+    expect(resizedInk.found, 'committed text disappeared while its layer was resized').toBe(true);
+    const beforeWidth = beforeInk.right - beforeInk.left + 1;
+    const beforeHeight = beforeInk.bottom - beforeInk.top + 1;
+    const resizedWidth = resizedInk.right - resizedInk.left + 1;
+    const resizedHeight = resizedInk.bottom - resizedInk.top + 1;
+    expect(resizedWidth, 'text width did not track the transformed layer').toBeGreaterThan(beforeWidth);
+    expect(resizedHeight, 'text height did not track the transformed layer').toBeGreaterThan(beforeHeight);
+  });
+
+  test('a Free Transform-rotated Type layer can re-enter editing without rasterizing its source', async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    const canvasClip = toClip({ left: box.x, top: box.y, right: box.x + box.width, bottom: box.y + box.height });
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box);
+    await replaceDraftText(page, 'MMMM');
+    await commitButton(page).click();
+    await expect(draftOverlay(page)).toHaveCount(0);
+    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'committed Type before Free Transform' });
+    const layerRows = page.getByTitle('Drag to reorder');
+    const layerCountBeforeEdit = await layerRows.count();
+
+    await page.getByTestId('header-edit-menu-button').click();
+    await page.getByTestId('edit-menu-free-transform-button').click();
+    await expect(page.locator('#rotate-slider')).toBeVisible();
+    await page.getByTitle('Rotate 90° Right').click();
+    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'Free Transform-rotated Type' });
+
+    // The Type editor is a DOM overlay, so it must inherit the same transient view transform as the
+    // document canvas and all three canvas overlays. Exercise pan, zoom and view rotation before
+    // re-entering the retained Type source.
+    const workspace = page.getByTestId('workspace-container');
+    const workspaceBox = await workspace.boundingBox();
+    if (!workspaceBox) throw new Error('workspace-container has no bounding box');
+    const viewCenter = { x: workspaceBox.x + workspaceBox.width / 2, y: workspaceBox.y + workspaceBox.height / 2 };
+
+    await clickToolButton(page, 'hand');
+    await page.mouse.move(viewCenter.x - 30, viewCenter.y - 15);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 30, viewCenter.y + 15, { steps: 4 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
+
+    await clickToolButton(page, 'zoom');
+    await page.mouse.click(viewCenter.x, viewCenter.y);
+    await expect(workspace).not.toHaveAttribute('data-view-zoom', '1');
+
+    await page.keyboard.press('r');
+    await expect(page.getByRole('button', { name: 'Reset View', exact: true })).toBeVisible();
+    await page.mouse.move(viewCenter.x - 15, viewCenter.y);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 15, viewCenter.y, { steps: 4 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-rotation', '0');
+
+    const transformedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-free-transformed');
+    const transformedImage = await loadImageData(transformedCapture);
+    const transformedInk = await scanPixelsForBounds(transformedImage, isRedInk);
+    expect(transformedInk.found, 'Free Transform removed the committed Type pixels').toBe(true);
+    let redPixel: { x: number; y: number } | null = null;
+    for (let y = transformedInk.top; y <= transformedInk.bottom && redPixel === null; y += 1) {
+      for (let x = transformedInk.left; x <= transformedInk.right; x += 1) {
+        const offset = (y * transformedImage.width + x) * 4;
+        const alpha = transformedImage.data[offset + 3] ?? 0;
+        if (
+          alpha > 128 &&
+          isRedInk(
+            transformedImage.data[offset] ?? 0,
+            transformedImage.data[offset + 1] ?? 0,
+            transformedImage.data[offset + 2] ?? 0,
+            alpha
+          )
+        ) {
+          redPixel = { x: x + 0.5, y: y + 0.5 };
+          break;
+        }
+      }
+    }
+    if (!redPixel) throw new Error('text-tool: rotated Type has no opaque red pixel to select');
+    const clickPoint = imagePointToCss(
+      { width: transformedImage.width, height: transformedImage.height },
+      box,
+      redPixel
+    );
+
+    await clickToolButton(page, 'text');
+    const documentViewStyle = await page.locator('.zoom-container').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    const editorViewStyle = await page.getByTestId('text-edit-view-transform').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    expect(editorViewStyle).toEqual(documentViewStyle);
+
+    await page.mouse.click(clickPoint.x, clickPoint.y);
+    await expect(draftOverlay(page), 'clicking transformed Type did not re-enter edit mode').toBeVisible();
+    await expect(draftOverlay(page)).toHaveText('MMMM');
+    await expect(draftOverlay(page)).toHaveCSS('transform', /^matrix\(/);
+    const overlayBox = await draftOverlay(page).boundingBox();
+    expect(overlayBox, 'the text overlay has no screen-space box').not.toBeNull();
+    expect(clickPoint.x).toBeGreaterThanOrEqual(overlayBox!.x - 2);
+    expect(clickPoint.x).toBeLessThanOrEqual(overlayBox!.x + overlayBox!.width + 2);
+    expect(clickPoint.y).toBeGreaterThanOrEqual(overlayBox!.y - 2);
+    expect(clickPoint.y).toBeLessThanOrEqual(overlayBox!.y + overlayBox!.height + 2);
+
+    await replaceDraftText(page, 'I');
+    await expect(commitButton(page)).toBeEnabled();
+    await commitButton(page).click();
+    await expect(draftOverlay(page), 'the committed re-entry left a second draft overlay').toHaveCount(0);
+    await expect(layerRows, 'editing transformed Type created a duplicate layer').toHaveCount(layerCountBeforeEdit);
+    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'edited Type after affine re-entry' });
+
+    const editedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-reentered-and-edited');
+    const editedInk = await scanPixelsForBounds(await loadImageData(editedCapture), isRedInk);
+    expect(editedInk.found, 'the transformed Type source disappeared after re-entry').toBe(true);
+    const transformedHeight = transformedInk.bottom - transformedInk.top + 1;
+    const editedHeight = editedInk.bottom - editedInk.top + 1;
+    expect(editedHeight, 'the replacement text did not update the retained source').toBeLessThan(
+      transformedHeight * 0.6
+    );
+  });
+
   test('Cancel discards the draft without committing a layer', async ({ page }) => {
     const layerRows = page.getByTitle('Drag to reorder');
     const commit = commitButton(page);
@@ -2289,6 +2479,29 @@ test.describe('Text tool', () => {
     expect(boxWidth, 'the point box is wider than the line it grew to fit').toBeLessThanOrEqual(inkWidth * 1.2);
   });
 
+  test('a point-text corner exposes rotation and dragging it changes the draft angle', async ({ page }) => {
+    const box = await canvasBox(page);
+    await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    const overlay = await draftOverlay(page).boundingBox();
+    expect(overlay, 'the point-text draft did not appear').not.toBeNull();
+
+    const surface = page.locator('.cursor-text');
+    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
+    await page.mouse.move(corner.x, corner.y);
+    await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+
+    await page.mouse.down();
+    const centerX = overlay!.x + overlay!.width / 2;
+    const centerY = overlay!.y + overlay!.height / 2;
+    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
+    await page.mouse.up();
+
+    await expect(surface, 'the text draft did not retain its rotated angle').toHaveAttribute(
+      'data-rotation',
+      /8[5-9]|9[0-5]/
+    );
+  });
+
   /**
    * Adobe's overflow icon: "If you enter more text that can fit within a paragraph boundary…, a
    * small box or circle containing a plus symbol (+) appears in place of a handle in the corner of
@@ -2445,5 +2658,156 @@ test.describe('Text tool', () => {
       description: 'the committed text layer',
     });
     expect(await redBoundsIn(page, iconRegion), 'the overflow icon was baked into the committed layer').toBeNull();
+  });
+
+  /**
+   * Center alignment: the committed ink's left and right insets are balanced,
+   * unlike left or right alignment where one inset is small and the other is large.
+   *
+   * `renderTextInto` resolves `'center'` to
+   * `boxLeft + (boxRight - boxLeft - width) / 2`, so the first glyph starts midway
+   * between the rectangle's left edge and the right edge minus the ink width. The
+   * `inset` field measures how far INSIDE the rectangle each edge of the ink sits,
+   * so for a centered band `inset.left` and `inset.right` are equal by construction.
+   */
+  test('center alignment centers the committed ink within the dragged rectangle', async ({ page }, testInfo) => {
+    const box = await canvasBox(page);
+    const alignSelect = page.locator('#align-select');
+    const [left, center] = await commitStyledSeries(page, testInfo, box, 'WAVE', [
+      { name: 'text-align-left', rect: DRAFT_RECT, apply: async () => undefined },
+      {
+        name: 'text-align-center',
+        rect: SECOND_DRAFT_RECT,
+        apply: async () => {
+          await expect(alignSelect, 'alignment is not enabled on a paragraph draft').toBeEnabled();
+          await alignSelect.selectOption({ value: 'center' });
+          await expect(alignSelect).toHaveValue('center');
+        },
+      },
+    ]);
+
+    // Left-aligned (baseline): the ink hugs the left edge and recedes from the right.
+    expect(left.inset.left, 'left-aligned text did not start near the left edge').toBeLessThan(20);
+    expect(left.inset.right, 'left-aligned text did not reach away from the right edge').toBeGreaterThan(50);
+
+    // Center-aligned: balanced insets — left and right distances are roughly equal.
+    expect(
+      Math.abs(center.inset.left - center.inset.right),
+      'center-aligned text is not centered in the rectangle'
+    ).toBeLessThan(15);
+    // And the center commit's left inset is larger than the left-aligned one's,
+    // because centering moves the first glyph away from the left edge.
+    expect(
+      center.inset.left - left.inset.left,
+      'center alignment did not move the ink away from the left edge'
+    ).toBeGreaterThan(20);
+
+    expectInkInsideRect(left, box, DRAFT_RECT, 'the left-aligned commit');
+    expectInkInsideRect(center, box, SECOND_DRAFT_RECT, 'the center-aligned commit');
+  });
+
+  /**
+   * Zero line height stacks every line on the first baseline, collapsing three
+   * wrapped lines to a single-line band of ink.
+   *
+   * `resolveTextStyle` accepts 0 as finite and drawable — its own comment states
+   * the case directly. The line-height slider is a range input whose `min` is
+   * `MIN_LINE_HEIGHT` (0.5), so the browser sanitizes any value below 0.5 and the
+   * handler never sees 0 through the control. The bypass invokes the handler
+   * directly via the React fiber, feeding it `{ target: { value: '0' } }` — the
+   * exact shape `handleLineHeightChange` reads.
+   *
+   * **The bypass runs BEFORE the drag, not after.** `publishStyle` spreads the
+   * current `toolArgs` and re-derives the rect through `calculateNewRect`, which
+   * returns `null` for a box that does not exist yet — and a draft's rect does
+   * not exist until the drag places it. Publishing `lineHeight` while
+   * `toolArgs.rect` is null therefore hands `onChange` a record with `rect: null`
+   * (the `?? rect` fallback is the null it already had), so the published args
+   * carry no box and `TextEditOverlay`'s `editing` stays false: the overlay never
+   * mounts, and the readout's `0.0` is the only thing left on screen. Setting the
+   * leading first, then dragging, puts the zero into the args the drag's own
+   * `publishStyle` reads and the draft opens holding it.
+   */
+  test('zero line height stacks all lines on one baseline', async ({ page, context }, testInfo) => {
+    const box = await canvasBox(page);
+    const lineHeightReadout = page.locator('label[for="line-height-slider"] span[aria-hidden="true"]');
+
+    await setTextToolColor(page, TEXT_COLOR);
+
+    // Invoke the handler directly via the React fiber to bypass the slider's min.
+    await page.evaluate(() => {
+      const slider = document.querySelector('#line-height-slider');
+      if (!slider) throw new Error('zero LH: no line-height slider mounted');
+      const fiberKey = Object.keys(slider).find((k) => k.startsWith('__reactFiber'));
+      if (!fiberKey) throw new Error('zero LH: no React fiber found on slider');
+      const fiber = (slider as unknown as Record<string, unknown>)[fiberKey] as unknown;
+      const onChange = (fiber as { memoizedProps?: unknown })?.memoizedProps;
+      const handler = (onChange as { onChange?: (event: { target: { value: string } }) => void })?.onChange;
+      if (!handler) throw new Error('zero LH: no onChange handler in memoizedProps');
+      handler({ target: { value: '0' } });
+    });
+
+    // The readout shows style.lineHeight.toFixed(1); '0.0' confirms the state is zero.
+    await expect(lineHeightReadout, 'line height was not set to zero').toHaveText('0.0');
+
+    await dragDraftRect(page, box, DRAFT_RECT);
+
+    // 'I\nI\nI' — three hard breaks, always three lines regardless of wrap width.
+    await replaceDraftLines(page, context, 'I\nI\nI');
+    await commitButton(page).click();
+
+    // Wait for the committed ink, then measure the band height over the whole canvas.
+    await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN)), hasRedPixels, {
+      description: 'red text pixels from the zero line-height commit',
+    });
+    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-zero-line-height');
+    const image = await loadImageData(capture);
+    const ink = await scanPixelsForBounds(image, isRedInk);
+    expect(ink.found, 'no red pixels found for the zero line-height commit').toBe(true);
+    const css = imageBoundsToCss({ width: image.width, height: image.height }, box, ink);
+
+    // At 64px Arial, a single glyph row is about 44 CSS px tall. With three lines
+    // stacked on one baseline (zero leading), the band cannot exceed a single line.
+    // With any positive leading, three lines would be at least ~120px tall.
+    expect(css.bottom - css.top, 'zero line height did not collapse the band to a single baseline').toBeLessThan(60);
+  });
+
+  /**
+   * The Adobe minimum font size (0.01) commits a layer but renders ink too small to
+   * clear the red-pixel threshold, proving the clamp reaches the renderer and not just
+   * the field.
+   *
+   * `handleFontSizeCommit` clamps to `[FONT_SIZE_MIN, FONT_SIZE_MAX]`, so 0 clamps to
+   * 0.01. That value is finite and accepted by `resolveTextStyle`, which passes it to
+   * `renderText` — but 0.01px at the document's scale is a sub-pixel quantity, so
+   * `fillText` draws nothing a pixel predicate that requires red > 180 can see.
+   */
+  test('the Adobe minimum font size commits a layer but renders ink below the red threshold', async ({
+    page,
+  }, testInfo) => {
+    const size = page.locator('#font-size-input');
+    const commit = commitButton(page);
+    const layerRows = page.getByTitle('Drag to reorder');
+    const box = await canvasBox(page);
+
+    // Clamp to the Adobe minimum: 0 → 0.01.
+    await size.fill('0');
+    await size.press('Enter');
+    await expect(size, 'a zero size was not clamped to the Adobe minimum').toHaveValue('0.01');
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box, DRAFT_RECT);
+    await replaceDraftText(page, 'X');
+    await commit.click();
+
+    // A layer IS created — 0.01 is a valid size, not a refusal.
+    await expect(layerRows, 'the minimum font size created no layer').toHaveCount(2);
+    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(TOOL_LAYER_NAME);
+
+    // But the ink is too small to clear the red pixel threshold.
+    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-size-min');
+    const image = await loadImageData(capture);
+    const ink = await scanPixelsForBounds(image, isRedInk);
+    expect(ink.found, 'a 0.01px font rendered red ink above the isRedInk threshold').toBe(false);
   });
 });

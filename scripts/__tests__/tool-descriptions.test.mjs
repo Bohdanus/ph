@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { availableTools } from '../../toolbar-mapping.ts';
+import { availableTools, toolbarMap } from '../../toolbar-mapping.ts';
 import { renderToolDocs, renderTooltips } from '../generate-tool-docs.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -86,6 +86,32 @@ describe('tool description citations', () => {
     expect(broken).toEqual([]);
   });
 
+  it('keeps the text toolbar citations attached to the controls they describe', () => {
+    const expected = new Map([
+      ['Font family', /FontSelect/],
+      ['Size', /data-testid="font-size-input"/],
+      ['Text color', /id="text-color"/],
+      ['Align Text Left / Center Text / Align Text Right', /id="align-select"/],
+      ['Commit / Cancel', /Commit/],
+    ]);
+    const text = descriptions.text;
+    const mismatches = [];
+
+    for (const option of text.options) {
+      const pattern = expected.get(option.control);
+      if (!pattern || option.appRef === undefined) continue;
+      const match = /^(?<path>[^:]+):(?<line>\d+)$/.exec(option.appRef);
+      if (!match) {
+        mismatches.push(`${option.control}: malformed appRef ${option.appRef}`);
+        continue;
+      }
+      const source = readRepoFile(match.groups.path).split('\n')[Number(match.groups.line) - 1] ?? '';
+      if (!pattern.test(source)) mismatches.push(`${option.control}: ${option.appRef} does not contain ${pattern}`);
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
   // A duplicated key is invisible to `index.ts`: the later spread silently wins, and the losing
   // family's research is lost with no error anywhere. The compiler proves the families are
   // complete; only this can prove they do not overlap.
@@ -140,8 +166,16 @@ describe('the generated files', () => {
     expect(readRepoFile('src/tools/descriptions/tooltips.ts')).toBe(expected);
   });
 
-  it('projects the record into the tooltip projection without changing a value', async () => {
-    const { toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+  it('projects description values and the toolbar-declared shortcut into tooltips', async () => {
+    const { descriptionKeyFor, toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+    const toolbarShortcuts = new Map();
+    for (const section of toolbarMap) {
+      for (const group of section) {
+        for (const entry of group) {
+          toolbarShortcuts.set(descriptionKeyFor(entry.name, entry.figure), entry.shortcut);
+        }
+      }
+    }
     const drifted = [];
 
     for (const [key, tool] of Object.entries(registeredDescriptions)) {
@@ -152,15 +186,43 @@ describe('the generated files', () => {
       }
       if (projection.summary !== tool.summary) drifted.push(`${key}: summary differs`);
       if (projection.implementation !== tool.implementation) drifted.push(`${key}: implementation differs`);
+      if (projection.shortcut !== toolbarShortcuts.get(key)) drifted.push(`${key}: toolbar shortcut differs`);
     }
 
     expect(drifted).toEqual([]);
     expect(Object.keys(toolTooltips).sort()).toEqual(Object.keys(registeredDescriptions).sort());
   });
 
+  it('does not project family-cycle keys or command shortcuts as a tool-tile shortcut', async () => {
+    const { toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+
+    for (const key of [
+      'pencil',
+      'color-replacement',
+      'patch',
+      'gradient',
+      'sponge',
+      'smudge',
+      'rotate-view',
+      'transform',
+    ]) {
+      expect(toolTooltips[key].shortcut, key).toBeUndefined();
+    }
+  });
+
   it('documents every tool', () => {
     const doc = readRepoFile('docs/TOOLS.md');
     const missing = availableTools.filter((name) => !doc.includes(`\`${name}\``));
     expect(missing, `tools absent from docs/TOOLS.md: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('documents the Star Tool and the generic Shape Tool group under distinct headings', () => {
+    const doc = readRepoFile('docs/TOOLS.md');
+    const headings = [...doc.matchAll(/^### (.+)$/gm)].map(([, heading]) => heading);
+
+    expect(headings.filter((heading) => heading === 'Star Tool')).toHaveLength(1);
+    expect(
+      headings.filter((heading) => heading === 'Shape Tool (the Tools panel group; no entry by that name)')
+    ).toHaveLength(1);
   });
 });

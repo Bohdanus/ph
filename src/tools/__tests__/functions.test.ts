@@ -40,6 +40,46 @@ describe('buildColorsFilter', () => {
       'grayscale(30%) sepia(80%) saturate(100%)'
     );
   });
+
+  it('propagates a non-finite saturation into the emitted string', () => {
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.NaN })).toBe(
+      'grayscale(0%) sepia(0%) saturate(NaN%)'
+    );
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.POSITIVE_INFINITY })).toBe(
+      'grayscale(0%) sepia(0%) saturate(Infinity%)'
+    );
+  });
+
+  it('emits a saturate above 100% for a positive saturation', () => {
+    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: 100 }), 'saturate')).toBeGreaterThan(1);
+  });
+
+  it('emits a saturate between 0 and 1 for a mild negative saturation', () => {
+    const factor = filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -50 }), 'saturate');
+    expect(factor).toBeGreaterThan(0);
+    expect(factor).toBeLessThan(1);
+  });
+
+  it('emits a negative saturate for saturation below the -100 floor', () => {
+    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -200 }), 'saturate')).toBeLessThan(0);
+  });
+
+  it('crosses zero exactly at -100, staying positive just above and negative just below', () => {
+    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -99 }), 'saturate')).toBeGreaterThan(0);
+    expect(filterTerm(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -101 }), 'saturate')).toBeLessThan(0);
+  });
+
+  it.fails('does not clamp NaN saturation to the neutral 100%', () => {
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.NaN })).toBe(
+      'grayscale(0%) sepia(0%) saturate(100%)'
+    );
+  });
+
+  it.fails('does not clamp Infinity saturation to the neutral 100%', () => {
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: Number.POSITIVE_INFINITY })).toBe(
+      'grayscale(0%) sepia(0%) saturate(100%)'
+    );
+  });
 });
 
 /**
@@ -56,7 +96,7 @@ const cssBrightnessRange = (factor: number) => ({ min: 0, max: factor });
 const cssContrastRange = (factor: number) => ({ min: 0.5 - 0.5 * factor, max: 0.5 + 0.5 * factor });
 
 /** The numeric operand of a composed CSS filter term, e.g. `50` from `contrast(50%)`. */
-const filterTerm = (filter: string, term: 'brightness' | 'contrast'): number => {
+const filterTerm = (filter: string, term: 'brightness' | 'contrast' | 'saturate'): number => {
   const match = new RegExp(`${term}\\(([^)]+)\\)`).exec(filter);
   if (!match) throw new Error(`filter "${filter}" is missing a ${term}() term`);
   return Number(match[1].replace('%', '')) / 100;
@@ -225,6 +265,52 @@ describe('buildLevelsFilter', () => {
     expect(buildLevelsFilter({ brightness: 0, contrast: Number.NaN })).toBe('brightness(100%) contrast(NaN%)');
   });
 
+  it('propagates Infinity and -Infinity into the emitted string rather than sanitising them', () => {
+    expect(buildLevelsFilter({ brightness: Number.POSITIVE_INFINITY, contrast: 0 })).toBe(
+      'brightness(Infinity%) contrast(100%)'
+    );
+    expect(buildLevelsFilter({ brightness: Number.NEGATIVE_INFINITY, contrast: 0 })).toBe(
+      'brightness(-Infinity%) contrast(100%)'
+    );
+    expect(buildLevelsFilter({ brightness: 0, contrast: Number.POSITIVE_INFINITY })).toBe(
+      'brightness(100%) contrast(Infinity%)'
+    );
+  });
+
+  it('emits a negative factor for values below the slider floor, which invalidates the CSS term', () => {
+    // Outside the slider travel the proportionate factor turns negative. The slider bounds
+    // keep these from reaching the emitted string in practice; this pins the mathematical
+    // behaviour rather than a sanitised result.
+    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -200, contrast: 0 }))[0]).toBeLessThan(0);
+    expect(parseLevelsFilter(buildLevelsFilter({ brightness: 0, contrast: -200 }))[1]).toBeLessThan(0);
+  });
+
+  it('crosses zero exactly at the brightness floor, staying positive just above and negative just below', () => {
+    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -149, contrast: 0 }))[0]).toBeGreaterThan(0);
+    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -150, contrast: 0 }))[0]).toBe(0);
+    expect(parseLevelsFilter(buildLevelsFilter({ brightness: -151, contrast: 0 }))[0]).toBeLessThan(0);
+  });
+
+  it.fails('does not clamp NaN brightness to 0', () => {
+    expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(0%) contrast(100%)');
+  });
+
+  it.fails('does not clamp NaN contrast to 50', () => {
+    expect(buildLevelsFilter({ brightness: 0, contrast: Number.NaN })).toBe('brightness(100%) contrast(50%)');
+  });
+
+  it.fails('does not clamp Infinity brightness to 100', () => {
+    expect(buildLevelsFilter({ brightness: Number.POSITIVE_INFINITY, contrast: 0 })).toBe(
+      'brightness(100%) contrast(100%)'
+    );
+  });
+
+  it.fails('does not clamp Infinity contrast to 100', () => {
+    expect(buildLevelsFilter({ brightness: 0, contrast: Number.POSITIVE_INFINITY })).toBe(
+      'brightness(100%) contrast(100%)'
+    );
+  });
+
   it('emits a negative factor for nothing on either travel, because a negative `brightness()` invalidates the whole string', () => {
     // A browser DISCARDS an invalid `ctx.filter` assignment outright rather than applying
     // its valid part, so one negative operand would drop the contrast term with it and the
@@ -276,6 +362,37 @@ describe('proportionateFactor', () => {
     expect(proportionateFactor(Number.NaN, 150)).toBeNaN();
     expect(proportionateFactor(Number.POSITIVE_INFINITY, 150)).toBe(Number.POSITIVE_INFINITY);
   });
+
+  it('propagates negative Infinity through the affine expression, unbounded below', () => {
+    expect(proportionateFactor(Number.NEGATIVE_INFINITY, 150)).toBe(Number.NEGATIVE_INFINITY);
+  });
+
+  it('yields a negative factor below the -span floor, the travel is unbounded below', () => {
+    expect(proportionateFactor(-200, 150)).toBeLessThan(0);
+    expect(proportionateFactor(-300, 150)).toBeLessThan(0);
+  });
+
+  it('crosses zero exactly at -span, staying positive just above and negative just below', () => {
+    expect(proportionateFactor(-149, 150)).toBeCloseTo(1 / 150, 10);
+    expect(proportionateFactor(-150, 150)).toBe(0);
+    expect(proportionateFactor(-151, 150)).toBeCloseTo(-1 / 150, 10);
+  });
+
+  it.fails('does not clamp NaN to 0', () => {
+    expect(proportionateFactor(Number.NaN, 150)).toBe(0);
+  });
+
+  it.fails('does not clamp NaN to 1', () => {
+    expect(proportionateFactor(Number.NaN, 150)).toBe(1);
+  });
+
+  it.fails('does not clamp Infinity to 1', () => {
+    expect(proportionateFactor(Number.POSITIVE_INFINITY, 150)).toBe(1);
+  });
+
+  it.fails('does not clamp -Infinity to 0', () => {
+    expect(proportionateFactor(Number.NEGATIVE_INFINITY, 150)).toBe(0);
+  });
 });
 
 describe('expAdjustment', () => {
@@ -319,6 +436,36 @@ describe('expAdjustment', () => {
     // image-processors.test.ts assert that a non-finite adjustment survives all the way
     // into the composed CSS filter string, so this must stay `NaN`.
     expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBeNaN();
+  });
+
+  it('propagates positive Infinity through the exponential, unbounded above', () => {
+    expect(expAdjustment(Number.POSITIVE_INFINITY, SATURATION_EXPONENT)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('propagates negative Infinity as a strictly negative factor, past the -100 zero', () => {
+    expect(expAdjustment(Number.NEGATIVE_INFINITY, SATURATION_EXPONENT)).toBeLessThan(0);
+  });
+
+  it('yields a negative factor below the -100 floor, the curve is unbounded below', () => {
+    expect(expAdjustment(-200, SATURATION_EXPONENT)).toBeLessThan(0);
+    expect(expAdjustment(-300, SATURATION_EXPONENT)).toBeLessThan(0);
+  });
+
+  it('crosses zero exactly at -100, staying positive just above and negative just below', () => {
+    expect(expAdjustment(-99, SATURATION_EXPONENT)).toBeGreaterThan(0);
+    expect(expAdjustment(-101, SATURATION_EXPONENT)).toBeLessThan(0);
+  });
+
+  it.fails('does not clamp NaN to 0', () => {
+    expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBe(0);
+  });
+
+  it.fails('does not clamp NaN to 1', () => {
+    expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBe(1);
+  });
+
+  it.fails('does not clamp Infinity to 1', () => {
+    expect(expAdjustment(Number.POSITIVE_INFINITY, SATURATION_EXPONENT)).toBe(1);
   });
 });
 

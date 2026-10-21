@@ -11,6 +11,7 @@ import {
   LINE_START_Y,
   canvasRedrawClip,
   drawLine,
+  drawLineFromDocument,
   getPageScroll,
   getWorkspaceCanvas,
   takeLineScreenshot,
@@ -435,6 +436,39 @@ describe('drawLine', () => {
     expect(input.up.mock.invocationCallOrder[0]).toBeGreaterThan(input.down.mock.invocationCallOrder[0]);
   });
 
+  it('maps document endpoints through the contain fit before drawing', async () => {
+    const input = createMouseMock();
+    const box: BoundingBox = { x: 100, y: 200, width: 800, height: 800 };
+
+    await drawLineFromDocument(createPageMock({ mouse: input.mouse }), box, 10, 20, 30, 40);
+
+    expect(input.move.mock.calls).toEqual([
+      [110, 320],
+      [130, 340],
+    ]);
+  });
+
+  it('uses the measured document size when mapping document endpoints', async () => {
+    const input = createMouseMock();
+    const box: BoundingBox = { x: 100, y: 200, width: 800, height: 600 };
+
+    await drawLineFromDocument(
+      createPageMock({ mouse: input.mouse }),
+      box,
+      10,
+      20,
+      30,
+      40,
+      {},
+      { width: 400, height: 300 }
+    );
+
+    expect(input.move.mock.calls).toEqual([
+      [120, 240],
+      [160, 280],
+    ]);
+  });
+
   it('interpolates the drag when steps are requested', async () => {
     const input = createMouseMock();
 
@@ -552,9 +586,11 @@ describe('drawLine', () => {
  * second case below is what distinguishes the two.
  *
  * Why it is read at the call site at all is the reason `clickToolButton` exists in the
- * production path: it scrolls the window by 440px in this build, so an offset read once is wrong
- * by a different amount before and after any tool click. `toolbar-helpers.ts:127`,
- * `cdp-helpers.ts:60` and `flyout-longpress-race.spec.ts:342,347` are the callers.
+ * production path: it wraps tool clicks with `preservingScroll` to hold scroll steady
+ * against the shifts that would otherwise come from test-fixture scrolls, so a one-time
+ * offset is wrong before and after any scroll-changing interaction and must be read
+ * live via `getPageScroll`. `toolbar-helpers.ts:127`, `cdp-helpers.ts:88` and
+ * `flyout-longpress-race.spec.ts:342,347` are the callers.
  */
 describe('getPageScroll', () => {
   it('reports the window scroll its own page function reads', async () => {

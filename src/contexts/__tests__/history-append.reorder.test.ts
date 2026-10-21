@@ -422,20 +422,21 @@ describe('deriveReorderLayersEntry', () => {
   });
 
   it.each([
-    { label: 'the item is disabled', item: reorderItem('layer-1', 'layer-b', { disabled: true }) },
+    { label: 'the item is disabled', item: reorderItem('layer-1', 'layer-b', { disabled: true }), enabled: false },
     {
-      label: 'the args carry enabled: false',
+      label: 'the args carry enabled: false but item.disabled is absent',
       item: {
         ...reorderItem('layer-1', 'layer-b'),
         args: { layerToMoveId: 'layer-1', afterWhichLayerId: 'layer-b', enabled: false },
       } as HistoryItem,
+      enabled: true,
     },
-  ] satisfies ReadonlyArray<{ label: string; item: HistoryItem }>)(
-    'derives a disabled entry when $label',
-    ({ item: disabled }) => {
+  ] satisfies ReadonlyArray<{ label: string; item: HistoryItem; enabled: boolean }>)(
+    'uses item.disabled as the history gate when $label',
+    ({ item: disabled, enabled }) => {
       const entry = plannedReorder(disabled, preOrder);
 
-      expect(entry.enabled).toBe(false);
+      expect(entry.enabled).toBe(enabled);
       // The operation is still the one the enabled move produces; the gate is
       // the entry's, not the map's.
       expect(entry.operation.orderByLayerId).toEqual(intentOrder);

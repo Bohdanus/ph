@@ -314,4 +314,90 @@ describe('useResizeObserverRAF', () => {
 
     expect(onResize).not.toHaveBeenCalled();
   });
+
+  it('reports a partial zero-dimension rect (zero width only)', () => {
+    const el = makeElement({ left: 10, top: 20 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    instance!.callback([makeEntry(0, 40)], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 20, width: 0, height: 40 });
+  });
+
+  it('reports a partial zero-dimension rect (zero height only)', () => {
+    const el = makeElement({ left: 10, top: 20 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    instance!.callback([makeEntry(40, 0)], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 20, width: 40, height: 0 });
+  });
+
+  it('falls back to rect dimensions when borderBoxSize entry lacks inlineSize and blockSize', () => {
+    const el = makeElement({ left: 3, top: 4, width: 80, height: 60 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    const entry = { ...makeEntry(50, 60), borderBoxSize: [{} as ResizeObserverSize] };
+    instance!.callback([entry], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 3, y: 4, width: 80, height: 60 });
+  });
+
+  it.fails('guards against NaN values in the border box size', () => {
+    const el = makeElement({ left: 0, top: 0 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    const entry = {
+      ...makeEntry(50, 60),
+      borderBoxSize: [{ inlineSize: NaN, blockSize: NaN }],
+    };
+    instance!.callback([entry], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).not.toHaveBeenCalledWith({ x: 0, y: 0, width: NaN, height: NaN });
+  });
+
+  it.fails('does not throw when entry.borderBoxSize is undefined', () => {
+    const el = makeElement();
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    const entry = {
+      ...makeEntry(50, 60),
+      borderBoxSize: undefined as unknown as ResizeObserverSize[],
+    };
+
+    expect(() => {
+      instance!.callback([entry], instance! as unknown as ResizeObserver);
+      vi.advanceTimersByTime(16);
+    }).not.toThrow();
+
+    expect(onResize).toHaveBeenCalled();
+  });
 });

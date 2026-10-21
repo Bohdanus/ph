@@ -223,7 +223,7 @@ describe('MobileShell', () => {
     const { container } = render(<Harness layersOpen toolSheetOpen />);
 
     expect(container.children).toHaveLength(4);
-    expect(Array.from(container.children).map((child) => child.tagName)).toEqual(['HEADER', 'DIV', 'NAV', 'DIV']);
+    expect(Array.from(container.children).map((child) => child.tagName)).toEqual(['HEADER', 'DIV', 'DIV', 'DIV']);
 
     const classes = regionClasses(container);
     expect(classes[0]).toContain('[grid-area:header]');
@@ -244,7 +244,7 @@ describe('MobileShell', () => {
     expect(Array.from(container.children).map((child) => child.tagName)).toEqual([
       'HEADER',
       'DIV',
-      'NAV',
+      'DIV',
       'DIV',
       'DIV',
     ]);

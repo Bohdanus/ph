@@ -99,6 +99,15 @@ describe('imagePointToCss', () => {
       point: { x: 800, y: 600 },
       expected: { x: 900, y: 650 },
     },
+    {
+      // An image taller than the box scales the y axis but leaves x at 1: the binding axis
+      // is width, so a point at the image's right edge lands on the box's right edge.
+      name: 'an image taller than the box scales only the y axis',
+      image: { width: 400, height: 600 },
+      box: BOX,
+      point: { x: 400, y: 600 },
+      expected: { x: 500, y: 350 },
+    },
   ];
 
   it.each(CASES)('maps image pixels onto the page for $name', ({ image, box, point, expected }) => {
@@ -130,6 +139,25 @@ describe('imagePointToCss', () => {
   it('collapses every point onto the box origin when the box has no area', () => {
     const collapsed: CssBox = { x: 37, y: 11, width: 0, height: 0 };
     expect(imagePointToCss({ width: 100, height: 50 }, collapsed, { x: 90, y: 40 })).toEqual({ x: 37, y: 11 });
+  });
+
+  it('maps a negative image point to a page point before the box origin', () => {
+    // 1:1 with BOX, so x = 100 + (-100) = 0, y = 50 + (-50) = 0.
+    expect(imagePointToCss({ width: 400, height: 300 }, BOX, { x: -100, y: -50 })).toEqual({ x: 0, y: 0 });
+  });
+
+  it('maps a non-integer scale corner to a fractional page coordinate', () => {
+    // image 300x200 in a 100x100 box (origin): scaleX 1/3, scaleY 1/2.
+    const result = imagePointToCss(
+      { width: 300, height: 200 },
+      { x: 0, y: 0, width: 100, height: 100 },
+      {
+        x: 299,
+        y: 199,
+      }
+    );
+    expect(result.x).toBeCloseTo(299 / 3, 9);
+    expect(result.y).toBeCloseTo(99.5, 9);
   });
 });
 
@@ -212,6 +240,67 @@ describe('imageBoundsToCss', () => {
     expect(css.right - css.left).toBe(4);
     // The amount a caller has to add back: one image pixel, in CSS units.
     expect(css.right - css.left + BOX.width / image.width).toBe(4.5);
+  });
+
+  /**
+   * P3 — zero-sized image yields `NaN` edges. `imageBoundsToCss` delegates to
+   * `imagePointToCss`, which divides by the image dimensions, so a zero-sized image
+   * yields NaN on every edge rather than throwing — exactly like the point rule's
+   * zero-width/zero-height cases. A zero-area BOX does NOT yield NaN here: `imagePointToCss`
+   * multiplies by the box extent (it does not divide by it), so a zero-area box
+   * collapses every edge to the origin. The inverse `cssPointToImage`, which DOES divide
+   * by the box extent, is the one whose zero-area-box NaN case is pinned separately
+   * below. These zero-image cases pin the division-by-zero failure mode so a fix
+   * that guards one axis cannot pass unnoticed.
+   */
+  it('yields NaN edges for a zero-sized image instead of throwing', () => {
+    const result = imageBoundsToCss({ width: 0, height: 0 }, BOX, { left: 0, top: 0, right: 0, bottom: 0 });
+    expect(result.left).toBeNaN();
+    expect(result.top).toBeNaN();
+    expect(result.right).toBeNaN();
+    expect(result.bottom).toBeNaN();
+  });
+
+  it('yields NaN on the x-axis for a zero-width image', () => {
+    const result = imageBoundsToCss({ width: 0, height: 50 }, BOX, { left: 0, top: 0, right: 0, bottom: 50 });
+    expect(result.left).toBeNaN();
+    expect(result.right).toBeNaN();
+    // The y-axis is unaffected: image height 50 maps bottom 50 via 50 + (50*300)/50 = 350.
+    expect(result.top).toBe(50);
+    expect(result.bottom).toBe(350);
+  });
+
+  it('yields NaN on the y-axis for a zero-height image', () => {
+    const result = imageBoundsToCss({ width: 50, height: 0 }, BOX, { left: 0, top: 0, right: 50, bottom: 0 });
+    // The x-axis is unaffected: image width 50 maps right 50 via 100 + (50*400)/50 = 500.
+    expect(result.left).toBe(100);
+    expect(result.right).toBe(500);
+    expect(result.top).toBeNaN();
+    expect(result.bottom).toBeNaN();
+  });
+
+  it('yields NaN for zero bounds and Infinity for non-zero on a zero-area image', () => {
+    const result = imageBoundsToCss({ width: 0, height: 0 }, BOX, { left: 0, top: 0, right: 10, bottom: 10 });
+    // `imagePointToCss` divides by the image extent, so zero bounds give 0/0 = NaN and
+    // non-zero bounds give 10/0 = Infinity. Both are signals that the capture was
+    // malformed, just different ones — NaN for the origin corner, Infinity for the far.
+    expect(result.left).toBeNaN();
+    expect(result.top).toBeNaN();
+    expect(result.right).toBe(Infinity);
+    expect(result.bottom).toBe(Infinity);
+  });
+
+  it('collapses every edge to the box origin for a zero-area box, rather than throwing', () => {
+    // A zero-area BOX is NOT a division-by-zero hazard for `imageBoundsToCss` — the box
+    // extent multiplies, it does not divide, so every edge maps to the origin and the
+    // caller gets a degenerate-but-definite rect rather than NaN. This pins that it stays
+    // that way if the rule is ever refactored to divide by the box extent.
+    const collapsed: CssBox = { x: 37, y: 11, width: 0, height: 0 };
+    const result = imageBoundsToCss({ width: 100, height: 50 }, collapsed, { left: 0, top: 0, right: 10, bottom: 10 });
+    expect(result.left).toBe(37);
+    expect(result.top).toBe(11);
+    expect(result.right).toBe(37);
+    expect(result.bottom).toBe(11);
   });
 
   /**
@@ -321,6 +410,31 @@ describe('cssPointToImage', () => {
     expect(point).toEqual({ x: 300, y: 200 });
   });
 
+  /**
+   * P3 — zero-sized image yields `NaN` edges. `cssPointToImage` divides by the box extent,
+   * so a zero-area box is the NaN source (pinned above). But the forward direction
+   * `imagePointToCss` divides by the IMAGE size, so a zero-sized image yields NaN there
+   * too — and unlike the box case, the image is the value a caller hands to a pixel
+   * sampler, so the NaN reaches `page.mouse.click` as an opaque failure. These cases pin
+   * both axes independently: zero width, zero height, and both, so a fix that guards one
+   * axis forgets the other cannot pass unnoticed.
+   */
+  it('yields NaN for a zero-width image instead of throwing', () => {
+    const result = imagePointToCss({ width: 0, height: 50 }, BOX, { x: 0, y: 0 });
+    expect(result.x).toBeNaN();
+  });
+
+  it('yields NaN for a zero-height image instead of throwing', () => {
+    const result = imagePointToCss({ width: 100, height: 0 }, BOX, { x: 0, y: 0 });
+    expect(result.y).toBeNaN();
+  });
+
+  it('yields Infinity on both axes for a zero-sized image at a non-zero point', () => {
+    const result = imagePointToCss({ width: 0, height: 0 }, BOX, { x: 50, y: 25 });
+    expect(result.x).toBe(Infinity);
+    expect(result.y).toBe(Infinity);
+  });
+
   it('yields NaN for a zero-area box instead of throwing', () => {
     const result = cssPointToImage({ width: 100, height: 50 }, { x: 37, y: 11, width: 0, height: 0 }, { x: 37, y: 11 });
     expect(result.x).toBeNaN();
@@ -396,10 +510,12 @@ describe('imagePointToCss and cssPointToImage are inverses', () => {
 });
 
 /**
- * The translation `captureCanvasScreenshot` needs, in the app's own numbers: the page is
- * 1177px tall in a 720px window, `clickToolButton` scrolls it 440px, and the workspace
- * canvas goes from `y: 100` to `y: -340`. Raw, that clip reaches a capture 440px away from
- * the region the caller measured — a wrong answer, not an error.
+ * The translation `viewportRectToPageRect` performs, in the suite's own numbers: the test
+ * passes a literal scroll of {x: 0, y: 440} (a fixture value tied to the legacy-rail
+ * guard, not app geometry — the app no longer scrolls per `e2e/OPEN_PROBLEMS.md`), so a
+ * rect measured at viewport `y: -340` maps to document `y: 100`. Raw, a viewport-relative
+ * clip reaches a capture 440px away from the region the caller measured — a wrong answer,
+ * not an error.
  */
 describe('viewportRectToPageRect', () => {
   const RECT: CssBox = { x: 56, y: -340, width: 320, height: 120 };
@@ -461,6 +577,53 @@ describe('viewportRectToPageRect', () => {
   it('is a pure function of its two arguments', () => {
     const scroll = { x: 30, y: 440 };
     expect(viewportRectToPageRect(RECT, scroll)).toEqual(viewportRectToPageRect(RECT, scroll));
+  });
+
+  it('adds a large vertical scroll to the origin, leaving the extent untouched', () => {
+    // A far-down scroll is still just an origin translation; the width/height must not move.
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 10000 })).toEqual({
+      x: 56,
+      y: 9660,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('adds a large horizontal scroll, extent untouched', () => {
+    expect(viewportRectToPageRect(RECT, { x: 7500, y: 0 })).toEqual({
+      x: 7556,
+      y: -340,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('survives a large scroll on both axes simultaneously', () => {
+    expect(viewportRectToPageRect(RECT, { x: 8000, y: 12000 })).toEqual({
+      x: 8056,
+      y: 11660,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('adds a fractional large scroll without rounding to a device pixel', () => {
+    // 0.5/0.25px of scroll is real at a fractional-DPR or zoomed window.
+    expect(viewportRectToPageRect(RECT, { x: 5000.5, y: 9999.25 })).toEqual({
+      x: 5056.5,
+      y: 9659.25,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('shifts the origin leftward and upward under a negative scroll', () => {
+    expect(viewportRectToPageRect(RECT, { x: -30, y: -440 })).toEqual({
+      x: 26,
+      y: -780,
+      width: 320,
+      height: 120,
+    });
   });
 });
 
@@ -612,5 +775,69 @@ describe('the coordinate shapes have exactly one declaration', () => {
     const source = readFileSync(new URL('../canvas-helpers.ts', import.meta.url), 'utf8');
     expect(source).toMatch(/type\s+CssBox\s+as\s+BoundingBox/);
     expect(source).toMatch(/export type \{[^}]*\bBoundingBox\b/);
+  });
+});
+
+describe('zero-area bounds and negative-coordinate round trips', () => {
+  it('collapses a zero-width bound (left === right) to a single CSS x', () => {
+    // 1:1 with BOX, so the inclusive index maps straight through and the two edges coincide.
+    expect(imageBoundsToCss({ width: 400, height: 300 }, BOX, { left: 10, top: 20, right: 10, bottom: 40 })).toEqual({
+      left: 110,
+      top: 70,
+      right: 110,
+      bottom: 90,
+    });
+  });
+
+  it('collapses a zero-height bound (top === bottom) to a single CSS y', () => {
+    expect(imageBoundsToCss({ width: 400, height: 300 }, BOX, { left: 10, top: 20, right: 30, bottom: 20 })).toEqual({
+      left: 110,
+      top: 70,
+      right: 130,
+      bottom: 70,
+    });
+  });
+
+  it('agrees with imagePointToCss on negative bounds at the origin box', () => {
+    // A bound extending before the image origin still maps each corner through the point rule.
+    const bounds = { left: -10, top: -20, right: -5, bottom: -5 };
+    expect(imageBoundsToCss({ width: 400, height: 300 }, BOX, bounds)).toEqual({
+      left: imagePointToCss({ width: 400, height: 300 }, BOX, { x: bounds.left, y: bounds.top }).x,
+      top: imagePointToCss({ width: 400, height: 300 }, BOX, { x: bounds.left, y: bounds.top }).y,
+      right: imagePointToCss({ width: 400, height: 300 }, BOX, { x: bounds.right, y: bounds.bottom }).x,
+      bottom: imagePointToCss({ width: 400, height: 300 }, BOX, { x: bounds.right, y: bounds.bottom }).y,
+    });
+  });
+
+  it('agrees with imagePointToCss on negative bounds at a non-origin box', () => {
+    const box: CssBox = { x: 37, y: 11, width: 400, height: 300 };
+    const bounds = { left: -100, top: -50, right: -50, bottom: -25 };
+    expect(imageBoundsToCss({ width: 400, height: 300 }, box, bounds)).toEqual({
+      left: imagePointToCss({ width: 400, height: 300 }, box, { x: bounds.left, y: bounds.top }).x,
+      top: imagePointToCss({ width: 400, height: 300 }, box, { x: bounds.left, y: bounds.top }).y,
+      right: imagePointToCss({ width: 400, height: 300 }, box, { x: bounds.right, y: bounds.bottom }).x,
+      bottom: imagePointToCss({ width: 400, height: 300 }, box, { x: bounds.right, y: bounds.bottom }).y,
+    });
+  });
+
+  it('round-trips a negative image point image -> css -> image', () => {
+    // 1:1 with BOX: (-100,-50) maps to the box origin (0,0) and back.
+    const image: ImageSize = { width: 400, height: 300 };
+    expect(cssPointToImage(image, BOX, imagePointToCss(image, BOX, { x: -100, y: -50 }))).toEqual({
+      x: -100,
+      y: -50,
+    });
+  });
+
+  it('round-trips a page point before the box css -> image -> css', () => {
+    // (0,0) is before the box origin; it should survive the inverse mapping untouched.
+    const image: ImageSize = { width: 400, height: 300 };
+    expect(imagePointToCss(image, BOX, cssPointToImage(image, BOX, { x: 0, y: 0 }))).toEqual({ x: 0, y: 0 });
+  });
+
+  it('round-trips a page point further left of the box css -> image -> css', () => {
+    // (-50, 0): still negative image space, still round-trips exactly at scale 1.
+    const image: ImageSize = { width: 400, height: 300 };
+    expect(imagePointToCss(image, BOX, cssPointToImage(image, BOX, { x: -50, y: 0 }))).toEqual({ x: -50, y: 0 });
   });
 });

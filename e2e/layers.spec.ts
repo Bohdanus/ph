@@ -36,6 +36,8 @@ const HISTORY_ROW_TITLE = 'Click to go back to this state';
  * the `capitalize` class would turn this into a locator error rather than a product signal.
  */
 const REORDER_ENTRY = /reorder layers/i;
+/** The product's own spelling of a delete entry: `REMOVE_ACTION = 'remove layer'` (`src/util/constants.ts`). */
+const REMOVE_ENTRY = /remove layer/i;
 
 test.describe('Layers', () => {
   test.beforeEach(async ({ page }) => {
@@ -299,5 +301,129 @@ test.describe('Layers', () => {
 
     await setHidden('draw 3', true);
     await waitForOverlap(isBlack, 'hiding a layer after a reorder to write the flag to the wrong row');
+  });
+
+  /**
+   * The existing "layers change order and are deleted sequentially" test asserts on pixels
+   * after each removal but never checks that the removal landed a row on the timeline. A
+   * deletion that published no entry leaves the canvas correct and every pixel assertion green,
+   * while the layer is silently un-undoable — which is the regression this pins.
+   *
+   * `removeLayer` in the test above calls `handleConfirmRemove`, dispatched as `REMOVE_ACTION`
+   * (`src/util/constants.ts`), so the row title is the product's own lower-case spelling read
+   * through the same case-insensitive filter `REORDER_ENTRY` uses for reorders.
+   */
+  test('deleting a layer is a history entry of its own', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#ff0000', true);
+    await drawLine(page, box, 180, 180, 420, 340, { steps: 15 });
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    const drawnRow = layerRows.filter({ hasText: 'draw 2' });
+
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    await expect(historyRows, 'the document entry plus the stroke').toHaveCount(2);
+    const beforeDelete = await historyRows.count();
+
+    await drawnRow.getByRole('button', { name: 'Remove layer' }).click();
+    await expect(drawnRow).toHaveCount(0);
+
+    await expect(historyRows, 'deleting a layer is ONE entry of its own, not zero').toHaveCount(beforeDelete + 1);
+    await expect(
+      historyRows.filter({ hasText: REMOVE_ENTRY }),
+      'the entry is titled "remove layer" (REMOVE_ACTION)'
+    ).toHaveCount(1);
+  });
+
+  /**
+   * The panel has TWO drop targets: a row (insert above / below it) and the bottom drop zone
+   * (move to the very bottom). `moveToTop` in the first test exercises the row path only, so
+   * the bottom zone is a separate drop that must land its own reorder entry and its own order.
+   *
+   * The bottom zone is the `div.flex-1.min-h-[20px]` that follows `layers-list` in
+   * `LayersTab.tsx`. It is addressed by its `min-h-[20px]` class token, which no other
+   * element in the panel carries, rather than by position — position is fragile when the
+   * `isOverBottom` indicator appears mid-drag and shifts the sibling chain.
+   */
+  test('dropping a layer on the bottom drop zone sends it to the bottom', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, color, true);
+      await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
+    };
+
+    // draw 2 (bottom of stack), draw 3, draw 4 (top). Panel lists topmost first.
+    await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 });
+    await draw('#ff0000', { x: box.x + 420, y: box.y + 180 }, { x: box.x + 180, y: box.y + 340 });
+    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 });
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    expect(await layerRows.allTextContents(), 'expected bedrock plus three strokes').toHaveLength(4);
+
+    // Drag the top layer (draw 4) to the bottom drop zone.
+    const source = layerRows.first();
+    await expect(source).toContainText('draw 4');
+
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    // The bottom drop zone's `min-h-[20px]` class is unique in the panel.
+    const bottomZone = page.locator('[class*="min-h-\\[20px\\]"]');
+    await expect(bottomZone).toBeVisible();
+
+    await source.dispatchEvent('dragstart', { dataTransfer });
+    await bottomZone.dispatchEvent('dragover', { dataTransfer });
+    await bottomZone.dispatchEvent('drop', { dataTransfer });
+    await source.dispatchEvent('dragend', { dataTransfer });
+
+    // The animateMove call in LayersTab uses two 200ms timers, so the row list settles after
+    // the animation before the assertion races the DOM.
+    await expect(layerRows.last(), 'draw 4 moved to the bottom of the stack').toContainText('draw 4');
+
+    // One drag is one history entry, same rule as the reorder test above.
+    await expect(page.getByTitle(HISTORY_ROW_TITLE).filter({ hasText: REORDER_ENTRY })).toHaveCount(1);
+  });
+
+  /**
+   * Every row, without exception, renders the drag handle so the user can always start a
+   * reorder. A row that rendered its name but no handle would be draggable only by accident
+   * — through the row itself, which also fires `selectLayer` — and the handle is the only
+   * affordance a user can reach reliably.
+   *
+   * The handle is `DragHandleIcon`, an `aria-hidden` SVG (`DragHandleIcon.tsx:11`), so it is
+   * counted by tag rather than by role.
+   */
+  test('every layer row shows a drag handle', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#ff0000', true);
+    await drawLine(page, box, 180, 180, 420, 340, { steps: 15 });
+
+    const rows = page.getByTitle('Drag to reorder');
+    const rowCount = await rows.count();
+    expect(rowCount, 'a stroke plus the bedrock layer').toBe(2);
+
+    // Per-layer glyphs are also decorative SVGs, so identify the drag affordance explicitly.
+    const handleCount = await rows.evaluateAll((nodes) =>
+      nodes.reduce((count, row) => {
+        return count + row.querySelectorAll('[data-testid="drag-handle-icon"]').length;
+      }, 0)
+    );
+    expect(handleCount, 'every row renders exactly one drag handle').toBe(rowCount);
   });
 });

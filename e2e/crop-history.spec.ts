@@ -1,8 +1,14 @@
 import { expect, type Page, test } from './fixtures/extended-test';
-import { type BoundingBox, getWorkspaceCanvas } from './helpers/canvas-helpers';
+import path from 'node:path';
+import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import type { BoundingBox } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
+import type { DrawToolArgs } from '../src/tools/draw.ts';
+import type { ShapeToolArgs } from '../src/tools/shape.ts';
+import type { Layer } from '../src/contexts/layer-types.ts';
 
 /**
  * Crop and transform are the only two tools whose commit is a FRAME change, and that makes them
@@ -326,6 +332,26 @@ async function applyCrop(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
 }
 
+async function openRasterFixture(page: Page, rootDir: string): Promise<void> {
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-open-button').click();
+  await acceptDiscardPrompt(page);
+  await (await chooser).setFiles(path.join(rootDir, 'fixtures/split-half-red-blue.png'));
+}
+
+async function readCanvasColor(page: Page, x: number, y: number) {
+  return getWorkspaceCanvas(page).evaluate(
+    (canvas, point) => {
+      const context = (canvas as HTMLCanvasElement).getContext('2d');
+      if (!context) throw new Error('document canvas has no 2D context');
+      const pixel = context.getImageData(point.x, point.y, 1, 1).data;
+      return { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] };
+    },
+    { x, y }
+  );
+}
+
 /**
  * That a release really did leave the document, on the edge it claims to have left by.
  *
@@ -436,12 +462,415 @@ async function commitCrop(page: Page): Promise<void> {
   await applyCrop(page);
 }
 
+type CropParityFrame = Readonly<{ x: number; y: number; width: number; height: number }>;
+
+type CropParityLayerFixture =
+  | Readonly<{
+      kind: 'raster';
+      id: string;
+      order: number;
+      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
+    }>
+  | Readonly<{
+      kind: 'blank';
+      id: string;
+      order: number;
+      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      color: string;
+      opacity: number;
+    }>
+  | Readonly<{
+      kind: 'text';
+      id: string;
+      order: number;
+      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      textArgs: Readonly<{
+        toolName: 'text';
+        align: 'left' | 'center' | 'right';
+        bold: boolean;
+        color: string;
+        fontFamily: string;
+        fontSize: number;
+        italic: boolean;
+        lineHeight: number;
+        text: string;
+        rect: Readonly<{ x1: number; y1: number; x2: number; y2: number }>;
+        kind: 'point' | 'paragraph';
+      }>;
+    }>
+  | Readonly<{
+      kind: 'vector';
+      id: string;
+      order: number;
+      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      args: ShapeToolArgs;
+    }>
+  | Readonly<{
+      kind: 'paint';
+      id: string;
+      order: number;
+      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      args: DrawToolArgs;
+    }>;
+
+type CropParityTransition = Readonly<{
+  angleDegrees: number;
+  nextFrame: CropParityFrame;
+}>;
+
+type CropParityFixture = Readonly<{
+  caseName: string;
+  documentId: string;
+  transitions: readonly CropParityTransition[];
+  layers: readonly CropParityLayerFixture[];
+}>;
+
+async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
+  return page.evaluate(async (fixture) => {
+    const load = (specifier: string) => import(/* @vite-ignore */ new URL(specifier, location.origin).href);
+    const [
+      { AssetRegistry },
+      { composeDurableDocument },
+      { isIdentityAffineTransform, rotationAffineAroundPoint },
+      { legacyHistoryToDurable },
+      { drawLayersToCanvas },
+      { replayHistory },
+      { replayDurableAtCursor },
+      { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION },
+      { findToolProcessor },
+    ] = await Promise.all([
+      load('/src/contexts/asset-registry.ts'),
+      load('/src/contexts/durable-compositor.ts'),
+      load('/src/contexts/affine-transform.ts'),
+      load('/src/contexts/history-adapter.ts'),
+      load('/src/contexts/layer-renderer.ts'),
+      load('/src/contexts/history-replay.ts'),
+      load('/src/contexts/durable-replay.ts'),
+      load('/src/util/constants.ts'),
+      load('/src/tools/toolProcessors.ts'),
+    ]);
+
+    const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
+    const layers = fixture.layers.map((layerFixture) => {
+      const createSourceCanvas = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = layerFixture.pos.width;
+        canvas.height = layerFixture.pos.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error(`A 2D context is required for ${layerFixture.id}`);
+        return { canvas, context };
+      };
+      let runtimeSource:
+        | Readonly<{ bitmap: HTMLCanvasElement | OffscreenCanvas; source: Readonly<Record<string, unknown>> }>
+        | Readonly<{ bitmap: null; source: Readonly<Record<string, unknown>> }>;
+      switch (layerFixture.kind) {
+        case 'raster': {
+          const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
+          for (const fill of layerFixture.fills) {
+            sourceContext.fillStyle = fill.color;
+            sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
+          }
+          runtimeSource = {
+            bitmap: sourceCanvas,
+            source: {
+              kind: 'image',
+              bitmap: sourceCanvas,
+              name: `${layerFixture.id}.png`,
+              isBedrock: false,
+              pos: layerFixture.pos,
+            },
+          };
+          break;
+        }
+        case 'blank': {
+          const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
+          sourceContext.globalAlpha = layerFixture.opacity;
+          sourceContext.fillStyle = layerFixture.color;
+          sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+          runtimeSource = {
+            bitmap: sourceCanvas,
+            source: {
+              kind: 'blank',
+              color: layerFixture.color,
+              opacity: layerFixture.opacity,
+              isBedrock: false,
+              pos: layerFixture.pos,
+            },
+          };
+          break;
+        }
+        case 'text':
+          runtimeSource = {
+            bitmap: null,
+            source: { kind: 'tool', args: layerFixture.textArgs, isBedrock: false, pos: layerFixture.pos },
+          };
+          break;
+        case 'vector':
+          runtimeSource = {
+            bitmap: null,
+            source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
+          };
+          break;
+        case 'paint': {
+          const processor = findToolProcessor(layerFixture.args.toolName);
+          if (!processor?.creator) throw new Error(`Paint source ${layerFixture.id} is not a deterministic creator`);
+          const [bitmap] = processor.imageProcessor({ size: layerFixture.pos })(layerFixture.args);
+          if (!bitmap) throw new Error(`Paint source ${layerFixture.id} produced no raster`);
+          runtimeSource = {
+            bitmap,
+            source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
+          };
+          break;
+        }
+      }
+      return {
+        id: layerFixture.id,
+        name: layerFixture.id,
+        isBedrock: false,
+        tmpCanvas: null,
+        bitmap: runtimeSource.bitmap,
+        visible: true,
+        opacity: 1,
+        locked: false,
+        blendMode: 'source-over',
+        order: layerFixture.order,
+        pos: layerFixture.pos,
+        presentationBounds: null,
+        source: runtimeSource.source,
+        operations: [],
+      };
+    });
+    if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
+    const transitions = fixture.transitions.map((transition, index) => {
+      const frameCenter = {
+        x: transition.nextFrame.x + transition.nextFrame.width / 2,
+        y: transition.nextFrame.y + transition.nextFrame.height / 2,
+      };
+      const candidate = rotationAffineAroundPoint((-transition.angleDegrees * Math.PI) / 180, frameCenter);
+      const transform = isIdentityAffineTransform(candidate) ? undefined : candidate;
+      return {
+        id: `frame-transition-${index + 1}`,
+        previousFrame: index === 0 ? baseFrame : fixture.transitions[index - 1]!.nextFrame,
+        nextFrame: transition.nextFrame,
+        angleDegrees: transition.angleDegrees,
+        transform,
+      };
+    });
+
+    const registry = new AssetRegistry();
+    try {
+      const history = [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId: layers[0]?.id,
+          documentSource: {
+            layers: Object.fromEntries(layers.map((layer) => [layer.id, layer])),
+            size: { width: 64, height: 64 },
+            frame: baseFrame,
+          },
+        },
+        ...transitions.map(({ id, previousFrame, nextFrame, transform }) => ({
+          id,
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame, nextFrame, ...(transform ? { transform } : {}) },
+        })),
+      ];
+      const converted = legacyHistoryToDurable(history, {
+        documentId: fixture.documentId,
+        registry,
+        initialSize: { width: 64, height: 64 },
+        initialFrame: baseFrame,
+      });
+      if (converted.diagnostics.length > 0) {
+        throw new Error(`Durable crop conversion failed: ${JSON.stringify(converted.diagnostics)}`);
+      }
+      const transitionResults = [];
+      let finalLegacyPixels: number[] = [];
+      let finalDurablePixels: number[] = [];
+      let finalMaterializedBounds: Record<string, unknown> = {};
+      for (const [index, transition] of transitions.entries()) {
+        const legacyReplay = replayHistory(
+          history,
+          index + 1,
+          { width: 64, height: 64 },
+          {
+            createLayer: () => {
+              throw new Error('Unexpected layer creation in a frame-only crop differential');
+            },
+            applyRasterTool: (layer: unknown) => layer,
+          },
+          baseFrame
+        );
+        if (legacyReplay.diagnostics.length > 0) {
+          throw new Error(`Legacy crop replay failed: ${JSON.stringify(legacyReplay.diagnostics)}`);
+        }
+        const frame = legacyReplay.documentFrame;
+        if (
+          frame.x !== transition.nextFrame.x ||
+          frame.y !== transition.nextFrame.y ||
+          frame.width !== transition.nextFrame.width ||
+          frame.height !== transition.nextFrame.height
+        ) {
+          throw new Error(`Legacy frame transition ${index + 1} did not reach its requested frame`);
+        }
+        const legacySurface = document.createElement('canvas');
+        const legacyLayers = (Object.values(legacyReplay.layers) as Layer[]).sort(
+          (left, right) => left.order - right.order
+        );
+        if (!drawLayersToCanvas(legacySurface, legacyLayers, frame)) {
+          throw new Error(`Legacy composition was refused for ${fixture.caseName} at transition ${index + 1}`);
+        }
+        const legacyContext = legacySurface.getContext('2d');
+        if (!legacyContext) throw new Error('Legacy crop composition produced no 2D context');
+        const legacyPixels = Array.from(legacyContext.getImageData(0, 0, frame.width, frame.height).data);
+
+        const cursor = converted.legacyCursorToDurableCursor[index + 1];
+        if (typeof cursor !== 'number')
+          throw new Error(`Frame transition ${index + 1} did not map to a durable cursor`);
+        const replay = replayDurableAtCursor(converted.document, cursor);
+        const composite = await composeDurableDocument(replay, {
+          documentId: fixture.documentId,
+          baselineAssetGeneration: registry.getDocumentGeneration(fixture.documentId),
+          operationSetRevision: converted.document.durableRevision,
+          assetRegistry: registry,
+        });
+        try {
+          const durableSurface = document.createElement('canvas');
+          durableSurface.width = frame.width;
+          durableSurface.height = frame.height;
+          const durableContext = durableSurface.getContext('2d');
+          if (!durableContext) throw new Error('Durable crop composition produced no 2D context');
+          durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
+          const durablePixels = Array.from(durableContext.getImageData(0, 0, frame.width, frame.height).data);
+          let differingBytes = 0;
+          for (let byte = 0; byte < Math.max(legacyPixels.length, durablePixels.length); byte += 1) {
+            if (legacyPixels[byte] !== durablePixels[byte]) differingBytes += 1;
+          }
+          const materializedBounds = Object.fromEntries(
+            fixture.layers.map(({ id }) => {
+              const layer = composite.layers[id];
+              if (!layer) throw new Error(`Durable crop did not materialize ${id} at transition ${index + 1}`);
+              return [id, layer.bounds];
+            })
+          );
+          transitionResults.push({
+            index: index + 1,
+            angleDegrees: transition.angleDegrees,
+            frame,
+            durableFrame: composite.frame,
+            legacyByteLength: legacyPixels.length,
+            durableByteLength: durablePixels.length,
+            differingBytes,
+            materializedBounds,
+          });
+          if (index === transitions.length - 1) {
+            finalLegacyPixels = legacyPixels;
+            finalDurablePixels = durablePixels;
+            finalMaterializedBounds = materializedBounds;
+          }
+        } finally {
+          composite.release();
+        }
+      }
+
+      const hasOpaqueRgb = (pixels: number[], rgb: readonly [number, number, number]): boolean => {
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (
+            pixels[index] === rgb[0] &&
+            pixels[index + 1] === rgb[1] &&
+            pixels[index + 2] === rgb[2] &&
+            (pixels[index + 3] ?? 0) > 0
+          ) {
+            return true;
+          }
+        }
+        return false;
+      };
+      const colors = [
+        ...new Set(
+          fixture.layers.flatMap((layer) => {
+            switch (layer.kind) {
+              case 'raster':
+                return layer.fills.map((fill) => fill.color);
+              case 'blank':
+                return [layer.color];
+              case 'text':
+                return [layer.textArgs.color];
+              case 'vector':
+              case 'paint':
+                return [layer.args.color];
+            }
+          })
+        ),
+      ];
+      const colorPresence = Object.fromEntries(
+        colors.map((color) => {
+          const normalized = color.replace('#', '');
+          const rgb: readonly [number, number, number] = [
+            Number.parseInt(normalized.slice(0, 2), 16),
+            Number.parseInt(normalized.slice(2, 4), 16),
+            Number.parseInt(normalized.slice(4, 6), 16),
+          ];
+          return [
+            color,
+            {
+              legacy: hasOpaqueRgb(finalLegacyPixels, rgb),
+              durable: hasOpaqueRgb(finalDurablePixels, rgb),
+            },
+          ];
+        })
+      );
+      const finalTransition = transitionResults.at(-1);
+      if (!finalTransition) throw new Error(`No frame transition was composed for ${fixture.caseName}`);
+      return {
+        caseName: fixture.caseName,
+        legacyPixels: finalLegacyPixels,
+        durablePixels: finalDurablePixels,
+        differingBytes: finalTransition.differingBytes,
+        colorPresence,
+        materializedBounds: finalMaterializedBounds,
+        transitionResults,
+      };
+    } finally {
+      registry.shutdown();
+    }
+  }, caseFixture);
+}
+
 test.describe('Crop history', () => {
   // Tall enough to hold the whole canvas box, so no band read is clipped by the fold. The
   // intersection in `readableBox` already makes a truncation unrepresentable; the window removes
   // the reason to want it in the first place, which is the same reasoning `transform.spec.ts`
   // gives for its own viewport, for a different reason.
   test.use({ viewport: { width: 1600, height: 1200 } });
+
+  test('the crop overlay selector exposes six guides and O cycles the active guide', async ({ page }) => {
+    await openDocument(page);
+    await openCropTool(page);
+
+    const overlaySelect = page.locator('#crop-overlay');
+    await expect(overlaySelect, 'the crop overlay selector is visible').toBeVisible();
+    expect(await overlaySelect.locator('option').allTextContents()).toEqual([
+      'Rule of Thirds',
+      'Grid',
+      'Diagonal',
+      'Triangle',
+      'Golden Ratio',
+      'Golden Spiral',
+    ]);
+    await expect(overlaySelect, 'Rule of Thirds is the default guide').toHaveValue('ruleOfThirds');
+
+    await page.keyboard.press('o');
+    await expect(overlaySelect, 'O advances to Grid').toHaveValue('grid');
+
+    await overlaySelect.selectOption('goldenSpiral');
+    await overlaySelect.evaluate((element) => (element as HTMLSelectElement).blur());
+    await page.keyboard.press('o');
+    await expect(overlaySelect, 'O wraps after Golden Spiral').toHaveValue('ruleOfThirds');
+  });
 
   test('a committed crop is one history entry that one undo restores in full', async ({ page }) => {
     await openDocument(page);
@@ -495,7 +924,7 @@ test.describe('Crop history', () => {
     // something larger. An undo that only partly restored the frame, or restored the pixels while
     // leaving the extent cropped, both fail on this line.
     await page.getByTestId('undo-button').click();
-    expect(await documentSize(page), 'one undo must put the whole frame back').toEqual(opening);
+    await expect.poll(() => documentSize(page), 'one undo must put the whole frame back').toEqual(opening);
     const restoredFit = await readFit(page);
     expect(
       { width: restoredFit.documentWidth, height: restoredFit.documentHeight },
@@ -602,7 +1031,7 @@ test.describe('Crop history', () => {
     // above about ORDER rather than about a stuck cursor. A crop that had destroyed the pixels
     // would leave the canvas clean here too, and no assertion above would have noticed.
     await page.getByTestId('undo-button').click();
-    expect(await documentSize(page), 'undoing the crop restores the opening frame').toEqual(opening);
+    await expect.poll(() => documentSize(page), 'undoing the crop restores the opening frame').toEqual(opening);
     const restoredFit = await readFit(page);
     await waitForInk(page, restoredFit, inkIn(bandOfDocumentY(restoredFit, BAR_ABOVE_Y)));
     await expect(
@@ -815,10 +1244,12 @@ test.describe('Crop history', () => {
       // that merely shrank. A growth written as a frame commit plus a fill would be two entries,
       // and one undo would leave the larger frame behind and fail on this line.
       await page.getByTestId('undo-button').click();
-      expect(
-        await documentSize(page),
-        'one undo must put the whole opening frame back, band included, not merely shrink it'
-      ).toEqual(opening);
+      await expect
+        .poll(
+          () => documentSize(page),
+          'one undo must put the whole opening frame back, band included, not merely shrink it'
+        )
+        .toEqual(opening);
       const container = page.getByTestId('workspace-container');
       await expect(container, 'and the app is fitting the opening document again, on the width').toHaveAttribute(
         'data-fit-document-width',
@@ -838,6 +1269,463 @@ test.describe('Crop history', () => {
         'the timeline is the opening entry and this one crop, so one undo reaching the start is the ' +
           'growth being a single entry rather than a frame commit plus a fill'
       ).toBeDisabled();
+    });
+
+    test('the crop corner exposes a rotation cursor and dragging it rotates the pending box', async ({ page }) => {
+      await openDocument(page);
+      const fit = await openCropTool(page);
+      await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
+
+      const surface = page.locator('.cursor-crop');
+      const corner = documentPoint(fit, CROP_LEFT_X - 10, CROP_TOP_Y - 10);
+      await page.mouse.move(corner.x, corner.y);
+      await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+
+      await page.mouse.down();
+      const rotatedCorner = documentPoint(fit, CROP_RIGHT_X - 160, CROP_TOP_Y - 180);
+      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.up();
+
+      await expect(surface, 'the pending crop keeps the rotated angle').toHaveAttribute(
+        'data-rotation',
+        /8[5-9]|9[0-5]/
+      );
+    });
+
+    test('a rotated crop transforms pixels in one history step and redo reproduces them exactly', async ({
+      page,
+    }, testInfo) => {
+      await openDocument(page);
+      await openRasterFixture(page, testInfo.config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      const originalPixels = await getWorkspaceCanvas(page).screenshot();
+
+      const cropFit = await openCropTool(page);
+      await dragOnCanvas(page, cropFit, { x: 16, y: 16 }, { x: 48, y: 48 });
+      const surface = page.locator('.cursor-crop');
+      const rotationHandle = documentPoint(cropFit, 15.5, 15.5);
+      await page.mouse.move(rotationHandle.x, rotationHandle.y);
+      await page.mouse.down();
+      const rotatedCorner = documentPoint(cropFit, 48.5, 15.5);
+      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.up();
+      await expect(surface, 'the pending crop has a nonzero rotation').toHaveAttribute(
+        'data-rotation',
+        /8[5-9]|9[0-5]/
+      );
+
+      await applyCrop(page);
+      await expect
+        .poll(() => documentSize(page), 'rotated crop commits the requested frame')
+        .toEqual({
+          width: 32,
+          height: 32,
+        });
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'unpublished');
+      await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      const committedPixels = await getWorkspaceCanvas(page).screenshot();
+
+      await page.getByTestId('undo-button').click();
+      await expect
+        .poll(() => documentSize(page), 'one undo restores the frame and pixels before crop')
+        .toEqual({
+          width: 64,
+          height: 64,
+        });
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+      await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      expect((await getWorkspaceCanvas(page).screenshot()).equals(originalPixels)).toBe(true);
+
+      await page.getByTestId('redo-button').click();
+      await expect
+        .poll(() => documentSize(page), 'one redo reapplies the complete rotated crop')
+        .toEqual({
+          width: 32,
+          height: 32,
+        });
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      const redonePixels = await getWorkspaceCanvas(page).screenshot();
+      expect(redonePixels.equals(committedPixels), 'redo must reproduce the rotated-crop pixels exactly').toBe(true);
+    });
+
+    test('durable materialization matches legacy pixels for a quarter-turn crop without an extra edge pixel', async ({
+      page,
+    }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'quarter-turn crop',
+        documentId: 'quarter-turn-crop-pixel-parity',
+        transitions: [{ angleDegrees: 90, nextFrame: { x: 16, y: 16, width: 32, height: 32 } }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'quarter-turn-crop-layer',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 32, height: 64, color: '#ff0000' },
+              { x: 32, y: 0, width: 32, height: 64, color: '#0000ff' },
+            ],
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#ff0000']?.legacy, 'legacy crop must contain fixture red pixels').toBe(true);
+      expect(result.colorPresence['#0000ff']?.legacy, 'legacy crop must contain fixture blue pixels').toBe(true);
+      expect(result.colorPresence['#ff0000']?.durable, 'durable crop must contain fixture red pixels').toBe(true);
+      expect(result.colorPresence['#0000ff']?.durable, 'durable crop must contain fixture blue pixels').toBe(true);
+      expect(result.differingBytes, 'durable and legacy crop rasters must be byte-identical').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(result.materializedBounds['quarter-turn-crop-layer']).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+      expect(result.transitionResults).toHaveLength(1);
+    });
+
+    test('a 37-degree crop matches legacy pixels for multiple positioned layers', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: '37-degree two-layer crop',
+        documentId: 'arbitrary-multilayer-crop-parity',
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 12, y: 10, width: 40, height: 44 } }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 32, height: 64, color: '#ff0000' },
+              { x: 32, y: 0, width: 32, height: 64, color: '#0000ff' },
+            ],
+          },
+          {
+            kind: 'raster',
+            id: 'center-patch',
+            order: 1,
+            pos: { x: 24, y: 24, width: 16, height: 16 },
+            fills: [
+              { x: 0, y: 0, width: 8, height: 16, color: '#ffff00' },
+              { x: 8, y: 0, width: 8, height: 16, color: '#00ff00' },
+            ],
+          },
+        ],
+      });
+
+      for (const [color, presence] of Object.entries(result.colorPresence)) {
+        expect(presence.legacy, `legacy crop should contain ${color}`).toBe(true);
+        expect(presence.durable, `durable crop should contain ${color}`).toBe(true);
+      }
+      expect(result.differingBytes, '37-degree multi-layer rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'center-patch']);
+      expect(result.transitionResults).toHaveLength(1);
+    });
+
+    test('a 37-degree crop preserves a committed text source across renderers', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: '37-degree text-source crop',
+        documentId: 'text-source-crop-pixel-parity',
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 8, width: 48, height: 48 } }],
+        layers: [
+          {
+            kind: 'text',
+            id: 'text-layer',
+            order: 0,
+            pos: { x: 24, y: 24, width: 16, height: 16 },
+            textArgs: {
+              toolName: 'text',
+              align: 'left',
+              bold: false,
+              color: '#ff00ff',
+              fontFamily: 'Arial',
+              fontSize: 12,
+              italic: false,
+              lineHeight: 1.2,
+              text: 'I',
+              rect: { x1: 0, y1: 0, x2: 16, y2: 16 },
+              kind: 'point',
+            },
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#ff00ff']?.legacy, 'legacy crop must contain text-source pixels').toBe(true);
+      expect(result.colorPresence['#ff00ff']?.durable, 'durable crop must contain text-source pixels').toBe(true);
+      expect(result.differingBytes, 'text-source crop rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds)).toEqual(['text-layer']);
+      expect(result.transitionResults).toHaveLength(1);
+    });
+
+    test('paragraph text with a serif font and centered alignment matches legacy pixels', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'paragraph serif text crop',
+        documentId: 'paragraph-serif-crop-pixel-parity',
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 8, width: 48, height: 48 } }],
+        layers: [
+          {
+            kind: 'text',
+            id: 'paragraph-serif',
+            order: 0,
+            pos: { x: 8, y: 16, width: 42, height: 24 },
+            textArgs: {
+              toolName: 'text',
+              align: 'center',
+              bold: false,
+              color: '#00ccff',
+              fontFamily: 'serif',
+              fontSize: 11,
+              italic: false,
+              lineHeight: 1.2,
+              text: 'Crop\nparity',
+              rect: { x1: 0, y1: 0, x2: 42, y2: 24 },
+              kind: 'paragraph',
+            },
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#00ccff']?.legacy, 'legacy crop must contain paragraph text pixels').toBe(true);
+      expect(result.colorPresence['#00ccff']?.durable, 'durable crop must contain paragraph text pixels').toBe(true);
+      expect(result.differingBytes, 'paragraph text crop rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(result.materializedBounds['paragraph-serif']).toBeDefined();
+    });
+
+    test('a non-centered right-aligned monospace text layer matches legacy pixels', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'non-centered monospace text crop',
+        documentId: 'non-centered-monospace-crop-pixel-parity',
+        transitions: [{ angleDegrees: -23, nextFrame: { x: 8, y: 8, width: 48, height: 48 } }],
+        layers: [
+          {
+            kind: 'text',
+            id: 'offset-monospace',
+            order: 0,
+            pos: { x: 5, y: 36, width: 46, height: 18 },
+            textArgs: {
+              toolName: 'text',
+              align: 'right',
+              bold: false,
+              color: '#ff8800',
+              fontFamily: 'monospace',
+              fontSize: 10,
+              italic: false,
+              lineHeight: 1.2,
+              text: 'RIGHT',
+              rect: { x1: 0, y1: 0, x2: 46, y2: 18 },
+              kind: 'point',
+            },
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#ff8800']?.legacy, 'legacy crop must contain offset text pixels').toBe(true);
+      expect(result.colorPresence['#ff8800']?.durable, 'durable crop must contain offset text pixels').toBe(true);
+      expect(result.differingBytes, 'offset text crop rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(result.materializedBounds['offset-monospace']).toBeDefined();
+    });
+
+    test('a blank source matches legacy pixels through a rotated crop', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'blank-source crop',
+        documentId: 'blank-source-crop-pixel-parity',
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 8, width: 48, height: 48 } }],
+        layers: [
+          {
+            kind: 'blank',
+            id: 'blank-source',
+            order: 0,
+            pos: { x: 20, y: 12, width: 18, height: 20 },
+            color: '#00ff00',
+            opacity: 1,
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#00ff00']?.legacy, 'legacy crop must contain blank-source pixels').toBe(true);
+      expect(result.colorPresence['#00ff00']?.durable, 'durable crop must contain blank-source pixels').toBe(true);
+      expect(result.differingBytes, 'blank-source crop rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+    });
+
+    test('a vector source matches legacy pixels through a rotated crop', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'vector-source crop',
+        documentId: 'vector-source-crop-pixel-parity',
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 8, width: 48, height: 48 } }],
+        layers: [
+          {
+            kind: 'vector',
+            id: 'vector-source',
+            order: 0,
+            pos: { x: 16, y: 18, width: 24, height: 18 },
+            args: {
+              toolName: 'shape',
+              alpha: 1,
+              color: '#00ffff',
+              backgroundColor: null,
+              hasFill: true,
+              figure: 'rectangle',
+              lineWidth: 1,
+              toolMode: 'shape',
+              start: { x: 2, y: 2 },
+              end: { x: 22, y: 16 },
+            },
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#00ffff']?.legacy, 'legacy crop must contain vector-source pixels').toBe(true);
+      expect(result.colorPresence['#00ffff']?.durable, 'durable crop must contain vector-source pixels').toBe(true);
+      expect(result.differingBytes, 'vector-source crop rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+    });
+
+    test('a paint source matches legacy pixels through a rotated crop', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'paint-source crop',
+        documentId: 'paint-source-crop-pixel-parity',
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 8, width: 48, height: 48 } }],
+        layers: [
+          {
+            kind: 'paint',
+            id: 'paint-source',
+            order: 0,
+            pos: { x: 16, y: 28, width: 32, height: 24 },
+            args: {
+              toolName: 'draw',
+              alpha: 1,
+              color: '#ff8800',
+              penType: 'pen',
+              lineWidth: 5,
+              points: [
+                { x: 2, y: 3 },
+                { x: 28, y: 18 },
+              ],
+            },
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#ff8800']?.legacy, 'legacy crop must contain paint-source pixels').toBe(true);
+      expect(result.colorPresence['#ff8800']?.durable, 'durable crop must contain paint-source pixels').toBe(true);
+      expect(result.differingBytes, 'paint-source crop rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+    });
+
+    test('multi-step frame transitions retain byte parity across text, vector, blank, and paint sources', async ({
+      page,
+    }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'multi-step mixed-source crop',
+        documentId: 'multi-step-mixed-source-crop-pixel-parity',
+        transitions: [
+          { angleDegrees: 37, nextFrame: { x: 4, y: 4, width: 56, height: 56 } },
+          { angleDegrees: 0, nextFrame: { x: 5, y: 6, width: 54, height: 52 } },
+          { angleDegrees: -17, nextFrame: { x: 7, y: 6, width: 50, height: 50 } },
+        ],
+        layers: [
+          {
+            kind: 'blank',
+            id: 'blank',
+            order: 0,
+            pos: { x: 28, y: 8, width: 10, height: 10 },
+            color: '#00ff00',
+            opacity: 1,
+          },
+          {
+            kind: 'vector',
+            id: 'vector',
+            order: 1,
+            pos: { x: 14, y: 18, width: 14, height: 14 },
+            args: {
+              toolName: 'shape',
+              alpha: 1,
+              color: '#00ffff',
+              backgroundColor: null,
+              hasFill: true,
+              figure: 'rectangle',
+              lineWidth: 1,
+              toolMode: 'shape',
+              start: { x: 1, y: 1 },
+              end: { x: 13, y: 13 },
+            },
+          },
+          {
+            kind: 'paint',
+            id: 'paint',
+            order: 2,
+            pos: { x: 40, y: 24, width: 16, height: 18 },
+            args: {
+              toolName: 'draw',
+              alpha: 1,
+              color: '#ff8800',
+              penType: 'pen',
+              lineWidth: 5,
+              points: [
+                { x: 1, y: 1 },
+                { x: 14, y: 16 },
+              ],
+            },
+          },
+          {
+            kind: 'text',
+            id: 'text',
+            order: 3,
+            pos: { x: 18, y: 38, width: 28, height: 18 },
+            textArgs: {
+              toolName: 'text',
+              align: 'left',
+              bold: false,
+              color: '#ff00ff',
+              fontFamily: 'serif',
+              fontSize: 10,
+              italic: false,
+              lineHeight: 1.2,
+              text: 'frame',
+              rect: { x1: 0, y1: 0, x2: 28, y2: 18 },
+              kind: 'point',
+            },
+          },
+        ],
+      });
+
+      expect(result.transitionResults).toHaveLength(3);
+      for (const transition of result.transitionResults) {
+        expect(transition.durableFrame).toEqual(transition.frame);
+        expect(transition.legacyByteLength).toBe(transition.frame.width * transition.frame.height * 4);
+        expect(transition.durableByteLength).toBe(transition.legacyByteLength);
+        expect(transition.differingBytes, `frame transition ${transition.index} must match byte-for-byte`).toBe(0);
+      }
+      for (const [color, presence] of Object.entries(result.colorPresence)) {
+        expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);
+        expect(presence.durable, `durable mixed-source crop should contain ${color}`).toBe(true);
+      }
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['blank', 'paint', 'text', 'vector']);
     });
   });
 });

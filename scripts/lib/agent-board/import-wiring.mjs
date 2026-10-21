@@ -75,6 +75,20 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
   const ambiguousRetirements = read.flatMap((entry) =>
     (entry.parsed.ambiguousRetirements ?? []).map((retirement) => ({ file: entry.file, ...retirement }))
   );
+  const letterSuffixedHeadings = read.flatMap((entry) =>
+    (entry.parsed.letterSuffixedHeadings ?? []).map((heading) => ({ file: entry.file, ...heading }))
+  );
+  if (letterSuffixedHeadings.length > 0) {
+    const details = letterSuffixedHeadings
+      .map(({ file, line, level, text }) => `  ${file}:${line} (level ${level}): ${JSON.stringify(text)}`)
+      .join('\n');
+    throw new BoardError(
+      'cannot import handoff documents: numbered headings with letter suffixes have no supported origin; ' +
+        'choose a numeric heading or resolve the origin grammar before importing:\n' +
+        details,
+      { code: 1 }
+    );
+  }
   if (ambiguousRetirements.length > 0) {
     const details = ambiguousRetirements
       .map(({ file, line, origin, heading }) => `  ${file}:${line} (${origin}): ${JSON.stringify(heading)}`)
@@ -102,12 +116,22 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     known
   );
 
+  const originForNumber = (file, number) => {
+    const base = file.split('/').filter(Boolean).pop() || 'unknown.md';
+    return `${base}#${number}`;
+  };
+  const retired = read
+    .flatMap((entry) => (entry.parsed.dead ?? []).map((number) => originForNumber(entry.file, number)))
+    .flatMap((origin) => {
+      const id = board.findIssue(origin)?.id;
+      return id ? [{ origin, id }] : [];
+    });
   const created = [];
   const skipped = [...plan.skip];
   const drifted = [...(plan.drift ?? [])];
-  const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`));
+  const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => originForNumber(entry.file, number)));
   const duplicates = read.flatMap((entry) =>
-    (entry.parsed.duplicateNumbers ?? []).map((number) => `${entry.file}#${number}`)
+    (entry.parsed.duplicateNumbers ?? []).map((number) => originForNumber(entry.file, number))
   );
   const notItems = [];
   const isNotItem = (item) =>
@@ -172,6 +196,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     skipped,
     drifted,
     dead,
+    retired,
     duplicates,
     notItems,
   };

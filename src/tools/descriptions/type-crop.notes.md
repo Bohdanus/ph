@@ -64,6 +64,17 @@ range.
 Adobe quotations that this pass did not open, including one this file had already recorded as
 unverifiable and left unquoted. See `Unverified` item 20.
 
+## Defensive input boundary
+
+The live crop commit remains the document-frame operation described below. Its registered raster
+processor is also defensive because old or hand-edited records can still reach a registry entry:
+missing, non-finite and zero-area crop rectangles are treated as no-op copies instead of producing a
+zero-sized bitmap or throwing while normalising the rectangle. The live document-frame commit
+rejects non-finite edges before `sortRoundRect`, so an invalid record cannot publish a frame whose
+size is `NaN`. Text creation follows the same platform boundary: an `OffscreenCanvas` with no 2D
+context yields a blank canvas rather than an exception during replay or export. These are safety
+guards, not Photoshop behaviour claims.
+
 ## Method
 
 Two passes. First the Photoshop half: `websearch` with `livecrawl: 'preferred'` over Adobe's
@@ -1210,8 +1221,8 @@ Neither entry changes a claim in `type-crop.ts`, and neither is a live crop defe
   registration.** `C` comes from the shared table (the `c` registration in
   `AppKeyboardShortcuts.tsx`), and
   `Enter`/`Esc` come from the raw `window` listener described in the next section rather than
-  from `useKeyDownShortcut`. Everything else Photoshop binds for the crop is absent, and two of
-  them are actively harmful to repeat. Detail in the next section.
+  from `useKeyDownShortcut`. The crop-scoped `O`/`Shift+O` handlers are also local to the
+  tool area; the remaining Photoshop crop bindings are absent. Detail in the next section.
 
 ### Which Photoshop crop keys the app actually binds
 
@@ -1236,17 +1247,16 @@ were unbound, which is the table's absence being read as the app's.
 | `Shift+C`            | The crop tile in `toolbar-mapping.ts` is a **single entry**, and the `c` registration in `AppKeyboardShortcuts.tsx` passes no `shift`, so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all.                                                                                    |
 | `Enter` / `Return`   | **Works, outside the table.** The `commit` arm of `CropToolArea`'s crop-keys effect commits the pending rect and clears `rect`/`preRatioRect`; the `Enter` registrations in `PolygonClickToolArea` and `FeatherMagneticLassoToolArea` own the table registrations, for the lasso tools.                                                                          |
 | `Esc`                | **Works, outside the table.** The `cancel` arm of the same crop-keys effect drops the draft rect and restores the previous framing. `Escape` is also registered in the two lasso areas and in the font popup (`FontSelect`'s `Escape` registration), and handled raw by `Transform`'s own `window` `keydown` effect, the two dialogs and the layer-rename field. |
-| `O`                  | **Switches tools.** The `o` registration in `AppKeyboardShortcuts.tsx` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn', 'sponge']` (`tonalGroup`, with the non-shift fallback inside `selectTonalTool` itself). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.                     |
-| `Shift+O`            | Same handler with `shift: true` (the `shift: true` twin of that registration), so it also leaves the crop — it cycles the tonal group.                                                                                                                                                                                                                           |
+| `O`                  | **Cycles overlays.** `CropToolArea` handles `O` while the Crop tool is active and advances through the six composition guides; the global tonal-tool registration remains the behavior outside Crop.                                                                                                                                                             |
+| `Shift+O`            | `CropToolArea` handles `Shift+O` while the Crop tool is active and flips Triangle or Golden Spiral orientation; other overlays ignore it. Outside Crop, the global tonal-tool registration remains unchanged.                                                                                                                                                    |
 | `X`                  | Unbound. There is no `x` registration anywhere in `src/`; `matchesShortcut` is case-insensitive (`normalizeKey()` in `useKeyboardEvents.tsx`), so this is not a capitalisation miss.                                                                                                                                                                             |
 | `Backspace`/`Delete` | Bound only in the two lasso tool areas (the `Backspace` and `Delete` registrations in `PolygonClickToolArea` and `FeatherMagneticLassoToolArea`), and only to remove the last draft anchor.                                                                                                                                                                      |
 | `Ctrl`/`⌘` + drag    | `useRect`'s `getEdgeAtPoint()` reads Ctrl and Command to **lock the current aspect ratio** — the behaviour the `Shift` modifier row already describes. It never reaches a Straighten tool; there is none.                                                                                                                                                        |
 
 So the data file's `shortcuts` array now carries eight rows — `C`, `Shift+C`, `Enter`, `Esc`,
 `X`, `O`, `Shift+O` and `Backspace` — each naming what the app does instead, rather than
-describing Photoshop's key and leaving the app's answer in `appNotes`. `appNotes` still states
-the absence of the rest, with `O`/`Shift+O` called out as tool switches rather than as no-ops,
-and Enter/Esc called out as real rather than missing. The Photoshop-side provenance for these
+describing Photoshop's key and leaving the app's answer in `appNotes`. `appNotes` records the crop-scoped `O`/`Shift+O` handlers and the remaining absent bindings,
+and Enter/Esc are called out as real rather than missing. The Photoshop-side provenance for these
 keys is unchanged and still in the source list: Adobe's CS6 shortcut list for `X` and
 `Shift+drag`, and the two third-party tutorials below for `Shift+C`, `O`, Alt-from-centre,
 Enter and Esc.

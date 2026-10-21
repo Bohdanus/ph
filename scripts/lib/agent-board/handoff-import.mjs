@@ -48,6 +48,8 @@
  * @property {number[]} duplicateNumbers numbered headings that share an origin
  * @property {{origin: string, number: number, line: number, heading: string}[]} ambiguousRetirements
  *   numbered headings whose status suffix could be prose or a retirement marker
+ * @property {{line: number, level: number, text: string}[]} letterSuffixedHeadings
+ *   numbered-looking headings whose letter suffix has no supported origin grammar
  */
 
 /**
@@ -188,6 +190,10 @@ const DEAD_HEADING = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed
  */
 const NUMBERED = /^(?:item\s+)?#?(\d+)\b/i;
 
+/** A numbered heading whose leading list contains an unsupported letter suffix. */
+const LETTER_SUFFIXED_NUMBERED =
+  /^(?:items?\s+)?(?:#?\d+[a-z]+(?:\s*,\s*#?\d+)*|#?\d+(?:\s*,\s*#?\d+)*\s*,\s*#?\d+[a-z]+)/i;
+
 /**
  * A numbered heading ending in a status word is a retirement only when the
  * heading itself is an explicit list, not when it also has an item title.
@@ -248,6 +254,9 @@ const SEVERITY_TOKEN = /\bP\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/gi;
  * endpoints would leave the entries between them live.
  */
 const NUMBER_OR_RANGE = /(\d{1,6})\s*(?:[-–—]\s*(\d{1,6}))?/g;
+
+/** A letter-suffixed number is not a valid retirement-list number. */
+const LETTER_SUFFIXED_NUMBER = /(?:^|[^\d])\d{1,6}[A-Za-z]+\b/;
 
 /**
  * A range wider than this is treated as its endpoints rather than expanded. It
@@ -347,6 +356,7 @@ function retiredNumbersIn(record) {
   if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) return [];
   if (ambiguousRetirementNumber(record) !== null) return [];
   const withoutSeverities = record.text.replace(SEVERITY_TOKEN, ' ');
+  if (LETTER_SUFFIXED_NUMBER.test(withoutSeverities)) return [];
   const numbers = new Set();
   for (const match of withoutSeverities.matchAll(NUMBER_OR_RANGE)) {
     const from = Number(match[1]);
@@ -397,13 +407,27 @@ function cap(text, limit) {
   return (boundary > limit / 2 ? clipped.slice(0, boundary) : clipped).trimEnd();
 }
 
+function clipBody(text, base) {
+  let clipped = cap(text, BODY_LIMIT);
+  if (clipped === text) return text;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const dropped = text.length - clipped.length;
+    const marker = `[… clipped — ${dropped} of ${text.length} characters dropped. The rest is in ${base}; read it there.]`;
+    const next = cap(text, Math.max(0, BODY_LIMIT - marker.length - 2));
+    if (next === clipped) return `${clipped}\n\n${marker}`;
+    clipped = next;
+  }
+  const dropped = text.length - clipped.length;
+  return `${clipped}\n\n[… clipped — ${dropped} of ${text.length} characters dropped. The rest is in ${base}; read it there.]`;
+}
+
 /**
  * The body is the item's own text up to the next marker, and it stops at any
  * heading at the same or a higher level because that heading belongs to whatever
  * comes next — a deeper heading is the item's own sub-structure. The rules
  * between two entries are dropped as layout.
  */
-function bodyOf(lines, open, endLine, endColumn) {
+function bodyOf(lines, open, endLine, endColumn, base) {
   const kept = [];
 
   for (let line = open.startLine; line < endLine; line += 1) {
@@ -415,7 +439,7 @@ function bodyOf(lines, open, endLine, endColumn) {
 
   while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
 
-  return cap(kept.join('\n').trim(), BODY_LIMIT);
+  return clipBody(kept.join('\n').trim(), base);
 }
 
 /**
@@ -499,6 +523,7 @@ function assemble(base, { lines, records }) {
   const items = [];
   const duplicateNumbers = new Set();
   const ambiguousRetirements = [];
+  const letterSuffixedHeadings = [];
   const seen = new Set();
   const runs = new Map();
   let ambient = 1;
@@ -508,7 +533,7 @@ function assemble(base, { lines, records }) {
   const close = (endLine, endColumn) => {
     if (!open) return;
     if (open.number !== null && seen.has(`${base}#${open.number}`)) duplicateNumbers.add(open.number);
-    const item = makeItem(base, open.number, open.title, bodyOf(lines, open, endLine, endColumn), seen, runs);
+    const item = makeItem(base, open.number, open.title, bodyOf(lines, open, endLine, endColumn, base), seen, runs);
     if (item) items.push(item);
     open = null;
   };
@@ -516,6 +541,13 @@ function assemble(base, { lines, records }) {
   for (const record of records) {
     if (record.kind === 'heading') {
       ambient = record.level;
+
+      if (LETTER_SUFFIXED_NUMBERED.test(record.text)) {
+        close(record.line, 0);
+        inDeadSection = false;
+        letterSuffixedHeadings.push({ line: record.line + 1, level: record.level, text: record.text });
+        continue;
+      }
 
       const ambiguousNumber = ambiguousRetirementNumber(record);
       if (ambiguousNumber !== null) {
@@ -596,6 +628,7 @@ function assemble(base, { lines, records }) {
     items,
     duplicateNumbers: [...duplicateNumbers].sort((a, b) => a - b),
     ambiguousRetirements,
+    letterSuffixedHeadings,
   };
 }
 
@@ -638,7 +671,7 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
   const path = String(file);
   const parsed = scan(text);
   const base = path.split('/').filter(Boolean).pop() || 'unknown.md';
-  const { items, duplicateNumbers, ambiguousRetirements } = assemble(base, parsed);
+  const { items, duplicateNumbers, ambiguousRetirements, letterSuffixedHeadings } = assemble(base, parsed);
 
   return {
     scope: scopeOf(path),
@@ -646,6 +679,7 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
     dead: deadNumbersIn(parsed.records),
     duplicateNumbers,
     ambiguousRetirements,
+    letterSuffixedHeadings,
   };
 }
 

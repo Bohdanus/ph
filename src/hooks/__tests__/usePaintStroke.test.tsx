@@ -11,6 +11,7 @@ import {
   createPointerMoveEvent,
   createPointerUpEvent,
 } from '@/__tests__/fixtures/pointer.ts';
+import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../document-gesture.ts';
 
 const CANVAS_SIZE: Size = { width: 400, height: 300 };
 /** A crop whose origin is not zero, which is the whole point of the conversion. */
@@ -107,6 +108,7 @@ describe('usePaintStroke', () => {
   });
 
   afterEach(() => {
+    resetDocumentGestures();
     container.remove();
   });
 
@@ -189,6 +191,7 @@ describe('usePaintStroke', () => {
 
     act(() => result.current.onPointerUp(up(7, 7)));
     expect(callbacks.onCommit).toHaveBeenCalledTimes(1);
+    expect(isDocumentGestureOpen()).toBe(false);
 
     // A second up is not a second commit: `usePointerPosition` owns the
     // pointer, and the hook refuses to commit a gesture it does not own.
@@ -267,6 +270,19 @@ describe('usePaintStroke', () => {
     expect(callbacks.onMove).not.toHaveBeenCalled();
     expect(callbacks.onCommit).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it('refuses a paint stroke while another document gesture owns the gate', () => {
+    claimDocumentGesture('layer-transform', 99);
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+
+    expect(pointerPositionMock.isPointerDownValid).not.toHaveBeenCalled();
+    expect(callbacks.onStart).not.toHaveBeenCalled();
+    expect(result.current.isMouseDown).toBe(false);
   });
 
   it('is inert while disabled', () => {
@@ -320,6 +336,7 @@ describe('usePaintStroke', () => {
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
     expect(result.current.points).toEqual([]);
     // The capture `usePointerPosition` took has to be released, or it refuses
     // every later pointer-down.
@@ -360,6 +377,7 @@ describe('usePaintStroke', () => {
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('cancels through the imperative handle while a gesture is in flight', () => {
@@ -372,6 +390,7 @@ describe('usePaintStroke', () => {
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('does not fire onCancel when cancel is called with nothing in flight', () => {
@@ -381,6 +400,18 @@ describe('usePaintStroke', () => {
     act(() => result.current.cancel());
 
     expect(callbacks.onCancel).not.toHaveBeenCalled();
+  });
+
+  it('releases the document claim when the stroke surface unmounts mid-gesture', () => {
+    const callbacks = makeCallbacks();
+    const { result, unmount } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    unmount();
+
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('does not re-render per move when no preview is supplied', () => {
@@ -457,5 +488,77 @@ describe('usePaintStroke', () => {
       [{ x: 100, y: 95 }],
     ]);
     expect(result.current.points).toEqual([]);
+  });
+
+  it('forwards non-finite NaN coordinates through to onStart and onCommit', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(NaN, NaN)));
+    act(() => result.current.onPointerUp(up(NaN, NaN)));
+
+    expect(callbacks.starts).toHaveLength(1);
+    expect(Number.isNaN(callbacks.starts[0][0].x)).toBe(true);
+    expect(Number.isNaN(callbacks.starts[0][0].y)).toBe(true);
+
+    expect(callbacks.commits).toHaveLength(1);
+    expect(callbacks.commits[0]).toHaveLength(2);
+    expect(Number.isNaN(callbacks.commits[0][1].x)).toBe(true);
+  });
+
+  it('forwards non-finite Infinity coordinates through to onStart and onCommit', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(Infinity, 0)));
+    act(() => result.current.onPointerUp(up(Infinity, 0)));
+
+    expect(callbacks.starts).toHaveLength(1);
+    expect(callbacks.starts[0][0].x).toBe(Infinity);
+
+    expect(callbacks.commits).toHaveLength(1);
+    expect(callbacks.commits[0]).toHaveLength(1);
+    expect(callbacks.commits[0][0].x).toBe(Infinity);
+  });
+
+  it('treats pointer-up with no active gesture as a no-op', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    pointerPositionMock.isPointerUpValid.mockReturnValue(false);
+    act(() => result.current.onPointerUp(up(10, 20)));
+
+    expect(callbacks.onCommit).not.toHaveBeenCalled();
+    expect(callbacks.onStart).not.toHaveBeenCalled();
+    expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it('commits a single-point stroke when the release lands on the start point', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(10, 20)));
+    act(() => result.current.onPointerUp(up(10, 20)));
+
+    expect(callbacks.commits).toEqual([[{ x: 50, y: 45 }]]);
+  });
+
+  it.fails('should reject NaN coordinates instead of forwarding them to onStart', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(NaN, NaN)));
+
+    expect(callbacks.onStart).not.toHaveBeenCalled();
+  });
+
+  it.fails('should reject Infinity coordinates instead of forwarding them to onStart', () => {
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(Infinity, 0)));
+
+    expect(callbacks.onStart).not.toHaveBeenCalled();
   });
 });

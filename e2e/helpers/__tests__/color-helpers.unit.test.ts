@@ -295,6 +295,56 @@ describe('Color Helpers', () => {
         'hexToRgb: expected 3, 4, 6 or 8 hex digits, got "rgba(255, 0, 0, 0.5)"'
       );
     });
+
+    it('expands uppercase shorthand hex (#F00, #0F0, #00F)', () => {
+      // The existing tests cover lowercase shorthand and mixed-case 6-digit;
+      // these confirm the same expansion holds for uppercase shorthand forms.
+      expect(hexToRgb('#F00')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#0F0')).toEqual({ r: 0, g: RED_CHANNEL_MAX, b: 0 });
+      expect(hexToRgb('#00F')).toEqual({ r: 0, g: 0, b: RED_CHANNEL_MAX });
+      expect(hexToRgb('#A0B')).toEqual({ r: 170, g: 0, b: 187 });
+    });
+
+    it('expands uppercase 4-char #rgba shorthand, dropping the alpha digit', () => {
+      expect(hexToRgb('#F00A')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#0F0F')).toEqual({ r: 0, g: RED_CHANNEL_MAX, b: 0 });
+      expect(hexToRgb('#00FA')).toEqual({ r: 0, g: 0, b: RED_CHANNEL_MAX });
+    });
+
+    it('strips the alpha byte from uppercase 8-digit #rrggbbaa hex', () => {
+      expect(hexToRgb('#FF0000FF')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#FF000080')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#00FF00CC')).toEqual({ r: 0, g: RED_CHANNEL_MAX, b: 0 });
+    });
+
+    it('parses channels at boundary values in every position', () => {
+      // Each value exercises a different 8-bit boundary (1, 128, 255) in a
+      // different channel position, so a parser that read channels from the
+      // wrong offset or dropped a byte would misplace the values.
+      expect(hexToRgb('#0180ff')).toEqual({ r: 1, g: 128, b: RED_CHANNEL_MAX });
+      expect(hexToRgb('#80ff00')).toEqual({ r: 128, g: RED_CHANNEL_MAX, b: 0 });
+      expect(hexToRgb('#01ff80')).toEqual({ r: 1, g: RED_CHANNEL_MAX, b: 128 });
+    });
+
+    it('throws for a 7-character hex string (one digit too long for 6)', () => {
+      expect(() => hexToRgb('#ff0000f')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "ff0000f"');
+    });
+
+    it('throws for a 5-character hex string (invalid length)', () => {
+      expect(() => hexToRgb('#ff00f')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "ff00f"');
+    });
+
+    it('throws for a 2-character hex string (too short for any form)', () => {
+      expect(() => hexToRgb('#12')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "12"');
+    });
+
+    it('throws for a single-character hex string', () => {
+      expect(() => hexToRgb('f')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "f"');
+    });
+
+    it('throws for a 9-character hex string (one digit too long for  8)', () => {
+      expect(() => hexToRgb('#ff0000ff1')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "ff0000ff1"');
+    });
   });
 
   describe('setForegroundColor', () => {
@@ -756,6 +806,86 @@ describe('Color Helpers', () => {
 
       expect(locator).not.toHaveBeenCalled();
       expect(mockPoll).not.toHaveBeenCalled();
+    });
+
+    it('writes a lowercase simple colour from uppercase 6-digit hex through the native setter', async () => {
+      // `toHexPair` always lowercases via `toString(16)`, so an uppercase input
+      // is normalised to the `#rrggbb` casing a `<input type="color">` can hold.
+      const { prototype, applied } = createNativeValueSetterProbe();
+      const input = createInputStub('foreground-color-input');
+      stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
+      const page = createMockPage({ evaluate: createRunningEvaluate() });
+
+      await setForegroundColor(page, '#FF0000');
+
+      expect(applied).toEqual([{ element: input, color: RED_HEX }]);
+    });
+
+    it('expands 3-char lowercase shorthand to 6-digit hex through the native setter', async () => {
+      // The shorthand is doubled to the six-digit form BEFORE it reaches the
+      // input, so the element never sees a value a colour input would rewrite
+      // to black.
+      const { prototype, applied } = createNativeValueSetterProbe();
+      const input = createInputStub('foreground-color-input');
+      stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
+      const page = createMockPage({ evaluate: createRunningEvaluate() });
+
+      await setForegroundColor(page, '#0f0');
+
+      expect(applied).toEqual([{ element: input, color: '#00ff00' }]);
+    });
+
+    it('expands uppercase 4-char shorthand and drops alpha through the native setter', async () => {
+      // The alpha digit is validated (not blindly dropped) and the result is
+      // lowercased before it reaches the input.
+      const { prototype, applied } = createNativeValueSetterProbe();
+      const input = createInputStub('foreground-color-input');
+      stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
+      const page = createMockPage({ evaluate: createRunningEvaluate() });
+
+      await setForegroundColor(page, '#F00A');
+
+      expect(applied).toEqual([{ element: input, color: RED_HEX }]);
+    });
+
+    it('dispatches input and change events before the swatch check rejects on mismatch', async () => {
+      // The DOM write is synchronous inside `page.evaluate`; the swatch check
+      // comes after. A mismatch must not leave the input half-written — the
+      // events fire, the value is set, and only then does the poll reject.
+      const { prototype, applied } = createNativeValueSetterProbe();
+      const input = createInputStub('foreground-color-input');
+      stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
+      const { locator, swatch } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], GREEN_RGB_CSS);
+      const evaluate = createRunningEvaluate();
+      const page = createMockPage({ evaluate, locator });
+      mockPollAssertion.mockImplementation(() => {
+        throw new Error(SWATCH_MISMATCH_MESSAGE);
+      });
+
+      await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(SWATCH_MISMATCH_MESSAGE);
+
+      expect(applied).toEqual([{ element: input, color: RED_HEX }]);
+      expect(input.dispatchEvent).toHaveBeenCalledTimes(2);
+      expect(input.dispatchEvent).toHaveBeenNthCalledWith(1, { type: 'input', bubbles: true });
+      expect(input.dispatchEvent).toHaveBeenNthCalledWith(2, { type: 'change', bubbles: true });
+      expect(swatch.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates a swatch.evaluate rejection instead of treating it as a colour match', async () => {
+      // `readComputedBackgroundColor` calls `swatch.evaluate`; if that rejects
+      // the error must surface, not be swallowed into a false positive.
+      const evaluate = createResolvedEvaluate();
+      const swatch = {
+        selector: FOREGROUND_COLOR_SWATCH_SELECTOR,
+        evaluate: vi.fn().mockRejectedValue(new Error('swatch disconnected')),
+      };
+      const locator = vi.fn(() => swatch);
+      const page = createMockPage({ evaluate, locator });
+
+      await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow('swatch disconnected');
+
+      expect(swatch.evaluate).toHaveBeenCalledTimes(1);
+      expect(mockPollAssertion).not.toHaveBeenCalled();
     });
   });
 });

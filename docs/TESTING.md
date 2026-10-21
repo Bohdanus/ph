@@ -169,7 +169,7 @@ Two of the four hooks wrap a `package.json` script — `pre-commit` ends at
 `npm run gate:commit`, and `pre-push` ends at `npm run gate:push` after the stale-branch
 check. The other two run
 `scripts/*.mjs` directly — `pre-merge-commit` at `merge-takeover-guard.mjs`, `post-merge` at
-`merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev servers** is
+`merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Coordination Rules** is
 where the takeover guard is documented.
 
 The headless E2E gate requires **zero failures**; do not adopt known failures as
@@ -256,18 +256,18 @@ CI in `.github/workflows/ci.yml` is read-only by design: the workflow sets
 `persist-credentials: false`, so no job can write to the repository or exfiltrate
 a usable token.
 
-- `ci`: lint, high-severity audit, typecheck, TS-project coverage assertion,
-  unit tests, build.
+- `ci`: lint, typecheck, TS-project coverage assertion, unit tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
+- `audit`: `npm audit --audit-level=high`, a non-blocking vulnerability-advisory check.
 - `e2e`: headless Playwright on Linux, Windows, and macOS — a matrix with
   `fail-fast: false` and `retries: 2` (three total attempts). `failOnFlakyTests`
   makes a test that passes only after a retry fail the job, so investigate it as a
   defect rather than treating it as a pass. Only `darwin/` visual-regression
   baselines are committed; the Linux and Windows legs fail-as-missing until their
   baselines are recorded (see `.github/workflows/ci.yml` "MISSING BASELINES").
-- **Dependency licences are not checked by CI.** `npm audit --audit-level=high`
-  checks vulnerability advisories, not licence terms. The README records this
-  limitation and the expectation to review dependency licences.
+- **Dependency licences are not checked by CI.** The `audit` job checks
+  vulnerability advisories, not licence terms. The README records this limitation
+  and the expectation to review dependency licences.
 
 **DO NOT WEAKEN A GATE TO GET GREEN: no skips, raised thresholds, deleted
 assertions, or re-recorded baselines.** Fix the defect or leave the recording
