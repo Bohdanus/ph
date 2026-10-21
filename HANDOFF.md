@@ -2667,30 +2667,25 @@ tracked and agent-editable. Leave operator-owned `docs/OVERRIDES.md` to its owne
 `docs/TOOLS.md` under its generator. Decide separately whether structured `implementationRefs`
 should migrate to symbol anchors.
 
-## 219. Nothing stops a test from asserting on a path another process owns, and all three repairs are prose
+## 219. Test resource isolation has no repository-wide write-boundary guard
 
-**Problem.** Every existing instance of this defect was repaired **by hand, with a comment describing
-the repair rather than a check**. `scripts/__tests__/e2e-run.test.mjs` asserted
-`isPortFree(await findFreePort())` — two binds with the port released in the gap — which
-`scripts/e2e-run.mjs` explicitly disclaims. `reservePort`, the production mechanism that exists
-_because_ one pick is not a guarantee, had **zero** test references. The repair was hardened,
-mutation-proved green, and 0 losses were observed in 10,250 find→check→bind cycles — so it declined
-to assert a trigger it had not seen and said so in the file.
+**Problem.** The e2e-run suite now has checks for its own resource boundaries: it exercises
+`reservePort`, gives the runner a temporary board with `AGENT_BOARD_DIR`, sends each run record to
+a temporary path, and reads the live worktree record only as a tripwire. Those checks are local to
+that suite. No repository-wide rule prevents another test from writing a path owned by a concurrent
+process, and no derived inventory of tests that write shared paths exists.
 
-That honesty is the right call and it leaves the class open. `node_modules` walking up to the parent
-checkout, `.kilo/e2e-last-run.json`, the e2e queue sentinel and the board database are all shared,
-and nothing enforces it. A scan that claimed three live siblings in that file was wrong within a day
-of the repair, which is this repository's own failure class and the reason the class needs a check
-rather than a fourth repair.
+`node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e queue sentinel, and the board database
+can all be shared across tests or worktrees. The suite-budgets inventory derives process-spawning
+tests only; it does not discover file writes or establish an allowlist for them.
 
 **Affected.** `scripts/__tests__/e2e-run.test.mjs`; `scripts/lib/**` for the shared-path helpers;
-`node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e queue sentinel, `board.db`.
+the wider `scripts/__tests__` tree; `node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e
+queue sentinel, `board.db`.
 
-**What would close it.** A rule with a check behind it: a test in this repository may not **write** a
-path outside a per-test temp directory, and the machine-shared paths get an explicit allowlist for
-reads. `scripts/__tests__/suite-budgets.test.mjs` already derives every spawning suite from the tree
-and asserts the derived set against a hard-coded list, so the mechanism for a derived inventory
-exists here already.
+**What would close it.** A check that inventories test writes and fails when a test writes outside
+its per-test temporary directory, plus an explicit allowlist for machine-shared reads. Derive the
+inventory from the test tree rather than maintaining a list that can silently omit a new writer.
 
 ## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
 
