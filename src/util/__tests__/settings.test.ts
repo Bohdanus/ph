@@ -117,6 +117,7 @@ describe('saveLastSettings', () => {
   it('stores text settings without text and rect', () => {
     saveLastSettings({
       text: 'hello',
+      angle: 37,
       rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
       fontSize: 32,
       lineHeight: 1.2,
@@ -130,6 +131,7 @@ describe('saveLastSettings', () => {
     const text = lastSavedSettings.text;
     expect(text.text).toBeUndefined();
     expect(text.rect).toBeUndefined();
+    expect(text.angle).toBeUndefined();
     expect(text.fontSize).toBe(32);
     expect(text.color).toBe('#0000ff');
     expect(text.bold).toBe(true);
@@ -146,6 +148,7 @@ describe('saveLastSettings', () => {
   it('persists the text character attributes verbatim, and invents none of them', () => {
     saveLastSettings({
       text: 'hello',
+      angle: 37,
       rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
       fontSize: 32,
       lineHeight: 1.8,
@@ -987,6 +990,7 @@ describe('defaultSettings and lastSavedSettings', () => {
       [
         'align',
         'allCaps',
+        'angle',
         'bold',
         'color',
         'fontFamily',

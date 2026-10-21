@@ -2500,6 +2500,18 @@ test.describe('Text tool', () => {
       'data-rotation',
       /8[5-9]|9[0-5]/
     );
+
+    await commitButton(page).click();
+    await expect(surface, 'Apply must return the active text tool to neutral geometry').toHaveAttribute(
+      'data-rotation',
+      '0'
+    );
+
+    await page.mouse.click(box.x + CLICK_POINT.x + 120, box.y + CLICK_POINT.y + 80);
+    await expect(surface, 'a new text placement must not inherit the previous layer angle').toHaveAttribute(
+      'data-rotation',
+      '0'
+    );
   });
 
   /**

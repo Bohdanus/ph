@@ -76,6 +76,7 @@ export const TRACKING_MAX = 1000;
  * the default reproduces the 120% and the semantics stay divergent.
  */
 export const AUTO_LEADING = 1.2;
+export const NEUTRAL_TEXT_ANGLE = 0;
 
 /**
  * The leading range the options bar offers, and the bounds a corrupt record is folded into.
@@ -197,7 +198,7 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
-  /** Rotation of the text box in degrees, around its centre. */
+  /** Per-layer rotation in degrees; the active tool resets it when the draft closes. */
   angle?: number;
   /** True only for a newly placed placeholder that has not received user input yet. */
   placeholderUntouched?: boolean;
@@ -338,13 +339,27 @@ export function resolveTextKind(args: TextToolArgs): TextKind {
  * `color` is a setting, not a derivation. It used to be omitted because the bar mirrored the store's
  * foreground into the args on every render, so the value was never the tool's to keep; it is the
  * tool's own swatch now, and `saveLastSettings` already persists it (`src/util/settings.ts` omits
- * `text` and `rect` and, since this revision, `kind`), so this type has to say the same thing.
+ * draft content/geometry and, since this revision, `kind` and `angle`), so this type has to say the
+ * same thing.
  *
  * `kind` is omitted rather than persisted for a different reason: it is decided by the gesture that
  * placed the draft, so a remembered `paragraph` would make the next draft wrap inside the last
  * layer's box before the user has dragged anything.
+ *
+ * `angle` is omitted because it is geometry of one text layer, not reusable character formatting.
+ * A committed source retains its own angle; each subsequent draft starts at zero.
  */
-export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect' | 'kind'>;
+export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect' | 'kind' | 'angle'>;
+
+export function clearTextDraftArgs<T extends object>(
+  args: T
+): Omit<T, 'text' | 'rect' | 'angle'> & { text: string; rect: null; angle: number } {
+  return { ...args, text: '', rect: null, angle: NEUTRAL_TEXT_ANGLE } as Omit<T, 'text' | 'rect' | 'angle'> & {
+    text: string;
+    rect: null;
+    angle: number;
+  };
+}
 
 /**
  * The CSS font shorthand, with style and weight BEFORE the size.

@@ -25,7 +25,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A combo box showing every font available to Photoshop in a WYSIWYG list, each entry rendered in its own face so the list previews the fonts.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:292',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:293',
       },
       {
         control: 'Font Style',
@@ -38,21 +38,21 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The type size, entered in points by default and accepting a unit suffix. `TypeUnits` is `MILLIMETERS / PIXELS / POINTS`.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:315',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:316',
       },
       {
         control: 'Text color',
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:397',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:398',
       },
       {
         control: 'Align Text Left / Center Text / Align Text Right',
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:409',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:410',
       },
       {
         control: 'Toggle the type on a path',
