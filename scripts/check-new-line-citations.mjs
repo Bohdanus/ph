@@ -8,7 +8,15 @@ import {
 
 const git = (args, options = {}) => execFileSync('git', args, { encoding: 'utf8', ...options });
 
-const diff = git(['diff', '--cached', '--unified=0', '--no-color', '--diff-filter=ACMR']);
+const baseIndex = process.argv.indexOf('--base');
+let diff;
+if (baseIndex === -1) {
+  diff = git(['diff', '--cached', '--unified=0', '--no-color', '--diff-filter=ACMR']);
+} else {
+  const base = process.argv[baseIndex + 1];
+  if (!base || base.startsWith('--')) throw new Error('Expected a commit or ref after --base.');
+  diff = git(['diff', '--unified=0', '--no-color', '--diff-filter=ACMR', `${base}...HEAD`, '--']);
+}
 const additions = addedLinesByFile(diff);
 const findings = [];
 

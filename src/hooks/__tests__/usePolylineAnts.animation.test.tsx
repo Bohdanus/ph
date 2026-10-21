@@ -142,12 +142,12 @@ describe('useMarchingPath animation lifecycle', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
-  it('stops the loop when paused before the first frame has run (src/hooks/usePolylineAnts.ts:148)', () => {
+  it('stops the loop when paused before the first frame has run in usePolylineAnts', () => {
     // The effect cleanup cancels the pending handle, and a handle a user agent returns is
     // `++identifier` off a counter that "must initially be zero" (HTML Standard §8.12), so
     // the first is 1 and the guard is never wrong in a browser. This used to be an
     // `it.fails` claiming the guard skipped handle 0 — an input this mock manufactured and
-    // the spec excludes. The production comment at `usePolylineAnts.ts:134-136` asserted
+    // the spec excludes. The production comment in `usePolylineAnts` asserted
     // the opposite; it has since been corrected. See HANDOFF.md.
     const { rerender } = setup();
     expect([...rafMocks.frames.keys()]).toEqual([1]);
@@ -239,7 +239,7 @@ describe('useMarchingPath animation lifecycle', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
-  it('cancels the very first pending frame when draw is called again (src/hooks/usePolylineAnts.ts:124)', () => {
+  it('cancels the very first pending frame when draw is called again in usePolylineAnts', () => {
     // The draw guard is `if (animationIdRef.current)`, and the first handle a hook ever
     // receives is 1: the spec's handle is `++identifier` off a counter that "must initially
     // be zero" (HTML Standard §8.12), so a falsy 0 is not an input this guard can meet.

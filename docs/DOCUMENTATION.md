@@ -248,9 +248,9 @@ symbol, a `§N` that is not a live `HANDOFF.md` heading, or a `file.ext:‹line�
 fence. Generated and point-in-time documents are excluded from those maintained-document checks.
 This test runs in CI and blocks merges with maintained-document citation violations. Structured
 `implementationRefs` in tool-description data are machine-readable metadata, not prose; they remain
-separately governed until that data format is migrated. The pre-commit gate rejects newly added
-line-number citations in tracked Markdown prose and source comments, except generated `docs/TOOLS.md`;
-existing historical citations remain a migration backlog.
+separately governed until that data format is migrated. Both CI and pre-commit reject new line-number
+citations in tracked Markdown prose and source comments, except generated `docs/TOOLS.md`; historical
+citations remain a migration backlog.
 
 **The one exemption is quotation.** A finding whose SUBJECT is a drifted line-number
 citation cannot be stated without one — "`history-replay.ts` cites 47 lines past its

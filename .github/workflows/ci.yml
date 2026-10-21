@@ -29,6 +29,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # The citation guard compares additions against the PR/push base commit below.
+          fetch-depth: 0
           # Nothing in this workflow pushes, tags or reads a private ref, so the
           # token the checkout leaves in .git/config is a credential with no job
           # that needs it. Combined with the read-only `permissions` above, a
@@ -45,6 +47,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Reject new line-number citations
+        env:
+          CITATION_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'main' }}
+        run: node scripts/check-new-line-citations.mjs --base "$CITATION_DIFF_BASE"
 
       - name: Lint
         run: npm run lint:check

@@ -2,7 +2,7 @@
 
 > **Resolved, and the plan is obsolete.** Recovered from `stash@{0}` on
 > 2026-09-28. The gap was closed by `8736334`, which applied Solution A and
-> Solution C in stronger form: `src/util/settings.ts:196` now carries a
+> Solution C in stronger form: `src/util/settings.ts` now carries a
 > `const _exhaustive: never = toolName` sentinel, so a missing arm fails
 > `npm run tsc` rather than being absorbed at runtime. Solution B would have
 > reintroduced the bug. Nothing here needs action; see
@@ -29,9 +29,9 @@ Tool arguments are managed through several layers:
 
 1. **`defaultSettings`** (`src/tools/settings.ts`): Defines the initial/default args for every tool type. All 29 tools have entries here.
 
-2. **`lastSavedSettings`** (`src/tools/settings.ts:467`): A mutable object initialized from `cloneDeep(defaultSettings)`. This serves as the in-memory "last saved" state for each tool and is the source of truth when restoring tool args.
+2. **`lastSavedSettings`** in `src/tools/settings.ts`: A mutable object initialized from `cloneDeep(defaultSettings)`. This serves as the in-memory "last saved" state for each tool and is the source of truth when restoring tool args.
 
-3. **`saveLastSettings`** (`src/util/settings.ts:26`): Called whenever tool args change (via `_setToolArgs` → `saveLastSettings`). This function **serializes and persists** args to `lastSavedSettings`. It contains a long if/else chain that handles each tool type differently (some strip transient fields, some only store `{ toolName }`, some merge with existing).
+3. **`saveLastSettings()`** in `src/util/settings.ts`: Called whenever tool args change (via `_setToolArgs` → `saveLastSettings`). This function **serializes and persists** args to `lastSavedSettings`. It contains a long if/else chain that handles each tool type differently (some strip transient fields, some only store `{ toolName }`, some merge with existing).
 
 4. **`CurrentToolContext`** (`src/contexts/useCurrentTool.tsx`):
    - `setToolArgs`: Calls `saveLastSettings(args)` then updates internal React state.
