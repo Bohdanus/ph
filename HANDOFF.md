@@ -126,9 +126,15 @@ and the legacy replay start from the same snapshot, which is the parity property
 extracted this rule to own.
 
 Bounding the lookup by replay target looks like a correctness fix, but it would reintroduce a
-data-loss bug. A selection can be created by a gesture that writes no history entry, so bounding
-the lookup at the replay target makes undoing a tool-switch deselect a silent visual no-op. Two tests
-pin the unbounded behaviour as load-bearing:
+data-loss bug. A `SELECTION_ACTION` entry's `previousSelectionState` carries the selection that
+existed _before_ that action — which may have been created by a gesture whose own history entry is
+at or after the replay target. Bounding the lookup at the replay target would make that baseline
+inaccessible when replaying before the first selection entry, turning an undo of a tool-switch
+deselect into a silent visual no-op. (The original framing — "a selection can be created by a
+gesture that writes no history entry" — was accurate before `00a170dc` routed selections through
+committed history entries, but the unbounded lookup is still required: it is the
+`previousSelectionState` on a later `SELECTION_ACTION` that supplies the baseline, and that action
+can sit after the replay target.) Two tests pin the unbounded behaviour as load-bearing:
 
 - The `it('restores a cleared selection when undoing the tool-switch history entry')` case in
   `useHistory.test.tsx` — "restores a cleared selection when undoing the
