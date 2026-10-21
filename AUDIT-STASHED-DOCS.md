@@ -12,7 +12,7 @@ stashed `HANDOFF.md` is a 424-line predecessor of main's 1114-line file and is
 | Recovered doc                                     | Disposition                                                                                                                                                                                                               |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `TEST_ISSUES.md` (355 lines)                      | 13 of 27 issues survived verification. All 13 fixed.                                                                                                                                                                      |
-| `docs/save-settings-inconsistency.md` (139 lines) | **Entirely obsolete.** Fixed by `8736334`; the `never` exhaustiveness sentinel it proposed as Solution C is at `src/util/settings.ts:81`. One stale comment remained (item 28).                                           |
+| `docs/save-settings-inconsistency.md` (139 lines) | **Entirely obsolete.** Fixed by `8736334`; the `never` exhaustiveness sentinel it proposed as Solution C is at `src/util/settings.ts:196`. One stale comment remained (item 28).                                          |
 | `docs/next-target-useLayer.md` (261 lines)        | **Obsolete as a plan.** Its Priority A "THE RACE" is not real, and every Priority A-F area is now covered by six test files that did not exist when it was written. It walked past two production defects (items 12, 14). |
 
 The chat that prompted this audit (`eb2160e`) is clean: its four claims are
@@ -34,7 +34,7 @@ length is the missing test.
 
 ### 2. `getHistoryItemTitle`'s tool-`layerSource` branch is unreachable from the fixture
 
-`useHistory.ts:17` branches on `layerSource?.kind === 'tool'`; the `HistoryTab`
+`useHistory.ts:26` branches on `layerSource?.kind === 'tool'`; the `HistoryTab`
 fixture entry carries `TOOL_ACTION` with `args.toolName` and **no** `layerSource`, so
 it takes the `actionName === TOOL_ACTION` branch at `:21` instead. The mock
 previously restated the whole title map, so neither path was under test; now that
@@ -72,27 +72,25 @@ lines 264-1228. They re-derive what the `shared shape geometry wiring` describe
 (`:1078`) already asserts generically through `shapeGeometryBounds` /
 `normalizeShapeGeometry`. Fragile, and low value to fix.
 
-### 7. `MIGRATION_NEXT_STEPS_SUNDAY.md:801-805` still carries a fixed issue
+### 7. `MIGRATION_NEXT_STEPS_SUNDAY.md:355` carried a fixed issue about toolbar-mapping.ts
 
-It states `toolbar-mapping.ts` is "type-checked only transitively" and prescribes
+It stated `toolbar-mapping.ts` is "type-checked only transitively" and prescribed
 `"include": ["src", "toolbar-mapping.ts"]` plus a CI assertion. Both landed:
-`tsconfig.app.json:43` and `ci.yml:48`. A fixed-issue entry inside a section titled
-"Stale documentation — actively misleading".
+`tsconfig.app.json:43` and `ci.yml:52`. A fixed-issue entry that records what was wrong
+and that the fix has landed — the section title is "Stale documentation — actively misleading".
 
 ### 8. The cutover gate names a function that no longer exists
 
-`AGENTS.md:268` still reads: "**DO NOT start single-writer cutover while
-`saveLayerCanvas()` promotes cached canvases outside reducer publication.**" The
-function is gone — `saveLayerCanvas` appears nowhere in `src/`, and `HANDOFF.md` §19
-(which recorded it as dead) has been deleted. The gate is therefore undecidable: it
-blocks on the behaviour of an export that is not in the tree, and a reader cannot tell
-whether the single-writer cutover is cleared or not.
-
-**Fix.** Establish what replaced it before rewording. `layer-presentation.ts`
-(`promoteLayerPresentation` / `requestPresentations`) is where cache promotion now
-happens, and the cutover's real remaining question is whether _that_ can promote
-outside reducer publication. Repoint the gate at the live function, or state the
-condition positively if the promotion path is already inside the reducer.
+The cutover gate that was at `AGENTS.md:268` — "**DO NOT start single-writer cutover while
+`saveLayerCanvas()` promotes cached canvases outside reducer publication.**" — has been
+**removed from `AGENTS.md`** (the file is now 40 lines and carries no architecture gate).
+The text survives only as a quoted historical artifact in
+`MIGRATION_NEXT_STEPS_SUNDAY.md` (§4.4, line 408), which itself notes it is false.
+`saveLayerCanvas` appears nowhere under `src/` — `grep -rn saveLayerCanvas src` → 0 hits.
+The gate is therefore undecidable: it blocks on the behaviour of an export that is not
+in the tree, and a reader cannot tell whether the single-writer cutover is cleared or
+not. The hazard it named was resolved by `2d654eb`, which moved cache promotion to
+`PROMOTE_LAYER_PRESENTATIONS` (`StoreContext.tsx`) — a typed action the reducer applies.
 
 ### 9. 4-digit hex is still mis-parsed
 
@@ -169,7 +167,7 @@ Recorded so the next session does not re-audit them. Each was verified against m
   `Common/UndoControls.test.tsx` share setup, not assertions; both earn their place.
 - `TEST_ISSUES.md` §6's "coverage thresholds in `vitest.config.ts:33` are 95/89/97/96"
   — false. `vitest.config.ts` has no `thresholds` key and no `test:coverage` script.
-  CI runs `npm run test -- --coverage` at `ci.yml:82`, so numbers are reported and
+  CI runs `npm run test -- --coverage` at `ci.yml:91`, so numbers are reported and
   nothing fails.
 - `docs/next-target-useLayer.md` Priority A "THE RACE" — not real, and never was.
   `Text.tsx:86` clears the shared draft before committing and
