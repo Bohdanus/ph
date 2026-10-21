@@ -351,3 +351,6 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     ],
   },
 };
+
+typeCropDescriptions.crop.appNotes +=
+  ' After a committed frame crop, re-entering Crop starts from the current frame. With angle 0, extending an edge live-previews retained layer pixels outside that frame; applying reveals them at their original raster coordinates without resampling. The retained-pixel preview and letterbox overhang guides are angle-0 only because their frame subtraction is axis-aligned. This recovers only content still present in layer sources. OVR-1 concerns extension into areas with no retained pixels and does not block crop recovery. The explicit Delete Cropped Pixels control and Image > Reveal All command are still absent.';

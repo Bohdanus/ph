@@ -352,6 +352,18 @@ async function readCanvasColor(page: Page, x: number, y: number) {
   );
 }
 
+async function readCanvasPixel(page: Page, testId: string, x: number, y: number) {
+  return page.getByTestId(testId).evaluate(
+    (canvas, point) => {
+      const context = (canvas as HTMLCanvasElement).getContext('2d');
+      if (!context) throw new Error('Canvas has no 2D context');
+      const pixel = context.getImageData(point.x, point.y, 1, 1).data;
+      return { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] };
+    },
+    { x, y }
+  );
+}
+
 /**
  * That a release really did leave the document, on the edge it claims to have left by.
  *
@@ -1112,6 +1124,47 @@ test.describe('Crop history', () => {
    */
   test.describe('with letterbox to release into', () => {
     test.use({ viewport: { width: 1600, height: 1400 } });
+
+    test('re-cropping after layer edits previews and recovers retained pixels without scaling', async ({ page }) => {
+      await openDocument(page);
+      const openingFit = await readFit(page);
+      const recoverableBarY = CROP_TOP_Y - 20;
+      await drawBar(page, openingFit, recoverableBarY);
+      await commitCrop(page);
+      expect(await documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT });
+
+      // A pair of visibility edits between crops must not discard the source pixels outside the
+      // current frame or prevent the crop preview from reading the updated layer stack.
+      await page.getByTestId('panel-header-layers').click();
+      const layer = page.getByTestId('layer-row').first();
+      await layer.getByRole('button', { name: 'Hide layer' }).click();
+      await layer.getByRole('button', { name: 'Show layer' }).click();
+
+      // Crop stays active after Apply; leave it and re-enter to exercise Photoshop's crop-box
+      // recovery rather than merely reusing the first pending gesture.
+      await clickToolButton(page, 'move');
+      const croppedFit = await openCropTool(page);
+      const topEdge = documentPoint(croppedFit, croppedFit.documentWidth / 2, 0);
+      const expandedTop = documentPoint(croppedFit, croppedFit.documentWidth / 2, -30);
+      await page.mouse.move(topEdge.x, topEdge.y);
+      await page.mouse.down();
+      await page.mouse.move(expandedTop.x, expandedTop.y, { steps: 10 });
+
+      const preview = page.getByTestId('crop-retained-pixels-preview');
+      await expect(preview, 'the crop preview renders previously hidden layer pixels before release').toBeVisible();
+      const previewPixel = await readCanvasPixel(page, 'crop-retained-pixels-preview', 320, 10);
+      expect(previewPixel.alpha, 'the original bar is present before applying the expanded frame').toBeGreaterThan(200);
+      expect(previewPixel.red).toBeLessThan(80);
+      await page.mouse.up();
+
+      await expect(page.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled();
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT + 30 });
+      const recoveredPixel = await readCanvasColor(page, 320, 10);
+      expect(recoveredPixel, 'the committed crop reveals the same source pixel at the same scale').toEqual(
+        previewPixel
+      );
+    });
 
     test('a crop released past the right and bottom edges commits a LARGER frame, not a clamped one', async ({
       page,

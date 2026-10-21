@@ -1136,10 +1136,23 @@ the edit stays reversible — where the **ON** case permanently removes everythi
 crop. The earlier version of this section had it backwards, called the app "destructive",
 and then contradicted itself two sentences later by saying undo restores the frame.
 
-What the app really lacks is the **setting** and the route back: there is no Delete Cropped
-Pixels control to offer or invert, and no `Image ▸ Reveal All` menu item (`grep` for
-`Reveal All` across `src/` returns nothing outside this notes file). Undo is the only way to
-see the discarded area again, and undo is not a control on the bar.
+The route back is now available through Crop itself. When the active history contains a
+`SET_DOCUMENT_FRAME_ACTION`, re-entering the Crop tool starts with a box at the current frame.
+Dragging an edge beyond that frame recomposes the current layer stack in the off-frame area while
+the crop is still pending; applying the larger frame reveals those retained pixels at their
+original raster coordinates, with no resampling. The retained-pixel preview and the separate
+letterbox overhang guides are limited to unrotated crops: their current frame subtraction uses
+axis-aligned geometry, not the rotated crop polygon. A rotated crop still uses the existing
+rotation preview path and can reveal retained content when committed.
+
+The app still has no **Delete Cropped Pixels** control to offer or invert, and no
+`Image ▸ Reveal All` menu item (`grep` for `Reveal All` across `src/` returns nothing outside
+this notes file). Re-cropping is the non-destructive recovery path. It can reveal only content
+still present in layer sources; an added band with no retained pixels remains transparent. That
+is OVR-1 in `docs/OVERRIDES.md`, and it is independent of recovering a previously cropped area.
+The E2E test `re-cropping after layer edits previews and recovers retained pixels without scaling`
+shrinks the frame, records intervening layer visibility edits, previews the hidden pixels on
+re-entry, then verifies that applying the larger frame returns the same pixel value.
 
 ### What kind of commit a crop is, and which handoff entries touch it
 

@@ -2,9 +2,24 @@ import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
 import { CropToolArea } from '../CropToolArea.tsx';
+import { SET_DOCUMENT_FRAME_ACTION } from '../../../util/constants.ts';
+import { drawLayersToCanvas } from '../../../contexts/layer-renderer.ts';
 
 const setToolArgsMock = vi.hoisted(() => vi.fn());
 const applyDocumentCropMock = vi.hoisted(() => vi.fn(() => true));
+const storeState = vi.hoisted(
+  (): {
+    documentFrame: { x: number; y: number; width: number; height: number };
+    layers: Record<string, never>;
+    history: Array<{ actionName: string; disabled?: boolean }>;
+    historyIndex: number;
+  } => ({
+    documentFrame: { x: 0, y: 0, width: 800, height: 600 },
+    layers: {},
+    history: [],
+    historyIndex: 0,
+  })
+);
 
 const useRectProps = vi.hoisted((): { current: UseRectProps | null } => ({ current: null }));
 
@@ -44,6 +59,7 @@ const toolArgsState = vi.hoisted(
       rect: { x1: number; y1: number; x2: number; y2: number } | null;
       preRatioRect: { x1: number; y1: number; x2: number; y2: number } | null;
       aspectRatio: number | null;
+      angle?: number;
     };
   } => ({
     toolArgs: {
@@ -61,6 +77,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       containerRef: { current: document.createElement('div') },
       toolOverlayRef: { current: document.createElement('canvas') },
       totalSize: { width: 800, height: 600 },
+      ...storeState,
     },
     vi.fn(),
   ],
@@ -74,7 +91,13 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useLayer.ts', () => ({
+  MAX_DOCUMENT_FRAME_AREA: 16_777_216,
+  MAX_DOCUMENT_FRAME_SIDE: 4096,
   useLayers: () => ({ applyDocumentCrop: applyDocumentCropMock }),
+}));
+
+vi.mock('../../../contexts/layer-renderer.ts', () => ({
+  drawLayersToCanvas: vi.fn(() => false),
 }));
 
 vi.mock('../../../hooks/useRect.ts', () => ({
@@ -96,6 +119,7 @@ describe('CropToolArea', () => {
   beforeEach(() => {
     useRectProps.current = null;
     setToolArgsMock.mockClear();
+    vi.mocked(drawLayersToCanvas).mockClear();
     applyDocumentCropMock.mockClear();
     applyDocumentCropMock.mockReturnValue(true);
     pointerHandlers.onPointerDown.mockClear();
@@ -107,6 +131,10 @@ describe('CropToolArea', () => {
       preRatioRect: null,
       aspectRatio: null,
     };
+    storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
+    storeState.layers = {};
+    storeState.history = [];
+    storeState.historyIndex = 0;
   });
 
   afterEach(() => {
@@ -162,6 +190,33 @@ describe('CropToolArea', () => {
       expect(useRectProps.current!.aspectRatio).toBeNull();
     });
 
+    it('seeds the current document bounds when re-entering crop after a frame edit', () => {
+      storeState.history = [{ actionName: SET_DOCUMENT_FRAME_ACTION }];
+      storeState.historyIndex = 0;
+
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      const fullFrame = { x1: 0, y1: 0, x2: 800, y2: 600 };
+      expect(useRectProps.current!.initialRect).toEqual(fullFrame);
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the first crop entry free for drawing a new crop rectangle', () => {
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      expect(useRectProps.current!.initialRect).toBeNull();
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+    });
+
+    it('does not seed a recrop box from a frame edit that has been undone', () => {
+      storeState.history = [{ actionName: SET_DOCUMENT_FRAME_ACTION }];
+      storeState.historyIndex = -1;
+
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      expect(useRectProps.current!.initialRect).toBeNull();
+    });
+
     it('opts out of the paint clamp, so the overhang stays on the overlay', () => {
       // Crop is the only consumer whose frame is a window onto a canvas that extends past the
       // image. Every other consumer wants the clamp, and passes this prop alone.
@@ -191,6 +246,50 @@ describe('CropToolArea', () => {
       render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
 
       expect(useRectProps.current!.onRepaint).toEqual(expect.any(Function));
+    });
+  });
+
+  describe('retained-pixel preview', () => {
+    it('renders the union frame while the pending crop extends beyond the current document', () => {
+      storeState.documentFrame = { x: 80, y: 100, width: 800, height: 600 };
+      storeState.history = [{ actionName: SET_DOCUMENT_FRAME_ACTION }];
+      storeState.historyIndex = 0;
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+        clearRect: vi.fn(),
+        setTransform: vi.fn(),
+      } as never);
+
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      act(() => {
+        useRectProps.current!.onRepaint?.({ x1: 0, y1: -20, x2: 800, y2: 300 });
+      });
+
+      expect(drawLayersToCanvas).toHaveBeenCalledWith(
+        expect.any(HTMLCanvasElement),
+        [],
+        { x: 80, y: 80, width: 800, height: 620 },
+        undefined,
+        expect.any(Number)
+      );
+    });
+
+    it('does not compose a retained-pixel preview for rotated crops', () => {
+      toolArgsState.toolArgs.angle = 12;
+      storeState.documentFrame = { x: 80, y: 100, width: 800, height: 600 };
+      storeState.history = [{ actionName: SET_DOCUMENT_FRAME_ACTION }];
+      storeState.historyIndex = 0;
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+        clearRect: vi.fn(),
+        setTransform: vi.fn(),
+      } as never);
+
+      const { queryByTestId } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      act(() => {
+        useRectProps.current!.onRepaint?.({ x1: 0, y1: -20, x2: 800, y2: 300 });
+      });
+
+      expect(queryByTestId('crop-retained-pixels-preview')).toBeNull();
+      expect(drawLayersToCanvas).not.toHaveBeenCalled();
     });
   });
 
@@ -432,6 +531,16 @@ describe('CropToolArea', () => {
       repaint(toolArgsState.toolArgs.rect);
 
       expect(container.querySelector('[data-testid="crop-overhang-overlay"]')).not.toBeNull();
+    });
+
+    it('suppresses axis-aligned overhang guides for a rotated crop', () => {
+      toolArgsState.toolArgs.rect = { x1: 700, y1: 500, x2: 900, y2: 700 };
+      toolArgsState.toolArgs.angle = 15;
+      const { container } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      repaint(toolArgsState.toolArgs.rect);
+
+      expect(container.querySelector('[data-testid="crop-overhang-overlay"]')).toBeNull();
     });
 
     it('renders the overhang on a single side, and shades only around it', () => {
