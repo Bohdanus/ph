@@ -652,6 +652,19 @@ describe('TextEditOverlay', () => {
       expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
     });
 
+    it('consumes but ignores a focus request for a different editing layer', () => {
+      toolArgs = makeTextArgs({ text: 'same text', rect: RECT, editingLayerId: 'text-1' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+      placeCaret(el, 2);
+      h.textEditFocusRequest = { id: 1, target: { kind: 'select-all', layerId: 'text-2' } };
+
+      rerender(<TextEditOverlay />);
+
+      expect(readSelection()).toMatchObject({ string: '', collapsed: true, startOffset: 2, endOffset: 2 });
+      expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+    });
+
     it('seeds the element with the draft text and focuses it on entry', () => {
       renderOverlay();
       const el = overlay();
