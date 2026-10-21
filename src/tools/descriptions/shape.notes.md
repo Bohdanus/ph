@@ -48,8 +48,8 @@ the pass that re-derived it, not the tree today, which has moved again:
 | `Cap`                                         | `Figures/Shape.tsx` — `Shape()`'s `figure === 'line'` gate: `aria-label="Line cap"`                             | 11                                                       |
 | `cornerRadius` read by the renderer           | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch: `const radius = args.cornerRadius ?? 0` | 24 — `drawShape()` grew above it                         |
 | `hasFill` derived from `toolMode`             | `src/tools/shape.ts` — `drawShape()`: `const hasFill = args.toolMode !== 'path' && args.hasFill`                | 24                                                       |
-| the shared triangle/polygon branch            | `src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' \|\| figure === 'polygon'` branch                 | 24                                                       |
-| the side count                                | `src/tools/shape.ts` — that same branch: `const sides = figure === 'triangle' ? 3 : 5`                          | 24                                                       |
+| the polygon/star branch                       | `src/tools/shape.ts` — `drawShape()`'s `figure === 'polygon' \|\| figure === 'star'` branch                     | 24                                                       |
+| the side count                                | `src/tools/shape.ts` — that branch: `const sides = polygonSides(args.sides)`                                    | 24                                                       |
 | the rectangle branch                          | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch                                          | 24                                                       |
 | the oval branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'oval'` branch                                               | 24                                                       |
 | the line branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'line'` branch                                               | 24                                                       |
@@ -153,8 +153,7 @@ the polygon's Sides field is a pre-draw
 parameter of a drag, not a click counter
 (`photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "Click and drag in the
 document to draw the polygon shape"). The app already does the right thing here —
-`src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' || figure === 'polygon'` branch —
-inscribes a regular n-gon.
+`src/tools/shape.ts` — `drawShape()`'s `figure === 'polygon'` branch — inscribes a regular n-gon.
 
 **What Adobe does _not_ say is that the n-gon is _regular_.** That word is this campaign's reading of
 "click and drag": a regular polygon inscribed in the drag box is the ordinary outcome of a drag
@@ -173,10 +172,12 @@ triangle, which means that two sides are of equal length"). As with the polygon 
 states the drag and the Shift half and never the resulting geometry**, so the isosceles reading is
 third-party plus inference; the data file's `summary` now describes the box (apex at top-centre,
 base across the bottom) rather than the classification, and the `purpose` labels the isosceles
-reading as this description's inference. The app's
-`src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' || figure === 'polygon'` branch —
-shares one branch with the polygon and hardcodes `figure === 'triangle' ? 3 : 5`, so it inscribes a
-regular triangle — the disproved behaviour — and `src/tools/shape.ts` —
+reading as this description's inference. The app's `src/tools/shape.ts` — `drawShape()` has a dedicated `figure === 'triangle'` branch
+(line 288) that draws a three-point triangle without consulting `polygonSides`, and a separate
+`figure === 'polygon' || figure === 'star'` branch (line 300) that reads `polygonSides(args.sides)`,
+so the triangle never touches the polygon's sides argument. The triangle branch inscribes an
+isosceles triangle (apex at top-centre, base across the bottom) — the disproved behaviour — rather
+than the equilateral constraint the prose used to claim. `src/tools/shape.ts` —
 `normalizeShapeGeometry()`'s `if (shiftKey)` arm — squares the drag box for it, which is neither
 equilateral nor the equilateral constraint.
 
@@ -324,12 +325,12 @@ shape's corner or, with the box checked, its centre (`ShapeToolArea.tsx` — `ha
 
 Per-figure deltas:
 
-| Photoshop control | rectangle                                                                     | ellipse                   | triangle           | polygon                                              | line                                                                     |
-| ----------------- | ----------------------------------------------------------------------------- | ------------------------- | ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| `Radius`          | **present** (`Figures/Shape.tsx` — `Shape()`'s `figure === 'rectangle'` gate) | not offered (third-party) | **missing**        | **missing**                                          | not offered (third-party)                                                |
-| `Sides`           | —                                                                             | —                         | —                  | **missing** (`shape.ts` — `drawShape()` hardcodes 5) | —                                                                        |
-| `Caps`            | inside Stroke type                                                            | inside Stroke type        | inside Stroke type | inside Stroke type                                   | **partial** (`Figures/Shape.tsx` — `Shape()`'s `figure === 'line'` gate) |
-| `Arrowheads`      | —                                                                             | —                         | —                  | —                                                    | **missing**                                                              |
+| Photoshop control | rectangle                                                                     | ellipse                   | triangle           | polygon                                        | line                                                                     |
+| ----------------- | ----------------------------------------------------------------------------- | ------------------------- | ------------------ | ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `Radius`          | **present** (`Figures/Shape.tsx` — `Shape()`'s `figure === 'rectangle'` gate) | not offered (third-party) | **missing**        | **missing**                                    | not offered (third-party)                                                |
+| `Sides`           | —                                                                             | —                         | —                  | **present** (`shape.ts` — `options[0].appRef`) | —                                                                        |
+| `Caps`            | inside Stroke type                                                            | inside Stroke type        | inside Stroke type | inside Stroke type                             | **partial** (`Figures/Shape.tsx` — `Shape()`'s `figure === 'line'` gate) |
+| `Arrowheads`      | —                                                                             | —                         | —                  | —                                              | **missing**                                                              |
 
 **The Radius row is the one that looks like a bug and is not — and the "not" is itself
 third-party.** Adobe confirms the control on two of the five figures and no more: the Rectangle
@@ -676,9 +677,8 @@ that rounds all three corners at once, and there are no individual radius handle
 `jkost.com`: "the Triangle and Polygon tools have a single Corner Radius control point handle which
 modifies the roundness of all corners equally" — note that this last quote is the only source for
 the _polygon_ half, since no Adobe page listing the polygon bar was found). The app's `drawShape`
-builds the triangle inside the branch shared with the polygon
-(`src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' || figure === 'polygon'` branch),
-which never reads `cornerRadius`, so even if the field were
+builds the triangle in its own `figure === 'triangle'` branch
+(`src/tools/shape.ts` — `drawShape()`), which never reads `cornerRadius`, so even if the field were
 rendered it would do nothing. It is not rendered either.
 
 Shift is the other half. The gear menu carries persistent `Equilateral`, `Unconstrained`,
@@ -723,7 +723,7 @@ here either way.
 ## `polygon` — Polygon Tool
 
 The premise correction is already the app's behaviour: `src/tools/shape.ts` — `drawShape()`'s
-`figure === 'triangle' || figure === 'polygon'` branch — builds a
+`figure === 'polygon'` branch — builds a
 regular n-gon inscribed in the drag box. Sides defaults to 5 in Photoshop
 (`www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "you can leave
 these options at their defaults (sides = 5, radius = 0 px)"), and the app defaults to 5 via
@@ -777,9 +777,9 @@ the only place the polygon's own list survives, naming Symmetric, Number of Side
 Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page
 carries none of them. So the app's Create Polygon dialog — Width, Height, From Center — cannot be
 checked against a live Adobe list, and none of the five archived fields is missing from the app
-merely because the dialog omits it: `drawShape` hardcodes five sides in `src/tools/shape.ts`'s
-`figure === 'triangle' || figure === 'polygon'` branch and
-reads no star or indent argument at all, so every one of them would be inert if a field offered it.
+merely because the dialog omits it: drawShape reads `polygonSides(args.sides)` (not a literal) in its `figure === 'polygon'`
+branch (`src/tools/shape.ts`, line 300), and reads no star or indent argument at all, so even if a
+field offered them they would be inert.
 They are gaps, and they are gaps in the renderer first — the dialog is the second place they would
 have to be closed, and it is not where they can be.
 
