@@ -51,6 +51,7 @@ function makeTextArgs(overrides: Partial<ToolArgs> = {}): ToolArgs {
   return {
     toolName: 'text',
     text: 'Hello',
+    angle: 0,
     fontSize: 64,
     lineHeight: 1.1,
     rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
@@ -203,6 +204,41 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(draft.rect).toBeNull();
   });
 
+  it('keeps a committed layer angle through re-entry but clears the next draft angle', () => {
+    const result = setupTextTool();
+    const args = makeTextArgs({ angle: 37, fontSize: 48, tracking: 120, color: '#123456' });
+
+    act(() => {
+      result.current.store.currentArgs.current = args;
+      result.current.layers.commitDirtyTool();
+    });
+
+    const layer = Object.values(result.current.store.layers)[0];
+    expect(layer?.source).toMatchObject({ kind: 'tool', args: { angle: 37, fontSize: 48, tracking: 120 } });
+    expect(result.current.store.currentArgs.current).toMatchObject({
+      text: '',
+      rect: null,
+      angle: 0,
+      fontSize: 48,
+      tracking: 120,
+      color: '#123456',
+    });
+
+    if (!layer) throw new Error('the committed text layer is missing');
+    act(() => result.current.layers.beginTextLayerEdit(layer.id));
+    const editingArgs = editArgsForExistingLayer(layer);
+    expect(editingArgs.angle).toBe(37);
+
+    act(() => {
+      result.current.store.currentArgs.current = { ...editingArgs, text: 'Edited' };
+      result.current.layers.commitDirtyTool();
+    });
+
+    const replacedLayer = Object.values(result.current.store.layers)[0];
+    expect(replacedLayer?.source).toMatchObject({ kind: 'tool', args: { angle: 37, text: 'Edited' } });
+    expect(result.current.store.currentArgs.current).toMatchObject({ text: '', rect: null, angle: 0 });
+  });
+
   it('creates only one layer when commitDirtyTool fires after a direct Apply commit', () => {
     const result = setupTextTool();
     const args = makeTextArgs();
@@ -279,7 +315,7 @@ describe('useLayers text commit idempotency boundary', () => {
   it('replaces the selected text layer for distinct text args', () => {
     const result = setupTextTool();
     const argsA = makeTextArgs();
-    const argsB = makeTextArgs({ text: 'World', rect: { x1: 0, y1: 0, x2: 200, y2: 60 } });
+    const argsB = makeTextArgs({ text: 'World', angle: 29, rect: { x1: 0, y1: 0, x2: 200, y2: 60 } });
 
     act(() => {
       result.current.store.currentArgs.current = argsA;
@@ -304,6 +340,10 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(Object.values(result.current.store.layers)[0]?.source).toMatchObject({
       kind: 'tool',
       args: { ...argsB, rect: { ...(argsB as TextToolArgs).rect, y2: 80.4 } },
+    });
+    expect(result.current.store.currentArgs.current).toMatchObject({
+      angle: 0,
+      fontSize: (argsB as TextToolArgs).fontSize,
     });
     expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
     expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);

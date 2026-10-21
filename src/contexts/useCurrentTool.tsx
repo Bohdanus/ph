@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { cloneDeep } from 'lodash-es';
 import { lastSavedSettings } from '../tools/settings.ts';
+import { clearTextDraftArgs } from '../tools/text.ts';
 import { isFigureType, normalizeFigure } from '../tools/shape.ts';
 import type { ToolName, ToolArgs, ToolArgsFor, ToolPatch } from './tool-types.ts';
 import { saveLastSettings } from '../util/settings.ts';
@@ -66,13 +67,16 @@ export function durableToolArgsForNavigation(
       text: _text,
       rect: _rect,
       kind: _kind,
+      angle: _angle,
       placeholderUntouched: _placeholderUntouched,
       editingLayerId: _editingLayerId,
       ...persisted
     } = args;
     // Keep an empty draft shape so Text.tsx cannot reopen a committed edit. The
     // committed text and layer-local rect are deliberately never rehydrated.
-    return normalizeToolArgs({ ...persisted, text: '', rect: null } as ToolArgs);
+    // The source keeps its own rotation; selecting it is not an edit session and must not rotate
+    // the next new draft. Explicit edit-entry handlers publish args from textLayerEditTarget.
+    return normalizeToolArgs(clearTextDraftArgs(persisted) as ToolArgs);
   }
 
   const { start: _start, end: _end, ...persisted } = args;

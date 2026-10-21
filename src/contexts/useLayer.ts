@@ -50,7 +50,7 @@ import {
   TOOL_ACTION,
   UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
-import type { TextToolArgs } from '../tools/text.ts';
+import { clearTextDraftArgs, type TextToolArgs } from '../tools/text.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
@@ -795,6 +795,8 @@ export const useLayers = () => {
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
+      // Successful sources capture angle before their clear path. Angle is per-layer geometry;
+      // character formatting remains reusable for the next text draft.
       // An empty existing edit is a source replacement, not a new empty layer. Keep its original
       // geometry and position so deleting all characters does not shrink the raster origin.
       if (!args.text && args.rect && args.editingLayerId) {
@@ -819,7 +821,7 @@ export const useLayers = () => {
         if (!replaced) return null;
 
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-        const cleared = { ...persistedArgs, text: '', rect: null };
+        const cleared = clearTextDraftArgs(persistedArgs);
         if (setToolArgs) setToolArgs(cleared);
         else currentArgsRef.current = cleared;
         clearOverlay();
@@ -830,7 +832,7 @@ export const useLayers = () => {
       // leaving an editor open that cannot create a valid raster.
       if (!args.text && args.rect) {
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-        const closed = { ...persistedArgs, text: '', rect: null };
+        const closed = clearTextDraftArgs(persistedArgs);
         if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(closed);
         else currentArgsRef.current = closed;
@@ -847,7 +849,7 @@ export const useLayers = () => {
       // happens to be those words, which is the defect the flag replaced.
       if (args.placeholderUntouched === true) {
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-        const discarded = { ...persistedArgs, text: '', rect: null };
+        const discarded = clearTextDraftArgs(persistedArgs);
         if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(discarded);
         else currentArgsRef.current = discarded;
@@ -865,7 +867,7 @@ export const useLayers = () => {
         requestedLayerId &&
         (!activeLayer || activeLayer.source?.kind !== 'tool' || activeLayer.source.args.toolName !== 'text')
       ) {
-        const cleared = { ...args, text: '', rect: null };
+        const cleared = clearTextDraftArgs(args);
         delete cleared.editingLayerId;
         cancelLayerPreview(requestedLayerId);
         if (setToolArgs) setToolArgs(cleared);
@@ -900,7 +902,7 @@ export const useLayers = () => {
           if (!replaced) return null;
 
           const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-          const cleared = { ...persistedArgs, text: '', rect: null };
+          const cleared = clearTextDraftArgs(persistedArgs);
           if (setToolArgs) setToolArgs(cleared);
           else currentArgsRef.current = cleared;
           clearOverlay();
@@ -911,7 +913,7 @@ export const useLayers = () => {
 
       const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
       const layer = createLayerFromTool({ args: { ...persistedArgs, placeholderUntouched: false } });
-      const cleared = { ...persistedArgs, text: '', rect: null };
+      const cleared = clearTextDraftArgs(persistedArgs);
       if (setToolArgs) {
         setToolArgs(cleared);
       } else {

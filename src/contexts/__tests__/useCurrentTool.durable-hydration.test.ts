@@ -46,6 +46,7 @@ describe('durableToolArgsForNavigation', () => {
           text: 'Committed text',
           rect: { x: 1, y: 2, width: 30, height: 20 },
           kind: 'paragraph',
+          angle: 37,
           placeholderUntouched: false,
           editingLayerId: 'layer-1',
           fontSize: 48,
@@ -59,6 +60,7 @@ describe('durableToolArgsForNavigation', () => {
 
     expect(args).toMatchObject({ toolName: 'text', fontSize: 48 });
     expect(args).toMatchObject({ text: '', rect: null });
+    expect(args).toMatchObject({ angle: 0 });
     expect(args).not.toHaveProperty('kind');
     expect(args).not.toHaveProperty('placeholderUntouched');
     expect(args).not.toHaveProperty('editingLayerId');
