@@ -522,14 +522,13 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     /**
      * Where the slot sweep drops to one pixel.
      *
-     * The slot stops shrinking below a 327px window, so the only heights at which its content can
-     * possibly fail to fit are at and below it — and a seven-pixel band there is invisible to a
-     * 50px step, which is the defect class this file exists for. 400 is above that clamp with room
-     * to spare (the slot is 128px there against a 44px tile) and above the fit's give-up edge at
-     * 365, so everything below it is the region where "the slot must fit" is the only claim that
-     * could be false.
+     * The current slot floor is `min-h-11` (44px), reached at roughly a 314px window with the
+     * shell's fixed rows. The old 55px/327px stop and seven-pixel overflow band disappeared when
+     * the lone three-dots tile moved to section 0. 400 is above the current floor and the fit's
+     * give-up edge (~365), so probing every pixel below it covers the slot's narrow risk region.
      */
     const CLAMP_PROBE_TOP = 400;
+    const SLOT_LAYOUT_SETTLE_TIMEOUT_MS = 3_000;
 
     /**
      * Descend to bracket, then bisect to a one-pixel bracket, for a band named by a predicate.
@@ -635,28 +634,32 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     // `scrollbar-none` remain as a backstop — a rail that could hide a tool would be worse than
     // one that scrolls — but nothing in the rail's own geometry reaches them any more, and a
     // backstop nothing can reach is a backstop nobody has evidence works.
-    const slotOverAt = async (height: number): Promise<{ inner: number; over: number }> => {
-      await open(page, 1280, height);
-      const state = await slot.evaluate((el) => ({
-        inner: window.innerHeight,
-        over: el.scrollHeight - el.clientHeight,
-      }));
-      expect(
-        state.inner,
-        `the ${height}px rung must actually be the viewport, or nothing below measures what it claims`
-      ).toBe(height);
-      return state;
+    const slotOverAt = async (height: number): Promise<void> => {
+      await page.setViewportSize({ width: 1280, height });
+      await expect
+        .poll(
+          async () => {
+            const state = await slot.evaluate((el) => ({
+              inner: window.innerHeight,
+              over: el.scrollHeight - el.clientHeight,
+            }));
+            return state.inner === height ? state.over : null;
+          },
+          {
+            message: `left toolbar slot must fit without scrolling at ${height}px`,
+            timeout: SLOT_LAYOUT_SETTLE_TIMEOUT_MS,
+            intervals: [50, 100, 250],
+          }
+        )
+        .toBe(0);
     };
 
-    const slotOverHeights: string[] = [];
-    for (let height = KNOWN_FIT; height >= SEARCH_FLOOR; height -= 50) {
-      const state = await slotOverAt(height);
-      if (state.over > 0) slotOverHeights.push(`H=${height} by ${state.over}px`);
+    let slotOverSamples = 0;
+    for (let height = KNOWN_FIT; height >= SEARCH_FLOOR;) {
+      await slotOverAt(height);
+      slotOverSamples += 1;
+      height -= height > CLAMP_PROBE_TOP ? 50 : 1;
     }
-    expect(
-      slotOverHeights,
-      'the slot must not need its own scrollport at any window height, or the fit is charging a row it is not rendering'
-    ).toEqual([]);
 
     // Printed, for the same reason `e2e/toolbar-fit.spec.ts` prints its sweep: the figures are
     // results, not inputs, so nobody should have to re-derive them to check this file's header or
@@ -668,7 +671,7 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     );
     console.log(
       `SLOT SWEEP (1280 wide) heights=${SEARCH_FLOOR}..${KNOWN_FIT} step=50 above ${CLAMP_PROBE_TOP}, ` +
-        `step=1 below it overflowing=${slotOverHeights.length}`
+        `step=1 at and below it samples=${slotOverSamples} all without overflow`
     );
 
     // The backstop is still there and still suppressed, so that IF the arithmetic is ever wrong
