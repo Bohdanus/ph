@@ -692,7 +692,7 @@ describe('useLayers text commit publishes the cleared draft', () => {
 describe('useLayers text commit with a nonzero document frame', () => {
   /**
    * The frame shifts the document origin off the canvas top-left. These cases pin that text
-   * layer replacement reduces measured rects through the frame (canvasRectToLayerLocal) rather
+   * layer replacement reduces measured rects through the frame (canvasRectToLocal) rather
    * than by the raw document-space layer pos, which was the defect.
    */
   const FRAME_CASES = [

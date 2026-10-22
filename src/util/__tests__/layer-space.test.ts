@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Point, Pos, RectXY } from '../../contexts/general-types.ts';
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
-import { canvasRectToLayerLocal } from '../rect.ts';
+import { canvasRectToLocal } from '../rect.ts';
 import { documentPointToLayerLocal, documentPointsToLayerLocal } from '../layer-space.ts';
 
 /** A layer at the document origin — the one case where the two spaces already agree. */
@@ -320,7 +320,7 @@ describe('documentPointsToLayerLocal', () => {
   });
 });
 
-describe('canvasRectToLayerLocal', () => {
+describe('canvasRectToLocal', () => {
   /**
    * Reduces a canvas-space rect to the layer-local coordinate frame a raster processor addresses.
    *
@@ -340,7 +340,7 @@ describe('canvasRectToLayerLocal', () => {
     const frame: DocumentFrame = { x: 0, y: 0, width: 800, height: 600 };
 
     // canvas pos = (100, 50); reduce by (100, 50) -> (50, 30) and (150, 80)
-    expect(canvasRectToLayerLocal(rect, layerPos, frame)).toEqual({ x1: 50, y1: 30, x2: 150, y2: 80 });
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 50, y1: 30, x2: 150, y2: 80 });
   });
 
   it('reduces a canvas-space rect by a positive frame origin', () => {
@@ -353,7 +353,7 @@ describe('canvasRectToLayerLocal', () => {
 
     // canvas pos = { x: 140 - 100, y: 75 - 50 } = { x: 40, y: 25 }
     // reduce by (40, 25) -> (200, 100) and (300, 180.4)
-    expect(canvasRectToLayerLocal(rect, layerPos, frame)).toEqual({ x1: 200, y1: 100, x2: 300, y2: 180.4 });
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 200, y1: 100, x2: 300, y2: 180.4 });
   });
 
   it('reduces a canvas-space rect by a negative frame origin (the crop case)', () => {
@@ -366,7 +366,7 @@ describe('canvasRectToLayerLocal', () => {
 
     // canvas pos = { x: 140 - (-100), y: 75 - (-50) } = { x: 240, y: 125 }
     // reduce by (240, 125) -> (0, 0) and (100, 80.4)
-    expect(canvasRectToLayerLocal(rect, layerPos, frame)).toEqual({ x1: 0, y1: 0, x2: 100, y2: 80.4 });
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 0, y1: 0, x2: 100, y2: 80.4 });
   });
 
   it('preserves fractional edges through the reduction', () => {
@@ -375,7 +375,7 @@ describe('canvasRectToLayerLocal', () => {
     const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
 
     // canvas pos = (240, 125); fractional edges subtract exactly
-    expect(canvasRectToLayerLocal(rect, layerPos, frame)).toEqual({
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({
       x1: 0.5,
       y1: 0.25,
       x2: 100.75,
@@ -389,7 +389,7 @@ describe('canvasRectToLayerLocal', () => {
     const layerPos: Pos = { x: 140, y: 75, width: 100, height: 80.4 };
     const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
 
-    expect(canvasRectToLayerLocal(rect, layerPos, frame)).toEqual({ x1: 0, y1: 0, x2: 100, y2: 80.4 });
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 0, y1: 0, x2: 100, y2: 80.4 });
   });
 
   it('returns a fresh rect object, never the input', () => {
@@ -397,7 +397,7 @@ describe('canvasRectToLayerLocal', () => {
     const layerPos: Pos = { x: 140, y: 75, width: 100, height: 80.4 };
     const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
 
-    const result = canvasRectToLayerLocal(rect, layerPos, frame);
+    const result = canvasRectToLocal(rect, layerPos, frame);
     expect(result).not.toBe(rect);
     // Mutating the result must not touch the input rect.
     result.x1 = -999;
@@ -414,7 +414,7 @@ describe('canvasRectToLayerLocal', () => {
     const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
 
     // canvas pos = { x: 240, y: 125 }; reduce by (240, 125) -> (60, 50) and (160, 100)
-    expect(canvasRectToLayerLocal(rect, layerPos, frame)).toEqual({ x1: 60, y1: 50, x2: 160, y2: 100 });
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 60, y1: 50, x2: 160, y2: 100 });
   });
 });
 

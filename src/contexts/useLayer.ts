@@ -51,7 +51,7 @@ import {
   UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
 import { clearTextDraftArgs, type TextToolArgs } from '../tools/text.ts';
-import { canvasRectToLayerLocal } from '../util/rect.ts';
+import { canvasRectToLocal } from '../util/rect.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
@@ -894,7 +894,7 @@ export const useLayers = () => {
             // comparison above still uses the un-reduced rect, so the guard is unaffected.
             args: {
               ...replacementArgs,
-              rect: canvasRectToLayerLocal(measuredRect, pos, documentFrame),
+              rect: canvasRectToLocal(measuredRect, pos, documentFrame),
               placeholderUntouched: false,
             },
             pos,

@@ -1,5 +1,5 @@
 import React, { type ChangeEvent, type KeyboardEvent, useRef, useState } from 'react';
-import { calculateNewRect, canvasRectToLayerLocal, sortRect, sortedRectToPos } from '../../../util/rect.ts';
+import { calculateNewRect, canvasRectToLocal as toLocal, sortRect, sortedRectToPos } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
@@ -231,9 +231,7 @@ const Text: React.FC<{}> = () => {
       // canvas-space rect therefore renders an EMPTY layer as soon as the document frame is not the
       // origin. Existing empty edits are the exception: their source rect is already layer-local,
       // so preserve it with the original position rather than reducing it a second time.
-      const replacementRect = canCommitEmptyEdit
-        ? originalRect
-        : canvasRectToLayerLocal(measuredRect, pos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+      const replacementRect = canCommitEmptyEdit ? originalRect : toLocal(measuredRect, pos, currentDocumentFrame);
       if (!isValidTextLayerGeometry(replacementRect, pos)) return;
       const replaced = replaceLayerSource(activeLayer.id, {
         kind: 'tool',

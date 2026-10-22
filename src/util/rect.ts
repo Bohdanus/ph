@@ -13,6 +13,8 @@ import { TEXT_PADDING } from './constants.ts';
 import { documentToCanvasPos, type DocumentFrame } from '../contexts/document-frame.ts';
 import type { Ctx2D, Point, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
+const ORIGIN_DOCUMENT_FRAME: DocumentFrame = { x: 0, y: 0, width: 0, height: 0 };
+
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
   if (!canvasRef.current) return { width: 0, height: 0 };
   return {
@@ -175,9 +177,9 @@ export function reduceRect(sortedRect: RectXYSorted, pos: Pos) {
   };
 }
 
-/** Convert a canvas-space rectangle to the layer-local coordinates stored by a tool source. */
-export const canvasRectToLayerLocal = (rect: RectXY, layerPos: Pos, frame: DocumentFrame): RectXY =>
-  reduceRect(sortRect(rect), documentToCanvasPos(layerPos, frame));
+/** Convert a canvas-space rectangle to layer-local coordinates; an absent frame uses the canvas origin. */
+export const canvasRectToLocal = (rect: RectXY, layerPos: Pos, frame?: DocumentFrame | null): RectXY =>
+  reduceRect(sortRect(rect), documentToCanvasPos(layerPos, frame ?? ORIGIN_DOCUMENT_FRAME));
 
 export function posToSortedRect(rect: Pos): RectXYSorted {
   const { x, y, width, height } = rect;

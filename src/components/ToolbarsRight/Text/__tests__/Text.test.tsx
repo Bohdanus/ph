@@ -623,7 +623,7 @@ describe('Text toolbar', () => {
     // layer pos directly, leaving the rect offset by the frame origin whenever the document was
     // not at (0, 0). With frame { x: -100, y: -50 }, a measured rect starting at canvas (0, 59.8)
     // was reduced by document pos { x: -100, y: 9.8 }, producing { x1: 100, y1: 50 } instead of
-    // { x1: 0, y1: 0 }. The fix projects the pos through the frame via canvasRectToLayerLocal.
+    // { x1: 0, y1: 0 }. The fix projects the pos through the frame via canvasRectToLocal.
     //
     // calculateNewRect (no canvas context) measures one 64px/1.1 line at 80.4px tall, centred
     // on the click y-centre of 100 → y1: 59.8, y2: 140.2. The canvas origin is (0, 59.8) and the
