@@ -534,7 +534,7 @@ describe('MobileLayersDrawer', () => {
     expect(setActiveLayerMock).not.toHaveBeenCalled();
   });
 
-  it('creates an ordinary blank layer covering the document frame', async () => {
+  it('creates a transparent blank layer covering the document frame', async () => {
     const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
@@ -542,7 +542,7 @@ describe('MobileLayersDrawer', () => {
 
     expect(createBlankLayerMock).toHaveBeenCalledWith({
       color: '#ffffff',
-      opacity: 1,
+      opacity: 0,
       pos: { x: 120, y: 90, width: 800, height: 600 },
     });
   });

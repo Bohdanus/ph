@@ -236,9 +236,11 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     layer.bitmap = source.bitmap;
   } else if (kind === 'blank') {
     const canvas = new OffscreenCanvas(width, height);
+    // Initialize even a transparent source so the browser can materialize its presentation bitmap.
+    const ctx = canvas.getContext('2d');
 
     if (source.opacity > 0) {
-      const ctx = canvas.getContext('2d')!;
+      if (!ctx) throw new Error('Unable to initialize blank layer canvas');
       ctx.fillStyle = source.color;
       if (source.opacity !== 1) {
         ctx.globalAlpha = source.opacity;
