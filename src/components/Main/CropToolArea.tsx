@@ -102,6 +102,31 @@ function getRecoveryPreviewFrame(rect: RectXYSorted | null, frame: DocumentFrame
   return previewFrame;
 }
 
+// drawLayersToCanvas can hold a target, staging surface, snapshot, and fallback snapshot at once.
+// Budget their aggregate frame-sized backing stores; resizeCanvas rounds each dimension separately.
+const MAX_RECOVERY_PREVIEW_TOTAL_BACKING_PIXELS = 16_777_216;
+const MAX_RECOVERY_PREVIEW_SURFACES = 4;
+const MAX_RECOVERY_PREVIEW_BACKING_PIXELS = Math.floor(
+  MAX_RECOVERY_PREVIEW_TOTAL_BACKING_PIXELS / MAX_RECOVERY_PREVIEW_SURFACES
+);
+
+function getRecoveryPreviewBackingScale(frame: DocumentFrame, dpr: number): number {
+  const { width, height } = documentFrameSize(frame);
+  const fitsBackingBudget = (scale: number) =>
+    Math.round(width * scale) * Math.round(height * scale) <= MAX_RECOVERY_PREVIEW_BACKING_PIXELS;
+  let low = 0;
+  let high = Math.min(dpr, Math.sqrt(MAX_RECOVERY_PREVIEW_BACKING_PIXELS / (width * height)));
+  if (fitsBackingBudget(high)) return high;
+
+  // Ideal width*height sizing is not enough: independently rounded canvas edges can exceed it.
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const middle = (low + high) / 2;
+    if (fitsBackingBudget(middle)) low = middle;
+    else high = middle;
+  }
+  return low;
+}
+
 /**
  * CANVAS px, not document px: every number below is in the frame's own space, whose origin is the
  * frame origin. `onRepaint`'s rect comes from `getLocalCoords()`
@@ -366,6 +391,9 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     () => (hasAppliedFrameChange ? getRecoveryPreviewFrame(paintedRect, currentFrame, angle) : null),
     [angle, currentFrame, hasAppliedFrameChange, paintedRect]
   );
+  const recoveryPreviewBackingScale = recoveryPreviewFrame
+    ? getRecoveryPreviewBackingScale(recoveryPreviewFrame, dpr)
+    : 1;
 
   useEffect(() => {
     const canvas = recoveryPreviewCanvasRef.current;
@@ -375,11 +403,20 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
 
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);
-    if (!drawLayersToCanvas(canvas, getSortedLayersArray(layers), recoveryPreviewFrame, undefined, dpr)) return;
+    if (
+      !drawLayersToCanvas(
+        canvas,
+        getSortedLayersArray(layers),
+        recoveryPreviewFrame,
+        undefined,
+        recoveryPreviewBackingScale
+      )
+    )
+      return;
 
     const previewContext = canvas.getContext('2d');
     if (!previewContext) return;
-    previewContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+    previewContext.setTransform(recoveryPreviewBackingScale, 0, 0, recoveryPreviewBackingScale, 0, 0);
     // The main canvas already shows this portion. Clear it so semi-transparent layers are not
     // composited twice; only retained pixels beyond the current frame belong on this overlay.
     previewContext.clearRect(
@@ -389,7 +426,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
       currentFrame.height
     );
     previewContext.setTransform(1, 0, 0, 1, 0, 0);
-  }, [currentFrame, dpr, layers, recoveryPreviewFrame]);
+  }, [currentFrame, layers, recoveryPreviewBackingScale, recoveryPreviewFrame]);
 
   const { pointerHandlers, pointerState } = useRect({
     imageSize: totalSize,

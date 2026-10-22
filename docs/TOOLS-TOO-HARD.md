@@ -424,9 +424,10 @@ const { x, y, width, height } = sortRoundRect(rect);
 
 The crop is registered as a `document-operation` (`toolProcessors.ts` — its `crop` entry's
 `commit: 'document-operation'`), so the commit is a frame edit and not a raster: it dispatches no
-fill of any kind, and the band the growth adds is covered by no layer and left transparent whatever
-the bottom layer is — the operator's
-decision, recorded as OVR-1 in [`OVERRIDES.md`](./OVERRIDES.md).
+fill or synthesis of any kind. Existing layer-source pixels outside the old frame still render
+when the frame expands; only areas with no retained source pixels remain transparent. The latter
+empty-band behavior is the operator's decision, recorded as OVR-1 in [`OVERRIDES.md`](./OVERRIDES.md),
+and it does not block recovery of pixels hidden by an earlier crop.
 
 The **Fill** control is not rendered at all: the bar carries an `Aspect Ratio` select and two buttons,
 `Apply` and `Clear` (`Crop.tsx` — the `Crop` options bar), and the only file under
@@ -445,15 +446,16 @@ processor signature), which is the shape a server round trip and three returned 
 take.
 
 **What the app does instead.** An axis-aligned rect with a ratio lock, which may be dragged past the
-image edge: the canvas grows and the added band is transparent. The commit path is honest about what
-it takes — a rect, the current frame, and one document edit — and it says so by writing no fill.
+image edge: the frame grows and retained off-frame source pixels are revealed. Newly exposed areas
+with no source pixels remain transparent. The commit path is honest about what it takes — a rect,
+the current frame, and one document edit — and it says so by writing no fill.
 
 **The frame growth is not this entry's missing capability.** The app can grow the document frame and
-leaves the added band transparent; that current behaviour is recorded by OVR-1 in
-`docs/OVERRIDES.md`. Frame growth is not a Photoshop Fill choice. What this entry records is the
-missing Straighten gesture, Content-Aware Fill, and Generative Expand. Patch-based synthesis and a
-cloud generative call are not landing, so this entry stays open under the lifecycle rule in the
-preamble.
+reveals any retained layer pixels that extend beyond it. Transparent fill applies only to newly
+exposed areas without source pixels; that behavior is OVR-1 in `docs/OVERRIDES.md`. Frame growth is
+not a Photoshop Fill choice. What this entry records is the missing Straighten gesture,
+Content-Aware Fill, and Generative Expand. Patch-based synthesis and a cloud generative call are not
+landing, so this entry stays open under the lifecycle rule in the preamble.
 
 ### Black and White as a hue-sextant weighted mix
 

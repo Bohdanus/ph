@@ -7,13 +7,16 @@ import { drawLayersToCanvas } from '../../../contexts/layer-renderer.ts';
 
 const setToolArgsMock = vi.hoisted(() => vi.fn());
 const applyDocumentCropMock = vi.hoisted(() => vi.fn(() => true));
+const devicePixelRatioState = vi.hoisted(() => ({ current: 1 }));
 const storeState = vi.hoisted(
   (): {
+    totalSize: { width: number; height: number };
     documentFrame: { x: number; y: number; width: number; height: number };
     layers: Record<string, never>;
     history: Array<{ actionName: string; disabled?: boolean }>;
     historyIndex: number;
   } => ({
+    totalSize: { width: 800, height: 600 },
     documentFrame: { x: 0, y: 0, width: 800, height: 600 },
     layers: {},
     history: [],
@@ -76,7 +79,6 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
     {
       containerRef: { current: document.createElement('div') },
       toolOverlayRef: { current: document.createElement('canvas') },
-      totalSize: { width: 800, height: 600 },
       ...storeState,
     },
     vi.fn(),
@@ -97,7 +99,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
 }));
 
 vi.mock('../../../contexts/layer-renderer.ts', () => ({
-  drawLayersToCanvas: vi.fn(() => false),
+  drawLayersToCanvas: vi.fn((): boolean => false),
 }));
 
 vi.mock('../../../hooks/useRect.ts', () => ({
@@ -115,13 +117,19 @@ vi.mock('../../../hooks/useRect.ts', () => ({
   },
 }));
 
+vi.mock('../../../hooks/useDevicePixelRatio.ts', () => ({
+  useDevicePixelRatio: () => devicePixelRatioState.current,
+}));
+
 describe('CropToolArea', () => {
   beforeEach(() => {
     useRectProps.current = null;
     setToolArgsMock.mockClear();
-    vi.mocked(drawLayersToCanvas).mockClear();
+    vi.mocked(drawLayersToCanvas).mockReset();
+    vi.mocked(drawLayersToCanvas).mockReturnValue(false);
     applyDocumentCropMock.mockClear();
     applyDocumentCropMock.mockReturnValue(true);
+    devicePixelRatioState.current = 1;
     pointerHandlers.onPointerDown.mockClear();
     pointerHandlers.onPointerMove.mockClear();
     pointerHandlers.onPointerUp.mockClear();
@@ -132,6 +140,7 @@ describe('CropToolArea', () => {
       aspectRatio: null,
     };
     storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
+    storeState.totalSize = { width: 800, height: 600 };
     storeState.layers = {};
     storeState.history = [];
     storeState.historyIndex = 0;
@@ -290,6 +299,65 @@ describe('CropToolArea', () => {
 
       expect(queryByTestId('crop-retained-pixels-preview')).toBeNull();
       expect(drawLayersToCanvas).not.toHaveBeenCalled();
+    });
+
+    it('caps the recovery preview backing store at high pixel counts and high DPR', () => {
+      devicePixelRatioState.current = 2;
+      storeState.documentFrame = { x: 0, y: 0, width: 4096, height: 4095 };
+      storeState.totalSize = { width: 4096, height: 4095 };
+      storeState.history = [{ actionName: SET_DOCUMENT_FRAME_ACTION }];
+      storeState.historyIndex = 0;
+      const context = {
+        clearRect: vi.fn(),
+        setTransform: vi.fn(),
+      };
+      vi.mocked(drawLayersToCanvas).mockReturnValue(true);
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as never);
+
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      act(() => {
+        useRectProps.current!.onRepaint?.({ x1: 0, y1: -1, x2: 4096, y2: 4095 });
+      });
+
+      expect(drawLayersToCanvas).toHaveBeenCalledWith(
+        expect.any(HTMLCanvasElement),
+        [],
+        { x: 0, y: -1, width: 4096, height: 4096 },
+        undefined,
+        0.5
+      );
+      expect(context.setTransform).toHaveBeenCalledWith(0.5, 0, 0, 0.5, 0, 0);
+    });
+
+    it('keeps the rounded backing dimensions within budget for asymmetric frames', () => {
+      devicePixelRatioState.current = 2;
+      storeState.documentFrame = { x: 0, y: 0, width: 259, height: 4071 };
+      storeState.totalSize = { width: 259, height: 4071 };
+      storeState.history = [{ actionName: SET_DOCUMENT_FRAME_ACTION }];
+      storeState.historyIndex = 0;
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+        clearRect: vi.fn(),
+        setTransform: vi.fn(),
+      } as never);
+
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      act(() => {
+        useRectProps.current!.onRepaint?.({ x1: 0, y1: -1, x2: 259, y2: 4071 });
+      });
+
+      expect(drawLayersToCanvas).toHaveBeenCalledWith(
+        expect.any(HTMLCanvasElement),
+        [],
+        { x: 0, y: -1, width: 259, height: 4072 },
+        undefined,
+        expect.any(Number)
+      );
+      const backingScale = vi.mocked(drawLayersToCanvas).mock.calls[0]?.[4];
+      if (backingScale === undefined) throw new Error('retained-pixel renderer was not called');
+      const backingPixels = Math.round(259 * backingScale) * Math.round(4072 * backingScale);
+      expect(backingScale).toBeLessThan(2);
+      expect(backingPixels).toBeLessThanOrEqual(4_194_304);
+      expect(backingPixels * 4).toBeLessThanOrEqual(16_777_216);
     });
   });
 
