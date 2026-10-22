@@ -32,11 +32,21 @@ describe('free model catalog filtering', () => {
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['a:free', 'b']);
   });
 
+  it('quarantines Kilo models that repeatedly failed while preserving known-good models', () => {
+    const data = [
+      kiloRow('poolside/laguna-s-2.1:free'),
+      kiloRow('kilo-auto/free'),
+      kiloRow('nvidia/nemotron-3.5-super-vl:free'),
+      kiloRow('recursive/flint-v1.0:free'),
+    ];
+    expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['poolside/laguna-s-2.1:free']);
+  });
+
   it('keeps Kilo candidates available when the optional OpenRouter catalog is down', async () => {
     const fetchImpl = vi.fn((url) =>
       url.includes('openrouter')
         ? Promise.resolve({ ok: false, status: 401 })
-        : Promise.resolve({ ok: true, json: async () => [kiloRow('kilo-auto/free')] })
+        : Promise.resolve({ ok: true, json: async () => [kiloRow('poolside/laguna-s-2.1:free')] })
     );
     const errors = [];
     const candidates = await loadCatalogs({
@@ -44,7 +54,7 @@ describe('free model catalog filtering', () => {
       openRouterKey: 'test',
       onCatalogError: (source) => errors.push(source),
     });
-    expect(candidates.map((row) => row.model)).toEqual(['kilo-auto/free']);
+    expect(candidates.map((row) => row.model)).toEqual(['poolside/laguna-s-2.1:free']);
     expect(errors).toEqual(['openrouter']);
   });
 });
