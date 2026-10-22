@@ -73,6 +73,29 @@ describe('free model rotation', () => {
     expect(chat).toHaveBeenCalledTimes(1);
   });
 
+  it('caps retries to three model requests per source before rotating providers', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' } }] }),
+      });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('k1'), kiloRow('k2'), kiloRow('k3'), kiloRow('k4')],
+      openrouter: [openRouterRow('o1')],
+      chat,
+    });
+    const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
+    expect(result.source).toBe('openrouter');
+    expect(chat).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(chat.mock.calls[2][1].body).model).toBe('k3');
+    expect(JSON.parse(chat.mock.calls[3][1].body).model).toBe('o1:free');
+  });
+
   it('ignores caller supplied paid candidates and only uses the live filtered catalog', async () => {
     const chat = vi.fn();
     const fetchImpl = catalogFetch({
