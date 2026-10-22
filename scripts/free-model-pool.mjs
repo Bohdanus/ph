@@ -6,6 +6,11 @@ const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
+const QUARANTINED_MODELS = new Set([
+  'kilo:kilo-auto/free',
+  'kilo:nvidia/nemotron-3.5-super-vl:free',
+  'kilo:recursive/flint-v1.0:free',
+]);
 
 export function zeroPriced(pricing) {
   return pricing?.prompt === '0' && pricing?.completion === '0';
@@ -16,6 +21,7 @@ export function catalogCandidates(source, data) {
   return rows
     .filter((row) => {
       if (!row?.id || !zeroPriced(row.pricing)) return false;
+      if (QUARANTINED_MODELS.has(`${source}:${row.id}`)) return false;
       if (source === 'openrouter') return row.id.endsWith(':free');
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
     })
