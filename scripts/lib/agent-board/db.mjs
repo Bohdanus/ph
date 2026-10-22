@@ -43,8 +43,23 @@ import { execFileSync } from 'node:child_process';
  * for a different migration, and a board stamped 2 by either script would be
  * indistinguishable from a board stamped 2 by the other. v2 therefore means
  * `migrateFileLockAttribution` and only that, which is why `issue_files` is v3.
+ *
+ * v4 adds a knowledge marker to token readings so an unreadable database is not
+ * stored or displayed as zero consumption. The token table itself is additive
+ * in `SCHEMA`; v3 boards get it there, then the v3→v4 step adds the marker when
+ * needed. Existing v4 boards from the interrupted integration remain readable.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+
+/**
+ * The polling window for GPT token-budget readings, in hours.
+ *
+ * A reading answers "how much GPT did this swarm consume in the last 5 hours,
+ * and how much of the configured look-back budget remains". This is the
+ * orchestration window, not a provider-reported account reset interval.
+ */
+export const TOKEN_WINDOW_HOURS = 5;
+export const MAX_TOKEN_WINDOW_HOURS = 72;
 
 /**
  * Issue statuses whose issues still describe work somebody may pick up. A
@@ -319,6 +334,38 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS events_issue_idx ON events(issue_id, seq);
 CREATE INDEX IF NOT EXISTS events_kind_idx ON events(kind, seq);
+
+create table if not exists token_window (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Which provider/model the reading is FOR. 'any' covers a roll-up poll that
+  -- sums every GPT family together: the swarm's budget is a single pool.
+  provider        TEXT NOT NULL,
+  model           TEXT NOT NULL,
+  -- Wall-clock the poll happened, in the board's own clock.
+  polled_at       TEXT NOT NULL,
+  -- The width of the look-back window that produced this reading, in hours.
+  window_hours    INTEGER NOT NULL DEFAULT 5,
+  -- The ceiling the reading was measured against, in tokens. Nullable: a poll
+  -- with no configured budget records consumed-only usage and leaves
+  -- remaining_tokens NULL rather than inventing a number.
+  budget_tokens   INTEGER,
+  consumed_tokens INTEGER NOT NULL,
+  -- Zero is only a storage sentinel when false; readers expose NULL then.
+  consumption_known INTEGER NOT NULL DEFAULT 1,
+  -- budget - consumed, clamped to >= 0. NULL when budget_tokens is NULL.
+  remaining_tokens INTEGER,
+  -- Where the numbers came from: 'session-db' reads the local Kilo session
+  -- ledger, 'live' came from a provider balance endpoint, 'manual' was handed
+  -- in by the operator. One reading, one source.
+  source          TEXT NOT NULL,
+  -- 'ok', 'no-budget', 'no-session-db', 'no-credentials', 'error'.
+  status          TEXT NOT NULL,
+  -- JSON for anything source-specific that has no dedicated column.
+  detail          TEXT
+);
+
+create index if not exists token_window_polled_idx on token_window(polled_at desc);
+create index if not exists token_window_source_idx on token_window(provider, model, polled_at desc);
 `;
 
 function git(args, { cwd } = {}) {
@@ -715,7 +762,43 @@ export class Board {
    * answers.
    */
   migrationSteps() {
-    return { 1: () => this.migrateFileLockAttribution(), 2: () => this.indexIssueFiles() };
+    return {
+      1: () => this.migrateFileLockAttribution(),
+      2: () => this.indexIssueFiles(),
+      3: () => this.migrateTokenConsumptionKnown(),
+    };
+  }
+
+  migrateTokenConsumptionKnown() {
+    const columns = this.db.prepare('PRAGMA table_info(token_window)').all();
+    const added = !columns.some((column) => column.name === 'consumption_known');
+    if (added) {
+      this.db.exec(`
+        ALTER TABLE token_window ADD COLUMN consumption_known INTEGER NOT NULL DEFAULT 0;
+      `);
+    }
+    // Run this on every v3→v4 attempt, even if an interrupted earlier attempt
+    // already added the column. It is idempotent, and status is authoritative
+    // for legacy rows that stored partial/unknown consumption as a number.
+    const backfilled = this.db
+      .prepare(
+        `
+      UPDATE token_window
+         SET consumption_known = CASE WHEN status IN ('ok', 'no-budget') THEN 1 ELSE 0 END
+       WHERE consumption_known IS NOT CASE WHEN status IN ('ok', 'no-budget') THEN 1 ELSE 0 END
+    `
+      )
+      .run();
+    if (added || Number(backfilled.changes) > 0) {
+      this.addEvent('board.migrate', {
+        from: 3,
+        to: 4,
+        table: 'token_window',
+        added: added ? 'consumption_known' : null,
+        backfilled: Number(backfilled.changes),
+      });
+    }
+    return true;
   }
 
   /**
@@ -2675,6 +2758,163 @@ export class Board {
           idleMs: at - Date.parse(issue.created_at),
         })),
     };
+  }
+
+  // --- token budget window -------------------------------------------------
+
+  /**
+   * Record a polled GPT token-budget reading, and log it so `swarm watch` shows
+   * the budget traffic that shaped the swarm's model choices.
+   *
+   * `remaining_tokens` is clamped to >= 0 by the poller and stored as-is here; a
+   * reading whose `status` is not `ok` still lands, because the status IS the
+   * signal (`no-budget`, `no-session-db`, `no-credentials`, `error`).
+   */
+  recordTokenWindow(reading) {
+    const {
+      provider,
+      model,
+      polledAt,
+      windowHours = TOKEN_WINDOW_HOURS,
+      budgetTokens = null,
+      consumedTokens,
+      remainingTokens = null,
+      resetAt = null,
+      source,
+      status,
+      detail = null,
+    } = reading;
+    if (!provider || !model || !polledAt || !source || !status) {
+      throw new BoardError('recordTokenWindow needs provider, model, polledAt, source, status', {
+        code: 1,
+      });
+    }
+    if (!Number.isFinite(windowHours) || windowHours <= 0 || windowHours > MAX_TOKEN_WINDOW_HOURS) {
+      throw new BoardError(`windowHours must be positive and no greater than ${MAX_TOKEN_WINDOW_HOURS}`, { code: 1 });
+    }
+    if (budgetTokens != null && (!Number.isSafeInteger(budgetTokens) || budgetTokens < 0)) {
+      throw new BoardError('budgetTokens must be null or a non-negative safe integer', { code: 1 });
+    }
+    if (consumedTokens != null && (!Number.isSafeInteger(consumedTokens) || consumedTokens < 0)) {
+      throw new BoardError('consumedTokens must be null or a non-negative safe integer', { code: 1 });
+    }
+    if (remainingTokens != null && (!Number.isSafeInteger(remainingTokens) || remainingTokens < 0)) {
+      throw new BoardError('remainingTokens must be null or a non-negative safe integer', { code: 1 });
+    }
+    const expectedRemaining =
+      budgetTokens == null || consumedTokens == null ? null : Math.max(0, budgetTokens - consumedTokens);
+    if (status === 'ok' && expectedRemaining != null && remainingTokens !== expectedRemaining) {
+      throw new BoardError('remainingTokens must equal budgetTokens minus consumedTokens, clamped to zero', {
+        code: 1,
+      });
+    }
+    const storedRemaining = consumedTokens == null || budgetTokens == null ? null : remainingTokens;
+    const detailObject = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
+    const storedDetail = JSON.stringify({ ...detailObject, resetAt });
+    return this.transaction(() => {
+      const result = this.db
+        .prepare(
+          `INSERT INTO token_window
+             (provider, model, polled_at, window_hours, budget_tokens,
+              consumed_tokens, consumption_known, remaining_tokens, source, status, detail)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          provider,
+          model,
+          polledAt,
+          windowHours,
+          budgetTokens,
+          consumedTokens ?? 0,
+          consumedTokens == null ? 0 : 1,
+          storedRemaining,
+          source,
+          status,
+          storedDetail
+        );
+      const id = Number(result.lastInsertRowid);
+      this.addEvent('token.poll', {
+        message: `${status === 'ok' ? 'token budget' : status}: ${consumedTokens == null ? 'consumption unknown' : `${consumedTokens} consumed`}${storedRemaining != null ? `, ${storedRemaining} left` : ''}`,
+        data: {
+          provider,
+          model,
+          windowHours,
+          budgetTokens,
+          consumedTokens,
+          remainingTokens: storedRemaining,
+          consumptionKnown: consumedTokens != null,
+          resetAt,
+          source,
+          status,
+          id,
+        },
+      });
+      return id;
+    });
+  }
+
+  /**
+   * The held readings, newest first. `provider`/`model` narrow the query;
+   * without them it is every reading, newest first. A roll-up poll stores
+   * `provider = 'gpt'` and `model = 'any'`, so a reader can ask "any GPT" or
+   * "that GPT" with one consistent shape.
+   */
+  tokenWindowReadings({ provider = null, model = null, limit = 50 } = {}) {
+    const where = [];
+    const params = [];
+    if (provider) {
+      where.push('provider = ?');
+      params.push(provider);
+    }
+    if (model) {
+      where.push('model = ?');
+      params.push(model);
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    params.push(limit);
+    const rows = this.db
+      .prepare(
+        `SELECT id, provider, model, polled_at, window_hours, budget_tokens,
+                              CASE WHEN consumption_known = 1 AND status IN ('ok', 'no-budget')
+                                   THEN consumed_tokens ELSE NULL END AS consumed_tokens,
+                              CASE WHEN consumption_known = 1 AND status IN ('ok', 'no-budget')
+                                   THEN 1 ELSE 0 END AS consumption_known,
+                              CASE WHEN consumption_known = 1 AND status = 'ok' AND budget_tokens IS NOT NULL
+                                   THEN MAX(0, budget_tokens - consumed_tokens) ELSE NULL END AS remaining_tokens,
+                              source, status, detail
+                 FROM token_window
+                 ${clause}
+                 ORDER BY polled_at DESC, id DESC
+                 LIMIT ?`
+      )
+      .all(...params);
+    return rows.map((row) => {
+      let detail = row.detail;
+      if (typeof detail === 'string') {
+        try {
+          detail = JSON.parse(detail);
+        } catch {
+          // Preserve malformed historical detail for diagnosis; consumers still
+          // get a visible reset_at=null rather than a guessed time.
+        }
+      }
+      return {
+        ...row,
+        detail,
+        reset_at: detail && typeof detail === 'object' && !Array.isArray(detail) ? (detail.resetAt ?? null) : null,
+      };
+    });
+  }
+
+  /**
+   * Drop readings older than `windowHours` so the table cannot grow without
+   * bound while the swarm polls. Only the NEWEST window is kept — the same
+   * window a poll looks back, so pruning and polling share one constant.
+   */
+  pruneTokenWindow({ at = this.now(), windowHours = TOKEN_WINDOW_HOURS } = {}) {
+    const since = new Date(at - windowHours * 3_600_000).toISOString();
+    const result = this.db.prepare('DELETE FROM token_window WHERE polled_at < ?').run(since);
+    return Number(result.changes);
   }
 }
 
