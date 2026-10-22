@@ -642,7 +642,7 @@ test.describe('Selection tools', () => {
     // reporting the same gesture. It asserts nothing about the VALUE — that number counts
     // DOCUMENT pixels while the drag is in CSS pixels, and the two are joined by a fit scale
     // that depends on the viewport, so the geometry assertion is what carries this test.
-    const report = page.getByText(/\d[\d,]*\s*pixels selected/);
+    const report = page.getByText(/\d[\d,]*\s+matching pixels/);
     await expect(report).toBeVisible();
     const reported = Number.parseInt((await report.innerText()).replace(/\D/g, ''), 10);
     expect(reported, 'the wand reports a non-zero count alongside the outline it drew').toBeGreaterThan(0);

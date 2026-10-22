@@ -284,8 +284,13 @@ and [SVG 2 painting](https://www.w3.org/TR/SVG2/painting.html) (sourced). URL sc
 newline normalization occurs before classifying `data:` URLs (sourced).
 Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
 APNG frame chunks are rejected before decode in both the standalone PNG and flattened-SVG paths.
-Standalone JPEG and WebP still rely on post-decode dimension validation and need separate
-format-specific preflight work.
+Standalone JPEG and WebP headers are checked against the document pixel ceiling before image
+decode. JPEG preflight checks the first scan for DNL and bounds marker/scan work; DNL-bearing,
+hierarchical, differential, and zero-height JPEGs are rejected because their effective dimensions
+are not bounded by the supported header path. WebP preflight validates RIFF extents, VP8/VP8L
+dimensions, VP8X feature flags, chunk order, animation-frame bounds, and a cumulative chunk limit.
+Animated WebP is passed to the browser image decoder after the canvas and frame checks, matching the
+existing flattened-image import behavior. Decoded dimensions remain checked after browser decode.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
