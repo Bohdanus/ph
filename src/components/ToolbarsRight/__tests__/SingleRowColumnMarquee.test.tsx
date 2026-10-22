@@ -61,10 +61,12 @@ const rowBand = (): Selection => ({
   lifecycle: 'committed',
   pos: { x: 0, y: 40, width: 200, height: 1 },
   points: [
-    { x: 0, y: 0 },
-    { x: 200, y: 0 },
-    { x: 200, y: 1 },
-    { x: 0, y: 1 },
+    [
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+      { x: 200, y: 1 },
+      { x: 0, y: 1 },
+    ],
   ],
 });
 

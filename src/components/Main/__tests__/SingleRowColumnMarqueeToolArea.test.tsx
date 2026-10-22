@@ -199,12 +199,14 @@ function committedSelection(edit: SelectionEdit): Selection {
  * corners and not its absolute ones — writing absolute coordinates in both would double the
  * offset, and this case is what says which of the two a commit stores.
  */
-function bandPoints(): Point[] {
+function bandPoints(): Point[][] {
   return [
-    { x: 0, y: 0 },
-    { x: 200, y: 0 },
-    { x: 200, y: MARQUEE_THICKNESS_PX },
-    { x: 0, y: MARQUEE_THICKNESS_PX },
+    [
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+      { x: 200, y: MARQUEE_THICKNESS_PX },
+      { x: 0, y: MARQUEE_THICKNESS_PX },
+    ],
   ];
 }
 
@@ -231,10 +233,12 @@ function columnBandSelection(column: number, id = 'selection-1'): Selection {
     lifecycle: 'committed',
     pos: { x: column, y: 0, width: MARQUEE_THICKNESS_PX, height: 120 },
     points: [
-      { x: 0, y: 0 },
-      { x: MARQUEE_THICKNESS_PX, y: 0 },
-      { x: MARQUEE_THICKNESS_PX, y: 120 },
-      { x: 0, y: 120 },
+      [
+        { x: 0, y: 0 },
+        { x: MARQUEE_THICKNESS_PX, y: 0 },
+        { x: MARQUEE_THICKNESS_PX, y: 120 },
+        { x: 0, y: 120 },
+      ],
     ],
   };
 }
@@ -259,10 +263,12 @@ function degenerateBandSelection(x: number, y: number, id = 'selection-1'): Sele
     lifecycle: 'committed',
     pos: { x, y, width: MARQUEE_THICKNESS_PX, height: MARQUEE_THICKNESS_PX },
     points: [
-      { x: 0, y: 0 },
-      { x: MARQUEE_THICKNESS_PX, y: 0 },
-      { x: MARQUEE_THICKNESS_PX, y: MARQUEE_THICKNESS_PX },
-      { x: 0, y: MARQUEE_THICKNESS_PX },
+      [
+        { x: 0, y: 0 },
+        { x: MARQUEE_THICKNESS_PX, y: 0 },
+        { x: MARQUEE_THICKNESS_PX, y: MARQUEE_THICKNESS_PX },
+        { x: 0, y: MARQUEE_THICKNESS_PX },
+      ],
     ],
   };
 }
@@ -754,10 +760,12 @@ describe('SingleRowColumnMarqueeToolArea', () => {
           ...bandSelection(40),
           pos: { x: 10, y: 40, width: 30, height: 20 },
           points: [
-            { x: 0, y: 0 },
-            { x: 30, y: 0 },
-            { x: 30, y: 20 },
-            { x: 0, y: 20 },
+            [
+              { x: 0, y: 0 },
+              { x: 30, y: 0 },
+              { x: 30, y: 20 },
+              { x: 0, y: 20 },
+            ],
           ],
         },
       ];
@@ -787,10 +795,12 @@ describe('SingleRowColumnMarqueeToolArea', () => {
           ...bandSelection(0),
           pos: { x: 0, y: 0, width: 200, height: 120 },
           points: [
-            { x: 0, y: 0 },
-            { x: 200, y: 0 },
-            { x: 200, y: 120 },
-            { x: 0, y: 120 },
+            [
+              { x: 0, y: 0 },
+              { x: 200, y: 0 },
+              { x: 200, y: 120 },
+              { x: 0, y: 120 },
+            ],
           ],
         },
       ];
@@ -1417,7 +1427,7 @@ describe('committed band geometry, read through the store readers', () => {
     gesture(toolArea, [canvas(5, 30)]);
 
     const [selection] = singleSelectionEdit().payload.updates.selections;
-    const corners: Point[] = selection.points.map((point) => ({
+    const corners: Point[] = selection.points[0]!.map((point) => ({
       x: point.x + selection.pos.x,
       y: point.y + selection.pos.y,
     }));

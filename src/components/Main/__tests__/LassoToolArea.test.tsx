@@ -111,9 +111,11 @@ describe('PolygonClickToolArea', () => {
     isActive: true,
     pos: { x: 34, y: 48, width: 16, height: 24 },
     points: [
-      { x: 4, y: 8 },
-      { x: 20, y: 8 },
-      { x: 20, y: 32 },
+      [
+        { x: 4, y: 8 },
+        { x: 20, y: 8 },
+        { x: 20, y: 32 },
+      ],
     ],
   };
 
@@ -189,9 +191,11 @@ describe('PolygonClickToolArea', () => {
               isActive: true,
               sourceTool: 'polygonal-lasso',
               points: [
-                { x: 1, y: 1 },
-                { x: 91, y: 1 },
-                { x: 91, y: 91 },
+                [
+                  { x: 1, y: 1 },
+                  { x: 91, y: 1 },
+                  { x: 91, y: 91 },
+                ],
               ],
               pos: { x: 39, y: 49, width: 92, height: 92 },
             }),
@@ -232,9 +236,11 @@ describe('PolygonClickToolArea', () => {
       isActive: true,
       sourceTool: 'freehand-lasso',
       points: [
-        { x: 1, y: 1 },
-        { x: 21, y: 11 },
-        { x: 31, y: 41 },
+        [
+          { x: 1, y: 1 },
+          { x: 21, y: 11 },
+          { x: 31, y: 41 },
+        ],
       ],
       pos: { x: 39, y: 49, width: 32, height: 42 },
     });
@@ -323,9 +329,11 @@ describe('PolygonClickToolArea', () => {
     expect(selectionEdits()).toHaveLength(1);
     expect(committedSelection()).toMatchObject({
       points: [
-        { x: 1, y: 1 },
-        { x: 791, y: 591 },
-        { x: 391, y: 291 },
+        [
+          { x: 1, y: 1 },
+          { x: 791, y: 591 },
+          { x: 391, y: 291 },
+        ],
       ],
       pos: { x: 39, y: 49, width: 792, height: 592 },
       sourceTool: 'freehand-lasso',
@@ -339,9 +347,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       },
     ];
@@ -370,9 +380,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       },
     ];
@@ -399,9 +411,11 @@ describe('PolygonClickToolArea', () => {
       metadata: { movedAtVersion: 1 },
       pos: { x: 49, y: 49, width: 82, height: 92 },
       points: [
-        { x: 1, y: 11 },
-        { x: 81, y: 1 },
-        { x: 81, y: 91 },
+        [
+          { x: 1, y: 11 },
+          { x: 81, y: 1 },
+          { x: 81, y: 91 },
+        ],
       ],
     });
   });
@@ -414,9 +428,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       },
     ];
@@ -441,9 +457,11 @@ describe('PolygonClickToolArea', () => {
       // +10/+15, applied to the origin rather than to the stored position.
       pos: { x: 49, y: 64, width: 92, height: 92 },
       points: [
-        { x: 1, y: 1 },
-        { x: 91, y: 1 },
-        { x: 91, y: 91 },
+        [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
       ],
     });
   });
@@ -463,9 +481,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       },
     ];
@@ -519,9 +539,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       },
     ];
@@ -544,9 +566,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       },
     ];

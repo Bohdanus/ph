@@ -214,9 +214,11 @@ const cloneArgs = (overrides: Partial<CloneStampToolArgs> = {}): CloneStampToolA
 const ACTIVE_SELECTION: Selection = {
   id: 'selection-1',
   points: [
-    { x: 0, y: 0 },
-    { x: 20, y: 0 },
-    { x: 20, y: 20 },
+    [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 20 },
+    ],
   ],
   isActive: true,
   pos: { x: 10, y: 15, width: 20, height: 20 },

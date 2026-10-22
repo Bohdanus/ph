@@ -486,7 +486,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
       selections: [
         {
           id: 'sel',
-          points: [{ x: 1, y: 2 }],
+          points: [[{ x: 1, y: 2 }]],
           isActive: true,
           pos: { x: 1, y: 2, width: 3, height: 4 },
           metadata: { featherRadius: 2 },
@@ -514,7 +514,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
   it('records a disabled selection action without changing the converted selection state', () => {
     const registry = new AssetRegistry();
     const nextSelection = {
-      selections: [{ id: 'sel', points: [{ x: 0, y: 0 }], isActive: true, pos: { x: 0, y: 0, width: 1, height: 1 } }],
+      selections: [{ id: 'sel', points: [[{ x: 0, y: 0 }]], isActive: true, pos: { x: 0, y: 0, width: 1, height: 1 } }],
       activeSelectionId: 'sel',
     };
 

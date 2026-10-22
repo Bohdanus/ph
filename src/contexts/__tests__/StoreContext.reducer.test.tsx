@@ -58,9 +58,11 @@ function makeSelection(id: string, overrides: Partial<Selection> = {}): Selectio
     id,
     isActive: true,
     points: [
-      { x: 0, y: 0 },
-      { x: 4, y: 0 },
-      { x: 4, y: 4 },
+      [
+        { x: 0, y: 0 },
+        { x: 4, y: 0 },
+        { x: 4, y: 4 },
+      ],
     ],
     pos: { x: 0, y: 0, width: 4, height: 4 },
     geometry: 'polygon',

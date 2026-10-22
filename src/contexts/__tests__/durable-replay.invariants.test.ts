@@ -747,13 +747,13 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
   it('set-selection replaces selections entirely', () => {
     const selection1 = {
       id: 'sel-1',
-      points: [{ x: 1, y: 2 }],
+      points: [[{ x: 1, y: 2 }]],
       isActive: true,
       pos: { x: 1, y: 2, width: 10, height: 12 },
     };
     const selection2 = {
       id: 'sel-2',
-      points: [{ x: 5, y: 6 }],
+      points: [[{ x: 5, y: 6 }]],
       isActive: true,
       pos: { x: 5, y: 6, width: 20, height: 30 },
     };

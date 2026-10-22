@@ -211,10 +211,12 @@ describe('MagicWandToolArea', () => {
                 isActive: true,
                 sourceTool: 'magic-wand',
                 points: [
-                  { x: 1, y: 1 },
-                  { x: 3, y: 1 },
-                  { x: 3, y: 3 },
-                  { x: 1, y: 3 },
+                  [
+                    { x: 1, y: 1 },
+                    { x: 3, y: 1 },
+                    { x: 3, y: 3 },
+                    { x: 1, y: 3 },
+                  ],
                 ],
                 pos: { x: 1, y: 1, width: 4, height: 4 },
                 metadata: expect.objectContaining({
@@ -386,9 +388,11 @@ describe('MagicWandToolArea', () => {
         lifecycle: 'committed',
         pos: { x: 0, y: 0, width: 4, height: 4 },
         points: [
-          { x: 0, y: 0 },
-          { x: 4, y: 0 },
-          { x: 4, y: 4 },
+          [
+            { x: 0, y: 0 },
+            { x: 4, y: 0 },
+            { x: 4, y: 4 },
+          ],
         ],
       },
     ];
@@ -425,9 +429,11 @@ describe('MagicWandToolArea', () => {
         lifecycle: 'committed',
         pos: { x: 0, y: 0, width: 4, height: 4 },
         points: [
-          { x: 0, y: 0 },
-          { x: 4, y: 0 },
-          { x: 4, y: 4 },
+          [
+            { x: 0, y: 0 },
+            { x: 4, y: 0 },
+            { x: 4, y: 4 },
+          ],
         ],
       },
     ];

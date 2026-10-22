@@ -60,7 +60,7 @@ export type SelectionMetadata = {
 
 export type Selection = {
   id: string;
-  points: Point[];
+  points: Point[][];
   isActive: boolean;
   pos: Pos;
   lifecycle?: 'committed';

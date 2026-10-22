@@ -1124,7 +1124,12 @@ function isCanonicalSelection(value: unknown): value is Record<string, unknown> 
     (sourceTool === undefined || (typeof sourceTool === 'string' && sourceTools.includes(sourceTool))) &&
     Array.isArray(selection.points) &&
     isJsonValue(selection.points) &&
-    selection.points.every((point) => hasCanonicalFiniteNumberKeys(point, ['x', 'y']) && isJsonValue(point)) &&
+    selection.points.every(
+      (contour) =>
+        Array.isArray(contour) &&
+        isJsonValue(contour) &&
+        contour.every((point) => hasCanonicalFiniteNumberKeys(point, ['x', 'y']) && isJsonValue(point))
+    ) &&
     hasCanonicalFiniteNumberKeys(selection.pos, ['x', 'y', 'width', 'height']) &&
     isJsonValue(selection.pos) &&
     (selection.metadata === undefined || isCanonicalSelectionMetadata(selection.metadata))

@@ -32,9 +32,11 @@ function polygon(overrides: Partial<Selection> = {}): Selection {
     sourceTool: 'polygonal-lasso',
     pos: { x: 10, y: 20, width: 30, height: 40 },
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+      ],
     ],
     ...overrides,
   };
@@ -401,9 +403,11 @@ describe('useSelectionMarchingAnts', () => {
           id: 'sel-2',
           pos: { x: 60, y: 0, width: 10, height: 10 },
           points: [
-            { x: 0, y: 0 },
-            { x: 10, y: 0 },
-            { x: 10, y: 10 },
+            [
+              { x: 0, y: 0 },
+              { x: 10, y: 0 },
+              { x: 10, y: 10 },
+            ],
           ],
         }),
       ],
@@ -445,7 +449,7 @@ describe('useSelectionMarchingAnts', () => {
 
   it.each([
     ['an inactive selection', { isActive: false }],
-    ['a degenerate selection', { points: [{ x: 0, y: 0 }] }],
+    ['a degenerate selection', { points: [[{ x: 0, y: 0 }]] }],
   ])('ignores %s', (_label, overrides) => {
     const { ctx } = setup({ selections: [polygon(overrides)] });
 
@@ -475,10 +479,12 @@ describe('useSelectionMarchingAnts', () => {
           // `createCommittedRectangleSelection` commits and the only thing that makes this a
           // rectangle rather than the triangle the fixture above describes.
           points: [
-            { x: 0, y: 0 },
-            { x: 30, y: 0 },
-            { x: 30, y: 40 },
-            { x: 0, y: 40 },
+            [
+              { x: 0, y: 0 },
+              { x: 30, y: 0 },
+              { x: 30, y: 40 },
+              { x: 0, y: 40 },
+            ],
           ],
         }),
       ],
@@ -493,6 +499,37 @@ describe('useSelectionMarchingAnts', () => {
     expect(path.lineTo).toHaveBeenCalledWith(40, 60);
     expect(path.lineTo).toHaveBeenCalledWith(10, 60);
     expect(path.closePath).toHaveBeenCalledOnce();
+  });
+
+  it('marches every contour of a multi-contour selection, even a nested hole', () => {
+    const { ctx } = setup({
+      selections: [
+        polygon({
+          id: 'sel-hole',
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 30, y: 0 },
+              { x: 30, y: 40 },
+              { x: 0, y: 40 },
+            ],
+            [
+              { x: 10, y: 10 },
+              { x: 20, y: 10 },
+              { x: 20, y: 20 },
+              { x: 10, y: 20 },
+            ],
+          ],
+        }),
+      ],
+    });
+    frame();
+
+    const path = vi.mocked(ctx.stroke).mock.calls.at(-1)![0] as Path2D;
+    expect(path.moveTo).toHaveBeenCalledTimes(2);
+    expect(path.closePath).toHaveBeenCalledTimes(2);
+    expect(path.moveTo).toHaveBeenNthCalledWith(1, 10, 20);
+    expect(path.moveTo).toHaveBeenNthCalledWith(2, 20, 30);
   });
 
   it('cancels the pending frame and clears the canvas on unmount', () => {

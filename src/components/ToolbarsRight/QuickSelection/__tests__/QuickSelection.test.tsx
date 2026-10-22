@@ -81,9 +81,11 @@ const REGION_SELECTION: Selection = {
   isActive: true,
   pos: { x: 5, y: 9, width: 40, height: 30 },
   points: [
-    { x: 5, y: 9 },
-    { x: 45, y: 9 },
-    { x: 45, y: 39 },
+    [
+      { x: 5, y: 9 },
+      { x: 45, y: 9 },
+      { x: 45, y: 39 },
+    ],
   ],
 };
 
