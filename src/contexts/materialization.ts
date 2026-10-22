@@ -103,6 +103,17 @@ function assertDocumentGeneration(request: MaterializationRequest): void {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const nameGetter = Object.getOwnPropertyDescriptor(DOMException.prototype, 'name')?.get;
+  if (!nameGetter) return false;
+  try {
+    return Reflect.apply(nameGetter, error, []) === 'AbortError';
+  } catch {
+    return false;
+  }
+}
+
 function presentationOperations(operations: readonly DurableOperation[]): PresentationOperation[] {
   const normalized: PresentationOperation[] = [];
   for (const operation of operations) {
@@ -421,7 +432,7 @@ export async function materializeDocument(
         // the visible document look successful while durable replay cannot
         // reproduce its pixels. Keep the failure local, report it, and let the
         // compositor continue with the layers that did materialize.
-        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        if (isAbortError(error)) throw error;
         console.error(`Unable to materialize durable layer ${layer.snapshot.id}; skipping layer`, error);
       }
       // Keep replay cooperative even when every operation is synchronous.
