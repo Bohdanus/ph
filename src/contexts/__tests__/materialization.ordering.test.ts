@@ -606,6 +606,76 @@ describe('materializeDocument safety (P0.3)', () => {
     registry.shutdown();
   });
 
+  it('propagates a cross-realm AbortError and releases earlier layer leases', async () => {
+    const registry = new AssetRegistry();
+    const request = makeRequest(registry);
+    const originalMaterialize = registry.materialize.bind(registry);
+    const release = vi.fn();
+    let calls = 0;
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      calls += 1;
+      if (calls === 2) {
+        const frame = document.createElement('iframe');
+        document.body.append(frame);
+        const ForeignDOMException = (frame.contentWindow as unknown as { DOMException?: typeof DOMException } | null)
+          ?.DOMException;
+        frame.remove();
+        if (!ForeignDOMException) throw new Error('The iframe DOMException constructor is unavailable');
+        throw new ForeignDOMException('Materialization aborted in another realm', 'AbortError');
+      }
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      materializeDocument(
+        makeReplay({
+          'layer-first': makeBlankLayer('layer-first', 40, 40),
+          'layer-second': makeBlankLayer('layer-second', 40, 50),
+        }),
+        request
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(release).toHaveBeenCalledOnce();
+    expect(consoleError).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
+  it('does not treat spoofed values as cross-realm AbortErrors', async () => {
+    const registry = new AssetRegistry();
+    const spoofedAbortError = new Error('ordinary failure') as Error & { [Symbol.toStringTag]: string };
+    spoofedAbortError.name = 'AbortError';
+    Object.defineProperty(spoofedAbortError, Symbol.toStringTag, { value: 'DOMException' });
+    const spoofedDomException = Object.create(DOMException.prototype) as DOMException;
+    Object.defineProperty(spoofedDomException, 'name', { value: 'AbortError' });
+    vi.spyOn(registry, 'materialize')
+      .mockRejectedValueOnce(spoofedAbortError)
+      .mockRejectedValueOnce(spoofedDomException);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await materializeDocument(
+      makeReplay({
+        'layer-failed': makeBlankLayer('layer-failed', 40, 40),
+        'layer-also-failed': makeBlankLayer('layer-also-failed', 40, 50),
+      }),
+      makeRequest(registry)
+    );
+
+    expect(result.layers).toEqual({});
+    expect(consoleError).toHaveBeenCalledTimes(2);
+    result.release();
+    registry.shutdown();
+  });
+
   it('aborts early when the signal is aborted before processing layers', async () => {
     const registry = new AssetRegistry();
     const controller = new AbortController();
