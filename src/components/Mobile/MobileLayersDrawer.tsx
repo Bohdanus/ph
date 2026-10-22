@@ -220,7 +220,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                 onClick={() =>
                   createBlankLayer({
                     color: '#ffffff',
-                    opacity: 1,
+                    opacity: 0,
                     pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
                   })
                 }
