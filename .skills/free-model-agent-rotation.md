@@ -17,7 +17,7 @@ For a standalone text completion, put the non-sensitive prompt in a temporary fi
 node scripts/free-model-pool.mjs --prompt-file /tmp/free-task.txt --max-tokens 1200
 ```
 
-The runner rotates through free model entries and, on HTTP 402/429, treats that provider as exhausted for this run and tries the next provider. It stops when all eligible providers fail. It does not use or discover paid fallback models. The OpenRouter key is read from `OPENROUTER_API_KEY` and must never be copied into files or output.
+The runner tries at most three eligible model IDs per provider per run. HTTP 402/429 immediately exhausts that provider and rotates to the next source; other failures rotate among at most three models before moving on. It stops when all eligible providers fail. It does not use or discover paid fallback models. The OpenRouter key is read from `OPENROUTER_API_KEY` and must never be copied into files or output.
 
 For parallel repository subagents, call the native `task` tool once per bounded subtask, specifying the exact catalog model and provider together. Free child sessions must not launch GPT subagents or perform Git operations. Inspect each child's resolved model before relying on its result; a provider label alone does not prove the selected model was free. If a task call is rate limited, refresh the catalog and rotate to another exact free pair. Stop when all available free capacity is exhausted.
 

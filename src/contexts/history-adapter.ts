@@ -1218,6 +1218,7 @@ export function legacyHistoryToDurable(
     const enabled = isEntryEnabled(item);
     const documentSourceProperty = readOwnDataProperty(item, 'documentSource');
     if (
+      legacyIndex === 0 &&
       documentSourceProperty.found &&
       !documentSourceProperty.accessor &&
       documentSourceProperty.value !== undefined &&

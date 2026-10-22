@@ -5,6 +5,7 @@ const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_ATTEMPTS_PER_SOURCE = 3;
 
 export function zeroPriced(pricing) {
   return pricing?.prompt === '0' && pricing?.completion === '0';
@@ -59,10 +60,14 @@ export async function completeWithFreeModel(
 ) {
   const available = await loadCatalogs({ fetchImpl, openRouterKey, onCatalogError });
   const exhausted = new Set();
+  const attempts = new Map();
   const errors = [];
   for (const candidate of available) {
     if (exhausted.has(candidate.source)) continue;
+    const sourceAttempts = attempts.get(candidate.source) ?? 0;
+    if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
     if (candidate.source === 'openrouter' && !openRouterKey) continue;
+    attempts.set(candidate.source, sourceAttempts + 1);
     const url = candidate.source === 'kilo' ? KILO_CHAT : OPENROUTER_CHAT;
     const headers = { 'Content-Type': 'application/json' };
     if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;

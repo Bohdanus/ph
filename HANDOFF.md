@@ -2758,4 +2758,28 @@ OVR-2 is about the Draw tool, not shapes. Preserve the `!!args.backgroundColor` 
 gate either way; it prevents a filled figure without a colour from painting with whatever
 `fillStyle` the shared overlay last carried.
 
+## 232. A source-backed create can fall below the durable top after sparse reorders
+
+**Problem.** Legacy `reorderLayers()` retains sparse numeric orders, while durable reorder
+operations normalize the same stack to dense orders. A source-backed create then derives its
+name/order from the live legacy record and validates against that same witness. Starting with three
+layers at orders `0, 1, 2`, moving the top layer to the bottom twice leaves the live stack at
+`-2, -1, 0` while the durable pre-state is `0, 1, 2`. The next blank create derives order `1`; its
+durable operation passes validation but sorts below the existing durable top at order `2`, while the
+legacy layer is at the top. Full conversion derives a different name/order pair from the normalized
+pre-state, so changing only the planned order or switching only the planner to `preLayers` does not
+preserve the existing exact legacy name/order contract.
+
+**Affected.** `src/contexts/layer-utils.ts` (`reorderLayers()`),
+`src/contexts/history-append.ts` (source-backed create planning/validation),
+`src/contexts/history-adapter.ts` (full conversion), and durable replay/reorder tests.
+
+**Blocker.** The existing source-backed append test pins the fast path and exact legacy-derived
+name/order, while durable reorder tests pin dense normalization. Resolve the representation across
+legacy reorder, source-backed append, full conversion and durable replay as one reviewed change.
+Until then, retain the legacy presentation authority and do not treat a current durable shadow after
+repeated sparse reorders as proof that its published layer stack is equivalent. A regression test
+must exercise two moves to the bottom followed by a source-backed create and compare both layer
+sequence and the complete name/order pair against full conversion.
+
 ---
