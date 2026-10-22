@@ -46,19 +46,20 @@ misread:
 
 ## Entries
 
-### OVR-1 — Photoshop fills the area an extended crop adds with the
+### OVR-1 — Photoshop fills empty canvas added by an extended crop with the
 
 Background layer's colour when the bottom layer is a locked Background
 
-**This app:** An extended crop always leaves the added band transparent,
-whatever the bottom layer is.
+**This app:** Crop does not synthesize or fill newly exposed canvas. Existing layer-source pixels
+outside the old frame are revealed when the frame expands; only areas with no retained source
+pixels remain transparent, regardless of the bottom layer.
 
 **Operator decided:** 2026-10-02
 
-**Why:** This is the Background-layer case of Photoshop's Fill dropdown,
-and it is the only cheap one. The other two values — Content-Aware and
-Generative Expand — are a patch-based synthesis model and a cloud
-generative feature, and are recorded in TOOLS-TOO-HARD.md instead.
+**Why:** This override records only the empty-band Background-layer Fill case. It does not block
+recovery of pixels retained outside an earlier crop. Content-Aware Fill and Generative Expand
+synthesize new pixels rather than reveal retained layer content; both are absent from this app and
+recorded in `docs/TOOLS-TOO-HARD.md`.
 
 ### OVR-2 — Photoshop's Tools panel has no Draw tool
 

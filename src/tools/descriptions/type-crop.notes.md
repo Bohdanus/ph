@@ -887,31 +887,27 @@ fields ("setting the aspect ratio or width and height values") without naming th
 The one setting that decides whether a committed crop is reversible, and the app has no
 counterpart for it at all.
 
-**What is Adobe's.** One sentence, and it is the whole of Adobe's text on the setting: the
-options page describes Delete Cropped Pixels as "**Permanently removes areas outside the
-crop, but allows editing when turned off**" (`crop-tool-options.html`). That establishes the
-delete-versus-hide contrast, which is the part of the row that is well attested, and it is
-what the data file now leads with.
+**What is Adobe's.** Adobe's crop-options page says Delete Cropped Pixels "**permanently removes
+areas outside the crop, but allows editing when turned off**". Adobe's current desktop
+non-destructive editing page adds the recovery details: with the option unchecked, hidden areas
+remain available and can be restored with **`Image ▸ Reveal All`** or by dragging the Crop tool
+beyond the image edge. That page also notes the option is unavailable for documents containing
+only a Background layer. Those are now primary-source claims in the data row, not third-party
+inferences.
 
-**What is not Adobe's — and was asserted anyway.** Four clauses were in the data file's row
-and all four are third-party:
+**What remains third-party.** The on-by-default state, demoting a locked Background layer to keep
+hidden pixels, and the resulting file growth still have no Adobe source in this research set. They
+remain labeled as third-party rather than being inferred from the recovery workflow. In particular,
+Adobe says the unchecked option is unavailable for a Background-only document; it does not document
+a demotion as the mechanism for enabling hidden-pixel recovery.
 
-- that the setting is **on by default**;
-- that the **Background layer is demoted** to a regular layer so Photoshop can keep the
-  hidden pixels (this is the most specific and the most checkable of the four);
-- that the pixels come back through **`Image ▸ Reveal All`** or by dragging the crop box out
-  again;
-- that **the file grows**.
-
-None of the four was reached at Adobe in this pass, so all four are now marked third-party in
-the row's own `detail` rather than presented as the setting's behaviour. They are plausible,
-they are consistently reported, and `01-photoshop-reference.md` may well carry Adobe text for
-some of them — but "consistently reported" is what they are, and the row now says so. What is
-_not_ claimed anywhere is the app-side consequence, which is unaffected either way: the app
-implements the **OFF** case — the canvas shrinks and the pixels stay in the layer bitmaps —
-and offers neither the setting nor an `Image ▸ Reveal All` to change that. The earlier
-version of this section said the app implemented the ON case, which inverted Adobe's own
-delete-versus-hide contrast; see "Is the app's crop destructive?" below.
+**App consequence.** The app always implements the non-destructive frame-change case. It has no
+Delete Cropped Pixels toggle or `Image ▸ Reveal All` command, but re-entering Crop after a frame
+change exposes a crop box that can be expanded; retained source pixels are previewed at angle zero
+and revealed on Apply. The app's transparent empty-area behavior is the separate OVR-1 decision,
+not a limit on recovering retained pixels. The earlier version of this section called the app
+destructive, which inverted Adobe's own delete-versus-hide contrast; see "Is the app's crop
+destructive?" below.
 
 ### Use Classic Mode, and the version boundary that was not Adobe's
 
@@ -995,9 +991,9 @@ value list**, and the narrowing is `Unverified` item 17: it carries Adobe's one 
 dropdown, the one value Adobe names in it, and the statement that Adobe does not publish the list.
 
 The app's own answer to "what fills the band" is **OVR-1 in `docs/OVERRIDES.md`**, decided by the
-operator's hand, and this file neither restates it nor edits it; the two absent Fill values are
-recorded exactly once, in `docs/TOOLS-TOO-HARD.md`, and this file points there instead of
-duplicating them.
+operator's hand. OVR-1 now explicitly applies only to source-empty growth: retained off-frame layer
+pixels reappear when the frame expands. The two absent synthesis features are recorded in
+`docs/TOOLS-TOO-HARD.md`; they are distinct from the preserved-pixel recovery path.
 
 **Two rows were added and one was rewritten by the pass before this one, and the count line
 above was wrong before any of that.** It said "Twelve controls · `partial` 3 · `missing` 9"
@@ -1129,30 +1125,69 @@ changes immediately, **smaller or larger**; the frame origin is subtracted in
 from the frame in `drawLayersToCanvas()` in
 `layer-renderer.ts`, so anything outside it stops rendering.
 
-But nothing is destroyed. Layer positions and sources are untouched, so the bitmaps still hold
-the pixels, and the history entry carries `previousFrame`, so undo puts the frame back. That
-is Photoshop's **Delete Cropped Pixels OFF** case — the canvas shrinks, the pixels are kept,
-the edit stays reversible — where the **ON** case permanently removes everything outside the
-crop. The earlier version of this section had it backwards, called the app "destructive",
-and then contradicted itself two sentences later by saying undo restores the frame.
+At angle zero, nothing is destroyed or resampled: layer positions and sources are untouched, so
+their bitmaps still hold the pixels, and the history entry carries `previousFrame`, so undo puts
+the frame back. That is Photoshop's **Delete Cropped Pixels OFF** case — the canvas shrinks, the
+pixels are kept, and the edit stays reversible — where the **ON** case permanently removes
+everything outside the crop. A rotated crop is different: `applyDocumentCrop()` transforms the
+layer geometry to match the requested angle before committing the frame. The earlier version of
+this section called the app destructive, then contradicted itself by saying undo restores the
+frame.
 
 The route back is now available through Crop itself. When the active history contains a
 `SET_DOCUMENT_FRAME_ACTION`, re-entering the Crop tool starts with a box at the current frame.
 Dragging an edge beyond that frame recomposes the current layer stack in the off-frame area while
-the crop is still pending; applying the larger frame reveals those retained pixels at their
-original raster coordinates, with no resampling. The retained-pixel preview and the separate
-letterbox overhang guides are limited to unrotated crops: their current frame subtraction uses
-axis-aligned geometry, not the rotated crop polygon. A rotated crop still uses the existing
-rotation preview path and can reveal retained content when committed.
+the crop is pending. At angle zero, applying the larger frame reveals retained pixels at their
+original raster coordinates, with no resampling. The E2E test
+`re-cropping after layer edits previews and recovers retained pixels without scaling` now paints a
+new bar after the first crop, changes layer visibility, re-enters Crop, and byte-compares a 100×12
+region before crop, during preview, and after Apply. This proves recovery still works after a real
+pixel edit, not only a visibility toggle, and that the output pixel region is not scaled.
+
+The retained-pixel preview and the separate letterbox overhang guides are limited to unrotated
+crops: their current frame subtraction uses axis-aligned geometry, not the rotated crop polygon.
+A rotated crop can still reveal retained data when committed; the E2E test
+`a rotated recrop commits retained pixels outside the prior frame` crops a 64×64 red/blue fixture,
+re-enters, extends the frame to include a hidden red pixel, rotates by a quarter turn, and verifies
+that Apply moves that pixel into the resulting frame. It also asserts there is no live
+retained-pixel preview at nonzero rotation, so the distinction is explicit rather than an
+unintended fallback.
 
 The app still has no **Delete Cropped Pixels** control to offer or invert, and no
 `Image ▸ Reveal All` menu item (`grep` for `Reveal All` across `src/` returns nothing outside
-this notes file). Re-cropping is the non-destructive recovery path. It can reveal only content
-still present in layer sources; an added band with no retained pixels remains transparent. That
-is OVR-1 in `docs/OVERRIDES.md`, and it is independent of recovering a previously cropped area.
-The E2E test `re-cropping after layer edits previews and recovers retained pixels without scaling`
-shrinks the frame, records intervening layer visibility edits, previews the hidden pixels on
-re-entry, then verifies that applying the larger frame returns the same pixel value.
+this notes file). Re-cropping can reveal only content still present in layer sources; flattening
+or exporting to a format that drops those sources is outside this guarantee. An expanded area with
+no retained source pixels stays transparent under OVR-1; the override does not affect recovery.
+
+#### Adobe contract and source confidence
+
+- Adobe's Photoshop crop page, last updated April 18, 2024,
+  [`crop-photos.html`](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-photos.html),
+  describes the crop boundary and says that with Delete Cropped Pixels unchecked the crop is
+  non-destructive; it also documents viewing the image outside the current crop border.
+- Adobe's desktop non-destructive editing page, last updated September 28, 2026,
+  [`non-destructive-editing-techniques.html`](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/create-layer-compositions/non-destructive-editing-techniques.html),
+  explicitly says the unchecked option preserves hidden cropped areas and names both recovery
+  routes: Image > Reveal All and dragging the Crop tool beyond the image edge. It also notes that
+  this option is unavailable for documents containing only a Background layer. That is why this
+  app's recovery guarantee is scoped to retained layer sources rather than to every flattened
+  image.
+- Adobe's [`crop-tool-options.html`](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html)
+  distinguishes Delete Cropped Pixels from the crop shield and Show Cropped Area. The latter are
+  preview/overlay settings; they do not themselves retain pixels. In this app, both visual
+  behaviors currently share the fixed black 0.7 overlay in `useRect`'s `drawMask()`.
+- Adobe's [`crop-tool-effects-on-image-dimensions.html`](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/resize-adjust-resolution/crop-tool-effects-on-image-dimensions.html)
+  explains that physical print size depends on the pixel-to-resolution ratio and that total pixels
+  and file size depend on pixel dimensions. This is useful context, but the no-resampling claim for
+  this app is established by `applyDocumentCrop()` and the byte-identical E2E pixel-region check,
+  not inferred from that page's short dimensions summary.
+- Content-Aware Fill and Generative Expand create new pixels outside the source image; they are
+  distinct from recovering hidden pixels. Photoshop exposes Content-Aware Fill in the Crop tool's
+  Fill dropdown and Generative Expand from the Contextual Task Bar. Neither command exists here.
+
+This feature preserves the source bitmap only while the document model retains it. Round-trip
+recovery after save/reopen has not yet been tested for every serializer or export format and is
+tracked below rather than promised here.
 
 ### What kind of commit a crop is, and which handoff entries touch it
 
@@ -1198,20 +1233,15 @@ Neither entry changes a claim in `type-crop.ts`, and neither is a live crop defe
   `handlePointerDown` never runs, because
   `CropToolArea`'s `useRect()` call passes the hook's handlers straight through without a
   `layerUnderPointer`. Photoshop's contract is the opposite way round.
-- **Extending the crop DOES add canvas — this bullet used to assert the opposite, and that
-  sentence was the defect this pass reverses.** `usePointerPosition.getLocalCoords` never
-  clamped, so the rect could always be dragged past the image edge; what used to throw the
-  overhang away was `trimRect()` on the commit path, and it no longer
-  is. `applyDocumentCrop()` in `src/contexts/useLayer.ts` normalises the rect with
-  `sortRoundRect()` — the same sort and the same round-each-edge-once, with
-  **no clamp** — so a rect reaching past an edge commits a **larger** `documentFrame` and a rect
-  reaching before the origin anchors the frame **negatively**. Photoshop hands back an empty
-  canvas for a rect that overlaps nothing, and this app accepts that too. The band the growth
-  adds is covered by no layer and stays transparent whatever the bottom layer is: **OVR-1** in
-  `docs/OVERRIDES.md`, by the operator's hand. So the divergence that survives is neither the
-  growth nor the transparency — it is that Photoshop can synthesise into the band, Content-Aware
-  Fill from the Fill dropdown on the Options bar and Generative Expand from the Contextual Task
-  Bar, and this app's bar renders no Fill control at all, with both recorded once in
+- **Extending the crop does add canvas, without clamping.** `usePointerPosition.getLocalCoords`
+  permits the rect past the image edge, and `applyDocumentCrop()` in `src/contexts/useLayer.ts`
+  normalises it with `sortRoundRect()` — sorting and rounding each edge once, with no clamp — so
+  the resulting `documentFrame` can be larger or have a negative origin. Photoshop hands back an
+  empty canvas for a rect that overlaps nothing, and this app accepts that too. If a layer source
+  already contains pixels outside the old frame, those pixels become visible when the frame grows;
+  only an area absent from all retained sources stays transparent under **OVR-1** in
+  `docs/OVERRIDES.md`. Photoshop's Content-Aware Fill and Generative Expand synthesize new content
+  into empty space; this app has no Fill or Generative Expand control, recorded in
   `docs/TOOLS-TOO-HARD.md`.
 - **The pending rect is DISCARDED by a tool switch, not written through.** The previous pass
   claimed the draft "survives a tool switch", and the file's own comment said the opposite in
@@ -1305,7 +1335,7 @@ Third party, labelled as such:
 ## Unverified
 
 Listed because they could not be sourced, or could be sourced only weakly. None of these
-appears as an assertion in `type-crop.ts`.
+appears as a Photoshop behavior or app capability assertion in `type-crop.ts`.
 
 1. **REFUTED, not open: "Anti-aliasing takes effect only on rasterization."** This was filed here
    as merely unsourced, and the available evidence already pointed the _other_ way. It is now
@@ -1404,15 +1434,12 @@ appears as an assertion in `type-crop.ts`.
 11. **Whether `W × H × Resolution` accepts a single dimension** with the other left empty, as
     a third-party tutorial describes. Only third-party; not asserted.
     Closest: https://jkost.com/blog/2017/05/essential-tips-for-cropping-in-photoshop-cc.html
-12. **The four `Delete Cropped Pixels` clauses that are not Adobe's.** The setting's on-by-default
-    state, the Background layer being demoted so the hidden pixels can be kept, the `Image ▸
-Reveal All` route back, and the file growth are third-party throughout; Adobe's own options
-    page gives one sentence, "Permanently removes areas outside the crop, but allows editing when
-    turned off". All four were asserted in the data file's row and all four are now marked
-    third-party inside that row. They are not deleted, because they are consistently reported and
-    the delete-versus-hide contrast built on them is the well-attested part — but they are
-    **not** Adobe text and the row no longer implies that they are. See the section under "Delete
-    Cropped Pixels" for the split.
+12. **Three `Delete Cropped Pixels` clauses remain third-party.** The on-by-default state,
+    demoting a locked Background layer, and the resulting file growth have not been found in an
+    Adobe source. The recovery routes are no longer part of this item: Adobe's desktop
+    non-destructive editing guidance documents both `Image ▸ Reveal All` and dragging the Crop
+    tool beyond the image edge, and says the unchecked option is unavailable for a Background-only
+    document. See the updated source discussion under "Delete Cropped Pixels" for the distinction.
     Closest: https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html
 13. **Partly resolved since this was filed: what returns the crop to unconstrained.** Adobe's
     options table defines `Ratio` as "Crops freely without a fixed ratio" and still does not
@@ -1484,12 +1511,11 @@ Reveal All` route back, and the file growth are third-party throughout; Adobe's 
       last updated 23 Feb 2026) puts it in the **Contextual Task Bar**: "From the Tools panel,
       select Crop tool and drag the crop handles outward to expand the canvas. Select Generative
       Expand from the Contextual Task Bar." Nothing on that page, and nothing else reached, calls
-      it a value in the Fill dropdown — yet `docs/OVERRIDES.md` (OVR-1) and
-      `docs/TOOLS-TOO-HARD.md` both call it "the other two values" of that dropdown, and
-      `type-crop.ts`'s `appNotes` still says "Photoshop's two synthesising values". Those three
-      are **not this file's to edit** (two are operator- or other-agent-owned, and the third would
-      contradict them), so the disagreement is reported and left; whoever reconciles it should
-      start from the Contextual Task Bar sentence. This file asserts no value list either way.
+      it a value in the Fill dropdown. The OVR-1, TOOLS-TOO-HARD and generated app notes have since
+      been reconciled: OVR-1 is only the empty Background-color band case, the too-hard entry names
+      Content-Aware Fill and Generative Expand as distinct synthesis features, and the app notes
+      distinguish synthesis from re-cropping retained pixels. This file asserts no Fill value list
+      beyond the one Adobe names.
     - **What the crop's extension closed is the app-side half, and the data file had it wrong.**
       The `Fill` row claimed that choosing Content-Aware Fill is what lets the crop box extend
       past the image edge. That causal claim is deleted: the crop extends the canvas with **no**
@@ -1572,3 +1598,15 @@ Reveal All` route back, and the file growth are third-party throughout; Adobe's 
     Hyphenation remains `missing` as a control — the app cannot
     switch hyphenation on, which is the actual gap, and it is unaffected by the breaker.
     Closest: https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/paragraphstyle
+23. **UNVERIFIED — hidden crop pixels across save/reopen/export.** `applyDocumentCrop()` preserves
+    layer sources in memory, and the crop-history E2E tests prove re-cropping before export. No test
+    yet proves every native serializer preserves off-frame source pixels across save/reopen, or
+    defines behavior after flattening to PNG/JPEG. The re-crop guarantee is therefore limited to
+    source data still present in the live document model.
+    Closest: `src/contexts/useLayer.ts` — `applyDocumentCrop()`; serializer round-trip coverage is
+    not yet present.
+24. **UNVERIFIED — automatic Crop Shield opacity adjustment.** Adobe's Crop Tool options page
+    documents a customizable shield color and opacity but does not describe automatic lightening
+    while the crop is dragged or promise that the shield never obscures the subject. The data row
+    no longer asserts that behavior; the app itself uses a fixed black 0.7 overlay.
+    Closest: https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html
