@@ -1703,75 +1703,26 @@ runs on a concurrent render that yielded — neither is a pre-paint refit).
 
 ---
 
-## 152. A touch device at 768px and above cannot reorder layers, and no document records it
+## 152. Canvas input lacks a stylus and gesture policy; options sliders have narrow touch targets
 
-**Problem.** Layer reordering is HTML5 drag-and-drop, and HTML5 drag does not fire on touch. At
-768px and above the only layer list the app renders is the desktop one, so on an iPad in landscape
-the rows cannot be reordered at all.
+**Problem.** Canvas tools do not distinguish pen from touch, consume stylus pressure, or support
+pinch-zoom and two-finger pan. The Draw, Levels, Smudge, and Transform options sliders expose only
+4–6px tracks and have no larger touch target. These gaps affect tablet input and remain separate
+from the layer list's implemented pointer-based touch reorder path.
 
-- `LayersTab.tsx` sets `draggable={editingLayerId !== layer.id}` on the layer row, with an
-  `onDragStart` that reads `e.dataTransfer`, an `onDragOver` and an `onDrop`. There is no
-  pointer-events reorder path anywhere in the file.
-- The breakpoint is `useMediaQuery.ts` — `MOBILE_MEDIA_QUERY = '(width < 768px)'` — and
-  `SidebarRight.tsx` hides the desktop aside with `max-md:hidden` below it. So the residual window
-  is exactly `width >= 768px`, which includes the 768-1024px tablet band this suite already
-  exercises (`e2e/OPEN_PROBLEMS.md` — its "P2 — the mobile bottom bar scrolls 615px with no
-  affordance" entry runs at 1133x744).
+**Evidence.** `pointerType` is used by `LayersTab.tsx` for touch reordering but not by the canvas
+input path; no tool processor consumes pointer pressure. The four options components use `h-1` or
+`h-1.5` range tracks, and there is no shared touch-sized slider component. `docs/FEATURES.md`
+records pinch-zoom and two-finger pan as absent.
 
-**The phone case is not part of this and must not be claimed.** Below 768px the app ships explicit
-reorder controls: `MobileLayersDrawer.tsx` renders ▲ and ▼ buttons — the `Move ${layer.name} up`
-and `Move ${layer.name} down` pair — `disabled` at the ends of the list,
-on `min-h-11 min-w-11` (44px) targets, calling `moveLayerAfter`. An earlier version of this entry
-said layer rows "cannot be reordered on a phone", which that refutes. The tablet-width case is the
-one that is live, and it is the one an earlier version did not name.
+**Next work.** Decide how canvas tools should handle pen, touch, and pressure before adding palm
+rejection; add touch gestures for canvas zoom and pan; and give the existing slider tracks a larger
+touch target without changing their visual thickness. Keep this work within the desktop and
+tablet/touch product boundary.
 
-**Two companions, both still true.**
-
-1. **No stylus discrimination.** `pointerType` appears in production code in exactly two places,
-   both in a test fixture: the `pointerType` member of the fixture object in
-   `src/__tests__/fixtures/pointer.ts`. `usePointerPosition` reads
-   `button`, `pointerId` and `clientX/Y` and nothing else, and no tool reads `pressure`. So there is
-   no stylus-versus-palm rejection and no pinch-zoom.
-2. **Slider hit areas.** There is no `src/components/Common/TouchSlider.tsx`, and the options-bar
-   sliders are 4-6px tall — `h-1.5` on every range input in `Draw.tsx` and in `Levels.tsx`, and on
-   `Smudge.tsx`'s `SLIDER_CLASS`; `h-1` on every range input in `Transform.tsx`. The mobile tool
-   sheet renders those same bars.
-
-**Why it is not a wiring bug.** Touch reordering needs a pointer-events drag with a gesture
-threshold, and the layers list has an existing HTML5 path with its own keyboard affordances to keep
-in step. Slider sizing is a component decision that applies to every bar at once, not one control.
-
-**Fix.** Three independent items, and the third is the only one with a worked answer.
-
-1. Add a pointer-events reorder path to `LayersTab.tsx` beside the HTML5 one — pointerdown on the
-   row's drag affordance, a movement threshold before it is a drag rather than a click, then the
-   same `moveLayerAfter` the mobile drawer calls. Reuse the 3px threshold `onRailDrag` in
-   `SidebarLeft.tsx` already uses for its own press-versus-drag decision rather than inventing a
-   second number.
-2. Read `event.pointerType` in `usePointerPosition` and skip a pen/touch gesture that the tool
-   cannot use, so a palm resting on the canvas does not paint. This is the first consumer of
-   `pointerType` the app would have, which is why the fixture has it and nothing else does.
-3. Slider targets: a `TouchSlider` with a 44px touch box around the existing 6px track, applied to
-   the shared bar rather than to one control. A discarded `docs/responsive-design-plan` branch had
-   a 70-line candidate; **do not land that document** — its audit section is false, it asserts no
-   mobile drawer or hamburger exists, that all chrome is `max-md:hidden` leaving a blank canvas, and
-   that `BottomToolbar.tsx` is an unintegrated stub, while `main` has `MobileMenuDrawer.tsx`,
-   `MobileShell.tsx` and `e2e/mobile-shell.spec.ts`. Take the component, re-derive the document.
-
-**Why this is being refiled.** `4833e740` deleted the entry and named no reason for it. It is not
-routed anywhere: `e2e/OPEN_PROBLEMS.md`'s "P3 — no mobile or HiDPI project, and no touch anywhere"
-is a Playwright-configuration coverage entry (one project, zero
-`hasTouch`/`isMobile`/`touchscreen`) and never names `draggable`, layer reordering, `pointerType` or
-slider hit size. `docs/FEATURES.md`'s "Mobile" section records the mobile gap as "No pinch-zoom and
-no two-finger pan" and asserts drawing works on touch, which is a different claim. Verified against
-`main@cf41f642`.
-
-**Files.** `src/components/SidebarRight/LayersTab.tsx` (the layer row's HTML5 drag handlers),
-`src/components/SidebarRight/SidebarRight.tsx` (the `max-md:hidden` aside),
-`src/hooks/useMediaQuery.ts` (`MOBILE_MEDIA_QUERY`), `src/components/Mobile/MobileLayersDrawer.tsx`
-(the ▲/▼ pair), `src/hooks/usePointerPosition.ts`,
-`src/components/ToolbarsRight/Draw/Draw.tsx`, `src/components/ToolbarsRight/Levels/Levels.tsx`
-(their range-input track classes)
+**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors,
+`src/components/ToolbarsRight/Draw/Draw.tsx`, `src/components/ToolbarsRight/Levels/Levels.tsx`,
+`src/components/ToolbarsRight/Smudge/Smudge.tsx`, `src/components/ToolbarsRight/Transform/Transform.tsx`
 
 ---
 

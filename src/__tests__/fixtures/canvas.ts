@@ -62,8 +62,16 @@ export const createMockCanvasContext = (overrides: Record<string, unknown> = {})
 });
 
 export const createMockCanvas = (overrides: Record<string, unknown> = {}) => {
+  const attributes = new Map<string, string>();
   const canvas = {
     getContext: vi.fn(),
+    getAttribute: vi.fn((name: string) => attributes.get(name) ?? null),
+    setAttribute: vi.fn((name: string, value: string) => {
+      attributes.set(name, value);
+    }),
+    removeAttribute: vi.fn((name: string) => {
+      attributes.delete(name);
+    }),
     width: 128,
     height: 64,
     ...overrides,
