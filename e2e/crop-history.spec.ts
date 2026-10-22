@@ -352,15 +352,14 @@ async function readCanvasColor(page: Page, x: number, y: number) {
   );
 }
 
-async function readCanvasPixel(page: Page, testId: string, x: number, y: number) {
+async function readCanvasRegion(page: Page, testId: string, x: number, y: number, width: number, height: number) {
   return page.getByTestId(testId).evaluate(
-    (canvas, point) => {
+    (canvas, region) => {
       const context = (canvas as HTMLCanvasElement).getContext('2d');
       if (!context) throw new Error('Canvas has no 2D context');
-      const pixel = context.getImageData(point.x, point.y, 1, 1).data;
-      return { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] };
+      return Array.from(context.getImageData(region.x, region.y, region.width, region.height).data);
     },
-    { x, y }
+    { x, y, width, height }
   );
 }
 
@@ -999,41 +998,22 @@ test.describe('Crop history', () => {
     // moved the frame's ORIGIN and not only its size: what renders at frame height 102 is layer
     // content at document height 372.
     const keptAfterCrop = BAR_KEPT_Y - CROP_TOP_Y;
-    await drawBar(page, croppedFit, keptAfterCrop);
+    const afterBarBand = await drawBar(page, croppedFit, keptAfterCrop);
     const afterBar = await documentSize(page);
     expect(afterBar, 'a stroke on a cropped document must not move the frame again').toEqual({
       width: COMMITTED_WIDTH,
       height: COMMITTED_HEIGHT,
     });
+    await waitForInk(page, croppedFit, inkIn(afterBarBand));
 
-    // ------------------------------------------------------------------------------------
-    // NO INK ASSERTION ON THAT BAR, AND THE OMISSION IS A DECLARED DEFECT, NOT A LOOPHOLE.
-    //
-    // A stroke committed on a CROPPED document writes a history entry and renders NOTHING. The
-    // dark-pixel bounds of the whole canvas are byte-identical before and after it, measured at
-    // frame heights 60, 150 and 240 and again by sweeping four heights across the raw element, so
-    // this is not a coordinate mistake in this file: the ink lands outside the layer raster the
-    // post-crop frame leaves behind. `usePaintStroke` records the point in DOCUMENT space
-    // (`canvasToDocumentPoint`), which after a crop is not the space the layer is positioned in.
-    //
-    // Asserting the missing ink would be a PIN, and a pin is a deliberate declaration that a
-    // defect exists — which belongs beside the defect, in a document this step does not own, and
-    // which the fix must remove in the same change. Shipping it inside a gate test would put a
-    // permanently red assertion into CI, which is the same move as skipping it with the polarity
-    // reversed. So the ordering property below is asserted on the FRAME and on the timeline, which
-    // is what S10 is chartered to assert and what the defect does not touch, and the pixel half is
-    // left for the fix to enable.
-    // ------------------------------------------------------------------------------------
-
-    // ONE UNDO. This is the ordering assertion nothing else in the suite makes: the frame commit
-    // and the pixel commit are two entries, and the undo must take the LATER one. A replay that
-    // ordered them the other way round, or a cursor that moved by two, fails on the frame read.
+    // One undo removes the visible post-crop stroke without changing the frame.
     await page.getByTestId('undo-button').click();
     const afterUndo = await documentSize(page);
     expect(afterUndo, 'the crop must survive an undo of the bar drawn after it').toEqual({
       width: COMMITTED_WIDTH,
       height: COMMITTED_HEIGHT,
     });
+    await waitForInk(page, croppedFit, inkIn());
     await expect(
       page.getByTestId('undo-button'),
       'the crop entry is still below this undo, so the frame commit was not the one taken'
@@ -1130,11 +1110,16 @@ test.describe('Crop history', () => {
       const openingFit = await readFit(page);
       const recoverableBarY = CROP_TOP_Y - 20;
       await drawBar(page, openingFit, recoverableBarY);
+      await waitForInk(page, openingFit, inkIn(bandOfDocumentY(openingFit, recoverableBarY)));
+      const sourcePixels = await readCanvasRegion(page, 'workspace-canvas', 350, recoverableBarY - 6, 100, 12);
       await commitCrop(page);
       expect(await documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT });
 
-      // A pair of visibility edits between crops must not discard the source pixels outside the
-      // current frame or prevent the crop preview from reading the updated layer stack.
+      // A pixel edit after cropping, followed by visibility history, must not discard retained
+      // source pixels outside the frame or break the next crop's layer-stack preview.
+      const croppedFit = await readFit(page);
+      const editedBand = await drawBar(page, croppedFit, 100);
+      await waitForInk(page, croppedFit, inkIn(editedBand));
       await page.getByTestId('panel-header-layers').click();
       const layer = page.getByTestId('layer-row').first();
       await layer.getByRole('button', { name: 'Hide layer' }).click();
@@ -1143,27 +1128,71 @@ test.describe('Crop history', () => {
       // Crop stays active after Apply; leave it and re-enter to exercise Photoshop's crop-box
       // recovery rather than merely reusing the first pending gesture.
       await clickToolButton(page, 'move');
-      const croppedFit = await openCropTool(page);
-      const topEdge = documentPoint(croppedFit, croppedFit.documentWidth / 2, 0);
-      const expandedTop = documentPoint(croppedFit, croppedFit.documentWidth / 2, -30);
+      const recropFit = await openCropTool(page);
+      const topEdge = documentPoint(recropFit, recropFit.documentWidth / 2, 0);
+      const expandedTop = documentPoint(recropFit, recropFit.documentWidth / 2, -30);
       await page.mouse.move(topEdge.x, topEdge.y);
       await page.mouse.down();
       await page.mouse.move(expandedTop.x, expandedTop.y, { steps: 10 });
 
       const preview = page.getByTestId('crop-retained-pixels-preview');
       await expect(preview, 'the crop preview renders previously hidden layer pixels before release').toBeVisible();
-      const previewPixel = await readCanvasPixel(page, 'crop-retained-pixels-preview', 320, 10);
-      expect(previewPixel.alpha, 'the original bar is present before applying the expanded frame').toBeGreaterThan(200);
-      expect(previewPixel.red).toBeLessThan(80);
+      const previewPixels = await readCanvasRegion(page, 'crop-retained-pixels-preview', 270, 4, 100, 12);
+      expect(previewPixels, 'the recovered pixels remain identical before applying the expanded frame').toEqual(
+        sourcePixels
+      );
       await page.mouse.up();
 
       await expect(page.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled();
       await applyCrop(page);
       await expect.poll(() => documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT + 30 });
-      const recoveredPixel = await readCanvasColor(page, 320, 10);
-      expect(recoveredPixel, 'the committed crop reveals the same source pixel at the same scale').toEqual(
-        previewPixel
+      const recoveredPixels = await readCanvasRegion(page, 'workspace-canvas', 270, 4, 100, 12);
+      expect(recoveredPixels, 'the committed crop restores the original raster region without resampling').toEqual(
+        sourcePixels
       );
+    });
+
+    test('a rotated recrop commits retained pixels outside the prior frame', async ({ page }, testInfo) => {
+      await page.setViewportSize({ width: 1800, height: 1400 });
+      await openDocument(page);
+      await openRasterFixture(page, testInfo.config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      await expect.poll(() => readCanvasColor(page, 3, 20)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+
+      const openingFit = await openCropTool(page);
+      await dragOnCanvas(page, openingFit, { x: 4, y: 4 }, { x: 60, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 56, height: 56 });
+
+      await clickToolButton(page, 'move');
+      const croppedFit = await openCropTool(page);
+      await dragOnCanvas(page, croppedFit, { x: 0, y: 0 }, { x: -3, y: 0 });
+      const preview = page.getByTestId('crop-retained-pixels-preview');
+      await expect(preview).toBeVisible();
+      await expect
+        .poll(() => readCanvasRegion(page, 'crop-retained-pixels-preview', 2, 16, 1, 1))
+        .toEqual([255, 0, 0, 255]);
+
+      const surface = page.locator('.cursor-crop');
+      const rotationHandle = documentPoint(croppedFit, -3.2, 0.2);
+      const rotatedCorner = documentPoint(croppedFit, 54.3, -1.7);
+      await page.mouse.move(rotationHandle.x, rotationHandle.y);
+      await expect(surface, 'the expanded corner still exposes the rotation handle').toHaveCSS(
+        'cursor',
+        /url.*ew-resize/
+      );
+      await page.mouse.down();
+      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.up();
+      await expect(surface, 'the recrop can be rotated after expanding its bounds').toHaveAttribute(
+        'data-rotation',
+        /8[5-9]|9[0-5]/
+      );
+      await expect(page.getByTestId('crop-retained-pixels-preview')).toHaveCount(0);
+
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 59, height: 56 });
+      await expect.poll(() => readCanvasColor(page, 18, 55)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
     });
 
     test('a crop released past the right and bottom edges commits a LARGER frame, not a clamped one', async ({
