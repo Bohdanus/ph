@@ -737,6 +737,28 @@ describe('AssetRegistry durable asset reconciliation', () => {
     expect(registry.getDocumentGeneration('document-a')).toBe(2);
   });
 
+  it('invalidates a pending baseline when reconciliation keeps every current asset', async () => {
+    const registry = new AssetRegistry();
+    const existing = createOwnedBitmap();
+    const existingId = registry.registerBaseline('document-a', existing.bitmap, { ownership: 'adopt' });
+    const source = document.createElement('canvas');
+    const pending = deferred<ImageBitmap>();
+    const { bitmap, close } = createOwnedBitmap(10, 10);
+    vi.stubGlobal('createImageBitmap', () => pending.promise);
+
+    const registration = registry.registerBaselineAsync('document-a', source);
+    registry.reconcileDocumentAssets('document-a', new Set([existingId]));
+    expect(registry.getDocumentGeneration('document-a')).toBe(1);
+    pending.resolve(bitmap);
+
+    await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
+    expect(close).toHaveBeenCalledOnce();
+    expect(existing.close).not.toHaveBeenCalled();
+    expect(registry.getRecord(existingId)).toBeDefined();
+    expect(registry.getDocumentGeneration('document-a')).toBe(1);
+    registry.shutdown();
+  });
+
   it('detaches a shared asset from the reconciled document only', () => {
     const registry = new AssetRegistry();
     const shared = createOwnedBitmap();

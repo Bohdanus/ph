@@ -2113,6 +2113,36 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     registry.shutdown();
   });
 
+  it('ignores malformed document sources after the opening baseline', () => {
+    const registry = new AssetRegistry();
+    const ignoredSource: HistoryItem = {
+      id: 'ignored-replacement',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'layer-2',
+      documentSource: {
+        layers: { 'layer-2': blankLayer('layer-2') },
+        size: null as unknown as { width: number; height: number },
+      },
+    };
+
+    const converted = convertLegacyHistorySafely([...baselineHistory(), ignoredSource], {
+      documentId: 'test-doc',
+      registry,
+    });
+
+    expect(converted.status).toBe('current');
+    expect(converted.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'ignored-replacement',
+        severity: 'warning',
+        code: 'document-replacement',
+      }),
+    ]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, -1]);
+    expect(converted.document?.history).toEqual([]);
+    registry.shutdown();
+  });
+
   it('records a null baseline active layer for a document source with no layers', () => {
     const registry = new AssetRegistry();
 

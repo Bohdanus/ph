@@ -159,7 +159,9 @@ variant or an equivalent atomic history action.
 2. Keep every currently appendable durable operation replayable without changing
    production authority. The runtime retained-operation boundary, the supported
    raster append path and the navigation presentation mount are closed, and the
-   §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
+   §87-§89 append-boundary defects are fixed. One separate source-backed create
+   stack-order gap after repeated sparse legacy reorders remains open; see
+   `HANDOFF.md` §232. Do not count that path as durable-authority proof.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity, history-panel parity, the
    browser authority seam, options-bar rehydration, and the pixel/export
