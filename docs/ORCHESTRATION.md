@@ -74,7 +74,12 @@ reviewers are required for cross-module, persistence, migration, or high-risk ch
 
 `main-worktree-guard` is post-write; worktrees must exist before fan-out. Swarm leases renew on
 swarm commands, not during long waits. Inventory omits branch-only refs; `branches:orphan` reports
-but does not decide them. Merge hooks do not cover fast-forwards or `git merge --squash -X ours`.
+but does not decide them. Prepare every clean merge in any worktree with
+`git merge --no-commit --no-ff <sha>`, then record it with `git commit`; the direct
+self-committing merge hook cannot identify the incoming commit and refuses it. On `main`, also
+set the reviewed parent and tree pins. Pins are operator-supplied review evidence, not a
+cryptographic approval token. Fast-forwards and `git merge --squash -X ours` bypass the blocking
+hooks.
 
 ## Worktrees
 
@@ -138,7 +143,7 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
 
 ### The rule is enforced at the commit, not by the reader
 
-`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit` and refuses to
+`scripts/main-worktree-guard.mjs` runs from `.husky/pre-commit` and refuses to
 record a commit made from the main worktree. It names the worktree recipe and the
 one override, so a refusal is a redirect rather than an obstacle: an agent that
 meets a bare "no" commits anyway, from the same checkout, on a branch nobody made.
@@ -156,13 +161,28 @@ rogue commits nobody can attribute" into "a dirty tree the next `git status`
 names" — the write side is the process rule above, and the guard is the floor
 under it.
 
+A separate merge-hook rule applies in every worktree: prepare clean merges with
+`git merge --no-commit --no-ff <full-sha>` and record them with `git commit`.
+The `pre-merge-commit` hook refuses direct self-committing merges because it
+cannot identify the actual incoming commit. Feature merges may omit the three
+landing pins; a merge into `main` requires them. If a direct merge is refused,
+check whether Git left `MERGE_HEAD` and abort only that exact attempt before
+retrying through the documented prepared-merge flow. Commit a main landing with
+`node scripts/commit-reviewed-landing.mjs` so Git reads the reviewed private
+index snapshot after its hooks run. Land one candidate at a time; octopus merges
+are refused because their multiple incoming commits cannot be checked against a
+single candidate SHA.
+
 Three things stay allowed, each deliberately:
 
-- **A landing.** A clean non-fast-forward `git merge` into `main` runs
-  `pre-merge-commit`; a fast-forward invokes no gating hook, so the documented
-  landing flow never reaches this file. It still invokes the non-blocking
-  `post-merge` hook, which attempts to release claims and locks for merged
-  worktrees whose branch, directory, and working tree are all eligible.
+- **A pinned landing.** Prepare a clean merge in `main` with
+  `git merge --no-commit --no-ff <reviewed-sha>`, then commit from the reviewed
+  private index snapshot with `node scripts/commit-reviewed-landing.mjs`.
+  `pre-commit` verifies `HEAD`, the actual `MERGE_HEAD`, and the
+  staged tree before allowing the commit. A direct self-committing merge reaches `pre-merge-commit`
+  before `MERGE_HEAD` is readable here and is refused; a fast-forward invokes no
+  blocking hook, so neither path is a landing procedure. The merge still invokes
+  the non-blocking `post-merge` hook after it is recorded.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
@@ -177,14 +197,30 @@ Three things stay allowed, each deliberately:
 - **The main worktree is a landing, not a negotiation.** A branch merges into
   `main` only after `main` has already been merged or rebased **into the branch,
   in the branch's own worktree**, and the gates re-run there. The merge into
-  `main` is then a fast-forward or a mechanical two-parent commit with nothing to
-  decide. Merging a stale branch straight into `main` puts the conflicts in a
+  `main` is then a mechanical two-parent commit with nothing to decide, prepared
+  with `--no-commit --no-ff` so its actual `MERGE_HEAD` can be checked. Merging a
+  stale branch straight into `main` puts the conflicts in a
   shared checkout where every other session is committing.
+- **A harvest must pin both merge parents and its tree.** Before review and gates, record the
+  exact `main` SHA and candidate SHA/tree. Prepare the final non-fast-forward
+  landing with `git merge --no-commit --no-ff <full-reviewed-sha>`, then pass
+  `KILO_EXPECTED_MAIN_SHA`, `KILO_EXPECTED_INCOMING_SHA`, and
+  `KILO_EXPECTED_TREE_SHA` to `node scripts/commit-reviewed-landing.mjs` as shown in
+  `.skills/worktree-merge-harvest.md` §Step 6. In the project main worktree,
+  `main-worktree-guard.mjs` and `merge-takeover-guard.mjs` compare the parent and
+  tree pins with `HEAD`, Git's actual `MERGE_HEAD`, and the staged result tree in
+  a private index snapshot
+  before creating the merge commit.
+  Supply these pins from the reviewed candidate record; the guard compares the
+  supplied values but cannot authenticate who supplied them. Reflog text is
+  caller-controlled and is not used to identify the incoming side.
+  A board claim coordinates paths but is not a main-ref lock. Fast-forward and
+  squash merges bypass this blocking check and are not the harvest landing path.
 - **The landing checkout must be clean before the merge starts.** Run `git status --short` and
   `git diff --cached --stat`; any path you do not own is a hard stop.
   Do not stage, stash, reset, abort, or resolve another session's work to make the
-  landing appear clean. Wait for its owner or use a separate, verified landing
-  checkout.
+  landing appear clean. Wait for its owner; do not create a second checkout to
+  update the same `main` branch ref.
 - **Never resolve a conflict in the main worktree**, and never repair one there
   with `reset --hard`, `checkout --ours`/`--theirs`, `hash-object`, or
   `update-index`. The first two destroy another session's uncommitted work; the
@@ -235,8 +271,9 @@ status` and `git diff` before staging.
   clean and the revert was invisible in the diff. The tell is a file that gained
   or lost lines for no reason the branch explains.
   **Now enforced, not merely written down.** `scripts/merge-takeover-guard.mjs` runs from
-  `pre-commit` (when `MERGE_HEAD` is set, which is a conflicted merge being completed) and
-  from `pre-merge-commit` (a clean `git merge` that commits itself), and it refuses the merge
+  `pre-commit` (when `MERGE_HEAD` is set, for a conflicted merge being completed or a clean
+  merge prepared with `--no-commit`) and from `pre-merge-commit` (where it refuses direct clean
+  merges because the actual incoming commit is not available), and it refuses the merge
   rather than reporting it. A reviewer only catches the files its brief happened to mention;
   this catches every path the merge resolved by copying one whole side's content. Three
   shapes, none of which produces a conflict marker: the result is the pre-divergence
@@ -354,25 +391,40 @@ repo:state` is what reports an operation in progress, and it separates the two s
   the _committed_ state is green instead, in a throwaway worktree, and report the
   block:
   ```sh
-  git worktree add --detach /tmp/verify-main main
-  ln -s "$PWD/node_modules" /tmp/verify-main/node_modules
-  (cd /tmp/verify-main && npx tsc -b && npx vitest run <suite>)
-  git worktree remove --force /tmp/verify-main
+  # Run from an already verified task worktree under .kilo/worktrees.
+  git worktree list --porcelain
+  TASK_WORKTREE="$(git rev-parse --show-toplevel)"
+  MAIN="<absolute path paired with branch refs/heads/main>"
+  BASE_SHA="$(git -C "$MAIN" rev-parse refs/heads/main)"
+  VERIFY_NAME="verify-main-$(date +%Y%m%d-%H%M%S)-$$"
+  VERIFY="${TASK_WORKTREE%/*}/$VERIFY_NAME"
+  test -d "${TASK_WORKTREE%/*}"
+  git -C "$TASK_WORKTREE" worktree add -b "$VERIFY_NAME" "$VERIFY" "$BASE_SHA"
+  VERIFY_SHA="$(git -C "$VERIFY" rev-parse HEAD)"
+  test "$VERIFY_SHA" = "$BASE_SHA"
+  (cd "$VERIFY" && npm ci && npm run tsc && npm run build && npm run test -- "<same failing suite>")
+  test "$(git -C "$MAIN" rev-parse refs/heads/main)" = "$BASE_SHA"
   ```
-  **The scratch worktree is yours to delete, and the recipe's own last line is the only
-  thing that deletes it** — which is why two of them outlived their creators.
-  `/private/tmp/verify-dpr` and `/private/tmp/verify-exporacle` were both on disk, both
-  detached, both clean, neither named `verify-main`, so no run of the recipe's cleanup step ever
-  claimed them; both were removed on 2026-10-03 once their HEADs were confirmed to be ancestors
-  of `main`. Two failure directions, and the second is the dangerous one: a leak when the
-  subagent dies first, and **collateral force-removal** when a sweep globs `verify-*` and cannot
-  tell its own leftovers from a live peer's. Note that `git worktree list` prints
-  `/private/tmp`, so a check written as `git worktree list | grep /tmp` matches nothing and
-  reports a clean machine. Either put the scratch worktree under `.kilo/` so the inventory sees
-  it, or delete it in the same turn you created it and accept that a dead agent leaks one.
-  This happened on the commit that followed the fix above, and the same `git add
--A` also tried to sweep a third agent's in-flight tests into the commit — which
-  is the previous bullet, one hour later, in the same worktree.
+  # After testing, run each fresh preflight from TASK_WORKTREE; inspect, do not suppress errors.
+  (cd "$TASK_WORKTREE" && npm run repo:state)
+  (cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
+  (cd "$TASK_WORKTREE" && npm run branches:orphan)
+  (cd "$TASK_WORKTREE" && npm run swarm -- status)
+  (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --dry-run)
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME")
+  ```
+  This checks a recorded committed-main snapshot; if `main` moved during the run, repeat from its
+  new SHA before calling the result current. The scratch branch and worktree are named and live
+  under `.kilo/worktrees`, not `/tmp`. Do not remove them manually. Before actual disposal, prove
+  the owning root and every transitive child session are finished, inspect the target's live
+  overlay and curated entry, and confirm its Git operation state is clear. An unrelated
+  in-progress worktree must remain untouched; an operation or live owner in `VERIFY` is a stop.
+  A refusal caused by the current session's `derived-live-writer` signal is expected: leave the
+  worktree in place and record cleanup as pending. Never use a detached worktree, a broad
+  `verify-*` cleanup, `git worktree remove --force`, or `--no-live-writers` without independent
+  evidence that all writers are gone.
+  ```
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
  MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,

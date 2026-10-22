@@ -37,13 +37,15 @@
  *
  * WHAT IS DELIBERATELY ALLOWED
  * ----------------------------
- * - **Landing.** A CLEAN merge into `main` runs `pre-merge-commit`, and a fast-forward runs no
- *   BLOCKING hook, so neither reaches this file. (`post-merge` DOES fire on a fast-forward; it
- *   releases board claims and exits 0, so it cannot block anything. "Runs no hook at all" was
- *   wrong about git, and it was wrong here.)
- *   A CONFLICTED one does reach this file: it is completed by an
- *   ordinary `git commit`, which fires `pre-commit`, whose first command is this guard. Land in a
- *   worktree and fast-forward `main`, which is the documented flow for exactly that reason.
+ * - **Landing.** A clean merge is prepared with `--no-commit --no-ff`; its later commit through
+ *   `commit-reviewed-landing.mjs` reaches this file with `MERGE_HEAD` set and a private index
+ *   snapshot. It is allowed only when HEAD, MERGE_HEAD, the staged tree, and the isolated index
+ *   match the reviewed parent and tree pins. A direct clean merge reaches
+ *   `pre-merge-commit` without a verifiable MERGE_HEAD and is refused. Fast-forwards run no
+ *   blocking hook, which is why the landing procedure requires `--no-ff`.
+ *   A conflicted merge in main is not a landing path. If it is resolved there, an ordinary
+ *   commit still lacks the required private index snapshot and is refused; abort it and resolve
+ *   the conflict in the candidate worktree instead.
  * - **A named operator hotfix.** `ALLOW_MAIN_COMMIT=1`, which is the only way
  *   through and is stated in the refusal rather than left to be discovered.
  * - **A repository it cannot place.** Detection failure allows the commit. This
@@ -55,8 +57,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -105,8 +107,11 @@ const REFUSAL = `gate: refusing to record a commit in the MAIN worktree.
   Not git stash: one refs/stash is shared by every worktree, so a pop here can
   take another agent's entry, silently.
 
-A clean merge and a fast-forward are unaffected — those run pre-merge-commit, or no blocking hook at all. A CONFLICTED merge
-is completed by an ordinary "git commit", so it lands here: bring main into a worktree instead.
+A main landing must be prepared with \`git merge --no-commit --no-ff <reviewed-sha>\` and recorded
+through \`node scripts/commit-reviewed-landing.mjs -m <message>\` with the reviewed parent and
+tree pins set. That command commits from a private snapshot of the prepared index; the hook checks
+the actual \`MERGE_HEAD\` and staged tree in that snapshot. A direct clean merge, an unpinned
+merge, a shared-index commit, and a fast-forward do not meet this gate.
 An operator hotfix the operator asked for on main by name is:
 
     ALLOW_MAIN_COMMIT=1 git commit -m "..."
@@ -151,15 +156,71 @@ export function resolveWorktree(cwd = process.cwd()) {
 }
 
 /**
+ * Read every incoming commit Git recorded for the current merge. MERGE_HEAD is
+ * a newline-separated list for octopus merges; callers that pin one candidate
+ * must reject that shape rather than inspecting only its first parent.
+ */
+export function readMergeHeadRefs(cwd = process.cwd()) {
+  try {
+    const mergeHeadPath = execFileSync('git', ['rev-parse', '--git-path', 'MERGE_HEAD'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (!mergeHeadPath) return [];
+    const absolutePath = resolve(cwd, mergeHeadPath);
+    if (!existsSync(absolutePath)) return [];
+    return readFileSync(absolutePath, 'utf8')
+      .split(/\r?\n/)
+      .map((ref) => ref.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * The decision. Pure, and exported, so the rules are testable without a
  * repository on disk — a test that had to `git init` to learn whether the guard
  * refuses would be a test about git as much as about the guard.
  */
-export function decide({ worktree, override = '' } = {}) {
+export function decide({ worktree, override = '', landing } = {}) {
   if (worktree === null || worktree === undefined) return { action: 'allow', reason: 'undetectable' };
   if (!worktree.isMainWorktree) return { action: 'allow', reason: 'linked worktree' };
   if (override === '1') return { action: 'allow', reason: `${OVERRIDE_VAR}=1` };
+  if (
+    landing?.head &&
+    landing?.incoming &&
+    landing?.incomingCount === 1 &&
+    landing?.tree &&
+    landing?.isolatedIndex === true &&
+    landing?.expectedMain &&
+    landing?.expectedIncoming &&
+    landing?.expectedTree &&
+    landing.head === landing.expectedMain &&
+    landing.incoming === landing.expectedIncoming &&
+    landing.tree === landing.expectedTree
+  ) {
+    return { action: 'allow', reason: 'pinned merge landing' };
+  }
   return { action: 'refuse' };
+}
+
+/**
+ * A main landing must commit from a private snapshot because Git rereads the
+ * selected index after `pre-commit` returns. An isolated `GIT_INDEX_FILE`
+ * keeps another process staging in the shared main checkout from changing the
+ * tree after the guard's last check.
+ */
+export function isIsolatedIndex(worktree, cwd = process.cwd(), env = process.env) {
+  if (!worktree?.isMainWorktree || !worktree.gitDir || !env.GIT_INDEX_FILE) return false;
+  try {
+    const activeIndex = realpathSync(resolve(cwd, env.GIT_INDEX_FILE));
+    const sharedIndex = realpathSync(join(worktree.gitDir, 'index'));
+    return activeIndex !== sharedIndex;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -195,7 +256,29 @@ export function run({
   exit = process.exit,
   worktree = resolveWorktree(cwd),
 } = {}) {
-  const decision = decide({ worktree, override: env[OVERRIDE_VAR] ?? '' });
+  const git = (args) => {
+    try {
+      return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    } catch {
+      return null;
+    }
+  };
+  const mergeHeadRefs = readMergeHeadRefs(cwd);
+  const decision = decide({
+    worktree,
+    override: env[OVERRIDE_VAR] ?? '',
+    landing: {
+      head: git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']),
+      incoming:
+        mergeHeadRefs.length === 1 ? git(['rev-parse', '--verify', '--quiet', `${mergeHeadRefs[0]}^{commit}`]) : null,
+      incomingCount: mergeHeadRefs.length,
+      tree: git(['write-tree']),
+      isolatedIndex: isIsolatedIndex(worktree, cwd, env),
+      expectedMain: env.KILO_EXPECTED_MAIN_SHA ?? '',
+      expectedIncoming: env.KILO_EXPECTED_INCOMING_SHA ?? '',
+      expectedTree: env.KILO_EXPECTED_TREE_SHA ?? '',
+    },
+  });
   if (decision.action === 'allow') return { refused: false, reason: decision.reason, code: null };
 
   const dirt = dirtSummary(cwd);

@@ -64,6 +64,38 @@ describe('the main-worktree guard refuses a commit recorded in the main worktree
     });
   });
 
+  it('allows a landing only when reviewed parents, tree, and isolated index match', () => {
+    const landing = {
+      head: 'main-reviewed',
+      incoming: 'candidate-reviewed',
+      tree: 'candidate-tree',
+      expectedMain: 'main-reviewed',
+      expectedIncoming: 'candidate-reviewed',
+      expectedTree: 'candidate-tree',
+      incomingCount: 1,
+      isolatedIndex: true,
+    };
+    expect(decide({ worktree: { isMainWorktree: true }, landing })).toEqual({
+      action: 'allow',
+      reason: 'pinned merge landing',
+    });
+    expect(
+      decide({ worktree: { isMainWorktree: true }, landing: { ...landing, incoming: 'other-candidate' } })
+    ).toEqual({ action: 'refuse' });
+    expect(decide({ worktree: { isMainWorktree: true }, landing: { ...landing, tree: 'changed-tree' } })).toEqual({
+      action: 'refuse',
+    });
+    expect(decide({ worktree: { isMainWorktree: true }, landing: { ...landing, isolatedIndex: false } })).toEqual({
+      action: 'refuse',
+    });
+    expect(decide({ worktree: { isMainWorktree: true }, landing: { ...landing, incoming: null } })).toEqual({
+      action: 'refuse',
+    });
+    expect(decide({ worktree: { isMainWorktree: true }, landing: { ...landing, incomingCount: 2 } })).toEqual({
+      action: 'refuse',
+    });
+  });
+
   it('treats every other value of the override as absent, including 0 and false', () => {
     // The trap this pins: a truthiness test reads `ALLOW_MAIN_COMMIT=0` as
     // permission, because in a language where `''` is falsy the string `'0'` is
@@ -113,10 +145,10 @@ describe('the refusal is a redirect, not an obstacle', () => {
     expect(text).toContain(`${OVERRIDE_VAR}=1`);
     expect(text).toContain('git worktree add -b fix/task .kilo/worktrees/task');
     expect(text).toContain('Not git stash');
-    // The landing path must be stated, or the natural reading is that a merge
-    // into main is also refused, and it is not: pre-merge-commit is a different
-    // hook and a fast-forward runs none of the blocking ones.
-    expect(text).toContain('pre-merge-commit');
+    // The allowed landing shape must be explicit, including the prepared merge state
+    // and pins the hooks use to verify its parents and result tree.
+    expect(text).toContain('--no-commit --no-ff');
+    expect(text).toContain('MERGE_HEAD');
   });
 
   it('stays silent when it allows, so an ordinary commit in a worktree is quiet', () => {
@@ -209,6 +241,20 @@ describe('the guard is actually installed', () => {
     expect(guardAt).toBeGreaterThan(-1);
     expect(gateAt).toBeGreaterThan(-1);
     expect(guardAt).toBeLessThan(gateAt);
+  });
+
+  it('rechecks a prepared merge after lint-staged can rewrite the index', () => {
+    const hook = readFileSync(join(REPO_ROOT, '.husky', 'pre-commit'), 'utf8');
+    const gateAt = hook.indexOf('gate:commit');
+    const takeoverChecks = [...hook.matchAll(/node scripts\/merge-takeover-guard\.mjs/g)].map((match) => match.index);
+    const mainGuardChecks = [...hook.matchAll(/node scripts\/main-worktree-guard\.mjs/g)].map((match) => match.index);
+
+    expect(takeoverChecks).toHaveLength(2);
+    expect(mainGuardChecks).toHaveLength(2);
+    expect(takeoverChecks[0]).toBeLessThan(gateAt);
+    expect(mainGuardChecks[0]).toBeLessThan(gateAt);
+    expect(takeoverChecks[1]).toBeGreaterThan(gateAt);
+    expect(mainGuardChecks[1]).toBeGreaterThan(gateAt);
   });
 
   it('has a shared entry point for git to find, so the gate is not skipped in a worktree', () => {

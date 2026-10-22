@@ -27,22 +27,29 @@ Return enough context to verify the match; do not blindly take the first row:
 ### Using the `session:id` helper (recommended)
 
 ```sh
-npm run session:id -- "distinctive current task phrase"
+npm run --silent session:id -- "distinctive phrase copied verbatim from the current user request"
 # or from any worktree:
-# node scripts/find-session-id.mjs "distinctive current task phrase"
+# node scripts/find-session-id.mjs "distinctive phrase copied verbatim from the current user request"
 ```
 
 The helper opens `~/.local/share/kilo/kilo.db` read-only (using the built-in `node:sqlite` module, so it
 needs no `node_modules`), searches top-level sessions for the phrase, and prints the most recent match's
-ID to stdout. Verify the match by running with `FIND_SESSION_VERBOSE=1`:
+ID to stdout. `npm run --silent` suppresses npm's lifecycle banner, so command substitution captures
+only the ID. The phrase must occur in the current user's request; do not use a branch name, workspace
+label, or generic phrase that may only match another chat. Verify that the selected match is the
+current conversation by running:
 
 ```sh
-npm run session:id -- "distinctive current task phrase" 2>&1
+FIND_SESSION_VERBOSE=1 npm run --silent session:id -- "distinctive phrase copied verbatim from the current user request"
 ```
 
+The verbose candidate list is written to stderr while the resolved ID stays on stdout. If the current
+chat is absent, the phrase is ambiguous, or the selected row identifies another chat, choose a more
+distinctive phrase from this request and retry; never take the newest unrelated result.
+
 When no phrase is given, the helper falls back to the most recent top-level session across all
-repositories (use `FIND_SESSION_VERBOSE=1` to verify the directory). If the database cannot be opened
-or no session matches, the helper exits non-zero with a message on stderr.
+repositories. Do not use that fallback for a commit trailer. If the database cannot be opened or no
+session matches, the helper exits non-zero with a message on stderr.
 
 Phrase searches are time-bounded to the last 7 days by default (override with
 `FIND_SESSION_DAYS=N`); this keeps the query fast on multi-gigabyte databases where a full scan

@@ -5,7 +5,7 @@ Photoshop clone. The toolbar is a Photoshop clone — HARD REQUIREMENT.
 - Make tracked edits and run Git/npm commands only in `.kilo/worktrees/`; `main` is read-only except for landing.
 - Before any other Git command, run `git worktree list --porcelain`, choose the `refs/heads/main` worktree, and create a task branch. Verify the new checkout with `git rev-parse --show-toplevel`.
 - Create the worktree before editing or starting subagents.
-- Commits require a `Chat: <native-session-id>` trailer; merges into `main` require `Branch: <source-branch>`. Resolve chat IDs with `npm run session:id -- "distinctive phrase"`.
+- Commits require a `Chat: <native-session-id>` trailer; merges into `main` require `Branch: <source-branch>`. Resolve the chat ID using the instructions for the current host in [`docs/CHAT-ID.md`](docs/CHAT-ID.md); use `session:id` only for Kilo sessions, and never guess when the match is ambiguous.
 - Follow [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) for landing, recovery, and disposal.
 
 ## Product Boundary

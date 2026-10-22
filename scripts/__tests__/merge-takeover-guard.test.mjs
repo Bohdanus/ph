@@ -1,7 +1,17 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,10 +41,22 @@ import {
 vi.setConfig({ testTimeout: 20_000 });
 
 let dir;
+const GUARD_PATH = realpathSync(join(import.meta.dirname, '../merge-takeover-guard.mjs'));
+const MAIN_GUARD_PATH = realpathSync(join(import.meta.dirname, '../main-worktree-guard.mjs'));
+const LANDING_COMMIT_PATH = realpathSync(join(import.meta.dirname, '../commit-reviewed-landing.mjs'));
 
 function git(args) {
   return execFileSync('git', args, {
     cwd: dir,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function gitAt(cwd, args) {
+  return execFileSync('git', args, {
+    cwd,
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -56,6 +78,96 @@ function write(name, body) {
 function commit(message) {
   git(['add', '-A']);
   git(['commit', '-qm', message]);
+}
+
+function prepareDisjointMerge() {
+  mkdirSync(join(dir, '.kilo'), { recursive: true });
+  write('AGENTS.md', '# temporary project policy marker\n');
+  write('base.txt', 'base\n');
+  commit('base');
+  const base = sha();
+
+  write('main.txt', 'main\n');
+  commit('main change');
+  const main = sha();
+
+  git(['checkout', '-qb', 'feat']);
+  write('feature.txt', 'feature\n');
+  commit('feature change');
+  const incoming = sha();
+  const incomingTree = git(['rev-parse', `${incoming}^{tree}`]);
+  git(['checkout', '-q', 'main']);
+  return { base, incoming, incomingTree, main };
+}
+
+function installPreMergeGuard() {
+  const hooks = join(dir, 'hooks');
+  mkdirSync(hooks);
+  const hook = join(hooks, 'pre-merge-commit');
+  writeFileSync(hook, `#!/bin/sh\nnode "${GUARD_PATH}"\n`);
+  chmodSync(hook, 0o755);
+  git(['config', 'core.hooksPath', hooks]);
+}
+
+function installPinnedPreCommitGuards({ afterChecks = '' } = {}) {
+  const hooks = join(dir, 'hooks');
+  mkdirSync(hooks, { recursive: true });
+  const hook = join(hooks, 'pre-commit');
+  writeFileSync(hook, `#!/bin/sh\nset -e\nnode "${GUARD_PATH}"\nnode "${MAIN_GUARD_PATH}"\n${afterChecks}\n`);
+  chmodSync(hook, 0o755);
+  git(['config', 'core.hooksPath', hooks]);
+}
+
+function removePreMergeGuard() {
+  git(['config', '--unset', 'core.hooksPath']);
+  rmSync(join(dir, 'hooks'), { recursive: true, force: true });
+}
+
+function withExpectedLanding({ main, incoming, tree }, run) {
+  const previousMain = process.env.KILO_EXPECTED_MAIN_SHA;
+  const previousIncoming = process.env.KILO_EXPECTED_INCOMING_SHA;
+  const previousTree = process.env.KILO_EXPECTED_TREE_SHA;
+  process.env.KILO_EXPECTED_MAIN_SHA = main;
+  process.env.KILO_EXPECTED_INCOMING_SHA = incoming;
+  process.env.KILO_EXPECTED_TREE_SHA = tree;
+  try {
+    return run();
+  } finally {
+    if (previousMain === undefined) delete process.env.KILO_EXPECTED_MAIN_SHA;
+    else process.env.KILO_EXPECTED_MAIN_SHA = previousMain;
+    if (previousIncoming === undefined) delete process.env.KILO_EXPECTED_INCOMING_SHA;
+    else process.env.KILO_EXPECTED_INCOMING_SHA = previousIncoming;
+    if (previousTree === undefined) delete process.env.KILO_EXPECTED_TREE_SHA;
+    else process.env.KILO_EXPECTED_TREE_SHA = previousTree;
+  }
+}
+
+function withNoExpectedLanding(run) {
+  const previousMain = process.env.KILO_EXPECTED_MAIN_SHA;
+  const previousIncoming = process.env.KILO_EXPECTED_INCOMING_SHA;
+  const previousTree = process.env.KILO_EXPECTED_TREE_SHA;
+  delete process.env.KILO_EXPECTED_MAIN_SHA;
+  delete process.env.KILO_EXPECTED_INCOMING_SHA;
+  delete process.env.KILO_EXPECTED_TREE_SHA;
+  try {
+    return run();
+  } finally {
+    if (previousMain === undefined) delete process.env.KILO_EXPECTED_MAIN_SHA;
+    else process.env.KILO_EXPECTED_MAIN_SHA = previousMain;
+    if (previousIncoming === undefined) delete process.env.KILO_EXPECTED_INCOMING_SHA;
+    else process.env.KILO_EXPECTED_INCOMING_SHA = previousIncoming;
+    if (previousTree === undefined) delete process.env.KILO_EXPECTED_TREE_SHA;
+    else process.env.KILO_EXPECTED_TREE_SHA = previousTree;
+  }
+}
+
+function commitReviewedLanding(message) {
+  return execFileSync(process.execPath, [LANDING_COMMIT_PATH, '-m', message], {
+    cwd: dir,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
 }
 
 /** Commit the index as it stands. A gitlink has no worktree path, so `git add -A` removes
@@ -460,8 +572,7 @@ describe('the shape the original scan set could not reach', () => {
     // guard afterwards means asking about a merge already recorded, which is the single
     // question this program documents that it cannot answer. Verified with raw git —
     // `--no-commit -s ours` leaves MERGE_HEAD written and HEAD on the pre-merge tip, which
-    // is exactly what `pre-merge-commit` sees, and it is confirmed end to end against a
-    // real `git merge -s ours` with the hook installed.
+    // is the prepared state `pre-commit` can inspect.
     contestedPath();
     gitOk(['merge', '--no-commit', '-s', 'ours', 'feat']);
 
@@ -470,7 +581,7 @@ describe('the shape the original scan set could not reach', () => {
     expect(main([], { cwd: dir })).toBe(1);
   });
 
-  it('is blind once such a merge is committed, which is the documented boundary', () => {
+  it('refuses once such a merge is committed because no prepared merge side remains', () => {
     // Pinned on purpose, and it is a boundary rather than a defect: the comparison this
     // program makes is unrecoverable after the commit, because HEAD has already moved onto
     // the result and `merge-base` then resolves to the incoming tip. An earlier draft of
@@ -479,17 +590,15 @@ describe('the shape the original scan set could not reach', () => {
     contestedPath();
     gitOk(['merge', '-s', 'ours', '--no-edit', 'feat']);
 
-    // With the merge recorded and the ref named, it reports clean — the branch's line is
-    // gone from HEAD and nothing here can say so any more.
+    // Reflog text cannot recover the merge side after the operation is committed. It must
+    // refuse rather than report a false clean result, even when the caller names a ref.
     const previous = process.env.GIT_REFLOG_ACTION;
     try {
       process.env.GIT_REFLOG_ACTION = 'merge feat';
-      expect(main([], { cwd: dir })).toBe(0);
+      expect(main([], { cwd: dir })).toBe(2);
       expect(git(['show', 'HEAD:f.txt'])).not.toContain('BRANCH');
 
-      // With nothing to identify the merge by, it refuses instead of passing. So the blind
-      // window is reachable only by a caller that already knows the ref — which is what
-      // `--manual` is, and never what a hook is.
+      // Removing the caller-controlled value yields the same refusal.
       process.env.GIT_REFLOG_ACTION = '';
       expect(main([], { cwd: dir })).toBe(2);
     } finally {
@@ -1036,7 +1145,7 @@ describe('what the operator is actually told', () => {
     git(['checkout', '-q', 'main']);
     write('f.txt', 'alpha\nMAIN\nbeta\n');
     commit('main edits');
-    gitOk(['merge', '--no-edit', 'feat']);
+    gitOk(['merge', '--no-commit', '--no-ff', 'feat']);
     takeTheirs('f.txt');
 
     const stderr = captureStderr(() => {
@@ -1102,10 +1211,9 @@ describe('what the operator is actually told', () => {
     git(['checkout', '-q', 'main']);
     write('v.txt', 'base\nmain\n');
     commit('main edits v');
-    // Disjoint, so the merge is clean, and `--no-commit` so it does not COMMIT itself. That
-    // is the hook's precondition: `pre-merge-commit` runs with MERGE_HEAD written and HEAD
-    // still on the pre-merge tip. A self-committing clean merge would leave neither, and the
-    // guard would refuse rather than answer — correctly, and for a different reason.
+    // Disjoint, so the merge is clean, and `--no-commit` so the prepared MERGE_HEAD and
+    // pre-merge HEAD remain available to the manual inspection command. A self-committing
+    // clean merge would reach the hook before this guard can identify the incoming commit.
     gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
     expect(existsSync(join(dir, '.git', 'MERGE_HEAD'))).toBe(true);
     expect(git(['write-tree'])).not.toBe(git(['rev-parse', 'HEAD^{tree}']));
@@ -1130,33 +1238,28 @@ describe('what the operator is actually told', () => {
 });
 
 describe('refusing rather than passing blind', () => {
-  it('throws when GIT_REFLOG_ACTION names no ref', () => {
-    write('f.txt', 'x\n');
-    commit('base');
-    expect(() => resolveIncomingRef(dir)).toThrow(/cannot tell which ref/);
-  });
-
-  it('throws when GIT_REFLOG_ACTION names a ref that does not resolve', () => {
+  it('throws when no prepared MERGE_HEAD exists, regardless of reflog text', () => {
     write('f.txt', 'x\n');
     commit('base');
     const previous = process.env.GIT_REFLOG_ACTION;
     process.env.GIT_REFLOG_ACTION = 'merge no-such-ref-anywhere';
     try {
-      expect(() => resolveIncomingRef(dir)).toThrow(/does not resolve to a commit/);
+      expect(() => resolveIncomingRef(dir)).toThrow(/Git has not written MERGE_HEAD/);
     } finally {
       restoreAction(previous);
     }
   });
 
-  it('resolves the incoming ref from GIT_REFLOG_ACTION', () => {
-    write('f.txt', 'x\n');
-    commit('base');
+  it('resolves the actual incoming commit from MERGE_HEAD even when reflog text is spoofed', () => {
+    const refs = prepareDisjointMerge();
+    git(['merge', '--no-commit', '--no-ff', 'feat']);
     const previous = process.env.GIT_REFLOG_ACTION;
     process.env.GIT_REFLOG_ACTION = 'merge main';
     try {
-      expect(resolveIncomingRef(dir)).toBe(sha());
+      expect(resolveIncomingRef(dir)).toBe(refs.incoming);
     } finally {
       restoreAction(previous);
+      git(['merge', '--abort']);
     }
   });
 
@@ -1179,6 +1282,374 @@ describe('refusing rather than passing blind', () => {
     expect(() => findTakeovers({ cwd: dir, head: sha(), incoming: orphan, resultTree: git(['write-tree']) })).toThrow(
       /share no merge-base/
     );
+  });
+});
+
+describe('pinned main landing', () => {
+  it('refuses a direct self-committing merge even when reflog text names the reviewed candidate', () => {
+    const refs = prepareDisjointMerge();
+    installPreMergeGuard();
+    const previous = process.env.GIT_REFLOG_ACTION;
+    let failure;
+
+    try {
+      process.env.GIT_REFLOG_ACTION = 'merge feat';
+      try {
+        withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+          git(['merge', '--no-ff', '--no-edit', 'feat']);
+        });
+      } catch (error) {
+        failure = error;
+      }
+    } finally {
+      restoreAction(previous);
+    }
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('Git has not written MERGE_HEAD');
+    expect(sha()).toBe(refs.main);
+    if (existsSync(join(dir, '.git', 'MERGE_HEAD'))) {
+      git(['merge', '--abort']);
+    }
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a direct self-committing merge on a feature branch in the same worktree', () => {
+    const refs = prepareDisjointMerge();
+    git(['checkout', '-qb', 'target', refs.main]);
+    installPreMergeGuard();
+    const previous = process.env.GIT_REFLOG_ACTION;
+    let failure;
+
+    try {
+      process.env.GIT_REFLOG_ACTION = 'merge feat';
+      try {
+        git(['merge', '--no-ff', '--no-edit', 'feat']);
+      } catch (error) {
+        failure = error;
+      }
+    } finally {
+      restoreAction(previous);
+    }
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('Git has not written MERGE_HEAD');
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', '--verify', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['merge', '--abort']);
+    expect(gitOk(['rev-parse', '--verify', 'MERGE_HEAD']).ok).toBe(false);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a direct self-committing merge in a linked feature worktree', () => {
+    const refs = prepareDisjointMerge();
+    const linked = mkdtempSync(join(tmpdir(), 'merge-guard-linked-'));
+    rmSync(linked, { recursive: true, force: true });
+    git(['worktree', 'add', '-b', 'linked-target', linked, refs.main]);
+    installPreMergeGuard();
+    const previous = process.env.GIT_REFLOG_ACTION;
+    let failure;
+
+    try {
+      process.env.GIT_REFLOG_ACTION = 'merge feat';
+      try {
+        gitAt(linked, ['merge', '--no-ff', '--no-edit', 'feat']);
+      } catch (error) {
+        failure = error;
+      }
+    } finally {
+      restoreAction(previous);
+      if (gitOk(['-C', linked, 'rev-parse', '--verify', 'MERGE_HEAD']).ok) gitAt(linked, ['merge', '--abort']);
+      removePreMergeGuard();
+      git(['worktree', 'remove', linked]);
+    }
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('Git has not written MERGE_HEAD');
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('requires the reviewed parent and tree pins before committing a prepared merge on main', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    git(['merge', '--no-commit', '--no-ff', 'feat']);
+    let failure;
+
+    withNoExpectedLanding(() => {
+      try {
+        git(['commit', '-m', 'un-pinned merge']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('expected landing requires KILO_EXPECTED_MAIN_SHA');
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['merge', '--abort']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses the exact pins when the shared index is used for the commit', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    git(['merge', '--no-commit', '--no-ff', 'feat']);
+    let failure;
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      try {
+        git(['commit', '-m', 'shared index landing']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('main landing requires a private index snapshot');
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['merge', '--abort']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('accepts the exact main and incoming SHAs from actual MERGE_HEAD state', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      git(['merge', '--no-commit', '--no-ff', 'feat']);
+      expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+      commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
+    });
+
+    const parents = git(['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ');
+    expect(parents[1]).toBe(refs.main);
+    expect(parents[2]).toBe(refs.incoming);
+  });
+
+  it('commits the reviewed snapshot while preserving later staging in the shared index', () => {
+    const refs = prepareDisjointMerge();
+    const sharedPath = 'staged-after-hook.txt';
+    write(sharedPath, 'another main-worktree writer staged this after the guards\n');
+    installPinnedPreCommitGuards({ afterChecks: `unset GIT_INDEX_FILE\ngit add ${sharedPath}` });
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      git(['merge', '--no-commit', '--no-ff', 'feat']);
+      commitReviewedLanding('isolated pinned merge\n\nBranch: feat\nChat: test-session');
+    });
+
+    expect(git(['rev-parse', 'HEAD^{tree}'])).toBe(refs.incomingTree);
+    expect(gitOk(['cat-file', '-e', `HEAD:${sharedPath}`]).ok).toBe(false);
+    expect(git(['status', '--porcelain'])).toContain(`A  ${sharedPath}`);
+    removePreMergeGuard();
+  });
+
+  it('refuses reviewed landings without both attribution trailers before committing', () => {
+    const refs = prepareDisjointMerge();
+    git(['merge', '--no-commit', '--no-ff', 'feat']);
+    let failure;
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      try {
+        commitReviewedLanding('missing chat trailer\n\nBranch: feat');
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('exactly one non-empty Branch: and Chat: trailer');
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['merge', '--abort']);
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses octopus merges in both the landing helper and pre-commit guard', () => {
+    const refs = prepareDisjointMerge();
+    git(['checkout', '-qb', 'feat-two', refs.base]);
+    write('second-feature.txt', 'second candidate\n');
+    commit('second feature change');
+    const secondIncoming = sha();
+    git(['checkout', '-q', 'main']);
+    installPinnedPreCommitGuards();
+    git(['merge', '--no-commit', '--no-ff', 'feat', 'feat-two']);
+    const preparedTree = git(['write-tree']);
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: preparedTree }, () => {
+      let helperFailure;
+      try {
+        commitReviewedLanding('octopus landing\n\nBranch: feat\nChat: test-session');
+      } catch (error) {
+        helperFailure = error;
+      }
+      expect(helperFailure).toBeDefined();
+      expect(String(helperFailure.stderr)).toContain('refusing an octopus merge');
+
+      const isolatedIndex = join(dir, 'isolated-index');
+      copyFileSync(join(dir, '.git', 'index'), isolatedIndex);
+      let hookFailure;
+      try {
+        execFileSync('git', ['commit', '-m', 'octopus landing\n\nBranch: feat\nChat: test-session'], {
+          cwd: dir,
+          env: { ...process.env, GIT_INDEX_FILE: isolatedIndex },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        hookFailure = error;
+      } finally {
+        rmSync(isolatedIndex, { force: true });
+      }
+      expect(hookFailure).toBeDefined();
+      expect(String(hookFailure.stderr)).toContain('refusing an octopus merge');
+    });
+
+    expect(sha()).toBe(refs.main);
+    const mergeHeadPath = resolve(dir, git(['rev-parse', '--git-path', 'MERGE_HEAD']));
+    expect(readFileSync(mergeHeadPath, 'utf8').trim().split('\n')).toEqual([refs.incoming, secondIncoming]);
+    git(['merge', '--abort']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('finds its reviewed landing if main advances before the helper returns', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    const postCommit = join(dir, 'hooks', 'post-commit');
+    writeFileSync(
+      postCommit,
+      '#!/bin/sh\nunset GIT_INDEX_FILE\nprintf "later main work\\n" > later-main.txt\ngit add later-main.txt\ngit -c core.hooksPath=/dev/null commit -m "next main commit" >/dev/null\n'
+    );
+    chmodSync(postCommit, 0o755);
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      git(['merge', '--no-commit', '--no-ff', 'feat']);
+      commitReviewedLanding('pinned merge with concurrent advance\n\nBranch: feat\nChat: test-session');
+    });
+
+    const firstParentCommits = git(['rev-list', '--first-parent', '--reverse', `${refs.main}..HEAD`]).split('\n');
+    expect(firstParentCommits).toHaveLength(2);
+    const landedParents = git(['rev-list', '--parents', '-n', '1', firstParentCommits[0]]).split(' ');
+    expect(landedParents[1]).toBe(refs.main);
+    expect(landedParents[2]).toBe(refs.incoming);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses an index changed after the reviewed candidate merge was prepared', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    git(['merge', '--no-commit', '--no-ff', 'feat']);
+    write('main.txt', 'unreviewed landing edit\n');
+    git(['add', 'main.txt']);
+    let failure;
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      try {
+        git(['commit', '-m', 'changed merge tree']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('prepared merge tree changed since review');
+    expect(sha()).toBe(refs.main);
+    git(['merge', '--abort']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a clean merge prepared against a newer main than the reviewed SHA', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    let failure;
+
+    withExpectedLanding({ main: refs.base, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      try {
+        git(['merge', '--no-commit', '--no-ff', 'feat']);
+        git(['commit', '-m', 'stale main pin']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('main moved since the candidate was reviewed');
+    expect(sha()).toBe(refs.main);
+    if (existsSync(join(dir, '.git', 'MERGE_HEAD'))) {
+      expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+      git(['merge', '--abort']);
+    }
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a different incoming commit than the reviewed candidate SHA', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    let failure;
+
+    withExpectedLanding({ main: refs.main, incoming: refs.base, tree: refs.incomingTree }, () => {
+      try {
+        git(['merge', '--no-commit', '--no-ff', 'feat']);
+        git(['commit', '-m', 'wrong incoming pin']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('incoming candidate changed since review');
+    expect(sha()).toBe(refs.main);
+    if (existsSync(join(dir, '.git', 'MERGE_HEAD'))) {
+      expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+      git(['merge', '--abort']);
+    }
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('ignores spoofed reflog text when the prepared incoming commit differs from the reviewed one', () => {
+    const refs = prepareDisjointMerge();
+    git(['checkout', '-q', refs.base]);
+    git(['checkout', '-qb', 'impostor']);
+    write('impostor.txt', 'different incoming commit\n');
+    commit('impostor candidate');
+    const impostor = sha();
+    git(['checkout', '-q', 'main']);
+    installPinnedPreCommitGuards();
+    const previous = process.env.GIT_REFLOG_ACTION;
+    let failure;
+
+    try {
+      process.env.GIT_REFLOG_ACTION = 'merge feat';
+      withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+        try {
+          git(['merge', '--no-commit', '--no-ff', 'impostor']);
+          expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(impostor);
+          git(['commit', '-m', 'spoofed reflog']);
+        } catch (error) {
+          failure = error;
+        }
+      });
+    } finally {
+      restoreAction(previous);
+    }
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('incoming candidate changed since review');
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(impostor);
+    git(['merge', '--abort']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
   });
 });
 
@@ -1246,7 +1717,7 @@ describe('the exit code a caller branches on', () => {
     write('f.txt', 'main\n');
     commit('main');
 
-    gitOk(['merge', '--no-edit', 'feat']);
+    gitOk(['merge', '--no-commit', '--no-ff', 'feat']);
     takeTheirs('f.txt');
 
     const previous = process.env.GIT_REFLOG_ACTION;
@@ -1254,10 +1725,8 @@ describe('the exit code a caller branches on', () => {
       process.env.GIT_REFLOG_ACTION = 'merge feat';
       expect(main([], { cwd: dir })).toBe(1);
 
-      // Abort first: with the merge still in progress MERGE_HEAD is present and answers
-      // the question on its own, so exit 2 is only reachable once it is gone. That
-      // precedence is deliberate — MERGE_HEAD is git's own record and GIT_REFLOG_ACTION is
-      // the fallback for the one hook where MERGE_HEAD is not yet written.
+      // Abort first: MERGE_HEAD is Git's prepared merge record. Once it is gone, no reflog
+      // description can stand in for the actual incoming commit.
       git(['merge', '--abort']);
       process.env.GIT_REFLOG_ACTION = '';
       expect(main([], { cwd: dir })).toBe(2);
@@ -1275,18 +1744,12 @@ describe('the exit code a caller branches on', () => {
     git(['checkout', '-q', 'main']);
     write('f.txt', 'main moved on\n');
     commit('main');
-    gitOk(['merge', '--no-edit', 'feat']);
+    gitOk(['merge', '--no-commit', '--no-ff', 'feat']);
 
-    const previous = process.env.GIT_REFLOG_ACTION;
-    process.env.GIT_REFLOG_ACTION = 'merge feat';
-    try {
-      expect(main([], { cwd: dir })).toBe(0);
-    } finally {
-      restoreAction(previous);
-    }
+    expect(main([], { cwd: dir })).toBe(0);
   });
 
-  it('surfaces a GuardError as exit 2 rather than throwing out of main', () => {
+  it('surfaces missing merge state as exit 2 rather than throwing out of main', () => {
     write('f.txt', 'x\n');
     commit('base');
     const previous = process.env.GIT_REFLOG_ACTION;

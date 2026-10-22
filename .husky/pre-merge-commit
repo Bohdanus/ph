@@ -27,9 +27,10 @@
 #   block a landing.
 # - `--no-verify` bypasses this, as it bypasses every other gate in this repository.
 #   CI is the backstop for that, and this is the floor under it rather than the ceiling.
-# - The incoming ref is read from GIT_REFLOG_ACTION because MERGE_HEAD is not yet
-#   written in this hook. If it cannot be identified the guard REFUSES rather than
-#   passing: a check that cannot tell must not report success.
+# - MERGE_HEAD is not readable in this hook in the project's supported flow. Reflog
+#   text is caller-controlled and cannot prove which commit Git prepared, so the guard
+#   refuses a direct self-committing merge in any worktree. Prepare clean merges with `--no-commit` and
+#   let `pre-commit` verify the actual MERGE_HEAD and staged tree against the reviewed pins.
 #
 # `HUSKY=0` is handled by the dispatcher in scripts/install-git-hooks.js.
 node scripts/merge-takeover-guard.mjs

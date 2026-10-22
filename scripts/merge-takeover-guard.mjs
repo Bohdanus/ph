@@ -126,7 +126,11 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { isIsolatedIndex, readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
 
 /**
  * Ceiling on one `cat-file --batch` response. A commit hook has a time budget and a memory
@@ -169,41 +173,39 @@ function tryGit(args, { cwd } = {}) {
 /**
  * The side being merged in.
  *
- * Two hooks, two difficulties, and the order matters. `MERGE_HEAD` is the honest answer and
- * is what `pre-commit` sees while a resolved conflict is being committed. It is NOT yet
- * written in `pre-merge-commit` — verified: it reads empty there, where
- * `prepare-commit-msg` milliseconds later reads it correctly. So `pre-merge-commit` falls
- * back to `GIT_REFLOG_ACTION`, which git sets to "merge <what-you-typed>".
+ * `MERGE_HEAD` is Git's prepared merge state and is available to `pre-commit`, both while a
+ * conflicted merge is completed and when a clean merge was prepared with `--no-commit`.
+ * `pre-merge-commit` does not expose it in this repository's supported Git flow. Reflog text
+ * such as `GIT_REFLOG_ACTION` is caller-controlled description, not proof of the side Git
+ * actually prepared, so this guard never uses it as an identity source. A clean merge must be
+ * prepared with `--no-commit` and recorded by `git commit`, where the actual `MERGE_HEAD` can
+ * be compared to the reviewed candidate SHA.
  *
- * The fallback is the fragile path and it is confined to the hook that has no better
- * option. When neither is available we REFUSE. A check that cannot tell must not report
- * success, because a false green here is the entire failure this program exists to prevent.
+ * If Git has not recorded a merge side in `MERGE_HEAD`, we REFUSE. A check that cannot tell
+ * must not report success, because a false green here is the entire failure this program exists
+ * to prevent.
  *
  * @param {string} cwd
  * @returns {string} the incoming commit
  */
 export function resolveIncomingRef(cwd) {
-  const mergeHead = tryGit(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD^{commit}'], { cwd });
-  if (mergeHead) return mergeHead;
-
-  const action = process.env.GIT_REFLOG_ACTION ?? '';
-  const match = /^merge\s+(.+)$/.exec(action.trim());
-  if (!match) {
+  const mergeHeads = readMergeHeadRefs(cwd);
+  if (mergeHeads.length > 1) {
     throw new GuardError(
-      `cannot tell which ref is being merged in: no MERGE_HEAD, and GIT_REFLOG_ACTION=${JSON.stringify(action)}.\n` +
-        `       This guard refuses rather than passing blind: a silent pass is the failure it exists to prevent.\n` +
-        `       Outside a merge it has nothing to check — run it only from pre-commit or pre-merge-commit.`
+      `refusing an octopus merge with ${mergeHeads.length} incoming commits; this guard verifies one candidate at a time.\n` +
+        '       Abort this merge and prepare separate pairwise merges so every incoming commit gets its own review.'
     );
   }
-  const named = match[1].trim();
-  const resolved = tryGit(['rev-parse', '--verify', '--quiet', `${named}^{commit}`], { cwd });
-  if (!resolved) {
-    throw new GuardError(
-      `GIT_REFLOG_ACTION names ${JSON.stringify(named)}, which does not resolve to a commit.\n` +
-        `       Refusing rather than passing blind.`
-    );
+  if (mergeHeads.length === 1) {
+    const mergeHead = tryGit(['rev-parse', '--verify', '--quiet', `${mergeHeads[0]}^{commit}`], { cwd });
+    if (mergeHead) return mergeHead;
+    throw new GuardError('MERGE_HEAD does not identify a valid incoming commit');
   }
-  return resolved;
+  throw new GuardError(
+    'cannot identify the incoming commit: Git has not written MERGE_HEAD.\n' +
+      '       Prepare clean landing merges with `git merge --no-commit --no-ff <full-reviewed-sha>`, then commit.\n' +
+      '       Reflog text is not proof of the merge side; this guard refuses rather than passing blind.'
+  );
 }
 
 /**
@@ -725,7 +727,15 @@ function report({ takeovers, scanned, incoming, base, head }) {
 export function main(argv, { cwd = process.cwd() } = {}) {
   const manual = argv.includes('--manual') || argv.includes('-m');
   try {
-    const findings = findTakeovers({ cwd });
+    const head = tryGit(['rev-parse', 'HEAD'], { cwd });
+    if (!head) throw new GuardError('not a git repository, or HEAD does not resolve');
+    const incoming = resolveIncomingRef(cwd);
+    const resultTree = tryGit(['write-tree'], { cwd });
+    if (!resultTree) throw new GuardError('git write-tree failed; cannot verify the prepared merge result');
+    const required = isProjectMainWorktree(cwd);
+    const isolatedIndex = !required || isIsolatedIndex(resolveWorktree(cwd), cwd, process.env);
+    assertExpectedLandingHeads({ head, incoming, resultTree }, process.env, { required, isolatedIndex });
+    const findings = findTakeovers({ cwd, head, incoming });
     if (findings.takeovers.length > 0) {
       process.stderr.write(`${report(findings)}\n`);
       return 1;
@@ -739,6 +749,82 @@ export function main(argv, { cwd = process.cwd() } = {}) {
     }
     throw error;
   }
+}
+
+/**
+ * Bind a documented harvest landing to the exact main SHA, candidate SHA, and result tree that
+ * were reviewed.
+ *
+ * In the project main worktree all three pins and a private index snapshot are required. On
+ * feature worktrees pins are opt-in, but clean merges there must still use `--no-commit` so
+ * `pre-commit` can read the actual MERGE_HEAD. The `pre-commit` hook checks main pins against
+ * the isolated index after the merge is prepared and before the merge commit moves `main`;
+ * refusing here prevents a stale-base or changed-tree composition from being recorded. If Git
+ * leaves this caller's merge in progress after a
+ * refusal, the caller may abort only that exact unresumed operation; it must never resolve it.
+ *
+ * @param {{ head:string, incoming:string, resultTree:string }} findings
+ * @param {NodeJS.ProcessEnv} env
+ * @param {{ required?:boolean, isolatedIndex?:boolean }} options
+ */
+export function assertExpectedLandingHeads(
+  findings,
+  env = process.env,
+  { required = false, isolatedIndex = false } = {}
+) {
+  const expectedMain = env.KILO_EXPECTED_MAIN_SHA;
+  const expectedIncoming = env.KILO_EXPECTED_INCOMING_SHA;
+  const expectedTree = env.KILO_EXPECTED_TREE_SHA;
+  if (!expectedMain && !expectedIncoming && !expectedTree && !required) return;
+  if (!expectedMain || !expectedIncoming || !expectedTree) {
+    throw new GuardError(
+      'expected landing requires KILO_EXPECTED_MAIN_SHA, KILO_EXPECTED_INCOMING_SHA, and KILO_EXPECTED_TREE_SHA; refusing an incomplete pin set'
+    );
+  }
+  if (findings.incomingCount !== undefined && findings.incomingCount !== 1) {
+    throw new GuardError('expected landing requires exactly one incoming commit; octopus merges are refused');
+  }
+  if (findings.head !== expectedMain) {
+    throw new GuardError(
+      `main moved since the candidate was reviewed: expected ${truncate(expectedMain)}, prepared ${truncate(findings.head)}. ` +
+        'Abort this landing attempt and sync, review, and gate the new composition in the candidate worktree.'
+    );
+  }
+  if (findings.incoming !== expectedIncoming) {
+    throw new GuardError(
+      `incoming candidate changed since review: expected ${truncate(expectedIncoming)}, prepared ${truncate(findings.incoming)}. ` +
+        'Abort this landing attempt and review and gate the actual candidate SHA in its worktree.'
+    );
+  }
+  if (findings.resultTree !== expectedTree) {
+    throw new GuardError(
+      `prepared merge tree changed since review: expected ${truncate(expectedTree)}, prepared ${truncate(findings.resultTree)}. ` +
+        'Abort this landing attempt and review and gate the actual result tree in the candidate worktree.'
+    );
+  }
+  if (required && !isolatedIndex) {
+    throw new GuardError(
+      'main landing requires a private index snapshot so the tree cannot change after the final hook check. ' +
+        'Use `node scripts/commit-reviewed-landing.mjs -m <message>` after preparing the merge.'
+    );
+  }
+}
+
+/**
+ * Main merges in this project occur in the checkout rooted beside the shared `.git`, with
+ * `AGENTS.md` and `.kilo` present. Temporary repositories used by the test suite lack those
+ * policy markers and retain the ordinary merge guard behavior.
+ *
+ * @param {string} cwd
+ * @returns {boolean}
+ */
+export function isProjectMainWorktree(cwd) {
+  const branch = tryGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd });
+  if (branch !== 'main') return false;
+  const commonDir = tryGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd });
+  if (!commonDir) throw new GuardError('cannot identify the shared git directory for main');
+  const projectRoot = dirname(resolve(commonDir));
+  return existsSync(join(projectRoot, 'AGENTS.md')) && existsSync(join(projectRoot, '.kilo'));
 }
 
 const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
