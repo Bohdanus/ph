@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
@@ -27,6 +27,10 @@ export type UseRectProps = {
   initialRect?: RectXYSorted | null; // can be set using props, in canvas px like everything else
 
   hideBlend?: boolean;
+  /** The consumer paints the overlay in DOM/SVG and only needs this hook's pointer geometry. */
+  externalOverlay?: boolean;
+  /** Reuse the crop dim as a base and repaint only the previous/current crop bounds. */
+  incrementalOverlay?: boolean;
   isMoveTool?: boolean;
 
   /**
@@ -62,6 +66,12 @@ export type UseRectProps = {
    * tools.
    */
   borderMode?: 'always' | 'while-dragging';
+  /** Let an overflow-safe crop surface draw the outline instead of this frame-clipped canvas. */
+  hideBorder?: boolean;
+  /** Let an overflow-safe crop surface draw the corner grips instead of this frame-clipped canvas. */
+  hideHandles?: boolean;
+  /** Let an overflow-safe crop surface draw the rotation grip instead of this frame-clipped canvas. */
+  hideRotationHandle?: boolean;
 
   /**
    * Paint the TRUE rect where the pointer left it, including the part that has left the canvas
@@ -101,11 +111,16 @@ export type UseRectProps = {
 
   /** The document canvas, sampled to pick an overlay-guide color that inverts the underlying pixels. */
   documentCanvasRef?: RefObject<HTMLCanvasElement | null>;
+  /** Cached guide color, supplied by consumers that already hold a safe pixel snapshot. */
+  overlayColor?: string;
+  /** Compute a cached guide color for the rect being painted, including the live drag rect. */
+  overlayColorForRect?: (rect: Pos) => string;
 
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 
   onRepaint?: (sortedRect: RectXYSorted) => void; // is called on redraw (RAF throttled)
+  onCancel?: () => void;
   onChange?: (sortedRect: RectXYSorted) => void; // is called on resize (RAF throttled)
   onChangeEnd: (sortedRect: RectXYSorted) => void; // is called after final change, when mouse is up
 };
@@ -120,6 +135,7 @@ const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre:
 const RECT_BORDER_DASH_LENGTH = 5;
 const RECT_BORDER_DASH_SPEED = 0.4;
 const ROTATE_HOTZONE = 24;
+export const ROTATE_HANDLE_OFFSET = ROTATE_HOTZONE / 2;
 
 /**
  * Samples the document canvas at strategic points within the crop rect and returns
@@ -129,7 +145,11 @@ const ROTATE_HOTZONE = 24;
  * Returns white as a fallback when no document canvas is available or when sampling
  * fails (e.g. cross-origin canvas).
  */
-function computeOverlayColor(documentCanvas: HTMLCanvasElement | null, rect: Pos): string {
+export function computeOverlayColor(
+  documentCanvas: HTMLCanvasElement | null,
+  rect: Pos,
+  documentImageSize?: Size
+): string {
   if (!documentCanvas) return 'rgba(255, 255, 255, 0.8)';
 
   const ctx = documentCanvas.getContext('2d');
@@ -148,9 +168,11 @@ function computeOverlayColor(documentCanvas: HTMLCanvasElement | null, rect: Pos
   let g = 0;
   let b = 0;
   let count = 0;
+  const backingScaleX = documentImageSize?.width ? documentCanvas.width / documentImageSize.width : 1;
+  const backingScaleY = documentImageSize?.height ? documentCanvas.height / documentImageSize.height : 1;
   for (const point of samplePoints) {
     try {
-      const pixel = ctx.getImageData(Math.round(point.x), Math.round(point.y), 1, 1);
+      const pixel = ctx.getImageData(Math.round(point.x * backingScaleX), Math.round(point.y * backingScaleY), 1, 1);
       r += pixel.data[0];
       g += pixel.data[1];
       b += pixel.data[2];
@@ -178,7 +200,9 @@ export function drawCropOverlay(
   documentCanvas: HTMLCanvasElement | null = null,
   overlayVisibility: CropOverlayVisibility = 'always',
   gridDivisions = 10,
-  isDragging = true
+  isDragging = true,
+  documentImageSize?: Size,
+  overlayColorOverride?: string
 ) {
   // Respect overlay visibility setting
   if (overlayVisibility === 'never' || (overlayVisibility === 'auto' && !isDragging)) return;
@@ -191,7 +215,7 @@ export function drawCropOverlay(
     ctx.lineTo(x2, y2);
   };
 
-  const overlayColor = computeOverlayColor(documentCanvas, rect);
+  const overlayColor = overlayColorOverride ?? computeOverlayColor(documentCanvas, rect, documentImageSize);
   ctx.save();
   ctx.strokeStyle = overlayColor;
   ctx.lineWidth = 1 / scale;
@@ -291,7 +315,12 @@ export function useRect({
   initialRect,
 
   hideBlend,
+  externalOverlay = false,
+  incrementalOverlay = false,
   isMoveTool,
+  hideBorder = false,
+  hideHandles = false,
+  hideRotationHandle = false,
   constrainToSquare = false,
   fromCentre = false,
   borderMode = 'always',
@@ -305,15 +334,22 @@ export function useRect({
   overlayVisibility = 'always',
   gridDivisions = 10,
   documentCanvasRef,
+  overlayColor,
+  overlayColorForRect,
 
   containerRef,
   overlayRef,
 
   onRepaint,
+  onCancel,
   onChange,
   onChangeEnd,
 }: UseRectProps) {
   const startRectRef = useRef<RectXYSorted | null>(null);
+  const latestImageSizeRef = useRef(imageSize);
+  useLayoutEffect(() => {
+    latestImageSizeRef.current = imageSize;
+  }, [imageSize]);
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
 
   const startPointRef = useRef<Point | null>(null);
@@ -325,10 +361,23 @@ export function useRect({
   const startRotationRef = useRef(rotation);
   const rotationStartAngleRef = useRef(0);
 
-  const pendingPoint = useRef<Point | null>(null);
+  const pendingClientXRef = useRef(0);
+  const pendingClientYRef = useRef(0);
+  const hasPendingClientPointRef = useRef(false);
   const frameRequested = useRef<number | null>(null);
   const borderAnimationFrameRef = useRef<number | null>(null);
   const borderDashOffsetRef = useRef(0);
+  const overlayPaintModeRef = useRef<'external' | 'incremental' | 'full' | null>(null);
+  const lastIncrementalRectRef = useRef<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    angle: number;
+    scale: number;
+  } | null>(null);
+  const incrementalCanvasSizeRef = useRef({ width: 0, height: 0 });
+  const gesturePointerIdRef = useRef<number | null>(null);
 
   /** Whether a pointer gesture this hook owns is in flight. See `beginGesture`. */
   const isGestureActiveRef = useRef(false);
@@ -379,6 +428,15 @@ export function useRect({
   }, [borderMode]);
 
   const drawMaskRef = useRef<((hasRectChanged?: boolean) => void) | null>(null);
+  const redraw = useCallback(() => drawMaskRef.current?.(), []);
+  const overlayAppearanceRef = useRef({
+    gridDivisions,
+    overlayColor,
+    overlayColorForRect,
+    overlayOrientation,
+    overlayType,
+    overlayVisibility,
+  });
 
   useEffect(() => {
     drawMaskRef.current = drawMask;
@@ -403,6 +461,26 @@ export function useRect({
     if (lastRotationRef.current !== rotation && rectUnsortedRef.current) drawMaskRef.current?.();
     lastRotationRef.current = rotation;
   }, [rotation]);
+
+  useEffect(() => {
+    const previous = overlayAppearanceRef.current;
+    const changed =
+      previous.gridDivisions !== gridDivisions ||
+      previous.overlayColor !== overlayColor ||
+      previous.overlayColorForRect !== overlayColorForRect ||
+      previous.overlayOrientation !== overlayOrientation ||
+      previous.overlayType !== overlayType ||
+      previous.overlayVisibility !== overlayVisibility;
+    overlayAppearanceRef.current = {
+      gridDivisions,
+      overlayColor,
+      overlayColorForRect,
+      overlayOrientation,
+      overlayType,
+      overlayVisibility,
+    };
+    if (changed && rectUnsortedRef.current) drawMaskRef.current?.();
+  }, [gridDivisions, overlayColor, overlayColorForRect, overlayOrientation, overlayType, overlayVisibility]);
 
   /**
    * The overlay canvas outlives this hook: `Main` renders both overlay canvases
@@ -458,7 +536,8 @@ export function useRect({
         // The overlay context is scaled by DPR (via resizeCanvas in Main.tsx), so clearRect
         // coordinates are in logical/frame pixels. Use imageSize (logical frame bounds) rather
         // than ctx.canvas.width/height (backing-store device pixels) to avoid over-clearing.
-        ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        const latestImageSize = latestImageSizeRef.current;
+        ctx.clearRect(0, 0, latestImageSize.width, latestImageSize.height);
       }
     };
   }, [endGesture, overlayRef]);
@@ -471,8 +550,15 @@ export function useRect({
     },
   });
 
-  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, dimensionsRef } =
-    pointerPositionData;
+  const {
+    isPointerDownValid,
+    isPointerMoveValid,
+    isPointerUpValid,
+    getLocalCoords,
+    getLocalCoordsFromClientPoint,
+    isMouseDown,
+    dimensionsRef,
+  } = pointerPositionData;
 
   function animateBorder() {
     borderAnimationFrameRef.current = null;
@@ -523,6 +609,13 @@ export function useRect({
 
       if (rotationEnabled) {
         const localPoint = hitPoint;
+        const rotationGrip = { x: (x1 + x2) / 2, y: y1 - ROTATE_HANDLE_OFFSET / scale };
+        if (
+          localPoint.y < y1 &&
+          Math.hypot(localPoint.x - rotationGrip.x, localPoint.y - rotationGrip.y) <= ROTATE_HOTZONE / scale
+        ) {
+          return 'rotate';
+        }
         const outside = localPoint.x < x1 || localPoint.x > x2 || localPoint.y < y1 || localPoint.y > y2;
         if (outside) {
           const corners = [
@@ -632,10 +725,45 @@ export function useRect({
     if (event.currentTarget) event.currentTarget.style.cursor = cursor ?? '';
   }
 
+  function getCropPaintBounds(rect: Pos, angle: number, scale: number): Pos {
+    const radians = (angle * Math.PI) / 180;
+    const halfWidth = (Math.abs(Math.cos(radians)) * rect.width + Math.abs(Math.sin(radians)) * rect.height) / 2;
+    const halfHeight = (Math.abs(Math.sin(radians)) * rect.width + Math.abs(Math.cos(radians)) * rect.height) / 2;
+    const padding = (ROTATE_HOTZONE + HANDLE_SIZE + 2) / Math.max(scale, Number.EPSILON);
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    return {
+      x: centerX - halfWidth - padding,
+      y: centerY - halfHeight - padding,
+      width: 2 * (halfWidth + padding),
+      height: 2 * (halfHeight + padding),
+    };
+  }
+
   function drawMask(hasRectChanged?: boolean) {
     const { scale } = dimensionsRef.current;
     const ctx = overlayRef.current?.getContext('2d');
     if (!ctx) return;
+
+    const rect = rectUnsortedRef.current;
+
+    // Straight crop chrome, dimming and guides are owned by the overflow-safe DOM surface. Keep
+    // useRect responsible for the shared geometry callbacks without clearing or repainting a
+    // frame-sized canvas on every pointer frame. Clear once when entering this mode to remove a
+    // rotated canvas overlay left by the previous mode.
+    if (externalOverlay) {
+      if (overlayPaintModeRef.current !== 'external') {
+        if (overlayPaintModeRef.current !== null) ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        overlayPaintModeRef.current = 'external';
+      }
+      lastIncrementalRectRef.current = null;
+      if (!rect) return;
+
+      const sortedRect = sortRect(rect);
+      onRepaint?.(sortedRect);
+      if (hasRectChanged) onChange?.(sortedRect);
+      return;
+    }
 
     // The tool overlay is ONE 2D context for the whole session, and every tool area is handed the
     // same object, so the `rgba(0, 0, 0, 0.7)` dim below renders at `0.7 x whatever globalAlpha
@@ -643,11 +771,12 @@ export function useRect({
     // rather than at each call site, and BEFORE the `hideBlend` block so the dim and the stroke are
     // both covered. The dash this function owns is written after, deliberately.
     resetOverlayAlpha(ctx);
-
-    ctx.clearRect(0, 0, imageSize.width, imageSize.height);
-
-    const rect = rectUnsortedRef.current;
-    if (!rect) return;
+    if (!rect) {
+      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      overlayPaintModeRef.current = null;
+      lastIncrementalRectRef.current = null;
+      return;
+    }
 
     // Sorted once and used twice: the paint below and the report at the bottom, which is the
     // sorted rect UNCLAMPED in every case. Only the paint has a choice of geometry.
@@ -662,18 +791,54 @@ export function useRect({
     const angle = rotationEnabled ? rotationRef.current : 0;
     const centerX = x + width / 2;
     const centerY = y + height / 2;
+    const currentOverlayColor = overlayColorForRect?.({ x, y, width, height }) ?? overlayColor;
+
+    if (incrementalOverlay) {
+      const canvasSize = incrementalCanvasSizeRef.current;
+      const needsBasePaint =
+        overlayPaintModeRef.current !== 'incremental' ||
+        canvasSize.width !== ctx.canvas.width ||
+        canvasSize.height !== ctx.canvas.height;
+      if (needsBasePaint) {
+        ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+        if (!hideBlend) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.fillRect(0, 0, imageSize.width, imageSize.height);
+        }
+        canvasSize.width = ctx.canvas.width;
+        canvasSize.height = ctx.canvas.height;
+        overlayPaintModeRef.current = 'incremental';
+      } else {
+        const previous = lastIncrementalRectRef.current;
+        if (previous) {
+          const dirty = getCropPaintBounds(previous, previous.angle, previous.scale);
+          ctx.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
+          if (!hideBlend) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(dirty.x, dirty.y, dirty.width, dirty.height);
+          }
+        }
+      }
+    } else {
+      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+      overlayPaintModeRef.current = 'full';
+      lastIncrementalRectRef.current = null;
+    }
 
     if (!hideBlend) {
-      // Draw semi-transparent overlay
+      // A full paint starts with a dimmed frame; an incremental paint restored the previous crop
+      // bounds to that same dimmed base above. In both cases the current rotated crop must be cut
+      // out after the base is ready. Keeping this clear outside the full-paint branch matters on
+      // every resize: otherwise the old window is restored, but the new window stays dimmed.
+      if (!incrementalOverlay) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, imageSize.width, imageSize.height);
+      }
 
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(0, 0, imageSize.width, imageSize.height);
-
-      // Clear the selection area. The DIM is the frame, not the selection — the `fillRect` above
-      // is `[0, 0, imageSize]`, the frame rect in canvas px — so the cut-out is against the frame
-      // rectangle in both modes, and this line is the only part of the blend the prop reaches: a
-      // negative CANVAS-origin `clearRect` is clipped by the backing store to exactly the part of
-      // the true rect that overlaps the frame, which is the cut-out wanted.
+      // The DIM is the frame, not the selection — the fill above is `[0, 0, imageSize]`, the
+      // frame rect in canvas px — so the cut-out is against the frame rectangle in both modes.
+      // A negative canvas-origin `clearRect` is clipped by the backing store to exactly the part
+      // of the true rect that overlaps the frame, which is the cut-out wanted.
       if (angle === 0) {
         ctx.clearRect(x, y, width, height);
       } else {
@@ -696,7 +861,9 @@ export function useRect({
           documentCanvasRef?.current,
           overlayVisibility,
           gridDivisions,
-          isMouseDown.current
+          isMouseDown.current,
+          imageSize,
+          currentOverlayColor
         );
       } else {
         ctx.save();
@@ -711,7 +878,9 @@ export function useRect({
           documentCanvasRef?.current,
           overlayVisibility,
           gridDivisions,
-          isMouseDown.current
+          isMouseDown.current,
+          imageSize,
+          currentOverlayColor
         );
         ctx.restore();
       }
@@ -727,7 +896,7 @@ export function useRect({
     // `beginGesture` — they are read rather than passed in because all seven of this function's
     // call sites would otherwise have to be told which of the two questions they were answering,
     // and the drag path and the final paint answer different ones.
-    if (borderMode === 'always' || (isGestureActiveRef.current && isMouseDown.current)) {
+    if (!hideBorder && (borderMode === 'always' || (isGestureActiveRef.current && isMouseDown.current))) {
       ctx.strokeStyle = '#007bff';
       ctx.lineWidth = 2 / scale;
       ctx.setLineDash([RECT_BORDER_DASH_LENGTH / scale, RECT_BORDER_DASH_LENGTH / scale]);
@@ -756,27 +925,29 @@ export function useRect({
     // Draw handles. `hIn` is the offset from the rect's LEFT and TOP edge and `hOut` the one added to
     // its RIGHT and BOTTOM edge. Outside grips end at their corners; the matching hit areas in
     // `edgeAtPoint` cover those same squares. Other consumers keep a straddling grip and hit area.
-    const h1 = HANDLE_SIZE / scale;
-    const hIn = handlesOutside ? -h1 : -h1 / 2;
-    const hOut = handlesOutside ? 0 : -h1 / 2;
-    ctx.fillStyle = '#007bff';
-    if (angle === 0) {
-      ctx.fillRect(x + hIn, y + hIn, h1, h1);
-      ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
-      ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
-      ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
-    } else {
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate((angle * Math.PI) / 180);
-      ctx.fillRect(-width / 2 + hIn, -height / 2 + hIn, h1, h1);
-      ctx.fillRect(width / 2 + hOut, -height / 2 + hIn, h1, h1);
-      ctx.fillRect(-width / 2 + hIn, height / 2 + hOut, h1, h1);
-      ctx.fillRect(width / 2 + hOut, height / 2 + hOut, h1, h1);
-      ctx.restore();
+    if (!hideHandles) {
+      const h1 = HANDLE_SIZE / scale;
+      const hIn = handlesOutside ? -h1 : -h1 / 2;
+      const hOut = handlesOutside ? 0 : -h1 / 2;
+      ctx.fillStyle = '#007bff';
+      if (angle === 0) {
+        ctx.fillRect(x + hIn, y + hIn, h1, h1);
+        ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
+        ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
+        ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
+      } else {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate((angle * Math.PI) / 180);
+        ctx.fillRect(-width / 2 + hIn, -height / 2 + hIn, h1, h1);
+        ctx.fillRect(width / 2 + hOut, -height / 2 + hIn, h1, h1);
+        ctx.fillRect(-width / 2 + hIn, height / 2 + hOut, h1, h1);
+        ctx.fillRect(width / 2 + hOut, height / 2 + hOut, h1, h1);
+        ctx.restore();
+      }
     }
 
-    if (rotationEnabled) {
+    if (rotationEnabled && !hideRotationHandle) {
       ctx.save();
       ctx.translate(centerX, centerY);
       ctx.rotate((angle * Math.PI) / 180);
@@ -790,6 +961,8 @@ export function useRect({
 
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
+
+    if (incrementalOverlay) lastIncrementalRectRef.current = { x, y, width, height, angle, scale };
 
     if (hasRectChanged) {
       onChange?.(sortedRect);
@@ -982,11 +1155,13 @@ export function useRect({
     // The gesture starts here, at the one point that knows a primary pointer was accepted, and
     // before the `drawMask()` further down in this function so the Move tool's own press-time
     // paint already belongs to a gesture rather than to an idle rect.
+    gesturePointerIdRef.current = event.pointerId;
     beginGesture();
 
     let isHandleClicked = false;
 
     currentEdgeRef.current = null;
+    startRotationRef.current = rotationRef.current;
     sampleFreshDragModifiers(event);
 
     const point = getLocalCoords(event);
@@ -1052,10 +1227,9 @@ export function useRect({
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>): boolean => {
-    const point = getLocalCoords(event);
-
     // detect mouse over drag handles
     if (!isMouseDown.current) {
+      const point = getLocalCoords(event);
       const edge = getEdgeAtPoint(point);
       setMouseCursor(edge, event);
       return !!edge;
@@ -1065,13 +1239,16 @@ export function useRect({
     if (isMoveTool && !startRectRef.current) return false;
 
     sampleFreshDragModifiers(event);
-    pendingPoint.current = point;
+    pendingClientXRef.current = event.clientX;
+    pendingClientYRef.current = event.clientY;
+    hasPendingClientPointRef.current = true;
     if (frameRequested.current !== null) return false;
 
     frameRequested.current = requestAnimationFrame(() => {
       frameRequested.current = null;
-
-      calculateMaskRect(pendingPoint.current!);
+      if (!hasPendingClientPointRef.current) return;
+      hasPendingClientPointRef.current = false;
+      calculateMaskRect(getLocalCoordsFromClientPoint(pendingClientXRef.current, pendingClientYRef.current));
       drawMask(true);
       scheduleBorderAnimation();
     });
@@ -1094,6 +1271,7 @@ export function useRect({
       // A release this hook DID accept, so nothing of ours is in flight afterwards whatever this
       // branch skips — the same reason the run below ends the gesture.
       endGesture();
+      gesturePointerIdRef.current = null;
 
       return;
     }
@@ -1110,16 +1288,43 @@ export function useRect({
     startPointRef.current = null;
     currentEdgeRef.current = null;
     customAspectRatioRef.current = null;
+    gesturePointerIdRef.current = null;
     Object.assign(freshDragModifiersRef.current, NO_MODIFIERS);
 
     cancelAnimationFrame(frameRequested.current!);
     frameRequested.current = null;
+    hasPendingClientPointRef.current = false;
 
     // With the rest of the gesture's own state, and before the final paint: the paint below is
     // of a finished gesture, not of a live one.
     endGesture();
 
     drawMask();
+  };
+
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    if (gesturePointerIdRef.current !== event.pointerId) return;
+    pointerPositionData.releasePointer();
+    if (!isGestureActiveRef.current) return;
+
+    if (frameRequested.current !== null) {
+      cancelAnimationFrame(frameRequested.current);
+      frameRequested.current = null;
+    }
+    hasPendingClientPointRef.current = false;
+    rectUnsortedRef.current = startRectRef.current ? { ...startRectRef.current } : null;
+    if (rotationRef.current !== startRotationRef.current) {
+      rotationRef.current = startRotationRef.current;
+      onRotationChange?.(startRotationRef.current);
+    }
+    startPointRef.current = null;
+    currentEdgeRef.current = null;
+    gesturePointerIdRef.current = null;
+    customAspectRatioRef.current = null;
+    Object.assign(freshDragModifiersRef.current, NO_MODIFIERS);
+    endGesture();
+    drawMask();
+    if (!rectUnsortedRef.current) onCancel?.();
   };
 
   // The return is GROUPED, and the grouping is the point.
@@ -1155,9 +1360,10 @@ export function useRect({
       onPointerDown: handlePointerDown,
       onPointerMove: handlePointerMove,
       onPointerUp: handlePointerUp,
+      onPointerCancel: handlePointerCancel,
     },
     rectHandles: {
-      redraw: () => drawMask(),
+      redraw,
       clearSelection: () => {
         startRectRef.current = null;
         rectUnsortedRef.current = null;
