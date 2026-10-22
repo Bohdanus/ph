@@ -230,6 +230,18 @@ async function readEffectiveDocumentScale(page: Page): Promise<number> {
   return fit.scale * fit.viewZoom;
 }
 
+async function readEffectiveScaleErrorForFrame(
+  page: Page,
+  expectedFrame: { width: number; height: number },
+  expectedScale: number
+): Promise<number> {
+  const fit = await readFit(page);
+  if (fit.documentWidth !== expectedFrame.width || fit.documentHeight !== expectedFrame.height) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.abs(fit.scale * fit.viewZoom - expectedScale);
+}
+
 /**
  * Opens the app and waits for the thing these tests actually need from it.
  *
@@ -945,6 +957,7 @@ test.describe('Crop history', () => {
     });
 
     const openingFit = await readFit(page);
+    const openingEffectiveScale = await readEffectiveDocumentScale(page);
     expect(
       { width: openingFit.documentWidth, height: openingFit.documentHeight },
       'the app fitted the opening document, so every coordinate below is an opening-document one'
@@ -972,6 +985,9 @@ test.describe('Crop history', () => {
       width: COMMITTED_WIDTH,
       height: COMMITTED_HEIGHT,
     });
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, cropped, openingEffectiveScale))
+      .toBeLessThan(0.000001);
 
     // The bar's DOCUMENT position moved with the frame origin, so its strip is read under the
     // POST-CROP fit. Reading it under the opening fit is the bug `bandOfDocumentY` is here to
@@ -979,7 +995,7 @@ test.describe('Crop history', () => {
     const croppedFit = await readFit(page);
     expect(
       { width: croppedFit.documentWidth, height: croppedFit.documentHeight },
-      'the app re-fitted the CROPPED document, which is why a document-space coordinate is the only stable one'
+      'contain fit follows the new frame dimensions while fit-scale compensation preserves screen-space pixel scale'
     ).toEqual(cropped);
     const keptOnCropped = bandOfDocumentY(croppedFit, BAR_KEPT_Y - CROP_TOP_Y);
     await waitForInk(page, croppedFit, inkIn(keptOnCropped));
@@ -989,6 +1005,9 @@ test.describe('Crop history', () => {
     // leaving the extent cropped, both fail on this line.
     await page.getByTestId('undo-button').click();
     await expect.poll(() => documentSize(page), 'one undo must put the whole frame back').toEqual(opening);
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, opening, openingEffectiveScale))
+      .toBeLessThan(0.000001);
     const restoredFit = await readFit(page);
     expect(
       { width: restoredFit.documentWidth, height: restoredFit.documentHeight },
@@ -999,6 +1018,19 @@ test.describe('Crop history', () => {
       page.getByTestId('undo-button'),
       'the kept bar sits below the crop, so it is still undoable'
     ).toBeEnabled();
+
+    // Redo and undo exercise the same frame transition through history. Neither transition should
+    // change apparent document-pixel size even though contain fit is recomputed for each frame.
+    await page.getByTestId('redo-button').click();
+    await expect.poll(() => documentSize(page), 'redo reapplies the cropped frame').toEqual(cropped);
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, cropped, openingEffectiveScale))
+      .toBeLessThan(0.000001);
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => documentSize(page), 'undo restores the opening frame again').toEqual(opening);
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, opening, openingEffectiveScale))
+      .toBeLessThan(0.000001);
 
     // AND THE CROP WAS ONE ENTRY, which the disabled state two undos later is the only proof of.
     //
