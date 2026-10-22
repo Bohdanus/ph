@@ -2,10 +2,10 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, type Locator, type Page, test, type TestInfo } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyoutViaKeyboard } from './helpers/toolbar-helpers';
 
 /**
- * Automated accessibility auditing, via axe-core, over four regions of the app.
+ * Automated accessibility auditing, via axe-core, over desktop app regions and a live tablet flyout.
  *
  * ## Why this file exists at all, when the suite already has ~172 role locators
  *
@@ -33,14 +33,14 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  * The app already hand-rolls exactly what axe audits, which is the strongest argument
  * for running axe rather than for trusting the hand-rolled version:
  * `src/components/Mobile/useModalA11y.ts` implements focus containment, the initial
- * focus and the restore, and `src/components/Mobile/MobileLayersDrawer.tsx:112-118`
+ * focus and the restore, and `src/components/Mobile/MobileLayersDrawer.tsx`
  * manages `role="dialog"`, `aria-modal`, `tabIndex={-1}` and the panel ref by hand.
  * The desktop dialogs do it through a shared hook instead
  * (`src/hooks/useDialogFocusContainment.ts`, wired in at
- * `src/components/NewImageDialog/NewImageDialog.tsx:63`). Two hand-written
+ * `src/components/NewImageDialog/NewImageDialog.tsx`). Two hand-written
  * implementations of one rule is precisely the shape that drifts.
  *
- * ## Why FOUR scans and not one whole-page sweep
+ * ## Why scoped scans instead of one whole-page sweep
  *
  * A single `analyze()` over the whole document is the obvious version and it is
  * worthless here: every violation comes back with the same selector prefix, so a
@@ -51,8 +51,8 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  * `workspace-canvas` plus a stack of overlays, and a document-wide sweep attributes
  * whatever it finds there to the shell.
  *
- * The four regions are chosen to cover the four distinct kinds of widget, not the
- * four most-likely-to-fail spots:
+ * The original desktop scopes cover distinct kinds of widget, not only the
+ * most-likely-to-fail spots:
  *
  * 1. **The shell** (`document`, unscoped) — DesktopHeader, the tools rail, the right
  *    dock, the footer. Structure, landmarks, headings, names.
@@ -67,98 +67,46 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *    between the file commands and the document, and before the guard moved into the
  *    app it was a native `confirm()` — which axe cannot audit at all, so nothing else
  *    in this file could ever have covered it.
+ * 5. **A live portalled tool flyout at tablet width** — its positioning wrapper is absent
+ *    from the app-shell scan while the flyout is closed.
  *
- * The fourth was added after the guard changed; the first three are unchanged and
- * none of them was relaxed to make room for it.
+ * The tablet flyout scan is additive; the original desktop scopes are not relaxed.
  *
  * ## What a GREEN run does NOT prove — read this before trusting one
  *
  * This is the part that decides whether the file is worth keeping, so it is stated at
  * length and in the negative.
  *
- * - **Green means axe found nothing in four regions of one viewport, in the light
- *   theme.** It does not mean the app is accessible. axe covers roughly 30-40% of WCAG
+ * - **Green means axe found nothing in the scanned states, in the light theme.** The
+ *   original four scopes use the desktop viewport; the flyout scope uses a tablet
+ *   viewport. It does not mean the app is accessible. axe covers roughly 30-40% of WCAG
  *   as a matter of design; the rest — keyboard operability, focus order, focus
  *   visibility, a screen reader actually understanding a canvas editor, error recovery,
  *   timing — is invisible to it and is mostly invisible to Playwright too.
- * - **The dark theme is NOT scanned, and it is not clean either.** Measured with the
- *   same unscoped shell scan and the theme toggled (`theme-toggle-button`), the dark
- *   palette reports the SAME two `label` violations and the same two structure rules,
- *   plus a DIFFERENT pair of contrast failures: the panel tab labels
- *   `div[aria-controls="panel-body-history"] > .truncate` and the same for `layers`,
- *   which are `dark:text-gray-400` on `dark:bg-gray-700`
- *   (`src/components/SidebarRight/PanelGroup.tsx:42`). A green run on this file says
- *   nothing at all about dark mode; that is a coverage gap, stated here so nobody
- *   reads a green run as covering it.
+ * - **Dark theme is not scanned by this file.** The audits make no dark-theme assertion;
+ *   a green run here does not cover dark mode.
  * - **A canvas photo editor has no meaningful non-visual equivalent.** The document
  *   is a `<canvas>`; its pixels are the content, and there is no DOM to expose. axe
  *   scans the SHELL AROUND the canvas and says nothing about the canvas. A green run
  *   here is a statement about the furniture, not the picture.
- * - **The scans are per-state, not per-app.** Four snapshots. The flyout menu, the
- *   mobile drawers, the Save dialog, the Export menu, the layers rename input, the
- *   History and Layers panels in their rolled-up and icon-only states, every other
- *   tool's options bar, and the dark theme are all UNSCANNED.
+ * - **The scans are per-state, not per-app.** Five snapshots cover the shell, dialogs,
+ *   one options bar, and one tablet flyout. Other overlays and dark theme are unscanned.
  * - **Contrast is measured on a headless render at one window size.** A subpixel
- *   difference between this Chrome and a user's browser, or between a 1x and a 2x
- *   display, moves a borderline pair across the threshold. The two light-theme
- *   failures below are exactly that kind of borderline case — 4.39 against a 4.5
- *   threshold, a 2.4% shortfall — so expect `color-contrast` to be the noisiest rule
- *   here and expect its exact boundary to move.
- * - **`incomplete` is NOT asserted.** axe returns a third bucket, `incomplete`, for
- *   checks it could not decide — in the shell scan, `aria-allowed-role` on one node and
- *   `color-contrast` on two. Asserting it would fail on elements axe correctly admits
- *   it cannot judge, which is a false positive, not a defect. It is attached to the
- *   report in full, its ids are logged on every run, and the attachment records each
- *   node's `targets`, so a reader can see it was there, was not counted, and can find
- *   the element without re-running the scan. `violations` is the only bucket this file
- *   asserts on, and it is asserted EMPTY.
- *   **The `aria-allowed-role` x1 is the one to read by hand.** It goes incomplete when
- *   an element's accessible role is ambiguous, which usually means the `role` and the
- *   element disagree. The two `color-contrast` results land on the `SidebarRight`
- *   `PanelGroup` header (`src/components/SidebarRight/PanelGroup.tsx:40-42`), whose
- *   background is set by class rather than inline — text over a surface axe declines to
- *   judge is usually a design decision, and belongs in `docs/OVERRIDES.md` rather than
- *   in a test if it is deliberate.
- * - **No rule is disabled and no tag filter is applied.** The full default rule set
- *   runs, `best-practice` included. Two of the four failures below are
- *   `best-practice` rules rather than WCAG A/AA, and they are left in on purpose: a
- *   rule that is switched off is a rule nobody reads the output of, and this
- *   repository does not weaken a gate to get green.
- * - **axe is a linter, not a judgement.** A violation on one of the rail's
- *   chevron buttons is a contrast defect; whether that control's GLYPH should be
- *   `»`/`«` at all rather than a word such as "Collapse panels" is an Adobe
- *   question, and `docs/OVERRIDES.md` is where that kind of decision belongs.
- *   (The glyph is not what the audit judges, and a button that needs a name it
- *   does not have is not made to pass by drawing a different character: both
- *   the rail's layout toggle and the dock's collapse toggle carry an
- *   `aria-label` and are addressed by test id, never by the glyph they render.)
- *   Nothing in this file may be made to pass by adding an entry there.
- * - **A pass is only as good as the census line it prints.** Every run logs
- *   `[axe] <label>: N violations, N incomplete, N passed rule(s) — audited N node(s)`.
- *   A scoped scan that stopped matching anything would also report zero violations,
- *   and `resolveScope` cannot catch that on its own; the audited-node count is what
- *   distinguishes a clean region from an empty audit. The measured counts, from the run
- *   that added the fourth scan, are 59 nodes for the New Image dialog, 25 for the
- *   unsaved-changes prompt, 33 for the options bar and 465 for the shell — the options
- *   bar and the shell have both moved as the app grew, which is the same drift this line
- *   exists to make visible.
+ *   difference between browsers or display scales can move a borderline pair across a
+ *   threshold; inspect attached axe details rather than treating a result as universal.
+ * - **Incomplete results are not asserted.** Axe attaches the complete result and logs
+ *   incomplete rules for human review; only the `violations` bucket is a gate.
+ * - **No rule is disabled and no tag filter is applied.** The full default rule set runs,
+ *   including `best-practice`; this repository does not weaken a gate to get green.
+ * - **axe is a linter, not a judgement.** Product-level semantics remain subject to
+ *   Photoshop behavior and the decision records in `docs/OVERRIDES.md`.
+ * - **Every scoped scan reports its audited node count.** This distinguishes a clean
+ *   region from an empty audit and makes scope drift visible without pinning layout size.
  *
- * ## THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE
+ * ## Gate policy
  *
- * Written honestly and run at `main@5cf281a5`: the shell scan reports FOUR violations
- * — two `critical`/`serious` and two `moderate` — and the two scoped scans are clean.
- * None of them is suppressed, none is thresholded around, and no application source
- * was edited to make this file green; that is a separate and much larger piece of
- * work, and it belongs to whoever owns the component.
- *
- * Each failure below was attributed to a source line and each attribution was CHECKED
- * rather than inferred, which is also how the alternative explanation — that a finding
- * is an artifact of the scan's own scope — was ruled out. See the per-test comments.
- *
- * A red spec is a legitimate artefact of adding a linter to a codebase that had
- * none, and deleting these assertions to get a green suite would throw away the only
- * evidence that they were needed. The same rule as every other gate here: do not
- * weaken a gate to get green.
+ * All scans assert zero violations. The original shell findings were repaired in source,
+ * and the tablet flyout is now scanned while open; neither state suppresses rules.
  */
 
 /**
@@ -197,6 +145,7 @@ const DEFAULT_RULESET = 'every axe rule, no tag filter, nothing disabled';
 
 /** The one snapshot every scan below is taken at. */
 const VIEWPORT = { width: 1280, height: 720 };
+const TABLET_VIEWPORT = { width: 900, height: 720 };
 
 /**
  * Renders a violation list as text a human can act on.
@@ -494,7 +443,7 @@ test("the Draw tool's options bar has no axe violations", async ({ page }, testI
 });
 
 /**
- * The application shell, unscoped. THE ONE THAT FAILS.
+ * The application shell, unscoped. The current strict scan passes after the wrapper fix.
  *
  * This is the only scan with no `include`, because the shell IS the thing under test:
  * landmarks and their names, heading structure, the accessible names of icon-only
@@ -504,9 +453,10 @@ test("the Draw tool's options bar has no axe violations", async ({ page }, testI
  * the one whose failure message is least actionable on its own — every selector is a
  * shell-level one. Its value is as a census: it is the scan that finds the contrast
  * pairs the two scoped scans cannot see, because those pairs are spread across the
- * header, the rail, the dock and the footer. It found four, and all four are real.
+ * header, the rail, the dock and the footer. The original baseline found four; the
+ * attribution below is historical context, not a description of current scan output.
  *
- * ## The four violations, and how each was attributed
+ * ## Historical baseline findings
  *
  * Each attribution was verified against the source and, where the finding could have
  * been an artifact of the SCAN rather than of the app, verified in the browser too.
@@ -515,8 +465,8 @@ test("the Draw tool's options bar has no axe violations", async ({ page }, testI
  *
  * 1. **`label`, critical, 2 occurrences.**
  *    `input[data-testid="foreground-color-input"]` and
- *    `input[data-testid="background-color-input"]` — `src/components/SidebarLeft/SidebarLeft.tsx:1240-1247`
- *    and `:1248-1255`. Neither has a `<label>`, an `aria-label` or an `aria-labelledby`.
+ *    `input[data-testid="background-color-input"]` — `src/components/SidebarLeft/SidebarLeft.tsx`.
+ *    Neither had a `<label>`, an `aria-label` or an `aria-labelledby` in the baseline.
  *
  *    **This is the finding most likely to be mistaken for a scan artifact, so it was
  *    checked in the browser rather than reasoned about.** The inputs are styled
@@ -536,17 +486,17 @@ test("the Draw tool's options bar has no axe violations", async ({ page }, testI
  * 2. **`color-contrast`, serious, 2 occurrences.** Both measure 4.39 against a 4.5
  *    threshold — `#6b7280` (`text-gray-500`) on `#f3f4f6` (`bg-gray-100`), a 2.4%
  *    shortfall, so these are borderline rather than egregious.
- *    - `.mt-1` → `data-testid="swap-colors-button"`, `src/components/SidebarLeft/SidebarLeft.tsx:1258-1265`
+ *    - `.mt-1` → `data-testid="swap-colors-button"`, `src/components/SidebarLeft/SidebarLeft.tsx`
  *      (`text-[8px] … text-gray-500`, 8px bold).
  *    - `.justify-between.px-2 > .text-gray-500.text-sm.dark\\:text-gray-400` →
- *      the `© 2025 Photo App` span, `src/components/Footer/Footer.tsx:19`.
+ *      the `© 2025 Photo App` span, `src/components/Footer/Footer.tsx`.
  *
  *    Both are ordinary visible text at ordinary sizes, so neither can be a visibility
  *    artifact. Genuine, and the cheapest of the four to fix.
  *
  * 3. **`page-has-heading-one`, moderate, 1 occurrence** — on `html` itself. There is
  *    no `<h1>` in the shell. `document.querySelectorAll('h1').length` is 0 after load,
- *    and the only `<h1>` in `src/` belongs to `LandingPage.tsx:11`, which nothing
+ *    and the only `<h1>` in `src/` belongs to `LandingPage.tsx`, which nothing
  *    renders. A `best-practice` rule rather than WCAG A/AA, and this is a photo editor
  *    whose surfaces are panels and toolbars, so "the page needs a title heading" is a
  *    weak claim about a canvas app — but it is left enabled on purpose.
@@ -559,7 +509,7 @@ test("the Draw tool's options bar has no axe violations", async ({ page }, testI
  *    `MAIN`, `ASIDE` (dock), `FOOTER`, and the options bar's own parent is a plain
  *    `DIV` with no `data-testid`. `best-practice`, not WCAG A/AA.
  *
- * ## Why none of the four is a scope artifact
+ * ## Historical scope analysis
  *
  * The scan is UNSCOPED — `new AxeBuilder({ page })` with no `include` — so the usual
  * artifact causes do not apply to the structural findings: there is no region to be
@@ -582,4 +532,21 @@ test('the application shell has no axe violations', async ({ page }, testInfo) =
 
   // NO `include`. Scoping this one to a region would be the same as not writing it.
   await expectNoViolations(page, testInfo, 'app-shell', (builder) => builder);
+});
+
+test('a live tool flyout keeps its menu semantics at tablet width', async ({ page }, testInfo) => {
+  await page.setViewportSize(TABLET_VIEWPORT);
+  await page.goto('/');
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+  await expect(page.getByTestId('left-sidebar')).toBeVisible();
+
+  await openToolFlyoutViaKeyboard(page, 'magic-wand');
+  const menu = page.getByRole('menu');
+  await expect(menu).toBeVisible();
+
+  const wrapperSelector = 'div:has(> [data-toolbar-flyout])';
+  const wrapper = await resolveScope(page, wrapperSelector, 'the tablet tool flyout wrapper');
+  expect(await wrapper.getAttribute('role')).toBeNull();
+  expect(await wrapper.getAttribute('aria-label')).toBeNull();
+  await expectNoViolations(page, testInfo, 'tablet-tool-flyout', (builder) => builder.include(wrapperSelector));
 });
