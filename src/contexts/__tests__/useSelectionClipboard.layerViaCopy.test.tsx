@@ -71,10 +71,12 @@ function polygonSelection(overrides: Partial<Selection> = {}): Selection {
     geometry: 'polygon',
     sourceTool: 'freehand-lasso',
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
-      { x: 0, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+        { x: 0, y: 40 },
+      ],
     ],
     pos: { x: 10, y: 20, width: 30, height: 40 },
     ...overrides,
@@ -129,8 +131,10 @@ describe('useSelectionClipboard copy guards', () => {
     storeState.selections = [
       polygonSelection({
         points: [
-          { x: 0, y: 0 },
-          { x: 5, y: 5 },
+          [
+            { x: 0, y: 0 },
+            { x: 5, y: 5 },
+          ],
         ],
       }),
     ];
@@ -172,10 +176,12 @@ describe('useSelectionClipboard copy guards', () => {
     storeState.selections = [
       polygonSelection({
         points: [
-          { x: 0, y: 0 },
-          { x: 5, y: 0 },
-          { x: 5, y: 5 },
-          { x: 0, y: 5 },
+          [
+            { x: 0, y: 0 },
+            { x: 5, y: 0 },
+            { x: 5, y: 5 },
+            { x: 0, y: 5 },
+          ],
         ],
         pos: { x: 95, y: 95, width: 5, height: 5 },
       }),
@@ -208,10 +214,12 @@ describe('useSelectionClipboard copy guards', () => {
     storeState.selections = [
       polygonSelection({
         points: [
-          { x: 0, y: 0 },
-          { x: 10, y: 0 },
-          { x: 10, y: 10 },
-          { x: 0, y: 10 },
+          [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+            { x: 10, y: 10 },
+            { x: 0, y: 10 },
+          ],
         ],
         pos: { x: 90, y: 90, width: 10, height: 10 },
       }),

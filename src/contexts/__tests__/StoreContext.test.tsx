@@ -12,10 +12,12 @@ const rectangularSelection: Selection = {
   isActive: true,
   pos: { x: 10, y: 20, width: 30, height: 40 },
   points: [
-    { x: 0, y: 0 },
-    { x: 30, y: 0 },
-    { x: 30, y: 40 },
-    { x: 0, y: 40 },
+    [
+      { x: 0, y: 0 },
+      { x: 30, y: 0 },
+      { x: 30, y: 40 },
+      { x: 0, y: 40 },
+    ],
   ],
 };
 

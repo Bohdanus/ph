@@ -101,9 +101,11 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
 const OUTGOING_SELECTION: Selection = {
   id: OUTGOING_SELECTION_ID,
   points: [
-    { x: 4, y: 4 },
-    { x: 12, y: 4 },
-    { x: 12, y: 12 },
+    [
+      { x: 4, y: 4 },
+      { x: 12, y: 4 },
+      { x: 12, y: 12 },
+    ],
   ],
   isActive: true,
   pos: { x: 4, y: 4, width: 8, height: 8 },

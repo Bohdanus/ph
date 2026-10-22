@@ -119,9 +119,11 @@ const committedTriangle = (overrides: Partial<Selection> = {}): Selection =>
     lifecycle: 'committed',
     pos: { x: 9, y: 9, width: 92, height: 92 },
     points: [
-      { x: 1, y: 1 },
-      { x: 91, y: 1 },
-      { x: 91, y: 91 },
+      [
+        { x: 1, y: 1 },
+        { x: 91, y: 1 },
+        { x: 91, y: 91 },
+      ],
     ],
     ...overrides,
   }) as Selection;
@@ -325,9 +327,11 @@ describe('PolygonClickToolArea', () => {
       expect(committedSelection()).toMatchObject({
         pos: { x: 13, y: 15, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       });
     });
@@ -361,7 +365,7 @@ describe('PolygonClickToolArea', () => {
         id: expect.any(String),
       });
       // Exactly the one commit, over every anchor the gesture accumulated.
-      expect(committedSelection().points).toHaveLength(6);
+      expect(committedSelection().points[0]).toHaveLength(6);
     });
   });
 
@@ -456,9 +460,11 @@ describe('PolygonClickToolArea', () => {
         id: 'selection-1',
         pos: { x: 24, y: 29, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
         metadata: { movedAtVersion: 2 },
       });
@@ -516,9 +522,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 59, y: 9, width: 42, height: 92 },
         points: [
-          { x: 1, y: 31 },
-          { x: 41, y: 1 },
-          { x: 41, y: 91 },
+          [
+            { x: 1, y: 31 },
+            { x: 41, y: 1 },
+            { x: 41, y: 91 },
+          ],
         ],
         metadata: { movedAtVersion: 1 },
       });
@@ -674,9 +682,11 @@ describe('PolygonClickToolArea', () => {
         id: 'selection-1',
         pos: { x: 59, y: 9, width: 42, height: 92 },
         points: [
-          { x: 1, y: 31 },
-          { x: 41, y: 1 },
-          { x: 41, y: 91 },
+          [
+            { x: 1, y: 31 },
+            { x: 41, y: 1 },
+            { x: 41, y: 91 },
+          ],
         ],
         metadata: { movedAtVersion: 1 },
       });
@@ -1081,9 +1091,11 @@ describe('PolygonClickToolArea', () => {
         sourceTool: 'freehand-lasso',
         pos: { x: 9, y: 9, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       });
     });

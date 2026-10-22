@@ -30,7 +30,7 @@ export function normalizeSelectionPoints(points: Point[]): Pick<Selection, 'poin
   const pos = pointsBoundingPos({ points });
   const normalizedPoints = points.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
 
-  return { points: normalizedPoints, pos };
+  return { points: [normalizedPoints], pos };
 }
 
 export function createCommittedPolygonSelection({
@@ -71,10 +71,12 @@ export function normalizeRectangleSelectionRect(
   return {
     pos: { x, y, width, height },
     points: [
-      { x: 0, y: 0 },
-      { x: width, y: 0 },
-      { x: width, y: height },
-      { x: 0, y: height },
+      [
+        { x: 0, y: 0 },
+        { x: width, y: 0 },
+        { x: width, y: height },
+        { x: 0, y: height },
+      ],
     ],
   };
 }
@@ -126,7 +128,7 @@ export function getActiveRectangularSelection(
 }
 
 export function getSelectionAbsolutePoints(selection: Selection): Point[] {
-  return selection.points.map((point) => ({
+  return selection.points.flat().map((point) => ({
     x: point.x + selection.pos.x,
     y: point.y + selection.pos.y,
   }));
@@ -255,10 +257,12 @@ export function moveSelectionAnchor(selection: Selection, anchorIndex: number, p
       ...selection,
       pos,
       points: [
-        { x: 0, y: 0 },
-        { x: pos.width, y: 0 },
-        { x: pos.width, y: pos.height },
-        { x: 0, y: pos.height },
+        [
+          { x: 0, y: 0 },
+          { x: pos.width, y: 0 },
+          { x: pos.width, y: pos.height },
+          { x: 0, y: pos.height },
+        ],
       ],
       metadata: {
         ...selection.metadata,
@@ -315,7 +319,11 @@ export function hasSameSelectionGeometry(a: Selection, b: Selection): boolean {
   if (aPos.x !== bPos.x || aPos.y !== bPos.y || aPos.width !== bPos.width || aPos.height !== bPos.height) return false;
   if (aPoints.length !== bPoints.length) return false;
 
-  return aPoints.every((point, index) => point.x === bPoints[index].x && point.y === bPoints[index].y);
+  return aPoints.every((contour, index) => {
+    const other = bPoints[index];
+    if (contour.length !== other.length) return false;
+    return contour.every((point, i) => point.x === other[i].x && point.y === other[i].y);
+  });
 }
 
 export type ClipboardCanvas = OffscreenCanvas | HTMLCanvasElement;

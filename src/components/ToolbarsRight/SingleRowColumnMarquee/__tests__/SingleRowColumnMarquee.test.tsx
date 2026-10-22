@@ -67,10 +67,12 @@ const BAND: Selection = {
   isActive: true,
   pos: { x: 0, y: 120, width: 800, height: 1 },
   points: [
-    { x: 0, y: 0 },
-    { x: 800, y: 0 },
-    { x: 800, y: 1 },
-    { x: 0, y: 1 },
+    [
+      { x: 0, y: 0 },
+      { x: 800, y: 0 },
+      { x: 800, y: 1 },
+      { x: 0, y: 1 },
+    ],
   ],
 };
 
@@ -260,9 +262,11 @@ describe('SingleRowColumnMarquee toolbar', () => {
           geometry: 'polygon',
           sourceTool: 'polygonal-lasso',
           points: [
-            { x: 0, y: 0 },
-            { x: 10, y: 0 },
-            { x: 10, y: 10 },
+            [
+              { x: 0, y: 0 },
+              { x: 10, y: 0 },
+              { x: 10, y: 10 },
+            ],
           ],
         },
       ];
@@ -282,10 +286,12 @@ describe('SingleRowColumnMarquee toolbar', () => {
           ...BAND,
           pos: { x: 400, y: 0, width: 1, height: 600 },
           points: [
-            { x: 0, y: 0 },
-            { x: 1, y: 0 },
-            { x: 1, y: 600 },
-            { x: 0, y: 600 },
+            [
+              { x: 0, y: 0 },
+              { x: 1, y: 0 },
+              { x: 1, y: 600 },
+              { x: 0, y: 600 },
+            ],
           ],
         },
       ];

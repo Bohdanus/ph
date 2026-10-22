@@ -80,9 +80,11 @@ function makeSelection(id: string, overrides: Partial<Selection> = {}): Selectio
   return {
     id,
     points: [
-      { x: 0, y: 0 },
-      { x: 8, y: 0 },
-      { x: 8, y: 6 },
+      [
+        { x: 0, y: 0 },
+        { x: 8, y: 0 },
+        { x: 8, y: 6 },
+      ],
     ],
     isActive: true,
     pos: { x: 0, y: 0, width: 8, height: 6 },
@@ -293,7 +295,7 @@ describe('useSelectionHistory durable-plan fallback', () => {
     seed([dragged, active], active.id);
     const moved = makeGesturePayload('dragged', {
       pos: { x: 9, y: 9, width: 8, height: 6 },
-      points: [{ x: 9, y: 9 }],
+      points: [[{ x: 9, y: 9 }]],
       metadata: { featherRadius: 1, movedAtVersion: 3 },
     });
     const failure = new Error('shadow projection failed');
@@ -342,7 +344,7 @@ describe('useSelectionHistory committed selection state', () => {
     const second = makeSelection('second');
     seed([first, second], second.id);
     const drawn = makeGesturePayload('drawn', {
-      points: [{ x: 1, y: 2 }],
+      points: [[{ x: 1, y: 2 }]],
       pos: { x: 1, y: 2, width: 10, height: 12 },
       metadata: { featherRadius: 7, movedAtVersion: 1 },
     });
@@ -360,7 +362,7 @@ describe('useSelectionHistory committed selection state', () => {
         lifecycle: 'committed',
         geometry: 'polygon',
         pos: { x: 1, y: 2, width: 10, height: 12 },
-        points: [{ x: 1, y: 2 }],
+        points: [[{ x: 1, y: 2 }]],
         metadata: { featherRadius: 7, movedAtVersion: 1 },
       },
     ]);
@@ -389,7 +391,7 @@ describe('useSelectionHistory committed selection state', () => {
     seed([dragged, active], active.id);
     const moved = makeGesturePayload('dragged', {
       pos: { x: 20, y: 24, width: 8, height: 6 },
-      points: [{ x: 20, y: 24 }],
+      points: [[{ x: 20, y: 24 }]],
       metadata: { featherRadius: 5, movedAtVersion: 2 },
     });
 
@@ -405,7 +407,7 @@ describe('useSelectionHistory committed selection state', () => {
       lifecycle: 'committed',
       geometry: 'polygon',
       pos: { x: 20, y: 24, width: 8, height: 6 },
-      points: [{ x: 20, y: 24 }],
+      points: [[{ x: 20, y: 24 }]],
       metadata: { featherRadius: 5, movedAtVersion: 2 },
     });
     expect(selections[1]).toEqual(active);
@@ -486,7 +488,7 @@ describe('useSelectionHistory recorded baseline is a value, not a live reference
     // mutated one.
     live.push(makeSelection('later'));
     live[0]!.pos.x = 999;
-    live[0]!.points[0]!.x = 999;
+    live[0]!.points[0]![0]!.x = 999;
     (live[0]!.metadata as { featherRadius: number }).featherRadius = 999;
 
     expect(recorded.selections).toHaveLength(1);

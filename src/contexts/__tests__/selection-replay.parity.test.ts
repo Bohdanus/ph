@@ -53,9 +53,11 @@ function selection(id: string, x: number, y: number, active = true): Selection {
   return {
     id,
     points: [
-      { x, y },
-      { x: x + 20, y },
-      { x: x + 20, y: y + 20 },
+      [
+        { x, y },
+        { x: x + 20, y },
+        { x: x + 20, y: y + 20 },
+      ],
     ],
     isActive: active,
     pos: { x, y, width: 20, height: 20 },

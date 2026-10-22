@@ -1,5 +1,5 @@
 import { SELECTION_ACTION } from '../util/constants.ts';
-import type { Selection, SelectionMetadata } from './general-types.ts';
+import type { Point, Selection, SelectionMetadata } from './general-types.ts';
 import type { SelectionSnapshot } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
 
@@ -115,7 +115,11 @@ function isCanonicalSelection(value: unknown): value is Selection {
     (value.geometry === undefined || value.geometry === 'polygon' || value.geometry === 'rectangle') &&
     (value.sourceTool === undefined ||
       (typeof value.sourceTool === 'string' && SELECTION_SOURCE_TOOLS.some((tool) => tool === value.sourceTool))) &&
-    hasDenseArray(value.points, (point): point is Selection['points'][number] => hasFiniteKeys(point, ['x', 'y'])) &&
+    hasDenseArray(
+      value.points,
+      (contour): contour is Selection['points'][number] =>
+        Array.isArray(contour) && hasDenseArray(contour, (point): point is Point => hasFiniteKeys(point, ['x', 'y']))
+    ) &&
     hasFiniteKeys(value.pos, ['x', 'y', 'width', 'height']) &&
     (value.metadata === undefined || isCanonicalMetadata(value.metadata))
   );
@@ -134,7 +138,7 @@ export function isValidSelectionSnapshot(value: unknown): value is SelectionSnap
 function cloneSelection(selection: Selection): Selection {
   return {
     ...selection,
-    points: selection.points.map((point) => ({ ...point })),
+    points: selection.points.map((contour) => contour.map((point) => ({ ...point }))),
     pos: { ...selection.pos },
     ...(selection.metadata ? { metadata: JSON.parse(JSON.stringify(selection.metadata)) } : {}),
   };
