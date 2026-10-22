@@ -1153,6 +1153,28 @@ that Apply moves that pixel into the resulting frame. It also asserts there is n
 retained-pixel preview at nonzero rotation, so the distinction is explicit rather than an
 unintended fallback.
 
+#### View scale through crop, undo and redo
+
+The canvas uses CSS `object-contain` to fit the current document frame in the workspace, then
+applies the view's zoom multiplier. Without compensation, reducing the frame increases the fit
+scale and makes the remaining pixels look enlarged; extending the frame makes them look smaller.
+That is a viewport fit change, not pixel resampling, but it violates the requested Photoshop-like
+UX: cropping should change the visible frame without changing the apparent size of document pixels.
+Adobe's current crop sources establish that a non-destructive crop retains hidden pixels and that
+ordinary cropping is distinct from resampling. They do not explicitly specify whether the desktop
+viewport's zoom percentage or apparent pixel size changes immediately after Apply. The scale
+invariant below is therefore an app behavior chosen to meet the requested UX, not a sourced claim
+about Photoshop's post-commit viewport handling.
+
+`StoreProvider` now detects a frame transition within the same document and adjusts an internal
+fit-scale compensation by `oldContainFit / newContainFit`. The effective scale (`containFit × view
+zoom × fit-scale compensation`) stays constant for crops and for frame changes replayed by undo or
+redo, while the View toolbar's zoom setting remains unchanged. Replacing the document resets the
+view as before. The effective view zoom obeys the existing 10%-1600% limit; an extreme frame change
+can reach a limit, so exact scale preservation is bounded there. The
+`preserves displayed pixel scale when a crop changes the document frame` StoreContext test and the
+pure shrink/grow cases in `view-state.test.ts` pin the calculation.
+
 The app still has no **Delete Cropped Pixels** control to offer or invert, and no
 `Image ▸ Reveal All` menu item (`grep` for `Reveal All` across `src/` returns nothing outside
 this notes file). Re-cropping can reveal only content still present in layer sources; flattening

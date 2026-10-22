@@ -2,6 +2,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useReducer,
@@ -29,7 +30,12 @@ import type {
   SelectionSourceTool,
   Size,
 } from './general-types.ts';
-import { DEFAULT_VIEW_STATE, viewStateRef, type ViewState } from './view-state.ts';
+import {
+  DEFAULT_VIEW_STATE,
+  preserveViewScaleCompensationAcrossFrameChange,
+  viewStateRef,
+  type ViewState,
+} from './view-state.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
@@ -1315,6 +1321,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Keep live DOM refs out of the reducer initializer; expose them after state updates.
   const [storeState, rawDispatch] = useReducer(reducer, initialState);
+  const previousPresentedFrameRef = useRef({
+    documentId: storeState.documentId,
+    documentRevision: storeState.documentRevision,
+    frame: storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize),
+  });
+  useLayoutEffect(() => {
+    const nextFrame = storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize);
+    const previous = previousPresentedFrameRef.current;
+    if (
+      previous.documentId === storeState.documentId &&
+      previous.documentRevision === storeState.documentRevision &&
+      !documentFrameEquals(previous.frame, nextFrame)
+    ) {
+      const viewport = containerRef.current?.getBoundingClientRect();
+      if (viewport && viewport.width > 0 && viewport.height > 0) {
+        const nextCompensation = preserveViewScaleCompensationAcrossFrameChange(
+          viewStateRef.current.zoom,
+          viewStateRef.current.fitScaleCompensation,
+          { width: viewport.width, height: viewport.height },
+          documentFrameSize(previous.frame),
+          documentFrameSize(nextFrame)
+        );
+        if (nextCompensation !== viewStateRef.current.fitScaleCompensation) {
+          viewStateRef.current = { ...viewStateRef.current, fitScaleCompensation: nextCompensation };
+          forceViewStateUpdate((value) => value + 1);
+        }
+      }
+    }
+    previousPresentedFrameRef.current = {
+      documentId: storeState.documentId,
+      documentRevision: storeState.documentRevision,
+      frame: nextFrame,
+    };
+  }, [storeState.documentFrame, storeState.documentId, storeState.documentRevision, storeState.totalSize]);
   const latestStateRef = useRef(storeState);
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before

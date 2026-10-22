@@ -176,6 +176,10 @@ interface Fit {
   readonly rectY: number;
   readonly rectWidth: number;
   readonly rectHeight: number;
+  readonly viewZoom: number;
+  readonly viewPanX: number;
+  readonly viewPanY: number;
+  readonly viewRotation: number;
 }
 
 /**
@@ -213,8 +217,17 @@ async function readFit(page: Page): Promise<Fit> {
       rectY: read('data-fit-rect-y'),
       rectWidth: read('data-fit-outer-width'),
       rectHeight: read('data-fit-outer-height'),
+      viewZoom: read('data-view-effective-zoom'),
+      viewPanX: read('data-view-pan-x'),
+      viewPanY: read('data-view-pan-y'),
+      viewRotation: read('data-view-rotation'),
     };
   });
+}
+
+async function readEffectiveDocumentScale(page: Page): Promise<number> {
+  const fit = await readFit(page);
+  return fit.scale * fit.viewZoom;
 }
 
 /**
@@ -242,9 +255,16 @@ async function documentSize(page: Page): Promise<DocumentSize> {
 
 /** A document point, as an absolute page point. The forward direction of the app's own fit. */
 function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoint {
+  const centerX = fit.rectWidth / 2;
+  const centerY = fit.rectHeight / 2;
+  const relativeX = fit.offsetX + documentX * fit.scale - centerX;
+  const relativeY = fit.offsetY + documentY * fit.scale - centerY;
+  const angle = (fit.viewRotation * Math.PI) / 180;
+  const rotatedX = relativeX * Math.cos(angle) - relativeY * Math.sin(angle);
+  const rotatedY = relativeX * Math.sin(angle) + relativeY * Math.cos(angle);
   return {
-    x: fit.rectX + fit.offsetX + documentX * fit.scale,
-    y: fit.rectY + fit.offsetY + documentY * fit.scale,
+    x: fit.rectX + centerX + fit.viewPanX + fit.viewZoom * rotatedX,
+    y: fit.rectY + centerY + fit.viewPanY + fit.viewZoom * rotatedY,
   };
 }
 
@@ -374,13 +394,13 @@ async function readCanvasRegion(page: Page, testId: string, x: number, y: number
  * document's own edge ON THE PAGE, which is where the two numbers have to be compared.
  */
 function expectReleasePastDocumentEdge(fit: Fit, release: PagePoint, edge: string, what: string): void {
-  const left = fit.rectX + fit.offsetX;
-  const top = fit.rectY + fit.offsetY;
+  const left = documentPoint(fit, 0, 0).x;
+  const top = documentPoint(fit, 0, 0).y;
   const documentEdge = {
     left,
-    right: left + fit.documentWidth * fit.scale,
+    right: documentPoint(fit, fit.documentWidth, 0).x,
     top,
-    bottom: top + fit.documentHeight * fit.scale,
+    bottom: documentPoint(fit, 0, fit.documentHeight).y,
   }[edge];
   if (documentEdge === undefined) throw new Error(`no document edge is named ${edge}`);
 
@@ -1108,12 +1128,16 @@ test.describe('Crop history', () => {
     test('re-cropping after layer edits previews and recovers retained pixels without scaling', async ({ page }) => {
       await openDocument(page);
       const openingFit = await readFit(page);
+      const openingEffectiveScale = await readEffectiveDocumentScale(page);
       const recoverableBarY = CROP_TOP_Y - 20;
       await drawBar(page, openingFit, recoverableBarY);
       await waitForInk(page, openingFit, inkIn(bandOfDocumentY(openingFit, recoverableBarY)));
       const sourcePixels = await readCanvasRegion(page, 'workspace-canvas', 350, recoverableBarY - 6, 100, 12);
       await commitCrop(page);
       expect(await documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT });
+      await expect
+        .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - openingEffectiveScale))
+        .toBeLessThan(0.000001);
 
       // A pixel edit after cropping, followed by visibility history, must not discard retained
       // source pixels outside the frame or break the next crop's layer-stack preview.
@@ -1150,6 +1174,9 @@ test.describe('Crop history', () => {
       expect(recoveredPixels, 'the committed crop restores the original raster region without resampling').toEqual(
         sourcePixels
       );
+      await expect
+        .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - openingEffectiveScale))
+        .toBeLessThan(0.000001);
     });
 
     test('a rotated recrop commits retained pixels outside the prior frame', async ({ page }, testInfo) => {
