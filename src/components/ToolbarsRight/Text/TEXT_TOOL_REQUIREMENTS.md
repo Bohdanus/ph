@@ -1369,12 +1369,14 @@ tool's cross-layer preference lifecycle. The sticky-character-settings portion i
 app's explicit contract informed by Photoshop conventions, not an Adobe quote; the reset angle is an
 app requirement for the per-layer transform supported here.
 
-**For a new text draft after Apply:** the app keeps the character choices — font family, size,
-bold, italic, color, leading, tracking, alignment, caps, underline and strikethrough — and starts
-the draft at `0°`, with point type as the new-draft kind. The just-committed layer keeps its own
-angle, and selecting that layer for editing restores its angle and kind. The persisted character
-choices also survive leaving and returning to the Text tool. The previous draft's text and geometry
-do not carry over.
+**For a new text draft after Apply or a second canvas placement:** the app keeps the character
+choices — font family, size, bold, italic, color, leading, tracking, alignment, caps, underline and
+strikethrough — and starts the draft at `0°`, with point type as the new-draft kind. A second canvas
+placement implicitly commits the open draft before creating the new placeholder. That new
+placeholder must use the reset tool angle, not the just-committed layer's stale angle. The
+just-committed layer keeps its own angle, and selecting that layer for editing restores its angle
+and kind. The persisted character choices also survive leaving and returning to the Text tool. The
+previous draft's text and geometry do not carry over.
 
 **What Adobe establishes:** character formatting can be applied to selected text
 ([Format characters](https://helpx.adobe.com/photoshop/desktop/text-typography/characters-glyphs/format-characters.html));

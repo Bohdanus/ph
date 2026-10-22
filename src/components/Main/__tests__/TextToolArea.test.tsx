@@ -14,6 +14,7 @@ type TextArgs = {
   fontFamily: string;
   fontSize: number;
   italic: boolean;
+  angle?: number;
   kind?: 'point' | 'paragraph';
   lineHeight: number;
   text?: string;
@@ -383,7 +384,22 @@ describe('TextToolArea', () => {
         rect: newRect,
         kind: 'paragraph',
         placeholderUntouched: true,
+        angle: 0,
       });
+    });
+
+    it('resets the previous layer angle when a canvas placement implicitly commits its draft', () => {
+      toolArgs = makeTextArgs({ text: 'Rotation source', angle: 73, rect: { x1: 0, y1: 0, x2: 40, y2: 20 } });
+      h.commitDirtyTool.mockReturnValue({} as never);
+      vi.mocked(calculateNewRect).mockReturnValue({ x1: 60, y1: 60, x2: 100, y2: 80 });
+
+      const rendered = renderArea();
+      gesture(rendered, { x: 60, y: 60 }, { x: 60, y: 60 }, { x1: 60, y1: 60, x2: 60, y2: 60 });
+
+      expect(h.commitDirtyTool).toHaveBeenCalledOnce();
+      expect(h.setToolArgs).toHaveBeenCalledWith(
+        expect.objectContaining({ text: PLACEHOLDER_TEXT, angle: 0, rect: { x1: 60, y1: 60, x2: 100, y2: 80 } })
+      );
     });
 
     it('does not republish the args when only the store foreground changed', () => {
