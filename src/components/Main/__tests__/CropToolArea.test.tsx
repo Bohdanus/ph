@@ -11,12 +11,14 @@ const devicePixelRatioState = vi.hoisted(() => ({ current: 1 }));
 const storeState = vi.hoisted(
   (): {
     totalSize: { width: number; height: number };
+    viewState: { panX: number; panY: number; zoom: number; fitScaleCompensation: number; rotation: number };
     documentFrame: { x: number; y: number; width: number; height: number };
     layers: Record<string, never>;
     history: Array<{ actionName: string; disabled?: boolean }>;
     historyIndex: number;
   } => ({
     totalSize: { width: 800, height: 600 },
+    viewState: { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0 },
     documentFrame: { x: 0, y: 0, width: 800, height: 600 },
     layers: {},
     history: [],
@@ -707,18 +709,21 @@ describe('CropToolArea', () => {
     });
 
     it('places the overhang with the contain fit the pointer divides by', () => {
-      // The one thing that must not be re-derived: this transform is the fit `getLocalCoords` and
-      // `drawMask` used, so the pieces below it land where the canvas put the document.
+      // The fit plane and view plane mirror the two transforms the canvas receives: contain fit
+      // inside the document, then pan/zoom/rotation around the workspace viewport.
       toolArgsState.toolArgs.rect = { x1: 700, y1: 500, x2: 900, y2: 700 };
       const { container } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
 
       repaint(toolArgsState.toolArgs.rect);
 
-      const layer = container.querySelector<HTMLElement>('[data-testid="crop-overhang-overlay"]')
-        ?.firstElementChild as HTMLElement;
-      expect(layer.style.transform).toBe('translate(100px, 100px) scale(1)');
-      expect(layer.style.width).toBe('800px');
-      expect(layer.style.height).toBe('600px');
+      const overlay = container.querySelector<HTMLElement>('[data-testid="crop-overhang-overlay"]');
+      expect(overlay?.style.transform).toBe('');
+      const viewPlane = overlay?.firstElementChild as HTMLElement;
+      expect(viewPlane.style.transform).toBe('translate(0px, 0px) scale(1) rotate(0deg)');
+      const fitPlane = viewPlane.firstElementChild as HTMLElement;
+      expect(fitPlane.style.transform).toBe('translate(100px, 100px) scale(1)');
+      expect(fitPlane.style.width).toBe('800px');
+      expect(fitPlane.style.height).toBe('600px');
     });
 
     it('keeps the overlay out of the gesture path', () => {

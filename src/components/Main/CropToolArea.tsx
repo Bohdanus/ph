@@ -18,6 +18,7 @@ import {
 import { drawLayersToCanvas } from '../../contexts/layer-renderer.ts';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
+import { effectiveViewZoom } from '../../contexts/view-state.ts';
 
 type cropToolAreaProps = {
   className?: string;
@@ -239,8 +240,9 @@ function cropOverhangPieces(rect: RectXYSorted, frameSize: Size, fit: ContainDim
 }
 
 export const CropToolArea = ({ className }: cropToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, canvasRef, totalSize, documentFrame, layers, history, historyIndex }] =
-    useStore();
+  const [
+    { containerRef, toolOverlayRef, canvasRef, totalSize, documentFrame, layers, history, historyIndex, viewState },
+  ] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const { applyDocumentCrop } = useLayers();
   const dpr = useDevicePixelRatio();
@@ -257,6 +259,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   } = args;
   const frameWidth = totalSize.width;
   const frameHeight = totalSize.height;
+  const viewTransform = `translate(${viewState.panX}px, ${viewState.panY}px) scale(${effectiveViewZoom(viewState)}) rotate(${viewState.rotation}deg)`;
   const currentFrame = useMemo(
     () => documentFrame ?? documentFrameFromSize({ width: frameWidth, height: frameHeight }),
     [documentFrame, frameHeight, frameWidth]
@@ -506,64 +509,64 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 overflow-hidden"
         >
-          {/*
-            The contain fit, applied once to a frame-sized layer, so everything inside is in
-            canvas px and the box div below carries the same numbers `drawMask` stroked.
-            `origin-top-left` matters: `translate` then `scale` about the default centre would put
-            the frame somewhere other than the place `getLocalCoords` reports.
-          */}
-          <div
-            className="absolute left-0 top-0 origin-top-left"
-            style={{
-              width: totalSize.width,
-              height: totalSize.height,
-              transformOrigin: `${(painted.rect.x1 + painted.rect.x2) / 2}px ${(painted.rect.y1 + painted.rect.y2) / 2}px`,
-              transform:
-                angle === 0
-                  ? `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale})`
-                  : `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale}) rotate(${angle}deg)`,
-            }}
-          >
-            {recoveryPreviewFrame && (
-              <canvas
-                ref={recoveryPreviewCanvasRef}
-                data-testid="crop-retained-pixels-preview"
-                aria-hidden="true"
-                className="pointer-events-none absolute"
-                style={{
-                  left: recoveryPreviewFrame.x - currentFrame.x,
-                  top: recoveryPreviewFrame.y - currentFrame.y,
-                  width: recoveryPreviewFrame.width,
-                  height: recoveryPreviewFrame.height,
-                }}
-              />
-            )}
-            {overhangPieces.map((piece) => (
-              <div
-                key={`${piece.kind}-${piece.x}-${piece.y}-${piece.width}-${piece.height}`}
-                data-testid={PIECE_TEST_ID[piece.kind]}
-                // Visual only, on every piece and not just the handles: the whole subtree is already
-                // out of hit testing through the wrapper, and a piece that became a hit target would
-                // be a second, silent answer to "which edge is under the pointer" competing with
-                // `getEdgeAtPoint`.
-                className="pointer-events-none absolute"
-                style={{
-                  left: piece.x,
-                  top: piece.y,
-                  width: piece.width,
-                  height: piece.height,
-                  backgroundColor: piece.kind === 'dim' ? DIM : piece.kind === 'handle' ? OUTLINE : undefined,
-                  // `drawMask` strokes a dashed line at `[5 / scale, 5 / scale]` canvas px. The
-                  // same dash in CSS px is the same pattern, and it starts at the box corner here
-                  // for the same reason the path starts there. A handle is a `fillRect`, so it is
-                  // solid and never reaches this branch.
-                  backgroundImage:
-                    piece.kind === 'outline'
-                      ? `repeating-linear-gradient(${piece.width >= piece.height ? 'to right' : 'to bottom'}, ${OUTLINE} 0 ${dash}px, transparent ${dash}px ${dash * 2}px)`
-                      : undefined,
-                }}
-              />
-            ))}
+          <div className="absolute inset-0" style={{ transform: viewTransform }}>
+            {/*
+              The contain fit, applied once to a frame-sized layer, so everything inside is in
+              canvas px and the box div below carries the same numbers `drawMask` stroked. Starting
+              at the top left matches the canvas's contain-fit transform; this wrapper's parent
+              applies the workspace view transform, while the outer wrapper keeps the result
+              clipped to the untransformed workspace bounds.
+            */}
+            <div
+              className="absolute left-0 top-0 origin-top-left"
+              style={{
+                width: totalSize.width,
+                height: totalSize.height,
+                transformOrigin: 'top left',
+                transform: `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale})`,
+              }}
+            >
+              {recoveryPreviewFrame && (
+                <canvas
+                  ref={recoveryPreviewCanvasRef}
+                  data-testid="crop-retained-pixels-preview"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: recoveryPreviewFrame.x - currentFrame.x,
+                    top: recoveryPreviewFrame.y - currentFrame.y,
+                    width: recoveryPreviewFrame.width,
+                    height: recoveryPreviewFrame.height,
+                  }}
+                />
+              )}
+              {overhangPieces.map((piece) => (
+                <div
+                  key={`${piece.kind}-${piece.x}-${piece.y}-${piece.width}-${piece.height}`}
+                  data-testid={PIECE_TEST_ID[piece.kind]}
+                  // Visual only, on every piece and not just the handles: the whole subtree is already
+                  // out of hit testing through the wrapper, and a piece that became a hit target would
+                  // be a second, silent answer to "which edge is under the pointer" competing with
+                  // `getEdgeAtPoint`.
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: piece.x,
+                    top: piece.y,
+                    width: piece.width,
+                    height: piece.height,
+                    backgroundColor: piece.kind === 'dim' ? DIM : piece.kind === 'handle' ? OUTLINE : undefined,
+                    // `drawMask` strokes a dashed line at `[5 / scale, 5 / scale]` canvas px. The
+                    // same dash in CSS px is the same pattern, and it starts at the box corner here
+                    // for the same reason the path starts there. A handle is a `fillRect`, so it is
+                    // solid and never reaches this branch.
+                    backgroundImage:
+                      piece.kind === 'outline'
+                        ? `repeating-linear-gradient(${piece.width >= piece.height ? 'to right' : 'to bottom'}, ${OUTLINE} 0 ${dash}px, transparent ${dash}px ${dash * 2}px)`
+                        : undefined,
+                  }}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}
