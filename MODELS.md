@@ -19,8 +19,9 @@
 ## Provider Rules
 
 - GPT models (Luna, Terra, and Sol) must always use `openai`: `task --model "<model>" --provider "openai"`.
-- I do not have an OpenRouter budget, so use only free or very low-cost models there when unavoidable. Never use it for GPT models.
+- **Free-first:** Prefer free models for high-signal text sweeps (web research, docs, chat history, code search) and simple code writing or review. Batch large inputs into bounded chunks and return concise results with source paths or citations. Try another free source if one is unavailable or rate-limited; never silently fall through to a paid model.
+- **Choose a free source:** Start with Kilo (`--provider "kilo"`), using `kilo-auto/free` or a live catalog entry explicitly marked `(free)`; Kilo usually has more free capacity than OpenRouter, but that can change. OpenRouter is also allowed for free work: use `--provider "openrouter"` with `openrouter/free` or a current model explicitly marked `:free`. Check the live catalog, exact provider/model pair, price, and limits before a sweep; do not assume an old model name is still free. Other free options include OpenCode Console models marked Free and local models through Ollama or LM Studio. Do not use paid OpenRouter models without explicit approval.
 - Pass `model` and `provider` together.
 - Free sessions must not launch GPT subagents or perform Git operations.
-- `kilo` provides 200 requests/hour per IP and requires no credits.
+- Kilo's anonymous free gateway currently documents 200 requests/hour per IP; account/IDE and provider limits may differ.
 - Model names can be ambiguous between free and paid variants; use the full name with the `(free)` suffix (for example, `Reflection: Beam 1.0 (free)`).
