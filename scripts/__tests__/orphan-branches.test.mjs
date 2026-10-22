@@ -117,4 +117,33 @@ describe('a branch nobody holds', () => {
     expect(text).toMatch(/Nothing here is retired by this command/);
     expect(text).toMatch(/x\s+2\s+conflicts\s+3\s+behind/);
   });
+
+  it('keeps total count separate from limited JSON branches', () => {
+    const root = fixture();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+      const extra = join(root, 'extra-wt');
+      g('worktree', 'add', '--quiet', '-b', 'orphan-extra', extra);
+      writeFileSync(join(extra, 'extra.txt'), 'extra\n');
+      execFileSync('git', ['add', '-A'], { cwd: extra, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'orphan-extra commit'], { cwd: extra, stdio: 'ignore' });
+      g('worktree', 'remove', extra);
+      const rows = collectOrphanBranches({ cwd: root, base: 'main' });
+      expect(rows).toHaveLength(2);
+
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        expect(main(['--json', '--limit', '1'], { cwd: root })).toBe(0);
+        expect(JSON.parse(String(write.mock.calls[0][0]))).toEqual({
+          base: 'main',
+          count: rows.length,
+          branches: rows.slice(0, 1),
+        });
+      } finally {
+        write.mockRestore();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
