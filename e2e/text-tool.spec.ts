@@ -2501,10 +2501,9 @@ test.describe('Text tool', () => {
     await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
     await page.mouse.up();
 
-    await expect(surface, 'the text draft did not retain its rotated angle').toHaveAttribute(
-      'data-rotation',
-      /8[5-9]|9[0-5]/
-    );
+    const rotation = Number(await surface.getAttribute('data-rotation'));
+    expect(rotation, 'the text draft did not retain its rotated angle').toBeGreaterThanOrEqual(85);
+    expect(rotation, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
 
     // Match the reported flow: placing elsewhere implicitly commits the first text and starts a
     // second draft. The second point is remote from the rotated source so this must be a placement,
@@ -2517,6 +2516,60 @@ test.describe('Text tool', () => {
     );
     await expect(draftOverlay(page), 'the new placeholder must render upright').toHaveCSS('transform', 'none');
     await expect(surface, 'a new text placement must start with a neutral angle').toHaveAttribute('data-rotation', '0');
+  });
+
+  test('Apply preserves the committed text angle and resets the next placement to zero degrees', async ({ page }) => {
+    const box = await canvasBox(page);
+    const layerRows = page.getByTitle('Drag to reorder');
+    const initialLayerCount = await layerRows.count();
+    await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    await replaceDraftText(page, 'Apply rotation source');
+
+    const overlay = await draftOverlay(page).boundingBox();
+    expect(overlay, 'the point-text draft did not appear').not.toBeNull();
+    const surface = page.locator('.cursor-text');
+    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
+    await page.mouse.move(corner.x, corner.y);
+    await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+
+    await page.mouse.down();
+    const centerX = overlay!.x + overlay!.width / 2;
+    const centerY = overlay!.y + overlay!.height / 2;
+    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
+    await page.mouse.up();
+    const rotatedAngle = (await surface.getAttribute('data-rotation')) ?? '';
+    const rotatedAngleDegrees = Number(rotatedAngle);
+    expect(rotatedAngleDegrees, 'the text draft did not retain its rotated angle').toBeGreaterThanOrEqual(85);
+    expect(rotatedAngleDegrees, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
+
+    await commitButton(page).click();
+    await expect(draftOverlay(page), 'Apply did not commit the rotated text layer').toHaveCount(0);
+    await expect(layerRows, 'Apply did not create the rotated text layer').toHaveCount(initialLayerCount + 1);
+
+    // Re-entering the committed layer must restore its own transform; resetting the tool for a new
+    // placement must not alter the angle stored on this layer.
+    await page.mouse.click(centerX, centerY);
+    await expect(draftOverlay(page), 'clicking the committed text did not re-enter editing').toHaveText(
+      'Apply rotation source'
+    );
+    await expect(surface, 'the committed layer lost its rotation when it was applied').toHaveAttribute(
+      'data-rotation',
+      rotatedAngle
+    );
+
+    await replaceDraftText(page, 'Applied rotation source');
+    await commitButton(page).click();
+    await expect(draftOverlay(page), 'Apply left the committed text editor open').toHaveCount(0);
+    await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.8);
+    await expect(draftOverlay(page), 'the next placement did not create a fresh placeholder').toHaveText('Lorem ipsum');
+    await expect(draftOverlay(page), 'the next placeholder after Apply must render upright').toHaveCSS(
+      'transform',
+      'none'
+    );
+    await expect(surface, 'Apply must reset the next text placement to a neutral angle').toHaveAttribute(
+      'data-rotation',
+      '0'
+    );
   });
 
   /**
