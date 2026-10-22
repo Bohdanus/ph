@@ -1179,6 +1179,65 @@ test.describe('Crop history', () => {
         .toBeLessThan(0.000001);
     });
 
+    test('a recrop resize and move keep the crop frame aligned with the zoomed canvas', async ({ page }) => {
+      await openDocument(page);
+      await commitCrop(page);
+      const croppedFit = await readFit(page);
+      await drawBar(page, croppedFit, 100);
+
+      // Re-entering crop after both a frame change and a pixel edit is the reported path. The
+      // previous crop deliberately leaves a non-unit view zoom compensation so the canvas has a
+      // transformed view when the crop box grows outside its current frame.
+      await clickToolButton(page, 'move');
+      const fit = await openCropTool(page);
+      const topEdge = documentPoint(fit, fit.documentWidth / 2, 0);
+      const extendedTop = documentPoint(fit, fit.documentWidth / 2, -40);
+      await page.mouse.move(topEdge.x, topEdge.y);
+      await page.mouse.down();
+      await page.mouse.move(extendedTop.x, extendedTop.y, { steps: 12 });
+      await page.mouse.up();
+
+      const readTopOutlineCenter = () =>
+        page.getByTestId('crop-overhang-outline').evaluateAll((elements) => {
+          const horizontal = elements
+            .map((element) => {
+              const rect = element.getBoundingClientRect();
+              return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+            })
+            .filter((rect) => rect.width > rect.height)
+            .sort((left, right) => right.width - left.width)[0];
+          if (!horizontal) throw new Error('the extended crop top edge was not rendered');
+          return { x: horizontal.x + horizontal.width / 2, y: horizontal.y + horizontal.height / 2 };
+        });
+      const expectedTop = documentPoint(fit, fit.documentWidth / 2, -40);
+      await expect
+        .poll(async () => {
+          const actual = await readTopOutlineCenter();
+          return Math.max(Math.abs(actual.x - expectedTop.x), Math.abs(actual.y - expectedTop.y));
+        })
+        .toBeLessThan(2);
+
+      // Move the whole crop rectangle after resizing it. Its top edge should move by the same
+      // document-space delta while the underlying document remains in place.
+      const moveFrom = documentPoint(fit, fit.documentWidth / 2, 120);
+      const moveTo = documentPoint(fit, fit.documentWidth / 2 + 30, 145);
+      await page.mouse.move(moveFrom.x, moveFrom.y);
+      await page.mouse.down();
+      await page.mouse.move(moveTo.x, moveTo.y, { steps: 12 });
+      await page.mouse.up();
+
+      const movedTop = documentPoint(fit, fit.documentWidth / 2 + 30, -15);
+      await expect
+        .poll(async () => {
+          const actual = await readTopOutlineCenter();
+          return Math.max(Math.abs(actual.x - movedTop.x), Math.abs(actual.y - movedTop.y));
+        })
+        .toBeLessThan(2);
+
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT + 40 });
+    });
+
     test('a rotated recrop commits retained pixels outside the prior frame', async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 1800, height: 1400 });
       await openDocument(page);
