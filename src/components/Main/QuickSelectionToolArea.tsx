@@ -10,7 +10,7 @@ import {
   getActiveSelection,
   getSelectionAbsolutePoints,
 } from '../../util/selection.ts';
-import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
 import { resetOverlayAlpha } from '../../util/canvas.ts';
 import {
   QUICK_SELECTION_SOURCE_TOOL,
@@ -175,7 +175,10 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     // base makes a `subtract` stroke select nothing — the same no-op Photoshop gives a
     // subtract brush with no selection to subtract from.
     const activeSelection = getActiveSelection(selections, activeSelectionId);
-    const basePoints = activeSelection ? getSelectionAbsolutePoints(activeSelection) : [];
+    // Stored points are document-space; the rasterizer and stroke seeds use frame-local coordinates.
+    const basePoints = activeSelection
+      ? getSelectionAbsolutePoints(activeSelection).map((point) => documentToCanvasPoint(point, documentFrame))
+      : [];
     const baseMask = basePoints.length >= 3 ? rasterizeSelectionMask(basePoints, size) : null;
 
     pointerIdRef.current = typeof event.pointerId === 'number' ? event.pointerId : null;
