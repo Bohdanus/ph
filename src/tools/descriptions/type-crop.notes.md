@@ -907,11 +907,19 @@ a demotion as the mechanism for enabling hidden-pixel recovery.
 
 **App consequence.** The app always implements the non-destructive frame-change case. It has no
 Delete Cropped Pixels toggle or `Image ▸ Reveal All` command, but re-entering Crop after a frame
-change exposes a crop box that can be expanded; retained source pixels are previewed at angle zero
-and revealed on Apply. The app's transparent empty-area behavior is the separate OVR-1 decision,
-not a limit on recovering retained pixels. The earlier version of this section called the app
-destructive, which inverted Adobe's own delete-versus-hide contrast; see "Is the app's crop
-destructive?" below.
+change exposes a crop box that can be expanded; retained source pixels appear immediately when the
+tool is re-entered. Adobe's tutorial asks the user to click the image after selecting Crop, so the
+immediate reveal is the app's chosen behavior rather than an exact interaction claim about
+Photoshop. Retained source pixels are previewed at angle zero and revealed on Apply. The preview
+composes a union of the current and retained frame bounds, even
+when that union exceeds one crop frame. Its backing resolution is reduced to keep each surface at
+or below 4096 pixels per side and the five renderer surfaces within a 16,777,216-pixel aggregate
+budget; retained unions above an 8192:1 aspect ratio cannot produce a non-zero preview. These
+preview limits do not modify layer source pixels. Crop commits themselves are capped at 4096 pixels
+per side and 16,777,216 frame pixels. The app's transparent empty-area behavior is the separate
+OVR-1 decision, not a limit on recovering retained pixels. The earlier version of this section
+called the app destructive, which inverted Adobe's own delete-versus-hide contrast; see "Is the
+app's crop destructive?" below.
 
 ### Use Classic Mode, and the version boundary that was not Adobe's
 

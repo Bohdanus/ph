@@ -624,6 +624,125 @@ describe('CropToolArea', () => {
       expect(backingPixels).toBeLessThanOrEqual(Math.floor(16_777_216 / 5));
       expect(backingPixels * 5).toBeLessThanOrEqual(16_777_216);
     });
+
+    it('previews a retained union just larger than one crop frame', () => {
+      devicePixelRatioState.current = 2;
+      const previousFrame = { x: 0, y: 0, width: 4096, height: 4096 };
+      const currentFrame = { x: 1, y: 0, width: 4096, height: 4096 };
+      storeState.documentFrame = currentFrame;
+      storeState.totalSize = { width: 4096, height: 4096 };
+      storeState.history = [
+        {
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          args: { previousFrame, nextFrame: currentFrame },
+        },
+      ];
+      storeState.historyIndex = 0;
+      vi.mocked(drawLayersToCanvas).mockReturnValue(true);
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(createGuideContext() as never);
+
+      const { container } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      act(() => {
+        useRectProps.current!.onRepaint?.({ x1: 0, y1: 0, x2: 4096, y2: 4096 });
+      });
+
+      expect(container.querySelector('[data-testid="crop-retained-pixels-preview"]')).not.toBeNull();
+      expect(vi.mocked(drawLayersToCanvas).mock.calls[0]?.[2]).toEqual({ x: 0, y: 0, width: 4097, height: 4096 });
+      const backingScale = vi.mocked(drawLayersToCanvas).mock.calls[0]?.[4];
+      if (backingScale === undefined) throw new Error('retained-pixel renderer was not called');
+      const backingWidth = Math.round(4097 * backingScale);
+      const backingHeight = Math.round(4096 * backingScale);
+      expect(backingWidth).toBeGreaterThan(0);
+      expect(backingHeight).toBeGreaterThan(0);
+      expect(backingWidth).toBeLessThanOrEqual(4096);
+      expect(backingHeight).toBeLessThanOrEqual(4096);
+      expect(backingWidth * backingHeight).toBeLessThanOrEqual(Math.floor(16_777_216 / 5));
+    });
+
+    it('caps a long retained union by backing side as well as aggregate pixel count', () => {
+      devicePixelRatioState.current = 2;
+      const previousFrame = { x: 0, y: 0, width: 50_000, height: 100 };
+      const currentFrame = { x: 1, y: 0, width: 4096, height: 100 };
+      storeState.documentFrame = currentFrame;
+      storeState.totalSize = { width: 4096, height: 100 };
+      storeState.history = [
+        {
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          args: { previousFrame, nextFrame: currentFrame },
+        },
+      ];
+      storeState.historyIndex = 0;
+      vi.mocked(drawLayersToCanvas).mockReturnValue(true);
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(createGuideContext() as never);
+
+      const { container } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      act(() => {
+        useRectProps.current!.onRepaint?.({ x1: 0, y1: 0, x2: 4096, y2: 100 });
+      });
+
+      expect(container.querySelector('[data-testid="crop-retained-pixels-preview"]')).not.toBeNull();
+      expect(vi.mocked(drawLayersToCanvas).mock.calls[0]?.[2]).toEqual({ x: 0, y: 0, width: 50_000, height: 100 });
+      const backingScale = vi.mocked(drawLayersToCanvas).mock.calls[0]?.[4];
+      if (backingScale === undefined) throw new Error('retained-pixel renderer was not called');
+      const backingWidth = Math.round(50_000 * backingScale);
+      const backingHeight = Math.round(100 * backingScale);
+      expect(backingWidth).toBeGreaterThan(0);
+      expect(backingHeight).toBeGreaterThan(0);
+      expect(backingWidth).toBeLessThanOrEqual(4096);
+      expect(backingHeight).toBeLessThanOrEqual(4096);
+      expect(backingWidth * backingHeight).toBeLessThanOrEqual(Math.floor(16_777_216 / 5));
+    });
+
+    it('does not mount an empty preview for retained unions beyond the backing aspect-ratio limit', () => {
+      const previousFrame = { x: 0, y: 0, width: 100_000, height: 1 };
+      const currentFrame = { x: 1, y: 0, width: 4096, height: 1 };
+      storeState.documentFrame = currentFrame;
+      storeState.totalSize = { width: 4096, height: 1 };
+      storeState.history = [
+        {
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          args: { previousFrame, nextFrame: currentFrame },
+        },
+      ];
+      storeState.historyIndex = 0;
+
+      const { queryByTestId } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      expect(queryByTestId('crop-retained-pixels-preview')).toBeNull();
+      expect(drawLayersToCanvas).not.toHaveBeenCalled();
+    });
+
+    it('renders the maximum supported aspect ratio at low DPR with non-zero backing dimensions', () => {
+      devicePixelRatioState.current = 0.4;
+      const previousFrame = { x: 0, y: 0, width: 8192, height: 1 };
+      const currentFrame = { x: 1, y: 0, width: 4096, height: 1 };
+      storeState.documentFrame = currentFrame;
+      storeState.totalSize = { width: 4096, height: 1 };
+      storeState.history = [
+        {
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          args: { previousFrame, nextFrame: currentFrame },
+        },
+      ];
+      storeState.historyIndex = 0;
+      vi.mocked(drawLayersToCanvas).mockReturnValue(true);
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(createGuideContext() as never);
+
+      const { container } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      act(() => {
+        useRectProps.current!.onRepaint?.({ x1: 0, y1: 0, x2: 4096, y2: 1 });
+      });
+
+      expect(container.querySelector('[data-testid="crop-retained-pixels-preview"]')).not.toBeNull();
+      expect(vi.mocked(drawLayersToCanvas).mock.calls[0]?.[2]).toEqual({ x: 0, y: 0, width: 8192, height: 1 });
+      const backingScale = vi.mocked(drawLayersToCanvas).mock.calls[0]?.[4];
+      if (backingScale === undefined) throw new Error('retained-pixel renderer was not called');
+      const backingWidth = Math.round(8192 * backingScale);
+      const backingHeight = Math.round(backingScale);
+      expect(backingWidth).toBe(4096);
+      expect(backingHeight).toBe(1);
+      expect(backingWidth * backingHeight).toBeLessThanOrEqual(Math.floor(16_777_216 / 5));
+    });
   });
 
   describe('onChangeEnd', () => {

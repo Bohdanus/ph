@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { isEqual } from 'lodash-es';
 import { ROTATE_HANDLE_OFFSET, useRect } from '../../hooks/useRect.ts';
-import { MAX_DOCUMENT_FRAME_AREA, MAX_DOCUMENT_FRAME_SIDE, useLayers } from '../../contexts/useLayer.ts';
+import { MAX_DOCUMENT_FRAME_SIDE, useLayers } from '../../contexts/useLayer.ts';
 import { sortRoundRect } from '../../util/rect.ts';
 import { HANDLE_SIZE, SET_DOCUMENT_FRAME_ACTION } from '../../util/constants.ts';
 import type { ContainDimensions } from '../../util/contain-fit.ts';
@@ -81,6 +81,8 @@ function subtractRects(bases: readonly Pos[], cuts: readonly Pos[]): Pos[] {
   return cuts.reduce((pieces, cut) => pieces.flatMap((piece) => subtractRect(piece, cut)), [...bases]);
 }
 
+const MAX_RECOVERY_PREVIEW_BACKING_SIDE = MAX_DOCUMENT_FRAME_SIDE;
+
 /** The extent represented by the active crop history and the currently visible frame. */
 function getHistoryFrameBounds(
   history: readonly HistoryItem[],
@@ -138,8 +140,11 @@ function getRecoveryPreviewFrame(
   if (!retainedPixelsExtendFrame) return null;
 
   const { width, height } = documentFrameSize(previewFrame);
-  if (width > MAX_DOCUMENT_FRAME_SIDE || height > MAX_DOCUMENT_FRAME_SIDE || width * height > MAX_DOCUMENT_FRAME_AREA)
-    return null;
+  const shorterSide = Math.min(width, height);
+  const longerSide = Math.max(width, height);
+  // At more extreme aspect ratios, even the longest safe backing edge cannot represent one
+  // backing pixel on the short edge. Do not mount an empty preview canvas in that case.
+  if (shorterSide <= 0 || longerSide / shorterSide > MAX_RECOVERY_PREVIEW_BACKING_SIDE * 2) return null;
 
   return previewFrame;
 }
@@ -153,13 +158,28 @@ const MAX_RECOVERY_PREVIEW_SURFACES = 5;
 const MAX_RECOVERY_PREVIEW_BACKING_PIXELS = Math.floor(
   MAX_RECOVERY_PREVIEW_TOTAL_BACKING_PIXELS / MAX_RECOVERY_PREVIEW_SURFACES
 );
-
 function getRecoveryPreviewBackingScale(frame: DocumentFrame, dpr: number): number {
   const { width, height } = documentFrameSize(frame);
-  const fitsBackingBudget = (scale: number) =>
-    Math.round(width * scale) * Math.round(height * scale) <= MAX_RECOVERY_PREVIEW_BACKING_PIXELS;
+  const fitsBackingBudget = (scale: number) => {
+    const backingWidth = Math.round(width * scale);
+    const backingHeight = Math.round(height * scale);
+    return (
+      backingWidth > 0 &&
+      backingHeight > 0 &&
+      backingWidth <= MAX_RECOVERY_PREVIEW_BACKING_SIDE &&
+      backingHeight <= MAX_RECOVERY_PREVIEW_BACKING_SIDE &&
+      backingWidth * backingHeight <= MAX_RECOVERY_PREVIEW_BACKING_PIXELS
+    );
+  };
   let low = 0;
-  let high = Math.min(dpr, Math.sqrt(MAX_RECOVERY_PREVIEW_BACKING_PIXELS / (width * height)));
+  // Divide the square roots separately so a large finite frame does not overflow width*height.
+  const areaScale = Math.sqrt(MAX_RECOVERY_PREVIEW_BACKING_PIXELS) / Math.sqrt(width) / Math.sqrt(height);
+  const sideScale = Math.min(MAX_RECOVERY_PREVIEW_BACKING_SIDE / width, MAX_RECOVERY_PREVIEW_BACKING_SIDE / height);
+  // A valid backing canvas needs at least one pixel on both sides. At very low DPR, preserve that
+  // minimum rather than handing drawLayersToCanvas a zero-sized surface for an otherwise supported
+  // retained frame.
+  const minimumNonZeroScale = 0.5 / Math.min(width, height);
+  let high = Math.min(Math.max(dpr, minimumNonZeroScale), areaScale, sideScale);
   if (fitsBackingBudget(high)) return high;
 
   // Ideal width*height sizing is not enough: independently rounded canvas edges can exceed it.
