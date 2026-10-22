@@ -1,6 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import path from 'node:path';
-import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
 import type { BoundingBox } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
@@ -1161,7 +1161,7 @@ test.describe('Crop history', () => {
 
       const preview = page.getByTestId('crop-retained-pixels-preview');
       await expect(preview, 'the crop preview renders previously hidden layer pixels before release').toBeVisible();
-      const previewPixels = await readCanvasRegion(page, 'crop-retained-pixels-preview', 270, 4, 100, 12);
+      const previewPixels = await readCanvasRegion(page, 'crop-retained-pixels-preview', 350, 244, 100, 12);
       expect(previewPixels, 'the recovered pixels remain identical before applying the expanded frame').toEqual(
         sourcePixels
       );
@@ -1177,6 +1177,65 @@ test.describe('Crop history', () => {
       await expect
         .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - openingEffectiveScale))
         .toBeLessThan(0.000001);
+    });
+
+    test('reselecting Crop shows retained pixels under the dim and widening restores the original raster', async ({
+      page,
+    }, testInfo) => {
+      await openDocument(page);
+      await openRasterFixture(page, testInfo.config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      const originalPixels = await readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64);
+      expect(await readCanvasColor(page, 1, 20)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+
+      const initialFit = await openCropTool(page);
+      await dragOnCanvas(page, initialFit, { x: 4, y: 4 }, { x: 60, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 56, height: 56 });
+
+      // Selecting Crop again must reveal the retained source immediately, before a handle moves.
+      await clickToolButton(page, 'move');
+      const recropFit = await openCropTool(page);
+      const preview = page.getByTestId('crop-retained-pixels-preview');
+      await expect(preview, 're-entering Crop exposes the original off-frame pixels').toBeVisible();
+      expect(await readCanvasRegion(page, 'crop-retained-pixels-preview', 1, 20, 1, 1)).toEqual([255, 0, 0, 255]);
+      await testInfo.attach('crop-reentry-retained-pixels-under-dim', {
+        body: await page.screenshot({ scale: 'css' }),
+        contentType: 'image/png',
+      });
+
+      // Read the rendered screenshot too: the hidden red pixel is still present, with the crop
+      // selection's black 70% blend drawn over it outside the current frame.
+      const blendedPoint = documentPoint(recropFit, -2.5, 16.5);
+      const screenshot = await page.screenshot({
+        clip: {
+          x: Math.round(blendedPoint.x) - 2,
+          y: Math.round(blendedPoint.y) - 2,
+          width: 5,
+          height: 5,
+        },
+        scale: 'css',
+      });
+      const rendered = await loadImageData(screenshot);
+      const center = (2 * rendered.width + 2) * 4;
+      expect(rendered.data[center], 'the screenshot shows red pixels darkened by the crop blend').toBeGreaterThan(40);
+      expect(rendered.data[center], 'the crop blend is visible over the retained red pixel').toBeLessThan(120);
+      expect(rendered.data[center + 1]).toBeLessThan(10);
+      expect(rendered.data[center + 2]).toBeLessThan(10);
+
+      // Grow all four crop edges back to the original image bounds, then prove the full raster is
+      // byte-identical to what was on the canvas before the first crop.
+      await dragOnCanvas(page, recropFit, { x: 0, y: 28 }, { x: -4, y: 28 });
+      await dragOnCanvas(page, recropFit, { x: 56, y: 28 }, { x: 60, y: 28 });
+      await dragOnCanvas(page, recropFit, { x: 28, y: 0 }, { x: 28, y: -4 });
+      await dragOnCanvas(page, recropFit, { x: 28, y: 56 }, { x: 28, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      expect(await readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64)).toEqual(originalPixels);
+      await testInfo.attach('crop-reentry-restored-original-raster', {
+        body: await page.screenshot({ scale: 'css' }),
+        contentType: 'image/png',
+      });
     });
 
     test('a recrop resize and move keep the crop frame aligned with the zoomed canvas', async ({ page }) => {

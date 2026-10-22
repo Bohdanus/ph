@@ -1134,15 +1134,17 @@ layer geometry to match the requested angle before committing the frame. The ear
 this section called the app destructive, then contradicted itself by saying undo restores the
 frame.
 
-The route back is now available through Crop itself. When the active history contains a
-`SET_DOCUMENT_FRAME_ACTION`, re-entering the Crop tool starts with a box at the current frame.
-Dragging an edge beyond that frame recomposes the current layer stack in the off-frame area while
-the crop is pending. At angle zero, applying the larger frame reveals retained pixels at their
-original raster coordinates, with no resampling. The E2E test
-`re-cropping after layer edits previews and recovers retained pixels without scaling` now paints a
-new bar after the first crop, changes layer visibility, re-enters Crop, and byte-compares a 100×12
-region before crop, during preview, and after Apply. This proves recovery still works after a real
-pixel edit, not only a visibility toggle, and that the output pixel region is not scaled.
+The route back is available through Crop itself. When the active history contains a
+`SET_DOCUMENT_FRAME_ACTION`, re-entering the Crop tool starts with a box at the current frame and
+immediately recomposes the retained layer pixels from the prior frame bounds. Pixels outside the
+current crop box remain visible under the same dim overlay used by the crop selection. At angle
+zero, widening the box to the original bounds restores the full raster at its original pixel
+coordinates, with no resampling. The E2E test
+`reselecting Crop shows retained pixels under the dim and widening restores the original raster`
+checks the actual screenshot blend and byte-compares the entire restored image with its pre-crop
+pixels. `re-cropping after layer edits previews and recovers retained pixels without scaling` also
+paints after the first crop, changes layer visibility, and verifies that retained pixels survive
+those edits before the next crop is applied.
 
 The retained-pixel preview and the separate letterbox overhang guides are limited to unrotated
 crops: their current frame subtraction uses axis-aligned geometry, not the rotated crop polygon.
