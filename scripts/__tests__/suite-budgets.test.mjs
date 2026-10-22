@@ -83,6 +83,7 @@ const BUDGETED = [
   'agent-board.test.mjs',
   'agents-citations.test.mjs',
   'docs-index.test.mjs',
+  'dispose-worktree.test.mjs',
   'e2e-run.test.mjs',
   'main-worktree-guard.test.mjs',
   'merge-release.test.mjs',

@@ -3,10 +3,10 @@
  *
  * WHY NO REPOSITORY, A BOOTSTRAP, OR A SESSION DATABASE
  * -----------------------------------------------------
- * Every effect in `dispose-worktree.mjs` is injected: the command runner, the
- * filesystem, the inventory document, the board rows and the session rows. So
- * the whole decision surface — which is where the incident lived — is testable
- * in-process, and this suite never spawns `git`.
+ * Most effects in `dispose-worktree.mjs` are injected: the command runner, the
+ * filesystem, the inventory document, the board rows and the session rows. The
+ * unregistered-directory CLI refusal also gets an isolated Git-repository test
+ * so both ordinary and dry-run command paths are covered end to end.
  *
  * That is not a stylistic preference. `scripts/__tests__/suite-budgets.test.mjs`
  * derives its list of process-spawning suites from a scan of this directory and
@@ -22,8 +22,18 @@
  * case with every other arm green.
  */
 
-import { describe, expect, it, afterEach, beforeEach } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { sep, join } from 'node:path';
 import {
@@ -35,6 +45,7 @@ import {
   locateInventory,
   inspectOrphanContent,
   orphanPreflight,
+  orphanRemovalRefusal,
   preflight,
   protectedContentOnDisk,
   readInventory,
@@ -50,6 +61,8 @@ import { SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 // same constant objects the generator writes into WORKTREES.json, so a rename of
 // an action value breaks these cases rather than silently agreeing with them.
 import { ACTION, LIVE_WINDOW_MS } from '../lib/worktree-inventory/classify.mjs';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const NOW = 1_800_000_000_000;
 
@@ -1365,8 +1378,14 @@ describe('unregistered worktree directories', () => {
 
   const resolveOrphan = (cwd, target) =>
     resolveOrphanDirectory(cwd, target, {
-      inventoryPath: join(root, 'WORKTREES.json'),
-      run: () => ({ stdout: `${join(root, '.git')}\n` }),
+      run: () => ({ stdout: `worktree ${root}\nbranch refs/heads/main\n` }),
+      realpath: (p) => {
+        try {
+          return realpathSync(p);
+        } catch {
+          return p;
+        }
+      },
     });
 
   it('resolves a bare name and an explicit path to one real direct child', () => {
@@ -1438,6 +1457,100 @@ describe('unregistered worktree directories', () => {
       content,
     });
     expect(live.failures.map((failure) => failure.code)).toEqual(['board-agent-live']);
+  });
+
+  it('refuses path-based removal after the repository root is swapped for a symlink', () => {
+    const victim = join(worktreesRoot, 'victim');
+    const outsideKilo = join(root, 'outside-kilo');
+    const outsideVictim = join(outsideKilo, 'worktrees', 'victim');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    mkdirSync(outsideVictim, { recursive: true });
+    writeFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'validated victim\n');
+    writeFileSync(join(outsideVictim, 'keep.txt'), 'outside data\n');
+
+    const orphan = resolveOrphan(root, 'victim');
+    const ownership = {
+      board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+      sessions: { available: true, live: [] },
+    };
+    expect(orphan.found).toBe(true);
+    expect(orphanPreflight({ ownership, content: inspectOrphanContent(victim) }).ok).toBe(true);
+
+    const validatedKilo = join(root, '.kilo-validated');
+    renameSync(join(root, '.kilo'), validatedKilo);
+    symlinkSync(outsideKilo, join(root, '.kilo'), 'dir');
+
+    expect(orphanRemovalRefusal(orphan)).toMatchObject({ removed: false, code: 'orphan-removal-unsupported' });
+    expect(readFileSync(join(outsideVictim, 'keep.txt'), 'utf8')).toBe('outside data\n');
+    expect(readFileSync(join(validatedKilo, 'worktrees', 'victim', '.vite', 'vitest', 'cache.bin'), 'utf8')).toBe(
+      'validated victim\n'
+    );
+  });
+
+  it('refuses path-based removal after the target name is replaced', () => {
+    const victim = join(worktreesRoot, 'victim');
+    const validatedVictim = join(worktreesRoot, 'victim-validated');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    writeFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'validated victim\n');
+
+    const orphan = resolveOrphan(root, 'victim');
+    const ownership = {
+      board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+      sessions: { available: true, live: [] },
+    };
+    expect(orphan.found).toBe(true);
+    expect(orphanPreflight({ ownership, content: inspectOrphanContent(victim) }).ok).toBe(true);
+
+    renameSync(victim, validatedVictim);
+    mkdirSync(victim);
+    writeFileSync(join(victim, 'replacement.txt'), 'replacement data\n');
+
+    expect(orphanRemovalRefusal(orphan)).toMatchObject({ removed: false, code: 'orphan-removal-unsupported' });
+    expect(readFileSync(join(victim, 'replacement.txt'), 'utf8')).toBe('replacement data\n');
+    expect(readFileSync(join(validatedVictim, '.vite', 'vitest', 'cache.bin'), 'utf8')).toBe('validated victim\n');
+  });
+
+  it('refuses path-based removal when Git registers the target after preflight', () => {
+    const victim = join(worktreesRoot, 'victim');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    writeFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'registered later\n');
+
+    const orphan = resolveOrphan(root, 'victim');
+    const ownership = {
+      board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+      sessions: { available: true, live: [] },
+    };
+    expect(orphanPreflight({ ownership, content: inspectOrphanContent(victim) }).ok).toBe(true);
+
+    expect(
+      readGitState(root, 'victim', {
+        list: () => [{ path: victim, branch: 'fix/registered-after-preflight' }],
+        run: () => ({ stdout: 'abc1234' }),
+      }).found
+    ).toBe(true);
+    expect(orphanRemovalRefusal(orphan)).toMatchObject({ removed: false, code: 'orphan-removal-unsupported' });
+    expect(readFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'utf8')).toBe('registered later\n');
+  });
+
+  it.each([
+    ['ordinary mode', []],
+    ['dry-run mode', ['--dry-run']],
+  ])('CLI %s refuses an unregistered directory and preserves it', (_label, flags) => {
+    execFileSync('git', ['init', '--quiet', '--initial-branch=main', root], { stdio: 'ignore' });
+    const victim = join(worktreesRoot, 'victim');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    const cache = join(victim, '.vite', 'vitest', 'cache.bin');
+    writeFileSync(cache, 'keep until supported safe removal exists\n');
+
+    const cli = join(import.meta.dirname, '../dispose-worktree.mjs');
+    const result = spawnSync(process.execPath, [cli, victim, ...flags], { cwd: root, encoding: 'utf8' });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('refusing unregistered directory');
+    expect(result.stderr).toContain('Unregistered directory removal is disabled');
+    expect(result.stderr).toContain('Nothing was changed.');
+    expect(readFileSync(cache, 'utf8')).toBe('keep until supported safe removal exists\n');
   });
 });
 
@@ -1774,96 +1887,126 @@ describe('salvage archives the ignored content a rebuild cannot replace', () => 
 /**
  * The inventory is read from the MAIN checkout, not from wherever this ran.
  *
- * This is the difference between a guard that works and a guard nobody runs.
- * `.gitignore` anchors the rule to `/WORKTREES.json` precisely so that each
- * worktree does not accumulate its own stale copy of a repository-wide document
- * — so reading `join(cwd, 'WORKTREES.json')` found nothing in every worktree
- * this repository actually uses. Measured: from a task worktree, with a valid
- * 66-worktree inventory in the main checkout and a target that inventory calls
- * `action: "dispose"`, every disposal refused `WORKTREES.json is absent` — and
- * the refusal's own advice is to run the generator, which writes the second copy
- * the ignore rule exists to prevent.
+ * There is exactly one canonical location: the checkout that has `main`
+ * registered, resolved through the shared `location.mjs` module. A stale
+ * task-local `WORKTREES.json` is the most dangerous state — it authorises a
+ * disposal against a snapshot the generator has never seen — so the canonical
+ * path is always returned, even when the file does not yet exist there.
+ * `readInventory` then refuses `missing` rather than falling back.
  */
 describe('locating the inventory', () => {
-  const gitSays = (commonDir) => (cwd, args) => ({ stdout: `${commonDir}\n` });
+  const identityRealpath = (p) => p;
+  const mainWorktreeRun = (cwd, args) => {
+    if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+    return { stdout: `${cwd}/.git\n` };
+  };
+  const bareRepoRun = (_cwd, args) => {
+    if (args[0] === 'worktree') {
+      return {
+        stdout: 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n',
+      };
+    }
+    return { stdout: '/repo/.git\n' };
+  };
 
   it('resolves it in the main checkout, from a worktree', () => {
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: gitSays('/repo/.git'),
-      exists: (p) => p === np('/repo/WORKTREES.json'),
+      run: mainWorktreeRun,
+      realpath: identityRealpath,
     });
     expect(resolved).toBe(np('/repo/WORKTREES.json'));
   });
 
-  it('does not fall back to the worktree copy when the main one is there', () => {
-    // The failure is silent: a path that exists but is not the authoritative one
-    // reads as a stale or absent inventory, and either way the disposal refuses.
+  it('resolves the linked main worktree, not the bare checkout that owns it', () => {
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: gitSays('/repo/.git'),
-      exists: (p) => p === np('/repo/WORKTREES.json') || p === np('/repo/.kilo/worktrees/task/WORKTREES.json'),
-    });
-    expect(resolved).not.toContain('.kilo');
-  });
-
-  it('uses the main-branch worktree when the common directory belongs to a bare checkout', () => {
-    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: (_cwd, args) => ({
-        stdout:
-          args[0] === 'worktree'
-            ? 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n'
-            : '/repo/.git\n',
-      }),
-      exists: (p) => p === np('/repo/WORKTREES.json') || p === np('/repo/.kilo/worktrees/main/WORKTREES.json'),
+      run: bareRepoRun,
+      realpath: identityRealpath,
     });
     expect(resolved).toBe(np('/repo/.kilo/worktrees/main/WORKTREES.json'));
   });
 
-  it('does not use a bare inventory when the registered main worktree has none', () => {
+  it('returns the canonical path even when the file does not yet exist', () => {
+    // A fresh clone, or a machine that has never run the generator. The canonical
+    // path is still returned — readInventory refuses `missing` rather than
+    // falling back to a stale task-local copy.
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: (_cwd, args) => ({
-        stdout:
-          args[0] === 'worktree'
-            ? 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n'
-            : '/repo/.git\n',
-      }),
-      exists: (p) => p === np('/repo/WORKTREES.json'),
+      run: mainWorktreeRun,
+      realpath: identityRealpath,
     });
-    expect(resolved).toBe(np('/repo/.kilo/worktrees/task/WORKTREES.json'));
+    expect(resolved).toBe(np('/repo/WORKTREES.json'));
   });
 
-  it('falls back to cwd outside a repository, so the injected suite still resolves', () => {
+  it('refuses a stale task-local inventory instead of reading it', () => {
+    const repositoryRoot = mkdtempSync(join(tmpdir(), 'dispose-inventory-root-'));
+    const cwd = join(repositoryRoot, '.kilo', 'worktrees', 'task');
+    const canonicalPath = join(realpathSync(repositoryRoot), 'WORKTREES.json');
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(
+      join(cwd, 'WORKTREES.json'),
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        generatedAt: new Date(NOW).toISOString(),
+        ownership: { asOf: new Date(NOW).toISOString() },
+        worktrees: [],
+      })
+    );
+
+    try {
+      const inventory = readInventory(cwd, greenState(), {
+        nowMs: NOW,
+        run: (_cwd, args) => ({
+          stdout: args[0] === 'worktree' ? `worktree ${repositoryRoot}\nbranch refs/heads/main\n` : '',
+        }),
+      });
+      expect(inventory).toEqual({ ok: false, reason: 'missing', path: canonicalPath });
+    } finally {
+      rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns no path outside a repository rather than using a cwd-local copy', () => {
     const resolved = locateInventory('/somewhere', {
       run: () => {
         throw new Error('not a git repository');
       },
-      exists: () => false,
     });
-    expect(resolved).toBe(np('/somewhere/WORKTREES.json'));
+    expect(resolved).toBeNull();
   });
 
-  it('falls back to cwd when the main checkout has no inventory yet', () => {
-    // A fresh clone, or a machine that has never run the generator. The refusal
-    // is then `inventory-missing`, which is the honest answer.
-    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: gitSays('/repo/.git'),
-      exists: () => false,
-    });
-    expect(resolved).toBe(np('/repo/.kilo/worktrees/task/WORKTREES.json'));
-  });
-
-  it('checks the registered main worktree before falling back to the common directory', () => {
+  it('prefers registered main and reads the primary roster only for inventory fallback', () => {
     const asked = [];
-    locateInventory('/repo/.kilo/worktrees/task', {
-      run: (cwd, args) => {
-        asked.push(args);
-        return { stdout: '/repo/.git\n' };
-      },
-      exists: () => true,
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: mainWorktreeRun,
+      realpath: identityRealpath,
     });
-    expect(asked).toEqual([
-      ['worktree', 'list', '--porcelain'],
-      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-    ]);
+    // With a registered main worktree, no repository-root fallback is needed.
+    expect(resolved).toBe(np('/repo/WORKTREES.json'));
+
+    // A bare primary entry supplies the fallback when no non-bare main exists.
+    asked.length = 0;
+    const fallbackRun = (cwd, args) => {
+      asked.push(args);
+      return { stdout: args[0] === 'worktree' ? 'worktree /repo\nbare\n' : '/repo/.git\n' };
+    };
+    const resolvedFallback = locateInventory('/repo/.kilo/worktrees/task', {
+      run: fallbackRun,
+      realpath: identityRealpath,
+    });
+    expect(resolvedFallback).toBe(np('/repo/WORKTREES.json'));
+    expect(asked).toEqual([['worktree', 'list', '--porcelain']]);
+  });
+
+  it('does not fall back to the primary checkout when a registered main path is invalid', () => {
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: (_cwd, args) => ({
+        stdout: args[0] === 'worktree' ? 'worktree /missing/main\nbranch refs/heads/main\n' : '/repo/.git\n',
+      }),
+      realpath: (p) => {
+        if (p === '/repo/.git') return p;
+        throw new Error('missing linked main checkout');
+      },
+    });
+    expect(resolved).toBeNull();
   });
 });
 
