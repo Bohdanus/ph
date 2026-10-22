@@ -2479,9 +2479,14 @@ test.describe('Text tool', () => {
     expect(boxWidth, 'the point box is wider than the line it grew to fit').toBeLessThanOrEqual(inkWidth * 1.2);
   });
 
-  test('a point-text corner exposes rotation and dragging it changes the draft angle', async ({ page }) => {
+  test('a rotated draft commits when placing the next text and the new placeholder starts at zero degrees', async ({
+    page,
+  }) => {
     const box = await canvasBox(page);
+    const layerRows = page.getByTitle('Drag to reorder');
+    const initialLayerCount = await layerRows.count();
     await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    await replaceDraftText(page, 'Rotation source');
     const overlay = await draftOverlay(page).boundingBox();
     expect(overlay, 'the point-text draft did not appear').not.toBeNull();
 
@@ -2501,17 +2506,17 @@ test.describe('Text tool', () => {
       /8[5-9]|9[0-5]/
     );
 
-    await commitButton(page).click();
-    await expect(surface, 'Apply must return the active text tool to neutral geometry').toHaveAttribute(
-      'data-rotation',
-      '0'
+    // Match the reported flow: placing elsewhere implicitly commits the first text and starts a
+    // second draft. The second point is remote from the rotated source so this must be a placement,
+    // not a click that re-enters the existing layer for editing.
+    const secondPoint = { x: box.x + box.width * 0.8, y: box.y + box.height * 0.8 };
+    await page.mouse.click(secondPoint.x, secondPoint.y);
+    await expect(layerRows, 'the first rotated draft was not implicitly committed').toHaveCount(initialLayerCount + 1);
+    await expect(draftOverlay(page), 'the second placement did not create a fresh placeholder').toHaveText(
+      'Lorem ipsum'
     );
-
-    await page.mouse.click(box.x + CLICK_POINT.x + 120, box.y + CLICK_POINT.y + 80);
-    await expect(surface, 'a new text placement must not inherit the previous layer angle').toHaveAttribute(
-      'data-rotation',
-      '0'
-    );
+    await expect(draftOverlay(page), 'the new placeholder must render upright').toHaveCSS('transform', 'none');
+    await expect(surface, 'a new text placement must start with a neutral angle').toHaveAttribute('data-rotation', '0');
   });
 
   /**

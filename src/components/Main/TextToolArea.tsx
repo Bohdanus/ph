@@ -2,6 +2,7 @@ import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import {
   PLACEHOLDER_TEXT,
+  NEUTRAL_TEXT_ANGLE,
   POINT_TYPE_MAX_DRAG_PX,
   drawOverflowIndicator,
   layoutText,
@@ -159,6 +160,10 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
         ...persistedArgs,
         text: placing ? PLACEHOLDER_TEXT : args.text,
         placeholderUntouched: placing ? true : args.placeholderUntouched,
+        // A placement can follow an implicit commit in the same pointer event. That commit clears
+        // the tool state, but this callback still holds the pre-commit args; never let the old
+        // layer's per-layer rotation leak into the new draft's placeholder.
+        angle: placing ? NEUTRAL_TEXT_ANGLE : persistedArgs.angle,
       };
 
       /**
