@@ -2,7 +2,9 @@ import { execFileSync } from 'node:child_process';
 
 import {
   citationsInAddedComments,
+  citationsInAddedCssComments,
   citationsInAddedHashComments,
+  citationsInAddedShellAndTomlComments,
   citationsInAddedMarkupComments,
   citationsInAddedMarkdown,
   addedLinesByFile,
@@ -32,12 +34,14 @@ for (const [fileName, lines] of additions) {
   } catch {
     continue;
   }
-  if (fileName.endsWith('.md')) {
+  if (fileName.endsWith('.md') || fileName.endsWith('.mdx')) {
     if (fileName !== 'docs/TOOLS.md') findings.push(...citationsInAddedMarkdown(source, fileName, lines));
+  } else if (fileName.endsWith('.css') || fileName.endsWith('.scss')) {
+    findings.push(...citationsInAddedCssComments(source, fileName, lines));
+  } else if (isHashCommentFile(fileName) && isYamlCommentFile(fileName)) {
+    findings.push(...citationsInAddedHashComments(source, fileName, lines, { yamlBlockScalars: true }));
   } else if (isHashCommentFile(fileName)) {
-    findings.push(
-      ...citationsInAddedHashComments(source, fileName, lines, { yamlBlockScalars: isYamlCommentFile(fileName) })
-    );
+    findings.push(...citationsInAddedShellAndTomlComments(source, fileName, lines));
   } else if (isMarkupCommentFile(fileName)) {
     findings.push(...citationsInAddedMarkupComments(source, fileName, lines));
   } else {
