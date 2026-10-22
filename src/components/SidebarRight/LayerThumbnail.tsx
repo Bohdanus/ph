@@ -13,7 +13,7 @@ const checkerboardStyle = {
 } as const;
 
 /** A small live layer preview. History rows intentionally do not use this component. */
-export default function LayerThumbnail({ layer }: { layer: Layer }) {
+export default function LayerThumbnail({ layer, touchReorderEnabled }: { layer: Layer; touchReorderEnabled: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -51,7 +51,12 @@ export default function LayerThumbnail({ layer }: { layer: Layer }) {
       height={THUMBNAIL_HEIGHT}
       aria-hidden="true"
       data-testid="layer-thumbnail"
-      className="h-8 w-12 shrink-0 rounded-sm border border-gray-300 dark:border-gray-600"
+      className={[
+        'h-8 w-12 shrink-0 rounded-sm border border-gray-300 dark:border-gray-600',
+        touchReorderEnabled && 'touch-none',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={checkerboardStyle}
     />
   );
