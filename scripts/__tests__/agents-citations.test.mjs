@@ -8,9 +8,11 @@ import { describe, expect, it, vi } from 'vitest';
 import * as citationPatterns from '../lib/citations/resolve.mjs';
 import {
   citationsInAddedComments,
+  citationsInAddedCssComments,
   citationsInAddedHashComments,
   citationsInAddedMarkupComments,
   citationsInAddedMarkdown,
+  citationsInAddedShellAndTomlComments,
   addedLinesByFile,
 } from '../lib/citations/added-comments.mjs';
 import { deadNumbers } from '../lib/agent-board/handoff-import.mjs';
@@ -588,6 +590,39 @@ describe("maintained guidance's code claims resolve against the program", () => 
     expect(citationsInAddedComments('const y = "not-a-comment.ts:3";', 'src/example.ts', new Set([1]))).toEqual([]);
   });
 
+  it('parses added diff lines beginning with extra plus signs and ignores no-newline markers', () => {
+    const diff = [
+      'diff --git a/legacy.md b/legacy.md',
+      '--- a/legacy.md',
+      '+++ b/legacy.md',
+      '@@ -1 +1 @@',
+      '-old text',
+      '+++ b/other.ts:22',
+      '\\ No newline at end of file',
+    ].join('\n');
+    const additions = addedLinesByFile(diff);
+    expect(additions.get('legacy.md')).toEqual(new Set([1]));
+    expect(citationsInAddedMarkdown('++ b/other.ts:22', 'legacy.md', additions.get('legacy.md'))).toEqual([
+      { fileName: 'legacy.md', line: 1, citation: 'b/other.ts:22' },
+    ]);
+    const multilineYaml = 'label: "first line\n  # quoted content: `yaml.ts:26`\n  second line"';
+    expect(citationsInAddedHashComments(multilineYaml, 'sample.yml', new Set([2]), { yamlBlockScalars: true })).toEqual(
+      []
+    );
+    const indentedBlockHeader = 'value:\n  |\n    # block content: `yaml.ts:27`';
+    expect(
+      citationsInAddedHashComments(indentedBlockHeader, 'sample.yml', new Set([3]), { yamlBlockScalars: true })
+    ).toEqual([]);
+    const taggedBlockHeader = 'value:\n  # separator comment\n  !!str |\n    # block content: `yaml.ts:28`';
+    expect(
+      citationsInAddedHashComments(taggedBlockHeader, 'sample.yml', new Set([2, 4]), { yamlBlockScalars: true })
+    ).toEqual([]);
+    const taggedHeaderComment = 'value:\n  !!str | # See `yaml.ts:29`\n    # block content: `yaml.ts:30`';
+    expect(
+      citationsInAddedHashComments(taggedHeaderComment, 'sample.yml', new Set([2, 3]), { yamlBlockScalars: true })
+    ).toEqual([{ fileName: 'sample.yml', line: 2, citation: 'yaml.ts:29' }]);
+  });
+
   it('finds JSONC comments without mistaking strings for comments', () => {
     const diff = [
       'diff --git a/kilo.jsonc b/kilo.jsonc',
@@ -652,6 +687,40 @@ describe("maintained guidance's code claims resolve against the program", () => 
     ).toEqual(['outside.ts:33']);
   });
 
+  it('ignores fences inside HTML comments and fences inside blockquotes', () => {
+    const markdown = ['<!--', '```', '-->', '> ```ts', '> quoted.ts:21', '> ```', 'live.ts:22'].join('\n');
+    expect(citationsInAddedMarkdown(markdown, 'doc.md', new Set([1, 2, 3, 4, 5, 6, 7]))).toEqual([
+      { fileName: 'doc.md', line: 7, citation: 'live.ts:22' },
+    ]);
+    const nestedList = [
+      '- item',
+      '  - nested',
+      '        ````md',
+      '        quoted.ts:35',
+      '        ````',
+      'live.ts:36',
+    ].join('\n');
+    expect(citationsInAddedMarkdown(nestedList, 'doc.md', new Set([4, 6]))).toEqual([
+      { fileName: 'doc.md', line: 6, citation: 'live.ts:36' },
+    ]);
+    const looseNestedList = [
+      '- item',
+      '  - nested',
+      '',
+      '      ```md',
+      '      quoted.ts:35',
+      '      ```',
+      'live.ts:46',
+    ].join('\n');
+    expect(citationsInAddedMarkdown(looseNestedList, 'doc.md', new Set([5, 7]))).toEqual([
+      { fileName: 'doc.md', line: 7, citation: 'live.ts:46' },
+    ]);
+    const htmlInfo = ['``` <!--', 'ignored.ts:37', '```', '```md', 'ignored-too.ts:38', '```', 'live.ts:39'].join('\n');
+    expect(citationsInAddedMarkdown(htmlInfo, 'doc.md', new Set([2, 5, 7]))).toEqual([
+      { fileName: 'doc.md', line: 7, citation: 'live.ts:39' },
+    ]);
+  });
+
   it('finds YAML comments while ignoring quoted and block-scalar content', () => {
     const diff = [
       'diff --git a/.github/workflows/sample.yml b/.github/workflows/sample.yml',
@@ -663,6 +732,11 @@ describe("maintained guidance's code claims resolve against the program", () => 
       '+label: "literal # value.ts:20"',
       '+script: |',
       '+  # This is block data, not a comment: `data.ts:22`.',
+      '+tagged: !!str |',
+      '+  # Also block data: `tagged.ts:23`.',
+      '+anchored: &example |',
+      '+  # Also block data: `anchored.ts:24`.',
+      '+plain: ordinary text " # This is a comment: `plain.ts:25`.',
       '+enabled: true # See `state.ts:24`.',
       "+prompt: don't copy `legacy.ts:26` # See `notes.ts:28`.",
     ].join('\n');
@@ -673,6 +747,11 @@ describe("maintained guidance's code claims resolve against the program", () => 
       'label: "literal # value.ts:20"',
       'script: |',
       '  # This is block data, not a comment: `data.ts:22`.',
+      'tagged: !!str |',
+      '  # Also block data: `tagged.ts:23`.',
+      'anchored: &example |',
+      '  # Also block data: `anchored.ts:24`.',
+      'plain: ordinary text " # This is a comment: `plain.ts:25`.',
       'enabled: true # See `state.ts:24`.',
       "prompt: don't copy `legacy.ts:26` # See `notes.ts:28`.",
     ].join('\n');
@@ -687,8 +766,9 @@ describe("maintained guidance's code claims resolve against the program", () => 
       )
     ).toEqual([
       { fileName: '.github/workflows/sample.yml', line: 2, citation: 'workflow.ts:18' },
-      { fileName: '.github/workflows/sample.yml', line: 6, citation: 'state.ts:24' },
-      { fileName: '.github/workflows/sample.yml', line: 7, citation: 'notes.ts:28' },
+      { fileName: '.github/workflows/sample.yml', line: 10, citation: 'plain.ts:25' },
+      { fileName: '.github/workflows/sample.yml', line: 11, citation: 'state.ts:24' },
+      { fileName: '.github/workflows/sample.yml', line: 12, citation: 'notes.ts:28' },
     ]);
   });
 
@@ -704,7 +784,7 @@ describe("maintained guidance's code claims resolve against the program", () => 
     ].join('\n');
     const shellAdditions = addedLinesByFile(shellDiff);
     expect(
-      citationsInAddedHashComments(
+      citationsInAddedShellAndTomlComments(
         "#!/usr/bin/env sh\n# Generated from `hook.ts:17`\nprintf '%s' 'literal # shell.ts:19' # See `inline.ts:21`",
         '.husky/pre-commit',
         shellAdditions.get('.husky/pre-commit')
@@ -712,6 +792,81 @@ describe("maintained guidance's code claims resolve against the program", () => 
     ).toEqual([
       { fileName: '.husky/pre-commit', line: 2, citation: 'hook.ts:17' },
       { fileName: '.husky/pre-commit', line: 3, citation: 'inline.ts:21' },
+    ]);
+
+    const heredoc = "cat <<'EOF'\n# literal `heredoc.ts:30`\nEOF\n# actual `shell.ts:31`";
+    expect(citationsInAddedShellAndTomlComments(heredoc, 'hook.sh', new Set([2, 4]))).toEqual([
+      { fileName: 'hook.sh', line: 4, citation: 'shell.ts:31' },
+    ]);
+    const shellEdgeCases = 'cat <<\\EOF\nEOF \n# payload `hidden.ts:40`\nEOF\ntrue;# actual `shell.ts:41`';
+    expect(citationsInAddedShellAndTomlComments(shellEdgeCases, 'hook.sh', new Set([3, 5]))).toEqual([
+      { fileName: 'hook.sh', line: 5, citation: 'shell.ts:41' },
+    ]);
+    const singleQuotedDelimiter = "cat <<'E\\OF'\nE\\OF\n# actual `shell.ts:42`";
+    expect(citationsInAddedShellAndTomlComments(singleQuotedDelimiter, 'hook.sh', new Set([3]))).toEqual([
+      { fileName: 'hook.sh', line: 3, citation: 'shell.ts:42' },
+    ]);
+    const emptyDelimiter = "cat <<''\n# heredoc content `hidden.ts:48`";
+    expect(citationsInAddedShellAndTomlComments(emptyDelimiter, 'hook.sh', new Set([2]))).toEqual([]);
+    const adjacentQuotedDelimiter = 'cat <<E"OF"\nEOF\n# actual `shell.ts:47`';
+    expect(citationsInAddedShellAndTomlComments(adjacentQuotedDelimiter, 'hook.sh', new Set([3]))).toEqual([
+      { fileName: 'hook.sh', line: 3, citation: 'shell.ts:47' },
+    ]);
+
+    const toml = 'message = """\n# literal `toml.ts:32`\n""" # actual `toml.ts:33`';
+    expect(citationsInAddedShellAndTomlComments(toml, 'settings.toml', new Set([2, 3]))).toEqual([
+      { fileName: 'settings.toml', line: 3, citation: 'toml.ts:33' },
+    ]);
+    const escapedToml = 'message = """\nembedded \\""" quote\n# literal `toml.ts:42`\n""" # actual `toml.ts:43`';
+    expect(citationsInAddedShellAndTomlComments(escapedToml, 'settings.toml', new Set([3, 4]))).toEqual([
+      { fileName: 'settings.toml', line: 4, citation: 'toml.ts:43' },
+    ]);
+
+    const gitignoreDiff = [
+      'diff --git a/subdir/.gitignore b/subdir/.gitignore',
+      '--- a/subdir/.gitignore',
+      '+++ b/subdir/.gitignore',
+      '@@ -1 +1 @@',
+      '+# See `src/example.ts:34`.',
+    ].join('\n');
+    const gitignoreAdditions = addedLinesByFile(gitignoreDiff);
+    expect(gitignoreAdditions.get('subdir/.gitignore')).toEqual(new Set([1]));
+    expect([...'.gitignore:34'.matchAll(LINE_NUMBER_CITATION)]).toHaveLength(1);
+    expect([...'.husky/pre-commit:16'.matchAll(LINE_NUMBER_CITATION)]).toHaveLength(1);
+    expect(
+      citationsInAddedShellAndTomlComments(
+        '# See `src/example.ts:34`',
+        'subdir/.gitignore',
+        gitignoreAdditions.get('subdir/.gitignore')
+      )
+    ).toEqual([{ fileName: 'subdir/.gitignore', line: 1, citation: 'src/example.ts:34' }]);
+
+    const quotedPath = [
+      'diff --git "a/docs/\\303\\274ber.md" "b/docs/\\303\\274ber.md"',
+      '--- "a/docs/\\303\\274ber.md"',
+      '+++ "b/docs/\\303\\274ber.md"',
+      '@@ -0,0 +1 @@',
+      '+See source.ts:44',
+    ].join('\n');
+    expect(addedLinesByFile(quotedPath).get('docs/über.md')).toEqual(new Set([1]));
+
+    const css = 'a { background: url(https://example.com/foo.ts:12); }';
+    expect(citationsInAddedCssComments(css, 'style.css', new Set([1]))).toEqual([]);
+    expect(
+      citationsInAddedCssComments('a{background:url(https://example.com/*foo.ts:12)}', 'style.css', new Set([1]))
+    ).toEqual([]);
+    expect(
+      citationsInAddedCssComments('a { x: url (/* See `source.ts:10` */ foo); }', 'style.css', new Set([1]))
+    ).toEqual([{ fileName: 'style.css', line: 1, citation: 'source.ts:10' }]);
+    expect(citationsInAddedCssComments('éurl(/* See `source.ts:11` */ value)', 'style.css', new Set([1]))).toEqual([
+      { fileName: 'style.css', line: 1, citation: 'source.ts:11' },
+    ]);
+    expect(citationsInAddedCssComments('😀url(/* See `source.ts:12` */ value)', 'style.css', new Set([1]))).toEqual([
+      { fileName: 'style.css', line: 1, citation: 'source.ts:12' },
+    ]);
+    const continuedCssString = 'a::after { content: "first\\\nsecond"; /* See `css.ts:45` */ }';
+    expect(citationsInAddedCssComments(continuedCssString, 'style.css', new Set([2]))).toEqual([
+      { fileName: 'style.css', line: 2, citation: 'css.ts:45' },
     ]);
 
     const markupDiff = [
@@ -734,6 +889,10 @@ describe("maintained guidance's code claims resolve against the program", () => 
     ).toEqual([
       { fileName: 'public/icon.svg', line: 2, citation: 'shape.ts:32' },
       { fileName: 'public/icon.svg', line: 3, citation: '`:33`' },
+    ]);
+    const cdata = '<svg><![CDATA[<!-- See `source.ts:12` -->]]><!-- real `source.ts:13` --></svg>';
+    expect(citationsInAddedMarkupComments(cdata, 'public/icon.svg', new Set([1]))).toEqual([
+      { fileName: 'public/icon.svg', line: 1, citation: 'source.ts:13' },
     ]);
   });
 
@@ -914,6 +1073,10 @@ describe("maintained guidance's code claims resolve against the program", () => 
     // A prose target is a citation too. `docs/README.md` citing `HANDOFF.md:99` drifts exactly as
     // much as `HANDOFF.md:99` does.
     expect(lineNumberCitationsIn('HANDOFF.md:99')).toEqual(['HANDOFF.md:99']);
+    expect(citationPatterns.citationsIn('See `.gitignore:34` and `.husky/pre-commit:16`.')).toMatchObject([
+      { target: '.gitignore', line: 34 },
+      { target: '.husky/pre-commit', line: 16 },
+    ]);
 
     // Not caught: the shapes that carry a colon and a number without citing a line. `node:fs` and
     // `node:path` are this repository's own import specifiers, and a URL's port is not a line.

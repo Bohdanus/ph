@@ -880,7 +880,7 @@ Two more habits from that `README.md` that make a doc set worth maintaining:
   spec says so in that section. **Do not promote a reconstruction to a spec** — that is the
   single rule that keeps a research corpus from decaying into folklore.
 
-**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore:49`
+**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore`
 (`.kilo`, alongside `.serena`), and `git check-ignore -v .kilo/plans/ps-research/README.md`
 confirms it. Two consequences, both of which will bite:
 
@@ -3364,7 +3364,7 @@ through `testInfo.snapshotDir` rather than `snapshotPath()` so a baseline commit
 does not read as missing on another (`e2e/README.md` — the `testInfo.snapshotDir` paragraph under "Baseline layout"). The directory holds 17 committed
 files; 7 are read, one per format in `browserVerifiedFormats` (`drawing.png.png`, `.jpeg`, `.webp`,
 `.svg`, `.bmp`, `.gif`, `.avif`); the other 10 are orphans nothing references
-(`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes:14` marks the snapshot tree `binary` so
+(`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes` marks the snapshot tree `binary` so
 line-ending normalisation can never rewrite the committed pixels.
 
 **A green run means the pixels matched** — only because the record-vs-compare branch is gated on
@@ -3502,7 +3502,7 @@ read/write rights on the source tree.
 2. `<ABSOLUTE PATH>/<plan>.md` — <what it is, which section>
 3. `<ABSOLUTE PATH>/AGENTS.md` — the binding repo rules
 
-<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore:49`), so it is not carried into a
+<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore`), so it is not carried into a
 fresh worktree: a plan that exists in one checkout must be named by absolute path, or the subagent
 will read a file that is not there.>
 
@@ -4337,7 +4337,7 @@ merge --ff-only main`.
 2. **`.kilo` is gitignored, so a worktree has no plan docs and no skills.** Symptom: the
    research corpus, the skill, and every plan directory appear not to exist; you re-research
    something that was already answered. Defence: read the corpus from the **main** checkout
-   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore:49`
+   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore`
    matches `.kilo`, and `git ls-files .kilo` returns nothing. Note the corollary —
    `HANDOFF.md`, `docs/handoffs/`, and `e2e/OPEN_PROBLEMS.md` **are** tracked and do exist in a
    worktree.
@@ -4583,7 +4583,7 @@ merge --ff-only main`.
 ## Appendix B — the research corpus that already exists
 
 `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/` — 11 files, ~265 KB, in the **main** checkout
-only. `.gitignore:49` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
+only. `.gitignore` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
 has none of it** (trap 2). Read it from the main checkout.
 
 **The rule: read before re-researching. A new research wave that ignores this corpus does not
