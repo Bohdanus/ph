@@ -10,7 +10,7 @@
 
 | Rank | Model                           | Provider | Variant  | Use                                                          |
 | ---- | ------------------------------- | -------- | -------- | ------------------------------------------------------------ |
-| 0    | Laguna S (Poolside)             | kilo     | thinking | TOP free model; only use Laguna S free                       |
+| 0    | Poolside: Laguna S 2.1 (free)   | kilo     | thinking | TOP free model; use this exact free catalog entry            |
 | 1    | Reflection: Beam 1.0 (free)     | kilo     | max      | Fast free model; not fully tested — verify important results |
 | 2    | Stealth: Glyph Cluster (free)   | kilo     | xhigh    | Strong general-purpose free model                            |
 | 3    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Less reliable; verify results                                |
@@ -35,3 +35,28 @@ To run one bounded prompt, save it to a file and use `node scripts/free-model-po
 OpenCode Console also currently lists zero-priced models, but its Console API requires a Console key and its free catalog includes limited-time offerings. Add it or another source to the runner only after checking its current official API endpoint, authentication requirements, and zero input and output prices. Product or IDE free access does not imply free API access. OpenRouter's `openrouter/free` router is not included because the runner requires the catalog to prove the price of each selected model explicitly.
 
 The runner is a completion client, not a tool-using agent. For actual repository subagents, use the live model/provider pair from the refreshed catalog with the native `task` tool, pass model and provider together, and inspect the child session's resolved model. Keep free children read-only and give them bounded tasks; the coordinator owns edits and Git. If the native task tool reports rate exhaustion, choose a different eligible provider/model or stop when the list is exhausted. Do not use paid fallback. For mock coverage, run `npm run test -- scripts/__tests__/free-model-pool.test.mjs`; for a live no-key Kilo catalog check, run `node scripts/free-model-pool.mjs --list --limit 5`. Live inference smoke checks should use a harmless non-sensitive prompt.
+
+## Quota-Aware Subagents
+
+Before **each** subagent launch, read the newest swarm reading with
+`npm run swarm -- tokens --json`; do not reuse a reading from before another
+subagent was launched. The board sums per-message session-DB usage against an
+operator-set budget; its remaining tokens and next-expiry time are rough estimates,
+not an authoritative account balance/reset. `reset_at` estimates the oldest
+matching message rolling out of the window; `resetAtEstimated` marks this clearly.
+If the reading is absent, older than 90 minutes, incomplete, unbudgeted or otherwise
+uncertain, fail closed and prefer a free subagent; treat an unknown reset as not near.
+
+For routing, "low allowance" means 20% or less of the configured five-hour token
+budget remains; "reset is near" means the estimated next expiry is 60 minutes or
+less. When allowance is low and the estimated expiry is more than 60 minutes away
+(or unknown), launch a free model by default. Consider paid Luna only when no
+suitable free model can do the task, and state that reason before launch. **Do not
+launch Terra or Sol as a subagent in this low-allowance state.**
+
+The only strong override is an explicit instruction from the operator in the
+current conversation that names Terra or Sol for the specific subtask and
+acknowledges the remaining-budget risk. A general request for rigor, a prior
+conversation, a model recommendation from another agent, or an ambiguous request
+does not override this rule. Do not infer an override or ask an agent to provide
+one on the operator's behalf.
