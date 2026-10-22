@@ -42,6 +42,15 @@ describe('free model catalog filtering', () => {
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['poolside/laguna-s-2.1:free']);
   });
 
+  it('tries the observed reliable Kilo model before other eligible candidates', () => {
+    const data = [kiloRow('unverified:free'), kiloRow('poolside/laguna-s-2.1:free'), kiloRow('also-unverified')];
+    expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual([
+      'poolside/laguna-s-2.1:free',
+      'unverified:free',
+      'also-unverified',
+    ]);
+  });
+
   it('keeps Kilo candidates available when the optional OpenRouter catalog is down', async () => {
     const fetchImpl = vi.fn((url) =>
       url.includes('openrouter')

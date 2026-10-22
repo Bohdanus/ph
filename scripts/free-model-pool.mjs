@@ -6,6 +6,7 @@ const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
+const PREFERRED_KILO_MODELS = ['poolside/laguna-s-2.1:free'];
 const QUARANTINED_MODELS = new Set([
   'kilo:kilo-auto/free',
   'kilo:nvidia/nemotron-3.5-super-vl:free',
@@ -18,7 +19,7 @@ export function zeroPriced(pricing) {
 
 export function catalogCandidates(source, data) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
-  return rows
+  const candidates = rows
     .filter((row) => {
       if (!row?.id || !zeroPriced(row.pricing)) return false;
       if (QUARANTINED_MODELS.has(`${source}:${row.id}`)) return false;
@@ -26,6 +27,12 @@ export function catalogCandidates(source, data) {
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
     })
     .map((row) => ({ source, model: row.id, name: row.name ?? row.id }));
+  if (source !== 'kilo') return candidates;
+  const preference = new Map(PREFERRED_KILO_MODELS.map((model, index) => [model, index]));
+  return candidates.sort(
+    (left, right) =>
+      (preference.get(left.model) ?? Number.MAX_SAFE_INTEGER) - (preference.get(right.model) ?? Number.MAX_SAFE_INTEGER)
+  );
 }
 
 export async function loadCatalogs({
