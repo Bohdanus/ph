@@ -528,7 +528,7 @@ its remedy is nothing rather than a plausible-looking command that fatals.
 
 ## The list of worktrees: `WORKTREES.json`
 
-`WORKTREES.json` at the repository root is a generated inventory of every
+`WORKTREES.json` at the canonical checkout root is a generated inventory of every
 worktree: its branch, how far it has drifted from `main`, whether that branch is
 already landed, what the working tree holds that no commit does, which Kilo
 sessions ran there, and which of those are unfinished, blocked or dead. **It is
@@ -546,6 +546,31 @@ anything. `/WORKTREES.json` in `.gitignore` is enforced by
 is deleted. **Do not commit it and do not re-add it**; a regeneration is
 `node scripts/worktree-inventory.mjs` and nothing else. The generator, the
 curated table and every finding stay tracked — only the output does not.
+There is exactly one canonical location for `WORKTREES.json`: the non-bare
+checkout that has `refs/heads/main` registered, resolved via the shared module
+`scripts/lib/worktree-inventory/location.mjs` by both the generator
+(`worktree-inventory.mjs`) and the disposer (`dispose-worktree.mjs`). When
+`main` is a linked worktree the file lives there; when `main` is the primary
+checkout it lives at that checkout's root. The repository storage root is a
+separate path taken from the first entry in Git's worktree roster (or the bare
+repository entry when it is bare); this keeps orphan containment anchored to
+the primary checkout even when `main` is linked under `.kilo/worktrees/`, and
+works when Git metadata lives outside the checkout or in a submodule. Neither
+reader nor writer falls back to a
+worktree-local or `cwd`-relative copy: a stale task-local `WORKTREES.json`
+is the single most dangerous state in this system, because it authorises a
+disposal against a snapshot the generator has never seen. If no `main` worktree
+is registered, the primary worktree entry supplies the repository-root fallback.
+If that roster is unreadable or a registered `main` path is invalid,
+inventory-path resolution fails closed. The disposer refuses a missing canonical
+file; the generator writes it there, while `--check` refuses if it is absent.
+
+Unregistered directories receive an additional fail-closed rule: the disposer
+may inspect their ownership and contents, but it does not recursively remove
+them, even when the preflight is clear. Node's portable path-based removal can
+delete a replacement directory if the repository root or target is swapped
+after validation. Registered worktrees continue to be removed through Git's
+worktree command.
 
 The consequence worth knowing: **a fresh clone has no inventory**, because
 nothing regenerates it for you. Generate one before you read a worktree list, and

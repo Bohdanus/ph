@@ -97,7 +97,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
@@ -112,6 +112,7 @@ import {
   unmergedPaths,
 } from './lib/git-operation-state.mjs';
 import { listWorktrees } from './lib/worktree-inventory/git.mjs';
+import { resolveInventoryPath, resolveRepositoryRoot } from './lib/worktree-inventory/location.mjs';
 
 /**
  * How old the inventory may be before the disposal is refused.
@@ -827,86 +828,46 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
 /**
  * WHERE THE INVENTORY IS, which is not where this program was invoked.
  *
- * `WORKTREES.json` describes EVERY worktree in the repository, so exactly one
- * copy is the right one: the main checkout's. `.gitignore` says so explicitly —
- * the rule is `/WORKTREES.json`, anchored to the root, precisely so that each
- * worktree does not accumulate its own stale copy of a repository-wide document.
+ * `WORKTREES.json` is the single canonical copy at the `refs/heads/main`
+ * checkout — the same path the generator writes — never a worktree-local or
+ * `cwd`-relative copy. A stale task-local file is a silent authorisation to
+ * delete worktrees the generator has not seen, so the canonical path is always
+ * returned (even when the file does not yet exist there), and `readInventory`
+ * refuses `missing` rather than falling back to another location.
  *
- * Reading `join(cwd, 'WORKTREES.json')` therefore found nothing wherever the work
- * actually happens. Measured: from `.kilo/worktrees/dispose-guard`, with a valid
- * 66-worktree inventory sitting in the main checkout and a target it classifies
- * `action: "dispose"`, every disposal refused `WORKTREES.json is absent` — and
- * the refusal's own advice is to run the generator, which writes a second copy
- * into the worktree, which is the thing the `.gitignore` rule exists to prevent.
- * A guard that cannot be run from a worktree is a guard nobody runs.
+ * Delegates to `resolveInventoryPath` from the shared `location.mjs` module so
+ * generator and disposer can never disagree on the path.
  *
- * Prefer the worktree that has `main` checked out. The common directory's
- * parent is usually that checkout, but a bare common repository can be a
- * separate worktree entry; in that case its inventory may be stale.
- * Fall back to the common-dir parent when no `main` worktree is registered,
- * then to `cwd` for a caller outside a repository.
+ * If the canonical location cannot be resolved, return `null`; never try a
+ * caller-local copy as a fallback.
  */
-export function locateInventory(cwd, { run = defaultRun, exists = existsSync } = {}) {
-  let mainRoot = null;
-  try {
-    const worktrees = run(cwd, ['worktree', 'list', '--porcelain']).stdout;
-    mainRoot = worktrees
-      .split(/\r?\n\r?\n/)
-      .map((entry) => ({
-        path: entry.match(/^worktree (.+)$/m)?.[1],
-        isMain: entry.split(/\r?\n/).includes('branch refs/heads/main'),
-      }))
-      .find((entry) => entry.path && entry.isMain)?.path;
-  } catch {
-    /* no registered main worktree; try the common directory */
-  }
-  if (mainRoot) {
-    const candidate = join(mainRoot, 'WORKTREES.json');
-    return exists(candidate) ? candidate : join(cwd, 'WORKTREES.json');
-  }
-  try {
-    const commonDir = realpathIfExists(
-      run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
-    );
-    if (commonDir) {
-      // `--git-common-dir` is the `.git` DIRECTORY; its parent is the checkout.
-      const commonRoot = dirname(commonDir);
-      const candidate = join(commonRoot, 'WORKTREES.json');
-      if (exists(candidate)) return candidate;
-    }
-  } catch {
-    /* not a repository, or git could not answer; `cwd` below is the fallback */
-  }
-  return join(cwd, 'WORKTREES.json');
+export function locateInventory(cwd, { run = defaultRun, realpath = realpathSync } = {}) {
+  return resolveInventoryPath(cwd, { run, realpath });
 }
 
 /**
  * Resolve a directory Git no longer registers, limited to one real directory
  * directly inside the repository's worktree storage.
+ *
+ * The repository root is resolved through `resolveRepositoryRoot` from the
+ * shared `location.mjs` module — never `dirname(inventoryPath)`. When `main`
+ * is a linked worktree under `.kilo/worktrees/main`, `dirname(inventoryPath)`
+ * resolves to that linked checkout's parent, which is `.kilo/worktrees/`, not
+ * the repository root — and `worktreesRoot` would then point at a non-existent
+ * or wrong location.
  */
 export function resolveOrphanDirectory(
   cwd,
   target,
-  { inventoryPath = locateInventory(cwd), run = defaultRun, lstat = lstatSync, realpath = realpathSync } = {}
+  { run = defaultRun, lstat = lstatSync, realpath = realpathSync } = {}
 ) {
-  let repositoryRoot = dirname(inventoryPath);
-  if (!existsSync(inventoryPath)) {
-    let commonDir;
-    try {
-      commonDir = run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim();
-    } catch (err) {
-      return {
-        found: false,
-        reason: 'repository-root-unreadable',
-        path: cwd,
-        error: firstLine(err),
-      };
-    }
-    if (!commonDir) {
-      return { found: false, reason: 'repository-root-unreadable', path: cwd };
-    }
-    const canonicalCommonDir = realpathIfExists(commonDir);
-    repositoryRoot = basename(canonicalCommonDir) === '.git' ? dirname(canonicalCommonDir) : canonicalCommonDir;
+  const repositoryRoot = resolveRepositoryRoot(cwd, { run, realpath });
+  if (!repositoryRoot) {
+    return {
+      found: false,
+      reason: 'repository-root-unreadable',
+      path: cwd,
+    };
   }
 
   const worktreesRoot = resolve(repositoryRoot, '.kilo', 'worktrees');
@@ -1123,8 +1084,12 @@ function liveSignal(board, sessions) {
  * with different messages, because "absent" and "stale" call for different
  * next steps.
  */
-export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locateInventory(cwd) } = {}) {
-  if (!existsSync(path)) return { ok: false, reason: 'missing', path };
+export function readInventory(
+  cwd,
+  gitState,
+  { nowMs = Date.now(), run = defaultRun, realpath = realpathSync, path = locateInventory(cwd, { run, realpath }) } = {}
+) {
+  if (!path || !existsSync(path)) return { ok: false, reason: 'missing', path };
   let doc;
   try {
     doc = JSON.parse(readFileSync(path, 'utf8'));
@@ -1258,6 +1223,23 @@ export function orphanPreflight({ ownership, content, preserveBranch = false } =
     }
   }
   return { ok: failures.length === 0, failures };
+}
+
+/**
+ * Refuse unregistered-directory removal. Node's portable filesystem API cannot
+ * recursively remove a directory relative to pinned root and target handles;
+ * checking the path again immediately before rmSync still leaves a symlink
+ * swap race.
+ */
+export function orphanRemovalRefusal(orphan) {
+  return {
+    removed: false,
+    code: 'orphan-removal-unsupported',
+    message:
+      'Cannot safely remove ' +
+      orphan.absolutePath +
+      ": Node's portable filesystem API cannot recursively remove a directory relative to pinned root and target handles. A final path check would still race. Unregistered directory removal is disabled; registered worktree removal remains available.",
+  };
 }
 
 /**
@@ -1718,8 +1700,8 @@ const defaultFs = { mkdirSync, writeFileSync };
 
 const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [--keep-branch] [--max-age-minutes <n>]
 
-  <worktree>   a registered worktree, or an unregistered directory directly under
-               the repository's .kilo/worktrees/ containing only regenerable content.
+  <worktree>   a registered worktree, or an unregistered directory to inspect for a
+               refusal. Recursive removal of unregistered directories is disabled.
 
 For a registered worktree, refuses unless the generated inventory calls it
 \`action: "dispose"\` or \`action: "legacy"\`, or \`--keep-branch\` explicitly selects
@@ -1727,9 +1709,11 @@ For a registered worktree, refuses unless the generated inventory calls it
 may have it as its directory inside the live window, and ignored content or Git
 operations in progress always refuse removal.
 
-If Git no longer registers the directory, the fallback only accepts a real
-direct child of the repository's \`.kilo/worktrees/\`. Every entry must be explicitly
-regenerable, no board or session may own it, and \`--keep-branch\` is inapplicable.
+If Git no longer registers the directory, the fallback inspects a real direct
+child of the repository's \`.kilo/worktrees/\` and reports ownership and content
+findings, but refuses removal even when every other check passes. A final path
+check cannot prevent a symlink swap before recursive deletion; \`--keep-branch\`
+is inapplicable because an unregistered directory has no branch to preserve.
 Unknown content is reported and preserved.
 Ordinary disposal anchors the branch at
 ${KEEP_REF_PREFIX}<name>. Branch-preserving disposal archives uncommitted work
@@ -1850,18 +1834,15 @@ function main(argv) {
       process.stderr.write(`dispose: refusing unregistered directory ${orphan.absolutePath}.\nNothing was changed.\n`);
       return 1;
     }
-    if (dryRun) {
-      process.stdout.write(`dispose: ${orphan.absolutePath} is safe to remove.\n  would remove orphan directory\n`);
-      return 0;
-    }
-    try {
-      rmSync(orphan.absolutePath, { recursive: true, force: false });
-    } catch (err) {
-      process.stderr.write(`dispose: could not remove ${orphan.absolutePath}: ${firstLine(err)}\n`);
-      return 2;
-    }
-    process.stdout.write(`dispose: removed unregistered directory ${orphan.absolutePath}.\n`);
-    return 0;
+    const refusal = orphanRemovalRefusal(orphan);
+    process.stderr.write(
+      'dispose: refusing unregistered directory ' +
+        orphan.absolutePath +
+        '.\n  - ' +
+        refusal.message +
+        '\nNothing was changed.\n'
+    );
+    return 1;
   }
 
   const inventory = readInventory(cwd, gitState, { nowMs });

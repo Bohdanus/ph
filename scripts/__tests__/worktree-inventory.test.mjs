@@ -43,6 +43,12 @@ import {
 } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 import {
+  parseWorktreeListing,
+  resolveInventoryPath,
+  resolveMainWorktreeRoot,
+  resolveRepositoryRoot,
+} from '../lib/worktree-inventory/location.mjs';
+import {
   auditWrites,
   buildPathIndex,
   buildCallRecords,
@@ -1099,11 +1105,29 @@ describe('the pinned clock', () => {
 });
 
 describe('the inventory output target', () => {
-  it('resolves the default output in the repository root, not the invoking worktree', () => {
-    expect(inventoryTarget('/repo', undefined)).toBe('/repo/WORKTREES.json');
-    expect(inventoryTarget('/repo', null)).toBe('/repo/WORKTREES.json');
+  it('requires a resolvable canonical path for the default output', () => {
+    expect(() => inventoryTarget('/repo', undefined)).toThrow(/canonical inventory path/);
     expect(inventoryTarget('/repo', 'reports/WORKTREES.json')).toBe('/repo/reports/WORKTREES.json');
     expect(inventoryTarget('/repo', '/tmp/WORKTREES.json')).toBe('/tmp/WORKTREES.json');
+  });
+
+  it('writes the default inventory beside linked main, not beside the primary checkout', () => {
+    const run = (_cwd, args) => ({
+      stdout:
+        args[0] === 'worktree'
+          ? 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n'
+          : '/repo/.git\n',
+    });
+    expect(inventoryTarget('/repo', undefined, { run, realpath: (p) => p })).toBe(
+      '/repo/.kilo/worktrees/main/WORKTREES.json'
+    );
+  });
+
+  it('uses the primary checkout only when a readable roster confirms no main worktree', () => {
+    const run = (_cwd, args) => ({
+      stdout: args[0] === 'worktree' ? 'worktree /repo\nbare\n' : '/repo/.git\n',
+    });
+    expect(inventoryTarget('/repo', null, { run, realpath: (p) => p })).toBe('/repo/WORKTREES.json');
   });
 
   it('rejects an empty output path before attempting to write', () => {
@@ -4149,6 +4173,135 @@ describe('the call history', () => {
     expect(inv.goneWorktrees).toEqual(writeAudit.goneWorktrees);
     expect(inv.totals.goneWorktreesWithWrites).toBe(1);
     expect(inv.totals.totalShellCalls).toBe(4);
+  });
+});
+
+describe('shared inventory-path resolver', () => {
+  const identityRealpath = (p) => p;
+
+  it('parseWorktreeListing: splits porcelain output into records', () => {
+    const porcelain = [
+      'worktree /repo',
+      'HEAD abc123',
+      'branch refs/heads/main',
+      '',
+      'worktree /repo/.kilo/worktrees/task',
+      'HEAD def456',
+      'branch refs/heads/fix/task',
+      '',
+      'worktree /repo/.kilo/worktrees/detached',
+      'HEAD ghi789',
+      'detached',
+    ].join('\n');
+
+    const records = parseWorktreeListing(porcelain);
+    expect(records).toHaveLength(3);
+    expect(records[0]).toEqual({ path: '/repo', branch: 'main', bare: false });
+    expect(records[1]).toEqual({ path: '/repo/.kilo/worktrees/task', branch: 'fix/task', bare: false });
+    expect(records[2]).toEqual({ path: '/repo/.kilo/worktrees/detached', branch: '(detached)', bare: false });
+  });
+
+  it('parseWorktreeListing: marks bare repositories', () => {
+    const records = parseWorktreeListing('worktree /repo\nbare\n');
+    expect(records).toEqual([{ path: '/repo', branch: '(unknown)', bare: true }]);
+  });
+
+  it('resolveMainWorktreeRoot: returns the main checkout path', () => {
+    const run = (cwd, args) => {
+      if (args[0] === 'worktree') {
+        return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+      }
+      return { stdout: '' };
+    };
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe('/repo');
+  });
+
+  it('resolveMainWorktreeRoot: returns null when no main worktree exists', () => {
+    const run = (cwd, args) => ({ stdout: 'worktree /repo\nbranch refs/heads/feature\n' });
+    expect(resolveMainWorktreeRoot('/repo', { run, realpath: identityRealpath })).toBeNull();
+  });
+
+  it.each([
+    ['missing', 'worktree /missing/main\nbranch refs/heads/main\n'],
+    ['ambiguous', 'worktree /repo/main-a\nbranch refs/heads/main\n\nworktree /repo/main-b\nbranch refs/heads/main\n'],
+  ])('resolveInventoryPath: refuses a %s registered main rather than falling back', (label, worktreeListing) => {
+    const asked = [];
+    const run = (_cwd, args) => {
+      asked.push(args);
+      return { stdout: args[0] === 'worktree' ? worktreeListing : '/repo/.git\n' };
+    };
+    const realpath = (p) => {
+      if (p === '/repo/.git') return p;
+      if (label === 'missing') throw new Error('main checkout does not exist');
+      return p;
+    };
+
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath })).toBeNull();
+    expect(asked).toEqual([['worktree', 'list', '--porcelain']]);
+  });
+
+  it('resolveInventoryPath: returns the main checkout path', () => {
+    const run = (cwd, args) => ({ stdout: 'worktree /repo\nbranch refs/heads/main\n' });
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
+      '/repo/WORKTREES.json'
+    );
+  });
+
+  it('resolveInventoryPath: returns the linked main worktree when main is not the primary', () => {
+    const run = (cwd, args) => ({
+      stdout:
+        'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n',
+    });
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
+      '/repo/.kilo/worktrees/main/WORKTREES.json'
+    );
+  });
+
+  it('resolveInventoryPath: bases fallback and main lookup on one roster snapshot', () => {
+    let calls = 0;
+    const run = () => {
+      calls += 1;
+      return {
+        stdout:
+          calls === 1
+            ? 'worktree /repo\nbranch refs/heads/feature\n'
+            : 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n',
+      };
+    };
+
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
+      '/repo/WORKTREES.json'
+    );
+    expect(calls).toBe(1);
+  });
+
+  it('resolveRepositoryRoot: keeps storage rooted at the primary checkout with linked main', () => {
+    const run = (_cwd, args) => ({
+      stdout:
+        args[0] === 'worktree'
+          ? 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n'
+          : '/repo/.git\n',
+    });
+    expect(resolveRepositoryRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe('/repo');
+  });
+
+  it('resolveRepositoryRoot: uses the primary checkout with an external common directory', () => {
+    const run = (_cwd, args) => ({
+      stdout: args[0] === 'worktree' ? 'worktree /repo/project\nbranch refs/heads/main\n' : '/metadata/project\n',
+    });
+    expect(resolveRepositoryRoot('/repo/project', { run, realpath: identityRealpath })).toBe('/repo/project');
+  });
+
+  it('resolveRepositoryRoot: uses the bare repository path for a bare primary entry', () => {
+    const run = () => ({ stdout: 'worktree /repo/project.git\nbare\n' });
+    expect(resolveRepositoryRoot('/repo/project.git', { run, realpath: identityRealpath })).toBe('/repo/project.git');
+  });
+
+  it('resolveInventoryPath: returns null outside a repository', () => {
+    const run = () => {
+      throw new Error('not a git repository');
+    };
+    expect(resolveInventoryPath('/somewhere', { run, realpath: identityRealpath })).toBeNull();
   });
 });
 
