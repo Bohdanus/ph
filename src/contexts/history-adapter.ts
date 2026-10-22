@@ -287,7 +287,6 @@ function hasSafeDocumentSource(
   if (!hasSafeRecordKeys(value, ['layers', 'size'], ['frame'])) return false;
   if (
     value.size !== undefined &&
-    value.size !== null &&
     (!hasSafeRecordKeys(value.size, ['width', 'height']) ||
       typeof value.size.width !== 'number' ||
       !Number.isFinite(value.size.width) ||
