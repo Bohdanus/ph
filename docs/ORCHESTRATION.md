@@ -4,6 +4,10 @@ How concurrent agents stay out of each other's way. `AGENTS.md` keeps the
 short form — create a worktree, one root agent per worktree, claim what you
 touch — and this file is the detail behind it.
 
+This document's `task`, `agent_manager`, and Kilo database instructions describe
+Kilo Code. Codex uses different delegation tools and configuration; see
+[`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md) for Codex-specific workflows.
+
 ## Find the trap you are in
 
 This file is over a thousand lines and **97 of 3,244 sessions — 3.0% — have ever opened it
@@ -28,6 +32,7 @@ save you the next one.
 | starting a Photoshop or algorithmic change                          | [Research before implementation](#research-before-implementation)                                              |
 | running an overnight task to completion                             | [The task lifecycle](#the-task-lifecycle)                                                                      |
 | finding a branch with no worktree                                   | [Branches nobody holds](#branches-nobody-holds)                                                                |
+| delegating from Codex                                               | [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                             |
 
 **Most of the rules below were written after the incident that motivated them**, so
 "documented but still violated" is usually the wrong diagnosis — the rule did not exist yet.
