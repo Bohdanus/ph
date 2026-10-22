@@ -2088,6 +2088,31 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     registry.shutdown();
   });
 
+  it('rejects a document source with a null size as non-canonical data', () => {
+    const registry = new AssetRegistry();
+    const initialFrame = { x: 1, y: 2, width: 33, height: 44 };
+
+    const converted = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId: 'layer-1',
+          documentSource: {
+            layers: { 'layer-1': blankLayer('layer-1') },
+            size: null as unknown as { width: number; height: number },
+          },
+        },
+      ],
+      { documentId: 'test-doc', registry, initialFrame }
+    );
+
+    expect(converted.diagnostics.map(({ message }) => message)).toContain(
+      'Legacy document source is not canonical data.'
+    );
+    registry.shutdown();
+  });
+
   it('records a null baseline active layer for a document source with no layers', () => {
     const registry = new AssetRegistry();
 
