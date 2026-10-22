@@ -143,29 +143,29 @@ export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, documentF
 
 type SnapshotSurface = OffscreenCanvas | HTMLCanvasElement;
 
-function createSnapshotSurface(size: Size, backingScale = 1): SnapshotSurface {
-  if (typeof OffscreenCanvas !== 'undefined')
-    return new OffscreenCanvas(size.width * backingScale, size.height * backingScale);
+function createSnapshotSurface(backingSize: Size): SnapshotSurface {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(backingSize.width, backingSize.height);
   const snapshot = document.createElement('canvas');
-  resizeCanvas(snapshot, size.width, size.height, backingScale);
+  snapshot.width = backingSize.width;
+  snapshot.height = backingSize.height;
   return snapshot;
 }
 
-function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size, backingScale = 1): SnapshotSurface | null {
+function snapshotVisibleCanvas(canvas: HTMLCanvasElement, backingSize: Size): SnapshotSurface | null {
   try {
-    let snapshot = createSnapshotSurface(size, backingScale);
+    let snapshot = createSnapshotSurface(backingSize);
     let context = snapshot.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
     if (!context || typeof context.drawImage !== 'function') {
       const fallback = document.createElement('canvas');
-      resizeCanvas(fallback, size.width, size.height, backingScale);
+      fallback.width = backingSize.width;
+      fallback.height = backingSize.height;
       snapshot = fallback;
       context = fallback.getContext('2d') as CanvasRenderingContext2D | null;
     }
     if (!context) return null;
-    // Snapshot pixels are copied 1:1 from the visible backing store. The fallback canvas was
-    // resized through resizeCanvas, which applies a logical DPR transform, so reset only this
-    // destination context before the raw blit. The source canvas transform is irrelevant to
-    // drawImage and must not be mutated.
+    // `backingSize` and both surfaces are measured in backing pixels, at any DPR. Copy those
+    // pixels 1:1 into the snapshot; the source canvas transform is irrelevant to drawImage and
+    // must not be mutated.
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(canvas, 0, 0);
     return snapshot;
@@ -185,19 +185,29 @@ function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size, backingSca
  */
 function restoreVisibleCanvas(
   canvas: HTMLCanvasElement,
-  size: Size,
+  backingSize: Size,
   backingScale: number,
   snapshot: SnapshotSurface | null
 ): void {
   try {
-    resizeCanvas(canvas, size.width, size.height, backingScale);
+    // The saved dimensions came from canvas.width/height, which are backing pixels already.
+    // Applying resizeCanvas's logical DPR scale here would scale the previous dimensions twice.
+    canvas.width = backingSize.width;
+    canvas.height = backingSize.height;
+    if (backingScale !== 1) {
+      canvas.getContext('2d')?.setTransform(backingScale, 0, 0, backingScale, 0, 0);
+      canvas.setAttribute('data-hidpi-ratio', String(backingScale));
+    } else {
+      canvas.removeAttribute('data-hidpi-ratio');
+    }
     if (!snapshot) return;
     const context = canvas.getContext('2d');
     if (!context) return;
-    // The snapshot was created with the same backingScale, so its backing store holds device pixels.
-    // The target context is scaled by backingScale, so reset to identity for the blit.
+    // Both surfaces have the same raw backing dimensions. Reset the destination transform for a
+    // 1:1 restore, then restore the target's normal logical-to-backing transform.
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(snapshot, 0, 0);
+    context.setTransform(backingScale, 0, 0, backingScale, 0, 0);
   } catch (error) {
     console.error('Unable to restore runtime layer presentation', error);
   }
@@ -253,6 +263,7 @@ export function drawLayersToCanvas(
   }
 
   const previousSize = { width: canvas.width, height: canvas.height };
+  const previousBackingScale = Number(canvas.getAttribute('data-hidpi-ratio')) || 1;
   // The publish WRITES the target, and it writes it in two steps: `resizeCanvas` resets a
   // resized canvas to transparent, and the `clearRect` empties one whose dimensions already
   // matched. A `drawImage` that threw between them left the document blank with nothing to put
@@ -269,7 +280,7 @@ export function drawLayersToCanvas(
     // resizing the canvas.
     const validationContext = canvas.getContext('2d');
     if (!validationContext) return false;
-    snapshot = snapshotVisibleCanvas(canvas, previousSize, backingScale);
+    snapshot = snapshotVisibleCanvas(canvas, previousSize);
     if (!snapshot) return false;
     needsRestore = true;
     resizeCanvas(canvas, size.width, size.height, backingScale);
@@ -283,7 +294,7 @@ export function drawLayersToCanvas(
     context.drawImage(stagingCanvas, 0, 0);
     return true;
   } catch (error) {
-    if (needsRestore) restoreVisibleCanvas(canvas, previousSize, backingScale, snapshot);
+    if (needsRestore) restoreVisibleCanvas(canvas, previousSize, previousBackingScale, snapshot);
     console.error('Unable to publish runtime layer presentation', error);
     return false;
   }

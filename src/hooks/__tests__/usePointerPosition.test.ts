@@ -294,27 +294,14 @@ describe('usePointerPosition', () => {
       expect(getBoundingClientRect).toHaveBeenCalled();
     });
 
-    it('re-notifies onResize on every call, and does so for identical coordinates too', () => {
-      // `getLocalCoords` is NOT a pure coordinate transform: its first statement is
-      // `calculateDimensions()`, which ends unconditionally in `onResizeRef.current?.(…)`.
-      // There is no change detection anywhere on that path, so the notify fires on every
-      // call — including a second call at the very same coordinates, which is the case a
-      // change-detecting implementation would skip. Pinning "it measured" is not the same
-      // as pinning "it notified", and this pins the second.
-      //
-      // No production caller currently depends on the redundancy — `useRect.ts:117` feeds
-      // `drawMask()`, a pure function of the rect, and `Draw.tsx:24`, `Paint.tsx:54` and
-      // `Shape.tsx:29` call `setBrushScale(scale)`, which React bails on when the value is
-      // unchanged — so this is a pin on observed behaviour, not a required contract. Making
-      // the notify conditional is a legitimate change; it would just have to update this
-      // test in the same commit.
+    it('notifies onResize only when the measured fit changes', () => {
       //
       // Payload, derived from `calculateDimensions` over these fixtures:
       //   container 400x200 at (50, 25), image 100x100
       //   scaleX = 400/100 = 4, scaleY = 200/100 = 2  =>  scale = min(4, 2) = 2
       //   innerWidth  = 100 * 2 = 200      innerHeight = 100 * 2 = 200
       //   offsetX = (400 - 200) / 2 = 100  offsetY   = (200 - 200) / 2 = 0
-      const { el } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
+      const { el, getBoundingClientRect } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
       const onResize = vi.fn();
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
 
@@ -327,21 +314,28 @@ describe('usePointerPosition', () => {
       act(() => {
         result.current.getLocalCoords(event);
       });
-      expect(onResize).toHaveBeenCalledTimes(1);
+      expect(onResize).not.toHaveBeenCalled();
 
       // The SAME event object, so the coordinates are provably identical.
       act(() => {
         result.current.getLocalCoords(event);
       });
 
-      // Not deduplicated: the unconditional notify means the count tracks the calls.
-      expect(onResize).toHaveBeenCalledTimes(2);
+      // Re-reading the same fit must not make `useRect` repaint the previous crop rect.
+      expect(onResize).not.toHaveBeenCalled();
+
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 50, top: 25, width: 500, height: 200 }));
+      act(() => {
+        result.current.getLocalCoords(event);
+      });
+
+      expect(onResize).toHaveBeenCalledTimes(1);
       expect(onResize).toHaveBeenLastCalledWith({
         innerWidth: 200,
         innerHeight: 200,
-        outerWidth: 400,
+        outerWidth: 500,
         outerHeight: 200,
-        offsetX: 100,
+        offsetX: 150,
         offsetY: 0,
         scale: 2,
       });
@@ -917,6 +911,16 @@ describe('usePointerPosition', () => {
       const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: 10, clientY: 20, target: null }));
 
       expect(coords).toEqual({ x: 5, y: 10 });
+    });
+
+    it('maps captured client coordinates through the same current fit as a pointer event', () => {
+      const { el } = createContainer({ left: 25, top: 40, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const eventCoords = result.current.getLocalCoords(pointerEvent(el, { clientX: 45, clientY: 70 }));
+      const capturedCoords = result.current.getLocalCoordsFromClientPoint(45, 70);
+
+      expect(capturedCoords).toEqual(eventCoords);
     });
 
     it('does not throw for a zero-size container and reports a zero scale to onResize', () => {

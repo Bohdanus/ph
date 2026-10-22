@@ -784,6 +784,10 @@ Third party, labelled as such:
 
 ## crop — Crop Tool
 
+The tracked acceptance contract for crop re-entry, retained pixels, resize rendering, and viewport
+zoom is [`docs/CROP-UX.md`](../../../docs/CROP-UX.md). This research section supplies Adobe behavior
+and source provenance; the app-specific requirements are called out separately in that contract.
+
 ### What the tool is
 
 A crop is a **pending, non-destructive framing**. Selecting the Crop tool shows a crop box
@@ -1136,19 +1140,42 @@ frame.
 
 The route back is available through Crop itself. When the active history contains a
 `SET_DOCUMENT_FRAME_ACTION`, re-entering the Crop tool starts with a box at the current frame and
-immediately recomposes the retained layer pixels from the prior frame bounds. Pixels outside the
-current crop box remain visible under the same dim overlay used by the crop selection. At angle
-zero, widening the box to the original bounds restores the full raster at its original pixel
-coordinates, with no resampling. The E2E test
+composes the retained layer pixels from the prior frame bounds. That preview keeps a fixed backing
+frame while the crop is resized; the layer stack is not recomposed for each pointer frame. Pixels
+outside the current crop box remain visible under the same dim overlay used by the crop selection.
+At angle zero, the composition guide, dashed outline, corner handles, and rotation grip are drawn
+over the full crop box, including the part beyond the current frame. The crop shade is four DOM
+bands around the crop window, and every unrotated composition guide and crop edge is SVG, so a
+resize updates local overlay geometry without clearing or filling the frame-sized tool canvas.
+Guide contrast samples the active crop from a small cached document snapshot; pointer movement does
+not issue pixel readbacks or recompose the layer stack. Rotated crops keep their canvas chrome, but
+they establish the dim layer once and restore only the previous rotated crop bounds on later paints;
+their guide color uses the same cached sample. Each incremental repaint restores the previous
+rotated crop bounds and cuts the current crop out of the dimmed base; after a DPR resize, the hook
+repaints the crop chrome because resizing a canvas clears its backing store. Active pointer events
+keep only the latest client coordinates until the animation frame, and a cancel from a different
+touch pointer cannot undo the captured gesture. The visible top rotation grip and its hit zone
+share the same location and retain a one-pixel stroke. Widening the box to the original bounds
+restores the full raster at its original pixel coordinates, with no resampling. The E2E test
 `reselecting Crop shows retained pixels under the dim and widening restores the original raster`
 checks the actual screenshot blend and byte-compares the entire restored image with its pre-crop
-pixels. `re-cropping after layer edits previews and recovers retained pixels without scaling` also
-paints after the first crop, changes layer visibility, and verifies that retained pixels survive
-those edits before the next crop is applied.
+pixels. `resizing a re-entered crop updates its full-frame grid and keeps the preview allocation
+fixed` captures the live resize and checks all four rule-of-thirds line coordinates, screenshot
+pixels for the guide, crop outline, corner handle and rotation grip, plus the stable retained-pixel
+preview backing store. It also requires the grid bounds to update within two animation frames and
+byte-compares the workspace raster and canvas bounds during resize, after release, and after moving
+the crop box from inside.
+`the visible top rotation grip rotates a re-entered crop instead of starting a new
+crop` exercises the drawn grip itself rather than only the legacy corner rotation hot zone.
+`re-cropping after layer edits previews and recovers retained pixels without scaling` also paints
+after the first crop, changes layer visibility, and verifies that retained pixels survive those
+edits before the next crop is applied. A pointer cancellation cancels the pending animation frame
+and restores the crop geometry that was active before the gesture.
 
-The retained-pixel preview and the separate letterbox overhang guides are limited to unrotated
-crops: their current frame subtraction uses axis-aligned geometry, not the rotated crop polygon.
-A rotated crop can still reveal retained data when committed; the E2E test
+The retained-pixel preview and the overflow-safe crop chrome are limited to unrotated crops: their
+current frame subtraction uses axis-aligned geometry, not the rotated crop polygon. Rotated crop
+guides and chrome use the frame-sized canvas path. A rotated crop can still reveal retained data
+when committed; the E2E test
 `a rotated recrop commits retained pixels outside the prior frame` crops a 64×64 red/blue fixture,
 re-enters, extends the frame to include a hidden red pixel, rotates by a quarter turn, and verifies
 that Apply moves that pixel into the resulting frame. It also asserts there is no live
@@ -1185,10 +1212,13 @@ no retained source pixels stays transparent under OVR-1; the override does not a
 
 #### Adobe contract and source confidence
 
-- Adobe's Photoshop crop page, last updated April 18, 2024,
+- Adobe's Photoshop crop page, last updated February 23, 2026,
   [`crop-photos.html`](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-photos.html),
-  describes the crop boundary and says that with Delete Cropped Pixels unchecked the crop is
-  non-destructive; it also documents viewing the image outside the current crop border.
+  says selecting Crop displays adjustable borders, and that the corner or edge handles resize the
+  crop area. Its screenshot shows a composition grid and shaded areas outside the crop. With Delete
+  Cropped Pixels unchecked, the crop is non-destructive; the page also documents viewing the image
+  outside the current crop border. This confirms that retained pixels should be visible on crop
+  re-entry; it does not specify a fixed shade opacity.
 - Adobe's desktop non-destructive editing page, last updated September 28, 2026,
   [`non-destructive-editing-techniques.html`](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/create-layer-compositions/non-destructive-editing-techniques.html),
   explicitly says the unchecked option preserves hidden cropped areas and names both recovery
@@ -1198,8 +1228,9 @@ no retained source pixels stays transparent under OVR-1; the override does not a
   image.
 - Adobe's [`crop-tool-options.html`](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html)
   distinguishes Delete Cropped Pixels from the crop shield and Show Cropped Area. The latter are
-  preview/overlay settings; they do not themselves retain pixels. In this app, both visual
-  behaviors currently share the fixed black 0.7 overlay in `useRect`'s `drawMask()`.
+  preview/overlay settings; they do not themselves retain pixels. Photoshop lets the crop shield
+  color and opacity be customized. In this app, both visual behaviors currently share the fixed
+  black 0.7 overlay in `useRect`'s `drawMask()`.
 - Adobe's [`crop-tool-effects-on-image-dimensions.html`](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/resize-adjust-resolution/crop-tool-effects-on-image-dimensions.html)
   explains that physical print size depends on the pixel-to-resolution ratio and that total pixels
   and file size depend on pixel dimensions. This is useful context, but the no-resampling claim for

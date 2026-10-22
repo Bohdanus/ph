@@ -6,6 +6,29 @@ import { inverseViewPoint, viewStateRef, viewportCenter } from '../contexts/view
 
 export type { ContainDimensions } from '../util/contain-fit.ts';
 
+function sameContainDimensions(left: ContainDimensions, right: ContainDimensions): boolean {
+  return (
+    left.innerWidth === right.innerWidth &&
+    left.innerHeight === right.innerHeight &&
+    left.outerWidth === right.outerWidth &&
+    left.outerHeight === right.outerHeight &&
+    left.offsetX === right.offsetX &&
+    left.offsetY === right.offsetY &&
+    left.scale === right.scale
+  );
+}
+
+type FitInputs = Readonly<{ outerWidth: number; outerHeight: number; imageWidth: number; imageHeight: number }>;
+
+function sameFitInputs(left: FitInputs, right: FitInputs): boolean {
+  return (
+    left.outerWidth === right.outerWidth &&
+    left.outerHeight === right.outerHeight &&
+    left.imageWidth === right.imageWidth &&
+    left.imageHeight === right.imageHeight
+  );
+}
+
 /**
  * The `data-*` attributes this hook publishes on its container, and what each one is.
  *
@@ -74,20 +97,40 @@ export function usePointerPosition<T extends HTMLElement>(
   /**
    * The last set of values written to the `data-fit-*` attributes, as one string.
    *
-   * `getLocalCoords` calls `calculateDimensions()` on every pointer event, so publishing
-   * unconditionally would be nine `setAttribute` calls per `pointermove` in production. The
-   * dimensions only change on a resize, so this signature makes the write path cold: nine
-   * number-to-string conversions and one comparison per event, zero DOM writes.
+   * `getLocalCoords` measures the container on every pointer event, so publishing
+   * unconditionally would be nine `setAttribute` calls per `pointermove` in production. This
+   * signature makes the write path cold: nine number-to-string conversions and one comparison per
+   * event, zero DOM writes when neither the fit nor the container position changed.
    */
-  const publishedFitRef = useRef<string | null>(null);
+  const publishedFitRef = useRef<Readonly<{
+    scale: number;
+    offsetX: number;
+    offsetY: number;
+    outerWidth: number;
+    outerHeight: number;
+    imageWidth: number;
+    imageHeight: number;
+    rectX: number;
+    rectY: number;
+  }> | null>(null);
+  const fitInputsRef = useRef<FitInputs | null>(null);
 
   const publishFit = useCallback(
     (dimensions: ContainDimensions, rect: Pos, image: Size) => {
-      const signature =
-        `${dimensions.scale}|${dimensions.offsetX}|${dimensions.offsetY}|` +
-        `${dimensions.outerWidth}|${dimensions.outerHeight}|` +
-        `${image.width}|${image.height}|${rect.x}|${rect.y}`;
-      if (signature === publishedFitRef.current) return;
+      const previous = publishedFitRef.current;
+      if (
+        previous &&
+        previous.scale === dimensions.scale &&
+        previous.offsetX === dimensions.offsetX &&
+        previous.offsetY === dimensions.offsetY &&
+        previous.outerWidth === dimensions.outerWidth &&
+        previous.outerHeight === dimensions.outerHeight &&
+        previous.imageWidth === image.width &&
+        previous.imageHeight === image.height &&
+        previous.rectX === rect.x &&
+        previous.rectY === rect.y
+      )
+        return;
 
       const node = ref.current;
       // Not `if (!node)`: the ref is generic over `T extends HTMLElement` and callers and
@@ -100,7 +143,17 @@ export function usePointerPosition<T extends HTMLElement>(
       // matched for every later call with the same dimensions - so a first `calculateDimensions`
       // that ran before the element was attached suppressed the publish for good, and the
       // attributes never appeared at all.
-      publishedFitRef.current = signature;
+      publishedFitRef.current = {
+        scale: dimensions.scale,
+        offsetX: dimensions.offsetX,
+        offsetY: dimensions.offsetY,
+        outerWidth: dimensions.outerWidth,
+        outerHeight: dimensions.outerHeight,
+        imageWidth: image.width,
+        imageHeight: image.height,
+        rectX: rect.x,
+        rectY: rect.y,
+      };
 
       node.setAttribute(FIT_ATTRIBUTES.scale, String(dimensions.scale));
       node.setAttribute(FIT_ATTRIBUTES.offsetX, String(dimensions.offsetX));
@@ -119,26 +172,52 @@ export function usePointerPosition<T extends HTMLElement>(
     const rect = ref.current?.getBoundingClientRect();
     if (!rect) return containerRectRef.current;
 
+    const previous = containerRectRef.current;
+    if (
+      previous &&
+      previous.x === rect.left &&
+      previous.y === rect.top &&
+      previous.width === rect.width &&
+      previous.height === rect.height
+    )
+      return previous;
+
     const nextRect: Pos = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
     containerRectRef.current = nextRect;
     return nextRect;
   }, [ref]);
 
   const calculateDimensions = useCallback(
-    (observed?: Pos) => {
+    (observed?: Pos): Pos | null => {
       // A rect handed in by the ResizeObserver is the measurement for this event,
       // so it is used as is. Re-reading `getBoundingClientRect()` here discarded
       // the observed size and substituted a second, possibly different one.
       if (observed) containerRectRef.current = observed;
       const rect = observed ?? readContainerRect() ?? containerRectRef.current;
-      if (!rect) return;
+      if (!rect) return null;
 
       const { width: outerWidth, height: outerHeight } = rect;
 
-      dimensionsRef.current = containFit({ width: outerWidth, height: outerHeight }, imageSize);
+      const nextInputs = {
+        outerWidth,
+        outerHeight,
+        imageWidth: imageSize.width,
+        imageHeight: imageSize.height,
+      };
+      const inputsChanged = !fitInputsRef.current || !sameFitInputs(fitInputsRef.current, nextInputs);
+      let dimensionsChanged = false;
+      if (inputsChanged) {
+        const nextDimensions = containFit({ width: outerWidth, height: outerHeight }, imageSize);
+        dimensionsChanged = !sameContainDimensions(dimensionsRef.current, nextDimensions);
+        // Keep the fit object stable between real layout changes. Consumers use this identity to
+        // avoid repainting overlays for a pointer event that only needs a fresh coordinate read.
+        if (dimensionsChanged) dimensionsRef.current = nextDimensions;
+        fitInputsRef.current = nextInputs;
+      }
 
       publishFit(dimensionsRef.current, rect, imageSize);
-      onResizeRef.current?.(dimensionsRef.current);
+      if (dimensionsChanged) onResizeRef.current?.(dimensionsRef.current);
+      return rect;
     },
     [imageSize, publishFit, readContainerRect]
   );
@@ -236,11 +315,14 @@ export function usePointerPosition<T extends HTMLElement>(
   };
 
   // in theory its managed internally by this hook, so not exposed outside
-  const onPointerCancel = useCallback((e: PointerEvent) => {
-    if (activePointerId.current === e.pointerId) {
-      clearEvent();
-    }
-  }, []);
+  const onPointerCancel = useCallback(
+    (e: PointerEvent) => {
+      if (activePointerId.current === e.pointerId) {
+        clearEvent();
+      }
+    },
+    [calculateDimensions]
+  );
 
   useEffect(() => {
     const node = ref.current;
@@ -251,33 +333,37 @@ export function usePointerPosition<T extends HTMLElement>(
     };
   }, [ref, onPointerCancel]);
 
-  const getLocalCoords = (e: React.PointerEvent<T>): Point => {
-    calculateDimensions();
+  const getLocalCoordsFromClientPoint = useCallback(
+    (clientX: number, clientY: number): Point => {
+      const rect = calculateDimensions() ?? containerRectRef.current;
+      if (!rect) return { x: 0, y: 0 };
 
-    const rect = readContainerRect() ?? containerRectRef.current;
-    if (!rect) return { x: 0, y: 0 };
+      const { offsetX, offsetY, scale } = dimensionsRef.current;
 
-    const { offsetX, offsetY, scale } = dimensionsRef.current;
+      const viewportPoint = { x: clientX - rect.x, y: clientY - rect.y };
+      const untransformed = inverseViewPoint(
+        viewportPoint,
+        viewStateRef.current,
+        viewportCenter(rect.width, rect.height)
+      );
+      const xCss = (untransformed.x - offsetX) / scale;
+      const yCss = (untransformed.y - offsetY) / scale;
 
-    const viewportPoint = { x: e.clientX - rect.x, y: e.clientY - rect.y };
-    const untransformed = inverseViewPoint(
-      viewportPoint,
-      viewStateRef.current,
-      viewportCenter(rect.width, rect.height)
-    );
-    const xCss = (untransformed.x - offsetX) / scale;
-    const yCss = (untransformed.y - offsetY) / scale;
+      return {
+        x: xCss,
+        y: yCss,
+      };
+    },
+    [calculateDimensions]
+  );
 
-    return {
-      x: xCss,
-      y: yCss,
-    };
-  };
+  const getLocalCoords = (e: React.PointerEvent<T>): Point => getLocalCoordsFromClientPoint(e.clientX, e.clientY);
 
   return {
     pointerIdRef: activePointerId,
     dimensionsRef,
     getLocalCoords,
+    getLocalCoordsFromClientPoint,
     isMouseDown,
     releasePointer,
     isPointerDownValid, // tells if the event was captured (therefore should be handled)

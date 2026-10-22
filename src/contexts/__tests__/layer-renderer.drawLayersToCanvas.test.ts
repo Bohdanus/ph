@@ -454,6 +454,7 @@ describe('drawLayersToCanvas', () => {
       ['width', 640],
       ['height', 480],
       ['width', 300],
+      ['height', 150],
     ]);
     expect(target.canvas.width).toBe(300);
     expect(target.canvas.height).toBe(150);
@@ -768,6 +769,36 @@ describe('drawLayersToCanvas', () => {
     expect(target.canvas.height).toBe(960);
     expect(target.canvas.getAttribute('data-hidpi-ratio')).toBe('2');
   });
+
+  it.each([
+    { backingScale: 2, backingWidth: 1280, backingHeight: 960 },
+    { backingScale: 0.5, backingWidth: 320, backingHeight: 240 },
+  ])(
+    'restores the existing $backingWidth×$backingHeight backing pixels after a $backingScale× publish blit fails',
+    ({ backingScale, backingWidth, backingHeight }) => {
+      const target = createTargetCanvas(backingWidth, backingHeight);
+      target.canvas.setAttribute('data-hidpi-ratio', String(backingScale));
+      const targetResizes = trackCanvasResizes(target.canvas);
+      const failure = new Error('blit failed');
+      target.context.drawImage.mockImplementationOnce(throwing(failure));
+
+      expect(drawLayersToCanvas(target.canvas, [], frame(0, 0, 640, 480), undefined, backingScale)).toBe(false);
+
+      expect(target.canvas.width).toBe(backingWidth);
+      expect(target.canvas.height).toBe(backingHeight);
+      expect(target.canvas.getAttribute('data-hidpi-ratio')).toBe(String(backingScale));
+      expect(targetResizes).toEqual([
+        ['width', backingWidth],
+        ['height', backingHeight],
+      ]);
+      expect(target.context.drawImage).toHaveBeenCalledTimes(2);
+      const snapshot = target.context.drawImage.mock.calls[1][0] as HTMLCanvasElement;
+      expect(snapshot.width).toBe(backingWidth);
+      expect(snapshot.height).toBe(backingHeight);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
+    }
+  );
 
   it('resizes only the staging canvas when composition fails', () => {
     const target = createTargetCanvas();
