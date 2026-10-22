@@ -797,23 +797,23 @@ Adobe's text on it: "**Place the pointer a little outside the corner handles and
 rotate the image. A grid displays inside the crop box and the image rotates behind it.**"
 (`crop-straighten-photos.html`.)
 
-**There is no drag that moves the box, and this file used to say there was.** The previous
-version of this section — and of the data file's `purpose` — claimed that the crop box "can
-be moved without touching the image by dragging outside the box", in the same breath as the
-correct first clause. Two clauses, one gesture, and the second one is false: dragging outside
-a corner **rotates**. The distinction that does exist is between the three regions — handles
-resize, outside a corner rotates, and inside the box moves the **image** while the box stays
-put, which is the interaction everyone gets wrong. That last half is Adobe's too, from a
-different page: "Select inside the crop border and drag to reposition the image"
-(`tool-techniques/crop-tool.html`). Adobe's product FAQ covers the same region with a
-sentence whose object is not named unambiguously — "click inside the crop area and drag to
-move it", inside an answer about repositioning a crop area (`crop-image.html`) — so the one
-unambiguous Adobe sentence about the inside drag is the one the data file uses, and what the
-other page means by "it" is filed as `Unverified`.
+**Adobe's inside-drag instructions conflict across pages and versions.** The current desktop
+Crop photos page (last updated 2026-02-23) says to drag inside to move the crop box. Adobe's
+2024 Crop tool page and 2020 tutorial instead say an inside drag repositions the image. The
+current Crop tool options page also lists **Use Classic Mode** as reverting to legacy behavior,
+but Adobe does not explicitly map those specific page instructions to that mode. This section
+and the app contract follow the current desktop page: the app's inside drag moves the pending
+crop box while leaving layer pixels fixed. Preserve the source-version conflict in future
+research; do not describe the older instruction as the current default. The other regions are
+consistent: edge and corner handles resize, and dragging just outside a corner rotates.
+Sources: `crop-photos.html` (2026-02-23), `tool-techniques/crop-tool.html` (2024-04-29),
+`image-resizing-basics.html` (2020-01-13), and `crop-tool-options.html` (2026-02-23).
 
-Nothing is committed until you confirm: Enter (Windows) / Return (Mac OS), the check mark
-below the box, or a double-click inside the box. **Esc cancels** and restores the previous
-framing. The crop variants are Straight Crop (the default mode of the tool) and
+The current desktop page says Enter/Return or **Done** applies the crop; Adobe's 2020 tutorial
+demonstrates the check mark in the options bar. Adobe's current keyboard shortcut reference labels
+Crop tool + Enter/Esc as **“Accept cropping or exit cropping”** without further defining “exit”.
+In this app, **Esc cancels** and restores the previous framing, as pinned by the crop-history E2E.
+The crop variants are Straight Crop (the default mode of the tool) and
 **Perspective Crop** — a _separate tool_ in the same flyout, reached by holding the Crop tool
 in the Tools panel or by `Shift+C`, which also holds Slice and Slice Select. `Straighten` is
 the one crop-variant button on the bar, and **Content-Aware is not a bar control at all**:
@@ -1379,6 +1379,7 @@ Adobe official help:
 - https://helpx.adobe.com/photoshop/using/crop-straighten-photos.html
 - https://helpx.adobe.com/photoshop-elements/using/cropping.html — Adobe, but Elements: "To swap Width and Height values, click the Swap icon in the options bar", the control the current Photoshop pages do not name
 - https://helpx.adobe.com/in/photoshop/using/new-shortcuts-cs6.html — Adobe's crop shortcut list; **note it is the CS6 list**, and it is the oldest source used in this family
+- https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf — Adobe's current Photoshop shortcut reference; labels Crop tool + Enter/Esc as "Accept cropping or exit cropping"
 - https://helpx.adobe.com/ph_fil/photoshop/how-to/content-aware-crop-fill.html
 
 Adobe product marketing:
@@ -1588,17 +1589,14 @@ appears as a Photoshop behavior or app capability assertion in `type-crop.ts`.
       component). The app's answer to what fills the
       added band is **OVR-1** in `docs/OVERRIDES.md`, recorded by hand, and both absent
       synthesis paths are recorded once in `docs/TOOLS-TOO-HARD.md`. That half is settled.
-18. **Which of the two an inside drag moves.** `tool-techniques/crop-tool.html` is
-    unambiguous — "Select inside the crop border and drag to reposition the image" — and is
-    what the data file uses. `crop-image.html` covers the same region with "click inside the
-    crop area and drag to move **it**", inside an answer about repositioning a crop area, and
-    the pronoun's object is not stated. Both are Adobe; they cannot both be a description of
-    the same product's behaviour, so one of them is loose, and which one is not determinable
-    from the pages. **The inherited pass noticed this and then asserted the loose page anyway**,
-    quoting `crop-image.html` — "hover outside a corner to rotate the crop box … To move the
-    crop box, drag it from inside" — inside `purpose`, while `appNotes` said the divergence was
-    "not settled". `purpose` now quotes both Adobe pages and states that the bar-page
-    behaviour is the one asserted and the product-page reading left open.
+18. **How Adobe's inside-drag behavior varies across published instructions.** The current
+    desktop `crop-photos.html` page (last updated 2026-02-23) says dragging inside moves the
+    crop box. The 2024 `tool-techniques/crop-tool.html` page and 2020 `image-resizing-basics.html`
+    tutorial say it repositions the image. The current `crop-tool-options.html` lists **Use
+    Classic Mode** as reverting to legacy behavior, but none of these pages explicitly ties the
+    older wording to that option. The app follows the current desktop page and moves the pending
+    crop box without moving its layer pixels. Keep the version conflict documented; do not
+    infer a mode mapping that Adobe has not stated.
 19. **The Adobe shortcut sheet that lists all four type tools on `T`.** The revalidation
     brief cites `https://cdn.edex.adobe.com/.../08d7c4a0-….pdf` for it; `webfetch` returns raw
     PDF bytes rather than text and no search result surfaced the sheet's contents, so the URL

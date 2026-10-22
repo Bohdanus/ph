@@ -6,9 +6,16 @@ for this clone; they are not claims about undocumented Photoshop behavior.
 
 ## Photoshop behavior established by Adobe
 
-- The Crop tool displays an adjustable boundary. Dragging an edge or corner handle resizes the
-  crop area; dragging inside moves the crop box. Enter/Return or Done applies the pending crop.
-  [Crop photos](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-photos.html)
+- The current desktop Crop photos page (last updated Feb 23, 2026) says the Crop tool displays an
+  adjustable boundary, edge and corner handles resize it, dragging inside moves the crop box, and
+  Enter/Return or Done applies it. Adobe's 2024 Crop tool page and its 2020 tutorial instead say an
+  inside drag repositions the image. Adobe's Crop tool options page exposes **Use Classic Mode** as
+  the legacy behavior, but the pages do not explicitly reconcile those gesture descriptions. This
+  contract follows the current desktop page for inside-drag behavior; do not treat the older wording
+  as a claim about the current default. [Current Crop photos](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-photos.html),
+  [2024 Crop tool page](https://helpx.adobe.com/photoshop/using/tool-techniques/crop-tool.html),
+  [2020 tutorial](https://helpx.adobe.com/ro/photoshop/how-to/image-resizing-basics.html),
+  [Crop tool options](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html)
 - **Delete Cropped Pixels** controls whether applying a crop permanently removes the outside
   areas. With it off, Photoshop preserves hidden areas and can recover them with **Image > Reveal
   All** or by extending the Crop tool beyond the image edge. This option is unavailable for a
@@ -21,6 +28,10 @@ for this clone; they are not claims about undocumented Photoshop behavior.
 - **Show Cropped Area** and **Crop Shield** are visual options: Adobe describes shaded cropped-out
   areas and a configurable color overlay outside the crop. They do not define whether pixels are
   retained; that is controlled by Delete Cropped Pixels. [Crop tool options](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html)
+- Adobe's current Photoshop keyboard shortcut reference labels **Crop tool + Enter or Esc** as
+  “Accept cropping or exit cropping.” It does not further define the meaning of “exit”; the app's
+  cancel semantics are pinned separately in the contract below. [Photoshop keyboard shortcuts
+  (PDF)](https://helpx.adobe.com/content/dam/help/en/photoshop/using/default-keyboard-shortcuts/photoshop-keyboard-shortcuts.pdf)
 
 The pixel-retention behavior is conditional in Photoshop. Do not describe hidden-pixel recovery as
 unconditional Photoshop behavior when Delete Cropped Pixels is enabled.
@@ -41,8 +52,9 @@ non-destructive case as its default behavior.
   not translate, scale, or otherwise move the layer pixels, the canvas contents, or the workspace
   view.
 - The selected crop's border, handles, and 3×3 Rule of Thirds grid must stay aligned with the same
-  resized bounds during the drag and after release. Re-entering Crop uses the same rendering path
-  and visual treatment as the first selection.
+  resized bounds during the drag and after release. The grid geometry and pixels, plus the crop
+  outline pixels, must repaint within two animation frames after a pointer update. Re-entering Crop
+  uses the same rendering path and visual treatment as the first selection.
 - Applying the crop changes the document frame without resampling the layer pixels or changing the
   current apparent workspace zoom, within the app's existing effective zoom range of 10%–1600%. If
   preserving apparent scale would cross a zoom limit, the limit takes precedence. It must not
@@ -52,6 +64,8 @@ non-destructive case as its default behavior.
   recover the unchanged original pixels exactly, provided the requested frame is within the app's
   crop commit limit. Pixels beyond all retained source bounds remain transparent, per
   [OVR-1](OVERRIDES.md).
+- Pressing Escape with a pending crop cancels it without changing the document frame, layer pixels,
+  or history, and leaves the Crop tool able to make and apply a later crop.
 - Crop chrome must follow pointer updates promptly. The retained-pixel preview's backing allocation
   stays fixed while the pending rectangle is resized; the full layer stack is not recomposed for
   every pointer movement.
