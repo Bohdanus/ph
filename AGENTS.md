@@ -36,5 +36,5 @@ Support desktop and tablet/touch devices, including Retina/high-DPI. Do not add 
 ## Gates And Documentation
 
 - Commit runs lint-staged, then typecheck/build; push runs the full suite. Never weaken gates or casually re-record baselines. See [`docs/TESTING.md#gates`](docs/TESTING.md).
-- Do not cite line numbers in prose or human-written source comments; use identifiers, test titles, files, headings, or `§N`. Do not edit generated `docs/TOOLS.md`.
+- Do not cite line numbers in prose or human-written source/config/markup comments; use identifiers, test titles, files, headings, or `§N`. Do not edit generated `docs/TOOLS.md`.
 - Keep `HANDOFF.md`, `.kilo/plans/`, and `e2e/OPEN_PROBLEMS.md` problem-focused, not changelogs. Remove fixed, verified entries. Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`HANDOFF.md`](HANDOFF.md) §1 before crossing replay/durable boundaries.

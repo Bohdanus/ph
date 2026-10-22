@@ -12,7 +12,7 @@ set -e
 # files with lint-staged before the commit was ever called illegitimate.
 node scripts/main-worktree-guard.mjs
 
-# Reject new line-number citations in prose and code comments before lint-staged rewrites staged files.
+# Reject new line-number citations in prose and source/config/markup comments before lint-staged rewrites staged files.
 node scripts/check-new-line-citations.mjs
 
 # A merge being completed must not silently delete the other side's committed work.

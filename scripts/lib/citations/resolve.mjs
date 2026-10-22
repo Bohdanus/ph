@@ -427,8 +427,30 @@ const LINE_NUMBER_CITATION = new RegExp(`[\\w./@-]+\\.(?:${CITATION_EXTENSION_SO
  * pass for the unterminated fence, which strips to the end of the document — the safe direction,
  * since a document that forgets its closing fence loses the check on everything after it.
  */
-const withoutFencedCode = (markdown) =>
-  markdown.replace(/^[ \t]{0,3}```[\s\S]*?^[ \t]{0,3}```[^\n]*$/gm, '').replace(/^[ \t]{0,3}```[\s\S]*$/m, '');
+const withoutFencedCode = (markdown) => {
+  const lines = markdown.split('\n');
+  let fenceCharacter = null;
+  let fenceLength = 0;
+
+  return lines
+    .map((line) => {
+      if (fenceCharacter === null) {
+        const opening = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
+        if (!opening) return line;
+        fenceCharacter = opening[1][0];
+        fenceLength = opening[1].length;
+        return '';
+      }
+
+      const closing = /^[ \t]{0,3}(`+|~+)[ \t]*$/.exec(line);
+      if (closing && closing[1][0] === fenceCharacter && closing[1].length >= fenceLength) {
+        fenceCharacter = null;
+        fenceLength = 0;
+      }
+      return '';
+    })
+    .join('\n');
+};
 
 /**
  * The citation forms this repository actually writes, in one pattern.

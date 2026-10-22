@@ -210,7 +210,7 @@ because `scripts/lib/worktree-inventory/curated.mjs` keys on their paths.
 sentence that needs it. Never copy one forward from a document you just read.
 
 **Cite the unit, never the line.** This applies to prose in maintained documents and to
-human-written comments in source and tests. A line number is a position in a file that
+human-written source, configuration, and markup comments. A line number is a position in a file that
 everything above it moves. An audit of `HANDOFF.md` found 36% of its hand-checked
 `file.ts:NNN` citations pointing at the wrong code — mostly off by one or two, some
 by 146 — and a 42-minute session once burned chasing nothing but that drift, one
@@ -249,7 +249,7 @@ fence. Generated and point-in-time documents are excluded from those maintained-
 This test runs in CI and blocks merges with maintained-document citation violations. Structured
 `implementationRefs` in tool-description data are machine-readable metadata, not prose; they remain
 separately governed until that data format is migrated. Both CI and pre-commit reject new line-number
-citations in tracked Markdown prose and source comments, except generated `docs/TOOLS.md`; historical
+citations in tracked Markdown prose and comments in source/configuration/markup files, except generated `docs/TOOLS.md`; historical
 citations remain a migration backlog.
 
 **The one exemption is quotation.** A finding whose SUBJECT is a drifted line-number

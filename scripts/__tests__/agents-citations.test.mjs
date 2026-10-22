@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 import * as citationPatterns from '../lib/citations/resolve.mjs';
 import {
   citationsInAddedComments,
+  citationsInAddedHashComments,
+  citationsInAddedMarkupComments,
   citationsInAddedMarkdown,
   addedLinesByFile,
 } from '../lib/citations/added-comments.mjs';
@@ -556,10 +558,10 @@ const ungatedDocumentsWithLineNumbers = (documents) =>
     .map(({ path }) => path);
 
 describe("maintained guidance's code claims resolve against the program", () => {
-  it('keeps the no-line-number rule explicit for prose and source comments', () => {
+  it('keeps the no-line-number rule explicit for prose and source/config comments', () => {
     const documentation = readFileSync(resolve(REPO_ROOT, 'docs/DOCUMENTATION.md'), 'utf8');
-    expect(readAgentsMd()).toContain('human-written source comments');
-    expect(documentation).toContain('human-written comments in source and tests');
+    expect(readAgentsMd()).toContain('human-written source/config/markup comments');
+    expect(documentation).toContain('human-written source, configuration, and markup comments');
   });
 
   it('finds new comment citations from staged diff lines, not code or unchanged comments', () => {
@@ -586,6 +588,26 @@ describe("maintained guidance's code claims resolve against the program", () => 
     expect(citationsInAddedComments('const y = "not-a-comment.ts:3";', 'src/example.ts', new Set([1]))).toEqual([]);
   });
 
+  it('finds JSONC comments without mistaking strings for comments', () => {
+    const diff = [
+      'diff --git a/kilo.jsonc b/kilo.jsonc',
+      '--- a/kilo.jsonc',
+      '+++ b/kilo.jsonc',
+      '@@ -1 +1,3 @@',
+      ' {',
+      '+  // Retain `settings.ts:29` as a stable reference.',
+      '+  "label": "value.ts:31",',
+    ].join('\n');
+    const additions = addedLinesByFile(diff);
+    expect(
+      citationsInAddedComments(
+        '{\n  // Retain `settings.ts:29` as a stable reference.\n  "label": "value.ts:31",\n}',
+        'kilo.jsonc',
+        additions.get('kilo.jsonc')
+      )
+    ).toEqual([{ fileName: 'kilo.jsonc', line: 2, citation: 'settings.ts:29' }]);
+  });
+
   it('finds new citations in excluded Markdown while leaving fenced examples alone', () => {
     const diff = [
       'diff --git a/MIGRATION_NEXT_STEPS_SUNDAY.md b/MIGRATION_NEXT_STEPS_SUNDAY.md',
@@ -610,6 +632,108 @@ describe("maintained guidance's code claims resolve against the program", () => 
     ).toEqual([
       { fileName: 'MIGRATION_NEXT_STEPS_SUNDAY.md', line: 2, citation: 'new.ts:22' },
       { fileName: 'MIGRATION_NEXT_STEPS_SUNDAY.md', line: 2, citation: '`:23`' },
+    ]);
+  });
+
+  it('captures every coordinate in a bare continuation list', () => {
+    expect(citationsInAddedMarkdown('evidence `:217,:219-221`', 'legacy.md', new Set([1]))).toEqual([
+      { fileName: 'legacy.md', line: 1, citation: '`:217,:219-221`' },
+    ]);
+  });
+
+  it('ignores tilde and variable-length fences while checking the remaining Markdown', () => {
+    const markdown = ['~~~text', 'inside.ts:11', '~~~', '````md', '```', 'nested.ts:22', '````', 'outside.ts:33'].join(
+      '\n'
+    );
+    expect(
+      [...citationPatterns.withoutFencedCode(markdown).matchAll(citationPatterns.LINE_NUMBER_CITATION)].map(
+        ([citation]) => citation
+      )
+    ).toEqual(['outside.ts:33']);
+  });
+
+  it('finds YAML comments while ignoring quoted and block-scalar content', () => {
+    const diff = [
+      'diff --git a/.github/workflows/sample.yml b/.github/workflows/sample.yml',
+      '--- a/.github/workflows/sample.yml',
+      '+++ b/.github/workflows/sample.yml',
+      '@@ -1 +1,7 @@',
+      ' title: existing',
+      '+# See `workflow.ts:18` for the source.',
+      '+label: "literal # value.ts:20"',
+      '+script: |',
+      '+  # This is block data, not a comment: `data.ts:22`.',
+      '+enabled: true # See `state.ts:24`.',
+      "+prompt: don't copy `legacy.ts:26` # See `notes.ts:28`.",
+    ].join('\n');
+    const additions = addedLinesByFile(diff);
+    const yaml = [
+      'title: existing',
+      '# See `workflow.ts:18` for the source.',
+      'label: "literal # value.ts:20"',
+      'script: |',
+      '  # This is block data, not a comment: `data.ts:22`.',
+      'enabled: true # See `state.ts:24`.',
+      "prompt: don't copy `legacy.ts:26` # See `notes.ts:28`.",
+    ].join('\n');
+    expect(
+      citationsInAddedHashComments(
+        yaml,
+        '.github/workflows/sample.yml',
+        additions.get('.github/workflows/sample.yml'),
+        {
+          yamlBlockScalars: true,
+        }
+      )
+    ).toEqual([
+      { fileName: '.github/workflows/sample.yml', line: 2, citation: 'workflow.ts:18' },
+      { fileName: '.github/workflows/sample.yml', line: 6, citation: 'state.ts:24' },
+      { fileName: '.github/workflows/sample.yml', line: 7, citation: 'notes.ts:28' },
+    ]);
+  });
+
+  it('finds comments in extensionless hooks and multiline markup files', () => {
+    const shellDiff = [
+      'diff --git a/.husky/pre-commit b/.husky/pre-commit',
+      '--- a/.husky/pre-commit',
+      '+++ b/.husky/pre-commit',
+      '@@ -1 +1,3 @@',
+      ' #!/usr/bin/env sh',
+      '+# Generated from `hook.ts:17`',
+      "+printf '%s' 'literal # shell.ts:19' # See `inline.ts:21`",
+    ].join('\n');
+    const shellAdditions = addedLinesByFile(shellDiff);
+    expect(
+      citationsInAddedHashComments(
+        "#!/usr/bin/env sh\n# Generated from `hook.ts:17`\nprintf '%s' 'literal # shell.ts:19' # See `inline.ts:21`",
+        '.husky/pre-commit',
+        shellAdditions.get('.husky/pre-commit')
+      )
+    ).toEqual([
+      { fileName: '.husky/pre-commit', line: 2, citation: 'hook.ts:17' },
+      { fileName: '.husky/pre-commit', line: 3, citation: 'inline.ts:21' },
+    ]);
+
+    const markupDiff = [
+      'diff --git a/public/icon.svg b/public/icon.svg',
+      '--- a/public/icon.svg',
+      '+++ b/public/icon.svg',
+      '@@ -1 +1,4 @@',
+      ' <svg>',
+      '+<!-- See `shape.ts:32`',
+      '+continued `:33` -->',
+      '+<text>literal.ts:40</text>',
+    ].join('\n');
+    const markupAdditions = addedLinesByFile(markupDiff);
+    expect(
+      citationsInAddedMarkupComments(
+        '<svg>\n<!-- See `shape.ts:32`\ncontinued `:33` -->\n<text>literal.ts:40</text>',
+        'public/icon.svg',
+        markupAdditions.get('public/icon.svg')
+      )
+    ).toEqual([
+      { fileName: 'public/icon.svg', line: 2, citation: 'shape.ts:32' },
+      { fileName: 'public/icon.svg', line: 3, citation: '`:33`' },
     ]);
   });
 

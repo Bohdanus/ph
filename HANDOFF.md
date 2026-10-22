@@ -2652,10 +2652,10 @@ silently was incorrect.
 The actual remaining gap was **new prose in tracked Markdown excluded from the maintained-document
 scan**, notably point-in-time reports. `MIGRATION_NEXT_STEPS_SUNDAY.md` still has historical
 citations, and `docs/OVERRIDES.md` is operator-owned. A pre-commit guard now rejects new citations in
-tracked Markdown prose and source comments, while exempting generated `docs/TOOLS.md`; it does not
+tracked Markdown prose and source/configuration/markup comments, while exempting generated `docs/TOOLS.md`; it does not
 migrate that existing historical residue.
 
-Human-written source comments follow the same ban. Structured `implementationRefs` in tool-description
+Human-written source/configuration/markup comments follow the same ban. Structured `implementationRefs` in tool-description
 data are separate machine-readable metadata and require a separate migration decision.
 
 **Affected.** `scripts/__tests__/agents-citations.test.mjs` — `DOCUMENTS_NOT_CHECKED` and the
