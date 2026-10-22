@@ -237,7 +237,7 @@ describe('usePointerPosition', () => {
 
     it('inverts a transient pan and zoom before returning document coordinates', () => {
       const { el } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
-      viewStateRef.current = { panX: 20, panY: -10, zoom: 2, rotation: 0 };
+      viewStateRef.current = { panX: 20, panY: -10, zoom: 2, fitScaleCompensation: 1, rotation: 0 };
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
       // The document point (10, 20) is at (120, 40) in the untransformed contain-fit viewport.

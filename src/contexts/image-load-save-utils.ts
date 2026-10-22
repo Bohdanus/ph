@@ -22,14 +22,6 @@ const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 const XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace';
 
-type CssWalkNode = {
-  type: string;
-  name: string;
-  value: string;
-  property: string;
-  prelude?: CssWalkNode;
-  children: { toArray: () => CssWalkNode[] };
-};
 const XLINK_NAMESPACE = 'http://www.w3.org/1999/xlink';
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const MAX_CSS_ANALYSIS_NODES = 20_000;
@@ -917,7 +909,7 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
     const fallbackValues: string[] = [];
     let invalidVar = false;
     try {
-      walkCss(valueAst, (node: CssWalkNode) => {
+      walkCss(valueAst, (node) => {
         if (node.type !== 'Function' || decodeCssEscapes(node.name).toLowerCase() !== 'var') return;
         const children = node.children.toArray();
         let name: string | undefined;
@@ -1078,7 +1070,7 @@ function collectCssSource(
 
   const stopWalk = Symbol('stop CSS resource walk');
   try {
-    walkCss(root, (node: CssWalkNode) => {
+    walkCss(root, (node) => {
       analysis.nodeCount += 1;
       if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) throw stopWalk;
       if (node.type === 'Declaration') {

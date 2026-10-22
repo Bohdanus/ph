@@ -361,6 +361,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
 typeCropDescriptions.crop.appNotes = [
   'The app commits crop as a SET_DOCUMENT_FRAME_ACTION, changing documentFrame rather than trimming layer bitmaps.',
   'At angle zero, layer source coordinates are unchanged: after a frame crop, re-entering Crop seeds the current bounds, extending them previews retained off-frame layer pixels, and Apply reveals those pixels without resampling.',
+  'The workspace compensates its contain-fit zoom when a frame changes, including undo and redo, so existing document pixels keep the same on-screen size; compensation is bounded by the view zoom limits.',
   'The live preview clears the current frame to avoid double-compositing translucent layers and budgets at most 4,194,304 backing pixels per frame-sized surface; very large previews may be lower resolution.',
   'Rotated crops apply a layer transform. Because overhang geometry is axis-aligned, retained-pixel preview and letterbox guides are suppressed at nonzero rotation; rotated recrops reveal retained content on commit.',
   'OVR-1 applies only to newly exposed areas with no retained source pixels; it does not block recovery. Adobe documents Delete Cropped Pixels off, Reveal All/drag recovery, a Background-only limitation, and separate Content-Aware and Generative synthesis features.',
