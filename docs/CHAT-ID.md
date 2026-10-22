@@ -80,54 +80,33 @@ work by branch, not by session ID; a Copilot URI is not a Kilo run ID.
 
 ## Codex CLI or Desktop sessions
 
-Prefer the current thread/session ID exposed by the Codex host. When the host does not expose it,
-Codex's local rollout log is a reliable fallback if this process can read the same `CODEX_HOME`.
-The default directory is `~/.codex`; if `CODEX_HOME` is set, use that directory instead. Codex
-stores dated `sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl` files. The first JSONL
-record is `session_meta`, whose payload contains the thread ID (`id`, and in some versions also
-`session_id`). The filename shape and metadata record are defined in the
-[OpenAI Codex rollout tests](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/common/rollout.rs).
-
-Search for a distinctive phrase from this chat. `rg -l` prints matching paths only, not transcript
-content; start with today's directory, then search the whole sessions directory if needed:
+Codex writes dated `sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl` logs under
+`$CODEX_HOME` (default `~/.codex`). The first record is `session_meta`; `payload.id` is the
+thread ID. See the [Codex rollout tests](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/common/rollout.rs).
+Find the current chat by a distinctive phrase; `rg -l` prints paths only:
 
 ```sh
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
-TODAY="$(date +%Y/%m/%d)"
-rg -l -F --glob 'rollout-*.jsonl' -- "distinctive phrase from this chat" "$CODEX_HOME_DIR/sessions/$TODAY"
-# If no file matches, search all date folders (the session may have started yesterday):
 rg -l -F --glob 'rollout-*.jsonl' -- "distinctive phrase from this chat" "$CODEX_HOME_DIR/sessions"
 ```
 
-Select the matching file for the current repository and time. Read only its first line and emit the
-metadata ID, without printing the transcript:
+Read only the matching file's first line to print its ID, never its transcript:
 
 ```sh
-SESSION_FILE="/path/printed/by/rg/rollout-....jsonl"
+SESSION_FILE="/matching/rollout-file.jsonl"
 head -n 1 "$SESSION_FILE" | node -e '
-let line = "";
-process.stdin.on("data", (chunk) => (line += chunk));
-process.stdin.on("end", () => {
-  const record = JSON.parse(line);
-  if (record.type !== "session_meta") throw new Error("first record is not session_meta");
-  const payload = record.payload ?? {};
-  const id = payload.session_id ?? payload.id;
-  if (typeof id !== "string" || !id) throw new Error("session metadata has no ID");
-  console.log(id);
+let s=""; process.stdin.on("data", x => s += x); process.stdin.on("end", () => {
+  const r=JSON.parse(s); if (r.type !== "session_meta") throw Error("not session_meta");
+  const id=r.payload?.id ?? r.payload?.session_id; if (!id) throw Error("missing ID"); console.log(id);
 });
 '
 ```
 
-Check that the emitted ID matches the UUID suffix in the filename and that the file's date,
-repository, and timestamp match this chat. The ID goes in the trailer verbatim:
+Confirm the filename, date, repository, and timestamp match this chat. Use the ID verbatim:
 
 ```text
 Chat: <codex-thread-id>
 ```
 
-Do not use `npm run session:id` for Codex; it queries Kilo's database. Do not `cat`, `less`, or
-otherwise print a rollout file: it contains private conversation history. If this host has no
-accessible Codex rollout or session API, use an explicitly operator-approved fallback label, not
-a guessed native ID. For this operator, create one `codex-<UTC timestamp>` label (for example,
-`codex-$(date -u +%Y%m%dT%H%M%SZ)`) and reuse it for every commit in that chat; this is a
-synthetic fallback, not a Codex-native ID.
+Do not use `npm run session:id` here; it searches Kilo. Never print a rollout file; it contains
+private conversation history.
