@@ -59,6 +59,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                               |
 | [`../MODELS.md`](../MODELS.md)                                                                         | The model/provider catalog, rankings, and failure patterns for agent delegation             |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                 |
+| [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                     | Codex subagent tools, context, model routing, cost, and shared-worktree rules               |
 | [`INCOMING_COMMITS.md`](INCOMING_COMMITS.md)                                                           | Records incoming commits from `git pull`/`git fetch` on the main worktree                   |
 | [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                   |
 | [`FREE-COMPUTE.md`](FREE-COMPUTE.md)                                                                   | Verified free/local inference options, observed failures, and current quota limits          |
