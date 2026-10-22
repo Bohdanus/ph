@@ -1369,6 +1369,26 @@ tool's cross-layer preference lifecycle. The sticky-character-settings portion i
 app's explicit contract informed by Photoshop conventions, not an Adobe quote; the reset angle is an
 app requirement for the per-layer transform supported here.
 
+**For a new text draft after Apply or a second canvas placement:** the app keeps the character
+choices — font family, size, bold, italic, color, leading, tracking, alignment, caps, underline and
+strikethrough — and starts the draft at `0°`, with point type as the new-draft kind. A second canvas
+placement implicitly commits the open draft before creating the new placeholder. That new
+placeholder must use the reset tool angle, not the just-committed layer's stale angle. The
+just-committed layer keeps its own angle, and selecting that layer for editing restores its angle
+and kind. The persisted character choices also survive leaving and returning to the Text tool. The
+previous draft's text and geometry do not carry over.
+
+**What Adobe establishes:** character formatting can be applied to selected text
+([Format characters](https://helpx.adobe.com/photoshop/desktop/text-typography/characters-glyphs/format-characters.html));
+for horizontal or vertical scaling specifically, Adobe says that with no text selected the value
+applies to new text ([Scale and rotate type](https://helpx.adobe.com/photoshop/desktop/text-typography/get-started-with-text/scale-and-rotate-type.html)).
+Adobe separately documents rotating a selected type layer ([Rotate text](https://helpx.adobe.com/photoshop/desktop/text-typography/get-started-with-text/rotate-text.html)).
+These pages distinguish character formatting from layer rotation, but they do not say whether a
+user's font, size, bold/italic, or layer angle is remembered after committing one layer and
+creating another. That cross-layer lifecycle is not presented here as proven Photoshop behavior.
+The app's sticky character choices and reset-on-new-draft angle are a deliberate, tested contract
+where Adobe's public documentation is silent.
+
 The behavior is pinned by `Text.test.tsx`'s
 `it('resets only the active angle after Apply, keeping the committed angle and typography')`,
 `useLayer.text.test.tsx`'s `it('keeps a committed layer angle through re-entry but clears the next draft angle')`,
@@ -1611,6 +1631,11 @@ such where it is used.
   full click-count selection ladder, faux styles, **"The line is always the same color as the type
   color"**, Underline Left/Right, **the faux small caps rule**, super/subscript faux generation, and
   **"Points is the default unit of measurement for type"** with its own preference
+- [Scale and rotate type](https://helpx.adobe.com/photoshop/desktop/text-typography/get-started-with-text/scale-and-rotate-type.html)
+  — Adobe explicitly says that with no text selected, horizontal or vertical scaling applies to
+  new text; it does not document cross-layer retention for font, size, or character styles
+- [Rotate text](https://helpx.adobe.com/photoshop/desktop/text-typography/get-started-with-text/rotate-text.html)
+  — rotation through the selected type layer's bounding box and the Contextual Task Bar
 - [Line and character spacing](https://helpx.adobe.com/photoshop/using/line-character-spacing.html)
   — leading as a Character-panel value, where auto-leading is changed, **"Metrics kerning is set as
   the default"**, the 1/1000-em tracking unit, the caret-vs-selection field swap, cumulative
