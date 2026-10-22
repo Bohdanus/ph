@@ -10,6 +10,7 @@ import {
 } from '../tools/text.ts';
 import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
+import { documentToCanvasPos, type DocumentFrame } from '../contexts/document-frame.ts';
 import type { Ctx2D, Point, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
@@ -173,6 +174,10 @@ export function reduceRect(sortedRect: RectXYSorted, pos: Pos) {
     y2: sortedRect.y2 - pos.y,
   };
 }
+
+/** Convert a canvas-space rectangle to the layer-local coordinates stored by a tool source. */
+export const canvasRectToLayerLocal = (rect: RectXY, layerPos: Pos, frame: DocumentFrame): RectXY =>
+  reduceRect(sortRect(rect), documentToCanvasPos(layerPos, frame));
 
 export function posToSortedRect(rect: Pos): RectXYSorted {
   const { x, y, width, height } = rect;

@@ -7,7 +7,7 @@ import type { Layer } from '../layer-types.ts';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { useLayers } from '../useLayer.ts';
-import { documentFrameFromSize } from '../document-frame.ts';
+import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
 import { textLayerEditTarget } from '../text-layer-edit.ts';
 import { NEW_LAYER_ACTION, REPLACE_LAYER_SOURCE_ACTION } from '../../util/constants.ts';
 import { createLayerSource } from '../layer-utils.ts';
@@ -64,8 +64,11 @@ function makeTextArgs(overrides: Partial<ToolArgs> = {}): ToolArgs {
   } as ToolArgs;
 }
 
-function editArgsForExistingLayer(layer: Layer): TextToolArgs {
-  const target = textLayerEditTarget(layer, documentFrameFromSize({ width: 800, height: 600 }));
+function editArgsForExistingLayer(
+  layer: Layer,
+  frame: DocumentFrame = documentFrameFromSize({ width: 800, height: 600 })
+): TextToolArgs {
+  const target = textLayerEditTarget(layer, frame);
   if (!target) throw new Error('existing layer could not be entered as text');
   return target.args;
 }
@@ -683,5 +686,121 @@ describe('useLayers text commit publishes the cleared draft', () => {
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
+  });
+});
+
+describe('useLayers text commit with a nonzero document frame', () => {
+  /**
+   * The frame shifts the document origin off the canvas top-left. These cases pin that text
+   * layer replacement reduces measured rects through the frame (canvasRectToLayerLocal) rather
+   * than by the raw document-space layer pos, which was the defect.
+   */
+  const FRAME_CASES = [
+    {
+      name: 'negative',
+      frame: { x: -100, y: -50, width: 800, height: 600 },
+      expectedLayerPos: { x: -100, y: -50 },
+    },
+    {
+      name: 'positive',
+      frame: { x: 100, y: 50, width: 800, height: 600 },
+      expectedLayerPos: { x: 100, y: 50 },
+    },
+  ] as const;
+
+  beforeEach(() => {
+    vi.mocked(createLayerSource).mockClear();
+    mockLayerId.counter = 0;
+  });
+
+  it.each(FRAME_CASES)(
+    'stores a layer-local rect for a non-empty replacement through a $name frame',
+    ({ frame, expectedLayerPos }) => {
+      const result = setupTextTool();
+      act(() => {
+        result.current.dispatch({
+          type: 'BATCH_UPDATES',
+          payload: { documentFrame: frame },
+        });
+      });
+
+      const argsA = makeTextArgs();
+      act(() => {
+        result.current.store.currentArgs.current = argsA;
+        result.current.layers.commitDirtyTool();
+      });
+
+      const originalLayer = result.current.store.layers['mock-layer-1'];
+      if (originalLayer?.source?.kind !== 'tool' || originalLayer.source.args.toolName !== 'text') {
+        throw new Error('created source was not a text layer');
+      }
+      expect(originalLayer.source.args.rect).toEqual({ x1: 0, y1: 0, x2: 100, y2: 50 });
+
+      // A distinct edit on the same layer triggers the replacement path.
+      const argsB = makeTextArgs({ text: 'World', rect: { x1: 0, y1: 0, x2: 200, y2: 60 } });
+      act(() => {
+        result.current.store.currentArgs.current = argsB;
+        result.current.layers.commitDirtyTool();
+      });
+
+      const layer = result.current.store.layers['mock-layer-1'];
+      expect(layer?.source).toMatchObject({
+        kind: 'tool',
+        args: expect.objectContaining({
+          text: 'World',
+          // Layer-local, not canvas-space. The buggy code reduced by the document-space pos
+          // { x: -100, y: -50 } instead of the canvas-space pos { x: 0, y: 0 }, which would
+          // have produced { x1: 100, y1: 50, x2: 300, y2: 130.4 }.
+          rect: { x1: 0, y1: 0, x2: 200, y2: 80.4 },
+          placeholderUntouched: false,
+        }),
+      });
+      expect(layer?.pos).toEqual({ ...expectedLayerPos, width: 200, height: 80.4 });
+      expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
+      expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+      expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
+    }
+  );
+
+  it('preserves the original layer-local rect for an empty edit through the frame', () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.dispatch({
+        type: 'BATCH_UPDATES',
+        payload: { documentFrame: FRAME_CASES[0].frame },
+      });
+    });
+
+    const originalArgs = makeTextArgs({ rect: { x1: 100, y1: 50, x2: 200, y2: 100 } });
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    act(() => result.current.layers.beginTextLayerEdit(originalLayer.id));
+
+    const editingArgs = editArgsForExistingLayer(originalLayer, FRAME_CASES[0].frame);
+    const emptiedArgs = { ...editingArgs, text: '' };
+    act(() => {
+      result.current.store.currentArgs.current = emptiedArgs;
+      result.current.layers.commitDirtyTool();
+    });
+
+    const committedLayer = result.current.store.layers[originalLayer.id];
+    const originalSource = originalLayer.source;
+    if (originalSource?.kind !== 'tool' || originalSource.args.toolName !== 'text') {
+      throw new Error('created source was not a text layer');
+    }
+    const originalRect = originalSource.args.rect;
+
+    // The empty-edit path does NOT reduce through the frame — it preserves the original
+    // layer-local rect verbatim. This is the exception that proves the rule: a second
+    // reduction would corrupt an already-correct local rect.
+    expect(committedLayer?.source).toMatchObject({
+      kind: 'tool',
+      args: { text: '', rect: originalRect },
+    });
+    expect(committedLayer?.pos).toEqual(originalLayer.pos);
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
   });
 });

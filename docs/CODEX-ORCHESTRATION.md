@@ -9,7 +9,8 @@ for Codex app, CLI, IDE, and Codex collaboration-tool sessions. Use
 Official references: [Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents),
 [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference),
 [OpenAI multi-agent guidance](https://developers.openai.com/api/docs/guides/responses-multi-agent),
-[usage and cost](https://developers.openai.com/api/docs/guides/agents-api/observability).
+[Codex CLI status and usage](https://developers.openai.com/codex/cli/slash-commands),
+[Agents API tracing and usage](https://developers.openai.com/api/docs/guides/agents-api/observability).
 
 ## Pick the right delegation tool
 
@@ -120,11 +121,13 @@ agent-specific `model` line if it should inherit the session default.
 More context is not automatically better. Give a child only the files and
 requirements needed for its task, keep outputs concise, cap retries, and send
 summaries rather than raw search dumps or test logs to the root. This reduces
-root-context pollution; it does not make child model/tool usage free. When
-available, inspect per-agent usage and `/status` in Codex CLI. Treat missing
-usage as unknown, not zero; recorded usage may change and is not a final bill.
-Reasoning tokens count as output usage. For Kilo quota/accounting, use the
-Kilo-specific instructions rather than Codex session assumptions.
+root-context pollution; it does not make child model/tool usage free. Use the
+host's per-agent usage view when available. In Codex CLI, `/status` reports the
+current session's token usage and context; it does not provide an API trace for
+each child. For Agents API sessions, inspect per-agent traces and usage. Treat
+missing API usage as unknown, not zero; recorded usage may change and is not a
+final bill. Reasoning tokens count as output usage. For Kilo quota/accounting,
+use the Kilo-specific instructions rather than Codex session assumptions.
 
 ## Filesystem, permissions, and ownership
 
