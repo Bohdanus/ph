@@ -66,6 +66,33 @@ const CSS_RESOURCE_PROPERTIES = new Set([
   '-webkit-mask-box-image-source',
   '-webkit-mask-image',
 ]);
+
+type CssWalkRecord = Record<string, unknown> & { type: string };
+
+const asCssWalkRecord = (value: unknown): CssWalkRecord | null => {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.type === 'string' ? (record as CssWalkRecord) : null;
+};
+
+const cssWalkStringField = (node: CssWalkRecord, field: string): string | null =>
+  typeof node[field] === 'string' ? (node[field] as string) : null;
+
+const cssWalkChildren = (node: CssWalkRecord): unknown[] | null => {
+  const children = node.children;
+  if (typeof children !== 'object' || children === null) return null;
+  const toArray = (children as Record<string, unknown>).toArray;
+  if (typeof toArray !== 'function') return null;
+  const result = toArray.call(children);
+  return Array.isArray(result) ? result : null;
+};
+
+// These nodes are returned by parseCss; the narrow runtime record guard above ensures that
+// malformed walker values fail closed before generation. Keep this cast at the generator boundary
+// because walkCss's callback is intentionally treated as unknown here.
+const generateCssFromParsedNode = (node: CssWalkRecord): string =>
+  generateCss(node as unknown as Parameters<typeof generateCss>[0]);
+
 const CSS_INERT_VARIABLE_PROPERTIES = new Set([
   'background-color',
   'block-size',
@@ -879,7 +906,10 @@ function cssContainsDataUrlString(source: string): boolean {
   return quote !== '';
 }
 
-function cssVariableReferences(source: string): { references: string[]; valid: boolean; parsedCharacters: number } {
+function cssVariableReferences(
+  source: string,
+  analysis: CssResourceAnalysis
+): { references: string[]; valid: boolean; parsedCharacters: number } {
   const references: string[] = [];
   const pendingValues = [source];
   let parsedCharacters = 0;
@@ -909,20 +939,58 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
     const fallbackValues: string[] = [];
     let invalidVar = false;
     try {
-      walkCss(valueAst, (node) => {
-        if (node.type !== 'Function' || decodeCssEscapes(node.name).toLowerCase() !== 'var') return;
-        const children = node.children.toArray();
+      walkCss(valueAst, (rawNode: unknown) => {
+        analysis.nodeCount += 1;
+        if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        const node = asCssWalkRecord(rawNode);
+        if (!node) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        if (node.type !== 'Function') return;
+        const functionName = cssWalkStringField(node, 'name');
+        if (functionName === null) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        if (decodeCssEscapes(functionName).toLowerCase() !== 'var') return;
+        const children = cssWalkChildren(node);
+        if (!children) {
+          invalidVar = true;
+          return walkCss.break;
+        }
         let name: string | undefined;
         let commaIndex = -1;
         for (let index = 0; index < children.length; index += 1) {
-          const child = children[index];
-          if (child.type === 'Operator' && child.value === ',') {
+          const child = asCssWalkRecord(children[index]);
+          if (!child) {
+            invalidVar = true;
+            return walkCss.break;
+          }
+          if (child.type === 'Operator') {
+            const operatorValue = cssWalkStringField(child, 'value');
+            if (operatorValue === null) {
+              invalidVar = true;
+              return walkCss.break;
+            }
+            if (operatorValue !== ',') {
+              invalidVar = true;
+              return walkCss.break;
+            }
             commaIndex = index;
             break;
           }
           if (child.type === 'WhiteSpace' || child.type === 'Comment') continue;
           if (!name && child.type === 'Identifier') {
-            name = decodeCssEscapes(child.name);
+            const identifier = cssWalkStringField(child, 'name');
+            if (identifier === null) {
+              invalidVar = true;
+              return walkCss.break;
+            }
+            name = decodeCssEscapes(identifier);
             continue;
           }
           invalidVar = true;
@@ -939,8 +1007,20 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
           return walkCss.break;
         }
         if (commaIndex >= 0) {
-          for (const child of children.slice(commaIndex + 1)) {
-            if (child.type === 'Raw') fallbackValues.push(child.value);
+          for (const rawFallback of children.slice(commaIndex + 1)) {
+            const child = asCssWalkRecord(rawFallback);
+            if (!child) {
+              invalidVar = true;
+              return walkCss.break;
+            }
+            if (child.type === 'Raw') {
+              const fallback = cssWalkStringField(child, 'value');
+              if (fallback === null) {
+                invalidVar = true;
+                return walkCss.break;
+              }
+              fallbackValues.push(fallback);
+            }
           }
         }
         return undefined;
@@ -987,7 +1067,7 @@ function collectCssDeclaration(
   const property = normalizeCssProperty(rawProperty);
   if (!property) return true;
 
-  const parsedReferences = cssVariableReferences(value);
+  const parsedReferences = cssVariableReferences(value, analysis);
   analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
   if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
   analysis.variableReferenceCount += parsedReferences.references.length;
@@ -1013,7 +1093,7 @@ function collectCssVariableSinkOnly(
   value: string,
   dataBaseInScope: boolean
 ): boolean {
-  const parsedReferences = cssVariableReferences(value);
+  const parsedReferences = cssVariableReferences(value, analysis);
   analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
   if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
   analysis.variableReferenceCount += parsedReferences.references.length;
@@ -1035,7 +1115,7 @@ function collectCssAtRule(
   if (cssUrlReferencesData(params, undefined, dataBaseInScope)) return true;
   if (normalizedName === 'import' && cssContainsDataUrlString(params)) return true;
 
-  const parsedReferences = cssVariableReferences(params);
+  const parsedReferences = cssVariableReferences(params, analysis);
   analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
   if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
   analysis.variableReferenceCount += parsedReferences.references.length;
@@ -1070,15 +1150,23 @@ function collectCssSource(
 
   const stopWalk = Symbol('stop CSS resource walk');
   try {
-    walkCss(root, (node) => {
+    walkCss(root, (rawNode: unknown) => {
       analysis.nodeCount += 1;
       if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) throw stopWalk;
+      const node = asCssWalkRecord(rawNode);
+      if (!node) throw stopWalk;
       if (node.type === 'Declaration') {
-        if (collectCssDeclaration(analysis, node.property, generateCss(node.value), dataBaseInScope)) {
+        const property = cssWalkStringField(node, 'property');
+        const value = asCssWalkRecord(node.value);
+        if (!property || !value) throw stopWalk;
+        if (collectCssDeclaration(analysis, property, generateCssFromParsedNode(value), dataBaseInScope)) {
           throw stopWalk;
         }
       } else if (node.type === 'Atrule') {
-        if (collectCssAtRule(analysis, node.name, node.prelude ? generateCss(node.prelude) : '', dataBaseInScope)) {
+        const name = cssWalkStringField(node, 'name');
+        const prelude = node.prelude === undefined || node.prelude === null ? null : asCssWalkRecord(node.prelude);
+        if (name === null || (node.prelude !== undefined && node.prelude !== null && !prelude)) throw stopWalk;
+        if (collectCssAtRule(analysis, name, prelude ? generateCssFromParsedNode(prelude) : '', dataBaseInScope)) {
           throw stopWalk;
         }
       }

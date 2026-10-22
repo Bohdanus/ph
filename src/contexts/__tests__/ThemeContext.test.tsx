@@ -33,6 +33,10 @@ describe('ThemeContext', () => {
     // coverage without anything noticing.
     document.documentElement.className = '';
 
+    // Default-theme cases must not inherit the override from the worker environment.
+    // Tests for the override set it explicitly below.
+    vi.stubEnv('VITE_TEST_THEME', '');
+
     localStorageMock.getItem.mockReset().mockReturnValue(null);
     localStorageMock.setItem.mockReset();
     localStorageMock.removeItem.mockReset();

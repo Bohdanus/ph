@@ -1210,6 +1210,20 @@ describe('loadImageFile rejection paths', () => {
     expect(decoders.reader).toBeUndefined();
   });
 
+  it('fails closed when the outer CSS walk and one variable-value walk exceed the shared node bound', async () => {
+    const decoders = installBrowserDecoders();
+    // Each parse visits about 10,000 nodes, below the 20,000 limit on its own. Counting both
+    // the outer stylesheet and the second value parse together must cross the shared limit.
+    const references = Array.from({ length: 5_000 }, () => 'var(--missing)').join(' ');
+    const file = new File([`<svg><rect style="color:${references}"/></svg>`], 'complex-value.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
   it('allows same-document SVG resource references', async () => {
     const decoders = installBrowserDecoders();
     const file = new File(

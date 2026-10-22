@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Point, Pos } from '../../contexts/general-types.ts';
+import type { Point, Pos, RectXY } from '../../contexts/general-types.ts';
+import type { DocumentFrame } from '../../contexts/document-frame.ts';
+import { canvasRectToLocal } from '../rect.ts';
 import { documentPointToLayerLocal, documentPointsToLayerLocal } from '../layer-space.ts';
 
 /** A layer at the document origin — the one case where the two spaces already agree. */
@@ -315,6 +317,104 @@ describe('documentPointsToLayerLocal', () => {
     }));
 
     expect(back).toEqual(stroke);
+  });
+});
+
+describe('canvasRectToLocal', () => {
+  /**
+   * Reduces a canvas-space rect to the layer-local coordinate frame a raster processor addresses.
+   *
+   * The contract: the rect is canvas-space (what `calculateNewRect` measures), the layer pos is
+   * DOCUMENT-space, and the document frame shifts the document origin on the canvas. The reduction
+   * must project the layer's document pos through the frame FIRST —
+   * `documentToCanvasPos(layerPos, frame)` — before subtracting it from the rect, so the layer's
+   * own origin cancels out and the result is relative to the layer's raster buffer.
+   *
+   * The defect this pins: reducing by the raw document-space pos instead of the canvas-space one
+   * leaves the rect offset by the frame origin whenever the document is not at (0, 0).
+   */
+
+  it('reduces by layer pos when the frame origin is zero', () => {
+    const rect: RectXY = { x1: 150, y1: 80, x2: 250, y2: 130 };
+    const layerPos: Pos = { x: 100, y: 50, width: 100, height: 80 };
+    const frame: DocumentFrame = { x: 0, y: 0, width: 800, height: 600 };
+
+    // canvas pos = (100, 50); reduce by (100, 50) -> (50, 30) and (150, 80)
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 50, y1: 30, x2: 150, y2: 80 });
+  });
+
+  it('reduces a canvas-space rect by a positive frame origin', () => {
+    // A positive frame origin (document shifted up-left on the canvas) moves the layer's
+    // document pos further from the canvas origin, which the reduction must undo by
+    // projecting through the frame.
+    const rect: RectXY = { x1: 240, y1: 125, x2: 340, y2: 205.4 };
+    const layerPos: Pos = { x: 140, y: 75, width: 100, height: 80.4 };
+    const frame: DocumentFrame = { x: 100, y: 50, width: 800, height: 600 };
+
+    // canvas pos = { x: 140 - 100, y: 75 - 50 } = { x: 40, y: 25 }
+    // reduce by (40, 25) -> (200, 100) and (300, 180.4)
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 200, y1: 100, x2: 300, y2: 180.4 });
+  });
+
+  it('reduces a canvas-space rect by a negative frame origin (the crop case)', () => {
+    // A negative frame origin (document extends beyond the canvas top-left, as a crop does)
+    // is the case the defect lived on: reducing by the raw document pos would leave the
+    // rect offset by the frame origin.
+    const rect: RectXY = { x1: 240, y1: 125, x2: 340, y2: 205.4 };
+    const layerPos: Pos = { x: 140, y: 75, width: 100, height: 80.4 };
+    const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
+
+    // canvas pos = { x: 140 - (-100), y: 75 - (-50) } = { x: 240, y: 125 }
+    // reduce by (240, 125) -> (0, 0) and (100, 80.4)
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 0, y1: 0, x2: 100, y2: 80.4 });
+  });
+
+  it('preserves fractional edges through the reduction', () => {
+    const rect: RectXY = { x1: 240.5, y1: 125.25, x2: 340.75, y2: 205.625 };
+    const layerPos: Pos = { x: 140, y: 75, width: 100.5, height: 80.4 };
+    const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
+
+    // canvas pos = (240, 125); fractional edges subtract exactly
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({
+      x1: 0.5,
+      y1: 0.25,
+      x2: 100.75,
+      y2: 80.625,
+    });
+  });
+
+  it('sorts an unsorted canvas rect before reducing', () => {
+    // A drag from right to left or bottom to top can hand a rect with reversed edges.
+    const rect: RectXY = { x1: 340, y1: 205.4, x2: 240, y2: 125 };
+    const layerPos: Pos = { x: 140, y: 75, width: 100, height: 80.4 };
+    const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
+
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 0, y1: 0, x2: 100, y2: 80.4 });
+  });
+
+  it('returns a fresh rect object, never the input', () => {
+    const rect: RectXY = { x1: 240, y1: 125, x2: 340, y2: 205.4 };
+    const layerPos: Pos = { x: 140, y: 75, width: 100, height: 80.4 };
+    const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
+
+    const result = canvasRectToLocal(rect, layerPos, frame);
+    expect(result).not.toBe(rect);
+    // Mutating the result must not touch the input rect.
+    result.x1 = -999;
+    expect(rect.x1).toBe(240);
+  });
+
+  it('projects the layer pos through the frame, not the raw document pos', () => {
+    // The defect reduced the canvas-space rect by the DOCUMENT-space layer pos directly.
+    // With a nonzero frame, the canvas pos is { x: 240, y: 125 } but the document pos
+    // is { x: 140, y: 75 }. A reduction by the document pos would yield { x1: 160, y1: 100, x2: 260, y2: 150 },
+    // not { x1: 60, y1: 50, x2: 160, y2: 100 }.
+    const rect: RectXY = { x1: 300, y1: 175, x2: 400, y2: 225 };
+    const layerPos: Pos = { x: 140, y: 75, width: 100, height: 80 };
+    const frame: DocumentFrame = { x: -100, y: -50, width: 800, height: 600 };
+
+    // canvas pos = { x: 240, y: 125 }; reduce by (240, 125) -> (60, 50) and (160, 100)
+    expect(canvasRectToLocal(rect, layerPos, frame)).toEqual({ x1: 60, y1: 50, x2: 160, y2: 100 });
   });
 });
 

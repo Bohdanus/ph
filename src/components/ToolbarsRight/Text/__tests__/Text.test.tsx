@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { KeyboardEventsProvider } from '../../../../hooks/useKeyboardEvents.tsx';
 import Text from '../Text.tsx';
+import type { DocumentFrame } from '../../../../contexts/document-frame.ts';
 
 const storeState = vi.hoisted(() => ({
   canvasRef: { current: null },
@@ -10,6 +11,7 @@ const storeState = vi.hoisted(() => ({
   currentArgs: { current: null },
   layers: {} as Record<string, unknown>,
   activeLayerId: null as string | null,
+  documentFrame: undefined as DocumentFrame | undefined,
   totalSize: { width: 800, height: 600 },
 }));
 
@@ -90,6 +92,7 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
     currentArgs: { current: null },
     layers: {},
     activeLayerId: null,
+    documentFrame: undefined,
     totalSize: { width: 800, height: 600 },
     ...overrides,
   });
@@ -517,13 +520,14 @@ describe('Text toolbar', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
   });
 
-  it('enables Commit for an empty edit of an existing text layer', () => {
+  it('enables Commit for an empty edit of an existing text layer through a nonzero document frame', () => {
     const originalRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
     const editRect = { x1: 100, y1: 50, x2: 200, y2: 100 };
     const originalPos = { x: 100, y: 50, width: 100, height: 50 };
     resetToolArgs({ text: '', rect: editRect, editingLayerId: 'text-layer-1' });
     resetStoreState({
       activeLayerId: 'text-layer-1',
+      documentFrame: { x: -100, y: -50, width: 800, height: 600 },
       layers: {
         'text-layer-1': {
           id: 'text-layer-1',
@@ -601,6 +605,70 @@ describe('Text toolbar', () => {
     expect(toolArgs.text).toBe('');
     expect(toolArgs.rect).toEqual(editRect);
     expect(toolArgs.editingLayerId).toBe('text-layer-1');
+  });
+
+  it.each([
+    {
+      name: 'negative',
+      frame: { x: -100, y: -50, width: 800, height: 600 },
+      expectedPos: { x: -100, y: 9.8 },
+    },
+    {
+      name: 'positive',
+      frame: { x: 100, y: 50, width: 800, height: 600 },
+      expectedPos: { x: 100, y: 109.8 },
+    },
+  ])('replaces an existing layer through a $name nonzero document frame', ({ frame, expectedPos }) => {
+    // The defect: applyText reduced the measured (canvas-space) rect by the document-space
+    // layer pos directly, leaving the rect offset by the frame origin whenever the document was
+    // not at (0, 0). With frame { x: -100, y: -50 }, a measured rect starting at canvas (0, 59.8)
+    // was reduced by document pos { x: -100, y: 9.8 }, producing { x1: 100, y1: 50 } instead of
+    // { x1: 0, y1: 0 }. The fix projects the pos through the frame via canvasRectToLocal.
+    //
+    // calculateNewRect (no canvas context) measures one 64px/1.1 line at 80.4px tall, centred
+    // on the click y-centre of 100 → y1: 59.8, y2: 140.2. The canvas origin is (0, 59.8) and the
+    // document pos is (-100, 9.8); reducing the measured rect by the projected canvas pos yields
+    // the layer-local (0, 0) origin and the 100×80.4 extent.
+    const layerPos = { x: 140, y: 75, width: 100, height: 80.4 };
+    const layerLocalRect = { x1: 0, y1: 0, x2: 100, y2: 80.4 };
+    resetToolArgs({
+      text: 'Hello',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 200 },
+      editingLayerId: 'text-layer-1',
+    });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      documentFrame: frame,
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: layerPos,
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: layerLocalRect } },
+        },
+      },
+    });
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+    expect(mockReplaceLayerSource).toHaveBeenCalledTimes(1);
+    expect(mockReplaceLayerSource).toHaveBeenCalledWith(
+      'text-layer-1',
+      expect.objectContaining({
+        kind: 'tool',
+        args: expect.objectContaining({
+          text: 'Hello',
+          // Layer-local: the fix, not the buggy canvas-space offset.
+          rect: expect.objectContaining({ x1: 0, y1: 0, x2: 100 }),
+        }),
+        pos: expect.objectContaining({ x: expectedPos.x, width: 100 }),
+      })
+    );
+    const replacement = mockReplaceLayerSource.mock.calls[0]?.[1];
+    expect(replacement.args.rect.y2).toBeCloseTo(80.4, 10);
+    expect(replacement.pos.y).toBeCloseTo(expectedPos.y, 10);
+    expect(replacement.pos.height).toBeCloseTo(80.4, 10);
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
   });
 
   it('does not show Commit and Cancel when the draft has no rect', () => {
