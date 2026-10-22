@@ -199,13 +199,13 @@ describe('replayHistory', () => {
     const dependencies = createDependencies();
     const previousSelection: Selection = {
       id: 'previous',
-      points: [{ x: 1, y: 2 }],
+      points: [[{ x: 1, y: 2 }]],
       isActive: true,
       pos: { x: 1, y: 2, width: 10, height: 12 },
     };
     const nextSelection: Selection = {
       id: 'next',
-      points: [{ x: 3, y: 4 }],
+      points: [[{ x: 3, y: 4 }]],
       isActive: true,
       pos: { x: 3, y: 4, width: 14, height: 16 },
     };
@@ -237,9 +237,11 @@ describe('replayHistory', () => {
     const drawn: Selection = {
       id: 'selection-1',
       points: [
-        { x: 1, y: 1 },
-        { x: 91, y: 1 },
-        { x: 91, y: 91 },
+        [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
       ],
       isActive: true,
       pos: { x: 9, y: 9, width: 92, height: 92 },
@@ -247,9 +249,11 @@ describe('replayHistory', () => {
     const moved: Selection = {
       ...drawn,
       points: [
-        { x: 11, y: 6 },
-        { x: 101, y: 6 },
-        { x: 101, y: 96 },
+        [
+          { x: 11, y: 6 },
+          { x: 101, y: 6 },
+          { x: 101, y: 96 },
+        ],
       ],
       isActive: true,
       pos: { x: 19, y: 4, width: 92, height: 92 },

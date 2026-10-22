@@ -314,7 +314,9 @@ export function cloneSelectionSnapshot(snapshot: SelectionSnapshot): SelectionSn
       snapshot.selections.map((selection) =>
         Object.freeze({
           ...selection,
-          points: Object.freeze(selection.points.map((point) => Object.freeze({ ...point }))),
+          points: Object.freeze(
+            selection.points.map((contour) => Object.freeze(contour.map((point) => Object.freeze({ ...point }))))
+          ),
           pos: Object.freeze({ ...selection.pos }),
           ...(selection.metadata ? { metadata: clonePlainValue(selection.metadata) } : {}),
         })

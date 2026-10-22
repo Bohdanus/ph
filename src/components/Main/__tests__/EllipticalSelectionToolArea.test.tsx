@@ -135,10 +135,12 @@ const coveringSelection = (): Selection => ({
   lifecycle: 'committed',
   pos: { x: 0, y: 0, width: 200, height: 120 },
   points: [
-    { x: 0, y: 0 },
-    { x: 200, y: 0 },
-    { x: 200, y: 120 },
-    { x: 0, y: 120 },
+    [
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+      { x: 200, y: 120 },
+      { x: 0, y: 120 },
+    ],
   ],
 });
 
@@ -154,10 +156,12 @@ const cornerSelection = (): Selection => ({
   ...coveringSelection(),
   pos: { x: 0, y: 0, width: 20, height: 20 },
   points: [
-    { x: 0, y: 0 },
-    { x: 20, y: 0 },
-    { x: 20, y: 20 },
-    { x: 0, y: 20 },
+    [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 20 },
+      { x: 0, y: 20 },
+    ],
   ],
 });
 
@@ -300,8 +304,10 @@ describe('EllipticalSelectionToolArea', () => {
     // centre recovered from the stored selection is the one number that says which space the
     // geometry is in. `pos` is the document-space origin of the normalised polygon and `points`
     // are relative to it, so the absolute centre is `pos` plus the mean of `points`.
-    const centre = (axis: 'x' | 'y'): number =>
-      selection.pos[axis] + selection.points.reduce((sum, point) => sum + point[axis], 0) / selection.points.length;
+    const centre = (axis: 'x' | 'y'): number => {
+      const pts = selection.points.flat();
+      return selection.pos[axis] + pts.reduce((sum, point) => sum + point[axis], 0) / pts.length;
+    };
 
     // Document space: the canvas centre plus the frame origin. The canvas answer would be
     // (60, 45) and the test would fail, which is the whole claim.
@@ -425,10 +431,12 @@ describe('EllipticalSelectionToolArea', () => {
         sourceTool: ELLIPTICAL_SELECTION_SOURCE_TOOL,
         pos: { x: 20, y: 30, width: 100, height: 60 },
         points: [
-          { x: 0, y: 0 },
-          { x: 100, y: 0 },
-          { x: 100, y: 60 },
-          { x: 0, y: 60 },
+          [
+            { x: 0, y: 0 },
+            { x: 100, y: 0 },
+            { x: 100, y: 60 },
+            { x: 0, y: 60 },
+          ],
         ],
       },
     ];

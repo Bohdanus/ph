@@ -177,10 +177,12 @@ describe('QuickSelectionToolArea', () => {
     lifecycle: 'committed',
     pos: { x: 120, y: 60, width: 20, height: 20 },
     points: [
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      { x: 20, y: 20 },
-      { x: 0, y: 20 },
+      [
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 20 },
+        { x: 0, y: 20 },
+      ],
     ],
   };
 

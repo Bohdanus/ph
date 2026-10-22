@@ -87,10 +87,12 @@ function createLassoSelection(): Selection {
     isActive: true,
     lifecycle: 'committed',
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
-      { x: 0, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+        { x: 0, y: 40 },
+      ],
     ],
     pos: { x: 10, y: 20, width: 30, height: 40 },
     sourceTool: 'freehand-lasso',

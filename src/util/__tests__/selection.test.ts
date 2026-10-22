@@ -162,9 +162,11 @@ const installOffscreenCanvas = () => {
 const selection = (overrides: Partial<Selection> = {}): Selection => ({
   id: 'sel-1',
   points: [
-    { x: 0, y: 0 },
-    { x: 10, y: 0 },
-    { x: 10, y: 10 },
+    [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+    ],
   ],
   isActive: true,
   pos: { x: 5, y: 5, width: 10, height: 10 },
@@ -220,16 +222,18 @@ describe('normalizeSelectionPoints', () => {
     expect(result).not.toBeNull();
     expect(result!.pos).toEqual({ x: 21, y: 21, width: 8, height: 8 });
     expect(result!.points).toEqual([
-      { x: 1, y: 1 },
-      { x: 7, y: 1 },
-      { x: 7, y: 7 },
+      [
+        { x: 1, y: 1 },
+        { x: 7, y: 1 },
+        { x: 7, y: 7 },
+      ],
     ]);
   });
 
   it('keeps the pos and the normalized points mutually consistent', () => {
     const result = normalizeSelectionPoints(triangle(20))!;
 
-    expect(result.points.map((point) => ({ x: point.x + result.pos.x, y: point.y + result.pos.y }))).toEqual(
+    expect(result.points[0]!.map((point) => ({ x: point.x + result.pos.x, y: point.y + result.pos.y }))).toEqual(
       triangle(20)
     );
   });
@@ -252,7 +256,7 @@ describe('normalizeSelectionPoints', () => {
     ]);
 
     expect(result!.pos).toEqual({ x: -11, y: -6, width: 8, height: 8 });
-    expect(result!.points[0]).toEqual({ x: 1, y: 1 });
+    expect(result!.points[0]![0]).toEqual({ x: 1, y: 1 });
   });
 
   it('propagates non-finite coordinates without clamping or guarding', () => {
@@ -269,9 +273,11 @@ describe('normalizeSelectionPoints', () => {
 
     expect(nanResult!.pos).toEqual({ x: NaN, y: NaN, width: NaN, height: NaN });
     expect(nanResult!.points).toEqual([
-      { x: NaN, y: NaN },
-      { x: NaN, y: NaN },
-      { x: NaN, y: NaN },
+      [
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+      ],
     ]);
 
     // Infinity is handled the same way: `Infinity - 1` stays Infinity for pos.x/pos.y, but
@@ -285,9 +291,11 @@ describe('normalizeSelectionPoints', () => {
 
     expect(infResult!.pos).toEqual({ x: Infinity, y: Infinity, width: NaN, height: NaN });
     expect(infResult!.points).toEqual([
-      { x: NaN, y: NaN },
-      { x: NaN, y: NaN },
-      { x: NaN, y: NaN },
+      [
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+      ],
     ]);
   });
 
@@ -305,9 +313,11 @@ describe('normalizeSelectionPoints', () => {
 
     expect(result!.pos).toEqual({ x: 4, y: 4, width: 2, height: 2 });
     expect(result!.points).toEqual([
-      { x: 1, y: 1 },
-      { x: 1, y: 1 },
-      { x: 1, y: 1 },
+      [
+        { x: 1, y: 1 },
+        { x: 1, y: 1 },
+        { x: 1, y: 1 },
+      ],
     ]);
   });
 });
@@ -354,10 +364,12 @@ describe('rectangle selection normalization', () => {
     expect(result).toEqual({
       pos: { x: 10, y: 10, width: 30, height: 30 },
       points: [
-        { x: 0, y: 0 },
-        { x: 30, y: 0 },
-        { x: 30, y: 30 },
-        { x: 0, y: 30 },
+        [
+          { x: 0, y: 0 },
+          { x: 30, y: 0 },
+          { x: 30, y: 30 },
+          { x: 0, y: 30 },
+        ],
       ],
     });
   });
@@ -579,7 +591,7 @@ describe('drawSelectionAnchors', () => {
 
   it('skips degenerate selections with fewer than three points', () => {
     const ctx = makeMockCtx();
-    drawSelectionAnchors(ctx, selection({ points: [{ x: 0, y: 0 }] }));
+    drawSelectionAnchors(ctx, selection({ points: [[{ x: 0, y: 0 }]] }));
 
     expect(ctx.save).not.toHaveBeenCalled();
     expect(ctx.arc).not.toHaveBeenCalled();
@@ -672,9 +684,11 @@ describe('findSelectionAnchorAtPoint', () => {
   it('returns the first matching anchor when two are inside the radius', () => {
     const tiny = selection({
       points: [
-        { x: 0, y: 0 },
-        { x: 2, y: 0 },
-        { x: 2, y: 2 },
+        [
+          { x: 0, y: 0 },
+          { x: 2, y: 0 },
+          { x: 2, y: 2 },
+        ],
       ],
       pos: { x: 0, y: 0, width: 2, height: 2 },
     });
@@ -879,9 +893,11 @@ describe('moveSelectionAnchor', () => {
 
     expect(moved.pos).toEqual({ x: 4, y: 4, width: 17, height: 12 });
     expect(moved.points).toEqual([
-      { x: 1, y: 1 },
-      { x: 16, y: 8 },
-      { x: 11, y: 11 },
+      [
+        { x: 1, y: 1 },
+        { x: 16, y: 8 },
+        { x: 11, y: 11 },
+      ],
     ]);
     expect(moved.metadata?.movedAtVersion).toBe(3);
   });
@@ -903,10 +919,12 @@ describe('moveSelectionAnchor', () => {
     expect(moved.id).toBe('rect-move');
     expect(moved.pos).toEqual({ x: 5, y: 5, width: 25, height: 4 });
     expect(moved.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 25, y: 0 },
-      { x: 25, y: 4 },
-      { x: 0, y: 4 },
+      [
+        { x: 0, y: 0 },
+        { x: 25, y: 0 },
+        { x: 25, y: 4 },
+        { x: 0, y: 4 },
+      ],
     ]);
   });
 
@@ -917,7 +935,7 @@ describe('moveSelectionAnchor', () => {
   });
 
   it('returns the original selection when the remaining points can no longer form a polygon', () => {
-    const single = selection({ points: [{ x: 0, y: 0 }] });
+    const single = selection({ points: [[{ x: 0, y: 0 }]] });
     expect(moveSelectionAnchor(single, 0, { x: 9, y: 9 })).toBe(single);
   });
 
@@ -943,10 +961,12 @@ describe('moveSelectionAnchor', () => {
       sourceTool: 'rectangular-selection',
       pos: { x: 5, y: 5, width: 10, height: 10 },
       points: [
-        { x: 0, y: 0 },
-        { x: 10, y: 0 },
-        { x: 10, y: 10 },
-        { x: 0, y: 10 },
+        [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ],
       ],
       metadata: { movedAtVersion: 4 },
     });
@@ -955,10 +975,12 @@ describe('moveSelectionAnchor', () => {
 
     expect(moved.pos).toEqual({ x: 5, y: 5, width: 20, height: 20 });
     expect(moved.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      { x: 20, y: 20 },
-      { x: 0, y: 20 },
+      [
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 20 },
+        { x: 0, y: 20 },
+      ],
     ]);
     expect(moved.metadata?.movedAtVersion).toBe(5);
     // Index 0 is the top-left of the rebuilt box, not the (25, 25) the drag was dropped at.
@@ -979,10 +1001,12 @@ describe('moveSelectionAnchor', () => {
       sourceTool: 'rectangular-selection',
       pos: { x: 5, y: 5, width: 0, height: 10 },
       points: [
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-        { x: 0, y: 10 },
-        { x: 0, y: 10 },
+        [
+          { x: 0, y: 0 },
+          { x: 0, y: 0 },
+          { x: 0, y: 10 },
+          { x: 0, y: 10 },
+        ],
       ],
     });
 
@@ -990,10 +1014,12 @@ describe('moveSelectionAnchor', () => {
 
     expect(moved.pos).toEqual({ x: 5, y: 3, width: 0, height: 12 });
     expect(moved.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 0, y: 0 },
-      { x: 0, y: 12 },
-      { x: 0, y: 12 },
+      [
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 12 },
+        { x: 0, y: 12 },
+      ],
     ]);
     // A drag that leaves the shape degenerate still counts as a move, so the writers' own
     // `hasSameSelectionGeometry` guard is what suppresses the commit, not the version counter.
@@ -1746,9 +1772,11 @@ describe('hasSameSelectionGeometry', () => {
       'a moved anchor',
       {
         points: [
-          { x: 1, y: 0 },
-          { x: 10, y: 0 },
-          { x: 10, y: 10 },
+          [
+            { x: 1, y: 0 },
+            { x: 10, y: 0 },
+            { x: 10, y: 10 },
+          ],
         ],
       },
     ],
@@ -1756,8 +1784,10 @@ describe('hasSameSelectionGeometry', () => {
       'a different point count',
       {
         points: [
-          { x: 0, y: 0 },
-          { x: 10, y: 0 },
+          [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ],
         ],
       },
     ],
@@ -1765,9 +1795,11 @@ describe('hasSameSelectionGeometry', () => {
       'a moved point',
       {
         points: [
-          { x: 0, y: 0 },
-          { x: 10, y: 1 },
-          { x: 10, y: 10 },
+          [
+            { x: 0, y: 0 },
+            { x: 10, y: 1 },
+            { x: 10, y: 10 },
+          ],
         ],
       },
     ],

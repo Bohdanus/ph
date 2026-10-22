@@ -37,9 +37,11 @@ function polygon(overrides: Partial<Selection> = {}): Selection {
     sourceTool: 'polygonal-lasso',
     pos: { x: 10, y: 20, width: 30, height: 40 },
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+      ],
     ],
     ...overrides,
   };
@@ -115,6 +117,37 @@ describe('SelectionMarchingAnts', () => {
     const path = vi.mocked(ctx.stroke).mock.calls.at(-1)![0] as Path2D;
     expect(path.moveTo).toHaveBeenCalledWith(10, 20);
     expect(path.closePath).toHaveBeenCalledOnce();
+  });
+
+  it('marches every contour of a multi-contour selection, even a nested hole', () => {
+    storeState.selections = [
+      polygon({
+        id: 'sel-hole',
+        points: [
+          [
+            { x: 0, y: 0 },
+            { x: 30, y: 0 },
+            { x: 30, y: 40 },
+            { x: 0, y: 40 },
+          ],
+          [
+            { x: 10, y: 10 },
+            { x: 20, y: 10 },
+            { x: 20, y: 20 },
+            { x: 10, y: 20 },
+          ],
+        ],
+      }),
+    ];
+    const { ctx } = setup();
+    frame();
+
+    const path = vi.mocked(ctx.stroke).mock.calls.at(-1)![0] as Path2D;
+    // Both contours are stroked: one moveTo+closePath per contour.
+    expect(path.moveTo).toHaveBeenCalledTimes(2);
+    expect(path.closePath).toHaveBeenCalledTimes(2);
+    expect(path.moveTo).toHaveBeenNthCalledWith(1, 10, 20);
+    expect(path.moveTo).toHaveBeenNthCalledWith(2, 20, 30);
   });
 
   it('offsets the border by the store document frame', () => {

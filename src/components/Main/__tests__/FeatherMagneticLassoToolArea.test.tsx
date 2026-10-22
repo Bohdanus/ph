@@ -266,9 +266,11 @@ describe('FeatherMagneticLassoToolArea', () => {
     isActive: true,
     pos: { x: 4, y: 8, width: 16, height: 24 },
     points: [
-      { x: 4, y: 8 },
-      { x: 20, y: 8 },
-      { x: 20, y: 32 },
+      [
+        { x: 4, y: 8 },
+        { x: 20, y: 8 },
+        { x: 20, y: 32 },
+      ],
     ],
   };
 
@@ -340,9 +342,11 @@ describe('FeatherMagneticLassoToolArea', () => {
               // 1. A conversion that dropped the frame reports (9, 9) instead.
               pos: { x: 39, y: 49, width: 52, height: 52 },
               points: expect.arrayContaining([
-                { x: 1, y: 1 },
-                { x: 51, y: 1 },
-                { x: 51, y: 51 },
+                expect.arrayContaining([
+                  { x: 1, y: 1 },
+                  { x: 51, y: 1 },
+                  { x: 51, y: 51 },
+                ]),
               ]),
               sourceTool: 'feather-magnetic-lasso',
             }),

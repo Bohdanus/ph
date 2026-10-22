@@ -164,10 +164,12 @@ describe('RectangularSelectionToolArea', () => {
                 // document space once the frame origin is added.
                 pos: { x: 50, y: 50, width: 80, height: 50 },
                 points: [
-                  { x: 0, y: 0 },
-                  { x: 80, y: 0 },
-                  { x: 80, y: 50 },
-                  { x: 0, y: 50 },
+                  [
+                    { x: 0, y: 0 },
+                    { x: 80, y: 0 },
+                    { x: 80, y: 50 },
+                    { x: 0, y: 50 },
+                  ],
                 ],
               }),
             ],
@@ -192,10 +194,12 @@ describe('RectangularSelectionToolArea', () => {
         isActive: true,
         pos: { x: 10, y: 20, width: 30, height: 40 },
         points: [
-          { x: 0, y: 0 },
-          { x: 30, y: 0 },
-          { x: 30, y: 40 },
-          { x: 0, y: 40 },
+          [
+            { x: 0, y: 0 },
+            { x: 30, y: 0 },
+            { x: 30, y: 40 },
+            { x: 0, y: 40 },
+          ],
         ],
       },
     ];
@@ -220,10 +224,12 @@ describe('RectangularSelectionToolArea', () => {
         metadata: { copiedAtVersion: 2 },
         pos: { x: 10, y: 20, width: 30, height: 40 },
         points: [
-          { x: 0, y: 0 },
-          { x: 30, y: 0 },
-          { x: 30, y: 40 },
-          { x: 0, y: 40 },
+          [
+            { x: 0, y: 0 },
+            { x: 30, y: 0 },
+            { x: 30, y: 40 },
+            { x: 0, y: 40 },
+          ],
         ],
       },
     ];
@@ -263,10 +269,12 @@ describe('RectangularSelectionToolArea', () => {
                 // document space once the frame origin is added.
                 pos: { x: 50, y: 70, width: 30, height: 40 },
                 points: [
-                  { x: 0, y: 0 },
-                  { x: 30, y: 0 },
-                  { x: 30, y: 40 },
-                  { x: 0, y: 40 },
+                  [
+                    { x: 0, y: 0 },
+                    { x: 30, y: 0 },
+                    { x: 30, y: 40 },
+                    { x: 0, y: 40 },
+                  ],
                 ],
                 metadata: { copiedAtVersion: 2, movedAtVersion: 1 },
               }),
