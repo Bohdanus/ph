@@ -1,9 +1,8 @@
 import type { LayerSource } from '@/contexts/layer-types.ts';
 
 /**
- * The type badge rendered at the right of every layer row's name. It is the
- * panel's only per-layer-kind glyph; `LayerSource` distinguishes `blank`,
- * `image`, and `tool` sources, and the badge mirrors that distinction.
+ * Auxiliary source glyphs shown beside a layer thumbnail. Type layers use the
+ * Photoshop-style T badge inside the thumbnail instead.
  *
  * `isBedrock` layers carry no `source` at all, so they are handled before the
  * source switch and render a separate background glyph.
@@ -32,6 +31,8 @@ export const LayerTypeIcon = ({ source }: { source: LayerSource | null | undefin
       </svg>
     );
   }
+
+  if (source.args.toolName === 'text') return null;
 
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
