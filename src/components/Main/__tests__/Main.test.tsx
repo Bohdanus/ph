@@ -56,6 +56,7 @@ vi.mock('../../../contexts/useFile.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useLayer.ts', () => ({
+  MAX_DOCUMENT_FRAME_SIDE: 4096,
   useLayers: () => ({ drawAllLayers: vi.fn() }),
 }));
 

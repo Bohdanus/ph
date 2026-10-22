@@ -1,7 +1,7 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Selection } from '../contexts/general-types.ts';
 import { type DocumentFrame, documentFrameSize, documentToCanvasPoint } from '../contexts/document-frame.ts';
-import { getSelectionAbsolutePoints } from '../util/selection.ts';
+
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
 import { readSelectionDragPreview } from './selection-drag-preview.ts';
@@ -37,13 +37,19 @@ type AntsShape = { id: string; path: Path2D };
 
 /** A closed contour through a selection's absolute points, or `null` when there is nothing to stroke. */
 function shapePath(selection: Selection, frame: DocumentFrame): Path2D | null {
-  const points = getSelectionAbsolutePoints(selection).map((point) => documentToCanvasPoint(point, frame));
-  if (points.length < 3) return null;
+  const contours = selection.points.map((contour) =>
+    contour.map((point) => documentToCanvasPoint({ x: point.x + selection.pos.x, y: point.y + selection.pos.y }, frame))
+  );
+
+  if (contours.every((contour) => contour.length < 3)) return null;
 
   const path = new Path2D();
-  path.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) path.lineTo(points[i].x, points[i].y);
-  path.closePath();
+  for (const contour of contours) {
+    if (contour.length < 3) continue;
+    path.moveTo(contour[0].x, contour[0].y);
+    for (let i = 1; i < contour.length; i++) path.lineTo(contour[i].x, contour[i].y);
+    path.closePath();
+  }
 
   return path;
 }

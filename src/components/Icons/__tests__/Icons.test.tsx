@@ -118,4 +118,15 @@ describe('layer type icons', () => {
     expect(svgOf(tool).innerHTML).not.toBe(svgOf(blank).innerHTML);
     expect(svgOf(tool).innerHTML).not.toBe(svgOf(image).innerHTML);
   });
+
+  it('leaves the Type-layer marker to its thumbnail instead of rendering the generic tool glyph', () => {
+    const textSource = {
+      kind: 'tool',
+      args: { toolName: 'text' },
+      pos: { x: 0, y: 0, width: 1, height: 1 },
+    } as LayerSource;
+    const { container } = render(<LayerTypeIcon source={textSource} />);
+
+    expect(container.firstChild).toBeNull();
+  });
 });

@@ -84,9 +84,11 @@ const ELLIPSE_SELECTION: Selection = {
   isActive: true,
   pos: { x: 8, y: 12, width: 24, height: 32 },
   points: [
-    { x: 8, y: 12 },
-    { x: 32, y: 12 },
-    { x: 32, y: 44 },
+    [
+      { x: 8, y: 12 },
+      { x: 32, y: 12 },
+      { x: 32, y: 44 },
+    ],
   ],
 };
 

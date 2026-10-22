@@ -420,6 +420,43 @@ describe('LayersTab', () => {
     expect(currentToolState.requestTextEditFocus).toHaveBeenCalledWith({ kind: 'select-all', layerId: 'text' });
   });
 
+  it('shows the Type badge on its thumbnail and opens that text layer on double-click', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Type badge',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    seed(
+      {
+        text: createMockLayer({
+          id: 'text',
+          name: 'Text layer',
+          pos: { x: 120, y: 80, width: 100, height: 60 },
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+      },
+      null
+    );
+    currentToolState.toolArgs = { toolName: 'move' };
+    render(<LayersTab />);
+
+    const badge = screen.getByRole('img', { name: 'Type layer' });
+    const thumbnail = screen.getByTestId('layer-thumbnail');
+    expect(badge).toHaveTextContent('T');
+    expect(badge.parentElement).toBe(thumbnail.parentElement);
+
+    fireEvent.doubleClick(thumbnail);
+
+    expect(layerMocks.beginTextLayerEdit).toHaveBeenCalledWith('text');
+  });
+
   it('commits and focuses once during the real row double-click sequence, even when text is unchanged', () => {
     const args: TextToolArgs = {
       toolName: 'text',

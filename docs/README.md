@@ -30,6 +30,7 @@ deliberately carries none of it.
 | [`TOOLS.md`](TOOLS.md)                     | The per-tool specification. **Generated** — do not edit; run `npm run docs:tools`                                |
 | [`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md) | The Adobe Tools-panel tools the rail does **not** have — the complement of `TOOLS.md`, keyed to Adobe's identity |
 | [`LAYERS-PANEL.md`](LAYERS-PANEL.md)       | The Layers panel's requirements and status                                                                       |
+| [`CROP-UX.md`](CROP-UX.md)                 | Crop behavior against Photoshop and the app's retained-pixel recovery contract                                   |
 | [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md)   | Capabilities deliberately not built, so nobody re-audits them                                                    |
 
 The ten per-family research notes live outside this directory, one per tool family:

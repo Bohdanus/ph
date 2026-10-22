@@ -342,7 +342,7 @@ describe('replayHistory selection branches', () => {
         args: {
           previousSelectionState: {
             selections: [
-              { id: 'old', points: [{ x: 0, y: 0 }], isActive: true, pos: { x: 0, y: 0, width: 4, height: 4 } },
+              { id: 'old', points: [[{ x: 0, y: 0 }]], isActive: true, pos: { x: 0, y: 0, width: 4, height: 4 } },
             ],
             activeSelectionId: 'old',
           },
@@ -360,7 +360,7 @@ describe('replayHistory selection branches', () => {
     const dependencies = createDependencies();
     const selection = {
       id: 'live',
-      points: [{ x: 1, y: 1 }],
+      points: [[{ x: 1, y: 1 }]],
       isActive: true,
       pos: { x: 1, y: 1, width: 5, height: 5 },
     };
@@ -384,7 +384,7 @@ describe('replayHistory selection branches', () => {
     const dependencies = createDependencies();
     const selection = {
       id: 'live',
-      points: [{ x: 1, y: 1 }],
+      points: [[{ x: 1, y: 1 }]],
       isActive: true,
       pos: { x: 1, y: 1, width: 5, height: 5 },
     };

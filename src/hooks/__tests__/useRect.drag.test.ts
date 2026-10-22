@@ -35,10 +35,12 @@ const pointer = vi.hoisted(() => {
     isPointerDownValid: vi.fn(() => state.downValid),
     isPointerMoveValid: vi.fn(() => state.moveValid),
     isPointerUpValid: vi.fn(() => state.upValid),
+    releasePointer: vi.fn(),
     getLocalCoords: vi.fn((event: { clientX: number; clientY: number }) => ({
       x: event.clientX,
       y: event.clientY,
     })),
+    getLocalCoordsFromClientPoint: vi.fn((clientX: number, clientY: number) => ({ x: clientX, y: clientY })),
     isMouseDown: { current: false },
     dimensionsRef: { current: { scale: 1 } },
     pointerIdRef: { current: null as number | null },
@@ -239,6 +241,22 @@ describe('useRect mask drawing', () => {
     expect(onRepaint).toHaveBeenCalledWith(RECT);
   });
 
+  it('redraws a rotated crop guide when its guide type changes without pointer movement', () => {
+    const { ctx, rerender, initialProps } = setup({
+      initialRect: RECT,
+      rotationEnabled: true,
+      rotation: 24,
+      overlayType: 'ruleOfThirds',
+    });
+    vi.mocked(ctx.moveTo).mockClear();
+    vi.mocked(ctx.lineTo).mockClear();
+
+    rerender({ ...initialProps, overlayType: 'diagonal' });
+
+    expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+  });
+
   it('re-paints only when the initial rect prop actually changes', () => {
     const onRepaint = vi.fn();
     const { rerender, initialProps } = setup({ initialRect: RECT, onRepaint });
@@ -313,6 +331,19 @@ describe('useRect overlay teardown', () => {
     // (imageSize) rather than the full canvas backing store. The test runs at 1x DPR, so
     // logical == device pixels, but the semantics are frame-relative.
     expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
+  });
+
+  it('clears the latest logical frame bounds after the document resizes', () => {
+    const { ctx, rerender, initialProps, unmount } = setup({
+      imageSize: { width: 320, height: 240 },
+      initialRect: RECT,
+    });
+    rerender({ ...initialProps, imageSize: { width: 640, height: 480 } });
+    vi.mocked(ctx.clearRect).mockClear();
+
+    unmount();
+
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
   });
 
   it('clears the logical frame bounds on unmount even when nothing was ever painted', () => {
@@ -1004,6 +1035,119 @@ describe('useRect pointer up and move tool', () => {
 
     expect(onChange).not.toHaveBeenCalled();
     expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 180, y1: 140, x2: 300, y2: 250 });
+  });
+
+  it('cancels a queued move and restores the crop rect on pointercancel', () => {
+    const onChangeEnd = vi.fn();
+    const onRepaint = vi.fn();
+    const { result, event, flushFrame } = setup({ initialRect: RECT, onChangeEnd, onRepaint });
+
+    startDrag({ result, event }, { x: 300, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(340, 175));
+    });
+    act(() => {
+      pointer.data.isMouseDown.current = false;
+      result.current.pointerHandlers.onPointerCancel(event(340, 175));
+    });
+    flushFrame();
+
+    expect(pointer.data.releasePointer).toHaveBeenCalledTimes(1);
+    expect(onChangeEnd).not.toHaveBeenCalled();
+    expect(onRepaint).toHaveBeenLastCalledWith(RECT);
+  });
+
+  it('ignores pointercancel from a second pointer while the captured gesture continues', () => {
+    const onRepaint = vi.fn();
+    const { result, event, flushFrame } = setup({ initialRect: RECT, onRepaint });
+
+    startDrag({ result, event }, { x: 300, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(340, 175));
+      result.current.pointerHandlers.onPointerCancel(event(200, 175, { pointerId: 2, pointerType: 'touch' }));
+    });
+    expect(pointer.data.releasePointer).not.toHaveBeenCalled();
+    flushFrame();
+
+    expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 340, y2: 250 });
+  });
+
+  it('maps only the latest captured move point inside the scheduled animation frame', () => {
+    const { result, event, flushFrame } = setup({ initialRect: RECT });
+    startDrag({ result, event }, { x: 300, y: 175 });
+    pointer.data.getLocalCoordsFromClientPoint.mockClear();
+
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(320, 175));
+      result.current.pointerHandlers.onPointerMove(event(340, 175));
+    });
+
+    expect(pointer.data.getLocalCoordsFromClientPoint).not.toHaveBeenCalled();
+    flushFrame();
+    expect(pointer.data.getLocalCoordsFromClientPoint).toHaveBeenCalledExactlyOnceWith(340, 175);
+  });
+
+  it('hit tests the visible rotation grip and keeps its canvas stroke at one document pixel', () => {
+    const { result, event, ctx } = setup({ initialRect: RECT, rotationEnabled: true });
+
+    expect(ctx.lineWidth).toBe(1);
+    act(() => {
+      result.current.pointerHandlers.onPointerDown(event(200, 88));
+    });
+
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('rotate');
+  });
+
+  it('uses the caller cached guide color instead of reading document pixels during a rotated paint', () => {
+    const documentCanvas = document.createElement('canvas');
+    const getImageData = vi.fn();
+    vi.spyOn(documentCanvas, 'getContext').mockReturnValue({ getImageData } as never);
+    const colorForRect = vi.fn(() => 'rgba(20, 40, 60, 0.8)');
+
+    setup({
+      initialRect: RECT,
+      rotationEnabled: true,
+      rotation: 15,
+      overlayType: 'ruleOfThirds',
+      documentCanvasRef: { current: documentCanvas },
+      overlayColorForRect: colorForRect,
+    });
+
+    expect(colorForRect).toHaveBeenCalledWith({ x: 100, y: 100, width: 200, height: 150 });
+    expect(getImageData).not.toHaveBeenCalled();
+  });
+
+  it('repaints only the previous crop bounds when an incremental overlay moves', () => {
+    const { result, event, ctx, flushFrame } = setup({
+      initialRect: RECT,
+      rotationEnabled: true,
+      incrementalOverlay: true,
+    });
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(220, 190));
+    });
+    flushFrame();
+
+    expect(ctx.clearRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalled();
+  });
+
+  it('leaves painting to the external overlay while still reporting rect geometry', () => {
+    const onRepaint = vi.fn();
+    const { ctx, result, event, flushFrame } = setup({ initialRect: RECT, externalOverlay: true, onRepaint });
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(240, 175));
+    });
+    flushFrame();
+
+    expect(onRepaint).toHaveBeenLastCalledWith({ x1: 140, y1: 100, x2: 340, y2: 250 });
+    expect(ctx.clearRect).not.toHaveBeenCalled();
+    expect(ctx.fillRect).not.toHaveBeenCalled();
   });
 
   it('ignores a pointer up that the capture layer refused', () => {

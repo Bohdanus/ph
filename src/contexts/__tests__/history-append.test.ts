@@ -62,7 +62,7 @@ function selectionState(id: string): SelectionSnapshot {
     selections: [
       {
         id,
-        points: [{ x: 1, y: 2 }],
+        points: [[{ x: 1, y: 2 }]],
         isActive: true,
         pos: { x: 1, y: 2, width: 3, height: 4 },
       } satisfies Selection,

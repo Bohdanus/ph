@@ -63,7 +63,7 @@ function provenance(actionName: ActionType, toolName?: string): DurableEntryProv
 function selection(overrides: Partial<Selection> = {}): Selection {
   return {
     id: 'selection-1',
-    points: [{ x: 1, y: 2 }],
+    points: [[{ x: 1, y: 2 }]],
     isActive: true,
     pos: { x: 0, y: 0, width: 8, height: 6 },
     ...overrides,

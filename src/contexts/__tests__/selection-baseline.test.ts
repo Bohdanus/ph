@@ -58,9 +58,11 @@ function outOfHistorySelection(id: string): Selection {
   return {
     id,
     points: [
-      { x: 12, y: 7 },
-      { x: 48, y: 7 },
-      { x: 48, y: 33 },
+      [
+        { x: 12, y: 7 },
+        { x: 48, y: 7 },
+        { x: 48, y: 33 },
+      ],
     ],
     isActive: true,
     pos: { x: 12, y: 7, width: 36, height: 26 },
@@ -153,9 +155,11 @@ function snapshotFixture(id: string): Selection {
   return {
     id,
     points: [
-      { x: 12, y: 7 },
-      { x: 48, y: 7 },
-      { x: 48, y: 33 },
+      [
+        { x: 12, y: 7 },
+        { x: 48, y: 7 },
+        { x: 48, y: 33 },
+      ],
     ],
     isActive: true,
     pos: { x: 12, y: 7, width: 36, height: 26 },
