@@ -59,8 +59,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { timingSafeEqual } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -76,13 +76,24 @@ import { fileURLToPath } from 'node:url';
 const OVERRIDE_VAR = 'ALLOW_MAIN_COMMIT';
 const MAIN_WORKTREE_GIT_DIR_KEY = 'ph.mainWorktreeGitDir';
 const MAIN_WORKTREE_PATH_KEY = 'ph.mainWorktreePath';
+const MAIN_WORKTREE_ID_KEY = 'ph.mainWorktreeIdentity';
+const MAIN_WORKTREE_ID_FILENAME = 'kilo-main-worktree-identity';
 
 export { OVERRIDE_VAR };
 
+function readMainWorktreeIdentity(gitDir) {
+  try {
+    return readFileSync(join(gitDir, MAIN_WORKTREE_ID_FILENAME), 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Record the private Git directory for the worktree that currently owns `main`.
- * The local config is shared by every linked worktree and survives detaching HEAD,
- * so the checkout remains protected if its symbolic branch changes mid-operation.
+ * The local config is shared by every linked worktree and survives detaching HEAD;
+ * the matching private marker distinguishes this checkout from a later worktree
+ * that Git creates with a recycled path-derived admin directory.
  *
  * @param {string} cwd
  * @param {{ required?: boolean }} options When true, persistence failures are surfaced to hook installation.
@@ -105,6 +116,17 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false } =
       registeredPath = git(['config', '--local', '--get', MAIN_WORKTREE_PATH_KEY]);
     } catch {
       // The first main-worktree registration has no config value yet.
+    }
+    let registeredIdentity = null;
+    try {
+      registeredIdentity = git(['config', '--local', '--get', MAIN_WORKTREE_ID_KEY]);
+    } catch {
+      // The first main-worktree registration has no identity token yet.
+    }
+    if (registeredGitDir !== gitDir || registeredIdentity !== readMainWorktreeIdentity(gitDir)) {
+      registeredIdentity = randomUUID();
+      writeFileSync(join(gitDir, MAIN_WORKTREE_ID_FILENAME), `${registeredIdentity}\n`, { mode: 0o600 });
+      git(['config', '--local', MAIN_WORKTREE_ID_KEY, registeredIdentity]);
     }
     if (registeredGitDir !== gitDir) git(['config', '--local', MAIN_WORKTREE_GIT_DIR_KEY, gitDir]);
     if (registeredPath !== worktreePath) git(['config', '--local', MAIN_WORKTREE_PATH_KEY, worktreePath]);
@@ -177,10 +199,12 @@ An operator hotfix the operator asked for in the designated main worktree by nam
  * may record a pinned landing. The hook installer records the designated main
  * checkout's private gitdir and path in shared local Git config, preserving its
  * protection if HEAD becomes detached or that path is recreated as a detached
- * checkout. Any detached checkout at the remembered main path stays protected:
- * without a branch ref or matching saved gitdir, it cannot be distinguished from
- * the original main checkout. The path fallback does not transfer protection to a
- * different branch worktree that reuses the old path. Git prevents the same local
+ * checkout. A marker inside the private gitdir distinguishes that worktree from a
+ * feature worktree Git later creates at the same path; Git can reuse a path-derived
+ * admin directory after removal. Any detached checkout at the remembered main path
+ * stays protected because, without a branch ref or matching identity marker, it
+ * cannot be distinguished from the original main checkout. A branched feature
+ * worktree at that path does not inherit protection. Git prevents the same local
  * branch from being checked out in two worktrees at once.
  *
  * Returns `null` when git cannot answer, which `decide` treats as "not the main
@@ -211,12 +235,22 @@ export function resolveWorktree(cwd = process.cwd()) {
     } catch {
       // A repository that has not run the hook installer has no registered path yet.
     }
+    let registeredMainIdentity = null;
+    try {
+      registeredMainIdentity = git(['config', '--local', '--get', MAIN_WORKTREE_ID_KEY]);
+    } catch {
+      // A repository that has not registered main has no saved identity token yet.
+    }
     const worktreePath = realpathSync(cwd);
     if (isMainWorktree && (registeredMainGitDir !== gitDir || registeredMainPath !== worktreePath)) {
       registerMainWorktree(cwd);
     }
+    const hasRegisteredMainIdentity =
+      registeredMainGitDir === gitDir &&
+      Boolean(registeredMainIdentity) &&
+      registeredMainIdentity === readMainWorktreeIdentity(gitDir);
     const isDesignatedMainWorktree =
-      isMainWorktree || registeredMainGitDir === gitDir || (branchRef === null && registeredMainPath === worktreePath);
+      isMainWorktree || hasRegisteredMainIdentity || (branchRef === null && registeredMainPath === worktreePath);
     return {
       gitDir,
       commonDir,

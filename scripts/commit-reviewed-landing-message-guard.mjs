@@ -81,8 +81,8 @@ function clearPendingMergeState(cwd) {
 function discardAbandonedPreparedMerge(cwd) {
   const state = readPendingMergeState(cwd);
   if (!state) return;
-  if (state.phase !== 'markers-lost') {
-    throw new Error('only prepared merge state with missing markers can be explicitly discarded');
+  if (!['prepared', 'markers-lost'].includes(state.phase)) {
+    throw new Error('only abandoned prepared merge state can be explicitly discarded');
   }
   if (readMergeHeadRefs(cwd).length !== 0 || hasAutoMergeMarker(cwd)) {
     throw new Error('merge markers are still present; resolve or abort the merge before discarding its state');
@@ -134,7 +134,9 @@ function recordPreparedMerge(cwd, phase = 'before') {
   const head = git(['rev-parse', 'HEAD^{commit}'], cwd);
   const incoming = git(['rev-parse', '--verify', `${mergeHeads[0]}^{commit}`], cwd);
   if (previousState && (previousState.head !== head || previousState.incoming !== incoming)) {
-    throw new Error('prepared merge parents changed before pre-commit; refusing to record the merge');
+    throw new Error(
+      'prepared merge parents changed before pre-commit; refusing to record the merge. If the previous merge was abandoned, abort this merge, reset the index to the recorded HEAD, then run `node scripts/commit-reviewed-landing-message-guard.mjs --discard-abandoned-prepared-merge`'
+    );
   }
   const resultTree = git(['write-tree'], cwd);
   writePendingMergeState(cwd, {

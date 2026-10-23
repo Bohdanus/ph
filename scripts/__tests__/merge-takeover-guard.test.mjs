@@ -2228,6 +2228,64 @@ describe('pinned main landing', () => {
     expect(gitAt(featureWorktree, ['show', 'HEAD:ordinary-change.txt'])).toBe('ordinary');
   });
 
+  it('discards an aborted prepared merge before recording a different merge', () => {
+    const refs = prepareDisjointMerge();
+    git(['checkout', '-qb', 'other', refs.base]);
+    write('other.txt', 'other feature\n');
+    commit('other feature change');
+    git(['checkout', '-q', 'main']);
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    const featureHead = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    installPinnedPreCommitGuards({ afterChecks: 'exit 1' });
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+
+    let firstCommitFailure;
+    try {
+      gitAt(featureWorktree, ['commit', '-m', 'Failed feature merge', '-m', 'Chat: test-session']);
+    } catch (error) {
+      firstCommitFailure = error;
+    }
+    expect(firstCommitFailure).toBeDefined();
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+    expect(gitAt(featureWorktree, ['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    gitAt(featureWorktree, ['merge', '--abort']);
+
+    installPinnedPreCommitGuards();
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'other']);
+    let changedParentsFailure;
+    try {
+      gitAt(featureWorktree, ['commit', '-m', 'Other feature merge', '-m', 'Chat: test-session']);
+    } catch (error) {
+      changedParentsFailure = error;
+    }
+    expect(changedParentsFailure).toBeDefined();
+    expect(String(changedParentsFailure.stderr)).toContain('prepared merge parents changed before pre-commit');
+    expect(String(changedParentsFailure.stderr)).toContain('--discard-abandoned-prepared-merge');
+    gitAt(featureWorktree, ['merge', '--abort']);
+
+    const discard = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, '--discard-abandoned-prepared-merge'], {
+      cwd: featureWorktree,
+      encoding: 'utf8',
+    });
+    expect(discard.status, discard.stderr).toBe(0);
+    const mergeStatePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(mergeStatePath)).toBe(false);
+
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'other']);
+    gitAt(featureWorktree, ['commit', '-m', 'Other feature merge', '-m', 'Chat: test-session']);
+    expect(gitAt(featureWorktree, ['show', 'HEAD:other.txt'])).toBe('other feature');
+    expect(gitAt(featureWorktree, ['ls-tree', '--name-only', 'HEAD'])).not.toContain('feature.txt');
+  });
+
   it('rejects an unpinned feature merge whose MERGE_HEAD becomes octopus after pre-commit', () => {
     const refs = prepareDisjointMerge();
     const featureWorktree = join(dir, 'feature-worktree');

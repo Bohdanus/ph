@@ -84,6 +84,15 @@ if [ ! -f "$hook" ]; then
 \t\tcurrent_git_dir="$(git rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null || true)"
 \t\tcommon_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 \t\tdesignated_main_git_dir="$(git config --local --get ph.mainWorktreeGitDir 2>/dev/null || true)"
+\t\tregistered_main_identity="$(git config --local --get ph.mainWorktreeIdentity 2>/dev/null || true)"
+\t\tcurrent_main_identity=""
+\t\tif [ -n "$current_git_dir" ] && [ -f "$current_git_dir/kilo-main-worktree-identity" ]; then
+\t\t\tcurrent_main_identity="$(cat "$current_git_dir/kilo-main-worktree-identity" 2>/dev/null || true)"
+\t\tfi
+\t\tdesignated_main_identity_match=false
+\t\tif [ -n "$registered_main_identity" ] && [ "$current_git_dir" = "$designated_main_git_dir" ] && [ -n "$current_main_identity" ] && [ "$current_main_identity" = "$registered_main_identity" ]; then
+\t\t\tdesignated_main_identity_match=true
+\t\tfi
 \t\tcurrent_worktree_path="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 \t\tif [ -n "$current_worktree_path" ]; then
 \t\t\tcurrent_worktree_path="$(cd "$current_worktree_path" 2>/dev/null && pwd -P || true)"
@@ -97,7 +106,7 @@ if [ ! -f "$hook" ]; then
 \t\tif [ -n "$main_worktree_path" ] && [ "$current_worktree_path" = "$main_worktree_path" ] && [ -z "$current_branch_ref" ]; then
 \t\t\tdetached_designated_main_path=true
 \t\tfi
-\t\tif [ "$current_branch" != "main" ] && [ "$current_git_dir" != "$common_git_dir" ] && [ "$current_git_dir" != "$designated_main_git_dir" ] && [ "$detached_designated_main_path" != true ]; then
+\t\tif [ "$current_branch" != "main" ] && [ "$current_git_dir" != "$common_git_dir" ] && [ "$designated_main_identity_match" != true ] && [ "$detached_designated_main_path" != true ]; then
 \t\tif git interpret-trailers --parse "$1" 2>/dev/null | awk -F: 'tolower($1) == "chat" { count++; if (substr($0, index($0, ":") + 1) ~ /[^[:space:]]/) nonempty++ } END { exit !(count == 1 && nonempty == 1) }'; then
 \t\t\texit 0
 \t\tfi

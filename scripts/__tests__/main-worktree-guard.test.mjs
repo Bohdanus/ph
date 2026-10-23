@@ -217,6 +217,29 @@ describe('the guard tells a main worktree from a linked one on a real repository
     expect(decide({ worktree })).toEqual({ action: 'refuse' });
   });
 
+  it('keeps the designated checkout protected if its branch changes from main', () => {
+    const original = resolveWorktree(mainLinked);
+    expect(original).toMatchObject({ isMainWorktree: true, isDesignatedMainWorktree: true });
+
+    const switchBranch = spawnSync('git', ['switch', '--quiet', '-c', 'feature-from-main'], {
+      cwd: mainLinked,
+      encoding: 'utf8',
+    });
+    expect(switchBranch.status, switchBranch.stderr).toBe(0);
+
+    const switched = resolveWorktree(mainLinked);
+    expect(switched).toMatchObject({
+      branchRef: 'refs/heads/feature-from-main',
+      isMainWorktree: false,
+      isDesignatedMainWorktree: true,
+      isProtectedWorktree: true,
+    });
+    expect(decide({ worktree: switched })).toEqual({ action: 'refuse' });
+
+    const restoreMain = spawnSync('git', ['switch', '--quiet', 'main'], { cwd: mainLinked, encoding: 'utf8' });
+    expect(restoreMain.status, restoreMain.stderr).toBe(0);
+  });
+
   it('keeps the designated main checkout protected after HEAD is detached', () => {
     const beforeDetach = resolveWorktree(mainLinked);
     expect(beforeDetach).toMatchObject({ isMainWorktree: true, isDesignatedMainWorktree: true });
@@ -482,6 +505,8 @@ describe('the guard is actually installed', () => {
       const hooksPath = git(fixture, ['config', '--get', 'core.hooksPath']);
       const dispatcher = resolve(fixture, hooksPath, 'commit-msg');
       const savedGitDir = realpathSync(git(detachedMain, ['rev-parse', '--absolute-git-dir']));
+      const savedIdentity = git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeIdentity']);
+      expect(savedIdentity).toMatch(/^[0-9a-f-]{36}$/i);
 
       const detach = spawnSync('git', ['switch', '--quiet', '--detach'], { cwd: detachedMain, encoding: 'utf8' });
       expect(detach.status, detach.stderr).toBe(0);
@@ -538,6 +563,13 @@ describe('the guard is actually installed', () => {
         }
       );
       expect(reuseForFeature.status, reuseForFeature.stderr).toBe(0);
+      const featureGitDir = realpathSync(git(detachedMain, ['rev-parse', '--absolute-git-dir']));
+      // Model Git reusing the removed main worktree's path-derived admin directory:
+      // the shared config still names the old main identity, but the recreated
+      // feature worktree has no private marker proving it is that same checkout.
+      git(fixture, ['config', '--local', 'ph.mainWorktreeGitDir', featureGitDir]);
+      git(fixture, ['config', '--local', 'ph.mainWorktreeIdentity', savedIdentity]);
+      rmSync(join(featureGitDir, 'kilo-main-worktree-identity'), { force: true });
       const featureAtOldMainPath = resolveWorktree(detachedMain);
       expect(featureAtOldMainPath).toMatchObject({
         branchRef: 'refs/heads/feature-reused',

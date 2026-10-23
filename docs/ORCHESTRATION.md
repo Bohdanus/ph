@@ -160,13 +160,15 @@ lint-staged plus `tsc -b` plus a build, and lint-staged rewrites staged files wi
 
 The hook installer records the designated main worktree's private Git directory
 and root path in shared local Git config (`ph.mainWorktreeGitDir` and
-`ph.mainWorktreePath`). The Git directory keeps the same checkout protected if
-its `HEAD` is detached or switched during a hook. If that private directory
-changes, the saved path still protects a detached checkout there; it does not
-transfer protection to a feature branch that reuses the path. A first install
-fails when `main` is detached and no saved identity exists. The path also lets an
-older linked worktree run the designated checkout's current final message guard
-while its own hook file is missing. Pinned landings and the hotfix override still require
+`ph.mainWorktreePath`). It also stores a random identity marker in that private
+Git directory. The matching marker keeps the same checkout protected if its
+`HEAD` is detached or switched during a hook, while a new worktree does not
+inherit protection if Git reuses the old path-derived admin directory. If the
+private directory changes, the saved path still protects a detached checkout
+there; it does not transfer protection to a feature branch that reuses the path.
+A first install fails when `main` is detached and no saved identity exists. The
+path also lets an older linked worktree run the designated checkout's current
+final message guard while its own hook file is missing. Pinned landings and the hotfix override still require
 `refs/heads/main` to be checked out. The final `commit-msg` gate requires exactly
 one non-empty `Chat:` trailer on every commit after `prepare-commit-msg` has had
 a chance to edit the message.
