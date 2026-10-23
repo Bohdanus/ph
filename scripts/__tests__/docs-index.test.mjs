@@ -130,6 +130,23 @@ describe('the documentation index accounts for every tracked markdown file', () 
   });
 });
 
+describe('the broad free-compute research stays out of routine entry points', () => {
+  it('is not linked from agent policy, model policy, or orchestration docs', () => {
+    const routineDocs = [
+      'AGENTS.md',
+      'MODELS.md',
+      'docs/README.md',
+      'docs/ORCHESTRATION.md',
+      'docs/CODEX-ORCHESTRATION.md',
+    ];
+    const linkedDocs = routineDocs.filter((path) => {
+      const content = readFileSync(resolve(REPO_ROOT, path), 'utf8');
+      return /\]\([^)]*FREE-COMPUTE\.md(?:#[^)]*)?\)/i.test(content);
+    });
+    expect(linkedDocs).toEqual([]);
+  });
+});
+
 /**
  * `docs/README.md` is an index, and `docs/DOCUMENTATION.md` says so: "The index is not a
  * home. README.md names documents; it does not carry their content." The index grew a

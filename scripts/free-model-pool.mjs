@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFile, writeFile } from 'node:fs/promises';
+
 const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
 const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
@@ -47,11 +49,12 @@ export async function loadCatalogs({
   fetchImpl = fetch,
   openRouterKey = process.env.OPENROUTER_API_KEY,
   groqKey = process.env.GROQ_API_KEY,
+  groqFreePlanConfirmed = false,
   onCatalogError = () => {},
 } = {}) {
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
-  if (groqKey) sources.push({ source: 'groq', url: GROQ_MODELS });
+  if (groqKey && groqFreePlanConfirmed) sources.push({ source: 'groq', url: GROQ_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url }) => {
       const headers = {};
@@ -80,11 +83,12 @@ export async function completeWithFreeModel(
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
     groqKey = process.env.GROQ_API_KEY,
+    groqFreePlanConfirmed = false,
     maxTokens = 1200,
     onCatalogError = () => {},
   } = {}
 ) {
-  const available = await loadCatalogs({ fetchImpl, openRouterKey, groqKey, onCatalogError });
+  const available = await loadCatalogs({ fetchImpl, openRouterKey, groqKey, groqFreePlanConfirmed, onCatalogError });
   const exhausted = new Set();
   const attempts = new Map();
   const errors = [];
@@ -137,45 +141,74 @@ export async function completeWithFreeModel(
 
 function usage() {
   return (
-    'Usage: node scripts/free-model-pool.mjs --list [--limit N]\n' +
-    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH]\n' +
+    'Usage: node scripts/free-model-pool.mjs --list [--limit N] [--groq-free-plan-only]\n' +
+    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--groq-free-plan-only]\n' +
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
-    'Sources: Kilo anonymous free models; when OPENROUTER_API_KEY is set, OpenRouter :free models; when GROQ_API_KEY is set, Groq GPT-OSS models. Never selects paid catalog entries. --output-file writes results to a file instead of stdout, avoiding context pollution.'
+    'Groq is disabled unless --groq-free-plan-only is passed. That flag confirms the Groq account is on its $0 Free plan; the runner cannot detect account plan. GPT-OSS IDs are paid on the Developer plan. --output-file avoids sending results to stdout.'
   );
 }
 
-export async function main(args = process.argv.slice(2)) {
+export async function main(
+  args = process.argv.slice(2),
+  {
+    fetchImpl = fetch,
+    openRouterKey = process.env.OPENROUTER_API_KEY,
+    groqKey = process.env.GROQ_API_KEY,
+    stdout = process.stdout,
+    stderr = process.stderr,
+  } = {}
+) {
   const list = args.includes('--list');
   const promptAt = args.indexOf('--prompt-file');
   const outputFileAt = args.indexOf('--output-file');
   const limitAt = args.indexOf('--limit');
   const tokenAt = args.indexOf('--max-tokens');
-  if ((!list && promptAt < 0) || (list && promptAt >= 0)) {
-    process.stderr.write(`${usage()}\n`);
+  const groqFreePlanConfirmed = args.includes('--groq-free-plan-only');
+  const hasValue = (index) => index < 0 || (args[index + 1] && !args[index + 1].startsWith('--'));
+  if (
+    (!list && promptAt < 0) ||
+    (list && promptAt >= 0) ||
+    (promptAt >= 0 && !hasValue(promptAt)) ||
+    (outputFileAt >= 0 && !hasValue(outputFileAt)) ||
+    (limitAt >= 0 && !hasValue(limitAt)) ||
+    (tokenAt >= 0 && !hasValue(tokenAt))
+  ) {
+    stderr.write(`${usage()}\n`);
     return 2;
   }
   if (list) {
     const candidates = await loadCatalogs({
-      onCatalogError: (source, error) => process.stderr.write(`${source} catalog unavailable: ${error.message}\n`),
+      fetchImpl,
+      openRouterKey,
+      groqKey,
+      groqFreePlanConfirmed,
+      onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
-    process.stdout.write(`${JSON.stringify(candidates.slice(0, limit), null, 2)}\n`);
+    stdout.write(`${JSON.stringify(candidates.slice(0, limit), null, 2)}\n`);
     return 0;
   }
-  const { readFile, writeFile } = await import('node:fs/promises');
   const prompt = await readFile(args[promptAt + 1], 'utf8');
-  const maxTokens = tokenAt >= 0 ? Math.max(1, Number(args[tokenAt + 1]) || 1200) : 1200;
+  const maxTokens = tokenAt >= 0 ? Number(args[tokenAt + 1]) : 1200;
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
+    stderr.write('--max-tokens must be an integer from 1 to 4000.\n');
+    return 2;
+  }
   const result = await completeWithFreeModel(prompt, {
+    fetchImpl,
+    openRouterKey,
+    groqKey,
     maxTokens,
-    onCatalogError: (source, error) => process.stderr.write(`${source} catalog unavailable: ${error.message}\n`),
+    groqFreePlanConfirmed,
+    onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
   });
   const output = `[${result.source}/${result.model}]\n${result.content}\n`;
   if (outputFileAt >= 0) {
     const outPath = args[outputFileAt + 1];
     await writeFile(outPath, output, 'utf8');
-    process.stderr.write(`Result written to ${outPath}\n`);
+    stderr.write(`Result written to ${outPath}\n`);
   } else {
-    process.stdout.write(output);
+    stdout.write(output);
   }
   return 0;
 }

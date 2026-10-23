@@ -55,12 +55,13 @@ describe('loadCatalogs with groq', () => {
       fetchImpl,
       openRouterKey: undefined,
       groqKey: 'test-key',
+      groqFreePlanConfirmed: true,
       onCatalogError: () => {},
     });
     expect(candidates.some((c) => c.source === 'groq' && c.model === 'openai/gpt-oss-20b')).toBe(true);
   });
 
-  it('excludes groq source when GROQ_API_KEY is absent', async () => {
+  it('does not probe Groq when a key is present but its free plan is not explicitly confirmed', async () => {
     const fetchImpl = vi.fn((url) => {
       if (url.includes('groq'))
         return Promise.resolve({ ok: true, json: async () => ({ data: [groqRow('openai/gpt-oss-20b')] }) });
@@ -69,11 +70,12 @@ describe('loadCatalogs with groq', () => {
     const candidates = await loadCatalogs({
       fetchImpl,
       openRouterKey: undefined,
-      groqKey: undefined,
+      groqKey: 'test-key',
       onCatalogError: () => {},
     });
     expect(candidates.some((c) => c.source === 'groq')).toBe(false);
     expect(candidates.some((c) => c.source === 'kilo')).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalledWith(expect.stringContaining('groq'), expect.anything());
   });
 });
 
@@ -106,6 +108,7 @@ describe('completeWithFreeModel with groq', () => {
       fetchImpl,
       openRouterKey: undefined,
       groqKey: 'secret-key',
+      groqFreePlanConfirmed: true,
     });
     expect(result).toMatchObject({ source: 'kilo', model: 'k1', content: 'kilo result' });
     expect(chat.mock.calls[0][1].headers.Authorization).toBeUndefined();
@@ -130,6 +133,7 @@ describe('completeWithFreeModel with groq', () => {
       fetchImpl,
       openRouterKey: undefined,
       groqKey: 'secret-key',
+      groqFreePlanConfirmed: true,
     });
     expect(result).toMatchObject({ source: 'groq', model: 'openai/gpt-oss-20b', content: 'groq result' });
     expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer secret-key');

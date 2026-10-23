@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { catalogCandidates, completeWithFreeModel, loadCatalogs, zeroPriced } from '../free-model-pool.mjs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { catalogCandidates, completeWithFreeModel, loadCatalogs, main, zeroPriced } from '../free-model-pool.mjs';
 
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
@@ -181,5 +184,55 @@ describe('free model rotation', () => {
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     expect(result.source).toBe('openrouter');
+  });
+});
+
+describe('free model runner CLI', () => {
+  it('writes a bounded completion to --output-file instead of stdout', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-'));
+    const promptPath = join(directory, 'prompt.txt');
+    const outputPath = join(directory, 'result.txt');
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const fetchImpl = vi.fn((url) =>
+      url.endsWith('/models')
+        ? Promise.resolve({ ok: true, json: async () => [kiloRow('poolside/laguna-s-2.1:free')] })
+        : Promise.resolve({
+            ok: true,
+            json: async () => ({
+              model: 'poolside/laguna-s-2.1:free',
+              choices: [{ message: { content: 'concise result' } }],
+            }),
+          })
+    );
+    try {
+      await writeFile(promptPath, 'summarize briefly', 'utf8');
+      const code = await main(['--prompt-file', promptPath, '--output-file', outputPath], {
+        fetchImpl,
+        openRouterKey: '',
+        groqKey: '',
+        stdout,
+        stderr,
+      });
+      expect(code).toBe(0);
+      expect(await readFile(outputPath, 'utf8')).toBe('[kilo/poolside/laguna-s-2.1:free]\nconcise result\n');
+      expect(stdout.write).not.toHaveBeenCalled();
+      expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Result written to'));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects missing option values before reading files or making requests', async () => {
+    const fetchImpl = vi.fn();
+    const stderr = { write: vi.fn() };
+    const code = await main(['--prompt-file', 'prompt.txt', '--output-file'], {
+      fetchImpl,
+      openRouterKey: '',
+      groqKey: '',
+      stderr,
+    });
+    expect(code).toBe(2);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
