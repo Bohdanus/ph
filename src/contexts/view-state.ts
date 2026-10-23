@@ -10,6 +10,8 @@ export type ViewState = {
   rotation: number;
   /** Whether the view follows contain-fit when the available workspace changes. */
   fitToScreen: boolean;
+  /** Temporary slider floor carried from a Fit On Screen view below the one-pixel limit. */
+  minimumZoomOverride?: number;
 };
 
 export const DEFAULT_VIEW_STATE: ViewState = {
@@ -33,6 +35,38 @@ export function minimumSliderZoomForDocumentSize(size: Pick<Size, 'width' | 'hei
   const minimumDimension = Math.min(size?.width ?? 0, size?.height ?? 0);
   if (!Number.isFinite(minimumDimension) || minimumDimension <= 0) return MIN_SLIDER_ZOOM;
   return Math.min(MAX_SLIDER_ZOOM, 1 / Math.max(1, minimumDimension));
+}
+
+/** Keep an already-visible subpixel Fit scale representable until the user zooms back above the floor. */
+export function minimumSliderZoomForCurrentView(
+  size: Pick<Size, 'width' | 'height'> | null | undefined,
+  magnification: number,
+  minimumZoomOverride?: number
+): number {
+  const documentMinimum = minimumSliderZoomForDocumentSize(size);
+  if (!Number.isFinite(magnification) || magnification <= 0) return documentMinimum;
+  if (magnification >= documentMinimum) return documentMinimum;
+  if (Number.isFinite(minimumZoomOverride) && minimumZoomOverride! > 0) {
+    return Math.min(documentMinimum, minimumZoomOverride!);
+  }
+  return magnification;
+}
+
+/** Keep a fixed subpixel floor while zooming until the document's one-pixel floor is reached. */
+export function minimumZoomOverrideForMagnification(
+  size: Pick<Size, 'width' | 'height'> | null | undefined,
+  magnification: number,
+  gestureMinimum: number,
+  previousOverride?: number
+): number | undefined {
+  const documentMinimum = minimumSliderZoomForDocumentSize(size);
+  if (!Number.isFinite(magnification) || magnification >= documentMinimum) return undefined;
+  if (Number.isFinite(previousOverride) && previousOverride! > 0) {
+    return Math.min(documentMinimum, previousOverride!);
+  }
+  return Number.isFinite(gestureMinimum) && gestureMinimum > 0
+    ? Math.min(documentMinimum, gestureMinimum)
+    : magnification;
 }
 
 function boundedSliderMinimum(minimumZoom: number): number {

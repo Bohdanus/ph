@@ -4,7 +4,8 @@ import {
   absoluteViewZoom,
   clampAbsoluteViewZoom,
   DEFAULT_VIEW_STATE,
-  minimumSliderZoomForDocumentSize,
+  minimumSliderZoomForCurrentView,
+  minimumZoomOverrideForMagnification,
   relativeViewZoomForMagnification,
   viewportCenter,
   zoomAroundViewportPoint,
@@ -21,14 +22,20 @@ type ViewGesture = {
   startY: number;
   startState: ViewState;
   startMagnification: number;
+  minimumZoom: number;
   alternate: boolean;
 };
 
 export function ViewToolArea({ className, mode }: { className?: string; mode: ViewToolMode }) {
-  const [{ containerRef, viewStateRef, setViewState, documentFrame }] = useStore();
+  const [{ containerRef, viewState, viewStateRef, setViewState, documentFrame }] = useStore();
   const fitScale = useWorkspaceFitScale();
   const devicePixelRatio = useDevicePixelRatio();
-  const minimumZoom = minimumSliderZoomForDocumentSize(documentFrame);
+  const currentViewState = viewState ?? DEFAULT_VIEW_STATE;
+  const minimumZoom = minimumSliderZoomForCurrentView(
+    documentFrame,
+    absoluteViewZoom(currentViewState, fitScale, devicePixelRatio),
+    currentViewState.minimumZoomOverride
+  );
   const gestureRef = useRef<ViewGesture | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -57,6 +64,7 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
       startY: event.clientY,
       startState,
       startMagnification: clampAbsoluteViewZoom(absoluteViewZoom(startState, fitScale, devicePixelRatio), minimumZoom),
+      minimumZoom,
       alternate: event.altKey,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -79,14 +87,22 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
     const factor = Math.pow(2, dx / 160);
     const currentState = viewStateRef.current;
     const startZoom = relativeZoomAtMagnification(gesture.startMagnification, currentState.fitScaleCompensation);
-    const zoom = relativeZoomAtMagnification(
-      clampAbsoluteViewZoom(gesture.startMagnification * (gesture.alternate ? 1 / factor : factor), minimumZoom),
-      currentState.fitScaleCompensation
+    const magnification = clampAbsoluteViewZoom(
+      gesture.startMagnification * (gesture.alternate ? 1 / factor : factor),
+      gesture.minimumZoom
+    );
+    const zoom = relativeZoomAtMagnification(magnification, currentState.fitScaleCompensation);
+    const minimumZoomOverride = minimumZoomOverrideForMagnification(
+      documentFrame,
+      magnification,
+      gesture.minimumZoom,
+      currentState.minimumZoomOverride ?? gesture.startState.minimumZoomOverride
     );
     const rebasedStartState = {
       ...gesture.startState,
       zoom: startZoom,
       fitScaleCompensation: currentState.fitScaleCompensation,
+      minimumZoomOverride,
     };
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -108,18 +124,23 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
       if (rect) {
         const factor = gesture.alternate ? 0.8 : 1.25;
         const currentState = viewStateRef.current;
+        const magnification = clampAbsoluteViewZoom(gesture.startMagnification * factor, gesture.minimumZoom);
+        const minimumZoomOverride = minimumZoomOverrideForMagnification(
+          documentFrame,
+          magnification,
+          gesture.minimumZoom,
+          currentState.minimumZoomOverride ?? gesture.startState.minimumZoomOverride
+        );
         const rebasedStartState = {
           ...gesture.startState,
           zoom: relativeZoomAtMagnification(gesture.startMagnification, currentState.fitScaleCompensation),
           fitScaleCompensation: currentState.fitScaleCompensation,
+          minimumZoomOverride,
         };
         setViewState(
           zoomAroundViewportPoint(
             rebasedStartState,
-            relativeZoomAtMagnification(
-              clampAbsoluteViewZoom(gesture.startMagnification * factor, minimumZoom),
-              currentState.fitScaleCompensation
-            ),
+            relativeZoomAtMagnification(magnification, currentState.fitScaleCompensation),
             { x: gesture.startX - rect.left, y: gesture.startY - rect.top },
             viewportCenter(rect.width, rect.height)
           )

@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import {
   absoluteViewZoom,
   DEFAULT_VIEW_STATE,
   formatViewZoomPercent,
-  minimumSliderZoomForDocumentSize,
+  minimumSliderZoomForCurrentView,
+  minimumZoomOverrideForMagnification,
   VIEW_ZOOM_SLIDER_STEPS,
   relativeViewZoomForMagnification,
   sliderPositionToViewZoom,
@@ -28,6 +30,7 @@ function ViewButtons({ fitScale, devicePixelRatio }: { fitScale: number; deviceP
             zoom: relativeViewZoomForMagnification(1, fitScale, 1, devicePixelRatio),
             fitScaleCompensation: 1,
             rotation: 0,
+            minimumZoomOverride: undefined,
           })
         }
       >
@@ -48,8 +51,14 @@ export function Zoom() {
   const fitScale = useWorkspaceFitScale();
   const devicePixelRatio = useDevicePixelRatio();
   const state = viewState ?? DEFAULT_VIEW_STATE;
-  const minimumZoom = minimumSliderZoomForDocumentSize(documentFrame);
   const zoom = absoluteViewZoom(state, fitScale, devicePixelRatio);
+  const minimumZoom = minimumSliderZoomForCurrentView(documentFrame, zoom, state.minimumZoomOverride);
+  const [interactionMinimumZoom, setInteractionMinimumZoom] = useState<number | null>(null);
+  const activeMinimumZoom = interactionMinimumZoom ?? minimumZoom;
+
+  const beginSliderInteraction = () => setInteractionMinimumZoom((current) => current ?? minimumZoom);
+  const endSliderInteraction = () => setInteractionMinimumZoom(null);
+
   return (
     <div className="flex items-center gap-2">
       <label className="w-24 shrink-0 whitespace-nowrap text-right tabular-nums" htmlFor="view-zoom-slider">
@@ -62,17 +71,30 @@ export function Zoom() {
         min={0}
         max={VIEW_ZOOM_SLIDER_STEPS}
         step={1}
-        value={viewZoomToSliderPosition(zoom, minimumZoom)}
-        onChange={(event) =>
+        value={viewZoomToSliderPosition(zoom, activeMinimumZoom)}
+        onPointerDown={beginSliderInteraction}
+        onPointerUp={endSliderInteraction}
+        onPointerCancel={endSliderInteraction}
+        onKeyDown={beginSliderInteraction}
+        onKeyUp={endSliderInteraction}
+        onBlur={endSliderInteraction}
+        onChange={(event) => {
+          const magnification = sliderPositionToViewZoom(Number(event.currentTarget.value), activeMinimumZoom);
           setViewState({
             zoom: relativeViewZoomForMagnification(
-              sliderPositionToViewZoom(Number(event.currentTarget.value), minimumZoom),
+              magnification,
               fitScale,
               state.fitScaleCompensation,
               devicePixelRatio
             ),
-          })
-        }
+            minimumZoomOverride: minimumZoomOverrideForMagnification(
+              documentFrame,
+              magnification,
+              activeMinimumZoom,
+              state.minimumZoomOverride
+            ),
+          });
+        }}
       />
       <ViewButtons devicePixelRatio={devicePixelRatio} fitScale={fitScale} />
     </div>

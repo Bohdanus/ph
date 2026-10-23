@@ -9,6 +9,8 @@ import {
   MAX_SLIDER_ZOOM,
   MIN_SLIDER_ZOOM,
   minimumSliderZoomForDocumentSize,
+  minimumSliderZoomForCurrentView,
+  minimumZoomOverrideForMagnification,
   VIEW_ZOOM_SLIDER_STEPS,
   inverseViewPoint,
   preserveViewScaleCompensationAcrossDisplayScaleChange,
@@ -38,6 +40,16 @@ describe('view state transforms', () => {
     expect(sliderPositionToViewZoom(0, minimumZoom)).toBeCloseTo(minimumZoom);
     expect(clampAbsoluteViewZoom(minimumZoom / 2, minimumZoom)).toBeCloseTo(minimumZoom);
     expect(sliderPositionToViewZoom(VIEW_ZOOM_SLIDER_STEPS, minimumZoom)).toBe(MAX_SLIDER_ZOOM);
+  });
+
+  it('keeps an already-visible subpixel view at the slider floor until it is zoomed in', () => {
+    const size = { width: 100_000, height: 1 };
+    expect(minimumSliderZoomForCurrentView(size, 0.004)).toBe(0.004);
+    expect(minimumSliderZoomForCurrentView(size, 0.005, 0.004)).toBe(0.004);
+    expect(minimumSliderZoomForCurrentView(size, 1)).toBe(1);
+    expect(minimumSliderZoomForCurrentView(size, 2)).toBe(1);
+    expect(minimumZoomOverrideForMagnification(size, 0.005, 0.004, 0.004)).toBe(0.004);
+    expect(minimumZoomOverrideForMagnification(size, 1, 0.004, 0.004)).toBeUndefined();
   });
 
   it('uses the fallback range without a document and keeps tiny zoom labels visible', () => {
