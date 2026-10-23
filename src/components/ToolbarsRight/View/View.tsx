@@ -1,7 +1,16 @@
 import { useStore } from '../../../contexts/StoreContext.tsx';
-import { DEFAULT_VIEW_STATE, MAX_VIEW_ZOOM, MIN_VIEW_ZOOM } from '../../../contexts/view-state.ts';
+import {
+  absoluteViewZoom,
+  DEFAULT_VIEW_STATE,
+  VIEW_ZOOM_SLIDER_STEPS,
+  relativeViewZoomForMagnification,
+  sliderPositionToViewZoom,
+  viewZoomToSliderPosition,
+} from '../../../contexts/view-state.ts';
+import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
+import { useWorkspaceFitScale } from '../../../hooks/useWorkspaceFitScale.ts';
 
-function ViewButtons() {
+function ViewButtons({ fitScale, devicePixelRatio }: { fitScale: number; devicePixelRatio: number }) {
   const [{ setViewState }] = useStore();
   return (
     <div className="flex items-center gap-1">
@@ -10,7 +19,15 @@ function ViewButtons() {
       </button>
       <button
         type="button"
-        onClick={() => setViewState({ panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0 })}
+        onClick={() =>
+          setViewState({
+            panX: 0,
+            panY: 0,
+            zoom: relativeViewZoomForMagnification(1, fitScale, 1, devicePixelRatio),
+            fitScaleCompensation: 1,
+            rotation: 0,
+          })
+        }
       >
         100%
       </button>
@@ -19,25 +36,42 @@ function ViewButtons() {
 }
 
 export function Hand() {
-  return <ViewButtons />;
+  const fitScale = useWorkspaceFitScale();
+  const devicePixelRatio = useDevicePixelRatio();
+  return <ViewButtons devicePixelRatio={devicePixelRatio} fitScale={fitScale} />;
 }
 
 export function Zoom() {
   const [{ viewState, setViewState }] = useStore();
-  const zoom = (viewState ?? DEFAULT_VIEW_STATE).zoom;
+  const fitScale = useWorkspaceFitScale();
+  const devicePixelRatio = useDevicePixelRatio();
+  const state = viewState ?? DEFAULT_VIEW_STATE;
+  const zoom = absoluteViewZoom(state, fitScale, devicePixelRatio);
   return (
-    <div className="flex items-center gap-1">
-      <label htmlFor="view-zoom-slider">Zoom {Math.round(zoom * 100)}%</label>
+    <div className="flex items-center gap-2">
+      <label className="w-24 shrink-0 whitespace-nowrap text-right tabular-nums" htmlFor="view-zoom-slider">
+        Zoom {Math.round(zoom * 100)}%
+      </label>
       <input
+        className="w-80 shrink-0"
         id="view-zoom-slider"
         type="range"
-        min={MIN_VIEW_ZOOM}
-        max={MAX_VIEW_ZOOM}
-        step={0.1}
-        value={zoom}
-        onChange={(event) => setViewState({ zoom: Number(event.target.value) })}
+        min={0}
+        max={VIEW_ZOOM_SLIDER_STEPS}
+        step={1}
+        value={viewZoomToSliderPosition(zoom)}
+        onChange={(event) =>
+          setViewState({
+            zoom: relativeViewZoomForMagnification(
+              sliderPositionToViewZoom(Number(event.currentTarget.value)),
+              fitScale,
+              state.fitScaleCompensation,
+              devicePixelRatio
+            ),
+          })
+        }
       />
-      <ViewButtons />
+      <ViewButtons devicePixelRatio={devicePixelRatio} fitScale={fitScale} />
     </div>
   );
 }
