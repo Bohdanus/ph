@@ -10,7 +10,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { copyFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +34,7 @@ function git(args, { cwd = process.cwd(), env = process.env, input } = {}) {
   return result.stdout.trim();
 }
 
-function hasRequiredTrailers(message, { cwd, env }) {
+function readTrailers(message, { cwd, env }) {
   const parsed = git(['interpret-trailers', '--parse'], { cwd, env, input: message });
   const trailers = parsed.split('\n').filter(Boolean);
   const values = new Map();
@@ -45,19 +46,45 @@ function hasRequiredTrailers(message, { cwd, env }) {
     if (!values.has(key)) values.set(key, []);
     values.get(key).push(value);
   }
-  return ['branch', 'chat'].every((key) => values.get(key)?.length === 1 && values.get(key)[0]);
+  return values;
 }
 
-function isReviewedLanding(commit, { cwd, env, expectedMain, expectedIncoming, expectedTree }) {
-  const parents = git(['rev-list', '--parents', '-n', '1', commit], { cwd, env }).split(' ');
-  const tree = git(['rev-parse', `${commit}^{tree}`], { cwd, env });
+export function hasChatTrailer(message, { cwd, env, expectedChat }) {
+  const chats = readTrailers(message, { cwd, env }).get('chat');
+  return chats?.length === 1 && Boolean(chats[0]) && (expectedChat === undefined || chats[0] === expectedChat);
+}
+
+export function hasRequiredTrailers(message, { cwd, env, expectedBranch, expectedChat }) {
+  const values = readTrailers(message, { cwd, env });
+  const chats = values.get('chat');
   return (
-    parents.length === 3 && parents[1] === expectedMain && parents[2] === expectedIncoming && tree === expectedTree
+    values.get('branch')?.length === 1 &&
+    values.get('branch')[0] === expectedBranch &&
+    chats?.length === 1 &&
+    Boolean(chats[0]) &&
+    chats[0] === expectedChat
   );
 }
 
-function findReviewedLanding({ cwd, env, expectedMain, expectedIncoming, expectedTree }) {
-  const matches = (commit) => isReviewedLanding(commit, { cwd, env, expectedMain, expectedIncoming, expectedTree });
+function isReviewedLanding(
+  commit,
+  { cwd, env, expectedMain, expectedIncoming, expectedTree, expectedBranch, expectedChat }
+) {
+  const parents = git(['rev-list', '--parents', '-n', '1', commit], { cwd, env }).split(' ');
+  const tree = git(['rev-parse', `${commit}^{tree}`], { cwd, env });
+  const message = git(['show', '-s', '--format=%B', commit], { cwd, env });
+  return (
+    parents.length === 3 &&
+    parents[1] === expectedMain &&
+    parents[2] === expectedIncoming &&
+    tree === expectedTree &&
+    hasRequiredTrailers(message, { cwd, env, expectedBranch, expectedChat })
+  );
+}
+
+function findReviewedLanding({ cwd, env, expectedMain, expectedIncoming, expectedTree, expectedBranch, expectedChat }) {
+  const matches = (commit) =>
+    isReviewedLanding(commit, { cwd, env, expectedMain, expectedIncoming, expectedTree, expectedBranch, expectedChat });
   const head = git(['rev-parse', 'HEAD'], { cwd, env });
   if (matches(head)) return head;
 
@@ -93,19 +120,24 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
     );
   }
   if (env.GIT_INDEX_FILE) return fail('run this command outside a Git hook and without GIT_INDEX_FILE set');
-  if (!isProjectMainWorktree(cwd)) return fail('this command is only for the project main worktree');
+  const initialWorktree = resolveWorktree(cwd);
+  if (!isProjectMainWorktree(cwd) || !initialWorktree?.isMainWorktree) {
+    return fail('this command is only for the designated project main worktree with refs/heads/main checked out');
+  }
 
   const expectedMain = env.KILO_EXPECTED_MAIN_SHA;
   const expectedIncoming = env.KILO_EXPECTED_INCOMING_SHA;
   const expectedTree = env.KILO_EXPECTED_TREE_SHA;
-  if (!expectedMain || !expectedIncoming || !expectedTree) {
+  const expectedBranch = env.KILO_EXPECTED_BRANCH;
+  const expectedChat = env.KILO_EXPECTED_CHAT_ID;
+  if (!expectedMain || !expectedIncoming || !expectedTree || !expectedBranch || !expectedChat) {
     return fail(
-      'set KILO_EXPECTED_MAIN_SHA, KILO_EXPECTED_INCOMING_SHA, and KILO_EXPECTED_TREE_SHA from the reviewed candidate record'
+      'set KILO_EXPECTED_MAIN_SHA, KILO_EXPECTED_INCOMING_SHA, KILO_EXPECTED_TREE_SHA, KILO_EXPECTED_BRANCH, and KILO_EXPECTED_CHAT_ID from the reviewed candidate record'
     );
   }
   try {
-    if (!hasRequiredTrailers(argv[1], { cwd, env })) {
-      return fail('merge message must have exactly one non-empty Branch: and Chat: trailer');
+    if (!hasRequiredTrailers(argv[1], { cwd, env, expectedBranch, expectedChat })) {
+      return fail(`merge message must have exactly one Branch: ${expectedBranch} and Chat: ${expectedChat} trailer`);
     }
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error));
@@ -125,6 +157,11 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
     }
     if (mergeHeads.length !== 1) throw new Error('no single prepared MERGE_HEAD is available for this landing');
 
+    git(['check-ref-format', '--branch', expectedBranch], { cwd, env });
+    const branchTip = git(['rev-parse', '--verify', `refs/heads/${expectedBranch}^{commit}`], { cwd, env });
+    if (branchTip !== expectedIncoming)
+      throw new Error('expected source branch does not point to the reviewed incoming candidate');
+
     const head = git(['rev-parse', 'HEAD^{commit}'], { cwd, env });
     const incoming = git(['rev-parse', '--verify', `${mergeHeads[0]}^{commit}`], { cwd, env });
     const tree = git(['write-tree'], { cwd, env });
@@ -136,10 +173,30 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
     indexSnapshotDir = mkdtempSync(join(tmpdir(), 'ph-reviewed-landing-'));
     const indexSnapshot = join(indexSnapshotDir, 'index');
     copyFileSync(sharedIndex, indexSnapshot);
+    const markerPath = join(indexSnapshotDir, 'reviewed-snapshot.json');
+    const markerToken = randomBytes(32).toString('hex');
+    writeFileSync(
+      markerPath,
+      JSON.stringify({
+        token: markerToken,
+        indexPath: realpathSync(indexSnapshot),
+        expectedMain,
+        expectedIncoming,
+        expectedTree,
+        expectedBranch,
+        expectedChat,
+      }),
+      { flag: 'wx', mode: 0o600 }
+    );
 
     const child = spawnSync('git', ['commit', ...argv], {
       cwd,
-      env: { ...env, GIT_INDEX_FILE: indexSnapshot },
+      env: {
+        ...env,
+        GIT_INDEX_FILE: indexSnapshot,
+        KILO_REVIEWED_LANDING_MARKER: markerPath,
+        KILO_REVIEWED_LANDING_TOKEN: markerToken,
+      },
       stdio: 'inherit',
     });
     if (child.error) throw child.error;
@@ -148,7 +205,9 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
       return;
     }
 
-    if (!findReviewedLanding({ cwd, env, expectedMain, expectedIncoming, expectedTree })) {
+    if (
+      !findReviewedLanding({ cwd, env, expectedMain, expectedIncoming, expectedTree, expectedBranch, expectedChat })
+    ) {
       throw new Error(
         'Git committed, but the reviewed merge object could not be found in main history; inspect main before retrying'
       );

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Refuses to record a commit in the main worktree.
+ * Refuses to record a commit in the primary or designated main worktree.
  * ---------------------------------------------
  * `docs/ORCHESTRATION.md` states the hard rule this program enforces: 100% of
  * work that changes a tracked file happens in its own worktree, and the main
@@ -28,7 +28,7 @@
  * It runs AFTER the edit, not before it. A session that writes into the main
  * worktree and never commits is not stopped here; its files are still
  * uncommitted, and they are still in a checkout every other session is reading.
- * This guard makes the main worktree a place where work cannot be _recorded_,
+ * This guard makes the primary and designated main worktrees places where work cannot be _recorded_,
  * which converts "71 rogue commits nobody can attribute" into "a dirty tree the
  * next `git status` names". Closing the write side is a process fix, not a
  * program: see `docs/ORCHESTRATION.md` on creating the worktree before the
@@ -39,15 +39,17 @@
  * ----------------------------
  * - **Landing.** A clean merge is prepared with `--no-commit --no-ff`; its later commit through
  *   `commit-reviewed-landing.mjs` reaches this file with `MERGE_HEAD` set and a private index
- *   snapshot. It is allowed only when HEAD, MERGE_HEAD, the staged tree, and the isolated index
- *   match the reviewed parent and tree pins. A direct clean merge reaches
- *   `pre-merge-commit` without a verifiable MERGE_HEAD and is refused. Fast-forwards run no
+ *   snapshot and helper-created workflow marker. It is allowed only when HEAD, MERGE_HEAD,
+ *   the staged tree, marker, source branch, and chat ID match the reviewed pins. The
+ *   `pre-merge-commit` hook refuses every direct clean merge. Fast-forwards run no
  *   blocking hook, which is why the landing procedure requires `--no-ff`.
  *   A conflicted merge in main is not a landing path. If it is resolved there, an ordinary
  *   commit still lacks the required private index snapshot and is refused; abort it and resolve
  *   the conflict in the candidate worktree instead.
- * - **A named operator hotfix.** `ALLOW_MAIN_COMMIT=1`, which is the only way
- *   through and is stated in the refusal rather than left to be discovered.
+ * - **A named operator hotfix on designated main.** `ALLOW_MAIN_COMMIT=1`,
+ *   which is the only way through there and is stated in the refusal rather
+ *   than left to be discovered. It cannot authorize a commit in the primary
+ *   checkout when that checkout has a task branch.
  * - **A repository it cannot place.** Detection failure allows the commit. This
  *   guard is repo-scoped and every checkout here is one git repository, so a
  *   git that will not answer is a broken environment rather than a policy
@@ -57,8 +59,9 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { timingSafeEqual } from 'node:crypto';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -71,8 +74,51 @@ import { fileURLToPath } from 'node:url';
  * makes out loud, so the spelling has to be unambiguous.
  */
 const OVERRIDE_VAR = 'ALLOW_MAIN_COMMIT';
+const MAIN_WORKTREE_GIT_DIR_KEY = 'ph.mainWorktreeGitDir';
+const MAIN_WORKTREE_PATH_KEY = 'ph.mainWorktreePath';
 
 export { OVERRIDE_VAR };
+
+/**
+ * Record the private Git directory for the worktree that currently owns `main`.
+ * The local config is shared by every linked worktree and survives detaching HEAD,
+ * so the checkout remains protected if its symbolic branch changes mid-operation.
+ *
+ * @param {string} cwd
+ * @param {{ required?: boolean }} options When true, persistence failures are surfaced to hook installation.
+ * @returns {boolean}
+ */
+export function registerMainWorktree(cwd = process.cwd(), { required = false } = {}) {
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  try {
+    if (git(['symbolic-ref', '--quiet', 'HEAD']) !== 'refs/heads/main') return false;
+    const gitDir = realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir'])));
+    const worktreePath = realpathSync(cwd);
+    let registeredGitDir = null;
+    let registeredPath = null;
+    try {
+      registeredGitDir = git(['config', '--local', '--get', MAIN_WORKTREE_GIT_DIR_KEY]);
+    } catch {
+      // The first main-worktree registration has no config value yet.
+    }
+    try {
+      registeredPath = git(['config', '--local', '--get', MAIN_WORKTREE_PATH_KEY]);
+    } catch {
+      // The first main-worktree registration has no config value yet.
+    }
+    if (registeredGitDir !== gitDir) git(['config', '--local', MAIN_WORKTREE_GIT_DIR_KEY, gitDir]);
+    if (registeredPath !== worktreePath) git(['config', '--local', MAIN_WORKTREE_PATH_KEY, worktreePath]);
+    return true;
+  } catch (error) {
+    if (required) {
+      throw new Error(
+        `cannot register the designated main worktree in shared Git config${error instanceof Error ? `: ${error.message}` : ''}`,
+        { cause: error }
+      );
+    }
+    return false;
+  }
+}
 
 /**
  * The refusal. It names the rule, what is at stake, and the two ways forward.
@@ -86,11 +132,12 @@ export { OVERRIDE_VAR };
  * every model reaches for and every worktree shares one
  * `refs/stash` in the common git dir.
  */
-const REFUSAL = `gate: refusing to record a commit in the MAIN worktree.
+const REFUSAL = `gate: refusing to record a commit in the primary or MAIN worktree.
 
-  docs/ORCHESTRATION.md: the main worktree is a landing, not an authoring
-  surface. Work that changes a tracked file belongs in its own worktree, on
-  its own branch, and main is where a finished branch merges.
+  docs/ORCHESTRATION.md: the primary checkout and designated main worktree are
+  not authoring surfaces. Work that changes a tracked file belongs in its own
+  linked worktree under .kilo/worktrees/, on its own branch. Only the designated
+  main worktree records a finished, pinned landing.
 
   What that protects: this checkout is shared. Whatever is in it right now is
   half-written by somebody else, unstaged files belong to no commit and no ref,
@@ -102,44 +149,37 @@ const REFUSAL = `gate: refusing to record a commit in the MAIN worktree.
     git diff --cached > /tmp/task.patch
     git worktree add -b fix/task .kilo/worktrees/task
     git -C .kilo/worktrees/task apply --index /tmp/task.patch
-    git -C .kilo/worktrees/task commit -m "..."
+    git -C .kilo/worktrees/task commit -m "Fix: <summary>" -m "Chat: <native-session-id>"
 
   Not git stash: one refs/stash is shared by every worktree, so a pop here can
   take another agent's entry, silently.
 
 A main landing must be prepared with \`git merge --no-commit --no-ff <reviewed-sha>\` and recorded
 through \`node scripts/commit-reviewed-landing.mjs -m <message>\` with the reviewed parent and
-tree pins set. That command commits from a private snapshot of the prepared index; the hook checks
-the actual \`MERGE_HEAD\` and staged tree in that snapshot. A direct clean merge, an unpinned
+tree, branch, and chat pins set. That command commits from a private snapshot of the prepared
+index and provides a helper-created workflow marker; the hook checks the actual
+\`MERGE_HEAD\`, staged tree, and marker. A direct clean merge, an unpinned
 merge, a shared-index commit, and a fast-forward do not meet this gate.
-An operator hotfix the operator asked for on main by name is:
+An operator hotfix the operator asked for in the designated main worktree by name is:
 
-    ALLOW_MAIN_COMMIT=1 git commit -m "..."
+    ALLOW_MAIN_COMMIT=1 git commit -m "Hotfix: <summary>" -m "Chat: <native-session-id>"
 `;
 
 /**
- * Whether this checkout is the repository's main worktree.
+ * Whether this checkout is the primary Git checkout or the designated `main` branch
+ * worktree. Repository policy permits commits only in linked task worktrees; the primary
+ * checkout remains protected even when it happens to have a task branch checked out.
  *
- * `git rev-parse --absolute-git-dir` is the per-worktree git directory and
- * `--git-common-dir` is the one they all share. In the main worktree they are
- * the same directory; in a linked worktree the first is
- * `<common>/worktrees/<name>` and the second is `<common>`. Measured on both
- * shapes in this repository — main answers `/Users/bkalynovskyi/ph/.git` twice,
- * and a linked worktree answers `.../.git/worktrees/<name>` then
- * `.../.git`.
- *
- * The common-dir query intentionally omits `--path-format=absolute`: that flag
- * was added in Git 2.31, while this guard must protect older installations too.
- * Resolve the older command's relative result against the requested checkout
- * before comparing real paths.
- *
- * `realpathSync` on both sides, because the two are equal as strings long before
- * they are equal as paths: git resolves its own directory through the cwd, so a
- * worktree reached through `/tmp` or `/var` — both symlinks on macOS — reports
- * a `/private/...` form on one side and not the other, and a string comparison
- * reports a main worktree where there is none. The same trap is why this
- * repository's `worktree-inventory.mjs` refuses `git rev-parse --show-toplevel`
- * as an answer.
+ * The primary Git checkout is not necessarily the project main worktree. This
+ * repository keeps `refs/heads/main` in a linked worktree, while the primary
+ * checkout can be on a task branch. Protect both locations from ordinary
+ * commits, and recognize the designated main branch separately because only it
+ * may record a pinned landing. The hook installer records the designated main
+ * checkout's private gitdir and path in shared local Git config, preserving its
+ * protection if HEAD becomes detached or that path is recreated as a detached
+ * checkout. The path fallback does not transfer protection to a different branch
+ * worktree that reuses the old path. Git prevents the same local branch from being
+ * checked out in two worktrees at once.
  *
  * Returns `null` when git cannot answer, which `decide` treats as "not the main
  * worktree" — the fail-open arm documented above.
@@ -149,7 +189,41 @@ export function resolveWorktree(cwd = process.cwd()) {
   try {
     const gitDir = realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir'])));
     const commonDir = realpathSync(resolve(cwd, git(['rev-parse', '--git-common-dir'])));
-    return { gitDir, commonDir, isMainWorktree: gitDir === commonDir };
+    let branchRef = null;
+    try {
+      branchRef = git(['symbolic-ref', '--quiet', 'HEAD']);
+    } catch {
+      // Detached and unborn worktrees have no current branch identity.
+    }
+    const isPrimaryWorktree = gitDir === commonDir;
+    const isMainWorktree = branchRef === 'refs/heads/main';
+    let registeredMainGitDir = null;
+    try {
+      registeredMainGitDir = git(['config', '--local', '--get', MAIN_WORKTREE_GIT_DIR_KEY]);
+    } catch {
+      // A repository that has not run the hook installer has no registered path yet.
+    }
+    let registeredMainPath = null;
+    try {
+      registeredMainPath = git(['config', '--local', '--get', MAIN_WORKTREE_PATH_KEY]);
+    } catch {
+      // A repository that has not run the hook installer has no registered path yet.
+    }
+    const worktreePath = realpathSync(cwd);
+    if (isMainWorktree && (registeredMainGitDir !== gitDir || registeredMainPath !== worktreePath)) {
+      registerMainWorktree(cwd);
+    }
+    const isDesignatedMainWorktree =
+      isMainWorktree || registeredMainGitDir === gitDir || (branchRef === null && registeredMainPath === worktreePath);
+    return {
+      gitDir,
+      commonDir,
+      branchRef,
+      isPrimaryWorktree,
+      isMainWorktree,
+      isDesignatedMainWorktree,
+      isProtectedWorktree: isPrimaryWorktree || isDesignatedMainWorktree,
+    };
   } catch {
     return null;
   }
@@ -186,17 +260,22 @@ export function readMergeHeadRefs(cwd = process.cwd()) {
  */
 export function decide({ worktree, override = '', landing } = {}) {
   if (worktree === null || worktree === undefined) return { action: 'allow', reason: 'undetectable' };
-  if (!worktree.isMainWorktree) return { action: 'allow', reason: 'linked worktree' };
-  if (override === '1') return { action: 'allow', reason: `${OVERRIDE_VAR}=1` };
+  const isProtectedWorktree = worktree.isProtectedWorktree ?? worktree.isMainWorktree;
+  if (!isProtectedWorktree) return { action: 'allow', reason: 'linked worktree' };
+  if (override === '1' && worktree.isMainWorktree) return { action: 'allow', reason: `${OVERRIDE_VAR}=1` };
   if (
+    worktree.isMainWorktree &&
     landing?.head &&
     landing?.incoming &&
     landing?.incomingCount === 1 &&
     landing?.tree &&
     landing?.isolatedIndex === true &&
+    landing?.reviewedSnapshot === true &&
     landing?.expectedMain &&
     landing?.expectedIncoming &&
     landing?.expectedTree &&
+    landing?.expectedBranch &&
+    landing?.expectedChat &&
     landing.head === landing.expectedMain &&
     landing.incoming === landing.expectedIncoming &&
     landing.tree === landing.expectedTree
@@ -224,7 +303,64 @@ export function isIsolatedIndex(worktree, cwd = process.cwd(), env = process.env
 }
 
 /**
- * How much of the main worktree is dirty, for the refusal's benefit.
+ * A private path by itself is not evidence that the landing helper copied the prepared
+ * index. Require its short-lived, mode-restricted workflow marker to bind that copy to the
+ * reviewed parent, incoming commit, tree, source branch, and chat attribution. This helps
+ * catch accidental alternate-index use; a same-user caller that deliberately constructs
+ * the environment and marker can bypass that distinction, so it is not an authentication
+ * boundary.
+ */
+export function isReviewedLandingSnapshot(worktree, cwd = process.cwd(), env = process.env) {
+  if (!isIsolatedIndex(worktree, cwd, env)) return false;
+  const markerPath = env.KILO_REVIEWED_LANDING_MARKER;
+  const token = env.KILO_REVIEWED_LANDING_TOKEN;
+  const expected = {
+    expectedMain: env.KILO_EXPECTED_MAIN_SHA,
+    expectedIncoming: env.KILO_EXPECTED_INCOMING_SHA,
+    expectedTree: env.KILO_EXPECTED_TREE_SHA,
+    expectedBranch: env.KILO_EXPECTED_BRANCH,
+    expectedChat: env.KILO_EXPECTED_CHAT_ID,
+  };
+  if (!markerPath || !/^[a-f0-9]{64}$/.test(token ?? '') || Object.values(expected).some((value) => !value)) {
+    return false;
+  }
+
+  try {
+    const resolvedMarker = realpathSync(resolve(cwd, markerPath));
+    const markerStat = lstatSync(resolve(cwd, markerPath));
+    const markerDir = dirname(resolvedMarker);
+    const dirStat = lstatSync(markerDir);
+    if (
+      markerStat.isSymbolicLink() ||
+      !markerStat.isFile() ||
+      !dirStat.isDirectory() ||
+      (process.platform !== 'win32' && (markerStat.mode & 0o077) !== 0) ||
+      (process.platform !== 'win32' && (dirStat.mode & 0o077) !== 0) ||
+      basename(markerDir).startsWith('ph-reviewed-landing-') === false ||
+      basename(resolvedMarker) !== 'reviewed-snapshot.json'
+    ) {
+      return false;
+    }
+
+    const activeIndex = realpathSync(resolve(cwd, env.GIT_INDEX_FILE));
+    const sharedIndex = realpathSync(join(worktree.gitDir, 'index'));
+    const record = JSON.parse(readFileSync(resolvedMarker, 'utf8'));
+    const recordToken = Buffer.from(record.token ?? '', 'hex');
+    const activeToken = Buffer.from(token, 'hex');
+    return (
+      activeIndex !== sharedIndex &&
+      recordToken.length === activeToken.length &&
+      timingSafeEqual(recordToken, activeToken) &&
+      record.indexPath === activeIndex &&
+      Object.entries(expected).every(([key, value]) => record[key] === value)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How much of the protected checkout is dirty, for the refusal's benefit.
  *
  * Advisory only: the count is another session's in-flight work far more often
  * than it is the committer's, which is the point of printing it. A failure to
@@ -274,9 +410,12 @@ export function run({
       incomingCount: mergeHeadRefs.length,
       tree: git(['write-tree']),
       isolatedIndex: isIsolatedIndex(worktree, cwd, env),
+      reviewedSnapshot: isReviewedLandingSnapshot(worktree, cwd, env),
       expectedMain: env.KILO_EXPECTED_MAIN_SHA ?? '',
       expectedIncoming: env.KILO_EXPECTED_INCOMING_SHA ?? '',
       expectedTree: env.KILO_EXPECTED_TREE_SHA ?? '',
+      expectedBranch: env.KILO_EXPECTED_BRANCH ?? '',
+      expectedChat: env.KILO_EXPECTED_CHAT_ID ?? '',
     },
   });
   if (decision.action === 'allow') return { refused: false, reason: decision.reason, code: null };

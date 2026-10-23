@@ -78,22 +78,22 @@
  *   ancestor, so the result IS the branch tree and every difference from main is a change
  *   the branch made on purpose. Verified, not assumed.
  * - `--no-verify`, which bypasses every hook in the repository, this one included.
- * - a merge whose result equals HEAD's file where the INCOMING side had nothing of its
- *   own there to lose — `-X ours` against a branch whose only change was a deletion, or
- *   against a file main already holds as a superset. Measured and asserted: those stay
- *   silent, because shape 3 asks whether the incoming side lost a line, not merely whether
- *   the result happened to match HEAD.
+ * - `-X ours` against a branch that removed only lines still present in HEAD: the incoming
+ *   side's remaining content all survives, and line-level deletions cannot be inferred from
+ *   a whole-file copy. Those stay silent when HEAD is a superset. Whole-file deletions are
+ *   different: an ignored deletion is counted as one lost incoming path, and an incoming
+ *   deletion that removes HEAD's distinct committed content is reported unless resolve-undo
+ *   proves it was an explicit modify/delete resolution.
  * - a REVERT the branch made deliberately and early, where main never had the change to
  *   lose. That is one of the two sides having `result == branch`, with `main` untouched,
  *   and it is not reported by design: an intentional revert is somebody's decision.
  * - a resolution that is NEITHER side's blob and still drops a line the losing side had.
  *   Measured reachable, and left unreported on purpose. Every shape here is a WHOLE-FILE
  *   one-sided decision — git copied one side's content for the entire path — and that is
- *   precisely the class that raises no conflict marker. A merge that DID conflict was
- *   visibly unmerged until somebody staged it, so its resolution is a human decision made
- *   in the open. Widening the gate to lossy hand-resolutions would fire on ordinary conflict
- *   resolution, and the first agent to meet that would reach for `--no-verify`, which is
- *   how the two original shapes were nearly lost once already.
+ *   class that raises no conflict marker when Git chooses the side automatically. A manual
+ *   conflict resolution that stages one whole side verbatim is still detected. A custom
+ *   resolution that is neither side's blob is outside this gate: flagging every lossy custom
+ *   resolution would also flag ordinary human conflict decisions and teach people to bypass it.
  * - `git merge --squash -X ours`. Not fixable here, and worth stating precisely: it produces
  *   a staged tree identical to HEAD's, so `git commit` answers "nothing to commit, working
  *   tree clean", there is no commit, there is no `MERGE_HEAD`, and neither hook fires. The
@@ -120,9 +120,12 @@
  *   and suspect blobs past the batch buffer, which answered `clean` because an unread blob
  *   measures as no loss. That last one was fail-OPEN and is now a refusal.
  *
- * Replayed over the 407 merges on `main` before and after: the same 36 merges refused, the
- * same kinds, the same paths. Every fix above is a shape that was invisible, not a verdict
- * that changed.
+ * The historical replay of the original seven fixes covered 407 merges on `main`: the same
+ * 36 merges refused before and after, with the same kinds and paths. That count predates the
+ * whole-file deletion checks below and is not a current replay total. A later adversarial
+ * pass found that whole-file incoming deletions need both directions checked: an ignored
+ * deletion loses incoming work, while an applied deletion can remove distinct HEAD work.
+ * The latter is reported unless resolve-undo proves an explicit modify/delete resolution.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -130,7 +133,12 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { isIsolatedIndex, readMergeHeadRefs, resolveWorktree } from './main-worktree-guard.mjs';
+import {
+  isIsolatedIndex,
+  isReviewedLandingSnapshot,
+  readMergeHeadRefs,
+  resolveWorktree,
+} from './main-worktree-guard.mjs';
 
 /**
  * Ceiling on one `cat-file --batch` response. A commit hook has a time budget and a memory
@@ -170,14 +178,25 @@ function tryGit(args, { cwd } = {}) {
   }
 }
 
+function tryGitRaw(args, { cwd } = {}) {
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The side being merged in.
  *
  * `MERGE_HEAD` is Git's prepared merge state and is available to `pre-commit`, both while a
  * conflicted merge is completed and when a clean merge was prepared with `--no-commit`.
- * `pre-merge-commit` does not expose it in this repository's supported Git flow. Reflog text
- * such as `GIT_REFLOG_ACTION` is caller-controlled description, not proof of the side Git
- * actually prepared, so this guard never uses it as an identity source. A clean merge must be
+ * The `pre-merge-commit` hook refuses every direct self-committing merge, so this guard does
+ * not depend on what that hook can read. A clean merge must be
  * prepared with `--no-commit` and recorded by `git commit`, where the actual `MERGE_HEAD` can
  * be compared to the reviewed candidate SHA.
  *
@@ -234,13 +253,23 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
 
   // `-m` diffs merge-base against each side, so this is precisely "what each side changed
   // since they diverged" and needs no parent arithmetic.
-  const toHead = tryGit(['diff', '--name-only', '-z', '-m', base, headRef], { cwd }) ?? '';
-  const toIncoming = tryGit(['diff', '--name-only', '-z', '-m', base, incomingRef], { cwd }) ?? '';
-  const resultVsHead = tryGit(['diff', '--name-only', '-z', headRef, result], { cwd }) ?? '';
+  const listPaths = (args, side) => {
+    // `-z` makes paths NUL-delimited. Do not trim this output: a legal path may begin
+    // with spaces or tabs, and trim() would silently change the first path before the
+    // tree maps are consulted.
+    const output = tryGitRaw(args, { cwd });
+    if (output === null) {
+      throw new GuardError(`git diff failed while listing ${side} paths; cannot verify the merge result`);
+    }
+    return splitNulRecords(output, `git diff ${side}`).map((path) => decodeGitPath(path, `git diff ${side}`));
+  };
+  const toHead = listPaths(['diff', '--name-only', '-z', '-m', base, headRef], 'HEAD-side');
+  const toIncoming = listPaths(['diff', '--name-only', '-z', '-m', base, incomingRef], 'incoming-side');
+  const resultVsHead = listPaths(['diff', '--name-only', '-z', headRef, result], 'result');
 
-  const changedByHead = new Set(splitZ(toHead));
-  const changedByIncoming = new Set(splitZ(toIncoming));
-  const movedByMerge = splitZ(resultVsHead);
+  const changedByHead = new Set(toHead);
+  const changedByIncoming = new Set(toIncoming);
+  const movedByMerge = resultVsHead;
   const moved = new Set(movedByMerge);
 
   // Four trees, four subprocesses, whatever the merge size. The per-path `rev-parse` this
@@ -252,7 +281,7 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     incoming: readTreeBlobs(incomingRef, cwd),
     result: readTreeBlobs(result, cwd),
   };
-  const resolvedModifyDeletePaths = readResolvedModifyDeletePaths(cwd);
+  const resolvedModifyDeletePaths = readResolvedModifyDeletePaths(cwd, trees);
 
   /** @type {{ path: string, kind: string, reason: (n: number) => string }[]} */
   const suspects = [];
@@ -334,18 +363,50 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     if (judged.has(path)) continue;
 
     const incomingBlob = trees.incoming.get(path);
-    // The branch deleted this path. Whatever HEAD holds is not the branch's content, so
-    // there is nothing of the branch's own here to lose.
-    if (!incomingBlob) continue;
-
     const headBlob = trees.head.get(path);
     const resultBlob = trees.result.get(path);
+    if (!incomingBlob) {
+      // Resolve-undo proves a person explicitly chose one side of the modify/delete
+      // conflict. Keeping HEAD's file or accepting the incoming deletion is deliberate,
+      // so the whole-file path scan must not call either choice silent loss.
+      if (resolvedModifyDeletePaths.has(path)) continue;
+      // A whole-file deletion is a committed change even though there are no branch bytes
+      // to count. If the merge preserved HEAD's file wholesale, that deletion was discarded.
+      // A line deletion is different: the remaining incoming content may all survive in a
+      // HEAD superset, and the omitted line itself is not represented in the incoming tree.
+      if (headBlob && headWon(resultBlob, headBlob)) {
+        suspects.push({
+          path,
+          kind: 'discarded-incoming-change',
+          losing: absent(),
+          incomingDeletedPath: true,
+          reason: () =>
+            "the incoming side deleted this path, but the result kept the merged-into side's file, so the committed deletion did not land",
+        });
+      } else if (trees.base.get(path) && headBlob && !resultBlob && !sameEntry(headBlob, trees.base.get(path))) {
+        // The opposite whole-file choice: the incoming deletion landed and removed distinct
+        // content HEAD had committed since the base. A deletion has no blob to compare, and
+        // an empty HEAD file has no lines to count, so this is one lost path rather than a
+        // line count. If HEAD had not changed the path from base, the deletion is the normal
+        // incoming change and there is no HEAD-side work to report lost.
+        suspects.push({
+          path,
+          kind: 'discarded-merged-into-change',
+          losing: headBlob,
+          missingResultPath: true,
+          incomingDeletedPath: true,
+          reason: () =>
+            "the incoming side deleted this path and the result removed it, so this side's committed change to the path did not land",
+        });
+      }
+      continue;
+    }
     // A staged modify/delete resolution that chose deletion has no HEAD or result blob.
     // Its resolve-undo stages prove this was an explicit conflict decision; the ours
     // strategy leaves no such record and must still be reported.
     if (!headBlob && !resultBlob && resolvedModifyDeletePaths.has(path)) continue;
     // Survived the merge verbatim. Nothing to measure.
-    if (resultBlob && resultBlob.oid === incomingBlob.oid) continue;
+    if (sameEntry(resultBlob, incomingBlob)) continue;
     // HEAD's side did NOT win wholesale, so git actually combined the two or somebody
     // resolved it by hand. See the boundary note in the header.
     if (!headWon(resultBlob, headBlob)) continue;
@@ -367,7 +428,9 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
   // One batched read for every blob any suspect needs, rather than two `git show` calls per
   // path. `--batch` is the only way to make content comparison flat in the number of paths.
   const wanted = new Set();
-  for (const { path, losing } of suspects) {
+  for (const { path, losing, missingResultPath } of suspects) {
+    if (missingResultPath) continue;
+    if (losing.absent) continue;
     const resultBlob = trees.result.get(path);
     for (const entry of [losing, resultBlob]) {
       if (entry && !entry.gitlink && entry.oid) wanted.add(entry.oid);
@@ -381,6 +444,19 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     const losing = suspect.losing;
     const resultBlob = trees.result.get(path);
 
+    if (suspect.missingResultPath) {
+      if (!resultBlob) {
+        takeovers.push({
+          path,
+          kind: suspect.kind,
+          deleted: 1,
+          ...(suspect.incomingDeletedPath ? { incomingDeletedPath: true } : {}),
+          reason: suspect.reason(1),
+        });
+      }
+      continue;
+    }
+
     // A path the merged-into side deleted and the merge brought back: there is no blob on
     // that side to compare, so the loss is the DELETION rather than any line of it. Counted
     // as one, because `git status` will say one file and not zero.
@@ -390,6 +466,7 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
           path,
           kind: suspect.kind,
           deleted: 1,
+          ...(suspect.incomingDeletedPath ? { incomingDeletedPath: true } : {}),
           reason: suspect.reason(1),
         });
       }
@@ -400,12 +477,14 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     // changed pointer — or a pointer that is simply gone — is the whole of what was lost.
     // The absent case matters because a branch that ADDS a submodule and is then swallowed
     // by `-s ours` leaves no result entry at all, which read as nothing lost.
-    const lost =
+    const contentLost =
       losing.gitlink || resultBlob?.gitlink
         ? (resultBlob?.oid ?? null) === losing.oid
           ? 0
           : 1
         : lostLineCount(contents.get(losing.oid), resultBlob ? contents.get(resultBlob.oid) : null);
+    const modeLost = resultBlob && losing.mode !== resultBlob.mode ? 1 : 0;
+    const lost = Math.max(contentLost, modeLost);
 
     // Copying one whole side is not by itself a loss, and treating it as one is how a gate
     // gets `--no-verify`'d. Resolving `git merge main` with `--theirs` is ordinary and
@@ -417,6 +496,7 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
         path,
         kind: suspect.kind,
         deleted: lost,
+        ...(suspect.incomingDeletedPath ? { incomingDeletedPath: true } : {}),
         reason: suspect.reason(lost),
       });
     }
@@ -474,12 +554,42 @@ function absent() {
   return { oid: null, mode: null, gitlink: false, absent: true };
 }
 
-function splitZ(text) {
-  return text.split('\0').filter((entry) => entry.length > 0);
+function splitNulRecords(buffer, source) {
+  const records = [];
+  let start = 0;
+  while (start < buffer.length) {
+    const end = buffer.indexOf(0, start);
+    if (end < 0) {
+      throw new GuardError(`${source} returned an unterminated path record; refusing to compare partial paths`);
+    }
+    if (end === start) {
+      throw new GuardError(`${source} returned an empty path record; refusing to compare a partial path list`);
+    }
+    records.push(buffer.subarray(start, end));
+    start = end + 1;
+  }
+  return records;
 }
 
-function readResolvedModifyDeletePaths(cwd) {
-  const raw = tryGit(['ls-files', '--resolve-undo', '-z'], { cwd });
+function decodeGitMetadata(bytes, source) {
+  if (bytes.some((byte) => byte > 0x7f)) {
+    throw new GuardError(`${source} returned non-ASCII metadata; refusing to parse ambiguous fields`);
+  }
+  return bytes.toString('ascii');
+}
+
+function decodeGitPath(bytes, source) {
+  const path = decodeUtf8(bytes);
+  if (path === null) {
+    throw new GuardError(
+      `${source} returned a path that is not valid UTF-8; refusing to compare ambiguous path identities`
+    );
+  }
+  return path;
+}
+
+function readResolvedModifyDeletePaths(cwd, trees) {
+  const raw = tryGitRaw(['ls-files', '--resolve-undo', '-z'], { cwd });
   if (raw === null) {
     throw new GuardError(
       'git ls-files --resolve-undo failed; cannot distinguish a resolved deletion from a silent strategy discard'
@@ -487,27 +597,64 @@ function readResolvedModifyDeletePaths(cwd) {
   }
 
   const stagesByPath = new Map();
-  for (const entry of splitZ(raw)) {
-    const separator = entry.indexOf('\t');
-    const stage = Number(entry.slice(0, separator).split(' ').at(-1));
-    const filePath = entry.slice(separator + 1);
-    if (separator < 0 || ![1, 2, 3].includes(stage) || !filePath) {
+  for (const entry of splitNulRecords(raw, 'git ls-files --resolve-undo')) {
+    const separator = entry.indexOf(0x09);
+    if (separator < 0) {
       throw new GuardError('git ls-files --resolve-undo returned an invalid entry; refusing to guess');
     }
-    const stages = stagesByPath.get(filePath) ?? new Set();
-    stages.add(stage);
+    const metadata = decodeGitMetadata(entry.subarray(0, separator), 'git ls-files --resolve-undo');
+    const fields = /^(100644|100755|120000|160000) ([0-9a-f]{40}|[0-9a-f]{64}) ([123])$/.exec(metadata);
+    if (!fields) {
+      throw new GuardError('git ls-files --resolve-undo returned invalid metadata; refusing to guess');
+    }
+    const mode = fields[1];
+    const oid = fields[2];
+    const stage = Number(fields[3]);
+    const filePath = decodeGitPath(entry.subarray(separator + 1), 'git ls-files --resolve-undo');
+    if (!filePath) {
+      throw new GuardError('git ls-files --resolve-undo returned an invalid entry; refusing to guess');
+    }
+    const stages = stagesByPath.get(filePath) ?? new Map();
+    if (stages.has(stage)) {
+      throw new GuardError(
+        'git ls-files --resolve-undo returned a duplicate path/stage record; refusing to infer an explicit resolution'
+      );
+    }
+    stages.set(stage, { mode, oid });
     stagesByPath.set(filePath, stages);
   }
 
+  for (const [filePath, stages] of stagesByPath) {
+    for (const [stage, entry] of stages) {
+      const tree = stage === 1 ? trees.base : stage === 2 ? trees.head : trees.incoming;
+      const expected = tree.get(filePath);
+      if (!expected || expected.mode !== entry.mode || expected.oid !== entry.oid) {
+        throw new GuardError(
+          'git ls-files --resolve-undo returned metadata inconsistent with the merge trees; refusing to infer an explicit resolution'
+        );
+      }
+    }
+  }
+
+  // Stage 1 plus exactly one side means a modify/delete conflict resolved by keeping the
+  // present side. Track either direction so an explicit deletion is distinguished from a
+  // strategy result that silently chose deletion.
   return new Set(
     [...stagesByPath]
-      .filter(([, stages]) => stages.has(1) && stages.has(3) && !stages.has(2))
+      .filter(([, stages]) => stages.has(1) && stages.has(2) !== stages.has(3))
       .map(([filePath]) => filePath)
   );
 }
 
 function truncate(sha) {
   return sha.slice(0, 8);
+}
+
+function displayPath(path) {
+  return JSON.stringify(path).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) => {
+    const codePoint = character.codePointAt(0);
+    return `\\u{${codePoint.toString(16)}}`;
+  });
 }
 
 /**
@@ -518,7 +665,7 @@ function truncate(sha) {
  * difference between a hook that runs in tens of milliseconds and one that runs in seconds.
  */
 function readTreeBlobs(treeish, cwd) {
-  const raw = tryGit(['ls-tree', '-r', '-z', '--full-tree', treeish], { cwd });
+  const raw = tryGitRaw(['ls-tree', '-r', '-z', '--full-tree', treeish], { cwd });
   const map = new Map();
   // Same reasoning as `batchBlobs`, and worse here: an empty map from ONE of the four
   // trees makes every path look absent from it, which silently empties all four scans at
@@ -530,14 +677,25 @@ function readTreeBlobs(treeish, cwd) {
         'a path missing from a tree reads as a path that side never had.'
     );
   }
-  for (const entry of splitZ(raw)) {
-    const tab = entry.indexOf('\t');
-    if (tab < 0) continue;
-    const [mode, , oid] = entry.slice(0, tab).split(' ');
+  for (const entry of splitNulRecords(raw, `git ls-tree ${truncate(treeish)}`)) {
+    const tab = entry.indexOf(0x09);
+    if (tab < 0) {
+      throw new GuardError(`git ls-tree ${truncate(treeish)} returned an invalid entry; refusing to guess`);
+    }
+    const metadata = decodeGitMetadata(entry.subarray(0, tab), `git ls-tree ${truncate(treeish)}`);
+    const fields = /^(100644|100755|120000|160000) (blob|commit) ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(metadata);
+    if (!fields || (fields[1] === '160000' ? fields[2] !== 'commit' : fields[2] !== 'blob')) {
+      throw new GuardError(`git ls-tree ${truncate(treeish)} returned invalid entry metadata; refusing to guess`);
+    }
+    const [, mode, , oid] = fields;
     // `mode` as well as the OID, because an entry is not its blob: a mode bit is a
     // committed change of its own, and comparing OIDs alone cannot see it change or be
     // changed. See `sameEntry`.
-    map.set(entry.slice(tab + 1), { oid, mode, gitlink: mode === '160000' });
+    const filePath = decodeGitPath(entry.subarray(tab + 1), `git ls-tree ${truncate(treeish)}`);
+    if (!filePath || map.has(filePath)) {
+      throw new GuardError(`git ls-tree ${truncate(treeish)} returned an empty or duplicate path; refusing to guess`);
+    }
+    map.set(filePath, { oid, mode, gitlink: mode === '160000' });
   }
   return map;
 }
@@ -580,17 +738,51 @@ export function batchBlobs(oids, cwd, { maxBytes = MAX_BLOB_BYTES } = {}) {
         'Refusing rather than comparing nothing: an unread blob measures as no loss at all, which is the one answer that must not be guessed.'
     );
   }
+  const remaining = new Map();
+  for (const oid of oids) remaining.set(oid, (remaining.get(oid) ?? 0) + 1);
+
   let offset = 0;
-  for (;;) {
+  while (offset < buf.length) {
     const newline = buf.indexOf(0x0a, offset);
-    if (newline < 0) break;
-    const [oid, , sizeText] = buf.toString('utf8', offset, newline).split(' ');
+    if (newline < 0)
+      throw new GuardError(
+        'git cat-file --batch returned an incomplete response header; refusing to compare partial content'
+      );
+    const header = buf.toString('utf8', offset, newline);
+    const fields = header.split(' ');
+    const [oid, type, sizeText] = fields;
+    const requested = remaining.get(oid) ?? 0;
+    if (fields.length === 2 && fields[1] === 'missing') {
+      throw new GuardError(
+        `git cat-file --batch could not read requested blob ${oid}; refusing to compare partial content`
+      );
+    }
+    if (fields.length !== 3 || requested === 0 || type !== 'blob' || !/^(0|[1-9]\d*)$/.test(sizeText ?? '')) {
+      throw new GuardError(
+        'git cat-file --batch returned an unexpected object header; refusing to compare partial content'
+      );
+    }
     const size = Number(sizeText);
-    if (!Number.isFinite(size) || size < 0) break;
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new GuardError('git cat-file --batch returned an invalid object size; refusing to compare partial content');
+    }
     const start = newline + 1;
-    out.set(oid, buf.subarray(start, start + size));
+    const end = start + size;
+    if (end >= buf.length || buf[end] !== 0x0a) {
+      throw new GuardError(
+        `git cat-file --batch returned truncated content for ${oid}; refusing to compare partial content`
+      );
+    }
+    out.set(oid, buf.subarray(start, end));
+    if (requested === 1) remaining.delete(oid);
+    else remaining.set(oid, requested - 1);
     // `--batch` puts a newline after the content, and a blob may itself end in one.
-    offset = start + size + 1;
+    offset = end + 1;
+  }
+  if (remaining.size > 0) {
+    throw new GuardError(
+      'git cat-file --batch omitted one or more requested blobs; refusing to compare partial content'
+    );
   }
   return out;
 }
@@ -628,21 +820,40 @@ function lostLineCount(losingBuf, resultBuf) {
   if (losingBuf.includes(0) || resultBuf.includes(0)) {
     return losingBuf.equals(resultBuf) ? 0 : Number.POSITIVE_INFINITY;
   }
+  const losingText = decodeUtf8(losingBuf);
+  const resultText = decodeUtf8(resultBuf);
+  if (losingText === null || resultText === null) {
+    return losingBuf.equals(resultBuf) ? 0 : Number.POSITIVE_INFINITY;
+  }
   const available = new Map();
-  for (const line of resultBuf.toString('utf8').split('\n')) {
+  for (const line of comparisonLines(resultText)) {
     const key = normaliseLine(line);
-    if (key.trim() === '') continue;
     available.set(key, (available.get(key) ?? 0) + 1);
   }
   let lost = 0;
-  for (const line of losingBuf.toString('utf8').split('\n')) {
+  for (const line of comparisonLines(losingText)) {
     const key = normaliseLine(line);
-    if (key.trim() === '') continue;
     const held = available.get(key) ?? 0;
     if (held > 0) available.set(key, held - 1);
     else lost++;
   }
   return lost;
+}
+
+function decodeUtf8(buf) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf);
+  } catch {
+    return null;
+  }
+}
+
+function comparisonLines(text) {
+  const lines = text.split('\n');
+  // One final newline terminates the last line; it is not an extra blank line. Any
+  // additional terminal separator represents a blank record and remains content.
+  if (lines.at(-1) === '') lines.pop();
+  return lines;
 }
 
 /**
@@ -671,7 +882,7 @@ function nonBlankLines(buf) {
   return n;
 }
 
-function report({ takeovers, scanned, incoming, base, head }) {
+function report({ takeovers, scanned, incoming, base, head, preparedMerge }) {
   const lines = [];
   if (takeovers.length === 0) {
     // "examined", not "moved by the merge": a `-s ours` merge moves NOTHING and discards
@@ -694,7 +905,7 @@ function report({ takeovers, scanned, incoming, base, head }) {
     // The kind on every finding, not only where advice hangs off it: the three shapes are
     // three different bugs with three different fixes, and an operator reading a refusal
     // should not have to open this file to learn which one they are looking at.
-    lines.push(`  ${path}  [${kind}]`);
+    lines.push(`  ${displayPath(path)}  [${kind}]`);
     lines.push(`      ${reason}`);
   }
   if (takeovers.length > LISTED) {
@@ -703,10 +914,10 @@ function report({ takeovers, scanned, incoming, base, head }) {
     lines.push('      `findTakeovers()`, rather than scrolling.');
   }
   lines.push('');
-  lines.push("  A merge that reports success while deleting another branch's committed work is the");
-  lines.push('  failure this guard exists for. Resolve each path as a UNION of both sides — a file');
-  lines.push('  can usually hold both edits — or, if a side is genuinely obsolete here, rebase');
-  lines.push('  the incoming branch onto main and let git carry the conflict to you visibly.');
+  lines.push('  A merge that reports success while deleting committed work is the failure this guard');
+  lines.push('  exists for. Combine edits when both sides have content; make an explicit choice for');
+  lines.push('  whole-file deletions. If one side is obsolete here, rebase the incoming branch onto');
+  lines.push('  main and let git carry the conflict to you visibly.');
   if (takeovers.some((t) => t.kind === 'discarded-incoming-change')) {
     lines.push('');
     lines.push("  `discarded-incoming-change` means the merge kept this side and dropped the branch's,");
@@ -714,12 +925,28 @@ function report({ takeovers, scanned, incoming, base, head }) {
     lines.push('  standard git idiom for recording a merge without taking its content; if that is');
     lines.push('  what you meant, `--no-verify` below is the way to say so.');
   }
+  if (takeovers.some((t) => t.kind === 'discarded-merged-into-change')) {
+    lines.push('  `discarded-merged-into-change` means the incoming side deleted a path that this');
+    lines.push('  side had changed since the merge base, and that committed change was removed.');
+  }
   lines.push('');
-  lines.push("  To see one side's version while deciding:");
-  lines.push('      git show :2:' + takeovers[0].path + '   # the side being merged INTO');
-  lines.push('      git show :3:' + takeovers[0].path + '   # the incoming side');
+  lines.push('  Listed paths are JSON-escaped. Decode each string, then shell-quote the complete');
+  lines.push('  revision:path argument; the JSON quotes are for display, not shell quoting.');
+  lines.push('  To inspect a path present in both commits (replace <path> with its decoded path):');
+  lines.push(`      git show ${head}:<path>   # the side being merged INTO`);
+  lines.push(`      git show ${incoming}:<path>   # the incoming side`);
+  lines.push('  These use the pinned commits above and work after Git has staged a resolution.');
+  if (takeovers.some((t) => t.incomingDeletedPath)) {
+    lines.push('  For an incoming whole-file deletion, the incoming commit has no blob at that path;');
+    lines.push('  `git show <incoming-sha>:<path>` fails by design. Inspect the merged-into version;');
+    lines.push('  that absence is the incoming change.');
+  }
   lines.push('');
-  lines.push('  Bypass for a merge you have verified by hand: git merge --no-verify <ref>');
+  lines.push(
+    preparedMerge
+      ? '  Bypass for a prepared merge you have verified by hand: git commit --no-verify'
+      : '  Bypass for a merge you have verified by hand: git merge --no-verify <ref>'
+  );
   lines.push('  Every gate in this repository is bypassable that way; say so in the commit.');
   return lines.join('\n');
 }
@@ -733,14 +960,21 @@ export function main(argv, { cwd = process.cwd() } = {}) {
     const resultTree = tryGit(['write-tree'], { cwd });
     if (!resultTree) throw new GuardError('git write-tree failed; cannot verify the prepared merge result');
     const required = isProjectMainWorktree(cwd);
-    const isolatedIndex = !required || isIsolatedIndex(resolveWorktree(cwd), cwd, process.env);
-    assertExpectedLandingHeads({ head, incoming, resultTree }, process.env, { required, isolatedIndex });
+    const worktree = resolveWorktree(cwd);
+    const isolatedIndex = !required || isIsolatedIndex(worktree, cwd, process.env);
+    const reviewedSnapshot = !required || isReviewedLandingSnapshot(worktree, cwd, process.env);
+    assertExpectedLandingHeads({ head, incoming, resultTree }, process.env, {
+      required,
+      isolatedIndex,
+      reviewedSnapshot,
+      cwd,
+    });
     const findings = findTakeovers({ cwd, head, incoming });
     if (findings.takeovers.length > 0) {
-      process.stderr.write(`${report(findings)}\n`);
+      process.stderr.write(`${report({ ...findings, preparedMerge: readMergeHeadRefs(cwd).length > 0 })}\n`);
       return 1;
     }
-    if (manual) process.stdout.write(`${report(findings)}\n`);
+    if (manual) process.stdout.write(`${report({ ...findings, preparedMerge: readMergeHeadRefs(cwd).length > 0 })}\n`);
     return 0;
   } catch (error) {
     if (error instanceof GuardError) {
@@ -765,20 +999,22 @@ export function main(argv, { cwd = process.cwd() } = {}) {
  *
  * @param {{ head:string, incoming:string, resultTree:string }} findings
  * @param {NodeJS.ProcessEnv} env
- * @param {{ required?:boolean, isolatedIndex?:boolean }} options
+ * @param {{ required?:boolean, isolatedIndex?:boolean, reviewedSnapshot?:boolean, cwd?:string }} options
  */
 export function assertExpectedLandingHeads(
   findings,
   env = process.env,
-  { required = false, isolatedIndex = false } = {}
+  { required = false, isolatedIndex = false, reviewedSnapshot = false, cwd = process.cwd() } = {}
 ) {
   const expectedMain = env.KILO_EXPECTED_MAIN_SHA;
   const expectedIncoming = env.KILO_EXPECTED_INCOMING_SHA;
   const expectedTree = env.KILO_EXPECTED_TREE_SHA;
-  if (!expectedMain && !expectedIncoming && !expectedTree && !required) return;
-  if (!expectedMain || !expectedIncoming || !expectedTree) {
+  const expectedBranch = env.KILO_EXPECTED_BRANCH;
+  const expectedChat = env.KILO_EXPECTED_CHAT_ID;
+  if (!expectedMain && !expectedIncoming && !expectedTree && !expectedBranch && !expectedChat && !required) return;
+  if (!expectedMain || !expectedIncoming || !expectedTree || !expectedBranch || !expectedChat) {
     throw new GuardError(
-      'expected landing requires KILO_EXPECTED_MAIN_SHA, KILO_EXPECTED_INCOMING_SHA, and KILO_EXPECTED_TREE_SHA; refusing an incomplete pin set'
+      'expected landing requires KILO_EXPECTED_MAIN_SHA, KILO_EXPECTED_INCOMING_SHA, KILO_EXPECTED_TREE_SHA, KILO_EXPECTED_BRANCH, and KILO_EXPECTED_CHAT_ID; refusing an incomplete pin set'
     );
   }
   if (findings.incomingCount !== undefined && findings.incomingCount !== 1) {
@@ -808,6 +1044,21 @@ export function assertExpectedLandingHeads(
         'Use `node scripts/commit-reviewed-landing.mjs -m <message>` after preparing the merge.'
     );
   }
+  if (required && !reviewedSnapshot) {
+    throw new GuardError(
+      'main landing requires a helper-created private index snapshot with a matching workflow marker and reviewed pins. ' +
+        'Use `node scripts/commit-reviewed-landing.mjs -m <message>` after preparing the merge.'
+    );
+  }
+  if (required) {
+    const validBranch = tryGit(['check-ref-format', '--branch', expectedBranch], { cwd });
+    const branchTip = validBranch
+      ? tryGit(['rev-parse', '--verify', `refs/heads/${expectedBranch}^{commit}`], { cwd })
+      : null;
+    if (branchTip !== expectedIncoming) {
+      throw new GuardError('expected source branch does not point to the reviewed incoming candidate');
+    }
+  }
 }
 
 /**
@@ -819,11 +1070,9 @@ export function assertExpectedLandingHeads(
  * @returns {boolean}
  */
 export function isProjectMainWorktree(cwd) {
-  const branch = tryGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd });
-  if (branch !== 'main') return false;
-  const commonDir = tryGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd });
-  if (!commonDir) throw new GuardError('cannot identify the shared git directory for main');
-  const projectRoot = dirname(resolve(commonDir));
+  const worktree = resolveWorktree(cwd);
+  if (!worktree?.isDesignatedMainWorktree) return false;
+  const projectRoot = dirname(resolve(worktree.commonDir));
   return existsSync(join(projectRoot, 'AGENTS.md')) && existsSync(join(projectRoot, '.kilo'));
 }
 

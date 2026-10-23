@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
@@ -44,6 +44,10 @@ let dir;
 const GUARD_PATH = realpathSync(join(import.meta.dirname, '../merge-takeover-guard.mjs'));
 const MAIN_GUARD_PATH = realpathSync(join(import.meta.dirname, '../main-worktree-guard.mjs'));
 const LANDING_COMMIT_PATH = realpathSync(join(import.meta.dirname, '../commit-reviewed-landing.mjs'));
+const LANDING_MESSAGE_GUARD_PATH = realpathSync(
+  join(import.meta.dirname, '../commit-reviewed-landing-message-guard.mjs')
+);
+const PRE_MERGE_HOOK_PATH = realpathSync(join(import.meta.dirname, '../../.husky/pre-merge-commit'));
 
 function git(args) {
   return execFileSync('git', args, {
@@ -104,7 +108,7 @@ function installPreMergeGuard() {
   const hooks = join(dir, 'hooks');
   mkdirSync(hooks);
   const hook = join(hooks, 'pre-merge-commit');
-  writeFileSync(hook, `#!/bin/sh\nnode "${GUARD_PATH}"\n`);
+  copyFileSync(PRE_MERGE_HOOK_PATH, hook);
   chmodSync(hook, 0o755);
   git(['config', 'core.hooksPath', hooks]);
 }
@@ -115,6 +119,21 @@ function installPinnedPreCommitGuards({ afterChecks = '' } = {}) {
   const hook = join(hooks, 'pre-commit');
   writeFileSync(hook, `#!/bin/sh\nset -e\nnode "${GUARD_PATH}"\nnode "${MAIN_GUARD_PATH}"\n${afterChecks}\n`);
   chmodSync(hook, 0o755);
+  const messageHook = join(hooks, 'commit-msg');
+  writeFileSync(messageHook, `#!/bin/sh\nset -e\nnode "${LANDING_MESSAGE_GUARD_PATH}" "$1"\n`);
+  chmodSync(messageHook, 0o755);
+  git(['config', 'core.hooksPath', hooks]);
+}
+
+function installMainWorktreeCommitGuards() {
+  const hooks = join(dir, 'hooks');
+  mkdirSync(hooks, { recursive: true });
+  const hook = join(hooks, 'pre-commit');
+  writeFileSync(hook, `#!/bin/sh\nset -e\nnode "${MAIN_GUARD_PATH}"\n`);
+  chmodSync(hook, 0o755);
+  const messageHook = join(hooks, 'commit-msg');
+  writeFileSync(messageHook, `#!/bin/sh\nset -e\nnode "${LANDING_MESSAGE_GUARD_PATH}" "$1"\n`);
+  chmodSync(messageHook, 0o755);
   git(['config', 'core.hooksPath', hooks]);
 }
 
@@ -123,13 +142,17 @@ function removePreMergeGuard() {
   rmSync(join(dir, 'hooks'), { recursive: true, force: true });
 }
 
-function withExpectedLanding({ main, incoming, tree }, run) {
+function withExpectedLanding({ main, incoming, tree, branch = 'feat', chat = 'test-session' }, run) {
   const previousMain = process.env.KILO_EXPECTED_MAIN_SHA;
   const previousIncoming = process.env.KILO_EXPECTED_INCOMING_SHA;
   const previousTree = process.env.KILO_EXPECTED_TREE_SHA;
+  const previousBranch = process.env.KILO_EXPECTED_BRANCH;
+  const previousChat = process.env.KILO_EXPECTED_CHAT_ID;
   process.env.KILO_EXPECTED_MAIN_SHA = main;
   process.env.KILO_EXPECTED_INCOMING_SHA = incoming;
   process.env.KILO_EXPECTED_TREE_SHA = tree;
+  process.env.KILO_EXPECTED_BRANCH = branch;
+  process.env.KILO_EXPECTED_CHAT_ID = chat;
   try {
     return run();
   } finally {
@@ -139,6 +162,10 @@ function withExpectedLanding({ main, incoming, tree }, run) {
     else process.env.KILO_EXPECTED_INCOMING_SHA = previousIncoming;
     if (previousTree === undefined) delete process.env.KILO_EXPECTED_TREE_SHA;
     else process.env.KILO_EXPECTED_TREE_SHA = previousTree;
+    if (previousBranch === undefined) delete process.env.KILO_EXPECTED_BRANCH;
+    else process.env.KILO_EXPECTED_BRANCH = previousBranch;
+    if (previousChat === undefined) delete process.env.KILO_EXPECTED_CHAT_ID;
+    else process.env.KILO_EXPECTED_CHAT_ID = previousChat;
   }
 }
 
@@ -146,9 +173,13 @@ function withNoExpectedLanding(run) {
   const previousMain = process.env.KILO_EXPECTED_MAIN_SHA;
   const previousIncoming = process.env.KILO_EXPECTED_INCOMING_SHA;
   const previousTree = process.env.KILO_EXPECTED_TREE_SHA;
+  const previousBranch = process.env.KILO_EXPECTED_BRANCH;
+  const previousChat = process.env.KILO_EXPECTED_CHAT_ID;
   delete process.env.KILO_EXPECTED_MAIN_SHA;
   delete process.env.KILO_EXPECTED_INCOMING_SHA;
   delete process.env.KILO_EXPECTED_TREE_SHA;
+  delete process.env.KILO_EXPECTED_BRANCH;
+  delete process.env.KILO_EXPECTED_CHAT_ID;
   try {
     return run();
   } finally {
@@ -158,6 +189,10 @@ function withNoExpectedLanding(run) {
     else process.env.KILO_EXPECTED_INCOMING_SHA = previousIncoming;
     if (previousTree === undefined) delete process.env.KILO_EXPECTED_TREE_SHA;
     else process.env.KILO_EXPECTED_TREE_SHA = previousTree;
+    if (previousBranch === undefined) delete process.env.KILO_EXPECTED_BRANCH;
+    else process.env.KILO_EXPECTED_BRANCH = previousBranch;
+    if (previousChat === undefined) delete process.env.KILO_EXPECTED_CHAT_ID;
+    else process.env.KILO_EXPECTED_CHAT_ID = previousChat;
   }
 }
 
@@ -168,6 +203,14 @@ function commitReviewedLanding(message) {
     maxBuffer: 32 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
+}
+
+function recordPreparedMergeState(cwd) {
+  const result = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, '--record-prepared-merge'], {
+    cwd,
+    encoding: 'utf8',
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 /** Commit the index as it stands. A gitlink has no worktree path, so `git add -A` removes
@@ -628,6 +671,143 @@ describe('the shape the original scan set could not reach', () => {
     expect(git(['show', ':0:f.txt'])).toContain('keep');
   });
 
+  it('reports an incoming whole-file deletion discarded by `-s ours`', () => {
+    write('f.txt', 'base\n');
+    write('other.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    git(['rm', '-q', 'f.txt']);
+    commit('branch deletes the whole file');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'main edits the file\n');
+    commit('main edits the deleted file');
+
+    const seen = mergeAndInspect('feat', { args: ['--no-commit', '-s', 'ours'] });
+
+    expect(seen.takeovers.map((takeover) => takeover.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+    expect(seen.takeovers[0].incomingDeletedPath).toBe(true);
+    expect(seen.takeovers[0].reason).toContain('incoming side deleted this path');
+
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+    expect(stderr).toContain('the incoming commit has no blob at that path');
+    expect(stderr).toContain('fails by design');
+    expect(stderr).toContain('Listed paths are JSON-escaped');
+  });
+
+  it('accepts an incoming modify/delete conflict explicitly resolved by deleting the path', () => {
+    write('f.txt', 'base\n');
+    write('other.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    git(['rm', '-q', 'f.txt']);
+    commit('branch deletes the whole file');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'main edit\n');
+    commit('main edits the deleted file');
+
+    const seen = mergeAndInspect('feat', { resolve: () => git(['rm', '-qf', 'f.txt']) });
+
+    expect(seen.conflicted).toBe(true);
+    expect(seen.takeovers).toEqual([]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(0);
+    });
+    expect(stderr).toBe('');
+  });
+
+  it('accepts an incoming modify/delete conflict explicitly resolved by keeping HEAD', () => {
+    write('f.txt', 'base\n');
+    write('other.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    git(['rm', '-q', 'f.txt']);
+    commit('branch deletes the whole file');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'main edit\n');
+    commit('main edits the deleted file');
+
+    const seen = mergeAndInspect('feat', {
+      resolve: () => {
+        git(['checkout', '--ours', '--', 'f.txt']);
+        git(['add', 'f.txt']);
+      },
+    });
+
+    expect(seen.conflicted).toBe(true);
+    expect(seen.takeovers).toEqual([]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(0);
+    });
+    expect(stderr).toBe('');
+  });
+
+  it('reports an incoming deletion result that removes HEAD changes without resolve-undo evidence', () => {
+    write('f.txt', 'base\n');
+    write('other.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    git(['rm', '-q', 'f.txt']);
+    commit('branch deletes the whole file');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'main edit\n');
+    commit('main edits the deleted file');
+
+    const head = sha();
+    const incoming = git(['rev-parse', 'feat']);
+    // Model a result tree where the incoming deletion won without a recorded
+    // modify/delete resolution. A manually staged deletion is covered above and is allowed.
+    const seen = findTakeovers({ cwd: dir, head, incoming, resultTree: git(['rev-parse', 'feat^{tree}']) });
+
+    expect(seen.takeovers.map((takeover) => takeover.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].kind).toBe('discarded-merged-into-change');
+    expect(seen.takeovers[0].deleted).toBe(1);
+    expect(seen.takeovers[0].reason).toContain("this side's committed change");
+  });
+
+  it('allows an incoming whole-file deletion when HEAD has no change since base', () => {
+    write('f.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    git(['rm', '-q', 'f.txt']);
+    commit('branch deletes the whole file');
+    git(['checkout', '-q', 'main']);
+    write('other.txt', 'main work\n');
+    commit('main advances elsewhere');
+
+    const seen = mergeAndInspect('feat', { args: ['--no-commit', '-X', 'theirs'] });
+
+    expect(seen.takeovers).toEqual([]);
+  });
+
+  it('escapes newlines and terminal controls in paths printed by the refusal', () => {
+    const unsafePath = 'bad\n\u001b[31mforged.txt';
+    write('other.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write(unsafePath, 'incoming\n');
+    commit('branch adds a control-character path');
+    git(['checkout', '-q', 'main']);
+    write('other.txt', 'main changed elsewhere\n');
+    commit('main advances');
+
+    const seen = mergeAndInspect('feat', { args: ['--no-commit', '-s', 'ours'] });
+    expect(seen.takeovers.map((takeover) => takeover.path)).toEqual([unsafePath]);
+
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+    expect(stderr).toContain(JSON.stringify(unsafePath));
+    expect(stderr).not.toContain(unsafePath);
+  });
+
   it('stays silent on `-X ours` where this side is already a strict SUPERSET', () => {
     // The mirror of the superset case the existing suite already pins for `--theirs`, and
     // the reason the discriminator asks what the LOSING side lost rather than whether the
@@ -846,13 +1026,10 @@ describe('the shape the original scan set could not reach', () => {
     // content verbatim, and which deletes a line the incoming side had.
     //
     // It stays silent deliberately. Every shape this program reports is a WHOLE-FILE
-    // one-sided decision — git copied one side's blob for the whole path. That is the class
-    // that produces no conflict marker, which is the only reason a gate is needed here: a
-    // merge that DID conflict was visibly unmerged until somebody staged it, and that
-    // resolution is a human decision made in the open. Reporting lossy hand-resolutions too
-    // would fire on ordinary conflict resolution, and the first agent to hit that would
-    // reach for --no-verify — which is how the two shapes above were nearly lost once already
-    // (see the superset case in 'the shapes it must NOT report').
+    // one-sided decision — git copied one side's blob for the whole path. A conflict
+    // resolution that chooses one side verbatim remains detectable and is reported. A custom
+    // resolution that combines neither side's blob is outside this detector's boundary;
+    // reporting every such resolution would also report ordinary hand-edited merges.
     write('f.txt', 'a\nb\nc\nd\n');
     commit('base');
 
@@ -1022,6 +1199,22 @@ describe('the shapes an independent review measured as silent passes', () => {
     expect(seen.takeovers[0].deleted).toBe(1);
   });
 
+  it('preserves leading whitespace in NUL-delimited path scans', () => {
+    write('base.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write(' branch.txt', 'incoming\n');
+    commit('branch adds a leading-space path');
+    git(['checkout', '-q', 'main']);
+    write('base.txt', 'main moved on\n');
+    commit('main moves on');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual([' branch.txt']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+
   it('reports a `-s ours` merge that discarded an added gitlink', () => {
     // The gitlink arm read `losing.oid !== resultBlob.oid` behind a `resultBlob &&`, so an
     // absent result entry answered zero. The adjacent file case handles the absence
@@ -1060,6 +1253,57 @@ describe('the shapes an independent review measured as silent passes', () => {
 
     expect(seen.takeovers.map((t) => t.path)).toEqual(['f.py']);
     expect(seen.takeovers[0].deleted).toBe(2);
+  });
+
+  it('reports a lost interior blank line that separates Markdown paragraphs', () => {
+    write('f.md', '# Heading\nParagraph\n');
+    write('other.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.md', '# Heading\n\nParagraph\n');
+    commit('branch adds a paragraph separator');
+    git(['checkout', '-q', 'main']);
+    write('other.txt', 'main moved on\n');
+    commit('main moves on elsewhere');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.md']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+
+  it('reports a lost blank record at end of file', () => {
+    write('f.md', 'Paragraph\n');
+    write('other.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.md', 'Paragraph\n\n');
+    commit('branch adds a terminal blank record');
+    git(['checkout', '-q', 'main']);
+    write('other.txt', 'main moved on\n');
+    commit('main moves on elsewhere');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.md']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+
+  it('uses byte identity for malformed UTF-8 instead of collapsing replacement characters', () => {
+    write('f.txt', Buffer.from([0x61, 0x0a, 0x78, 0xff, 0x0a]));
+    write('other.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', Buffer.from([0x61, 0x0a, 0x78, 0xfe, 0x0a]));
+    commit('branch changes malformed byte');
+    git(['checkout', '-q', 'main']);
+    write('other.txt', 'main moved on\n');
+    commit('main moves on elsewhere');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].deleted).toBe(Number.POSITIVE_INFINITY);
   });
 
   it('does NOT report a commit that only changed line endings', () => {
@@ -1105,6 +1349,23 @@ describe('the shapes an independent review measured as silent passes', () => {
     expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
     expect(seen.takeovers[0].deleted).toBe(1);
   });
+
+  it('reports a branch mode-only change swallowed by `-s ours`', () => {
+    write('f.txt', 'alpha\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    git(['update-index', '--chmod=+x', 'f.txt']);
+    chmodSync(join(dir, 'f.txt'), 0o755);
+    commitIndexOnly('branch makes f executable');
+    git(['checkout', '-q', 'main']);
+    write('other.txt', 'main moved on\n');
+    commit('main moves on');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
 });
 
 describe('what the operator is actually told', () => {
@@ -1132,6 +1393,8 @@ describe('what the operator is actually told', () => {
     expect(stderr).toContain('-s ours');
     // The refusal must still offer the documented way out.
     expect(stderr).toContain('--no-verify');
+    expect(stderr).toContain('git commit --no-verify');
+    expect(stderr).not.toContain('git merge --no-verify');
     // And must not claim the commit was a no-op, which a reordered superset made a lie.
     expect(stderr).not.toMatch(/landed as a no-op/);
   });
@@ -1306,7 +1569,7 @@ describe('pinned main landing', () => {
     }
 
     expect(failure).toBeDefined();
-    expect(String(failure.stderr)).toContain('Git has not written MERGE_HEAD');
+    expect(String(failure.stderr)).toContain('direct self-committing merges are refused');
     expect(sha()).toBe(refs.main);
     if (existsSync(join(dir, '.git', 'MERGE_HEAD'))) {
       git(['merge', '--abort']);
@@ -1334,7 +1597,7 @@ describe('pinned main landing', () => {
     }
 
     expect(failure).toBeDefined();
-    expect(String(failure.stderr)).toContain('Git has not written MERGE_HEAD');
+    expect(String(failure.stderr)).toContain('direct self-committing merges are refused');
     expect(sha()).toBe(refs.main);
     expect(git(['rev-parse', '--verify', 'MERGE_HEAD'])).toBe(refs.incoming);
     git(['merge', '--abort']);
@@ -1367,7 +1630,7 @@ describe('pinned main landing', () => {
     }
 
     expect(failure).toBeDefined();
-    expect(String(failure.stderr)).toContain('Git has not written MERGE_HEAD');
+    expect(String(failure.stderr)).toContain('direct self-committing merges are refused');
     expect(git(['status', '--porcelain'])).toBe('');
   });
 
@@ -1417,6 +1680,37 @@ describe('pinned main landing', () => {
     expect(git(['status', '--porcelain'])).toBe('');
   });
 
+  it('refuses a caller-controlled alternate index without the helper workflow marker', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    git(['merge', '--no-commit', '--no-ff', 'feat']);
+    const isolatedIndex = join(dir, 'caller-controlled-index');
+    copyFileSync(join(dir, '.git', 'index'), isolatedIndex);
+    let failure;
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      try {
+        execFileSync('git', ['commit', '-m', 'direct alternate index\n\nBranch: feat\nChat: test-session'], {
+          cwd: dir,
+          env: { ...process.env, GIT_INDEX_FILE: isolatedIndex },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('private index snapshot');
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['merge', '--abort']);
+    rmSync(isolatedIndex, { force: true });
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
   it('accepts the exact main and incoming SHAs from actual MERGE_HEAD state', () => {
     const refs = prepareDisjointMerge();
     installPinnedPreCommitGuards();
@@ -1449,23 +1743,495 @@ describe('pinned main landing', () => {
     removePreMergeGuard();
   });
 
-  it('refuses reviewed landings without both attribution trailers before committing', () => {
+  it('binds the source branch and chat trailers to the reviewed candidate', () => {
     const refs = prepareDisjointMerge();
+    git(['branch', 'wrong-feat', refs.base]);
     git(['merge', '--no-commit', '--no-ff', 'feat']);
+
+    const messages = [
+      'wrong branch\n\nBranch: wrong-feat\nChat: test-session',
+      'wrong chat\n\nBranch: feat\nChat: another-session',
+      'duplicate branch\n\nBranch: feat\nBranch: feat\nChat: test-session',
+      'duplicate chat\n\nBranch: feat\nChat: test-session\nChat: test-session',
+      'missing chat\n\nBranch: feat',
+    ];
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      for (const message of messages) {
+        let failure;
+        try {
+          commitReviewedLanding(message);
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeDefined();
+        expect(String(failure.stderr)).toContain(
+          'merge message must have exactly one Branch: feat and Chat: test-session trailer'
+        );
+      }
+    });
+
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['merge', '--abort']);
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a prepare-commit-msg hook that changes the reviewed Chat trailer', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    writeFileSync(
+      prepareHook,
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\n`
+    );
+    chmodSync(prepareHook, 0o755);
     let failure;
 
     withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      git(['merge', '--no-commit', '--no-ff', 'feat']);
       try {
-        commitReviewedLanding('missing chat trailer\n\nBranch: feat');
+        commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
       } catch (error) {
         failure = error;
       }
     });
 
     expect(failure).toBeDefined();
-    expect(String(failure.stderr)).toContain('exactly one non-empty Branch: and Chat: trailer');
+    expect(String(failure.stderr)).toContain("commit-reviewed-landing-message-guard: Git's final merge message");
     expect(sha()).toBe(refs.main);
     expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['merge', '--abort']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a prepare-commit-msg hook that removes MERGE_HEAD during a reviewed landing', () => {
+    const refs = prepareDisjointMerge();
+    installPinnedPreCommitGuards();
+    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    writeFileSync(
+      prepareHook,
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\nrm -f "$(git rev-parse --git-path MERGE_HEAD)"\n`
+    );
+    chmodSync(prepareHook, 0o755);
+    let failure;
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      git(['merge', '--no-commit', '--no-ff', 'feat']);
+      try {
+        commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: reviewed landing MERGE_HEAD disappeared or changed'
+    );
+    expect(sha()).toBe(refs.main);
+    expect(gitOk(['rev-parse', 'MERGE_HEAD']).ok).toBe(false);
+    git(['reset', '--hard', 'main']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a prepare-commit-msg hook that changes symbolic HEAD during a reviewed landing', () => {
+    const refs = prepareDisjointMerge();
+    git(['branch', 'attacker']);
+    installPinnedPreCommitGuards();
+    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    writeFileSync(
+      prepareHook,
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\ngit symbolic-ref HEAD refs/heads/attacker\n`
+    );
+    chmodSync(prepareHook, 0o755);
+    let failure;
+
+    withExpectedLanding({ main: refs.main, incoming: refs.incoming, tree: refs.incomingTree }, () => {
+      git(['merge', '--no-commit', '--no-ff', 'feat']);
+      try {
+        commitReviewedLanding('pinned merge\n\nBranch: feat\nChat: test-session');
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: reviewed landing checkout changed away from the designated main worktree'
+    );
+    expect(sha()).toBe(refs.main);
+    expect(git(['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    git(['merge', '--abort']);
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('requires a Chat trailer for an operator hotfix on main', () => {
+    const refs = prepareDisjointMerge();
+    installMainWorktreeCommitGuards();
+    write('hotfix.txt', 'hotfix\n');
+    git(['add', 'hotfix.txt']);
+
+    let missingChatFailure;
+    try {
+      execFileSync('git', ['commit', '-m', 'Hotfix: missing attribution'], {
+        cwd: dir,
+        env: { ...process.env, ALLOW_MAIN_COMMIT: '1' },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      missingChatFailure = error;
+    }
+    expect(missingChatFailure).toBeDefined();
+    expect(String(missingChatFailure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: an operator hotfix on main must have exactly one non-empty Chat: trailer'
+    );
+    expect(sha()).toBe(refs.main);
+
+    execFileSync('git', ['commit', '-m', 'Hotfix: attributed', '-m', 'Chat: operator-session'], {
+      cwd: dir,
+      env: { ...process.env, ALLOW_MAIN_COMMIT: '1' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    expect(sha()).not.toBe(refs.main);
+    expect(git(['show', '-s', '--format=%B', 'HEAD'])).toContain('Chat: operator-session');
+    removePreMergeGuard();
+    expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('allows optional expected pins on a feature-worktree merge', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    let missingChatFailure;
+    try {
+      gitAt(featureWorktree, ['commit', '-m', 'Feature change without attribution']);
+    } catch (error) {
+      missingChatFailure = error;
+    }
+    expect(missingChatFailure).toBeDefined();
+    expect(String(missingChatFailure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: every commit must have exactly one non-empty Chat: trailer'
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(refs.main);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    const featureHead = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+
+    installPinnedPreCommitGuards();
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const resultTree = gitAt(featureWorktree, ['write-tree']);
+    withExpectedLanding(
+      { main: featureHead, incoming: refs.incoming, tree: resultTree, branch: 'feat', chat: 'test-session' },
+      () => {
+        gitAt(featureWorktree, ['commit', '-m', 'Feature merge\n\nBranch: feat\nChat: test-session']);
+      }
+    );
+
+    const landed = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}'])).toBe(resultTree);
+    expect(gitAt(featureWorktree, ['rev-list', '--parents', '-n', '1', landed]).split(' ')).toEqual([
+      landed,
+      featureHead,
+      refs.incoming,
+    ]);
+    expect(gitAt(featureWorktree, ['show', '-s', '--format=%B', landed])).toContain('Chat: test-session');
+    removePreMergeGuard();
+  });
+
+  it('binds optional feature-worktree merge pins to the final message and prepared MERGE_HEAD', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    const featureHead = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    installPinnedPreCommitGuards();
+
+    const messageArgs = ['commit', '-m', 'Feature merge\n\nBranch: feat\nChat: test-session'];
+    const attemptPinnedCommit = (resultTree) => {
+      let failure;
+      withExpectedLanding(
+        { main: featureHead, incoming: refs.incoming, tree: resultTree, branch: 'feat', chat: 'test-session' },
+        () => {
+          try {
+            gitAt(featureWorktree, messageArgs);
+          } catch (error) {
+            failure = error;
+          }
+        }
+      );
+      expect(failure).toBeDefined();
+      expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+    };
+    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    let resultTree = gitAt(featureWorktree, ['write-tree']);
+    writeFileSync(
+      prepareHook,
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Chat: test-session","Chat: altered-session"));' "$1"\n`
+    );
+    chmodSync(prepareHook, 0o755);
+    attemptPinnedCommit(resultTree);
+    expect(gitAt(featureWorktree, ['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    gitAt(featureWorktree, ['merge', '--abort']);
+
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    resultTree = gitAt(featureWorktree, ['write-tree']);
+    writeFileSync(
+      prepareHook,
+      `#!/bin/sh\nnode -e 'const fs=require("node:fs"); const p=process.argv[1]; const m=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,m.replace("Branch: feat","Branch: changed-branch"));' "$1"\n`
+    );
+    chmodSync(prepareHook, 0o755);
+    attemptPinnedCommit(resultTree);
+    expect(gitAt(featureWorktree, ['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    gitAt(featureWorktree, ['merge', '--abort']);
+
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    resultTree = gitAt(featureWorktree, ['write-tree']);
+    writeFileSync(prepareHook, `#!/bin/sh\nrm -f "$(git rev-parse --git-path MERGE_HEAD)"\n`);
+    chmodSync(prepareHook, 0o755);
+    let disappearedMergeFailure;
+    withExpectedLanding(
+      { main: featureHead, incoming: refs.incoming, tree: resultTree, branch: 'feat', chat: 'test-session' },
+      () => {
+        try {
+          gitAt(featureWorktree, messageArgs);
+        } catch (error) {
+          disappearedMergeFailure = error;
+        }
+      }
+    );
+    expect(disappearedMergeFailure).toBeDefined();
+    expect(String(disappearedMergeFailure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: pinned feature merge MERGE_HEAD disappeared or changed'
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+    let mergeHeadAfterRemoval = null;
+    try {
+      mergeHeadAfterRemoval = gitAt(featureWorktree, ['rev-parse', '--verify', 'MERGE_HEAD']);
+    } catch {
+      // The prepare hook deliberately removed the merge record before commit-msg ran.
+    }
+    expect(mergeHeadAfterRemoval).toBeNull();
+
+    gitAt(featureWorktree, ['reset', '--hard', featureHead]);
+    rmSync(prepareHook, { force: true });
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    resultTree = gitAt(featureWorktree, ['write-tree']);
+    withExpectedLanding(
+      { main: featureHead, incoming: refs.incoming, tree: resultTree, branch: 'feat', chat: 'test-session' },
+      () => gitAt(featureWorktree, messageArgs)
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}'])).toBe(resultTree);
+  });
+
+  it('refuses an unpinned feature merge whose prepared tree changes after pre-commit', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    const featureHead = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    installPinnedPreCommitGuards();
+
+    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const resultTree = gitAt(featureWorktree, ['write-tree']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+    writeFileSync(prepareHook, '#!/bin/sh\ngit rm -f feature.txt\n');
+    chmodSync(prepareHook, 0o755);
+
+    let failure;
+    withNoExpectedLanding(() => {
+      try {
+        gitAt(featureWorktree, ['commit', '-m', 'Unpinned feature merge', '-m', 'Chat: test-session']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: prepared merge parents or result tree changed after pre-commit'
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+    expect(gitAt(featureWorktree, ['rev-parse', 'MERGE_HEAD'])).toBe(refs.incoming);
+    expect(gitAt(featureWorktree, ['write-tree'])).not.toBe(resultTree);
+
+    gitAt(featureWorktree, ['merge', '--abort']);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+    writeFileSync(prepareHook, '#!/bin/sh\nrm -f "$(git rev-parse --git-path MERGE_HEAD)"\n');
+    chmodSync(prepareHook, 0o755);
+    let disappearedMergeFailure;
+    withNoExpectedLanding(() => {
+      try {
+        gitAt(featureWorktree, ['commit', '-m', 'Unpinned feature merge', '-m', 'Chat: test-session']);
+      } catch (error) {
+        disappearedMergeFailure = error;
+      }
+    });
+    expect(disappearedMergeFailure).toBeDefined();
+    expect(String(disappearedMergeFailure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: prepared merge markers disappeared after pre-commit'
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+  });
+
+  it('clears aborted merge state when MERGE_MSG remains behind', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    installPinnedPreCommitGuards();
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+
+    gitAt(featureWorktree, ['merge', '--abort']);
+    const mergeMessagePath = resolve(featureWorktree, gitAt(featureWorktree, ['rev-parse', '--git-path', 'MERGE_MSG']));
+    writeFileSync(mergeMessagePath, 'Stale message left by the aborted merge\n');
+    expect(recordPreparedMergeState(featureWorktree).status).toBe(0);
+
+    const statePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(statePath)).toBe(false);
+    const preCommitHook = join(dir, 'hooks', 'pre-commit');
+    writeFileSync(preCommitHook, '#!/bin/sh\nexit 0\n');
+    chmodSync(preCommitHook, 0o755);
+    writeFileSync(join(featureWorktree, 'ordinary-change.txt'), 'ordinary\n');
+    gitAt(featureWorktree, ['add', 'ordinary-change.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Ordinary commit', '-m', 'Chat: test-session']);
+    expect(gitAt(featureWorktree, ['show', 'HEAD:ordinary-change.txt'])).toBe('ordinary');
+  });
+
+  it('rejects an unpinned feature merge whose MERGE_HEAD becomes octopus after pre-commit', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    const featureHead = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    installPinnedPreCommitGuards();
+
+    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    writeFileSync(
+      prepareHook,
+      `#!/bin/sh\nprintf '%s\\n' '${refs.base}' >> "$(git rev-parse --git-path MERGE_HEAD)"\n`
+    );
+    chmodSync(prepareHook, 0o755);
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+
+    let failure;
+    withNoExpectedLanding(() => {
+      try {
+        gitAt(featureWorktree, ['commit', '-m', 'Unpinned feature merge', '-m', 'Chat: test-session']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: feature merge requires exactly one incoming commit; refusing an octopus merge'
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+    const mergeHeadPath = resolve(featureWorktree, gitAt(featureWorktree, ['rev-parse', '--git-path', 'MERGE_HEAD']));
+    expect(readFileSync(mergeHeadPath, 'utf8').trim().split('\n')).toEqual([refs.incoming, refs.base]);
+  });
+
+  it('refuses an unpinned feature merge if prepare-commit-msg removes both merge markers', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    const featureHead = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    installPinnedPreCommitGuards();
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+    const recorded = recordPreparedMergeState(featureWorktree);
+    expect(recorded.status, recorded.stderr).toBe(0);
+
+    const prepareHook = join(dir, 'hooks', 'prepare-commit-msg');
+    writeFileSync(
+      prepareHook,
+      '#!/bin/sh\n' +
+        'git rm -f feature.txt >/dev/null\n' +
+        'rm -f "$(git rev-parse --git-path MERGE_HEAD)" "$(git rev-parse --git-path MERGE_MSG)"\n'
+    );
+    chmodSync(prepareHook, 0o755);
+
+    let failure;
+    withNoExpectedLanding(() => {
+      try {
+        gitAt(featureWorktree, ['commit', '-m', 'Unpinned feature merge', '-m', 'Chat: test-session']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: prepared merge markers disappeared after pre-commit'
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+
+    gitAt(featureWorktree, ['reset', '--hard', featureHead]);
+    const clearedAfterAbort = recordPreparedMergeState(featureWorktree);
+    expect(clearedAfterAbort.status, clearedAfterAbort.stderr).toBe(0);
+    const mergeStatePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(mergeStatePath)).toBe(false);
+  });
+
+  it('requires the reviewed source branch ref to point at the incoming candidate', () => {
+    const refs = prepareDisjointMerge();
+    git(['branch', 'wrong-feat', refs.base]);
+    git(['merge', '--no-commit', '--no-ff', 'feat']);
+    let failure;
+
+    withExpectedLanding(
+      { main: refs.main, incoming: refs.incoming, tree: refs.incomingTree, branch: 'wrong-feat' },
+      () => {
+        try {
+          commitReviewedLanding('wrong source ref\n\nBranch: wrong-feat\nChat: test-session');
+        } catch (error) {
+          failure = error;
+        }
+      }
+    );
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'expected source branch does not point to the reviewed incoming candidate'
+    );
+    expect(sha()).toBe(refs.main);
     git(['merge', '--abort']);
     expect(git(['status', '--porcelain'])).toBe('');
   });
@@ -1684,6 +2450,240 @@ describe('refusing rather than passing when the content cannot be read', () => {
     expect(got.get(oid)?.toString('utf8')).toBe('alpha\nbeta\n');
   });
 
+  it('refuses a valid but absent object instead of returning an incomplete batch', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const missing = execFileSync('git', ['hash-object', '--stdin'], {
+      cwd: dir,
+      input: 'object intentionally not written to the database\n',
+      encoding: 'utf8',
+    }).trim();
+
+    expect(() => batchBlobs([missing], dir)).toThrow(/could not read requested blob/);
+  });
+
+  it('refuses when Git cannot return a complete changed-path list', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'fake-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    writeFileSync(
+      wrapper,
+      '#!/bin/sh\nif [ "$1" = "diff" ] && [ "$2" = "--name-only" ]; then exit 73; fi\nexec "$REAL_GIT_PATH" "$@"\n'
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(
+        /git diff failed while listing HEAD-side paths/
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
+  it('refuses invalid UTF-8 path bytes instead of collapsing distinct path identities', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'invalid-path-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf '100644 blob 0000000000000000000000000000000000000000\\t\\377bad\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/path that is not valid UTF-8/);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
+  it('refuses successful but malformed ls-tree metadata', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'malformed-tree-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf 'foo\\tbad.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/invalid entry metadata/);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
+  it('refuses successful but malformed resolve-undo metadata', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'malformed-undo-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = "ls-files" ] && [ "$2" = "--resolve-undo" ]; then printf 'bad\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/invalid metadata/);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
+  it('refuses duplicate resolve-undo stages instead of treating them as one explicit resolution', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'duplicate-undo-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    const oid = '0000000000000000000000000000000000000000';
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = "ls-files" ] && [ "$2" = "--resolve-undo" ]; then printf '100644 ${oid} 1\\tf.txt\\000100644 ${oid} 1\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/duplicate path\/stage record/);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
+  it('refuses resolve-undo metadata that does not match the merge trees', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'inconsistent-undo-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    const oid = '0000000000000000000000000000000000000000';
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = "ls-files" ] && [ "$2" = "--resolve-undo" ]; then printf '100644 ${oid} 1\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(
+        /metadata inconsistent with the merge trees/
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
+  it('refuses non-ASCII bytes in tree metadata before ASCII decoding can normalize them', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'non-ascii-tree-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf '\\26100644 blob 0000000000000000000000000000000000000000\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/non-ASCII metadata/);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
+  it('rejects empty NUL records instead of accepting a partial path list', () => {
+    write('f.txt', 'present\n');
+    commit('base');
+    const bin = join(dir, 'empty-record-bin');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const wrapper = join(bin, 'git');
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf '100644 blob 0000000000000000000000000000000000000000\\tf.txt\\000\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+    );
+    chmodSync(wrapper, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.REAL_GIT_PATH;
+    try {
+      process.env.PATH = `${bin}:${previousPath ?? ''}`;
+      process.env.REAL_GIT_PATH = realGit;
+      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/empty path record/);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+      else process.env.REAL_GIT_PATH = previousRealGit;
+    }
+  });
+
   it('asks for more than the old 256 MiB, and names the ceiling it asks for', () => {
     // A number nobody reads is a number nobody raises. The old value is quoted here so that
     // lowering it again is a visible edit to a stated reason rather than a silent edit.
@@ -1717,13 +2717,20 @@ describe('the exit code a caller branches on', () => {
     write('f.txt', 'main\n');
     commit('main');
 
+    const mergedInto = sha();
+    const incoming = git(['rev-parse', 'feat']);
     gitOk(['merge', '--no-commit', '--no-ff', 'feat']);
     takeTheirs('f.txt');
 
     const previous = process.env.GIT_REFLOG_ACTION;
     try {
       process.env.GIT_REFLOG_ACTION = 'merge feat';
-      expect(main([], { cwd: dir })).toBe(1);
+      const refusal = captureStderr(() => {
+        expect(main([], { cwd: dir })).toBe(1);
+      });
+      expect(refusal).toContain(`git show ${mergedInto}:<path>`);
+      expect(refusal).toContain(`git show ${incoming}:<path>`);
+      expect(refusal).toContain('work after Git has staged a resolution');
 
       // Abort first: MERGE_HEAD is Git's prepared merge record. Once it is gone, no reflog
       // description can stand in for the actual incoming commit.

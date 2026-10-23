@@ -12,11 +12,11 @@ set -e
 # merges and the dangerous one is THIS one. Measured with raw git:
 #   - merge conflicts, you resolve, you `git commit`  -> pre-commit fires, MERGE_HEAD set
 #   - clean merge prepared with `--no-commit`         -> pre-commit fires, MERGE_HEAD set
-#   - clean direct `git merge`                        -> pre-merge-commit fires before MERGE_HEAD is readable
+#   - clean direct `git merge`                        -> pre-merge-commit refuses unconditionally
 # A conflicted merge resolved with `checkout --theirs <file>` is Case A, so a guard wired
 # only into `pre-merge-commit` would never have seen it. A clean merge must use `--no-commit`
 # so this hook can inspect Git's actual MERGE_HEAD; the pre-merge hook rejects the direct
-# self-committing path because reflog text cannot prove which commit Git prepared.
+# self-committing path on every Git version, without relying on its MERGE_HEAD timing.
 #
 # `merge-takeover-guard.mjs` no-ops in about a `rev-parse` unless MERGE_HEAD exists, so an
 # ordinary commit pays nothing for this line. Here MERGE_HEAD identifies the incoming commit,

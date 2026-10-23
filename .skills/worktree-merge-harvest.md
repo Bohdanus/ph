@@ -48,16 +48,27 @@ the time it is acted on.
 
 **What makes the first rule enforceable is one layer down.**
 `scripts/main-worktree-guard.mjs` runs from `.husky/pre-commit` and refuses
-ordinary commits made from the main worktree. A pinned landing is the only merge
-commit allowed: prepare it with `--no-commit --no-ff`, then use
-`scripts/commit-reviewed-landing.mjs` with reviewed parent and tree pins. It
-commits a private index snapshot, and the guard compares `HEAD`, `MERGE_HEAD`,
+ordinary commits made from either the primary Git checkout or the designated
+`main` branch worktree. The primary checkout remains protected when it has a task
+branch checked out. A pinned landing is allowed only in the designated `main`
+worktree: prepare it with `--no-commit --no-ff`, then use
+`scripts/commit-reviewed-landing.mjs` with reviewed parent, tree, branch, and
+chat pins. It commits a private index snapshot, and the guard compares `HEAD`, `MERGE_HEAD`,
 and that staged tree. Direct self-committing merges are refused in every worktree; check for
 `MERGE_HEAD` and abort only that refused attempt before retrying. Fast-forwards
 also do not provide this check, so neither shape is a landing path. The pins are
 an operator-supplied record of the reviewed candidate, not a cryptographic
 approval token. The operator hotfix override remains `ALLOW_MAIN_COMMIT=1`, and
-only the exact value `1`. A completed merge also fires `post-merge`, which
+only the exact value `1`; an ordinary hotfix commit still needs its `Chat:` trailer.
+The hook installer records the designated main worktree's private Git directory
+and path in shared local Git config (`ph.mainWorktreeGitDir` and
+`ph.mainWorktreePath`). The Git directory keeps the same checkout protected if
+`HEAD` is detached or switched during a hook. If that private directory changes,
+the saved path still protects a detached checkout there; it does not transfer
+protection to a feature branch that reuses the path. A first install fails when
+`main` is detached and no saved identity exists. A landing or hotfix still
+requires `refs/heads/main` to be checked out.
+A completed merge also fires `post-merge`, which
 releases eligible board claims but cannot block the merge.
 Everything else that changes a tracked file belongs in the branch's own worktree,
 including a comment — and before you edit, `git rev-parse --show-toplevel` is the
@@ -479,7 +490,22 @@ git -C "$MAIN" merge --no-commit --no-ff "$REVIEWED_CANDIDATE_SHA"
 
 If the merge reports a conflict or `git status` shows unmerged paths, abort this exact merge and
 resync in the candidate worktree. Never resolve it in `main`. Continue only when the prepared
-merge has no unmerged paths and its actual `MERGE_HEAD` is `REVIEWED_CANDIDATE_SHA`:
+merge has no unmerged paths and its actual `MERGE_HEAD` is `REVIEWED_CANDIDATE_SHA`.
+
+If the candidate adds or changes a Git hook, refresh the shared dispatchers from the candidate
+worktree now, after the clean merge has made the hook file available in `MAIN` and before the
+landing commit. Verify the new dispatcher exists. If a non-main linked worktree has not synced
+the tracked hook yet, the shared dispatcher runs the designated main checkout's current final
+guard with that linked worktree as its Git context. The shared pre-commit entry records pending
+merge identity so `prepare-commit-msg` cannot erase Git's merge markers and skip the final
+takeover check, and the final index tree must still match the one approved by pre-commit.
+
+```bash
+(cd "$WORKTREE" && node scripts/install-git-hooks.js)
+test -x "$(git -C "$MAIN" rev-parse --path-format=absolute --git-common-dir)/hooks-gate/commit-msg"
+```
+
+Then commit the prepared result:
 
 ```bash
 (
@@ -487,18 +513,26 @@ merge has no unmerged paths and its actual `MERGE_HEAD` is `REVIEWED_CANDIDATE_S
   KILO_EXPECTED_MAIN_SHA="$REVIEWED_MAIN_SHA" \
   KILO_EXPECTED_INCOMING_SHA="$REVIEWED_CANDIDATE_SHA" \
   KILO_EXPECTED_TREE_SHA="$REVIEWED_TREE" \
+  KILO_EXPECTED_BRANCH="$BRANCH" \
+  KILO_EXPECTED_CHAT_ID="$CHAT_ID" \
     node scripts/commit-reviewed-landing.mjs -m "$MERGE_MESSAGE"
 )
 ```
 
 The `--no-commit` merge leaves `MERGE_HEAD` available to `pre-commit`. The landing script snapshots
 the prepared index so another process staging files in the shared main worktree cannot change the
-commit tree after the final hook check. The main-worktree guard allows that commit only when
-`HEAD`, `MERGE_HEAD`, and the snapshot tree match the reviewed main SHA, candidate SHA, and
-candidate tree. Then `scripts/merge-takeover-guard.mjs` checks the prepared tree for lost work. If the merge conflicts,
+commit tree after the final hook check. It also writes a private workflow marker for that
+snapshot. The marker helps catch accidental alternate-index use; it is not an authentication
+boundary against a same-user caller deliberately constructing the environment and marker.
+The main-worktree guard allows that commit only when `HEAD`, `MERGE_HEAD`, the snapshot tree,
+marker, source branch, and chat ID match the reviewed record. The helper requires exactly one
+matching `Branch:` and `Chat:` trailer and verifies that the source branch still points at the
+reviewed candidate SHA. The `commit-msg` hook repeats the snapshot checks and checks the final
+message after `prepare-commit-msg` has run. Then `scripts/merge-takeover-guard.mjs` checks the
+prepared tree for lost work. If the merge conflicts,
 do not resolve it in `main`; abort the operation this command started and resync in the candidate
-worktree. The pre-merge hook refuses a direct self-committing merge because `GIT_REFLOG_ACTION` is
-caller-controlled text, not proof of the incoming commit. Do not substitute a branch name,
+worktree. The pre-merge hook refuses every direct self-committing merge, without relying on
+`GIT_REFLOG_ACTION` or Git-version-specific `MERGE_HEAD` timing. Do not substitute a branch name,
 fast-forward, squash, `--no-verify`, or the old `--ff-only || git merge` fallback.
 
 After the merge, verify the recorded parents, tree and trailers:
@@ -677,7 +711,7 @@ skipped its own safety steps.
   the candidate tree; `main-worktree-guard` and `merge-takeover-guard` require and recheck both
   parents and the tree from `pre-commit` after a `--no-commit --no-ff` merge prepared in the main
   worktree and committed from a private index snapshot. Direct
-  self-committing merges are refused because `pre-merge-commit` cannot identify the actual incoming
-  commit here. Fast-forwards bypass the blocking hook, and squash strategies do not create a merge
+  self-committing merges are refused unconditionally by `pre-merge-commit`. Fast-forwards bypass
+  the blocking hook, and squash strategies do not create a merge
   commit for it to inspect; neither is the harvest landing path. This is not a global lock on
   arbitrary Git ref plumbing, so do not claim protection outside the documented guarded workflow.

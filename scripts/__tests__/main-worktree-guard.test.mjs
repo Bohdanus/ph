@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -49,8 +49,16 @@ function commonDir(cwd) {
 }
 
 describe('the main-worktree guard refuses a commit recorded in the main worktree', () => {
-  it('refuses in the main worktree', () => {
+  it('refuses in the designated main worktree', () => {
     expect(decide({ worktree: { isMainWorktree: true } })).toEqual({ action: 'refuse' });
+  });
+
+  it('refuses in the primary checkout even when it has a task branch checked out', () => {
+    expect(decide({ worktree: { isPrimaryWorktree: true, isMainWorktree: false, isProtectedWorktree: true } })).toEqual(
+      {
+        action: 'refuse',
+      }
+    );
   });
 
   it('allows in a linked worktree, which is where the rule says the work belongs', () => {
@@ -64,6 +72,15 @@ describe('the main-worktree guard refuses a commit recorded in the main worktree
     });
   });
 
+  it('does not let the main-only override authorize a commit in the primary task checkout', () => {
+    expect(
+      decide({
+        worktree: { isPrimaryWorktree: true, isMainWorktree: false, isProtectedWorktree: true },
+        override: '1',
+      })
+    ).toEqual({ action: 'refuse' });
+  });
+
   it('allows a landing only when reviewed parents, tree, and isolated index match', () => {
     const landing = {
       head: 'main-reviewed',
@@ -72,8 +89,11 @@ describe('the main-worktree guard refuses a commit recorded in the main worktree
       expectedMain: 'main-reviewed',
       expectedIncoming: 'candidate-reviewed',
       expectedTree: 'candidate-tree',
+      expectedBranch: 'feature-reviewed',
+      expectedChat: 'chat-reviewed',
       incomingCount: 1,
       isolatedIndex: true,
+      reviewedSnapshot: true,
     };
     expect(decide({ worktree: { isMainWorktree: true }, landing })).toEqual({
       action: 'allow',
@@ -134,7 +154,7 @@ describe('the refusal is a redirect, not an obstacle', () => {
   it('exits non-zero and writes the refusal to stderr', () => {
     const { code, text } = refuseInMain();
     expect(code).toBe(1);
-    expect(text).toContain('refusing to record a commit in the MAIN worktree');
+    expect(text).toContain('refusing to record a commit in the primary or MAIN worktree');
   });
 
   it('names the override, the worktree command, and what not to reach for', () => {
@@ -143,6 +163,7 @@ describe('the refusal is a redirect, not an obstacle', () => {
     // sentiment: without a named way forward the guard only moves the failure.
     const { text } = refuseInMain();
     expect(text).toContain(`${OVERRIDE_VAR}=1`);
+    expect(text).toContain('Chat: <native-session-id>');
     expect(text).toContain('git worktree add -b fix/task .kilo/worktrees/task');
     expect(text).toContain('Not git stash');
     // The allowed landing shape must be explicit, including the prepared merge state
@@ -169,6 +190,7 @@ describe('the refusal is a redirect, not an obstacle', () => {
 describe('the guard tells a main worktree from a linked one on a real repository', () => {
   let root;
   let linked;
+  let mainLinked;
 
   beforeAll(() => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'main-worktree-guard-')));
@@ -177,24 +199,73 @@ describe('the guard tells a main worktree from a linked one on a real repository
     writeFileSync(join(root, 'a.txt'), 'a\n');
     expect(git(root, ['add', 'a.txt'])).not.toBeNull();
     expect(git(root, ['commit', '-m', 'first'])).not.toBeNull();
+    expect(git(root, ['branch', 'task/root'])).not.toBeNull();
+    expect(git(root, ['checkout', 'task/root'])).not.toBeNull();
     expect(git(root, ['worktree', 'add', '-b', 'fix/task', join(root, 'wt')])).not.toBeNull();
     linked = join(root, 'wt');
+    mainLinked = join(root, 'main-wt');
+    expect(git(root, ['worktree', 'add', mainLinked, 'main'])).not.toBeNull();
   });
 
   afterAll(() => {
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  it('reports the root checkout as the main worktree', () => {
-    expect(resolveWorktree(root)).toMatchObject({ isMainWorktree: true });
+  it('protects a linked checkout of refs/heads/main, even when it is not Git’s primary worktree', () => {
+    const worktree = resolveWorktree(mainLinked);
+    expect(worktree).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
+    expect(decide({ worktree })).toEqual({ action: 'refuse' });
   });
 
-  it('reports a linked worktree as not main, so a commit there is allowed', () => {
-    // The failure this pins is the expensive one: answering `true` for a linked
-    // worktree would refuse every commit in the one-per-task workflow
-    // AGENTS.md mandates, and the first agent to hit it would reach for
-    // `--no-verify`.
-    expect(resolveWorktree(linked)).toMatchObject({ isMainWorktree: false });
+  it('keeps the designated main checkout protected after HEAD is detached', () => {
+    const beforeDetach = resolveWorktree(mainLinked);
+    expect(beforeDetach).toMatchObject({ isMainWorktree: true, isDesignatedMainWorktree: true });
+    expect(git(mainLinked, ['switch', '--detach'])).not.toBeNull();
+
+    const detached = resolveWorktree(mainLinked);
+    expect(detached).toMatchObject({
+      branchRef: null,
+      isPrimaryWorktree: false,
+      isMainWorktree: false,
+      isDesignatedMainWorktree: true,
+      isProtectedWorktree: true,
+    });
+    expect(decide({ worktree: detached })).toEqual({ action: 'refuse' });
+  });
+
+  it('protects the primary checkout and allows a feature-linked worktree', () => {
+    const primary = resolveWorktree(root);
+    expect(primary).toMatchObject({
+      branchRef: 'refs/heads/task/root',
+      isPrimaryWorktree: true,
+      isMainWorktree: false,
+      isProtectedWorktree: true,
+    });
+    expect(decide({ worktree: primary })).toEqual({ action: 'refuse' });
+
+    const feature = resolveWorktree(linked);
+    expect(feature).toMatchObject({
+      branchRef: 'refs/heads/fix/task',
+      isPrimaryWorktree: false,
+      isMainWorktree: false,
+      isProtectedWorktree: false,
+    });
+    expect(decide({ worktree: feature })).toEqual({ action: 'allow', reason: 'linked worktree' });
+  });
+
+  it('recognizes this repository’s designated main checkout', () => {
+    const records = git(REPO_ROOT, ['worktree', 'list', '--porcelain']);
+    const mainRecord = records.split('\n\n').find((record) => /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record));
+    const mainPath = mainRecord?.match(/^worktree (.+)$/m)?.[1];
+    expect(mainPath).toBeTruthy();
+    expect(resolveWorktree(mainPath)).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
+
+    const check = spawnSync(process.execPath, [join(REPO_ROOT, 'scripts', 'main-worktree-guard.mjs')], {
+      cwd: mainPath,
+      encoding: 'utf8',
+    });
+    expect(check.status).toBe(1);
+    expect(check.stderr).toContain('refusing to record a commit in the primary or MAIN worktree');
   });
 
   it('reports nothing outside a repository, rather than a guess', () => {
@@ -241,6 +312,229 @@ describe('the guard is actually installed', () => {
     expect(guardAt).toBeGreaterThan(-1);
     expect(gateAt).toBeGreaterThan(-1);
     expect(guardAt).toBeLessThan(gateAt);
+  });
+
+  it('checks the final prepared landing message and installs the commit-msg gate', () => {
+    const hook = readFileSync(join(REPO_ROOT, '.husky', 'commit-msg'), 'utf8');
+    const installer = readFileSync(join(REPO_ROOT, 'scripts', 'install-git-hooks.js'), 'utf8');
+
+    expect(hook).toContain('commit-reviewed-landing-message-guard.mjs "$1"');
+    expect(installer).toMatch(/const HOOKS = \[[^\]]*'commit-msg'/);
+  });
+
+  it('installs a working commit-msg dispatcher and tolerates older linked worktrees', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-hooks-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: fixture, encoding: 'utf8' });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      writeFileSync(join(fixture, 'README.md'), 'hook fixture\n');
+      git(fixture, ['add', 'README.md']);
+      git(fixture, ['commit', '--quiet', '-m', 'fixture']);
+
+      const configLock = join(fixture, '.git', 'config.lock');
+      writeFileSync(configLock, '');
+      const blockedInstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(blockedInstall.status).not.toBe(0);
+      rmSync(configLock);
+
+      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(install.status).toBe(0);
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])).toBe(
+        git(fixture, ['rev-parse', '--absolute-git-dir'])
+      );
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(fixture);
+
+      const hooksPath = git(fixture, ['config', '--get', 'core.hooksPath']);
+      expect(hooksPath).not.toBeNull();
+      const dispatcher = resolve(fixture, hooksPath, 'commit-msg');
+      expect(existsSync(dispatcher)).toBe(true);
+      expect(readFileSync(dispatcher, 'utf8')).toContain('/.husky/commit-msg');
+      const preCommitDispatcher = resolve(fixture, hooksPath, 'pre-commit');
+      expect(readFileSync(preCommitDispatcher, 'utf8')).toContain('--record-prepared-merge');
+
+      const mainCall = spawnSync(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
+      expect(mainCall.status).toBe(1);
+      expect(mainCall.stderr).toContain('commit-msg is missing');
+
+      const detachedMain = spawnSync('git', ['switch', '--quiet', '--detach'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(detachedMain.status, detachedMain.stderr).toBe(0);
+      const detachedMainCall = spawnSync(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
+      expect(detachedMainCall.status).toBe(1);
+      expect(detachedMainCall.stderr).toContain('commit-msg is missing');
+
+      const featureWorktree = join(fixture, 'feature-worktree');
+      const featureCheckout = spawnSync(
+        'git',
+        ['worktree', 'add', '--quiet', '-b', 'feature', featureWorktree, 'main'],
+        {
+          cwd: fixture,
+          encoding: 'utf8',
+        }
+      );
+      expect(featureCheckout.status, featureCheckout.stderr).toBe(0);
+      const reinstallWithSavedIdentity = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: featureWorktree,
+        encoding: 'utf8',
+      });
+      expect(reinstallWithSavedIdentity.status, reinstallWithSavedIdentity.stderr).toBe(0);
+      writeFileSync(join(featureWorktree, 'message-file'), 'Feature change\n');
+      const featureCall = spawnSync(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
+      expect(featureCall.status).toBe(1);
+      expect(featureCall.stderr).toContain('exactly one non-empty Chat: trailer');
+      writeFileSync(join(featureWorktree, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
+      const attributedFeatureCall = spawnSync(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
+      expect(attributedFeatureCall.status).toBe(0);
+
+      const scripts = join(fixture, 'scripts');
+      mkdirSync(scripts);
+      writeFileSync(
+        join(scripts, 'commit-reviewed-landing-message-guard.mjs'),
+        'import { readFileSync } from "node:fs";\n' +
+          'if (readFileSync(process.argv[2], "utf8").includes("run-current-final-guard")) {\n' +
+          '  process.stderr.write("designated main final guard evaluated the linked worktree\\n");\n' +
+          '  process.exitCode = 1;\n' +
+          '}\n'
+      );
+      writeFileSync(join(featureWorktree, 'message-file'), 'run-current-final-guard\n\nChat: fixture-session\n');
+      const finalGuardCall = spawnSync(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
+      expect(finalGuardCall.status).toBe(1);
+      expect(finalGuardCall.stderr).toContain('designated main final guard evaluated the linked worktree');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses first-time hook installation when the linked main checkout is detached', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-detached-install-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: fixture, encoding: 'utf8' });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      writeFileSync(join(fixture, 'README.md'), 'hook fixture\n');
+      git(fixture, ['add', 'README.md']);
+      git(fixture, ['commit', '--quiet', '-m', 'fixture']);
+      git(fixture, ['branch', 'feature']);
+      git(fixture, ['switch', '--quiet', 'feature']);
+
+      const detachedMain = join(fixture, 'detached-main');
+      const mainCheckout = spawnSync('git', ['worktree', 'add', '--quiet', detachedMain, 'main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(mainCheckout.status, mainCheckout.stderr).toBe(0);
+      const detach = spawnSync('git', ['switch', '--quiet', '--detach'], { cwd: detachedMain, encoding: 'utf8' });
+      expect(detach.status, detach.stderr).toBe(0);
+
+      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(install.status).not.toBe(0);
+      expect(install.stderr).toContain('cannot identify the designated main worktree');
+      expect(git(detachedMain, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])).toBeNull();
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a recreated detached main path protected when its private gitdir changed', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-reused-path-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: fixture, encoding: 'utf8' });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      writeFileSync(join(fixture, 'README.md'), 'hook fixture\n');
+      git(fixture, ['add', 'README.md']);
+      git(fixture, ['commit', '--quiet', '-m', 'fixture']);
+      git(fixture, ['branch', 'feature']);
+      git(fixture, ['switch', '--quiet', 'feature']);
+
+      const detachedMain = join(fixture, 'detached-main');
+      const initialCheckout = spawnSync('git', ['worktree', 'add', '--quiet', detachedMain, 'main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(initialCheckout.status, initialCheckout.stderr).toBe(0);
+      const initialInstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(initialInstall.status, initialInstall.stderr).toBe(0);
+      const savedGitDir = realpathSync(git(detachedMain, ['rev-parse', '--absolute-git-dir']));
+
+      const detach = spawnSync('git', ['switch', '--quiet', '--detach'], { cwd: detachedMain, encoding: 'utf8' });
+      expect(detach.status, detach.stderr).toBe(0);
+      const remove = spawnSync('git', ['worktree', 'remove', '--force', detachedMain], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(remove.status, remove.stderr).toBe(0);
+      const recreate = spawnSync('git', ['worktree', 'add', '--quiet', '--detach', detachedMain, 'main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(recreate.status, recreate.stderr).toBe(0);
+      const recreatedGitDir = realpathSync(git(detachedMain, ['rev-parse', '--absolute-git-dir']));
+      // Git may reuse the path-derived admin directory, so pin the stale identity
+      // state explicitly instead of relying on the worktree name allocator.
+      const staleGitDir =
+        savedGitDir !== recreatedGitDir ? savedGitDir : join(fixture, '.git', 'worktrees', 'removed-main');
+      expect(staleGitDir).not.toBe(recreatedGitDir);
+      git(fixture, ['config', '--local', 'ph.mainWorktreeGitDir', staleGitDir]);
+
+      const recreatedMain = resolveWorktree(detachedMain);
+      expect(recreatedMain).toMatchObject({
+        branchRef: null,
+        isMainWorktree: false,
+        isDesignatedMainWorktree: true,
+        isProtectedWorktree: true,
+      });
+      expect(decide({ worktree: recreatedMain })).toEqual({ action: 'refuse' });
+
+      const installWithStaleIdentity = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(installWithStaleIdentity.status).not.toBe(0);
+      expect(installWithStaleIdentity.stderr).toContain('cannot identify the designated main worktree');
+
+      const removeRecreatedMain = spawnSync('git', ['worktree', 'remove', '--force', detachedMain], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(removeRecreatedMain.status, removeRecreatedMain.stderr).toBe(0);
+      const reuseForFeature = spawnSync(
+        'git',
+        ['worktree', 'add', '--quiet', '-b', 'feature-reused', detachedMain, 'main'],
+        {
+          cwd: fixture,
+          encoding: 'utf8',
+        }
+      );
+      expect(reuseForFeature.status, reuseForFeature.stderr).toBe(0);
+      const featureAtOldMainPath = resolveWorktree(detachedMain);
+      expect(featureAtOldMainPath).toMatchObject({
+        branchRef: 'refs/heads/feature-reused',
+        isDesignatedMainWorktree: false,
+        isProtectedWorktree: false,
+      });
+      expect(decide({ worktree: featureAtOldMainPath })).toEqual({ action: 'allow', reason: 'linked worktree' });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it('rechecks a prepared merge after lint-staged can rewrite the index', () => {

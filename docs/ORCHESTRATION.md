@@ -144,7 +144,10 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
 ### The rule is enforced at the commit, not by the reader
 
 `scripts/main-worktree-guard.mjs` runs from `.husky/pre-commit` and refuses to
-record a commit made from the main worktree. It names the worktree recipe and the
+record an ordinary commit made from either the primary Git checkout or the
+designated `main` worktree. The primary checkout stays protected even if it has a
+task branch checked out; pinned landings are allowed only in the designated
+`main` worktree. It names the worktree recipe and the
 one override, so a refusal is a redirect rather than an obstacle: an agent that
 meets a bare "no" commits anyway, from the same checkout, on a branch nobody made.
 It is a program rather than another paragraph for the two reasons above — a
@@ -155,6 +158,19 @@ Ordering is load-bearing: it runs before `gate:commit` because that gate is
 lint-staged plus `tsc -b` plus a build, and lint-staged rewrites staged files with
 `--fix` before the commit is ever called illegitimate.
 
+The hook installer records the designated main worktree's private Git directory
+and root path in shared local Git config (`ph.mainWorktreeGitDir` and
+`ph.mainWorktreePath`). The Git directory keeps the same checkout protected if
+its `HEAD` is detached or switched during a hook. If that private directory
+changes, the saved path still protects a detached checkout there; it does not
+transfer protection to a feature branch that reuses the path. A first install
+fails when `main` is detached and no saved identity exists. The path also lets an
+older linked worktree run the designated checkout's current final message guard
+while its own hook file is missing. Pinned landings and the hotfix override still require
+`refs/heads/main` to be checked out. The final `commit-msg` gate requires exactly
+one non-empty `Chat:` trailer on every commit after `prepare-commit-msg` has had
+a chance to edit the message.
+
 What it does **not** do is stop the write. It runs after the edit, so a session
 that writes into `main` and never commits is not stopped by it. It converts "71
 rogue commits nobody can attribute" into "a dirty tree the next `git status`
@@ -163,8 +179,8 @@ under it.
 
 A separate merge-hook rule applies in every worktree: prepare clean merges with
 `git merge --no-commit --no-ff <full-sha>` and record them with `git commit`.
-The `pre-merge-commit` hook refuses direct self-committing merges because it
-cannot identify the actual incoming commit. Feature merges may omit the three
+The `pre-merge-commit` hook unconditionally refuses direct self-committing merges;
+prepare them with `--no-commit` so the next hook can inspect `MERGE_HEAD`. Feature merges may omit the five
 landing pins; a merge into `main` requires them. If a direct merge is refused,
 check whether Git left `MERGE_HEAD` and abort only that exact attempt before
 retrying through the documented prepared-merge flow. Commit a main landing with
@@ -173,20 +189,34 @@ index snapshot after its hooks run. Land one candidate at a time; octopus merges
 are refused because their multiple incoming commits cannot be checked against a
 single candidate SHA.
 
+The shared `pre-commit` dispatcher records the merge parent and index tree in the
+worktree's private Git directory after the worktree's own checks and lint-staged
+rewrites finish. The final message guard checks that record after
+`prepare-commit-msg`, so a hook that removes both `MERGE_HEAD` and `MERGE_MSG`
+cannot turn a prepared feature merge into an ordinary commit. It also requires
+the final index tree to match the tree pre-commit approved; a message hook cannot
+stage a different merge resolution after the takeover check. After an aborted
+merge, the next pre-commit clears the record only when the index has returned to
+the original `HEAD` tree and no `AUTO_MERGE` marker remains; otherwise, restore
+or inspect that worktree before committing. A leftover `MERGE_MSG` alone does
+not block an ordinary commit after a clean abort.
+
 Three things stay allowed, each deliberately:
 
 - **A pinned landing.** Prepare a clean merge in `main` with
   `git merge --no-commit --no-ff <reviewed-sha>`, then commit from the reviewed
   private index snapshot with `node scripts/commit-reviewed-landing.mjs`.
-  `pre-commit` verifies `HEAD`, the actual `MERGE_HEAD`, and the
-  staged tree before allowing the commit. A direct self-committing merge reaches `pre-merge-commit`
-  before `MERGE_HEAD` is readable here and is refused; a fast-forward invokes no
+  `pre-commit` verifies `HEAD`, the actual `MERGE_HEAD`, the staged tree, and
+  reviewed snapshot marker before allowing the commit. `commit-msg` repeats the
+  snapshot checks and verifies the final message after `prepare-commit-msg` has
+  run. The `pre-merge-commit` hook refuses direct self-committing merges on every
+  supported Git version; a fast-forward invokes no
   blocking hook, so neither path is a landing procedure. The merge still invokes
   the non-blocking `post-merge` hook after it is recorded.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
-  like a denial into a bypass.
+  like a denial into a bypass. The commit still requires its `Chat:` trailer.
 - **A repository the guard cannot place.** Detection fails open and policy fails
   closed, because they are different questions: a git that will not answer is a
   broken environment, not a decision, and blocking there would trade a real gate
@@ -201,19 +231,24 @@ Three things stay allowed, each deliberately:
   with `--no-commit --no-ff` so its actual `MERGE_HEAD` can be checked. Merging a
   stale branch straight into `main` puts the conflicts in a
   shared checkout where every other session is committing.
-- **A harvest must pin both merge parents and its tree.** Before review and gates, record the
-  exact `main` SHA and candidate SHA/tree. Prepare the final non-fast-forward
-  landing with `git merge --no-commit --no-ff <full-reviewed-sha>`, then pass
-  `KILO_EXPECTED_MAIN_SHA`, `KILO_EXPECTED_INCOMING_SHA`, and
-  `KILO_EXPECTED_TREE_SHA` to `node scripts/commit-reviewed-landing.mjs` as shown in
-  `.skills/worktree-merge-harvest.md` §Step 6. In the project main worktree,
-  `main-worktree-guard.mjs` and `merge-takeover-guard.mjs` compare the parent and
-  tree pins with `HEAD`, Git's actual `MERGE_HEAD`, and the staged result tree in
-  a private index snapshot
-  before creating the merge commit.
-  Supply these pins from the reviewed candidate record; the guard compares the
-  supplied values but cannot authenticate who supplied them. Reflog text is
-  caller-controlled and is not used to identify the incoming side.
+- **A harvest must pin both merge parents, its tree, source branch, and chat.** Before review
+  and gates, record the exact `main` SHA, candidate SHA/tree, source branch, and chat ID. Prepare
+  the final non-fast-forward landing with `git merge --no-commit --no-ff <full-reviewed-sha>`,
+  then pass `KILO_EXPECTED_MAIN_SHA`, `KILO_EXPECTED_INCOMING_SHA`, `KILO_EXPECTED_TREE_SHA`,
+  `KILO_EXPECTED_BRANCH`, and `KILO_EXPECTED_CHAT_ID` to
+  `node scripts/commit-reviewed-landing.mjs` as shown in
+  `.skills/worktree-merge-harvest.md` §Step 6. The helper requires exactly matching `Branch:`
+  and `Chat:` trailers, verifies that the source branch still resolves to the reviewed incoming
+  SHA, and creates a mode-restricted workflow marker for its private index snapshot. The marker
+  helps detect accidental alternate-index use; a same-user caller can deliberately construct
+  it, so it is not an authentication boundary. In the project main
+  worktree, `main-worktree-guard.mjs` and `merge-takeover-guard.mjs` compare the pins with
+  `HEAD`, Git's actual `MERGE_HEAD`, the staged result tree, and that marker before creating the
+  merge commit. The `commit-msg` hook checks the final `Branch:` and `Chat:` trailers after
+  `prepare-commit-msg`, which can rewrite the message after `pre-commit`. The pins bind the
+  prepared operation to the reviewed record; they do not
+  authenticate who supplied them. Reflog text is caller-controlled and is not used to identify
+  the incoming side.
   A board claim coordinates paths but is not a main-ref lock. Fast-forward and
   squash merges bypass this blocking check and are not the harvest landing path.
 - **The landing checkout must be clean before the merge starts.** Run `git status --short` and
@@ -221,6 +256,12 @@ Three things stay allowed, each deliberately:
   Do not stage, stash, reset, abort, or resolve another session's work to make the
   landing appear clean. Wait for its owner; do not create a second checkout to
   update the same `main` branch ref.
+- **Refresh shared hook dispatchers when a candidate adds a hook.** After preparing a
+  conflict-free merge that adds the tracked hook file, run `node scripts/install-git-hooks.js`
+  from the candidate worktree and verify its dispatcher exists in the common Git directory,
+  before creating the landing commit. If a non-main linked worktree has not synced the tracked
+  hook yet, the shared dispatcher still requires exactly one non-empty `Chat:` trailer; it
+  skips only the main landing checks. It fails closed on `main`.
 - **Never resolve a conflict in the main worktree**, and never repair one there
   with `reset --hard`, `checkout --ours`/`--theirs`, `hash-object`, or
   `update-index`. The first two destroy another session's uncommitted work; the
@@ -272,10 +313,11 @@ status` and `git diff` before staging.
   or lost lines for no reason the branch explains.
   **Now enforced, not merely written down.** `scripts/merge-takeover-guard.mjs` runs from
   `pre-commit` (when `MERGE_HEAD` is set, for a conflicted merge being completed or a clean
-  merge prepared with `--no-commit`) and from `pre-merge-commit` (where it refuses direct clean
-  merges because the actual incoming commit is not available), and it refuses the merge
-  rather than reporting it. A reviewer only catches the files its brief happened to mention;
-  this catches every path the merge resolved by copying one whole side's content. Three
+  merge prepared with `--no-commit`). The `pre-merge-commit` hook unconditionally refuses
+  direct clean merges, regardless of `MERGE_HEAD` timing. A detected takeover is refused
+  rather than reported. A reviewer only catches the files its brief happened to mention;
+  this catches paths where the merge copied one side's content or silently discarded a
+  whole-file change. Three
   shapes, none of which produces a conflict marker: the result is the pre-divergence
   content (the `-A` case above), it is the incoming side's file verbatim
   (`checkout --theirs <path>`, or `git merge -X theirs`), or it is THIS side's version of
@@ -286,15 +328,21 @@ status` and `git diff` before staging.
   construction and `git merge -s ours` reported `clean — 0 path(s) moved by the merge`
   while deleting the branch's commit. `docs/DOCUMENTATION.md`'s one-home rule is why the
   asymmetry survived: `-X theirs` was documented and its inverse was simply never written
-  down, so there was nothing to contradict.
+  down, so there was nothing to contradict. The incoming-side scan also checks whole-file
+  deletions in both directions: it reports an ignored branch deletion, and it reports a
+  deletion that removes distinct HEAD content unless resolve-undo records an explicit
+  modify/delete choice.
 
   It finds that shape through a second scan over **the paths the INCOMING side changed**,
   not the paths HEAD changed, and that distinction is load-bearing: `-s ours` applies
   nothing at all, so a branch's added files vanish too, and a scan over HEAD's changes
   finds only the contested subset and reports the rest of a dropped commit as clean.
 
-  All three shapes are measured the same way — by asking whether a line the losing side
-  committed is **absent** from the result, not by counting a diff. `--numstat` bills a
+  Content changes in all three shapes are measured by asking whether a line the losing side
+  committed is **absent** from the result, not by counting a diff. Whole-file deletions have
+  no lines on the deleted side, so their missing path is counted once. A conflict resolved by
+  staging one whole side's blob is still detected; a custom resolution whose blob matches
+  neither side is outside this detector. `--numstat` bills a
   moved line as one deletion plus one insertion, so a result that is a superset in content
   but not in line order reads as a loss; measuring content is what makes "this side's
   version won" mean that something was actually dropped. A resolution that is neither
@@ -312,12 +360,13 @@ status` and `git diff` before staging.
   dirty worktrees remain held and are reported. `--no-verify` bypasses the gating hooks,
   but not `post-merge`.
 
-  **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
-  about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
-  repository, driven through `findTakeovers` with the real index. All seven destroyed
-  committed work and reported success. **Replayed over every merge on `main` before and after
-  the fixes, the same merges are refused, with the same kinds and the same paths** —
-  every change was a shape that was _invisible_, never a verdict that moved:
+  **Seven original shapes it used to pass, found by adversarial review and measured, not
+  reasoned about.** Each was reproduced against the guard as it stood: a real merge in a
+  throwaway repository, driven through `findTakeovers` with the real index. All seven
+  destroyed committed work and reported success. The historical replay for those seven
+  fixes covered every merge on `main` at that time: the same 36 merges were refused before
+  and after, with the same kinds and paths. That count predates the whole-file deletion
+  checks below and is not a current replay total.
 
   | Shape                                              | What it destroyed                                   | How it slipped through                                                                                                                                                                                           |
   | -------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -336,6 +385,13 @@ status` and `git diff` before staging.
   whose subject matter is images — an unread blob measures as no loss, so the largest possible
   silent pass was also the most likely one. Both now refuse, and the second raises rather than
   returning an empty map: an unread blob must never be a zero.
+
+  **A later adversarial pass found a whole-file deletion gap in both directions.** If the
+  incoming side deleted a path, `-s ours` could silently preserve HEAD's file and discard the
+  committed deletion. Conversely, a result that applied that deletion could erase HEAD's
+  distinct post-base edit. The guard counts the first as one lost incoming path and the
+  second as one lost HEAD path; resolve-undo evidence preserves the existing exception for
+  an explicit modify/delete choice.
 
   **One shape it still cannot see, and it is not a merge defect.** `git merge --squash -X ours`
   produces a staged tree identical to HEAD's, so `git commit` answers "nothing to commit", there
@@ -451,7 +507,7 @@ repo:state` is what reports an operation in progress, and it separates the two s
   the worktree it is running in. Every worktree made by `git worktree add` had no
   `.husky/_`, so git found no hook, ran nothing, and exited 0.
   `core.hooksPath` now points at `<common git dir>/hooks-gate`, which every
-  worktree shares, and the tracked `.husky/pre-commit` is what runs. **If a hook
+  worktree shares, and the tracked `.husky/<hook>` entry points are what run. **If a hook
   ever stops firing, run `git config core.hooksPath` first and assume nothing.**
   Re-install with `npm install` (the `prepare` script).
 - **A worktree on an older commit blocks with a specific message, not a mystery
