@@ -11,7 +11,7 @@ This page is about how.
 **`store.durableDocument` is a complete, correctly-typed, fully-populated
 document whose authority is surface-specific during the staged cutover.**
 
-It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
+It has thirteen operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
 rebuilt on every commit and every navigation. Successful supported navigation,
 eligible committed append/reorder presentation, and export consume its materialized
@@ -46,11 +46,14 @@ Evidence, all three current:
   publication is awaited and the complete legacy replay is painted only for the
   fallback outcome.
 
-`src/contexts/materialization.ts` has one production importer,
-`src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
+`src/contexts/materialization.ts` has one runtime production importer,
+`src/contexts/durable-compositor.ts`; `durable-render-projection.ts` imports only
+its `MaterializedLayer` type. `StoreContext.boundary-gates.test.ts` pins both
+source-level import sites. **The compositor is no longer isolated:**
 `StoreContext.tsx`'s staged navigation and background append/reorder publication
-paths call `composeDurableDocument()`, so the durable document feeds supported
-presentation surfaces. It does not replace logical state:
+paths call
+`composeDurableDocument()`, so the durable document feeds supported presentation
+surfaces. It does not replace logical state:
 the composition is staged off-tree, every layer is checked by
 `durablePresentationIsRendererIdentical()` against the legacy structural replay,
 and the complete result is published into `durableRenderProjection` with a
