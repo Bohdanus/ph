@@ -166,9 +166,13 @@ Git directory. The matching marker keeps the same checkout protected if its
 inherit protection if Git reuses the old path-derived admin directory. If the
 private directory changes, the saved path still protects a detached checkout
 there; it does not transfer protection to a feature branch that reuses the path.
-A first install fails when `main` is detached and no saved identity exists. The
-path also lets an older linked worktree run the designated checkout's current
-final message guard while its own hook file is missing. Pinned landings and the hotfix override still require
+A hook install while `main` is checked out seeds an identity marker for older
+registrations that recorded only the path and private Git directory. A first
+install fails when `main` is detached and no saved identity exists. The path
+also lets an older linked worktree run the designated checkout's current final
+message guard while its own hook file is missing, but only while the saved path
+still has the recorded private directory and matching marker; a reused path
+cannot supply that guard. Pinned landings and the hotfix override still require
 `refs/heads/main` to be checked out. The final `commit-msg` gate requires exactly
 one non-empty `Chat:` trailer on every commit after `prepare-commit-msg` has had
 a chance to edit the message.
@@ -202,6 +206,13 @@ merge, the next pre-commit clears the record only when the index has returned to
 the original `HEAD` tree and no `AUTO_MERGE` marker remains; otherwise, restore
 or inspect that worktree before committing. A leftover `MERGE_MSG` alone does
 not block an ordinary commit after a clean abort.
+The merge record begins when the `pre-commit` dispatcher runs. If an operator
+runs `git merge --quit` before that first snapshot, Git removes the merge state
+while leaving the staged result; the guard cannot recover the discarded parent
+from the later ordinary commit. `post-merge` does not run for `--no-commit`, so
+it cannot close this pre-snapshot gap. Treat `--quit` as abandoning the prepared
+merge and reset or restore the index before making another commit. After the
+first snapshot, marker removal is detected and the commit is refused.
 
 Three things stay allowed, each deliberately:
 

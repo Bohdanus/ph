@@ -99,10 +99,15 @@ function readMainWorktreeIdentity(gitDir) {
  * @param {{ required?: boolean }} options When true, persistence failures are surfaced to hook installation.
  * @returns {boolean}
  */
-export function registerMainWorktree(cwd = process.cwd(), { required = false } = {}) {
+export function registerMainWorktree(cwd = process.cwd(), { required = false, allowDetached = false } = {}) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   try {
-    if (git(['symbolic-ref', '--quiet', 'HEAD']) !== 'refs/heads/main') return false;
+    let branchRef = null;
+    try {
+      branchRef = git(['symbolic-ref', '--quiet', 'HEAD']);
+    } catch {
+      // Detached HEAD is eligible only after the installer validates its saved identity.
+    }
     const gitDir = realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir'])));
     const worktreePath = realpathSync(cwd);
     let registeredGitDir = null;
@@ -123,7 +128,22 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false } =
     } catch {
       // The first main-worktree registration has no identity token yet.
     }
-    if (registeredGitDir !== gitDir || registeredIdentity !== readMainWorktreeIdentity(gitDir)) {
+    if (
+      branchRef !== 'refs/heads/main' &&
+      (!allowDetached ||
+        branchRef !== null ||
+        registeredGitDir !== gitDir ||
+        (registeredPath !== worktreePath && registeredIdentity !== readMainWorktreeIdentity(gitDir)))
+    ) {
+      return false;
+    }
+    const worktreeIdentity = readMainWorktreeIdentity(gitDir);
+    if (
+      registeredGitDir !== gitDir ||
+      !registeredIdentity ||
+      !worktreeIdentity ||
+      registeredIdentity !== worktreeIdentity
+    ) {
       registeredIdentity = randomUUID();
       writeFileSync(join(gitDir, MAIN_WORKTREE_ID_FILENAME), `${registeredIdentity}\n`, { mode: 0o600 });
       git(['config', '--local', MAIN_WORKTREE_ID_KEY, registeredIdentity]);
@@ -242,7 +262,13 @@ export function resolveWorktree(cwd = process.cwd()) {
       // A repository that has not registered main has no saved identity token yet.
     }
     const worktreePath = realpathSync(cwd);
-    if (isMainWorktree && (registeredMainGitDir !== gitDir || registeredMainPath !== worktreePath)) {
+    if (
+      isMainWorktree &&
+      (registeredMainGitDir !== gitDir ||
+        registeredMainPath !== worktreePath ||
+        !registeredMainIdentity ||
+        registeredMainIdentity !== readMainWorktreeIdentity(gitDir))
+    ) {
       registerMainWorktree(cwd);
     }
     const hasRegisteredMainIdentity =

@@ -30,7 +30,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { registerMainWorktree } from './main-worktree-guard.mjs';
@@ -76,7 +76,21 @@ if [ ! -f "$hook" ]; then
 \tif [ "${name}" = "commit-msg" ]; then
 \t\tmain_worktree_path="$(git config --local --get ph.mainWorktreePath 2>/dev/null || true)"
 \t\tmain_message_guard="$main_worktree_path/scripts/commit-reviewed-landing-message-guard.mjs"
-\t\tif [ -f "$main_message_guard" ]; then
+\t\tregistered_main_git_dir="$(git config --local --get ph.mainWorktreeGitDir 2>/dev/null || true)"
+\t\tregistered_main_identity="$(git config --local --get ph.mainWorktreeIdentity 2>/dev/null || true)"
+\t\tvalidated_main_git_dir=""
+\t\tvalidated_main_identity=""
+\t\tsaved_main_identity_match=false
+\t\tif [ -n "$main_worktree_path" ] && [ -d "$main_worktree_path" ]; then
+\t\t\tvalidated_main_git_dir="$(git -C "$main_worktree_path" rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null || true)"
+\t\t\tif [ -n "$validated_main_git_dir" ] && [ -f "$validated_main_git_dir/kilo-main-worktree-identity" ]; then
+\t\t\t\tvalidated_main_identity="$(cat "$validated_main_git_dir/kilo-main-worktree-identity" 2>/dev/null || true)"
+\t\t\tfi
+\t\tfi
+\t\tif [ -n "$registered_main_identity" ] && [ "$validated_main_git_dir" = "$registered_main_git_dir" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
+\t\t\tsaved_main_identity_match=true
+\t\tfi
+\t\tif [ -f "$main_message_guard" ] && [ -n "$registered_main_identity" ] && [ "$validated_main_git_dir" = "$registered_main_git_dir" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
 \t\t\tnode "$main_message_guard" "$1"
 \t\t\texit $?
 \t\tfi
@@ -84,7 +98,6 @@ if [ ! -f "$hook" ]; then
 \t\tcurrent_git_dir="$(git rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null || true)"
 \t\tcommon_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 \t\tdesignated_main_git_dir="$(git config --local --get ph.mainWorktreeGitDir 2>/dev/null || true)"
-\t\tregistered_main_identity="$(git config --local --get ph.mainWorktreeIdentity 2>/dev/null || true)"
 \t\tcurrent_main_identity=""
 \t\tif [ -n "$current_git_dir" ] && [ -f "$current_git_dir/kilo-main-worktree-identity" ]; then
 \t\t\tcurrent_main_identity="$(cat "$current_git_dir/kilo-main-worktree-identity" 2>/dev/null || true)"
@@ -103,10 +116,14 @@ if [ ! -f "$hook" ]; then
 \t\tcurrent_branch_ref="$(git symbolic-ref --quiet HEAD 2>/dev/null || true)"
 \t\tcurrent_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 \t\tdetached_designated_main_path=false
-\t\tif [ -n "$main_worktree_path" ] && [ "$current_worktree_path" = "$main_worktree_path" ] && [ -z "$current_branch_ref" ]; then
+\t\tif [ -z "$registered_main_identity" ] && [ -n "$main_worktree_path" ] && [ "$current_worktree_path" = "$main_worktree_path" ] && [ -z "$current_branch_ref" ]; then
 \t\t\tdetached_designated_main_path=true
 \t\tfi
 \t\tif [ "$current_branch" != "main" ] && [ "$current_git_dir" != "$common_git_dir" ] && [ "$designated_main_identity_match" != true ] && [ "$detached_designated_main_path" != true ]; then
+\t\tif [ -n "$registered_main_identity" ] && [ "$saved_main_identity_match" != true ]; then
+\t\t\techo "gate: cannot locate the designated main commit-msg guard with its saved identity; run 'npm install' from the designated main worktree" >&2
+\t\t\texit 1
+\t\tfi
 \t\tif git interpret-trailers --parse "$1" 2>/dev/null | awk -F: 'tolower($1) == "chat" { count++; if (substr($0, index($0, ":") + 1) ~ /[^[:space:]]/) nonempty++ } END { exit !(count == 1 && nonempty == 1) }'; then
 \t\t\texit 0
 \t\tfi
@@ -195,27 +212,67 @@ function main() {
   if (!mainPath) {
     let registeredPath = null;
     let registeredGitDir = null;
+    let registeredIdentity = null;
     try {
       registeredPath = git(['config', '--local', '--get', 'ph.mainWorktreePath']);
       registeredGitDir = git(['config', '--local', '--get', 'ph.mainWorktreeGitDir']);
+      registeredIdentity = git(['config', '--local', '--get', 'ph.mainWorktreeIdentity']);
     } catch {
       // A first install with detached main has no saved identity to fall back to.
     }
-    const canonicalRegisteredPath = registeredPath ? realpathSync(registeredPath) : null;
-    const registeredRecord = canonicalRegisteredPath
+    let canonicalRegisteredPath = null;
+    try {
+      if (registeredPath) canonicalRegisteredPath = realpathSync(registeredPath);
+    } catch {
+      // The registered worktree may have moved; its private marker can identify it below.
+    }
+    let registeredRecord = canonicalRegisteredPath
       ? records.find((record) => {
           const recordPath = record.match(/^worktree (.+)$/m)?.[1];
           try {
-            return recordPath && realpathSync(recordPath) === canonicalRegisteredPath;
+            return (
+              /(?:^|\n)detached(?:\n|$)/.test(record) &&
+              recordPath &&
+              realpathSync(recordPath) === canonicalRegisteredPath
+            );
           } catch {
             return false;
           }
         })
       : null;
+    if (registeredIdentity && registeredGitDir) {
+      for (const record of records) {
+        if (!/(?:^|\n)detached(?:\n|$)/.test(record)) continue;
+        const recordPath = record.match(/^worktree (.+)$/m)?.[1];
+        if (!recordPath) continue;
+        try {
+          const actualPath = realpathSync(recordPath);
+          const actualGitDir = realpathSync(
+            execFileSync('git', ['-C', actualPath, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'], {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'pipe'],
+            }).trim()
+          );
+          const identityPath = path.join(actualGitDir, 'kilo-main-worktree-identity');
+          if (
+            actualGitDir === realpathSync(registeredGitDir) &&
+            existsSync(identityPath) &&
+            readFileSync(identityPath, 'utf8').trim() === registeredIdentity
+          ) {
+            canonicalRegisteredPath = actualPath;
+            registeredRecord = record;
+            break;
+          }
+        } catch {
+          // A stale or moved nonmatching worktree is not identity proof.
+        }
+      }
+    }
     let registeredIdentityMatches = false;
+    let validatedDetachedMainPath = null;
     if (registeredPath && registeredGitDir && registeredRecord) {
       try {
-        const actualPath = realpathSync(registeredPath);
+        const actualPath = realpathSync(registeredRecord.match(/^worktree (.+)$/m)[1]);
         const actualGitDir = realpathSync(
           execFileSync('git', ['-C', actualPath, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'], {
             encoding: 'utf8',
@@ -228,10 +285,14 @@ function main() {
             stdio: ['ignore', 'pipe', 'pipe'],
           }).trim()
         );
+        const actualIdentity = readFileSync(path.join(actualGitDir, 'kilo-main-worktree-identity'), 'utf8').trim();
         registeredIdentityMatches =
+          Boolean(registeredIdentity) &&
+          actualIdentity === registeredIdentity &&
           actualPath === canonicalRegisteredPath &&
           actualGitDir === realpathSync(registeredGitDir) &&
           actualCommonDir === realpathSync(commonDir);
+        if (registeredIdentityMatches) validatedDetachedMainPath = actualPath;
       } catch {
         // A stale path or identity is not proof that the protected checkout remains available.
       }
@@ -240,6 +301,9 @@ function main() {
       throw new Error(
         'cannot identify the designated main worktree: keep refs/heads/main checked out during the first hook install, or restore its saved identity'
       );
+    }
+    if (!registerMainWorktree(validatedDetachedMainPath, { required: true, allowDetached: true })) {
+      throw new Error(`could not migrate the detached main worktree identity for ${validatedDetachedMainPath}`);
     }
   }
 

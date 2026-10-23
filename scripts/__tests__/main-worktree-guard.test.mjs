@@ -375,6 +375,19 @@ describe('the guard is actually installed', () => {
       );
       expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(fixture);
 
+      // Upgrade the earlier path/gitdir-only registration while main is checked out.
+      // An absent identity token must be seeded even when both old config values match.
+      const mainGitDir = realpathSync(git(fixture, ['rev-parse', '--absolute-git-dir']));
+      rmSync(join(mainGitDir, 'kilo-main-worktree-identity'), { force: true });
+      git(fixture, ['config', '--local', '--unset', 'ph.mainWorktreeIdentity']);
+      const upgradeInstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(upgradeInstall.status, upgradeInstall.stderr).toBe(0);
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeIdentity'])).toMatch(/^[0-9a-f-]{36}$/i);
+      expect(existsSync(join(mainGitDir, 'kilo-main-worktree-identity'))).toBe(true);
+
       const hooksPath = git(fixture, ['config', '--get', 'core.hooksPath']);
       expect(hooksPath).not.toBeNull();
       const dispatcher = resolve(fixture, hooksPath, 'commit-msg');
@@ -547,7 +560,7 @@ describe('the guard is actually installed', () => {
       writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
       const staleDetachedMainCall = spawnSync(dispatcher, ['message-file'], { cwd: detachedMain, encoding: 'utf8' });
       expect(staleDetachedMainCall.status).toBe(1);
-      expect(staleDetachedMainCall.stderr).toContain('commit-msg is missing');
+      expect(staleDetachedMainCall.stderr).toContain('cannot locate the designated main commit-msg guard');
 
       const removeRecreatedMain = spawnSync('git', ['worktree', 'remove', '--force', detachedMain], {
         cwd: fixture,
@@ -577,12 +590,23 @@ describe('the guard is actually installed', () => {
         isProtectedWorktree: false,
       });
       expect(decide({ worktree: featureAtOldMainPath })).toEqual({ action: 'allow', reason: 'linked worktree' });
+      const staleGuardScripts = join(detachedMain, 'scripts');
+      mkdirSync(staleGuardScripts, { recursive: true });
+      writeFileSync(join(staleGuardScripts, 'commit-reviewed-landing-message-guard.mjs'), 'process.exit(0);\n');
+      writeFileSync(join(detachedMain, 'message-file'), 'Feature change without attribution\n');
+      const staleGuardSourceCall = spawnSync(dispatcher, ['message-file'], {
+        cwd: detachedMain,
+        encoding: 'utf8',
+      });
+      expect(staleGuardSourceCall.status).toBe(1);
+      expect(staleGuardSourceCall.stderr).toContain('cannot locate the designated main commit-msg guard');
       writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
       const featureAtOldMainPathCall = spawnSync(dispatcher, ['message-file'], {
         cwd: detachedMain,
         encoding: 'utf8',
       });
-      expect(featureAtOldMainPathCall.status).toBe(0);
+      expect(featureAtOldMainPathCall.status).toBe(1);
+      expect(featureAtOldMainPathCall.stderr).toContain('cannot locate the designated main commit-msg guard');
 
       writeFileSync(join(detachedMain, 'feature-only.txt'), 'feature commit\n');
       git(detachedMain, ['add', 'feature-only.txt']);
@@ -619,6 +643,70 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(detachedFeatureAtOldMainPathCall.status).toBe(1);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('finds a moved detached main identity after its old path is reused', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-moved-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: fixture, encoding: 'utf8' });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      writeFileSync(join(fixture, 'README.md'), 'hook fixture\n');
+      git(fixture, ['add', 'README.md']);
+      git(fixture, ['commit', '--quiet', '-m', 'fixture']);
+      git(fixture, ['branch', 'feature']);
+      git(fixture, ['switch', '--quiet', 'feature']);
+
+      const oldMainPath = join(fixture, 'designated-main-old');
+      const movedMainPath = join(fixture, 'designated-main-moved');
+      const mainCheckout = spawnSync('git', ['worktree', 'add', '--quiet', oldMainPath, 'main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(mainCheckout.status, mainCheckout.stderr).toBe(0);
+      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(install.status, install.stderr).toBe(0);
+      const detachMain = spawnSync('git', ['switch', '--quiet', '--detach'], {
+        cwd: oldMainPath,
+        encoding: 'utf8',
+      });
+      expect(detachMain.status, detachMain.stderr).toBe(0);
+      const moveMain = spawnSync('git', ['worktree', 'move', oldMainPath, movedMainPath], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(moveMain.status, moveMain.stderr).toBe(0);
+      const reuseOldPath = spawnSync('git', ['worktree', 'add', '--quiet', '--detach', oldMainPath, 'main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(reuseOldPath.status, reuseOldPath.stderr).toBe(0);
+
+      const reinstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(reinstall.status, reinstall.stderr).toBe(0);
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(movedMainPath);
+
+      const movedScripts = join(movedMainPath, 'scripts');
+      mkdirSync(movedScripts);
+      writeFileSync(
+        join(movedScripts, 'commit-reviewed-landing-message-guard.mjs'),
+        'process.stderr.write("moved designated main guard evaluated\\n"); process.exitCode = 1;\n'
+      );
+      const dispatcher = resolve(fixture, git(fixture, ['config', '--get', 'core.hooksPath']), 'commit-msg');
+      writeFileSync(join(fixture, 'message-file'), 'sentinel\n\nChat: fixture-session\n');
+      const finalGuardCall = spawnSync(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
+      expect(finalGuardCall.status).toBe(1);
+      expect(finalGuardCall.stderr).toContain('moved designated main guard evaluated');
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
