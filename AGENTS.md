@@ -12,6 +12,8 @@ Photoshop clone. The toolbar is a Photoshop clone — HARD REQUIREMENT.
 
 Support desktop and tablet/touch devices, including Retina/high-DPI. Do not add phone layouts or phone-specific interactions.
 
+Keep pixel-substitution tools such as Color Replacement on their own args, processor, and options bar; do not add them to the paint tools' `PaintToolName` union (`src/tools/brush.ts`).
+
 ## Agents And Reviews
 
 - In Kilo Code, use `task` for research and `agent_manager` only for visible sessions/worktrees. For Codex orchestration, follow [`docs/CODEX-ORCHESTRATION.md`](docs/CODEX-ORCHESTRATION.md); do not assume Kilo tools or model/provider routing exist in Codex. Give each subagent an absolute worktree path and exclusive write set.
