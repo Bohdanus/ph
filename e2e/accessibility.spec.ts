@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Locator, type Page, test, type TestInfo } from './fixtures/extended-test';
+import { expect, type Locator, type Page, test, type TestInfo, useAppDefaultTheme } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { clickToolButton, openToolFlyoutViaKeyboard } from './helpers/toolbar-helpers';
@@ -51,7 +51,7 @@ import { clickToolButton, openToolFlyoutViaKeyboard } from './helpers/toolbar-he
  * `workspace-canvas` plus a stack of overlays, and a document-wide sweep attributes
  * whatever it finds there to the shell.
  *
- * The original desktop scopes cover distinct kinds of widget, not only the
+ * The desktop scopes cover distinct kinds of widget, not only the
  * most-likely-to-fail spots:
  *
  * 1. **The shell** (`document`, unscoped) — DesktopHeader, the tools rail, the right
@@ -67,8 +67,10 @@ import { clickToolButton, openToolFlyoutViaKeyboard } from './helpers/toolbar-he
  *    between the file commands and the document, and before the guard moved into the
  *    app it was a native `confirm()` — which axe cannot audit at all, so nothing else
  *    in this file could ever have covered it.
- * 5. **A live portalled tool flyout at tablet width** — its positioning wrapper is absent
- *    from the app-shell scan while the flyout is closed.
+ * 5. **The same four desktop surfaces in dark theme** — the shared test fixture pins
+ *    light for reliable pixel oracles, so these scans release the pin and reload.
+ * 6. **A live portalled tool flyout at tablet width in both themes** — its positioning
+ *    wrapper is absent from the app-shell scan while the flyout is closed.
  *
  * The tablet flyout scan is additive; the original desktop scopes are not relaxed.
  *
@@ -77,20 +79,18 @@ import { clickToolButton, openToolFlyoutViaKeyboard } from './helpers/toolbar-he
  * This is the part that decides whether the file is worth keeping, so it is stated at
  * length and in the negative.
  *
- * - **Green means axe found nothing in the scanned states, in the light theme.** The
- *   original four scopes use the desktop viewport; the flyout scope uses a tablet
- *   viewport. It does not mean the app is accessible. axe covers roughly 30-40% of WCAG
+ * - **Green means axe found no violations in the scanned states and themes.** The
+ *   desktop scopes use the desktop viewport; the flyout scope uses a tablet viewport.
+ *   A green run does not mean the app is accessible. axe covers roughly 30-40% of WCAG
  *   as a matter of design; the rest — keyboard operability, focus order, focus
  *   visibility, a screen reader actually understanding a canvas editor, error recovery,
  *   timing — is invisible to it and is mostly invisible to Playwright too.
- * - **Dark theme is not scanned by this file.** The audits make no dark-theme assertion;
- *   a green run here does not cover dark mode.
  * - **A canvas photo editor has no meaningful non-visual equivalent.** The document
  *   is a `<canvas>`; its pixels are the content, and there is no DOM to expose. axe
  *   scans the SHELL AROUND the canvas and says nothing about the canvas. A green run
  *   here is a statement about the furniture, not the picture.
- * - **The scans are per-state, not per-app.** Five snapshots cover the shell, dialogs,
- *   one options bar, and one tablet flyout. Other overlays and dark theme are unscanned.
+ * - **The scans are per-state, not per-app.** Ten snapshots cover four desktop surfaces
+ *   in both themes and one tablet flyout in both themes. Other overlays are unscanned.
  * - **Contrast is measured on a headless render at one window size.** A subpixel
  *   difference between browsers or display scales can move a borderline pair across a
  *   threshold; inspect attached axe details rather than treating a result as universal.
@@ -105,8 +105,8 @@ import { clickToolButton, openToolFlyoutViaKeyboard } from './helpers/toolbar-he
  *
  * ## Gate policy
  *
- * All scans assert zero violations. The original shell findings were repaired in source,
- * and the tablet flyout is now scanned while open; neither state suppresses rules.
+ * All scans assert zero violations. The app shell is scanned in light and dark themes,
+ * and the tablet flyout is scanned while open; neither state suppresses rules.
  */
 
 /**
@@ -146,6 +146,13 @@ const DEFAULT_RULESET = 'every axe rule, no tag filter, nothing disabled';
 /** The one snapshot every scan below is taken at. */
 const VIEWPORT = { width: 1280, height: 720 };
 const TABLET_VIEWPORT = { width: 900, height: 720 };
+
+async function loadDarkApplication(page: Page): Promise<void> {
+  await page.goto('/');
+  await useAppDefaultTheme(page);
+  await page.reload();
+  await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+}
 
 /**
  * Renders a violation list as text a human can act on.
@@ -360,6 +367,21 @@ test('the New Image dialog has no axe violations', async ({ page }, testInfo) =>
   );
 });
 
+test('the dark New Image dialog has no axe violations', async ({ page }, testInfo) => {
+  await page.setViewportSize(VIEWPORT);
+  await loadDarkApplication(page);
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-new-button').click();
+  await acceptDiscardPrompt(page);
+
+  const dialog = await resolveScope(page, '[data-testid="new-image-dialog"]', 'the dark New Image dialog');
+  await expect(dialog).toBeVisible();
+  await expectNoViolations(page, testInfo, 'new-image-dialog-dark', (builder) =>
+    builder.include('[data-testid="new-image-dialog"]')
+  );
+});
+
 /**
  * The unsaved-changes guard — the app's own modal, and a FOURTH region.
  *
@@ -406,6 +428,21 @@ test('the unsaved-changes prompt has no axe violations', async ({ page }, testIn
   await acceptDiscardPrompt(page);
 });
 
+test('the dark unsaved-changes prompt has no axe violations', async ({ page }, testInfo) => {
+  await page.setViewportSize(VIEWPORT);
+  await loadDarkApplication(page);
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-new-button').click();
+
+  const prompt = await resolveScope(page, '[data-testid="confirm-dialog"]', 'the dark unsaved-changes prompt');
+  await expect(prompt).toBeVisible();
+  await expectNoViolations(page, testInfo, 'confirm-dialog-dark', (builder) =>
+    builder.include('[data-testid="confirm-dialog"]')
+  );
+  await acceptDiscardPrompt(page);
+});
+
 /**
  * The Draw tool's options bar.
  *
@@ -440,6 +477,18 @@ test("the Draw tool's options bar has no axe violations", async ({ page }, testI
   await resolveScope(page, scope, "the Draw tool's options bar");
 
   await expectNoViolations(page, testInfo, 'draw-options-bar', (builder) => builder.include(scope));
+});
+
+test("the dark Draw tool's options bar has no axe violations", async ({ page }, testInfo) => {
+  await page.setViewportSize(VIEWPORT);
+  await loadDarkApplication(page);
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+  await clickToolButton(page, 'draw');
+  await expect(page.locator('#pen-type'), 'the dark Draw options bar is the one on screen').toBeVisible();
+
+  const scope = 'div[class~="[grid-area:toolbar]"]';
+  await resolveScope(page, scope, "the dark Draw tool's options bar");
+  await expectNoViolations(page, testInfo, 'draw-options-bar-dark', (builder) => builder.include(scope));
 });
 
 /**
@@ -534,6 +583,15 @@ test('the application shell has no axe violations', async ({ page }, testInfo) =
   await expectNoViolations(page, testInfo, 'app-shell', (builder) => builder);
 });
 
+test('the dark application shell has no axe violations', async ({ page }, testInfo) => {
+  await page.setViewportSize(VIEWPORT);
+  await loadDarkApplication(page);
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+  await expect(page.getByTestId('left-sidebar')).toBeVisible();
+
+  await expectNoViolations(page, testInfo, 'app-shell-dark', (builder) => builder);
+});
+
 test('a live tool flyout keeps its menu semantics at tablet width', async ({ page }, testInfo) => {
   await page.setViewportSize(TABLET_VIEWPORT);
   await page.goto('/');
@@ -549,4 +607,19 @@ test('a live tool flyout keeps its menu semantics at tablet width', async ({ pag
   expect(await wrapper.getAttribute('role')).toBeNull();
   expect(await wrapper.getAttribute('aria-label')).toBeNull();
   await expectNoViolations(page, testInfo, 'tablet-tool-flyout', (builder) => builder.include(wrapperSelector));
+});
+
+test('a live dark tool flyout keeps its menu semantics at tablet width', async ({ page }, testInfo) => {
+  await page.setViewportSize(TABLET_VIEWPORT);
+  await loadDarkApplication(page);
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+  await expect(page.getByTestId('left-sidebar')).toBeVisible();
+  await openToolFlyoutViaKeyboard(page, 'magic-wand');
+  await expect(page.getByRole('menu')).toBeVisible();
+
+  const wrapperSelector = 'div:has(> [data-toolbar-flyout])';
+  const wrapper = await resolveScope(page, wrapperSelector, 'the dark tablet tool flyout wrapper');
+  expect(await wrapper.getAttribute('role')).toBeNull();
+  expect(await wrapper.getAttribute('aria-label')).toBeNull();
+  await expectNoViolations(page, testInfo, 'tablet-tool-flyout-dark', (builder) => builder.include(wrapperSelector));
 });

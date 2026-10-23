@@ -94,10 +94,9 @@ import { ConsolePolice } from '../helpers/console-police';
  *   which releases this pin and reloads rather than running under it — and all it reads
  *   is the class on `<html>` and the string in `localStorage`. A `dark:` Tailwind
  *   variant that stopped applying would leave it green, so that test is a claim about
- *   the DEFAULT and not about dark mode as it reaches the screen. There is very little
- *   of the latter here. `e2e/accessibility.spec.ts` runs under the light pin and has no
- *   dark-theme axe result, so this suite does not establish whether the dark palette has
- *   contrast violations.
+ *   the DEFAULT and not about dark mode as it reaches the screen. The accessibility
+ *   suite separately releases this pin and reloads before scanning the shell, dialogs,
+ *   options bar, and tablet flyout in dark theme.
  *
  * WHY `addInitScript` AND NOT A NAVIGATION-TIME `evaluate`
  *   `ThemeProvider` reads `localStorage.getItem('theme')` synchronously inside its
