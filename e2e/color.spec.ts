@@ -50,22 +50,15 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
   // change, which turns the second assertion into a check that the click did
   // something rather than a check that the app booted.
   await clickToolButton(page, 'reposition');
-  // Resolved, not addressed: `draw` is group 13 of the 16 in `toolbar-mapping.ts`, and the
-  // rail fits SEVEN of them into the slot at this viewport, so `draw` sits in the three-dots
-  // tile and there is no `tool-button-draw` element at all. The seven is the number to keep
-  // current: the fold follows the fit, not the ordinal, and `draw` stopped being the last
-  // group, so a count derived any other way would be describing a rail this viewport does not
-  // produce. The three-dots tile carries no `aria-pressed` at all — it opens a menu rather
-  // than toggling a tool — so the helper reads its lit class off the same `group.some(...)`
-  // predicate the tiles read `aria-pressed` from, and this says the same thing whether the
-  // tool has a tile or not.
+  // Draw is available through overflow at this viewport, not as a primary tile. The helper
+  // opens the overflow entry and checks the selected group state; avoid hard-coding a group
+  // ordinal because the toolbar mapping and fit can change independently.
   await expectToolSelected(page, 'draw', false);
 
   await clickToolButton(page, 'draw');
   // The draw tool only strokes with the active foreground color once it is the active tool.
-  // Asserted for the same reason as the assertion above it: `draw` is group 13 and the rail
-  // fits seven at this viewport, so it is in the three-dots tile and there is no
-  // `tool-button-draw` element.
+  // Asserted through the shared selected-group state because Draw is in the overflow menu at
+  // this viewport rather than a visible primary tile.
   await expectToolSelected(page, 'draw');
 
   // Measured AFTER the tool switches, not before, and `drawLine` takes box-relative

@@ -150,15 +150,10 @@ violations on `main`.
     to `draw`, and `HANDOFF.md` §119 records both halves. Three assertions in
     `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` pin it, the
     load-bearing one being
-    `it('gives the Draw tool no shortcut, because no key selects it')`. It is also the
-    suite's default way to make a mark, which is
-    why `HANDOFF.md` §74 sequences it last: `clickToolButton(page, 'draw')` occurs in
-    every `e2e/*.spec.ts` that makes a mark — count them with
-    `grep -rc "clickToolButton([^)]*'draw'" e2e --include="*.spec.ts"`, which excludes
-    the non-spec files that also call it — and `e2e/pen-types.spec.ts` exists
-    specifically to test it and dies with the tool. Re-derive that number rather than
-    quoting one: `HANDOFF.md` §74's own figure for this ("25 call sites across 14 e2e
-    specs") does not reproduce against this counting rule and must not be copied forward.
+    `it('gives the Draw tool no shortcut, because no key selects it')`. Draw remains a
+    visible tile under OVR-2, but is not keyboard-reachable. Its position and overflow state
+    are determined by the current toolbar mapping and viewport; do not justify preserving it
+    with historical click-site counts or stale §74 ordering claims.
 
 ## What is not a tool
 
@@ -267,8 +262,8 @@ it enumerates the hand-copied lists and the tests that pin tool names
 `src/tools/__tests__/tool-processors.test.ts`,
 `src/components/SidebarLeft/__tests__/SidebarLeft.rendering.test.tsx`,
 `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` and
-`src/components/Common/AppKeyboardShortcuts.tsx`). **`HANDOFF.md` §68
-is not this**: it is about a committed shape being painted twice. The former 41/70/36/34 counts are
+`src/components/Common/AppKeyboardShortcuts.tsx`). **The former shape-preview duplication was fixed
+by `29b4ec31` and is unrelated to the toolbar roster.** The former 41/70/36/34 counts are
 historical and are not an authoritative Photoshop default-roster total; Adobe's public documentation
 does not enumerate the complete default panel. See `docs/TOOLS-INVENTORY.md` for the current
 implementation count, missing candidates, and unresolved default placements.

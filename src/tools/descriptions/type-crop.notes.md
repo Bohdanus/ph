@@ -1272,15 +1272,11 @@ This is the load-bearing reason the crop is `partial` rather than `implemented`:
 performs a document operation Photoshop also performs, but by a route no other tool uses, with
 its own processor branch dead.
 
-**Two handoff entries were checked against the crop, and neither bears on it.** `HANDOFF.md`
-§68 ("A committed shape is painted twice, and nothing removes the overlay")
-names `src/components/Main/ShapeToolArea.tsx` in its first sentence: it is
-about the shape tool's overlay never being cleared on commit, and its own closing paragraph
-records that the coordinate-space half of the entry's earlier version was wrong — so the
-reading this file used to give it is the half the entry itself retracts. The crop never paints
-through that overlay at all. The crop's preview is the tool overlay drawn by `drawMask` and its
-commit is `applyDocumentCrop`, which converts through `canvasRectToDocumentFrame` — a different
-code path from the one §68 describes.
+**The shape overlay fix is a separate path.** The `clears the preview after committing a shape`
+regression test in `src/components/Main/__tests__/ShapeToolArea.test.tsx` pins the fix from
+`29b4ec31`. The crop never paints through that overlay at all. The crop's preview is the tool
+overlay drawn by `drawMask` and its commit is `applyDocumentCrop`, which converts through
+`canvasRectToDocumentFrame` — a different code path.
 `docs/handoffs/ps-transform-geometry-review-and-merge.md` §2.1 ("The taper changed from linear to
 projective, and every pre-existing test was structurally blind to it") names the crop exactly once,
 in

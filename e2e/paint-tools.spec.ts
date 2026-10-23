@@ -610,9 +610,8 @@ async function paintBand(page: Page): Promise<Geometry> {
  */
 async function paintRampBand(page: Page, endDocX: number): Promise<Geometry> {
   await paintBand(page);
-  // The Gradient is its own single-tool tile, so it has no flyout to long-press: a plain
-  // click on the tile selects it. The bucket stays in the erase-and-fill flyout it has
-  // always shared, so there is no group to open here.
+  // Gradient and Paint Bucket are separate singleton tiles in the current mapping. The
+  // keyboard G/Shift+G family does not imply a shared rail flyout, so click Gradient directly.
   await clickToolButton(page, 'gradient');
   // Re-solve: the Gradient bar is wide enough to reflow the workspace, and a box measured
   // before it opened clips empty canvas (e2e/OPEN_PROBLEMS.md).

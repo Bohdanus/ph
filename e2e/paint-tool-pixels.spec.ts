@@ -281,25 +281,12 @@ for (const tool of PAINT_TOOLS) {
 }
 
 test('selecting a paint tool releases the previously primary tool button', async ({ page }) => {
-  // This one test needs the two tools on DIFFERENT tiles and BOTH of them present, so it asks for
-  // a window tall enough that nothing collapses. That is a requirement of the claim, not a
-  // convenience: the collapse folds a SUFFIX of the rail, and at 1280x720 the seven tiles on
-  // screen stop at the Brush group — the SEVENTH of the rail's fifteen — so the fold now separates
-  // this pair instead of merging them. `tool-button-brush` is on screen and `tool-button-draw` is
-  // not, because Draw is the twelfth group and everything from Clone Stamp (the eighth) down is in
-  // the three-dots tile. "Draw is released when Brush is selected" would then fail on a locator
-  // that resolves to no element rather than on the behaviour it claims, and the closing
-  // `tool-button-brush` check would be the only half of the pair with a tile to read at all.
+  // This test needs both tools on visible, separate tiles; use a tall viewport so toolbar
+  // overflow does not hide either control. Avoid depending on total group counts or ordinals:
+  // the fit can change as the mapped roster evolves.
   //
-  // 1400 is deliberately well past the boundary rather than just over it. The whole fifteen-row
-  // grid is 765px of content — fifteen 44px tiles, fourteen 6px row gaps, three 7px section
-  // rules — and the fit budgets the WHOLE slot now, where it used to take four fifths of it,
-  // so the first window height at which nothing collapses is 1037: measured, that is where the
-  // slot itself is 765px, the exact height the grid needs. The step off "everything" is not one
-  // pixel but two whole rows — at 1036 the fit keeps thirteen tiles and folds the tail, because
-  // fourteen tiles is unreachable: fourteen rows plus the three-dots row IS the full fifteen-row
-  // grid. A window a few pixels above 1037 would turn this test into a measurement of the
-  // boundary rather than of the claim it is making.
+  // 1400 is deliberately well past the fold boundary. This test checks selected-state behavior
+  // with both primary buttons present, not the exact number of groups that fit at a breakpoint.
   await page.setViewportSize({ width: 1280, height: 1400 });
   await page.goto('/');
   await expect(getWorkspaceCanvas(page)).toBeVisible();
@@ -313,9 +300,8 @@ test('selecting a paint tool releases the previously primary tool button', async
   await openToolFlyout(page, 'brush');
   await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
 
-  // `aria-pressed` is `group.some(tool => tool.name === toolName)` (SidebarLeft.tsx:658),
-  // so it moves between groups rather than following one tile: Draw is its own group
-  // (toolbar-mapping.ts:102) and Brush a different one, so selecting Brush has to clear Draw.
+  // `aria-pressed` follows whether the active group contains the tool, so selecting Brush's
+  // group must clear Draw's separate selected state.
   await expect(drawButton, 'Draw must not stay pressed after a different tool group takes over').toHaveAttribute(
     'aria-pressed',
     'false'

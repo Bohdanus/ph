@@ -1307,9 +1307,8 @@ test('the theme toggle switches the whole document between light and dark', asyn
  * WHAT IT ASSERTS, and what it does not: the `dark` class on `<html>` and `dark` in
  * `localStorage`. Not rendering. A `dark:` Tailwind variant that stopped applying
  * leaves both of those true, so this test is a declaration about `DEFAULT_THEME` and must
- * not be read as dark-mode coverage — `e2e/accessibility.spec.ts` records two extra
- * `color-contrast` violations on the panel tab labels
- * (`src/components/SidebarRight/PanelGroup.tsx:42`) that only the dark palette has.
+ * not be read as dark-mode coverage — `e2e/accessibility.spec.ts` runs under the light
+ * pin and provides no dark-theme axe result. Dark contrast remains unmeasured by that gate.
  *
  * WHAT IT DOES NOT DO. It does not weaken or parametrise the pin. `useAppDefaultTheme`
  * turns the pin off for this tab and removes the stored value in the same step, then the

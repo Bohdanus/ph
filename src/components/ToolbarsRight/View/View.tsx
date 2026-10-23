@@ -8,7 +8,10 @@ function ViewButtons() {
       <button type="button" onClick={() => setViewState(DEFAULT_VIEW_STATE)}>
         Fit On Screen
       </button>
-      <button type="button" onClick={() => setViewState({ panX: 0, panY: 0, zoom: 1, rotation: 0 })}>
+      <button
+        type="button"
+        onClick={() => setViewState({ panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0 })}
+      >
         100%
       </button>
     </div>
