@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 81-82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -619,73 +619,6 @@ either here would land a deletion without the replacement rail.
 
 **Files.** `toolbar-mapping.ts`, `src/components/SidebarLeft/SidebarLeft.tsx`,
 `src/components/AppKeyboardShortcuts.tsx`, `src/components/SidebarLeft/toolbar-mapping.test.ts`
-
-## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
-
-`src/hooks/usePolylineAnts.ts` — the stale comment above the `isPaused` effect, whose closing three
-lines are quoted in (c) below
-
-Two `it.fails` tests in `src/hooks/__tests__/usePolylineAnts.animation.test.tsx` were **deleted
-and the behaviour pinned as working**, because both were pinned to a defect that a rAF mock
-manufactured rather than to a real one. That conclusion is right. What is left behind is not:
-**the production comment those two tripwires were written against has since been corrected, and
-the claim that it still contradicts the test suite is now false.**
-
-**(a) The handles were an artefact of the mock, not a defect.** The mock counted frame handles
-from `0`. HTML Standard §8.12 (Animation frames) defines the handle as a pre-increment: the target
-object has "an animation frame callback identifier, which is a number that **must initially be
-zero**", and the `requestAnimationFrame(callback)` steps say to "**increment target's animation
-frame callback identifier by one, and let handle be the result**". Handles are therefore `1, 2, 3,
-…` and `0` is unreachable. The first `it.fails` reported that pausing with frame 0 pending did not
-stop the loop, and the second that a second loop ran in parallel at double speed — both inputs a
-browser cannot produce. **The mock now starts at `1` and both are ordinary passing tests.** An
-earlier version of the comment justified this with the spec defining a frame handle as a "new
-POSITIVE long"; that phrase is in no version of the spec and the IDL return type is
-`unsigned long`, so the claim was unciteable even though the conclusion held. The mechanism is
-the pre-increment above.
-
-**(b) The production guard is a truthiness guard where its sibling uses `!== null`.**
-`usePolylineAnts.ts` guards a pending frame three times — `clear()`'s cancel, `draw()`'s cancel before
-rescheduling and the `isPaused` effect cleanup's cancel — and all three are
-`if (animationIdRef.current)`. `useAnts.ts` does the identical job for the identical
-pending-frame bookkeeping: `clear()` uses `if (animationIdRef.current !== null)` and
-`schedule()` uses `=== null`. `useAnts` nulls the ref immediately after cancelling, so `0` and `null`
-are genuinely
-distinguishable there; `usePolylineAnts` never produces `0` either way, which is why the
-truthiness form is currently correct. **It is correct by the spec argument in (a), not by
-construction**, and the sibling in the same directory is the standing counterexample to "0 cannot
-happen" — which is a local property of one file's mocks, not of the platform.
-
-**(c) The comment above that same `isPaused` effect is stale and asserts the branch removed.** It
-reads:
-
-> A pending handle of 0 is the one case the cleanup's own truthy guard skips, but 0 is falsy here
-> too, so cancelling here never had anything to do. That falsy-0 path is why pausing with frame 0
-> pending does not stop the loop.
-
-The last sentence is the claim the `it('stops the loop when paused before the first frame has run
-…')` title in `usePolylineAnts.animation.test.tsx` now
-**falsifies**: that test asserts that pausing before the first frame has run _does_ stop the loop, and
-its own comment cites the `isPaused` effect cleanup's `if (animationIdRef.current)` — the very guard
-this comment
-describes. The production comment saying the loop does not stop has **since been corrected**;
-the test now agrees with it.
-
-**When production is next touched, the stale comment above `usePolylineAnts.ts`'s `isPaused` effect
-must be corrected or deleted**, and
-the **four** sibling counters that still start at `0` — the `let nextId = 0` in
-`useSelectionAnts.test.tsx`, `useAnts.test.tsx`, `usePolylineAnts.test.tsx` and
-`useAnts.transform.test.tsx`, all four of them `.test.tsx` — should move to `1` in the
-same change, so the **five** rAF mocks in `src/hooks/__tests__/` stop disagreeing about a value the
-platform fixes; only `usePolylineAnts.animation.test.tsx` counts from `1` today. Switching the three
-guards to `!== null` to match `useAnts` is the durable fix and makes the whole
-question disappear; it is deliberately **not** done here, because this branch is tests and handoff
-only and may not edit production.
-
-**No defect is claimed here.** Nothing user-visible is broken today, the truthiness guards do the
-right thing in a browser, and the two `it.fails` were correctly removed. The finding is that the
-justification for that removal is still in production prose in the opposite form, and a reader who
-trusts it would re-add the tripwires.
 
 ## 83. The panel workspace: seven documented Photoshop behaviours are NOT built, and the list matters more than the feature
 
@@ -1892,84 +1825,28 @@ assertions or add an accepted console error.
 it checks history and dimensions, not the post-crop bar's pixels).
 ---
 
-## 160. The accessibility gate misses incomplete contrast checks and several live surfaces
+## 160. Axe incomplete results remain human-review candidates
 
-`ThemeContext.tsx` hard-codes `DEFAULT_THEME = 'dark'` and the
-`prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e
-suite pins itself to **light** (`e2e/fixtures/extended-test.ts`'s `pinnedTheme` auto fixture),
-because its pixel oracle — `hasDarkPixels`, `getStrokeAnalysis`, `measureInk` — reads "there is
-nothing here" out of a near-white pixel and is calibrated against the light workspace checkerboard.
-That pin is correct and its header says why. This entry is its cost, and the cost is not the pin.
+The shared e2e fixture pins light because the pixel-analysis helpers rely on the light workspace
+backdrop. `e2e/accessibility.spec.ts` now explicitly releases that pin and reloads before running
+the four desktop scans (application shell, New Image dialog, unsaved-changes prompt, and Draw options
+bar) and the tablet flyout scan in dark theme as well as light. Both theme runs currently report zero
+axe violations.
 
-**The gap.** The one test that runs with the pin released
-(`e2e/document-dialogs.spec.ts`, the `test('with nothing stored the document starts dark')` case)
-asserts the
-`dark` class on `<html>` and the string in `localStorage`. It reads **no pixel**, so it would stay
-green if every `dark:` Tailwind variant in the app stopped applying. No other spec exercises a
-single `dark:` class. **Nothing measures how dark renders.**
+**The remaining boundary is `incomplete`.** Axe cannot automatically decide these cases, so
+`expectNoViolations()` attaches the full result, including target selectors, and logs the candidate
+rule counts; only confirmed `violations` fail the suite. The current shell and tablet-flyout runs
+include incomplete `color-contrast` and `label-content-name-mismatch` candidates. Do not turn the
+whole bucket into a failing count without reviewing those candidates: `incomplete` means the rule
+could not decide, not that the element is defective.
 
-**The measured contrast failure is fixed.** The dock's collapse glyph is a single `«`/`»` character
-at `text-sm`, in the collapse-glyph `<button>` in `SidebarRight.tsx`. Its colors now exceed AA in
-both themes:
+**Next work.** Review the attached incomplete candidates for real contrast or labeling defects and
+add deterministic assertions or fixes for confirmed cases. Preserve the distinction between
+confirmed violations and axe's human-review bucket. Other overlays and unscanned responsive states
+remain outside the current audit.
 
-- light: `text-gray-600` (#4b5563) on `bg-gray-200` (#e5e7eb) = **6.10:1**
-- dark: `dark:text-gray-300` (#d1d5db) on `dark:bg-gray-700` (#374151) = **7.00:1**
-
-WCAG AA for normal text is **4.5:1**. The glyph remains an axe `incomplete` check because its text is
-too short to evaluate, and `e2e/accessibility.spec.ts` does not assert the `incomplete` bucket. That
-is still a coverage gap: future contrast regressions on controls axe cannot judge can go unnoticed.
-
-**Remaining coverage work.** The dock glyph's visible contrast is corrected, but the automated
-gate still does not assert `incomplete`, and the live flyout and mobile toolbar findings below
-remain unaddressed. Update the stale accessibility-test header to describe the current scans and
-their limitations before relying on it as an audit record.
-
-### Also live, and found while measuring the above
-
-Both reproduced in **light and dark**; neither is dark-specific.
-
-- **`region`, moderate**, on the flyout/tooltip portal wrapper, with the flyout open
-  (`AnchoredOverlay.tsx`'s `createPortal()` wrapper `style` object). A real violation at 1115 audited
-  nodes, in a region the file's header lists as unscanned.
-- **`aria-allowed-role`, minor** and **`region`, moderate**, on the
-  `<nav role="toolbar" data-testid="mobile-bottom-bar">` in `MobileBottomBar.tsx`.
-  `role="toolbar"` is not permitted on `nav`. Visible at 500x800, 309 nodes audited.
-
-### `e2e/accessibility.spec.ts`'s header is stale in five places, and reading it costs the next session an hour
-
-Every one of these was fixed in the **same commit that added the file** (`6982cd35`), and the
-header describes the state that commit fixed:
-
-- The header's "The dark theme is NOT scanned" bullet says dark reports two extra `color-contrast`
-  violations on the panel tab labels, citing
-  `dark:text-gray-400` at `PANEL_TAB_CLASS` in `PanelGroup.tsx`. That class is now
-  `dark:text-gray-300`
-  (**7.00:1**), and a dark scan of the shell reports **0** violations. Measured: light and dark are
-  both clean in all three scanned regions — shell, New Image dialog, Draw options bar.
-- The header's "## THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE" section, and the
-  four-violation attribution block under it, describe a red suite. `npm run test:e2e -- accessibility` is
-  **3 passed, 0 violation(s)**.
-- The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
-  File (New/Open/Save) and Tools menus only.
-- The header's "The scans are per-state, not per-app" bullet says the Save dialog is unscanned. It
-  was measured here: 0 violations, 45 nodes, both
-  themes. (Not added to the gate, so the header is still right about the gate and wrong about the
-  state.)
-- Dark is **cleaner** than light by one node: `.text-lg > span` (the same `«`) is `incomplete` in
-  light and passes in dark.
-
-**Fix.** Rewrite the header to describe the current state and keep it a measurement rather than a
-narrative: state the three scanned regions, their node counts, that both themes report 0, and that
-`incomplete` is not asserted — which is what let the glyph through.
-
-**Files.** `SidebarRight.tsx` (the three collapsed-dock `«`/`»` glyph buttons),
-`AnchoredOverlay.tsx` (`createPortal()`'s wrapper `style`),
-`MobileBottomBar.tsx` (the `<nav role="toolbar">`),
-`e2e/accessibility.spec.ts` (its header — "The dark theme is NOT scanned", "`incomplete` is NOT
-asserted", "The scans are per-state, not per-app", "## THIS FILE CURRENTLY FAILS, AND THAT IS THE
-DELIVERABLE" and its four-violation attribution block — plus `expectNoViolations()`'s doc comment),
-`e2e/fixtures/extended-test.ts` (`pinnedTheme`), `e2e/document-dialogs.spec.ts` (the
-`test('with nothing stored the document starts dark')` case)
+**Files.** `e2e/accessibility.spec.ts` — the scoped scans and `expectNoViolations()`;
+`e2e/fixtures/extended-test.ts` — `pinnedTheme` and `useAppDefaultTheme()`.
 
 ---
 

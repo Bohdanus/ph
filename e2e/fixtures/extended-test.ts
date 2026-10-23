@@ -89,17 +89,14 @@ import { ConsolePolice } from '../helpers/console-police';
  *
  *   So the suite pins light and states it here, where every spec's `test` comes from.
  *   The pin is a property of the ORACLE, not a claim about the app. What the app does
- *   with nothing stored is ASSERTED, not RENDERED, by exactly one test
+ *   with nothing stored is ASSERTED, not RENDERED, by one test
  *   (`e2e/document-dialogs.spec.ts`, "with nothing stored the document starts dark"),
  *   which releases this pin and reloads rather than running under it — and all it reads
  *   is the class on `<html>` and the string in `localStorage`. A `dark:` Tailwind
- *   variant that stopped applying would leave it green, so that test is a claim about
- *   the DEFAULT and not about dark mode as it reaches the screen. There is very little
- *   of the latter here, and the gap is recorded rather than left to be inferred:
- *   `e2e/accessibility.spec.ts` measures that the dark palette reports two EXTRA
- *   `color-contrast` violations, on the panel tab labels
- *   (`src/components/SidebarRight/PanelGroup.tsx:42`), that a light-only green run says
- *   nothing at all about.
+ *   variant that stopped applying would leave that test green, so it is a claim about
+ *   the DEFAULT and not about dark mode as it reaches the screen. The accessibility
+ *   suite separately releases this pin and scans the shell, dialogs, options bar, and
+ *   tablet flyout in dark theme.
  *
  * WHY `addInitScript` AND NOT A NAVIGATION-TIME `evaluate`
  *   `ThemeProvider` reads `localStorage.getItem('theme')` synchronously inside its
