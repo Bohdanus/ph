@@ -1327,8 +1327,8 @@ test.describe('Text tool', () => {
     // subject is the layer itself, so it is the one that asserts the generated name; the
     // commit's pixels and the Cancel button assert row counts instead.
     await expect(layerRows).toHaveCount(2);
-    await expect(layerRows.nth(0)).toHaveText(TOOL_LAYER_NAME);
-    await expect(layerRows.nth(1)).toHaveText(STARTING_LAYER_NAME);
+    await expect(layerRows.nth(0).getByTestId('layer-name')).toHaveText(TOOL_LAYER_NAME);
+    await expect(layerRows.nth(1).getByTestId('layer-name')).toHaveText(STARTING_LAYER_NAME);
   });
 
   test('committed text reaches the canvas as foreground pixels inside the dragged rectangle', async ({
@@ -2872,7 +2872,9 @@ test.describe('Text tool', () => {
 
     // A layer IS created — 0.01 is a valid size, not a refusal.
     await expect(layerRows, 'the minimum font size created no layer').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(TOOL_LAYER_NAME);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a text layer').toHaveText(
+      TOOL_LAYER_NAME
+    );
 
     // But the ink is too small to clear the red pixel threshold.
     const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-size-min');
