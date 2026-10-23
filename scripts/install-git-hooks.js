@@ -84,8 +84,20 @@ if [ ! -f "$hook" ]; then
 \t\tcurrent_git_dir="$(git rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null || true)"
 \t\tcommon_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 \t\tdesignated_main_git_dir="$(git config --local --get ph.mainWorktreeGitDir 2>/dev/null || true)"
+\t\tcurrent_worktree_path="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+\t\tif [ -n "$current_worktree_path" ]; then
+\t\t\tcurrent_worktree_path="$(cd "$current_worktree_path" 2>/dev/null && pwd -P || true)"
+\t\tfi
+\t\tif [ -n "$main_worktree_path" ]; then
+\t\t\tmain_worktree_path="$(cd "$main_worktree_path" 2>/dev/null && pwd -P || true)"
+\t\tfi
+\t\tcurrent_branch_ref="$(git symbolic-ref --quiet HEAD 2>/dev/null || true)"
 \t\tcurrent_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-\t\tif [ "$current_branch" != "main" ] && [ "$current_git_dir" != "$common_git_dir" ] && [ "$current_git_dir" != "$designated_main_git_dir" ]; then
+\t\tdetached_designated_main_path=false
+\t\tif [ -n "$main_worktree_path" ] && [ "$current_worktree_path" = "$main_worktree_path" ] && [ -z "$current_branch_ref" ]; then
+\t\t\tdetached_designated_main_path=true
+\t\tfi
+\t\tif [ "$current_branch" != "main" ] && [ "$current_git_dir" != "$common_git_dir" ] && [ "$current_git_dir" != "$designated_main_git_dir" ] && [ "$detached_designated_main_path" != true ]; then
 \t\tif git interpret-trailers --parse "$1" 2>/dev/null | awk -F: 'tolower($1) == "chat" { count++; if (substr($0, index($0, ":") + 1) ~ /[^[:space:]]/) nonempty++ } END { exit !(count == 1 && nonempty == 1) }'; then
 \t\t\texit 0
 \t\tfi

@@ -473,6 +473,8 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(initialInstall.status, initialInstall.stderr).toBe(0);
+      const hooksPath = git(fixture, ['config', '--get', 'core.hooksPath']);
+      const dispatcher = resolve(fixture, hooksPath, 'commit-msg');
       const savedGitDir = realpathSync(git(detachedMain, ['rev-parse', '--absolute-git-dir']));
 
       const detach = spawnSync('git', ['switch', '--quiet', '--detach'], { cwd: detachedMain, encoding: 'utf8' });
@@ -511,6 +513,11 @@ describe('the guard is actually installed', () => {
       expect(installWithStaleIdentity.status).not.toBe(0);
       expect(installWithStaleIdentity.stderr).toContain('cannot identify the designated main worktree');
 
+      writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
+      const staleDetachedMainCall = spawnSync(dispatcher, ['message-file'], { cwd: detachedMain, encoding: 'utf8' });
+      expect(staleDetachedMainCall.status).toBe(1);
+      expect(staleDetachedMainCall.stderr).toContain('commit-msg is missing');
+
       const removeRecreatedMain = spawnSync('git', ['worktree', 'remove', '--force', detachedMain], {
         cwd: fixture,
         encoding: 'utf8',
@@ -532,6 +539,12 @@ describe('the guard is actually installed', () => {
         isProtectedWorktree: false,
       });
       expect(decide({ worktree: featureAtOldMainPath })).toEqual({ action: 'allow', reason: 'linked worktree' });
+      writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
+      const featureAtOldMainPathCall = spawnSync(dispatcher, ['message-file'], {
+        cwd: detachedMain,
+        encoding: 'utf8',
+      });
+      expect(featureAtOldMainPathCall.status).toBe(0);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
