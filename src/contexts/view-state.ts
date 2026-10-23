@@ -23,10 +23,22 @@ export const DEFAULT_VIEW_STATE: ViewState = {
 /** Relative view transform limits. The displayed zoom percentage is fit-scale aware. */
 export const MIN_VIEW_ZOOM = 1e-12;
 export const MAX_VIEW_ZOOM = 1e12;
-/** The zoom toolbar exposes 10% through Photoshop's documented 3200% maximum. */
+/** Used only when no document size is available. */
 export const MIN_SLIDER_ZOOM = 0.1;
 export const MAX_SLIDER_ZOOM = 32;
 export const VIEW_ZOOM_SLIDER_STEPS = 1000;
+
+/** Adobe documents a one-pixel zoom floor; this maps it to the shorter document edge. */
+export function minimumSliderZoomForDocumentSize(size: Pick<Size, 'width' | 'height'> | null | undefined): number {
+  const minimumDimension = Math.min(size?.width ?? 0, size?.height ?? 0);
+  if (!Number.isFinite(minimumDimension) || minimumDimension <= 0) return MIN_SLIDER_ZOOM;
+  return Math.min(MAX_SLIDER_ZOOM, 1 / Math.max(1, minimumDimension));
+}
+
+function boundedSliderMinimum(minimumZoom: number): number {
+  const finiteMinimum = Number.isFinite(minimumZoom) ? minimumZoom : MIN_SLIDER_ZOOM;
+  return Math.min(MAX_SLIDER_ZOOM, Math.max(MIN_VIEW_ZOOM, finiteMinimum));
+}
 
 export const viewStateRef: { current: ViewState } = { current: DEFAULT_VIEW_STATE };
 
@@ -35,29 +47,43 @@ export function clampViewZoom(zoom: number): number {
 }
 
 /** Clamp the absolute document-pixel-to-monitor-pixel magnification used by the toolbar and Zoom Tool. */
-export function clampAbsoluteViewZoom(magnification: number): number {
+export function clampAbsoluteViewZoom(magnification: number, minimumZoom = MIN_SLIDER_ZOOM): number {
   const finiteZoom = Number.isFinite(magnification) ? magnification : 1;
-  return Math.min(MAX_SLIDER_ZOOM, Math.max(MIN_SLIDER_ZOOM, finiteZoom));
+  const boundedMinimum = boundedSliderMinimum(minimumZoom);
+  return Math.min(MAX_SLIDER_ZOOM, Math.max(boundedMinimum, finiteZoom));
 }
 
 /**
  * Map absolute image-pixels-per-monitor-pixel magnification to a logarithmic slider position.
  * Equal pointer travel then makes an equal proportional zoom change across the full range.
  */
-export function viewZoomToSliderPosition(magnification: number): number {
-  const boundedZoom = clampAbsoluteViewZoom(magnification);
-  const progress = Math.log(boundedZoom / MIN_SLIDER_ZOOM) / Math.log(MAX_SLIDER_ZOOM / MIN_SLIDER_ZOOM);
+export function viewZoomToSliderPosition(magnification: number, minimumZoom = MIN_SLIDER_ZOOM): number {
+  const boundedMinimum = boundedSliderMinimum(minimumZoom);
+  const boundedZoom = clampAbsoluteViewZoom(magnification, boundedMinimum);
+  const progress = Math.log(boundedZoom / boundedMinimum) / Math.log(MAX_SLIDER_ZOOM / boundedMinimum);
   return Math.round(progress * VIEW_ZOOM_SLIDER_STEPS);
 }
 
 /** Convert one logarithmic slider position to absolute image-pixels-per-monitor-pixel magnification. */
-export function sliderPositionToViewZoom(position: number): number {
+export function sliderPositionToViewZoom(position: number, minimumZoom = MIN_SLIDER_ZOOM): number {
+  const boundedMinimum = boundedSliderMinimum(minimumZoom);
   const boundedPosition = Math.min(
     VIEW_ZOOM_SLIDER_STEPS,
-    Math.max(0, Number.isFinite(position) ? position : viewZoomToSliderPosition(1))
+    Math.max(0, Number.isFinite(position) ? position : viewZoomToSliderPosition(1, boundedMinimum))
   );
-  return MIN_SLIDER_ZOOM * Math.pow(MAX_SLIDER_ZOOM / MIN_SLIDER_ZOOM, boundedPosition / VIEW_ZOOM_SLIDER_STEPS);
+  return boundedMinimum * Math.pow(MAX_SLIDER_ZOOM / boundedMinimum, boundedPosition / VIEW_ZOOM_SLIDER_STEPS);
 }
+
+/** Format the physical magnification as a percentage without rounding sub-1% zoom to zero. */
+export function formatViewZoomPercent(magnification: number): string {
+  const percentage = magnification * 100;
+  return `${percentage >= 1 ? Math.round(percentage) : viewZoomPercentFormatter.format(percentage)}%`;
+}
+
+const viewZoomPercentFormatter = new Intl.NumberFormat('en-US', {
+  maximumSignificantDigits: 4,
+  useGrouping: false,
+});
 
 export function effectiveViewZoom(state: Pick<ViewState, 'zoom' | 'fitScaleCompensation'>): number {
   return state.zoom * state.fitScaleCompensation;

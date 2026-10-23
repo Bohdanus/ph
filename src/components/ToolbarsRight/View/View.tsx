@@ -2,6 +2,8 @@ import { useStore } from '../../../contexts/StoreContext.tsx';
 import {
   absoluteViewZoom,
   DEFAULT_VIEW_STATE,
+  formatViewZoomPercent,
+  minimumSliderZoomForDocumentSize,
   VIEW_ZOOM_SLIDER_STEPS,
   relativeViewZoomForMagnification,
   sliderPositionToViewZoom,
@@ -42,15 +44,16 @@ export function Hand() {
 }
 
 export function Zoom() {
-  const [{ viewState, setViewState }] = useStore();
+  const [{ viewState, setViewState, documentFrame }] = useStore();
   const fitScale = useWorkspaceFitScale();
   const devicePixelRatio = useDevicePixelRatio();
   const state = viewState ?? DEFAULT_VIEW_STATE;
+  const minimumZoom = minimumSliderZoomForDocumentSize(documentFrame);
   const zoom = absoluteViewZoom(state, fitScale, devicePixelRatio);
   return (
     <div className="flex items-center gap-2">
       <label className="w-24 shrink-0 whitespace-nowrap text-right tabular-nums" htmlFor="view-zoom-slider">
-        Zoom {Math.round(zoom * 100)}%
+        Zoom {formatViewZoomPercent(zoom)}
       </label>
       <input
         className="w-80 shrink-0"
@@ -59,11 +62,11 @@ export function Zoom() {
         min={0}
         max={VIEW_ZOOM_SLIDER_STEPS}
         step={1}
-        value={viewZoomToSliderPosition(zoom)}
+        value={viewZoomToSliderPosition(zoom, minimumZoom)}
         onChange={(event) =>
           setViewState({
             zoom: relativeViewZoomForMagnification(
-              sliderPositionToViewZoom(Number(event.currentTarget.value)),
+              sliderPositionToViewZoom(Number(event.currentTarget.value), minimumZoom),
               fitScale,
               state.fitScaleCompensation,
               devicePixelRatio

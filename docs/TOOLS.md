@@ -3071,7 +3071,7 @@ The Zoom tool changes the displayed scale of the canvas and keeps the clicked po
 
 - `Z` — Selects the Zoom tool.
 
-**In this app:** `implemented` — The view percentage stays stable when the workspace is resized or moved between displays with different pixel density; pan and zoom remain outside document history. The control range is currently 10%-3200%, matching Adobe’s maximum but retaining a fixed 10% minimum instead of Adobe’s one-pixel minimum. Animated zoom, marquee zoom, and wheel preferences are not implemented.
+**In this app:** `implemented` — The view percentage stays stable when the workspace is resized or moved between displays with different pixel density; pan and zoom remain outside document history. The lower bound follows document size so the shorter edge reaches one physical display pixel, an aspect-ratio interpretation of Adobe’s documented one-pixel minimum. Animated zoom, marquee zoom, and wheel preferences are not implemented.
 
 Implementation:
 

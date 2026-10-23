@@ -21,7 +21,7 @@
 ## Unverified or deferred
 
 - Flick panning momentum, Pan All Windows, Overscroll preferences, animated zoom, wheel-zoom preferences, the compass overlay, graphics-processor gating, Shift angle snapping, and Rotate All Windows are not implemented.
-- The app control matches Adobe’s documented 3200% maximum and floors at a fixed 10%, rather than Adobe’s one-pixel minimum.
+- The app derives a lower zoom bound from the document's shorter edge so that edge is one physical display pixel. Adobe documents the one-pixel minimum but does not specify an aspect-ratio formula; this mapping is an implementation inference.
 
 ## Sources
 
