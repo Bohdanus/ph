@@ -103,11 +103,13 @@ The retired coordination gate forbids production imports of `replay-budget.ts`,
 `replay-coordinator.ts` and `replay-checkpoints.ts` were deleted as dead code —
 nothing imported them outside `__tests__` — and the gate keeps both names rather
 than dropping them with the files, so reintroducing either is reported rather
-than silently absorbed. A separate plain assertion allows exactly one
-production importer for `materialization.ts`, `durable-compositor.ts`. The
-compositor is mounted for navigation presentation and its `tmpCanvas` is already
-consumed by render and export. The remaining cutover surfaces stay
-legacy-authoritative until their differential and ownership gates pass.
+than silently absorbed. Production materialization has one runtime consumer,
+`durable-compositor.ts`; `durable-render-projection.ts` imports only the
+`MaterializedLayer` type. `StoreContext.boundary-gates.test.ts` pins both
+source-level import sites. The compositor is mounted for navigation presentation
+and its `tmpCanvas` is already consumed by render and export. The remaining
+cutover surfaces stay legacy-authoritative until their differential and ownership
+gates pass.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 
@@ -159,9 +161,12 @@ variant or an equivalent atomic history action.
 2. Keep every currently appendable durable operation replayable without changing
    production authority. The runtime retained-operation boundary, the supported
    raster append path and the navigation presentation mount are closed, and the
-   §87-§89 append-boundary defects are fixed. One separate source-backed create
-   stack-order gap after repeated sparse legacy reorders remains open; see
-   `HANDOFF.md` §232. Do not count that path as durable-authority proof.
+   §87-§89 append-boundary defects are fixed. The reproduced source-backed create
+   after moving the same layer to the bottom twice is covered by
+   `StoreContext.durable-append.test.tsx`. The regression checks the sparse
+   orders, created name and order, and durable-document equality against full
+   legacy conversion. This closes that reproduction only; it is not proof of
+   durable authority for unrelated operation shapes.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity, history-panel parity, the
    browser authority seam, options-bar rehydration, and the pixel/export
