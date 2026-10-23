@@ -15,7 +15,6 @@ Support desktop and tablet/touch devices, including Retina/high-DPI. Do not add 
 ## Agents And Reviews
 
 - In Kilo Code, use `task` for research and `agent_manager` only for visible sessions/worktrees. For Codex orchestration, follow [`docs/CODEX-ORCHESTRATION.md`](docs/CODEX-ORCHESTRATION.md); do not assume Kilo tools or model/provider routing exist in Codex. Give each subagent an absolute worktree path and exclusive write set.
-- With Jan, run at most one local model inference at a time; wait for the active request/process to finish before starting another.
 - For Kilo `task`, pass `model` and `provider` together. Kilo free sessions must not launch GPT subagents or perform Git operations. In every runtime, the coordinator owns branch, merge, commit, reset, and disposal work.
 - Before every subagent launch, inspect the newest `npm run swarm -- tokens --json` reading. If it is missing, stale (older than 90 minutes), incomplete, unbudgeted, or otherwise uncertain, treat GPT capacity as constrained and prefer a free model. When 20% or less remains and the estimated next expiry is more than 60 minutes away (or unknown), use free subagents by default and do not launch Terra or Sol without the explicit operator override defined in `MODELS.md`.
 - See [MODELS.md](MODELS.md) for model/provider guidance.
