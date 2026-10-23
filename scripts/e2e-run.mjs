@@ -777,8 +777,12 @@ export async function run(argv, options = {}) {
   // (`test:e2e:headed`, `:ui`, `:debug`, `:update-baselines`) pass run arguments
   // too, so every one of them needs the subcommand as well. Wrapper flags are
   // consumed here and never forwarded to Playwright.
-  const quiet = argv.includes('--quiet') || (!argv.includes('--verbose') && env.E2E_QUIET !== '0');
-  const playwrightArgv = ['test', ...argv.filter((arg) => !['--no-lock', '--quiet', '--verbose'].includes(arg))];
+  const separatorIndex = argv.indexOf('--');
+  const wrapperArgs = argv.slice(0, separatorIndex === -1 ? argv.length : separatorIndex);
+  const forwardedArgs = wrapperArgs.filter((arg) => !['--no-lock', '--quiet', '--verbose'].includes(arg));
+  if (separatorIndex !== -1) forwardedArgs.push(...argv.slice(separatorIndex));
+  const quiet = wrapperArgs.includes('--quiet') || (!wrapperArgs.includes('--verbose') && env.E2E_QUIET !== '0');
+  const playwrightArgv = ['test', ...forwardedArgs];
 
   if (isHelpRequest(playwrightArgv)) {
     // Nothing runs, so there is nothing to prepare — but the refusals still run
@@ -830,7 +834,7 @@ export async function run(argv, options = {}) {
     ? 'CI'
     : env.E2E_SKIP_LOCK === '1'
       ? 'E2E_SKIP_LOCK=1'
-      : argv.includes('--no-lock')
+      : wrapperArgs.includes('--no-lock')
         ? '--no-lock'
         : null;
   const lock = skipReason ? null : (options.lock ?? new SwarmLock({ ...options, env, log }));
