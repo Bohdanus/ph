@@ -45,6 +45,7 @@ forgotten it. Two rows have weaker coverage than the table implies:
 npm run test            # vitest, jsdom - app unit tests
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
 npm run test:e2e        # playwright, HEADLESS - starts its OWN server on a port it picks
+npm run test:e2e:verbose # like test:e2e, but streams suite output live
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
@@ -55,6 +56,8 @@ baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
 
 **`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
+It captures suite output by default and replays it only on failure; use
+`npm run test:e2e:verbose` or `--verbose` when live output is needed.
 It does two independent things, and telling them apart is the whole design.
 
 **The guarantee: the run starts its own server.** It picks a port, verifies it is

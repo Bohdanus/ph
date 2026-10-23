@@ -26,6 +26,7 @@
     "test:staged": "git diff --cached --name-only --diff-filter=ACMR -z | xargs -0 vitest related --run",
     "test:integration": "vitest --run src/contexts/__tests__/psd-utils.test.ts src/hooks/__tests__/useApp.psd.test.ts",
     "test:e2e": "node scripts/e2e-run.mjs",
+    "test:e2e:verbose": "node scripts/e2e-run.mjs --verbose",
     "test:e2e:raw": "playwright test",
     "test:e2e:ui": "node scripts/e2e-run.mjs --ui",
     "test:e2e:debug": "node scripts/e2e-run.mjs --debug",
