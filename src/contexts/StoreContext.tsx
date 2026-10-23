@@ -32,8 +32,12 @@ import type {
   Size,
 } from './general-types.ts';
 import {
+  absoluteViewZoom,
+  clampAbsoluteViewZoom,
   DEFAULT_VIEW_STATE,
+  minimumSliderZoomForDocumentSize,
   preserveViewScaleCompensationAcrossDisplayScaleChange,
+  relativeViewZoomForMagnification,
   viewStateRef,
   type ViewState,
 } from './view-state.ts';
@@ -1317,7 +1321,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const setViewState = (partial: Partial<ViewState>) => {
     const changesViewTransform = ['panX', 'panY', 'zoom', 'rotation'].some((key) => key in partial);
     const fitToScreen = partial.fitToScreen ?? (changesViewTransform ? false : viewStateRef.current.fitToScreen);
-    viewStateRef.current = { ...viewStateRef.current, ...partial, fitToScreen };
+    const nextViewState = { ...viewStateRef.current, ...partial, fitToScreen };
+    if (fitToScreen) delete nextViewState.minimumZoomOverride;
+    viewStateRef.current = nextViewState;
     forceViewStateUpdate((value) => value + 1);
   };
 
@@ -1368,12 +1374,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           previous.devicePixelRatio,
           devicePixelRatio
         );
-        if (nextCompensation !== viewStateRef.current.fitScaleCompensation) {
-          viewStateRef.current = {
-            ...viewStateRef.current,
+        const currentViewState = viewStateRef.current;
+        const nextFitToScreen = frameChanged ? false : currentViewState.fitToScreen;
+        const priorMagnification = absoluteViewZoom(currentViewState, previousFitScale, previous.devicePixelRatio);
+        const priorMinimumZoom = minimumSliderZoomForDocumentSize(previous.frame);
+        const preservesSubpixelScale =
+          currentViewState.fitToScreen ||
+          currentViewState.minimumZoomOverride !== undefined ||
+          priorMagnification < priorMinimumZoom * (1 - 1e-9);
+        const nextMagnification = absoluteViewZoom(
+          { ...currentViewState, fitScaleCompensation: nextCompensation },
+          nextFitScale,
+          devicePixelRatio
+        );
+        const nextMinimumZoom = minimumSliderZoomForDocumentSize(nextFrame);
+        const carriesMinimumZoomOverride = currentViewState.minimumZoomOverride !== undefined;
+        const startsMinimumZoomOverride =
+          !carriesMinimumZoomOverride &&
+          (priorMagnification < priorMinimumZoom * (1 - 1e-9) ||
+            (preservesSubpixelScale && nextMagnification < nextMinimumZoom));
+        const nextMinimumZoomOverride = frameChanged
+          ? carriesMinimumZoomOverride
+            ? currentViewState.minimumZoomOverride
+            : startsMinimumZoomOverride
+              ? priorMagnification
+              : undefined
+          : currentViewState.minimumZoomOverride;
+        const boundedMagnification =
+          frameChanged && !preservesSubpixelScale
+            ? clampAbsoluteViewZoom(nextMagnification, nextMinimumZoom)
+            : nextMagnification;
+        const nextZoom =
+          boundedMagnification === nextMagnification
+            ? currentViewState.zoom
+            : relativeViewZoomForMagnification(boundedMagnification, nextFitScale, nextCompensation, devicePixelRatio);
+        if (
+          nextCompensation !== currentViewState.fitScaleCompensation ||
+          nextZoom !== currentViewState.zoom ||
+          nextFitToScreen !== currentViewState.fitToScreen ||
+          nextMinimumZoomOverride !== currentViewState.minimumZoomOverride
+        ) {
+          const nextViewState = {
+            ...currentViewState,
+            zoom: nextZoom,
             fitScaleCompensation: nextCompensation,
-            fitToScreen: frameChanged ? false : viewStateRef.current.fitToScreen,
+            fitToScreen: nextFitToScreen,
+            minimumZoomOverride: nextMinimumZoomOverride,
           };
+          if (nextMinimumZoomOverride === undefined) delete nextViewState.minimumZoomOverride;
+          viewStateRef.current = nextViewState;
           forceViewStateUpdate((value) => value + 1);
         }
       }

@@ -251,12 +251,16 @@ async function dragZoomSliderTo(page: Page, targetZoom: number): Promise<void> {
   const slider = page.locator('#view-zoom-slider');
   const target = await slider.evaluate((element, zoom) => {
     const input = element as HTMLInputElement;
+    const workspace = document.querySelector('[data-testid="workspace-container"]');
+    const width = Number(workspace?.getAttribute('data-fit-document-width'));
+    const height = Number(workspace?.getAttribute('data-fit-document-height'));
+    const minimumZoom = width > 0 && height > 0 ? 1 / Math.max(1, Math.min(width, height)) : 0.1;
     const rect = input.getBoundingClientRect();
     const thumbWidth = 16;
     const minPosition = Number(input.min);
     const maxPosition = Number(input.max);
     const currentPosition = Number(input.value);
-    const targetProgress = Math.log(zoom / 0.1) / Math.log(32 / 0.1);
+    const targetProgress = Math.log(zoom / minimumZoom) / Math.log(32 / minimumZoom);
     const positionToX = (position: number) =>
       rect.left + thumbWidth / 2 + ((position - minPosition) / (maxPosition - minPosition)) * (rect.width - thumbWidth);
     return {
@@ -394,6 +398,39 @@ test.describe('Zoom tool', () => {
 
     await expect.poll(() => actualMagnification(page)).toBeCloseTo(32, 2);
     await expect(page.locator('label[for="view-zoom-slider"]')).toHaveText('Zoom 3200%');
+  });
+
+  test('the slider and Zoom Tool stop at a one-physical-pixel view of the document', async ({ page }) => {
+    await openWorkspace(page);
+    await clickToolButton(page, 'zoom');
+
+    const workspace = page.getByTestId('workspace-container');
+    const documentWidth = Number(await workspace.getAttribute('data-fit-document-width'));
+    const documentHeight = Number(await workspace.getAttribute('data-fit-document-height'));
+    const minimumDimension = Math.min(documentWidth, documentHeight);
+    expect(minimumDimension).toBeGreaterThan(0);
+    const minimumMagnification = 1 / minimumDimension;
+
+    const slider = page.locator('#view-zoom-slider');
+    await slider.focus();
+    await slider.press('Home');
+    await expect.poll(() => actualMagnification(page)).toBeCloseTo(minimumMagnification, 7);
+    const label = page.locator('label[for="view-zoom-slider"]');
+    const labelText = (await label.textContent())?.trim() ?? '';
+    const percentText = /^Zoom ([\d.]+)%$/.exec(labelText)?.[1];
+    expect(percentText, 'the readout must retain precision below 1%').toBeDefined();
+    expect((Number(percentText) / 100) * minimumDimension).toBeCloseTo(1, 3);
+
+    const area = page.getByTestId('zoom-tool-area');
+    const bounds = await area.boundingBox();
+    expect(bounds, 'the Zoom Tool must own the workspace gesture surface').not.toBeNull();
+    await area.click({
+      modifiers: ['Alt'],
+      position: { x: bounds!.width / 2, y: bounds!.height / 2 },
+    });
+    await expect.poll(() => actualMagnification(page)).toBeCloseTo(minimumMagnification, 7);
+    expect((await actualMagnification(page)) * minimumDimension).toBeCloseTo(1, 2);
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
   });
 
   test('keeps physical magnification stable when the workspace is resized', async ({ page }) => {

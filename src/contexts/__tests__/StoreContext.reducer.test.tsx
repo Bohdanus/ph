@@ -8,6 +8,7 @@ import { deriveSetDocumentFrameEntry, deriveSetLayerPropertiesEntry } from '../h
 import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
+import { absoluteViewZoom, minimumSliderZoomForDocumentSize, relativeViewZoomForMagnification } from '../view-state.ts';
 import {
   OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
@@ -765,6 +766,342 @@ describe('StoreContext document frame derivation', () => {
       expect(store().viewState.fitToScreen).toBe(false);
     }
   );
+
+  it('clamps a preserved manual zoom to the new one-pixel floor after a crop and keeps replay coherent', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-crop-zoom-floor', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    const originalMinimum = minimumSliderZoomForDocumentSize(defaultFrame);
+    act(() => store().setViewState({ zoom: relativeViewZoomForMagnification(originalMinimum, 2) }));
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(originalMinimum);
+
+    const historyLengthBeforeCrop = store().history.length;
+    const croppedFrame = { x: 0, y: 0, width: 400, height: 200 };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: croppedFrame },
+          historyItem: toolItem('crop-frame-zoom-floor', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: defaultFrame,
+            nextFrame: croppedFrame,
+          }),
+        },
+      });
+    });
+
+    const croppedMinimum = minimumSliderZoomForDocumentSize(croppedFrame);
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(croppedMinimum);
+    expect(store().viewState.fitToScreen).toBe(false);
+    expect(store().viewState.minimumZoomOverride).toBeUndefined();
+    expect(store().history).toHaveLength(historyLengthBeforeCrop + 1);
+
+    const cropTimeline = store().history;
+    const branchRevision = store().branchRevision;
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: defaultFrame, totalSize: initialSize },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 2, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(croppedMinimum);
+    expect(store().viewState.fitToScreen).toBe(false);
+
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: croppedFrame, totalSize: { width: 400, height: 200 } },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 1, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(croppedMinimum);
+    expect(store().viewState.fitToScreen).toBe(false);
+    expect(store().history).toHaveLength(historyLengthBeforeCrop + 1);
+  });
+
+  it('preserves a subpixel Fit On Screen view when a narrow crop raises the slider floor', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    const openingFrame = { x: 0, y: 0, width: 200_000, height: 1_000 };
+    const openingSize = { width: openingFrame.width, height: openingFrame.height };
+    const openingBaseline = baselineItem('aspect-ratio-baseline');
+    const croppedFrame = { x: 0, y: 0, width: 100_000, height: 1 };
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-aspect-ratio-zoom-floor',
+          history: [
+            {
+              ...openingBaseline,
+              documentSource: {
+                ...openingBaseline.documentSource!,
+                size: openingSize,
+                frame: openingFrame,
+              },
+            },
+          ],
+          updates: { totalSize: openingSize, documentFrame: openingFrame },
+        },
+      });
+    });
+
+    expect(store().viewState.fitToScreen).toBe(true);
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(minimumSliderZoomForDocumentSize(croppedFrame)).toBe(1);
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: croppedFrame },
+          historyItem: toolItem('crop-frame-aspect-ratio', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: openingFrame,
+            nextFrame: croppedFrame,
+          }),
+        },
+      });
+    });
+
+    expect(absoluteViewZoom(store().viewState, 0.008)).toBeCloseTo(0.004);
+    expect(store().viewState.fitToScreen).toBe(false);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    const cropTimeline = store().history;
+    const branchRevision = store().branchRevision;
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: openingFrame, totalSize: openingSize },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 2, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: {
+            documentFrame: croppedFrame,
+            totalSize: { width: croppedFrame.width, height: croppedFrame.height },
+          },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 1, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.008)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+    expect(store().history).toHaveLength(cropTimeline.length);
+  });
+
+  it('keeps a subpixel Fit anchor through an expanding crop and its undo/redo', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    const openingFrame = { x: 0, y: 0, width: 200_000, height: 100 };
+    const openingSize = { width: openingFrame.width, height: openingFrame.height };
+    const openingBaseline = baselineItem('expanding-fit-baseline');
+    const expandedFrame = { x: 0, y: 0, width: 200_000, height: 1_000 };
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-expanding-fit-zoom-floor',
+          history: [
+            {
+              ...openingBaseline,
+              documentSource: {
+                ...openingBaseline.documentSource!,
+                size: openingSize,
+                frame: openingFrame,
+              },
+            },
+          ],
+          updates: { totalSize: openingSize, documentFrame: openingFrame },
+        },
+      });
+    });
+
+    expect(store().viewState.fitToScreen).toBe(true);
+    expect(minimumSliderZoomForDocumentSize(openingFrame)).toBeCloseTo(0.01);
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: expandedFrame },
+          historyItem: toolItem('expand-frame-fit-zoom-floor', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: openingFrame,
+            nextFrame: expandedFrame,
+          }),
+        },
+      });
+    });
+
+    expect(minimumSliderZoomForDocumentSize(expandedFrame)).toBeCloseTo(0.001);
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    const cropTimeline = store().history;
+    const branchRevision = store().branchRevision;
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: openingFrame, totalSize: openingSize },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 2, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: {
+            documentFrame: expandedFrame,
+            totalSize: { width: expandedFrame.width, height: expandedFrame.height },
+          },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 1, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+    expect(store().history).toHaveLength(cropTimeline.length);
+  });
+
+  it('does not carry a one-pixel floor override from an ordinary Fit crop', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    const openingFrame = { x: 0, y: 0, width: 2_000, height: 1_000 };
+    const openingSize = { width: openingFrame.width, height: openingFrame.height };
+    const openingBaseline = baselineItem('ordinary-fit-baseline');
+    const firstCrop = { x: 0, y: 0, width: 1_000, height: 500 };
+    const narrowCrop = { x: 0, y: 0, width: 1_000, height: 1 };
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-ordinary-fit-zoom-floor',
+          history: [
+            {
+              ...openingBaseline,
+              documentSource: {
+                ...openingBaseline.documentSource!,
+                size: openingSize,
+                frame: openingFrame,
+              },
+            },
+          ],
+          updates: { totalSize: openingSize, documentFrame: openingFrame },
+        },
+      });
+    });
+    expect(store().viewState.fitToScreen).toBe(true);
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: firstCrop },
+          historyItem: toolItem('ordinary-fit-crop', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: openingFrame,
+            nextFrame: firstCrop,
+          }),
+        },
+      });
+    });
+    expect(store().viewState.minimumZoomOverride).toBeUndefined();
+    expect(absoluteViewZoom(store().viewState, 0.8)).toBeGreaterThan(minimumSliderZoomForDocumentSize(firstCrop));
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: narrowCrop },
+          historyItem: toolItem('ordinary-fit-narrow-crop', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: firstCrop,
+            nextFrame: narrowCrop,
+          }),
+        },
+      });
+    });
+    expect(store().viewState.minimumZoomOverride).toBeUndefined();
+    expect(absoluteViewZoom(store().viewState, 0.8)).toBeCloseTo(1);
+  });
 
   it('does not treat a same-id document replacement as a crop', () => {
     const { store, dispatch } = renderWithProbe();
