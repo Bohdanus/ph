@@ -987,7 +987,9 @@ test.describe('Text tool in-place editing', () => {
     // an EMPTY text layer passes the first two and fails the third.
     await expect(overlay(page), 'the overlay is still up, so nothing was committed').toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
 
     const fit = await readFit(page);
     const fontSize = await toolFontSize(page);
@@ -1022,7 +1024,9 @@ test.describe('Text tool in-place editing', () => {
 
     await expect(overlay(page), 'the overlay is still up, so nothing was committed').toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   test('a committed text layer can be re-entered from its Layers row', async ({ page }) => {
@@ -1063,7 +1067,9 @@ test.describe('Text tool in-place editing', () => {
     // not satisfy it either.
     await clickToPlace(page, box, SECOND_BOX_CLICK);
     await expect(layerRows, 'the first draft was discarded rather than committed').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
     await expect(overlay(page), 'the second placement did not open a new editor').toHaveCount(1);
 
     /**
@@ -1335,7 +1341,9 @@ test.describe('Text tool in-place editing', () => {
     await page.getByRole('button', { name: 'Commit' }).click();
     await expect(overlay(page), 'the overlay is still up, so the Commit button committed nothing').toHaveCount(0);
     await expect(layerRows, 'the Commit button discarded an untouched placeholder').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   test('the overlay is laid over the box the canvas drew', async ({ page }, testInfo: TestInfo) => {
@@ -1679,7 +1687,9 @@ test.describe('Text tool in-place editing', () => {
     await expect(overlay(page), 'the draft outlived the numeric keypad Enter').toHaveCount(0);
     await expect(commit, 'Commit is still mounted after the draft was committed').toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   /**
@@ -1711,7 +1721,9 @@ test.describe('Text tool in-place editing', () => {
 
     await expect(overlay(page), 'the draft outlived the tool switch').toHaveCount(0);
     await expect(layerRows, 'the tool switch did not commit the draft').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   /**
@@ -1736,7 +1748,9 @@ test.describe('Text tool in-place editing', () => {
     // The commit that undo will remove.
     await expect(overlay(page), 'the draft outlived its commit').toHaveCount(0);
     await expect(layerRows, 'the text was not committed').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
 
     // Undo removes the layer created by the commit above.
     const undo = getUndoButton(page);
@@ -1748,7 +1762,9 @@ test.describe('Text tool in-place editing', () => {
     // Redo restores it.
     await getRedoButton(page).click();
     await expect(layerRows, 'redo did not restore the text layer').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the restored layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the restored layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
   });
 });
 
