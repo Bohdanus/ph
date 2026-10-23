@@ -159,12 +159,13 @@ function createImageLayer(id: string, pos: Pos, overrides: Partial<Layer> = {}):
   };
 }
 
-function createVectorLayer(id: string, pos: Pos): Layer {
+function createPixelShapeLayer(id: string, pos: Pos): Layer {
   const source: ToolLayerSource = {
     kind: 'tool',
     pos,
     args: {
       toolName: 'shape',
+      toolMode: 'pixels',
       figure: 'rectangle',
       alpha: 1,
       color: '#000000',
@@ -325,7 +326,7 @@ describe('drawLayersToCanvas', () => {
     const failure = new Error('bitmap decode failed');
     vi.spyOn(toolProcessors.shape, 'imageProcessor').mockImplementation(throwing(failure));
     const drawn = createImageLayer('drawn', { x: 0, y: 0, width: 20, height: 10 });
-    const broken = createVectorLayer('broken', { x: 4, y: 6, width: 20, height: 10 });
+    const broken = createPixelShapeLayer('broken', { x: 4, y: 6, width: 20, height: 10 });
     const never = createImageLayer('never', { x: 8, y: 9, width: 20, height: 10 });
 
     expect(drawLayersToCanvas(target.canvas, [drawn, broken, never], frame(0, 0, 640, 480))).toBe(false);

@@ -1,4 +1,4 @@
-import type { Pos, Size } from './general-types.ts';
+import type { BitmapSource, Pos, Size } from './general-types.ts';
 import type { Layer, LayerOperation } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
@@ -18,6 +18,7 @@ import {
   type PresentationDrawTarget,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
+import { drawShape, normalizeFigure, setShapeCtx, type ShapeToolArgs } from '../tools/shape.ts';
 
 function enabledFilterOperations(
   operations: readonly LayerOperation[]
@@ -53,6 +54,164 @@ function requireLayerFilterSupport(operations: readonly LayerOperation[]): void 
 }
 
 const vectorToolNames = new Set<ToolName>(['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']);
+const rasterPreviewCanvases = new WeakSet<object>();
+const sourceOnlyShapeBitmapCache = new WeakMap<object, { source: object; isSourceOnly: boolean }>();
+const SHAPE_BITMAP_COMPARE_TILE_SIZE = 256;
+const MAX_SHAPE_BITMAP_COMPARE_PIXELS = 16_777_216;
+
+function outputScale(ctx: CanvasRenderingContext2D): number {
+  const getTransform = (ctx as CanvasRenderingContext2D & { getTransform?: () => DOMMatrix }).getTransform;
+  const transform = getTransform?.call(ctx);
+  if (!transform) return 1;
+
+  const trace = transform.a ** 2 + transform.b ** 2 + transform.c ** 2 + transform.d ** 2;
+  const determinant = transform.a * transform.d - transform.b * transform.c;
+  const scale = Math.sqrt((trace + Math.sqrt(Math.max(0, trace ** 2 - 4 * determinant ** 2))) / 2);
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function validShapeGeometry(
+  args: ShapeToolArgs | null,
+  sourcePos: Pos | undefined,
+  position: Pos
+): { args: ShapeToolArgs; sourcePos: Pos } | null {
+  const start = args?.start;
+  const end = args?.end;
+  if (
+    !args ||
+    !sourcePos ||
+    !start ||
+    !end ||
+    !Number.isFinite(sourcePos.x) ||
+    !Number.isFinite(sourcePos.y) ||
+    !Number.isFinite(sourcePos.width) ||
+    !Number.isFinite(sourcePos.height) ||
+    sourcePos.width <= 0 ||
+    sourcePos.height <= 0 ||
+    !Number.isFinite(position.x) ||
+    !Number.isFinite(position.y) ||
+    !Number.isFinite(position.width) ||
+    !Number.isFinite(position.height) ||
+    position.width <= 0 ||
+    position.height <= 0 ||
+    !Number.isFinite(start.x) ||
+    !Number.isFinite(start.y) ||
+    !Number.isFinite(end.x) ||
+    !Number.isFinite(end.y)
+  ) {
+    return null;
+  }
+  return { args, sourcePos };
+}
+
+function createShapeSurface(size: Size): {
+  surface: SnapshotSurface;
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+} | null {
+  let surface: SnapshotSurface | null = null;
+  try {
+    surface = createSnapshotSurface(size);
+    let context = surface.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    if (!context || typeof context.drawImage !== 'function') {
+      releaseShapeSurface(surface);
+      const fallback = document.createElement('canvas');
+      fallback.width = size.width;
+      fallback.height = size.height;
+      surface = fallback;
+      context = fallback.getContext('2d');
+    }
+    if (!context) {
+      releaseShapeSurface(surface);
+      return null;
+    }
+    return { surface, context };
+  } catch {
+    if (surface) releaseShapeSurface(surface);
+    return null;
+  }
+}
+
+function releaseShapeSurface(surface: SnapshotSurface): void {
+  surface.width = 0;
+  surface.height = 0;
+}
+
+function hasUsableRaster(bitmap: BitmapSource | null): bitmap is BitmapSource {
+  return Boolean(
+    bitmap && Number.isFinite(bitmap.width) && Number.isFinite(bitmap.height) && bitmap.width > 0 && bitmap.height > 0
+  );
+}
+
+function bitmapMatchesShapeSource(bitmap: BitmapSource, source: object, args: ShapeToolArgs, sourcePos: Pos): boolean {
+  if (bitmap.width > MAX_SHAPE_BITMAP_COMPARE_PIXELS / bitmap.height) return false;
+
+  const bitmapKey = bitmap as object;
+  // Only ImageBitmap exposes close(); unlike canvases and image elements, its
+  // pixels cannot change while retaining the same object identity.
+  const immutableBitmap = typeof (bitmap as { close?: unknown }).close === 'function';
+  const cached = immutableBitmap ? sourceOnlyShapeBitmapCache.get(bitmapKey) : undefined;
+  if (cached?.source === source) return cached.isSourceOnly;
+
+  let sourceSurface: ReturnType<typeof createShapeSurface> = null;
+  let compareSurface: ReturnType<typeof createShapeSurface> = null;
+  let isSourceOnly = false;
+  try {
+    const cacheSize = { width: bitmap.width, height: bitmap.height };
+    sourceSurface = createShapeSurface(cacheSize);
+    compareSurface = createShapeSurface({
+      width: Math.min(bitmap.width, SHAPE_BITMAP_COMPARE_TILE_SIZE),
+      height: Math.min(bitmap.height, SHAPE_BITMAP_COMPARE_TILE_SIZE),
+    });
+    if (!sourceSurface || !compareSurface) return false;
+
+    const renderArgs = scaleVectorArgs(
+      args as unknown as Record<string, unknown>,
+      sourcePos,
+      sourcePos
+    ) as unknown as ShapeToolArgs;
+    const normalizedArgs: ShapeToolArgs = {
+      ...renderArgs,
+      toolName: 'shape',
+      figure: normalizeFigure(renderArgs.figure),
+    };
+    const sourceContext = sourceSurface.context as CanvasRenderingContext2D;
+    sourceContext.setTransform(1, 0, 0, 1, 0, 0);
+    sourceContext.globalAlpha = 1;
+    sourceContext.globalCompositeOperation = 'source-over';
+    sourceContext.filter = 'none';
+    setShapeCtx(sourceContext, normalizedArgs);
+    drawShape(sourceContext, normalizedArgs);
+
+    const compareContext = compareSurface.context as CanvasRenderingContext2D;
+    compareContext.setTransform(1, 0, 0, 1, 0, 0);
+    compareContext.globalAlpha = 1;
+    compareContext.globalCompositeOperation = 'source-over';
+    compareContext.filter = 'none';
+    isSourceOnly = true;
+    for (let y = 0; y < bitmap.height && isSourceOnly; y += SHAPE_BITMAP_COMPARE_TILE_SIZE) {
+      for (let x = 0; x < bitmap.width && isSourceOnly; x += SHAPE_BITMAP_COMPARE_TILE_SIZE) {
+        const tileWidth = Math.min(SHAPE_BITMAP_COMPARE_TILE_SIZE, bitmap.width - x);
+        const tileHeight = Math.min(SHAPE_BITMAP_COMPARE_TILE_SIZE, bitmap.height - y);
+        const sourcePixels = sourceContext.getImageData(x, y, tileWidth, tileHeight).data;
+        compareContext.clearRect(0, 0, compareSurface.surface.width, compareSurface.surface.height);
+        compareContext.drawImage(bitmap, -x, -y, bitmap.width, bitmap.height);
+        const cachedPixels = compareContext.getImageData(0, 0, tileWidth, tileHeight).data;
+        isSourceOnly = sourcePixels.length === cachedPixels.length;
+        for (let index = 0; isSourceOnly && index < sourcePixels.length; index += 1) {
+          if (sourcePixels[index] !== cachedPixels[index]) isSourceOnly = false;
+        }
+      }
+    }
+  } catch {
+    isSourceOnly = false;
+  } finally {
+    if (sourceSurface) releaseShapeSurface(sourceSurface.surface);
+    if (compareSurface) releaseShapeSurface(compareSurface.surface);
+  }
+
+  if (immutableBitmap) sourceOnlyShapeBitmapCache.set(bitmapKey, { source, isSourceOnly });
+  return isSourceOnly;
+}
 
 function getLayerBitmap(layer: Layer, position: Pos) {
   if (layer.tmpCanvas) return layer.tmpCanvas;
@@ -80,18 +239,11 @@ export function drawLayerSource(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
   position: Pos = layer.pos,
-  documentFrame?: DocumentFrame
+  documentFrame?: DocumentFrame,
+  preferCachedSource = false
 ): boolean {
   const effectivePosition = layer.presentationBounds ?? position;
-  const bitmap = layer.tmpCanvas ?? getLayerBitmap(layer, position);
-  if (
-    !bitmap ||
-    bitmap.width === 0 ||
-    bitmap.height === 0 ||
-    effectivePosition.width === 0 ||
-    effectivePosition.height === 0
-  )
-    return false;
+  if (effectivePosition.width === 0 || effectivePosition.height === 0) return false;
 
   const hasBakedPresentation = layer.tmpCanvas !== null && layer.presentationBounds !== null;
   const operations: PresentationOperation[] = [];
@@ -107,6 +259,103 @@ export function drawLayerSource(
       });
     }
   }
+
+  const source = layer.source;
+  const isRetainedVectorSource = source?.kind === 'tool' && vectorToolNames.has(source.args.toolName);
+  const shapeSourcePos = source?.kind === 'tool' && 'pos' in source ? source.pos : undefined;
+  const shapeSourceArgs =
+    source?.kind === 'tool' && 'figure' in source.args ? (source.args as unknown as ShapeToolArgs) : null;
+  const shapeGeometry = isRetainedVectorSource ? validShapeGeometry(shapeSourceArgs, shapeSourcePos, position) : null;
+  const bitmapIsSourceOnly = Boolean(
+    layer.bitmap &&
+    !preferCachedSource &&
+    isRetainedVectorSource &&
+    source?.kind === 'tool' &&
+    shapeGeometry &&
+    bitmapMatchesShapeSource(layer.bitmap, source, shapeGeometry.args, shapeGeometry.sourcePos)
+  );
+  if (
+    isRetainedVectorSource &&
+    shapeGeometry &&
+    operations.length === 0 &&
+    layer.presentationBounds === null &&
+    (layer.bitmap === null || bitmapIsSourceOnly) &&
+    !preferCachedSource &&
+    (shapeGeometry.args.toolMode === undefined || shapeGeometry.args.toolMode === 'shape')
+  ) {
+    const scaledArgs = scaleVectorArgs(
+      shapeGeometry.args as unknown as Record<string, unknown>,
+      shapeGeometry.sourcePos,
+      position
+    ) as unknown as ShapeToolArgs;
+    const shapeArgs: ShapeToolArgs = {
+      ...scaledArgs,
+      toolName: 'shape',
+      figure: normalizeFigure(scaledArgs.figure),
+    };
+
+    const scale = outputScale(ctx);
+    const surfaceSize = {
+      width: Math.max(1, Math.ceil(position.width * scale)),
+      height: Math.max(1, Math.ceil(position.height * scale)),
+    };
+    const shapeSurface = createShapeSurface(surfaceSize);
+    if (shapeSurface) {
+      let rendered = false;
+      try {
+        const shapeCtx = shapeSurface.context as CanvasRenderingContext2D;
+        shapeCtx.save();
+        try {
+          shapeCtx.setTransform(surfaceSize.width / position.width, 0, 0, surfaceSize.height / position.height, 0, 0);
+          shapeCtx.filter = 'none';
+          shapeCtx.globalAlpha = 1;
+          shapeCtx.globalCompositeOperation = 'source-over';
+          setShapeCtx(shapeCtx, shapeArgs);
+          drawShape(shapeCtx, shapeArgs);
+        } finally {
+          shapeCtx.restore();
+        }
+
+        ctx.save();
+        try {
+          ctx.filter = 'none';
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(
+            shapeSurface.surface,
+            position.x - (documentFrame?.x ?? 0),
+            position.y - (documentFrame?.y ?? 0),
+            position.width,
+            position.height
+          );
+        } finally {
+          ctx.restore();
+        }
+        rendered = true;
+      } catch {
+        // Failure in this optional sharp-render path must not hide a valid cached raster.
+      } finally {
+        releaseShapeSurface(shapeSurface.surface);
+      }
+      if (rendered) return true;
+    }
+  }
+
+  const cachedRaster = isRetainedVectorSource
+    ? preferCachedSource
+      ? (layer.tmpCanvas ?? layer.bitmap)
+      : hasUsableRaster(layer.tmpCanvas)
+        ? layer.tmpCanvas
+        : hasUsableRaster(layer.bitmap)
+          ? layer.bitmap
+          : null
+    : layer.tmpCanvas;
+  const bitmap =
+    cachedRaster ??
+    (source?.kind === 'tool' && source.args.toolName === 'shape' && 'figure' in source.args && !shapeGeometry
+      ? null
+      : getLayerBitmap(layer, position));
+  if (!hasUsableRaster(bitmap)) return false;
+
   const target: PresentationDrawTarget = { kind: 'document', frame: documentFrame };
   const evaluation = evaluatePresentationForDraw(
     {
@@ -130,12 +379,17 @@ export function drawLayerSource(
   return true;
 }
 
-export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, documentFrame?: DocumentFrame): boolean {
+export function drawLayer(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  documentFrame?: DocumentFrame,
+  preferCachedSource = false
+): boolean {
   ctx.save();
   try {
     ctx.globalAlpha = layer.opacity;
     ctx.globalCompositeOperation = layer.blendMode;
-    return drawLayerSource(ctx, layer, layer.pos, documentFrame);
+    return drawLayerSource(ctx, layer, layer.pos, documentFrame, preferCachedSource);
   } finally {
     ctx.restore();
   }
@@ -223,7 +477,7 @@ export function drawLayersToCanvas(
   canvas: HTMLCanvasElement,
   layers: readonly Layer[],
   documentFrame: DocumentFrame,
-  silentMissingLayerIds?: ReadonlySet<string>,
+  previewLayerIds?: ReadonlySet<string>,
   backingScale = 1,
   requireVisibleLayerBitmaps = false
 ): boolean {
@@ -242,9 +496,12 @@ export function drawLayersToCanvas(
       // the other layers. The staging canvas is discarded by the return below, so the visible
       // canvas keeps the presentation it already had.
       try {
-        if (!drawLayer(stagingContext, layer, documentFrame)) {
+        const isPreview = previewLayerIds?.has(layer.id) ?? false;
+        if (isPreview && layer.tmpCanvas) rasterPreviewCanvases.add(layer.tmpCanvas as object);
+        const hasRasterPreview = layer.tmpCanvas !== null && rasterPreviewCanvases.has(layer.tmpCanvas as object);
+        if (!drawLayer(stagingContext, layer, documentFrame, isPreview || hasRasterPreview)) {
           if (requireVisibleLayerBitmaps) return false;
-          if (!silentMissingLayerIds?.has(layer.id)) {
+          if (!isPreview) {
             console.error('skipped layer without bitmap', layer.id);
           }
         }
