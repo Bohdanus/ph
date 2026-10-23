@@ -59,13 +59,13 @@ describe('the silent-revert gate is installed, not merely written', () => {
     expect(readFileSync(installed, 'utf8')).toContain('.husky/pre-merge-commit');
   });
 
-  it('runs the guard, and does not swallow its exit code', () => {
+  it('refuses direct merges and does not swallow the refusal', () => {
     const hook = readFileSync(join(REPO_ROOT, '.husky', 'pre-merge-commit'), 'utf8');
-    expect(hook).toMatch(/node scripts\/merge-takeover-guard\.mjs/);
-    // The dispatcher runs `sh -e "$hook"`, so the guard's exit code is what blocks the
-    // merge. A `|| true` or a piped swallow here would make the whole thing a report.
+    expect(hook).toContain('direct self-committing merges are refused');
+    expect(hook).toMatch(/exit 1/);
+    // A `|| true` or a piped swallow would turn the refusal into a report.
     expect(hook).not.toMatch(/\|\|\s*true/);
-    expect(hook).not.toMatch(/merge-takeover-guard\.mjs\s*\|\|/);
+    expect(hook).not.toMatch(/exit 1\s*\|\|/);
   });
 
   it('names the fast-forward limit rather than implying total coverage', () => {
@@ -89,7 +89,7 @@ describe('the silent-revert gate is installed, not merely written', () => {
   });
 });
 
-describe('the guard it installs exists and is honest about what it detects', () => {
+describe('the guard and policy it installs exist and are honest about what they detect', () => {
   it('is tracked', () => {
     expect(() => realpathSync(join(REPO_ROOT, 'scripts', 'merge-takeover-guard.mjs'))).not.toThrow();
   });
