@@ -335,7 +335,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
 
     const operation = converted.document.history[1]?.operation;
     expect(operation).toMatchObject({ kind: 'reorder-layers' });
-    expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual({ 'layer-1': 0, 'layer-b': 1 });
+    expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual({ 'layer-1': -1, 'layer-b': 1 });
     registry.shutdown();
   });
 
@@ -1875,9 +1875,9 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
 
     const operation = converted.document.history[2]?.operation;
     expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual({
-      'layer-b': 0,
-      'layer-c': 1,
-      'layer-1': 2,
+      'layer-b': 1,
+      'layer-c': 2,
+      'layer-1': 3,
     });
     registry.shutdown();
   });
@@ -1954,12 +1954,12 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     {
       label: 'moves a layer to the bottom when no anchor is named',
       afterWhichLayerId: null,
-      expectedOrder: { 'layer-1': 0, 'layer-b': 1 },
+      expectedOrder: { 'layer-1': -1, 'layer-b': 1 },
     },
     {
       label: 'places a layer directly after a present anchor',
       afterWhichLayerId: 'layer-b',
-      expectedOrder: { 'layer-b': 0, 'layer-1': 1 },
+      expectedOrder: { 'layer-b': 1, 'layer-1': 2 },
     },
   ] satisfies ReadonlyArray<{
     label: string;

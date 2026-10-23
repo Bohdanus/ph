@@ -64,7 +64,12 @@ import {
   TOOL_ACTION,
   UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
-import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
+import {
+  deriveLayerNameAndOrder,
+  reorderLayerOrderValues,
+  type LayerOrderRecord,
+  toolLayerBlendMode,
+} from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
@@ -1331,19 +1336,11 @@ export function legacyHistoryToDurable(
         // "map to the preceding durable cursor", the same as a dropped rename.
         const anchorPresent = !afterWhichLayerId || currentLayers.has(afterWhichLayerId);
         if (layerToMoveId && currentLayers.has(layerToMoveId) && anchorPresent) {
-          const order = Object.fromEntries(
-            [...currentLayers.values()]
-              .sort((left, right) => left.order - right.order)
-              .map((layer, index) => [layer.id, index])
-          );
-          let orderByLayerId = order;
-          // Reordering a layer after itself preserves the runtime sequence.
-          if (afterWhichLayerId !== layerToMoveId) {
-            const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
-            const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
-            remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
-            orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
-          }
+          const orderByLayerId = reorderLayerOrderValues({
+            orderByLayerId: Object.fromEntries([...currentLayers.values()].map((layer) => [layer.id, layer.order])),
+            layerToMoveId,
+            afterWhichLayerId,
+          })!;
           operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
           if (enabled) {
             for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
@@ -1690,8 +1687,8 @@ export const convertLegacyHistory = legacyHistoryToDurable;
  * the other here would leave a third rule rather than one of the two.
  *
  * The layer set is read for its orders alone (`LayerOrderRecord`). Rebuilds use
- * durable snapshots; source-backed appends pass the live record so sparse legacy
- * orders after a reorder still produce the same next name/order as the UI. The
+ * durable snapshots; source-backed appends pass the live record so legacy
+ * sparse orders after a reorder produce the same next name/order as the UI. The
  * empty map in {@link deriveReplaceLayerSourceEntry} stays meaningful because
  * replacement discards the derived order, exactly as the old fold's did.
  *

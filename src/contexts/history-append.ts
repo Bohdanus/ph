@@ -753,32 +753,40 @@ function translate(
  * matrix of orders and intents, and the store test pins the published document
  * against a full conversion.
  *
- * `preOrder` is the layer sequence bottom first — index 0 is the bottom of the
- * stack — which is the same sequence `reorderLayers` and `replayHistory` operate
- * on, and the same one the converter normalizes its own layer snapshots into.
+ * `preOrder` is the layer sequence bottom first. `preLayerOrders` carries the
+ * numeric values from that live record because legacy source-backed layer
+ * creation derives its name from those values after replay.
  *
  * A `null` result means the mover or a named anchor is absent from the live
- * order, so the intent cannot produce a valid reorder. Anchoring a layer after
- * itself is a valid no-op in sequence terms: it returns the normalized current
- * order, matching `reorderLayers` and the converter.
+ * order, so the intent cannot produce a valid reorder. A self-anchor preserves
+ * relative sequence but retains the exact sparse-value updates of legacy replay.
  */
 export function reorderOrderAfterIntent(
   preOrder: readonly LayerId[],
-  intent: { layerToMoveId: LayerId; afterWhichLayerId?: LayerId | null }
+  intent: { layerToMoveId: LayerId; afterWhichLayerId?: LayerId | null },
+  preLayerOrders: Readonly<Record<LayerId, number>>
 ): Readonly<Record<LayerId, number>> | null {
   if (!intent.layerToMoveId) return null;
   if (!preOrder.includes(intent.layerToMoveId)) return null;
   if (intent.afterWhichLayerId && !preOrder.includes(intent.afterWhichLayerId)) return null;
-  if (intent.afterWhichLayerId === intent.layerToMoveId) {
-    return Object.freeze(Object.fromEntries(preOrder.map((id, index) => [id, index])));
+  if (
+    Object.keys(preLayerOrders).length !== preOrder.length ||
+    preOrder.some((id) => !Object.hasOwn(preLayerOrders, id))
+  ) {
+    return null;
   }
-
-  const remaining = preOrder.filter((id) => id !== intent.layerToMoveId);
-  // A falsy anchor means the bottom, which is index 0 here. A named anchor is
-  // known to be present, so `indexOf` cannot be -1 and the `+ 1` is its slot.
-  const targetIndex = intent.afterWhichLayerId ? remaining.indexOf(intent.afterWhichLayerId) + 1 : 0;
-  remaining.splice(targetIndex, 0, intent.layerToMoveId);
-  return Object.freeze(Object.fromEntries(remaining.map((id, index) => [id, index])));
+  const next: Record<LayerId, number> = Object.fromEntries(preOrder.map((id) => [id, preLayerOrders[id]]));
+  if (!intent.afterWhichLayerId) {
+    const minOrder = Object.values(next).reduce((minimum, order) => Math.min(minimum, order), Infinity);
+    next[intent.layerToMoveId] = minOrder - 1;
+    return Object.freeze(next);
+  }
+  const targetOrder = next[intent.afterWhichLayerId]!;
+  for (const id of preOrder) {
+    if (next[id]! > targetOrder) next[id] += 2;
+  }
+  next[intent.layerToMoveId] = targetOrder + 1;
+  return Object.freeze(next);
 }
 
 /**
@@ -791,17 +799,23 @@ export function reorderOrderAfterIntent(
  */
 export function deriveReorderLayersEntry(
   item: HistoryItem,
-  preOrder: readonly LayerId[] | null | undefined
+  preOrder: readonly LayerId[] | null | undefined,
+  preLayerOrders?: Readonly<Record<LayerId, number>> | null
 ): DurableHistoryEntry | null {
   if (item.actionName !== REORDER_ACTION) return null;
   if (!preOrder) return null;
   const args = item.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
   const layerToMoveId = args?.layerToMoveId;
   if (!layerToMoveId) return null;
-  const orderByLayerId = reorderOrderAfterIntent(preOrder, {
-    layerToMoveId,
-    afterWhichLayerId: args?.afterWhichLayerId,
-  });
+  if (!preLayerOrders) return null;
+  const orderByLayerId = reorderOrderAfterIntent(
+    preOrder,
+    {
+      layerToMoveId,
+      afterWhichLayerId: args?.afterWhichLayerId,
+    },
+    preLayerOrders
+  );
   if (!orderByLayerId) return null;
   return Object.freeze({
     id: item.id,
@@ -948,24 +962,23 @@ export type DurableAppendInput = Readonly<{
    * them. It is supplied by the store from the live record, never by a writer.
    */
   preLayerOrder?: readonly LayerId[] | null;
+  /** The live sparse order values used by the legacy reorder arithmetic. */
+  preLayerOrders?: Readonly<Record<LayerId, number>> | null;
   /**
    * The layer ids the durable document itself holds at its cursor, in the order
    * its own snapshots sort into.
    *
    * A reorder map is keyed on the whole layer set, and durable replay silently
-   * skips ids it does not know (`durable-replay.ts`), so a map derived from a
-   * layer set the shadow does not share would renumber the layers the two models
-   * do agree on and leave the shadow ordered differently from the document. The
-   * store supplies the comparison so this module never has to replay anything.
+   * skips ids it does not know (`durable-replay.ts`). The store supplies the
+   * comparison so this module never has to replay anything.
    *
-   * The ORDER is compared, not just the membership, and the difference is the
-   * whole point. A published map is a fresh normalisation of the order, so it
-   * overwrites whatever order the shadow had; publishing it while the two models
-   * already disagree about the order launders that disagreement into a document
-   * no reconversion will reproduce. Sequence equality is what makes a publication
-   * and a reconversion interchangeable.
+   * Both the sequence and exact numeric values are compared. Sparse values affect
+   * later source-backed layer names, so sequence equality alone cannot prove that
+   * publication and full conversion are interchangeable.
    */
   durableLayerOrder?: readonly LayerId[] | null;
+  /** Exact durable order values at the shadow cursor. */
+  durableLayerOrders?: Readonly<Record<LayerId, number>> | null;
   /**
    * The durable pre-append layer snapshots used to grade source-backed create
    * and merge plans. A missing map still permits canonical-shape validation,
@@ -1584,7 +1597,8 @@ function validatePlannedDurableEntryUnchecked(
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null,
   registry?: AssetRegistryProbe | null,
   documentId?: string,
-  liveLayers?: Readonly<Record<LayerId, Layer>> | null
+  liveLayers?: Readonly<Record<LayerId, Layer>> | null,
+  preLayerOrders?: Readonly<Record<LayerId, number>> | null
 ): string | null {
   if (!hasSafeLegacyEntryData(entry)) return 'the legacy history entry is malformed';
   if (!hasPlainDataProperties(planned)) {
@@ -1710,10 +1724,15 @@ function validatePlannedDurableEntryUnchecked(
     const layerToMoveId = args?.layerToMoveId;
     if (!layerToMoveId) return 'a layer reorder has no moving layer id';
     if (!preLayerOrder) return 'a layer reorder was checked without the store layer order it was planned against';
-    const expected = reorderOrderAfterIntent(preLayerOrder, {
-      layerToMoveId,
-      afterWhichLayerId: args?.afterWhichLayerId,
-    });
+    if (!preLayerOrders) return 'a layer reorder was checked without exact store layer order values';
+    const expected = reorderOrderAfterIntent(
+      preLayerOrder,
+      {
+        layerToMoveId,
+        afterWhichLayerId: args?.afterWhichLayerId,
+      },
+      preLayerOrders
+    );
     // The refusal cases never reach here: `decideDurableAppend` sends a reorder
     // whose intent does not apply down the `preconditions` path before it calls
     // this. Grading one as a mismatch would report a writer defect for an append
@@ -1921,7 +1940,8 @@ export function validatePlannedDurableEntry(
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null,
   registry?: AssetRegistryProbe | null,
   documentId?: string,
-  liveLayers?: Readonly<Record<LayerId, Layer>> | null
+  liveLayers?: Readonly<Record<LayerId, Layer>> | null,
+  preLayerOrders?: Readonly<Record<LayerId, number>> | null
 ): string | null {
   try {
     return validatePlannedDurableEntryUnchecked(
@@ -1931,7 +1951,8 @@ export function validatePlannedDurableEntry(
       preLayers,
       registry,
       documentId,
-      liveLayers
+      liveLayers,
+      preLayerOrders
     );
   } catch {
     return 'the planned durable history entry is malformed';
@@ -1947,7 +1968,9 @@ function decideDurableAppendUnchecked({
   planned,
   documentRevision,
   preLayerOrder,
+  preLayerOrders,
   durableLayerOrder,
+  durableLayerOrders,
   preLayers,
   liveLayers: suppliedLiveLayers,
   registry: suppliedRegistry,
@@ -2019,11 +2042,9 @@ function decideDurableAppendUnchecked({
   // the question, not a writer that answered it wrongly, and the conversion that
   // replaces it already handles the no-op correctly.
   //
-  // Of the three, only the sequence comparison is reachable from the store: it
-  // supplies an array for the store order by construction, and the base it reads
-  // the durable order from was already required non-null above. The other two are
-  // the module's API contract — a caller that cannot see the live record has no
-  // way to publish a reorder, and must be told that rather than be trusted.
+  // The store supplies both sequence and numeric order maps by construction.
+  // Missing values cannot be reconstructed from a sequence without fabricating
+  // dense indices, so callers that cannot see the live record must be refused.
   if (entry.actionName === REORDER_ACTION) {
     if (!preLayerOrder) {
       return { outcome: 'preconditions', reason: 'a layer reorder needs the store layer order it was planned against' };
@@ -2040,6 +2061,33 @@ function decideDurableAppendUnchecked({
         reason: 'the durable document and the store record disagree about the layer order',
       };
     }
+    if (!preLayerOrders || !durableLayerOrders) {
+      return {
+        outcome: 'preconditions',
+        reason: 'a layer reorder needs exact runtime and durable order values to compare',
+      };
+    }
+    if (!sameOrderMap(preLayerOrders, durableLayerOrders)) {
+      return {
+        outcome: 'preconditions',
+        reason: 'the durable document and the store record disagree about the layer order values',
+      };
+    }
+  }
+
+  const sourceBackedLayerAppend =
+    entry.actionName === NEW_LAYER_ACTION ||
+    entry.actionName === MERGE_ACTION ||
+    (entry.actionName === TOOL_ACTION && sourceFromEntry(entry)?.kind === 'tool');
+  if (sourceBackedLayerAppend && preLayers && suppliedLiveLayers) {
+    const durableOrders = Object.fromEntries([...preLayers].map(([id, layer]) => [id, layer.order]));
+    const liveOrders = Object.fromEntries(Object.values(suppliedLiveLayers).map((layer) => [layer.id, layer.order]));
+    if (!sameOrderMap(liveOrders, durableOrders)) {
+      return {
+        outcome: 'preconditions',
+        reason: 'the durable document and the store record disagree about source-backed layer order values',
+      };
+    }
   }
 
   const registry = suppliedRegistry === null ? null : (suppliedRegistry ?? getAssetRegistry());
@@ -2050,7 +2098,8 @@ function decideDurableAppendUnchecked({
     preLayers,
     registry,
     documentId,
-    suppliedLiveLayers
+    suppliedLiveLayers,
+    preLayerOrders
   );
   if (problem) {
     if (!registry && problem.includes('cannot be verified without the asset registry')) {

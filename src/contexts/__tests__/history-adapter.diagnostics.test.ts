@@ -1067,14 +1067,14 @@ describe('durable entry id uniqueness', () => {
     expect(last?.kind).toBe('reorder-layers');
     expect(last?.kind === 'reorder-layers' && last.orderByLayerId).toEqual({
       'layer-a': 0,
-      [layerId]: 1,
-      'layer-b': 2,
+      [layerId]: 2,
+      'layer-b': 3,
     });
     // The user-visible half: replaying the shadow stacks the layers that way.
     const replayed = replayDurableDocument(result.document);
     expect(
       Object.fromEntries(Object.entries(replayed.layers).map(([id, layer]) => [id, layer.snapshot.order]))
-    ).toEqual({ 'layer-a': 0, [layerId]: 1, 'layer-b': 2 });
+    ).toEqual({ 'layer-a': 0, [layerId]: 2, 'layer-b': 3 });
   });
 
   it('leaves the id-keyed entry lookup resolving exactly one entry, so toggling the id cannot disable another edit', () => {

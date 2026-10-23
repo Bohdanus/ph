@@ -513,8 +513,8 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
     );
 
     const replay = replayDurableDocument(document);
-    expect(replay.layers[layerId]?.snapshot.order).toBe(1);
-    expect(replay.layers[layer2Id]?.snapshot.order).toBe(0);
+    expect(replay.layers[layerId]?.snapshot.order).toBe(2);
+    expect(replay.layers[layer2Id]?.snapshot.order).toBe(1);
   });
 
   it('apply-filter on non-existent layer is a no-op', () => {
