@@ -38,6 +38,31 @@ and [`KILO.md`](KILO.md).
 - Root agent reconciles child claims against source files and required primary
   sources, performs validation, and owns the final review/landing process.
 
+## Token-intensive research
+
+- Bulk web research and chat-history mining MUST use a verified free read-only
+  delegate when the active host can explicitly route one. Give it a bounded query,
+  an exclusive summary-file path, and a short evidence-backed output limit. Do not
+  return raw pages or transcripts to the root conversation; child output still
+  consumes root context.
+- Do not assume Codex subagents can use Kilo's free models. Verify the active host's
+  resolved model/provider. If the host cannot guarantee a free route, stop rather
+  than silently doing bulk research in the paid root context or delegating it to a
+  paid subagent.
+- For public URL lists when the host has no free web-research delegate, run
+  `node scripts/free-research.mjs` from a task worktree. It bounds the fetch and
+  prompt sizes and writes a condensed result to a file. Groq is excluded unless the
+  caller passes `--groq-free-plan-only` after independently confirming the account's
+  $0 Free plan; do not pass that flag when the plan is paid or uncertain. The script
+  cannot detect Groq billing plans. See `MODELS.md` for the complete model-routing
+  and account-plan policy.
+- Chat searches are not handled by the URL runner. Use a free read-only delegate
+  that can access the relevant chat-history store, ask it to return only matched
+  session IDs and a concise evidence file, then read that file in the root. Never
+  send private transcripts to an unverified provider.
+- If no safe free path exists, request explicit authorization before switching to
+  paid research; do not treat the user's request for rigor as paid-routing approval.
+
 ## Project-specific guardrails
 
 Follow the Photoshop product, worktree, review, and test requirements in

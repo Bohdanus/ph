@@ -38,6 +38,8 @@
     "test:e2e:clean": "rm -rf test-results/*/ test-results/.last-run.json playwright-report",
     "test:e2e:install": "playwright install chrome",
     "probe:console": "node scripts/probe-console.mjs",
+    "free:models": "node scripts/free-model-pool.mjs",
+    "free:research": "node scripts/free-research.mjs",
     "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
     "gate:verify": "npm run --silent tsc && npm run --silent build",
     "gate:commit": "node scripts/quiet-command.mjs lint-staged --fail-on-changes --no-stash && npm run --silent gate:verify",
