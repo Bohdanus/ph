@@ -3,10 +3,14 @@ import {
   absoluteViewZoom,
   clampAbsoluteViewZoom,
   DEFAULT_VIEW_STATE,
+  formatViewZoomPercent,
   MAX_VIEW_ZOOM,
   MIN_VIEW_ZOOM,
   MAX_SLIDER_ZOOM,
   MIN_SLIDER_ZOOM,
+  minimumSliderZoomForDocumentSize,
+  minimumSliderZoomForCurrentView,
+  minimumZoomOverrideForMagnification,
   VIEW_ZOOM_SLIDER_STEPS,
   inverseViewPoint,
   preserveViewScaleCompensationAcrossDisplayScaleChange,
@@ -27,6 +31,33 @@ describe('view state transforms', () => {
     expect(sliderPositionToViewZoom(-1)).toBe(MIN_SLIDER_ZOOM);
     expect(sliderPositionToViewZoom(VIEW_ZOOM_SLIDER_STEPS + 1)).toBe(MAX_SLIDER_ZOOM);
     expect(sliderPositionToViewZoom(Number.NaN)).toBeCloseTo(1);
+  });
+
+  it('sets the slider floor where the shorter document edge reaches one physical pixel', () => {
+    const minimumZoom = minimumSliderZoomForDocumentSize({ width: 1200, height: 600 });
+    expect(minimumZoom).toBeCloseTo(1 / 600);
+    expect(viewZoomToSliderPosition(minimumZoom, minimumZoom)).toBe(0);
+    expect(sliderPositionToViewZoom(0, minimumZoom)).toBeCloseTo(minimumZoom);
+    expect(clampAbsoluteViewZoom(minimumZoom / 2, minimumZoom)).toBeCloseTo(minimumZoom);
+    expect(sliderPositionToViewZoom(VIEW_ZOOM_SLIDER_STEPS, minimumZoom)).toBe(MAX_SLIDER_ZOOM);
+  });
+
+  it('keeps an already-visible subpixel view at the slider floor until it is zoomed in', () => {
+    const size = { width: 100_000, height: 1 };
+    expect(minimumSliderZoomForCurrentView(size, 0.004)).toBe(0.004);
+    expect(minimumSliderZoomForCurrentView(size, 0.005, 0.004)).toBe(0.004);
+    expect(minimumSliderZoomForCurrentView(size, 1)).toBe(1);
+    expect(minimumSliderZoomForCurrentView(size, 2)).toBe(1);
+    expect(minimumZoomOverrideForMagnification(size, 0.005, 0.004, 0.004)).toBe(0.004);
+    expect(minimumZoomOverrideForMagnification(size, 1, 0.004, 0.004)).toBeUndefined();
+  });
+
+  it('uses the fallback range without a document and keeps tiny zoom labels visible', () => {
+    expect(minimumSliderZoomForDocumentSize({ width: 0, height: 0 })).toBe(MIN_SLIDER_ZOOM);
+    expect(formatViewZoomPercent(1 / 600)).toBe('0.1667%');
+    expect(formatViewZoomPercent(0.99)).toBe('99%');
+    expect(formatViewZoomPercent(1)).toBe('100%');
+    expect(formatViewZoomPercent(MAX_SLIDER_ZOOM)).toBe('3200%');
   });
 
   it.each([0.25, 0.99, 1, 1.01, 2, 8])('preserves useful precision around %s magnification', (zoom) => {
