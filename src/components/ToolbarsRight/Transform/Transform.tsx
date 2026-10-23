@@ -217,6 +217,7 @@ const Transform: React.FC<{}> = () => {
           <input
             id="rotate-slider"
             type="range"
+            aria-label="Rotation angle"
             min={-90}
             max={90}
             value={rotate}
