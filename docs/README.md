@@ -120,6 +120,7 @@ in the live set depends on them, and they are not part of this hierarchy.
 
 | File                                     | What it is                                                                                                   |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `../RECOVERY.md`                         | Preserves recovery instructions for an unreviewed inventory patch; do not apply wholesale                    |
 | `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete   |
 | `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                    |
 | `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
