@@ -1,6 +1,7 @@
 import React, {
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -32,7 +33,7 @@ import type {
 } from './general-types.ts';
 import {
   DEFAULT_VIEW_STATE,
-  preserveViewScaleCompensationAcrossFrameChange,
+  preserveViewScaleCompensationAcrossDisplayScaleChange,
   viewStateRef,
   type ViewState,
 } from './view-state.ts';
@@ -74,6 +75,9 @@ import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer }
 import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
 import { projectDurableRender, type DurableRenderProjection } from './durable-render-projection.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
+import { containFit } from '../util/contain-fit.ts';
+import { useResizeObserverRAF } from '../hooks/useResizeObserver.ts';
+import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 import {
   closePresentationBitmap,
   DocumentPresentationScope,
@@ -1303,6 +1307,7 @@ function divergentLayerIds(current: LayersRecord, next: LayersRecord): string[] 
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
+  const devicePixelRatio = useDevicePixelRatio();
   // refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const toolOverlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -1310,7 +1315,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [, forceViewStateUpdate] = useState(0);
   const setViewState = (partial: Partial<ViewState>) => {
-    viewStateRef.current = { ...viewStateRef.current, ...partial };
+    const changesViewTransform = ['panX', 'panY', 'zoom', 'rotation'].some((key) => key in partial);
+    const fitToScreen = partial.fitToScreen ?? (changesViewTransform ? false : viewStateRef.current.fitToScreen);
+    viewStateRef.current = { ...viewStateRef.current, ...partial, fitToScreen };
     forceViewStateUpdate((value) => value + 1);
   };
 
@@ -1326,36 +1333,72 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     documentId: storeState.documentId,
     documentRevision: storeState.documentRevision,
     frame: storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize),
+    viewport: null as Size | null,
+    devicePixelRatio,
   });
-  useLayoutEffect(() => {
-    const nextFrame = storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize);
-    const previous = previousPresentedFrameRef.current;
-    if (
-      previous.documentId === storeState.documentId &&
-      previous.documentRevision === storeState.documentRevision &&
-      !documentFrameEquals(previous.frame, nextFrame)
-    ) {
-      const viewport = containerRef.current?.getBoundingClientRect();
-      if (viewport && viewport.width > 0 && viewport.height > 0) {
-        const nextCompensation = preserveViewScaleCompensationAcrossFrameChange(
+  const reconcileViewScaleForWorkspace = useCallback(
+    (observed?: Size) => {
+      const nextFrame = storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize);
+      const previous = previousPresentedFrameRef.current;
+      const rect = observed ?? containerRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+      const viewport = { width: rect.width, height: rect.height };
+      const sameDocument = previous.documentId === storeState.documentId;
+      const sameFrame = documentFrameEquals(previous.frame, nextFrame);
+      const viewportChanged =
+        previous.viewport !== null &&
+        (previous.viewport.width !== viewport.width || previous.viewport.height !== viewport.height);
+      const devicePixelRatioChanged = previous.devicePixelRatio !== devicePixelRatio;
+      const frameChanged = !sameFrame;
+      const shouldPreserveMagnification =
+        previous.viewport !== null &&
+        sameDocument &&
+        ((sameFrame && !viewStateRef.current.fitToScreen && (viewportChanged || devicePixelRatioChanged)) ||
+          (frameChanged && previous.documentRevision === storeState.documentRevision));
+
+      if (shouldPreserveMagnification) {
+        const previousFitScale = containFit(previous.viewport!, documentFrameSize(previous.frame)).scale;
+        const nextFitScale = containFit(viewport, documentFrameSize(nextFrame)).scale;
+        const nextCompensation = preserveViewScaleCompensationAcrossDisplayScaleChange(
           viewStateRef.current.zoom,
           viewStateRef.current.fitScaleCompensation,
-          { width: viewport.width, height: viewport.height },
-          documentFrameSize(previous.frame),
-          documentFrameSize(nextFrame)
+          previousFitScale,
+          nextFitScale,
+          previous.devicePixelRatio,
+          devicePixelRatio
         );
         if (nextCompensation !== viewStateRef.current.fitScaleCompensation) {
-          viewStateRef.current = { ...viewStateRef.current, fitScaleCompensation: nextCompensation };
+          viewStateRef.current = {
+            ...viewStateRef.current,
+            fitScaleCompensation: nextCompensation,
+            fitToScreen: frameChanged ? false : viewStateRef.current.fitToScreen,
+          };
           forceViewStateUpdate((value) => value + 1);
         }
       }
-    }
-    previousPresentedFrameRef.current = {
-      documentId: storeState.documentId,
-      documentRevision: storeState.documentRevision,
-      frame: nextFrame,
-    };
-  }, [storeState.documentFrame, storeState.documentId, storeState.documentRevision, storeState.totalSize]);
+
+      previousPresentedFrameRef.current = {
+        documentId: storeState.documentId,
+        documentRevision: storeState.documentRevision,
+        frame: nextFrame,
+        viewport,
+        devicePixelRatio,
+      };
+    },
+    [
+      containerRef,
+      devicePixelRatio,
+      storeState.documentFrame,
+      storeState.documentId,
+      storeState.documentRevision,
+      storeState.totalSize,
+    ]
+  );
+  useLayoutEffect(() => {
+    reconcileViewScaleForWorkspace();
+  }, [reconcileViewScaleForWorkspace]);
+  useResizeObserverRAF(containerRef, reconcileViewScaleForWorkspace);
   const latestStateRef = useRef(storeState);
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before
