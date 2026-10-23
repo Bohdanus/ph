@@ -1757,10 +1757,12 @@ describe('decideDurableAppend: reorder entries', () => {
       prior: { entries: priorEntries, cursor: 0, branchRevision: 0 },
       next,
       entry,
-      planned: deriveReorderLayersEntry(entry, preOrder),
+      planned: deriveReorderLayersEntry(entry, preOrder, { bottom: 0, middle: 1, top: 2 }),
       documentRevision: 4,
       preLayerOrder: preOrder,
+      preLayerOrders: { bottom: 0, middle: 1, top: 2 },
       durableLayerOrder: [...preOrder],
+      durableLayerOrders: { bottom: 0, middle: 1, top: 2 },
       ...overrides,
     });
   };
@@ -1774,7 +1776,7 @@ describe('decideDurableAppend: reorder entries', () => {
     expect(decision.document.history).toHaveLength(2);
     expect(decision.document.history[1]!.operation).toEqual({
       kind: 'reorder-layers',
-      orderByLayerId: { middle: 0, top: 1, bottom: 2 },
+      orderByLayerId: { middle: 1, top: 2, bottom: 3 },
     });
     expect(decision.document.history[1]!.id).toBe(entry.id);
     expect(decision.document.durableRevision).toBe(8);
@@ -1782,15 +1784,14 @@ describe('decideDurableAppend: reorder entries', () => {
 
   it.each([
     ['no store order at all', { preLayerOrder: null }],
+    ['runtime order values are absent', { preLayerOrders: null }],
+    ['durable order values do not match', { durableLayerOrders: { bottom: 0, middle: 1, top: 4 } }],
     ['a durable order that is not supplied', { durableLayerOrder: null }],
     ['a durable order of the wrong length', { durableLayerOrder: ['bottom', 'middle'] }],
     ['a durable order with a layer the store does not hold', { durableLayerOrder: [...preOrder, 'ghost'] }],
     ['a durable order missing a layer the store holds', { durableLayerOrder: ['bottom', 'top'] }],
-    // Same length, same members, different sequence. This is the case a
-    // membership check cannot see, and it is the one that matters: a published
-    // map is a fresh normalisation of the order, so publishing while the models
-    // disagree about the order launders the disagreement into a document no
-    // reconversion will reproduce.
+    // Same length and members but a different sequence: membership alone is
+    // insufficient to prove the store and durable pre-states agree.
     [
       'a durable order that is the same set in a different sequence',
       { durableLayerOrder: ['top', 'middle', 'bottom'] },
@@ -1820,8 +1821,8 @@ describe('decideDurableAppend: reorder entries', () => {
   });
 
   it.each([
-    ['no anchor', undefined, { bottom: 0, middle: 1, top: 2 }],
-    ['an explicit null anchor', null, { bottom: 0, middle: 1, top: 2 }],
+    ['no anchor', undefined, { bottom: -1, middle: 1, top: 2 }],
+    ['an explicit null anchor', null, { bottom: -1, middle: 1, top: 2 }],
   ] as const)('plans a move to the bottom for %s', (_label, afterWhichLayerId, expected) => {
     const entry = reorderEntry({ afterWhichLayerId });
     const decision = decide(entry);

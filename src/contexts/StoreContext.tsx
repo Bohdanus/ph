@@ -759,7 +759,8 @@ function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
 /**
  * The live record's layer order, bottom first: index 0 is the bottom of the
  * stack, which is the same sequence `reorderLayers` mutates, `replayHistory`
- * replays, and the durable converter normalizes its own snapshots into.
+ * replays, and the durable converter processes in the same sequence. Numeric
+ * values stay sparse because older source-backed creates derive names from them.
  *
  * Read here, at the store, rather than in the hook: a drag dispatches 200 ms
  * after the row that started it was rendered, so a closure's copy of the layer
@@ -1696,16 +1697,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A reorder's durable operation names the resulting order of every layer,
       // so it is planned here, where the pre-append record is authoritative, and
       // it is checked against a second, independent copy of the rule. The
-      // shadow's OWN layer order is supplied too, and compared as a sequence: a
-      // published map is a fresh normalisation of the order, so publishing one
-      // while the two models already disagree about the order would overwrite
-      // that disagreement with a document no reconversion would reproduce.
+      // shadow's own sequence and exact numeric values are supplied too: its
+      // sparse values affect future source-backed layer naming, so matching only
+      // the visible sequence cannot prove a publication matches reconversion.
       const base = currentState.durableStatus === 'current' ? currentState.durableDocument : null;
       const preLayerOrder = layerOrderBottomFirst(currentState.layers);
-      const durableLayerOrder = base
-        ? Object.values(replayDurableDocument(base, base.cursor).layers)
+      const preLayerOrders = Object.fromEntries(
+        Object.values(currentState.layers).map((layer) => [layer.id, layer.order])
+      );
+      const durableLayers = base ? Object.values(replayDurableDocument(base, base.cursor).layers) : null;
+      const durableLayerOrder = durableLayers
+        ? [...durableLayers]
             .sort((left, right) => left.snapshot.order - right.snapshot.order)
             .map((layer) => layer.snapshot.id)
+        : null;
+      const durableLayerOrders = durableLayers
+        ? Object.fromEntries(durableLayers.map((layer) => [layer.snapshot.id, layer.snapshot.order]))
         : null;
       // The record is reordered by `intent` while the durable map is derived from
       // the history item's args, because that is what a replay reads. Production
@@ -1724,10 +1731,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         prior,
         next: timeline,
         entry: historyItem,
-        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
+        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder, preLayerOrders) : null,
         documentRevision: currentState.documentRevision,
         preLayerOrder,
+        preLayerOrders,
         durableLayerOrder,
+        durableLayerOrders,
       });
       const converted =
         decision.outcome === 'published'
