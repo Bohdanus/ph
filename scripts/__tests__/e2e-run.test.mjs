@@ -1110,8 +1110,9 @@ describe('e2e-run: quiet mode (--quiet / E2E_QUIET=1)', () => {
       env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
       log: recorder().log,
       runPlaywright: suite,
+      quiet: true,
     });
-    expect(suite.calls[0].quiet, 'help is not silenced').not.toBe(true);
+    expect(suite.calls[0].quiet, 'help is not silenced even if its caller requested quiet').toBe(false);
     expect(suite.calls[0].args.join(' '), '-h reaches Playwright').toContain('-h');
   });
 });

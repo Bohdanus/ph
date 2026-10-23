@@ -790,7 +790,7 @@ export async function run(argv, options = {}) {
     // as refused unconditionally and "unconditionally" should not have a help-shaped
     // exception. They are cheap and they throw before anything is started.
     assertOwnServer(env);
-    return spawnSuite(playwrightArgv, { ...options, env });
+    return spawnSuite(playwrightArgv, { ...options, env, quiet: false });
   }
 
   // The guarantee is settled first, because it is the one that must not be negotiable.
