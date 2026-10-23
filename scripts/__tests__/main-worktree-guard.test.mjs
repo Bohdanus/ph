@@ -358,7 +358,13 @@ describe('the guard is actually installed', () => {
       expect(existsSync(dispatcher)).toBe(true);
       expect(readFileSync(dispatcher, 'utf8')).toContain('/.husky/commit-msg');
       const preCommitDispatcher = resolve(fixture, hooksPath, 'pre-commit');
-      expect(readFileSync(preCommitDispatcher, 'utf8')).toContain('--record-prepared-merge');
+      const preCommitDispatcherText = readFileSync(preCommitDispatcher, 'utf8');
+      const beforeRecord = preCommitDispatcherText.indexOf('--record-prepared-merge-before');
+      const trackedHook = preCommitDispatcherText.indexOf('sh -e "$hook" "$@"');
+      const afterRecord = preCommitDispatcherText.indexOf('--record-prepared-merge-after');
+      expect(beforeRecord).toBeGreaterThanOrEqual(0);
+      expect(beforeRecord).toBeLessThan(trackedHook);
+      expect(afterRecord).toBeGreaterThan(trackedHook);
 
       const mainCall = spawnSync(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
       expect(mainCall.status).toBe(1);
@@ -545,6 +551,42 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(featureAtOldMainPathCall.status).toBe(0);
+
+      writeFileSync(join(detachedMain, 'feature-only.txt'), 'feature commit\n');
+      git(detachedMain, ['add', 'feature-only.txt']);
+      const featureCommit = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'feature-only'], {
+        cwd: detachedMain,
+        encoding: 'utf8',
+      });
+      expect(featureCommit.status, featureCommit.stderr).toBe(0);
+      const featureTip = git(detachedMain, ['rev-parse', 'HEAD']);
+      const removeFeatureWorktree = spawnSync('git', ['worktree', 'remove', '--force', detachedMain], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(removeFeatureWorktree.status, removeFeatureWorktree.stderr).toBe(0);
+      const recreateDetachedFeature = spawnSync(
+        'git',
+        ['worktree', 'add', '--quiet', '--detach', detachedMain, featureTip],
+        {
+          cwd: fixture,
+          encoding: 'utf8',
+        }
+      );
+      expect(recreateDetachedFeature.status, recreateDetachedFeature.stderr).toBe(0);
+      const detachedFeatureAtOldMainPath = resolveWorktree(detachedMain);
+      expect(detachedFeatureAtOldMainPath).toMatchObject({
+        branchRef: null,
+        isDesignatedMainWorktree: true,
+        isProtectedWorktree: true,
+      });
+      expect(decide({ worktree: detachedFeatureAtOldMainPath })).toEqual({ action: 'refuse' });
+      writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
+      const detachedFeatureAtOldMainPathCall = spawnSync(dispatcher, ['message-file'], {
+        cwd: detachedMain,
+        encoding: 'utf8',
+      });
+      expect(detachedFeatureAtOldMainPathCall.status).toBe(1);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

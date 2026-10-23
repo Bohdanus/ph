@@ -120,13 +120,28 @@ if grep -q 'husky\\.sh' "$hook" && [ ! -f "$(dirname "$hook")/_/husky.sh" ]; the
 \texit 1
 fi
 
-sh -e "$hook" "$@"
-status=$?
-if [ "$status" -ne 0 ]; then
-\texit "$status"
+# Snapshot a prepared merge before the worktree's pre-commit hook can remove its
+# Git markers. The second snapshot below refreshes the result tree after lint-staged.
+if [ "${name}" = "pre-commit" ]; then
+\tworktree_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+\tstate_guard="$worktree_root/scripts/commit-reviewed-landing-message-guard.mjs"
+\tif [ ! -f "$state_guard" ]; then
+\t\tmain_worktree_path="$(git config --local --get ph.mainWorktreePath 2>/dev/null || true)"
+\t\tstate_guard="$main_worktree_path/scripts/commit-reviewed-landing-message-guard.mjs"
+\tfi
+\tif [ -f "$state_guard" ]; then
+\t\tnode "$state_guard" --record-prepared-merge-before
+\t\trecord_status=$?
+\t\tif [ "$record_status" -ne 0 ]; then
+\t\t\texit "$record_status"
+\t\tfi
+\tfi
 fi
 
-# Record the prepared merge after the worktree's own pre-commit checks and
+sh -e "$hook" "$@"
+hook_status=$?
+
+# Refresh the prepared merge after the worktree's own pre-commit checks and
 # lint-staged rewrites. This common dispatcher also covers linked worktrees
 # whose tracked pre-commit hook predates the state recorder.
 if [ "${name}" = "pre-commit" ]; then
@@ -137,9 +152,16 @@ if [ "${name}" = "pre-commit" ]; then
 \t\tstate_guard="$main_worktree_path/scripts/commit-reviewed-landing-message-guard.mjs"
 \tfi
 \tif [ -f "$state_guard" ]; then
-\t\tnode "$state_guard" --record-prepared-merge
-\t\texit $?
+\t\tnode "$state_guard" --record-prepared-merge-after
+\t\trecord_status=$?
+\t\tif [ "$record_status" -ne 0 ]; then
+\t\t\texit "$record_status"
+\t\tfi
 \tfi
+fi
+
+if [ "$hook_status" -ne 0 ]; then
+\texit "$hook_status"
 fi
 
 exit 0

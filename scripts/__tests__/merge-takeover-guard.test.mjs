@@ -117,7 +117,10 @@ function installPinnedPreCommitGuards({ afterChecks = '' } = {}) {
   const hooks = join(dir, 'hooks');
   mkdirSync(hooks, { recursive: true });
   const hook = join(hooks, 'pre-commit');
-  writeFileSync(hook, `#!/bin/sh\nset -e\nnode "${GUARD_PATH}"\nnode "${MAIN_GUARD_PATH}"\n${afterChecks}\n`);
+  writeFileSync(
+    hook,
+    `#!/bin/sh\nnode "${LANDING_MESSAGE_GUARD_PATH}" --record-prepared-merge-before || exit $?\n(\nset -e\nif git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then node "${GUARD_PATH}"; fi\nnode "${MAIN_GUARD_PATH}"\n${afterChecks}\n)\nstatus=$?\nnode "${LANDING_MESSAGE_GUARD_PATH}" --record-prepared-merge-after || exit $?\nif [ "$status" -ne 0 ]; then exit "$status"; fi\n`
+  );
   chmodSync(hook, 0o755);
   const messageHook = join(hooks, 'commit-msg');
   writeFileSync(messageHook, `#!/bin/sh\nset -e\nnode "${LANDING_MESSAGE_GUARD_PATH}" "$1"\n`);
@@ -205,8 +208,8 @@ function commitReviewedLanding(message) {
   }).trim();
 }
 
-function recordPreparedMergeState(cwd) {
-  const result = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, '--record-prepared-merge'], {
+function recordPreparedMergeState(cwd, phase = 'before') {
+  const result = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, `--record-prepared-merge-${phase}`], {
     cwd,
     encoding: 'utf8',
   });
@@ -1827,7 +1830,7 @@ describe('pinned main landing', () => {
 
     expect(failure).toBeDefined();
     expect(String(failure.stderr)).toContain(
-      'commit-reviewed-landing-message-guard: reviewed landing MERGE_HEAD disappeared or changed'
+      'commit-reviewed-landing-message-guard: prepared merge markers disappeared after pre-commit'
     );
     expect(sha()).toBe(refs.main);
     expect(gitOk(['rev-parse', 'MERGE_HEAD']).ok).toBe(false);
@@ -1902,6 +1905,47 @@ describe('pinned main landing', () => {
     expect(git(['show', '-s', '--format=%B', 'HEAD'])).toContain('Chat: operator-session');
     removePreMergeGuard();
     expect(git(['status', '--porcelain'])).toBe('');
+  });
+
+  it('refuses a main hotfix while AUTO_MERGE remains after MERGE_HEAD disappears', () => {
+    const refs = prepareDisjointMerge();
+
+    git(['checkout', '-qb', 'hotfix-conflict', refs.base]);
+    write('base.txt', 'feature conflict\n');
+    commit('feature conflict');
+    git(['checkout', '-q', 'main']);
+    write('base.txt', 'main conflict\n');
+    commit('main conflict');
+    const mainBeforeHotfix = sha();
+    installMainWorktreeCommitGuards();
+
+    const merge = gitOk(['merge', '--no-commit', '--no-ff', 'hotfix-conflict']);
+    expect(merge.ok).toBe(false);
+    write('base.txt', 'resolved conflict\n');
+    git(['add', 'base.txt']);
+    const autoMergePath = resolve(dir, git(['rev-parse', '--git-path', 'AUTO_MERGE']));
+    const mergeHeadPath = resolve(dir, git(['rev-parse', '--git-path', 'MERGE_HEAD']));
+    expect(existsSync(autoMergePath)).toBe(true);
+    rmSync(mergeHeadPath, { force: true });
+
+    write('hotfix.txt', 'hotfix beside the unresolved merge\n');
+    git(['add', 'hotfix.txt']);
+    let failure;
+    try {
+      execFileSync('git', ['commit', '-m', 'Hotfix: interrupted merge', '-m', 'Chat: operator-session'], {
+        cwd: dir,
+        env: { ...process.env, ALLOW_MAIN_COMMIT: '1' },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain('AUTO_MERGE remains');
+    expect(sha()).toBe(mainBeforeHotfix);
+    expect(existsSync(autoMergePath)).toBe(true);
   });
 
   it('allows optional expected pins on a feature-worktree merge', () => {
@@ -2016,7 +2060,7 @@ describe('pinned main landing', () => {
     );
     expect(disappearedMergeFailure).toBeDefined();
     expect(String(disappearedMergeFailure.stderr)).toContain(
-      'commit-reviewed-landing-message-guard: pinned feature merge MERGE_HEAD disappeared or changed'
+      'commit-reviewed-landing-message-guard: prepared merge markers disappeared after pre-commit'
     );
     expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
     let mergeHeadAfterRemoval = null;
@@ -2091,6 +2135,65 @@ describe('pinned main landing', () => {
       'commit-reviewed-landing-message-guard: prepared merge markers disappeared after pre-commit'
     );
     expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+  });
+
+  it('refuses an unpinned feature merge if pre-commit removes both merge markers', () => {
+    const refs = prepareDisjointMerge();
+    const featureWorktree = join(dir, 'feature-worktree');
+    git(['worktree', 'add', '-qb', 'feature-target', featureWorktree, refs.main]);
+    installMainWorktreeCommitGuards();
+
+    writeFileSync(join(featureWorktree, 'feature-note.txt'), 'feature note\n');
+    gitAt(featureWorktree, ['add', 'feature-note.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Feature change', '-m', 'Chat: test-session']);
+    const featureHead = gitAt(featureWorktree, ['rev-parse', 'HEAD']);
+    installPinnedPreCommitGuards({
+      afterChecks:
+        'rm -f "$(git rev-parse --git-path MERGE_HEAD)" "$(git rev-parse --git-path MERGE_MSG)"\ngit rm -f feature.txt\nprintf "pre-commit change\\n" > gate-change.txt\ngit add gate-change.txt\nexit 1',
+    });
+    gitAt(featureWorktree, ['merge', '--no-commit', '--no-ff', 'feat']);
+
+    let failure;
+    withNoExpectedLanding(() => {
+      try {
+        gitAt(featureWorktree, ['commit', '-m', 'Unpinned feature merge', '-m', 'Chat: test-session']);
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeDefined();
+    expect(String(failure.stderr)).toContain(
+      'commit-reviewed-landing-message-guard: prepared merge markers disappeared during pre-commit'
+    );
+    expect(gitAt(featureWorktree, ['rev-parse', 'HEAD'])).toBe(featureHead);
+    const retryRecord = recordPreparedMergeState(featureWorktree);
+    expect(retryRecord.status).not.toBe(0);
+    expect(retryRecord.stderr).toContain('prepared merge state records missing merge markers');
+    expect(gitAt(featureWorktree, ['write-tree'])).not.toBe(gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}']));
+
+    gitAt(featureWorktree, ['reset', '--hard', featureHead]);
+    const autoMergePath = resolve(featureWorktree, gitAt(featureWorktree, ['rev-parse', '--git-path', 'AUTO_MERGE']));
+    rmSync(autoMergePath, { force: true });
+    const discard = spawnSync(process.execPath, [LANDING_MESSAGE_GUARD_PATH, '--discard-abandoned-prepared-merge'], {
+      cwd: featureWorktree,
+      encoding: 'utf8',
+    });
+    expect(discard.status, discard.stderr).toBe(0);
+    const mergeStatePath = resolve(
+      featureWorktree,
+      gitAt(featureWorktree, ['rev-parse', '--git-path', 'kilo-prepared-merge-state.json'])
+    );
+    expect(existsSync(mergeStatePath)).toBe(false);
+    const recoveredPreCommit = join(dir, 'hooks', 'pre-commit');
+    writeFileSync(
+      recoveredPreCommit,
+      `#!/bin/sh\nnode "${LANDING_MESSAGE_GUARD_PATH}" --record-prepared-merge-before || exit $?\nnode "${MAIN_GUARD_PATH}" || exit $?\nnode "${LANDING_MESSAGE_GUARD_PATH}" --record-prepared-merge-after\n`
+    );
+    chmodSync(recoveredPreCommit, 0o755);
+    writeFileSync(join(featureWorktree, 'ordinary-after-recovery.txt'), 'ordinary commit after recovery\n');
+    gitAt(featureWorktree, ['add', 'ordinary-after-recovery.txt']);
+    gitAt(featureWorktree, ['commit', '-m', 'Ordinary after recovery', '-m', 'Chat: test-session']);
   });
 
   it('clears aborted merge state when MERGE_MSG remains behind', () => {

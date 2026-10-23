@@ -177,9 +177,11 @@ An operator hotfix the operator asked for in the designated main worktree by nam
  * may record a pinned landing. The hook installer records the designated main
  * checkout's private gitdir and path in shared local Git config, preserving its
  * protection if HEAD becomes detached or that path is recreated as a detached
- * checkout. The path fallback does not transfer protection to a different branch
- * worktree that reuses the old path. Git prevents the same local branch from being
- * checked out in two worktrees at once.
+ * checkout. Any detached checkout at the remembered main path stays protected:
+ * without a branch ref or matching saved gitdir, it cannot be distinguished from
+ * the original main checkout. The path fallback does not transfer protection to a
+ * different branch worktree that reuses the old path. Git prevents the same local
+ * branch from being checked out in two worktrees at once.
  *
  * Returns `null` when git cannot answer, which `decide` treats as "not the main
  * worktree" — the fail-open arm documented above.

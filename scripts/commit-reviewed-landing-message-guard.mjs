@@ -67,12 +67,33 @@ function readPendingMergeState(cwd) {
   if (!state || !isSha(state.head) || !isSha(state.headTree) || !isSha(state.incoming) || !isSha(state.resultTree)) {
     throw new Error('prepared merge state is invalid; inspect the worktree Git directory before committing');
   }
+  if (state.phase !== undefined && !['prepared', 'markers-lost'].includes(state.phase)) {
+    throw new Error('prepared merge state has an unknown phase; inspect the worktree Git directory before committing');
+  }
   return state;
 }
 
 function clearPendingMergeState(cwd) {
   const path = pendingMergeStatePath(cwd);
   if (existsSync(path)) unlinkSync(path);
+}
+
+function discardAbandonedPreparedMerge(cwd) {
+  const state = readPendingMergeState(cwd);
+  if (!state) return;
+  if (state.phase !== 'markers-lost') {
+    throw new Error('only prepared merge state with missing markers can be explicitly discarded');
+  }
+  if (readMergeHeadRefs(cwd).length !== 0 || hasAutoMergeMarker(cwd)) {
+    throw new Error('merge markers are still present; resolve or abort the merge before discarding its state');
+  }
+  const head = git(['rev-parse', 'HEAD^{commit}'], cwd);
+  const resultTree = git(['write-tree'], cwd);
+  const headTree = git(['rev-parse', 'HEAD^{tree}'], cwd);
+  if (head !== state.head || resultTree !== headTree) {
+    throw new Error('reset the index to the recorded HEAD before discarding abandoned prepared merge state');
+  }
+  clearPendingMergeState(cwd);
 }
 
 function writePendingMergeState(cwd, state) {
@@ -82,15 +103,24 @@ function writePendingMergeState(cwd, state) {
   renameSync(temporaryPath, path);
 }
 
-function recordPreparedMerge(cwd) {
+function recordPreparedMerge(cwd, phase = 'before') {
+  const previousState = readPendingMergeState(cwd);
   const mergeHeads = readMergeHeadRefs(cwd);
-  const state = readPendingMergeState(cwd);
   if (mergeHeads.length === 0) {
-    if (!state) return;
+    if (!previousState) return;
+    if (phase === 'after') {
+      writePendingMergeState(cwd, { ...previousState, phase: 'markers-lost' });
+      throw new Error('prepared merge markers disappeared during pre-commit; refusing to commit');
+    }
+    if (previousState.phase === 'markers-lost') {
+      throw new Error(
+        'prepared merge state records missing merge markers; after confirming the merge was abandoned and resetting the index to HEAD, run `node scripts/commit-reviewed-landing-message-guard.mjs --discard-abandoned-prepared-merge`'
+      );
+    }
     const head = git(['rev-parse', 'HEAD^{commit}'], cwd);
     const resultTree = git(['write-tree'], cwd);
     const headTree = git(['rev-parse', 'HEAD^{tree}'], cwd);
-    if (head === state.head && resultTree === state.headTree && !hasAutoMergeMarker(cwd)) {
+    if (head === previousState.head && resultTree === previousState.headTree && !hasAutoMergeMarker(cwd)) {
       clearPendingMergeState(cwd);
       return;
     }
@@ -98,14 +128,21 @@ function recordPreparedMerge(cwd) {
       'a previous prepared merge left unresolved state; abort or restore that merge before starting another commit'
     );
   }
-  if (mergeHeads.length !== 1) throw new Error('prepared merge state requires exactly one incoming commit');
+  if (mergeHeads.length !== 1) {
+    throw new Error('feature merge requires exactly one incoming commit; refusing an octopus merge');
+  }
   const head = git(['rev-parse', 'HEAD^{commit}'], cwd);
+  const incoming = git(['rev-parse', '--verify', `${mergeHeads[0]}^{commit}`], cwd);
+  if (previousState && (previousState.head !== head || previousState.incoming !== incoming)) {
+    throw new Error('prepared merge parents changed before pre-commit; refusing to record the merge');
+  }
   const resultTree = git(['write-tree'], cwd);
   writePendingMergeState(cwd, {
     head,
     headTree: git(['rev-parse', 'HEAD^{tree}'], cwd),
-    incoming: git(['rev-parse', '--verify', `${mergeHeads[0]}^{commit}`], cwd),
+    incoming,
     resultTree,
+    phase: 'prepared',
   });
 }
 
@@ -115,6 +152,9 @@ function assertPendingMergeState(cwd, mergeHeads) {
   const head = git(['rev-parse', 'HEAD^{commit}'], cwd);
   if (mergeHeads.length === 0) {
     throw new Error('prepared merge markers disappeared after pre-commit; refusing to record a feature merge');
+  }
+  if (mergeHeads.length !== 1) {
+    throw new Error('feature merge requires exactly one incoming commit; refusing an octopus merge');
   }
   const resultTree = git(['write-tree'], cwd);
   const incoming = mergeHeads.length === 1 ? git(['rev-parse', '--verify', `${mergeHeads[0]}^{commit}`], cwd) : null;
@@ -126,9 +166,19 @@ function assertPendingMergeState(cwd, mergeHeads) {
 
 export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = process.env } = {}) {
   try {
-    if (argv[0] === '--record-prepared-merge') {
+    if (
+      argv[0] === '--record-prepared-merge' ||
+      argv[0] === '--record-prepared-merge-before' ||
+      argv[0] === '--record-prepared-merge-after'
+    ) {
       if (argv.length !== 1) throw new Error('unexpected arguments for prepared merge state recording');
-      recordPreparedMerge(cwd);
+      const phase = argv[0] === '--record-prepared-merge-after' ? 'after' : 'before';
+      recordPreparedMerge(cwd, phase);
+      return;
+    }
+    if (argv[0] === '--discard-abandoned-prepared-merge') {
+      if (argv.length !== 1) throw new Error('unexpected arguments for abandoned prepared merge cleanup');
+      discardAbandonedPreparedMerge(cwd);
       return;
     }
     const reviewedLanding = hasReviewedLandingContext(env);
@@ -207,7 +257,14 @@ export function main(argv = process.argv.slice(2), { cwd = process.cwd(), env = 
       if (!worktree?.isMainWorktree) {
         throw new Error('designated main checkout must have refs/heads/main checked out before committing');
       }
-      if (mergeHeads.length === 0) return;
+      if (mergeHeads.length === 0) {
+        if (hasAutoMergeMarker(cwd)) {
+          throw new Error(
+            'an operator hotfix on main cannot be committed while AUTO_MERGE remains; resolve or abort the interrupted merge first'
+          );
+        }
+        return;
+      }
     }
     if (reviewedLanding && mergeHeads.length !== 1) {
       throw new Error('reviewed landing MERGE_HEAD disappeared or changed; refusing to commit');
