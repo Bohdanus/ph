@@ -1668,44 +1668,32 @@ operator's hand — an agent records the finding and stops, which is what this e
 `e2e/OPEN_PROBLEMS.md` (the GROUP-level collapsed-tool assertion entry), `AGENTS.md` (model policy,
 overrides)
 
-## 160. The accessibility gate misses incomplete contrast checks and several live surfaces
+## 160. Dark-theme accessibility scans are in place; axe incomplete candidates still need review
 
-`ThemeContext.tsx` hard-codes `DEFAULT_THEME = 'dark'` and the
-`prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e
-suite pins itself to **light** (`e2e/fixtures/extended-test.ts`'s `pinnedTheme` auto fixture),
-because its pixel oracle — `hasDarkPixels`, `getStrokeAnalysis`, `measureInk` — reads "there is
-nothing here" out of a near-white pixel and is calibrated against the light workspace checkerboard.
-That pin is correct and its header says why. This entry is its cost, and the cost is not the pin.
+The shared e2e fixture pins light because the pixel-analysis helpers rely on the light workspace
+backdrop. `e2e/accessibility.spec.ts` releases that pin, reloads, and audits the shell, New Image
+dialog, unsaved-changes prompt, Draw options bar, and tablet flyout in both themes. The current ten
+scans report zero confirmed axe violations.
 
-**The gap.** The one test that runs with the pin released
-(`e2e/document-dialogs.spec.ts`, the `test('with nothing stored the document starts dark')` case)
-asserts the
-`dark` class on `<html>` and the string in `localStorage`. It reads **no pixel**, so it would stay
-green if every `dark:` Tailwind variant in the app stopped applying. The axe scans are light-pinned,
-and no dark-pixel screenshot assertion was found. **Nothing measures how dark renders.**
+**Manual-review boundary.** Axe's `incomplete` bucket contains cases it could not decide; it is not
+evidence of a violation. `expectNoViolations()` attaches the full result, including target selectors,
+and logs candidate rule counts; only confirmed `violations` fail the suite. The shell and tablet-flyout
+runs include incomplete `color-contrast` and `label-content-name-mismatch` candidates. Do not assert
+the whole bucket empty or attribute a candidate to a particular target without reviewing the attached
+result.
 
-**The measured contrast failure is fixed.** The dock's collapse glyph is a single `«`/`»` character
-at `text-sm`, in the collapse-glyph `<button>` in `SidebarRight.tsx`. Its colors now exceed AA in
-both themes:
+The collapsed dock glyph's measured foreground/background ratios are 6.10:1 in light and 7.00:1
+in dark, above WCAG AA's 4.5:1 requirement for normal text. Its `incomplete` target and reason have
+not been revalidated after the color fix; do not assume a generic incomplete result belongs to this
+glyph.
 
-- light: `text-gray-600` (#4b5563) on `bg-gray-200` (#e5e7eb) = **6.10:1**
-- dark: `dark:text-gray-300` (#d1d5db) on `dark:bg-gray-700` (#374151) = **7.00:1**
+**Next work.** Review the attached candidates individually, then add deterministic assertions or
+fixes for confirmed issues. Preserve the distinction between confirmed violations and axe's
+human-review bucket. Other overlays and responsive states remain outside the current audit.
 
-WCAG AA for normal text is **4.5:1**. The measured ratios pass both themes, but the axe `incomplete`
-status and its reason have not been revalidated after the color fix. `e2e/accessibility.spec.ts` does
-not assert the `incomplete` bucket, so an unresolved target may go unnoticed; do not attribute an
-incomplete result to short text without a fresh axe result.
-
-**Remaining coverage work.** The dock glyph's visible contrast is corrected, the flyout portal
-wrapper's `role="region"` has been removed (commit `45503bfa`), and the mobile toolbar's
-`<nav role="toolbar">` is now a `<div role="toolbar">` (commit `567baf69`) — both findings are
-already resolved in source. The `e2e/accessibility.spec.ts` header was rewritten in the same commit
-that added the file (`6982cd35`) and now has 5 tests covering shell, New Image dialog, unsaved-changes
-prompt, Draw options bar, and a tablet-width flyout scan; those scans are light-pinned and report zero
-violations. The dark theme is not scanned. The gate does not assert the `incomplete` bucket (axe returns
-`incomplete` when it cannot decide), but the current target/reason has not been confirmed after the
-contrast fix. Surfacing or gating incompletes should follow a target-by-target review rather than an
-unverified assumption about the dock glyph.
+**Files.** `e2e/accessibility.spec.ts` — the scoped scans and `expectNoViolations()`;
+`e2e/fixtures/extended-test.ts` — `pinnedTheme` and `useAppDefaultTheme()`;
+`src/components/SidebarRight/PanelGroup.tsx` — the collapsed dock glyph.
 
 ---
 
