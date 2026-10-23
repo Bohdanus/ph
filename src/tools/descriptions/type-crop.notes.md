@@ -1207,7 +1207,7 @@ about Photoshop's post-commit viewport handling.
 fit-scale compensation by `oldContainFit / newContainFit`. The effective scale (`containFit × view
 zoom × fit-scale compensation`) stays constant for crops and for frame changes replayed by undo or
 redo, while the View toolbar's zoom setting remains unchanged. Replacing the document resets the
-view as before. The effective view zoom obeys the existing 10%-1600% limit; an extreme frame change
+view as before. The effective view zoom obeys the existing 10%-3200% limit; an extreme frame change
 can reach a limit, so exact scale preservation is bounded there. The
 `preserves displayed pixel scale when a crop changes the document frame` StoreContext test and the
 pure shrink/grow cases in `view-state.test.ts` pin the calculation.

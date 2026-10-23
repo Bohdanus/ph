@@ -3057,11 +3057,11 @@ The Zoom tool changes the displayed scale of the canvas and keeps the clicked po
 
 **Options bar**
 
-| Control       | Photoshop                                                               | In this app                                                 |
-| ------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Zoom          | Sets the displayed scale from 10% through 1600% in this implementation. | `partial` — `src/components/ToolbarsRight/View/View.tsx:31` |
-| Fit On Screen | Resets the view to the centered contain-fit scale.                      | `present` — `src/components/ToolbarsRight/View/View.tsx:8`  |
-| 100%          | Centers the image at 100% display scale.                                | `present` — `src/components/ToolbarsRight/View/View.tsx:13` |
+| Control       | Photoshop                                                                                            | In this app                                                 |
+| ------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Zoom          | Magnifies up to 3200%, with a one-pixel minimum; at 100%, one image pixel maps to one monitor pixel. | `partial` — `src/components/ToolbarsRight/View/View.tsx:31` |
+| Fit On Screen | Resets the view to the centered contain-fit scale.                                                   | `present` — `src/components/ToolbarsRight/View/View.tsx:8`  |
+| 100%          | Centers the image at one image pixel per physical display pixel, accounting for display density.     | `present` — `src/components/ToolbarsRight/View/View.tsx:13` |
 
 **Modifiers**
 
@@ -3071,7 +3071,7 @@ The Zoom tool changes the displayed scale of the canvas and keeps the clicked po
 
 - `Z` — Selects the Zoom tool.
 
-**In this app:** `implemented` — The pointer anchor, document coordinate inversion, and existing tool gestures follow the transient view transform. Animated zoom, marquee zoom, wheel preferences, and the 25600% desktop maximum are not implemented.
+**In this app:** `implemented` — The view percentage stays stable when the workspace is resized or moved between displays with different pixel density; pan and zoom remain outside document history. The lower bound follows document size so the shorter edge reaches one physical display pixel, an aspect-ratio interpretation of Adobe’s documented one-pixel minimum. Animated zoom, marquee zoom, and wheel preferences are not implemented.
 
 Implementation:
 
@@ -3081,6 +3081,8 @@ Implementation:
 
 Sources:
 
+- <https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/zoom-images.html>
+- <https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/high-density-monitor-support-and-per-monitor-scaling.html>
 - <https://helpx.adobe.com/photoshop/using/tool-techniques/zoom-tool.html>
 - <https://helpx.adobe.com/photoshop/using/viewing-images.html>
 

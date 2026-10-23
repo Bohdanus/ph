@@ -47,7 +47,7 @@ export const viewDescriptions: Record<ViewToolName, ToolDescription> = {
     options: [
       {
         control: 'Zoom',
-        detail: 'Sets the displayed scale from 10% through 1600% in this implementation.',
+        detail: 'Magnifies up to 3200%, with a one-pixel minimum; at 100%, one image pixel maps to one monitor pixel.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/View/View.tsx:31',
       },
@@ -59,7 +59,7 @@ export const viewDescriptions: Record<ViewToolName, ToolDescription> = {
       },
       {
         control: '100%',
-        detail: 'Centers the image at 100% display scale.',
+        detail: 'Centers the image at one image pixel per physical display pixel, accounting for display density.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/View/View.tsx:13',
       },
@@ -73,8 +73,10 @@ export const viewDescriptions: Record<ViewToolName, ToolDescription> = {
       'src/hooks/usePointerPosition.ts:354',
     ],
     appNotes:
-      'The pointer anchor, document coordinate inversion, and existing tool gestures follow the transient view transform. Animated zoom, marquee zoom, wheel preferences, and the 25600% desktop maximum are not implemented.',
+      'The view percentage stays stable when the workspace is resized or moved between displays with different pixel density; pan and zoom remain outside document history. The lower bound follows document size so the shorter edge reaches one physical display pixel, an aspect-ratio interpretation of Adobe’s documented one-pixel minimum. Animated zoom, marquee zoom, and wheel preferences are not implemented.',
     sources: [
+      'https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/zoom-images.html',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/high-density-monitor-support-and-per-monitor-scaling.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/zoom-tool.html',
       'https://helpx.adobe.com/photoshop/using/viewing-images.html',
     ],

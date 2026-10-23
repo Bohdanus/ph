@@ -1,12 +1,18 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import {
-  clampViewZoom,
+  absoluteViewZoom,
+  clampAbsoluteViewZoom,
   DEFAULT_VIEW_STATE,
+  minimumSliderZoomForCurrentView,
+  minimumZoomOverrideForMagnification,
+  relativeViewZoomForMagnification,
   viewportCenter,
   zoomAroundViewportPoint,
   type ViewState,
 } from '../../contexts/view-state.ts';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
+import { useWorkspaceFitScale } from '../../hooks/useWorkspaceFitScale.ts';
 
 export type ViewToolMode = 'hand' | 'zoom' | 'rotate-view';
 
@@ -15,19 +21,26 @@ type ViewGesture = {
   startX: number;
   startY: number;
   startState: ViewState;
-  anchor: { x: number; y: number };
+  startMagnification: number;
+  minimumZoom: number;
   alternate: boolean;
 };
 
 export function ViewToolArea({ className, mode }: { className?: string; mode: ViewToolMode }) {
-  const [{ containerRef, viewStateRef, setViewState }] = useStore();
+  const [{ containerRef, viewState, viewStateRef, setViewState, documentFrame }] = useStore();
+  const fitScale = useWorkspaceFitScale();
+  const devicePixelRatio = useDevicePixelRatio();
+  const currentViewState = viewState ?? DEFAULT_VIEW_STATE;
+  const minimumZoom = minimumSliderZoomForCurrentView(
+    documentFrame,
+    absoluteViewZoom(currentViewState, fitScale, devicePixelRatio),
+    currentViewState.minimumZoomOverride
+  );
   const gestureRef = useRef<ViewGesture | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  const viewportPoint = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    return rect ? { x: event.clientX - rect.left, y: event.clientY - rect.top } : { x: 0, y: 0 };
-  };
+  const relativeZoomAtMagnification = (magnification: number, compensation: number) =>
+    relativeViewZoomForMagnification(magnification, fitScale, compensation, devicePixelRatio);
 
   const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (gestureRef.current?.pointerId !== event.pointerId) return;
@@ -44,13 +57,14 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || gestureRef.current) return;
-    const anchor = viewportPoint(event);
+    const startState = { ...viewStateRef.current };
     gestureRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      startState: { ...viewStateRef.current },
-      anchor,
+      startState,
+      startMagnification: clampAbsoluteViewZoom(absoluteViewZoom(startState, fitScale, devicePixelRatio), minimumZoom),
+      minimumZoom,
       alternate: event.altKey,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -71,11 +85,34 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
       return;
     }
     const factor = Math.pow(2, dx / 160);
-    const zoom = clampViewZoom(gesture.startState.zoom * (gesture.alternate ? 1 / factor : factor));
+    const currentState = viewStateRef.current;
+    const startZoom = relativeZoomAtMagnification(gesture.startMagnification, currentState.fitScaleCompensation);
+    const magnification = clampAbsoluteViewZoom(
+      gesture.startMagnification * (gesture.alternate ? 1 / factor : factor),
+      gesture.minimumZoom
+    );
+    const zoom = relativeZoomAtMagnification(magnification, currentState.fitScaleCompensation);
+    const minimumZoomOverride = minimumZoomOverrideForMagnification(
+      documentFrame,
+      magnification,
+      gesture.minimumZoom,
+      currentState.minimumZoomOverride ?? gesture.startState.minimumZoomOverride
+    );
+    const rebasedStartState = {
+      ...gesture.startState,
+      zoom: startZoom,
+      fitScaleCompensation: currentState.fitScaleCompensation,
+      minimumZoomOverride,
+    };
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     setViewState(
-      zoomAroundViewportPoint(gesture.startState, zoom, gesture.anchor, viewportCenter(rect.width, rect.height))
+      zoomAroundViewportPoint(
+        rebasedStartState,
+        zoom,
+        { x: gesture.startX - rect.left, y: gesture.startY - rect.top },
+        viewportCenter(rect.width, rect.height)
+      )
     );
   };
 
@@ -86,11 +123,25 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
       const rect = containerRef.current?.getBoundingClientRect();
       if (rect) {
         const factor = gesture.alternate ? 0.8 : 1.25;
+        const currentState = viewStateRef.current;
+        const magnification = clampAbsoluteViewZoom(gesture.startMagnification * factor, gesture.minimumZoom);
+        const minimumZoomOverride = minimumZoomOverrideForMagnification(
+          documentFrame,
+          magnification,
+          gesture.minimumZoom,
+          currentState.minimumZoomOverride ?? gesture.startState.minimumZoomOverride
+        );
+        const rebasedStartState = {
+          ...gesture.startState,
+          zoom: relativeZoomAtMagnification(gesture.startMagnification, currentState.fitScaleCompensation),
+          fitScaleCompensation: currentState.fitScaleCompensation,
+          minimumZoomOverride,
+        };
         setViewState(
           zoomAroundViewportPoint(
-            gesture.startState,
-            gesture.startState.zoom * factor,
-            gesture.anchor,
+            rebasedStartState,
+            relativeZoomAtMagnification(magnification, currentState.fitScaleCompensation),
+            { x: gesture.startX - rect.left, y: gesture.startY - rect.top },
             viewportCenter(rect.width, rect.height)
           )
         );
