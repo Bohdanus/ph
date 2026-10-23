@@ -74,7 +74,12 @@ reviewers are required for cross-module, persistence, migration, or high-risk ch
 
 `main-worktree-guard` is post-write; worktrees must exist before fan-out. Swarm leases renew on
 swarm commands, not during long waits. Inventory omits branch-only refs; `branches:orphan` reports
-but does not decide them. Merge hooks do not cover fast-forwards or `git merge --squash -X ours`.
+but does not decide them. Prepare every clean merge in any worktree with
+`git merge --no-commit --no-ff <sha>`, then record it with `git commit`; the direct
+self-committing merge hook cannot identify the incoming commit and refuses it. On `main`, also
+set the reviewed parent and tree pins. Pins are operator-supplied review evidence, not a
+cryptographic approval token. Fast-forwards and `git merge --squash -X ours` bypass the blocking
+hooks.
 
 ## Worktrees
 
@@ -138,8 +143,11 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
 
 ### The rule is enforced at the commit, not by the reader
 
-`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit` and refuses to
-record a commit made from the main worktree. It names the worktree recipe and the
+`scripts/main-worktree-guard.mjs` runs from `.husky/pre-commit` and refuses to
+record an ordinary commit made from either the primary Git checkout or the
+designated `main` worktree. The primary checkout stays protected even if it has a
+task branch checked out; pinned landings are allowed only in the designated
+`main` worktree. It names the worktree recipe and the
 one override, so a refusal is a redirect rather than an obstacle: an agent that
 meets a bare "no" commits anyway, from the same checkout, on a branch nobody made.
 It is a program rather than another paragraph for the two reasons above — a
@@ -150,23 +158,78 @@ Ordering is load-bearing: it runs before `gate:commit` because that gate is
 lint-staged plus `tsc -b` plus a build, and lint-staged rewrites staged files with
 `--fix` before the commit is ever called illegitimate.
 
+The hook installer records the designated main worktree's private Git directory
+and root path in shared local Git config (`ph.mainWorktreeGitDir` and
+`ph.mainWorktreePath`). It also stores a random identity marker in that private
+Git directory. The matching marker keeps the same checkout protected if its
+`HEAD` is detached or switched during a hook, while a new worktree does not
+inherit protection if Git reuses the old path-derived admin directory. If the
+private directory changes, the saved path still protects a detached checkout
+there; it does not transfer protection to a feature branch that reuses the path.
+A hook install while `main` is checked out seeds an identity marker for older
+registrations that recorded only the path and private Git directory. A first
+install fails when `main` is detached and no saved identity exists. The path
+also lets an older linked worktree run the designated checkout's current final
+message guard while its own hook file is missing, but only while the saved path
+still has the recorded private directory and matching marker; a reused path
+cannot supply that guard. Pinned landings and the hotfix override still require
+`refs/heads/main` to be checked out. The final `commit-msg` gate requires exactly
+one non-empty `Chat:` trailer on every commit after `prepare-commit-msg` has had
+a chance to edit the message.
+
 What it does **not** do is stop the write. It runs after the edit, so a session
 that writes into `main` and never commits is not stopped by it. It converts "71
 rogue commits nobody can attribute" into "a dirty tree the next `git status`
 names" — the write side is the process rule above, and the guard is the floor
 under it.
 
+A separate merge-hook rule applies in every worktree: prepare clean merges with
+`git merge --no-commit --no-ff <full-sha>` and record them with `git commit`.
+The `pre-merge-commit` hook unconditionally refuses direct self-committing merges;
+prepare them with `--no-commit` so the next hook can inspect `MERGE_HEAD`. Feature merges may omit the five
+landing pins; a merge into `main` requires them. If a direct merge is refused,
+check whether Git left `MERGE_HEAD` and abort only that exact attempt before
+retrying through the documented prepared-merge flow. Commit a main landing with
+`node scripts/commit-reviewed-landing.mjs` so Git reads the reviewed private
+index snapshot after its hooks run. Land one candidate at a time; octopus merges
+are refused because their multiple incoming commits cannot be checked against a
+single candidate SHA.
+
+The shared `pre-commit` dispatcher records the merge parent and index tree in the
+worktree's private Git directory after the worktree's own checks and lint-staged
+rewrites finish. The final message guard checks that record after
+`prepare-commit-msg`, so a hook that removes both `MERGE_HEAD` and `MERGE_MSG`
+cannot turn a prepared feature merge into an ordinary commit. It also requires
+the final index tree to match the tree pre-commit approved; a message hook cannot
+stage a different merge resolution after the takeover check. After an aborted
+merge, the next pre-commit clears the record only when the index has returned to
+the original `HEAD` tree and no `AUTO_MERGE` marker remains; otherwise, restore
+or inspect that worktree before committing. A leftover `MERGE_MSG` alone does
+not block an ordinary commit after a clean abort.
+The merge record begins when the `pre-commit` dispatcher runs. If an operator
+runs `git merge --quit` before that first snapshot, Git removes the merge state
+while leaving the staged result; the guard cannot recover the discarded parent
+from the later ordinary commit. `post-merge` does not run for `--no-commit`, so
+it cannot close this pre-snapshot gap. Treat `--quit` as abandoning the prepared
+merge and reset or restore the index before making another commit. After the
+first snapshot, marker removal is detected and the commit is refused.
+
 Three things stay allowed, each deliberately:
 
-- **A landing.** A clean non-fast-forward `git merge` into `main` runs
-  `pre-merge-commit`; a fast-forward invokes no gating hook, so the documented
-  landing flow never reaches this file. It still invokes the non-blocking
-  `post-merge` hook, which attempts to release claims and locks for merged
-  worktrees whose branch, directory, and working tree are all eligible.
+- **A pinned landing.** Prepare a clean merge in `main` with
+  `git merge --no-commit --no-ff <reviewed-sha>`, then commit from the reviewed
+  private index snapshot with `node scripts/commit-reviewed-landing.mjs`.
+  `pre-commit` verifies `HEAD`, the actual `MERGE_HEAD`, the staged tree, and
+  reviewed snapshot marker before allowing the commit. `commit-msg` repeats the
+  snapshot checks and verifies the final message after `prepare-commit-msg` has
+  run. The `pre-merge-commit` hook refuses direct self-committing merges on every
+  supported Git version; a fast-forward invokes no
+  blocking hook, so neither path is a landing procedure. The merge still invokes
+  the non-blocking `post-merge` hook after it is recorded.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
-  like a denial into a bypass.
+  like a denial into a bypass. The commit still requires its `Chat:` trailer.
 - **A repository the guard cannot place.** Detection fails open and policy fails
   closed, because they are different questions: a git that will not answer is a
   broken environment, not a decision, and blocking there would trade a real gate
@@ -177,14 +240,41 @@ Three things stay allowed, each deliberately:
 - **The main worktree is a landing, not a negotiation.** A branch merges into
   `main` only after `main` has already been merged or rebased **into the branch,
   in the branch's own worktree**, and the gates re-run there. The merge into
-  `main` is then a fast-forward or a mechanical two-parent commit with nothing to
-  decide. Merging a stale branch straight into `main` puts the conflicts in a
+  `main` is then a mechanical two-parent commit with nothing to decide, prepared
+  with `--no-commit --no-ff` so its actual `MERGE_HEAD` can be checked. Merging a
+  stale branch straight into `main` puts the conflicts in a
   shared checkout where every other session is committing.
+- **A harvest must pin both merge parents, its tree, source branch, and chat.** Before review
+  and gates, record the exact `main` SHA, candidate SHA/tree, source branch, and chat ID. Prepare
+  the final non-fast-forward landing with `git merge --no-commit --no-ff <full-reviewed-sha>`,
+  then pass `KILO_EXPECTED_MAIN_SHA`, `KILO_EXPECTED_INCOMING_SHA`, `KILO_EXPECTED_TREE_SHA`,
+  `KILO_EXPECTED_BRANCH`, and `KILO_EXPECTED_CHAT_ID` to
+  `node scripts/commit-reviewed-landing.mjs` as shown in
+  `.skills/worktree-merge-harvest.md` §Step 6. The helper requires exactly matching `Branch:`
+  and `Chat:` trailers, verifies that the source branch still resolves to the reviewed incoming
+  SHA, and creates a mode-restricted workflow marker for its private index snapshot. The marker
+  helps detect accidental alternate-index use; a same-user caller can deliberately construct
+  it, so it is not an authentication boundary. In the project main
+  worktree, `main-worktree-guard.mjs` and `merge-takeover-guard.mjs` compare the pins with
+  `HEAD`, Git's actual `MERGE_HEAD`, the staged result tree, and that marker before creating the
+  merge commit. The `commit-msg` hook checks the final `Branch:` and `Chat:` trailers after
+  `prepare-commit-msg`, which can rewrite the message after `pre-commit`. The pins bind the
+  prepared operation to the reviewed record; they do not
+  authenticate who supplied them. Reflog text is caller-controlled and is not used to identify
+  the incoming side.
+  A board claim coordinates paths but is not a main-ref lock. Fast-forward and
+  squash merges bypass this blocking check and are not the harvest landing path.
 - **The landing checkout must be clean before the merge starts.** Run `git status --short` and
   `git diff --cached --stat`; any path you do not own is a hard stop.
   Do not stage, stash, reset, abort, or resolve another session's work to make the
-  landing appear clean. Wait for its owner or use a separate, verified landing
-  checkout.
+  landing appear clean. Wait for its owner; do not create a second checkout to
+  update the same `main` branch ref.
+- **Refresh shared hook dispatchers when a candidate adds a hook.** After preparing a
+  conflict-free merge that adds the tracked hook file, run `node scripts/install-git-hooks.js`
+  from the candidate worktree and verify its dispatcher exists in the common Git directory,
+  before creating the landing commit. If a non-main linked worktree has not synced the tracked
+  hook yet, the shared dispatcher still requires exactly one non-empty `Chat:` trailer; it
+  skips only the main landing checks. It fails closed on `main`.
 - **Never resolve a conflict in the main worktree**, and never repair one there
   with `reset --hard`, `checkout --ours`/`--theirs`, `hash-object`, or
   `update-index`. The first two destroy another session's uncommitted work; the
@@ -235,10 +325,12 @@ status` and `git diff` before staging.
   clean and the revert was invisible in the diff. The tell is a file that gained
   or lost lines for no reason the branch explains.
   **Now enforced, not merely written down.** `scripts/merge-takeover-guard.mjs` runs from
-  `pre-commit` (when `MERGE_HEAD` is set, which is a conflicted merge being completed) and
-  from `pre-merge-commit` (a clean `git merge` that commits itself), and it refuses the merge
-  rather than reporting it. A reviewer only catches the files its brief happened to mention;
-  this catches every path the merge resolved by copying one whole side's content. Three
+  `pre-commit` (when `MERGE_HEAD` is set, for a conflicted merge being completed or a clean
+  merge prepared with `--no-commit`). The `pre-merge-commit` hook unconditionally refuses
+  direct clean merges, regardless of `MERGE_HEAD` timing. A detected takeover is refused
+  rather than reported. A reviewer only catches the files its brief happened to mention;
+  this catches paths where the merge copied one side's content or silently discarded a
+  whole-file change. Three
   shapes, none of which produces a conflict marker: the result is the pre-divergence
   content (the `-A` case above), it is the incoming side's file verbatim
   (`checkout --theirs <path>`, or `git merge -X theirs`), or it is THIS side's version of
@@ -249,15 +341,21 @@ status` and `git diff` before staging.
   construction and `git merge -s ours` reported `clean — 0 path(s) moved by the merge`
   while deleting the branch's commit. `docs/DOCUMENTATION.md`'s one-home rule is why the
   asymmetry survived: `-X theirs` was documented and its inverse was simply never written
-  down, so there was nothing to contradict.
+  down, so there was nothing to contradict. The incoming-side scan also checks whole-file
+  deletions in both directions: it reports an ignored branch deletion, and it reports a
+  deletion that removes distinct HEAD content unless resolve-undo records an explicit
+  modify/delete choice.
 
   It finds that shape through a second scan over **the paths the INCOMING side changed**,
   not the paths HEAD changed, and that distinction is load-bearing: `-s ours` applies
   nothing at all, so a branch's added files vanish too, and a scan over HEAD's changes
   finds only the contested subset and reports the rest of a dropped commit as clean.
 
-  All three shapes are measured the same way — by asking whether a line the losing side
-  committed is **absent** from the result, not by counting a diff. `--numstat` bills a
+  Content changes in all three shapes are measured by asking whether a line the losing side
+  committed is **absent** from the result, not by counting a diff. Whole-file deletions have
+  no lines on the deleted side, so their missing path is counted once. A conflict resolved by
+  staging one whole side's blob is still detected; a custom resolution whose blob matches
+  neither side is outside this detector. `--numstat` bills a
   moved line as one deletion plus one insertion, so a result that is a superset in content
   but not in line order reads as a loss; measuring content is what makes "this side's
   version won" mean that something was actually dropped. A resolution that is neither
@@ -275,12 +373,13 @@ status` and `git diff` before staging.
   dirty worktrees remain held and are reported. `--no-verify` bypasses the gating hooks,
   but not `post-merge`.
 
-  **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
-  about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
-  repository, driven through `findTakeovers` with the real index. All seven destroyed
-  committed work and reported success. **Replayed over every merge on `main` before and after
-  the fixes, the same merges are refused, with the same kinds and the same paths** —
-  every change was a shape that was _invisible_, never a verdict that moved:
+  **Seven original shapes it used to pass, found by adversarial review and measured, not
+  reasoned about.** Each was reproduced against the guard as it stood: a real merge in a
+  throwaway repository, driven through `findTakeovers` with the real index. All seven
+  destroyed committed work and reported success. The historical replay for those seven
+  fixes covered every merge on `main` at that time: the same 36 merges were refused before
+  and after, with the same kinds and paths. That count predates the whole-file deletion
+  checks below and is not a current replay total.
 
   | Shape                                              | What it destroyed                                   | How it slipped through                                                                                                                                                                                           |
   | -------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -299,6 +398,13 @@ status` and `git diff` before staging.
   whose subject matter is images — an unread blob measures as no loss, so the largest possible
   silent pass was also the most likely one. Both now refuse, and the second raises rather than
   returning an empty map: an unread blob must never be a zero.
+
+  **A later adversarial pass found a whole-file deletion gap in both directions.** If the
+  incoming side deleted a path, `-s ours` could silently preserve HEAD's file and discard the
+  committed deletion. Conversely, a result that applied that deletion could erase HEAD's
+  distinct post-base edit. The guard counts the first as one lost incoming path and the
+  second as one lost HEAD path; resolve-undo evidence preserves the existing exception for
+  an explicit modify/delete choice.
 
   **One shape it still cannot see, and it is not a merge defect.** `git merge --squash -X ours`
   produces a staged tree identical to HEAD's, so `git commit` answers "nothing to commit", there
@@ -354,25 +460,40 @@ repo:state` is what reports an operation in progress, and it separates the two s
   the _committed_ state is green instead, in a throwaway worktree, and report the
   block:
   ```sh
-  git worktree add --detach /tmp/verify-main main
-  ln -s "$PWD/node_modules" /tmp/verify-main/node_modules
-  (cd /tmp/verify-main && npx tsc -b && npx vitest run <suite>)
-  git worktree remove --force /tmp/verify-main
+  # Run from an already verified task worktree under .kilo/worktrees.
+  git worktree list --porcelain
+  TASK_WORKTREE="$(git rev-parse --show-toplevel)"
+  MAIN="<absolute path paired with branch refs/heads/main>"
+  BASE_SHA="$(git -C "$MAIN" rev-parse refs/heads/main)"
+  VERIFY_NAME="verify-main-$(date +%Y%m%d-%H%M%S)-$$"
+  VERIFY="${TASK_WORKTREE%/*}/$VERIFY_NAME"
+  test -d "${TASK_WORKTREE%/*}"
+  git -C "$TASK_WORKTREE" worktree add -b "$VERIFY_NAME" "$VERIFY" "$BASE_SHA"
+  VERIFY_SHA="$(git -C "$VERIFY" rev-parse HEAD)"
+  test "$VERIFY_SHA" = "$BASE_SHA"
+  (cd "$VERIFY" && npm ci && npm run tsc && npm run build && npm run test -- "<same failing suite>")
+  test "$(git -C "$MAIN" rev-parse refs/heads/main)" = "$BASE_SHA"
   ```
-  **The scratch worktree is yours to delete, and the recipe's own last line is the only
-  thing that deletes it** — which is why two of them outlived their creators.
-  `/private/tmp/verify-dpr` and `/private/tmp/verify-exporacle` were both on disk, both
-  detached, both clean, neither named `verify-main`, so no run of the recipe's cleanup step ever
-  claimed them; both were removed on 2026-10-03 once their HEADs were confirmed to be ancestors
-  of `main`. Two failure directions, and the second is the dangerous one: a leak when the
-  subagent dies first, and **collateral force-removal** when a sweep globs `verify-*` and cannot
-  tell its own leftovers from a live peer's. Note that `git worktree list` prints
-  `/private/tmp`, so a check written as `git worktree list | grep /tmp` matches nothing and
-  reports a clean machine. Either put the scratch worktree under `.kilo/` so the inventory sees
-  it, or delete it in the same turn you created it and accept that a dead agent leaks one.
-  This happened on the commit that followed the fix above, and the same `git add
--A` also tried to sweep a third agent's in-flight tests into the commit — which
-  is the previous bullet, one hour later, in the same worktree.
+  # After testing, run each fresh preflight from TASK_WORKTREE; inspect, do not suppress errors.
+  (cd "$TASK_WORKTREE" && npm run repo:state)
+  (cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
+  (cd "$TASK_WORKTREE" && npm run branches:orphan)
+  (cd "$TASK_WORKTREE" && npm run swarm -- status)
+  (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME" --dry-run)
+  (cd "$TASK_WORKTREE" && npm run dispose -- "$VERIFY_NAME")
+  ```
+  This checks a recorded committed-main snapshot; if `main` moved during the run, repeat from its
+  new SHA before calling the result current. The scratch branch and worktree are named and live
+  under `.kilo/worktrees`, not `/tmp`. Do not remove them manually. Before actual disposal, prove
+  the owning root and every transitive child session are finished, inspect the target's live
+  overlay and curated entry, and confirm its Git operation state is clear. An unrelated
+  in-progress worktree must remain untouched; an operation or live owner in `VERIFY` is a stop.
+  A refusal caused by the current session's `derived-live-writer` signal is expected: leave the
+  worktree in place and record cleanup as pending. Never use a detached worktree, a broad
+  `verify-*` cleanup, `git worktree remove --force`, or `--no-live-writers` without independent
+  evidence that all writers are gone.
+  ```
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
  MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,
@@ -399,7 +520,7 @@ repo:state` is what reports an operation in progress, and it separates the two s
   the worktree it is running in. Every worktree made by `git worktree add` had no
   `.husky/_`, so git found no hook, ran nothing, and exited 0.
   `core.hooksPath` now points at `<common git dir>/hooks-gate`, which every
-  worktree shares, and the tracked `.husky/pre-commit` is what runs. **If a hook
+  worktree shares, and the tracked `.husky/<hook>` entry points are what run. **If a hook
   ever stops firing, run `git config core.hooksPath` first and assume nothing.**
   Re-install with `npm install` (the `prepare` script).
 - **A worktree on an older commit blocks with a specific message, not a mystery

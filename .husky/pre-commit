@@ -6,31 +6,38 @@
 # reporting only the last command's status.
 set -e
 
-# First, and before anything expensive: the main worktree is a landing, not an
-# authoring surface (docs/ORCHESTRATION.md). A refusal here costs a `git status`
-# and a `rev-parse`, where the gate below costs ~9s and would rewrite staged
-# files with lint-staged before the commit was ever called illegitimate.
-node scripts/main-worktree-guard.mjs
-
-# Reject new line-number citations in prose and source/config/markup comments before lint-staged rewrites staged files.
-node scripts/check-new-line-citations.mjs
-
 # A merge being completed must not silently delete the other side's committed work.
 #
 # This is here, and not only in `pre-merge-commit`, because the two fire on different
 # merges and the dangerous one is THIS one. Measured with raw git:
 #   - merge conflicts, you resolve, you `git commit`  -> pre-commit fires, MERGE_HEAD set
-#   - merge is clean, `git merge` commits it itself   -> pre-merge-commit fires, MERGE_HEAD EMPTY
+#   - clean merge prepared with `--no-commit`         -> pre-commit fires, MERGE_HEAD set
+#   - clean direct `git merge`                        -> pre-merge-commit refuses unconditionally
 # A conflicted merge resolved with `checkout --theirs <file>` is Case A, so a guard wired
-# only into `pre-merge-commit` would never have seen it. And this is exactly the shape that
-# reaches a worktree: the main-worktree guard above refuses merge commits in `main`, but
-# ALLOWS one in a feature worktree, which is where `git merge main` is supposed to happen.
+# only into `pre-merge-commit` would never have seen it. A clean merge must use `--no-commit`
+# so this hook can inspect Git's actual MERGE_HEAD; the pre-merge hook rejects the direct
+# self-committing path on every Git version, without relying on its MERGE_HEAD timing.
 #
 # `merge-takeover-guard.mjs` no-ops in about a `rev-parse` unless MERGE_HEAD exists, so an
-# ordinary commit pays nothing for this line. Here MERGE_HEAD is readable, so the guard gets
-# the incoming ref from git rather than from GIT_REFLOG_ACTION.
+# ordinary commit pays nothing for this line. Here MERGE_HEAD identifies the incoming commit,
+# and on main the guard checks it against the reviewed landing SHA.
 if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   node scripts/merge-takeover-guard.mjs
 fi
 
+# The main worktree is a landing, not an authoring surface (docs/ORCHESTRATION.md).
+# Run this after the merge guard so a stale SHA pair gets its specific refusal before
+# the general main-worktree refusal. Both checks run before citation/lint gates.
+node scripts/main-worktree-guard.mjs
+
+# Reject new line-number citations in prose and source/config/markup comments before lint-staged rewrites staged files.
+node scripts/check-new-line-citations.mjs
+
 npm run --silent gate:commit
+
+# lint-staged in gate:commit may rewrite indexed files. Recheck the exact prepared
+# result after that rewrite so the commit still matches the reviewed candidate tree.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  node scripts/merge-takeover-guard.mjs
+  node scripts/main-worktree-guard.mjs
+fi
