@@ -741,9 +741,10 @@ describe('the document shapes the parser has to survive', () => {
    */
   it('keeps a LIVE entry whose title merely CONTAINS a status word mid-title', () => {
     /**
-     * Still corpus, verbatim from `HANDOFF.md:1788`. The entry was RENUMBERED
+     * Still corpus, verbatim from `## 76. A closure check reported "3 FIXED" …`
+     * The entry was RENUMBERED
      * 70 → 76 while this fixture said 70: §70 is now a different, live entry
-     * ("A tool whose settings do not fit a shared arm…", `HANDOFF.md:1532`), so
+     * ("A tool whose settings do not fit a shared arm…", §70), so
      * a fixture on 70 asserted nothing anybody could check against the document
      * and shadowed a real entry number. The prose below is unchanged apart from
      * the number, because the defect is identical — it is the same entry.

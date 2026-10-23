@@ -479,8 +479,8 @@ have been citing an absence.
 or annotation tool, not a distinct painting mode, and not a pen in the Photoshop sense. The chain
 that settles it, in order:
 
-1. `toolbar-mapping.ts` — the `[{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }]` tile, its own
-   single-tool tile, at the end of the tonal group after Dodge, Burn and the Sponge. (The
+1. `toolbar-mapping.ts` — the `[{ label: 'Draw Tool', name: 'draw' }]` entry, with no shortcut, in its
+   own single-tool tile at the end of the tonal group after Dodge, Burn and the Sponge. (The
    `{ label: 'Burn Tool', name: 'burn' }` entry is in that same group, and the group closes just after
    the `{ label: 'Sponge Tool', name: 'sponge' }` entry, so the closing bracket this file used to
    cite is the one after the Sponge.)
@@ -732,18 +732,16 @@ can disagree, and here they do. The precise, verifiable statement is therefore n
 nothing"; it is **"the letter is taken by the Brush"**.
 
 **`B` is bound to the brush group** — `src/components/Common/AppKeyboardShortcuts.tsx` —
-`brushGroup`: `const brushGroup = ['brush', 'pencil', 'color-replacement', 'eraser']` — and `draw` is
+`brushGroup`: `const brushGroup = ['brush', 'pencil', 'color-replacement']` — and `draw` is
 not in it. `selectBrushTool` (in the same file) resolves a plain `B` to the Brush and a `Shift+B` to
-the next member of that group. **A grep of `goToTool(` across `src/` finds no call with `'draw'`**,
-so no key anywhere selects this tool. The `B` badged on the Draw Tool is therefore wrong twice over,
-which is what the keyboard/UX audit recorded: in Photoshop `B` is the Brush, and in this app the
-letter is bound to the Brush as well, leaving the Draw Tool reachable by pointer only. Because no key
-reaches it, Photoshop's spring-loaded hold-and-switch cannot reach it either.
+the next member of that group. **A search of `goToTool(` across `src/` finds no call with `'draw'`**,
+so no key anywhere selects this tool. The current Draw entry has no `shortcut` property, and
+`toolbar-mapping.test.ts` pins that omission and cross-entry shortcut uniqueness. Draw remains
+pointer-reachable only; Photoshop's spring-loaded hold-and-switch cannot reach it either.
 
-The collision the brief asked about is still real and still in the data: the
-`{ label: 'Brush Tool', name: 'brush', shortcut: 'B' }` tile and the Draw tile (`'B'`) in
-`toolbar-mapping.ts`, two different tiles in the same
-`toolbarMap`. `bruceblinn`'s CS3 table gives `B, Shift-B` to "Brush,
+An earlier version of these notes claimed the Draw/Brush `B` collision was still present in
+`toolbarMap`. That described an older state: current `toolbar-mapping.ts` contains the Brush's `B`
+entry and a Draw entry with no shortcut. `bruceblinn`'s CS3 table gives `B, Shift-B` to "Brush,
 pencil, and color replacement tools", and `thedigitalprocess` says the same in prose: "You can
 activate the brush, pencil or replacement brush at any time by pressing the letter B, and cycle
 through these tools by pressing Shift+B."

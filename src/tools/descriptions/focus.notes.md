@@ -725,12 +725,15 @@ tool increases or decreases contrast by moving gray levels away from or toward t
 (<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and Photoshop
 Elements splits the direction: "In grayscale, Saturate increases contrast … In grayscale, Desaturate
 decreases contrast" (<https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html>).
-The rule is scoped to a document **MODE**, and this app has no `Image > Mode` surface at all —
-`color`'s `grayscale` is a per-layer filter amount, and a layer made grey by it is still an RGB layer,
-where the rule does not apply. On an RGB pixel with no chroma the chroma scale is already an exact
-no-op, so implementing the pivot anyway would make the tool behave the way Photoshop behaves in a mode
-this app cannot reach. `docs/OVERRIDES.md` may not be edited by an agent, so the gap is recorded in
-`HANDOFF.md` instead.
+The rule is scoped to a document **MODE**, and this app has no `Image > Mode` surface or stored
+`colorMode`. `color`'s `grayscale` is a per-layer filter amount, and a layer made grey by it is still an
+RGB layer, where the mode-specific rule does not apply. A grayscale PSD is different: the importer
+warns and expands its pixels to RGB but does not retain the original mode, so those achromatic pixels
+cannot be distinguished from ordinary RGB gray. On any achromatic RGB pixel the chroma scale is an
+exact no-op, but that does not establish Photoshop's mode-specific behavior for imported grayscale
+content. Implementing a tonal pivot for all achromatic RGB would be wrong; supporting the imported
+case requires retaining/providing document-mode information. `docs/OVERRIDES.md` may not be edited by
+an agent, so the gap is recorded in `HANDOFF.md` instead.
 
 **The one place `Vibrance`'s behaviour diverges from what a tutorial says.** A 2026 walkthrough
 describes it as "adjusts the intensity of subtle colors in an image while minimizing the effect on

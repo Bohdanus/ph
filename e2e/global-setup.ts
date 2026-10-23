@@ -482,14 +482,12 @@ function refuseOpeningHtmlReport(hazard: WindowHazard | null): void {
  * Why `fetch` and not a browser: this file exists to STOP an agent opening a window,
  * and a `chromium.launch()` here would be invisible to the guard above, which only
  * inspects `config.argv` and `config.projects[].use.headless`. It would also demand a
- * browser download `test:e2e:install` does not make, and a `page.goto('/')` would
- * inherit `index.html`'s external googletagmanager/fonts.googleapis.com requests.
+ * browser download `test:e2e:install` does not make.
  *
  * Why it never fails the run: this is an optimisation. A genuinely broken dev server
  * must fail the tests, with THEIR diagnostics, not here.
  *
  * ## The part that made a wrong entry look like a working one
- *
  * A Vite dev server does NOT 404 a path that does not exist. The SPA fallback
  * answers it with `200` and `content-type: text/html`, verified against a live
  * Vite 8.3.0. So `response.ok` alone cannot tell "transformed a module graph" from

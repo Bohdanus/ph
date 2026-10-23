@@ -651,13 +651,15 @@ the current baselines, write it down next to them, then pin CI to it. **Re-recor
 baselines under a known version is the only way to establish the record, and that is not a
 change an agent makes.**
 
-## P3 — no mobile or HiDPI project, and no touch anywhere
+## P3 — no dedicated mobile/HiDPI project; touch coverage and the full 2x suite remain partial
 
-`playwright.config.ts` declares one project, and no project configures mobile emulation
-or touch input. `mobile-shell.spec.ts` only resizes a viewport on that desktop project;
-it does not enable touch or a mobile UA. Separately, `check-dpr.spec.ts` has test-scoped
-coverage at device scale factors 1 and 2, but the full suite is not 2x-clean as described
-below.
+`playwright.config.ts` declares one project, with no project-level mobile emulation or touch
+profile. Some specs do opt into touch per test: `layers.spec.ts` covers tablet layer reorder,
+`text-edit.spec.ts` uses touchscreen taps for tablet re-entry, and `canvas-growth.spec.ts` runs a
+tablet touch case. `mobile-shell.spec.ts` still only resizes a viewport and drives its bar with the
+mouse; this particular flow has no touch reachability assertion. Separately, `check-dpr.spec.ts`
+has test-scoped coverage at device scale factors 1 and 2, but the full suite is not 2x-clean as
+described below.
 
 This was raised against the review with a precondition attached: enabling a 2x project
 before `getStrokeAnalysis` was DPI-relative "trades a coverage gain for three new failure
@@ -684,10 +686,10 @@ skipped.** The failures are
   entry does not name.
 
 So the honest statement is: the classifier and the specs this change touched are now
-resolution-independent, and four other specs are not. What remains is a coverage decision
-rather than a single defect, which is why it is still open: adding a project multiplies
-every run's cost, and the mobile/HiDPI specs this would exercise do not exist yet. It is
-not a one-line change to `playwright.config.ts`.
+resolution-independent, and four other specs are not. Some test-scoped touch/mobile cases exist,
+but there is no dedicated project and coverage remains sparse across controls and gestures. Adding a
+project multiplies every run's cost and is a coverage decision, not a one-line change to
+`playwright.config.ts`.
 
 `e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
 width and height equal the document dimensions multiplied by the expected device scale
@@ -780,9 +782,9 @@ test reads the bar's `scrollWidth` against its `clientWidth`.
 The open question is a product one, not a defect report: a tool bar with 969px of hidden
 overflow needs either a visible scroll affordance or a different layout — the tool sheet
 already exists as `MobileToolSheet`, and wrapping is the other obvious answer. What keeps
-it undecided is coverage, recorded in the `P3 — no mobile or HiDPI project, and no touch
-anywhere` entry below: no Playwright project configures `hasTouch` or `isMobile`, and the
-suite does not exercise `page.touchscreen` input.
+it undecided is coverage, recorded in the `P3 — no dedicated mobile/HiDPI project` entry below:
+touch is enabled in a few test-scoped cases, but this toolbar flow has no touchscreen reachability
+test.
 `mobile-shell.spec.ts` does run at a device width (it sets `test.use({ viewport: { width:
 390, height: 844 } })`) and it drives the bar with `page.mouse`, so what is missing is
 touch emulation and a reachability assertion — not a device width, which it already has.

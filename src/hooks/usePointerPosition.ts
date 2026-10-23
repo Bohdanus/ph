@@ -77,6 +77,7 @@ export function usePointerPosition<T extends HTMLElement>(
   /** The element the capture was taken on, so a release without an event can name it. */
   const captureTargetRef = useRef<{ releasePointerCapture?: (id: number) => void } | null>(null);
   const isMouseDown = useRef(false);
+  const pointerTypeRef = useRef<PointerEvent['pointerType']>('mouse');
 
   // coordinates of the contained image within container
   const dimensionsRef = useRef<ContainDimensions>({
@@ -268,6 +269,7 @@ export function usePointerPosition<T extends HTMLElement>(
     if (activePointerId.current !== null) return false;
 
     isMouseDown.current = true;
+    pointerTypeRef.current = e.pointerType;
     activePointerId.current = e.pointerId;
     captureTargetRef.current = e.currentTarget as unknown as { releasePointerCapture?: (id: number) => void };
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -366,8 +368,9 @@ export function usePointerPosition<T extends HTMLElement>(
     getLocalCoordsFromClientPoint,
     isMouseDown,
     releasePointer,
-    isPointerDownValid, // tells if the event was captured (therefore should be handled)
-    isPointerMoveValid, // tells if the event was captured (therefore should be handled)
-    isPointerUpValid, // tells if the event was captured (therefore should be handled)
+    isPointerDownValid,
+    isPointerMoveValid,
+    isPointerUpValid,
+    pointerTypeRef,
   };
 }
