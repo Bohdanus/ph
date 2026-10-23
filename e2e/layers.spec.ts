@@ -585,6 +585,18 @@ test.describe('Tablet touch layer reordering', () => {
         });
         if (type === 'touchEnd') touchActive = false;
       };
+      const dispatchEarlyStartAndMove = async () => {
+        touchActive = true;
+        const start = touch!.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ id: 1, x: sourcePoint.x, y: sourcePoint.y, radiusX: 1, radiusY: 1, force: 1 }],
+        });
+        const move = touch!.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ id: 1, x: targetPoint.x, y: targetPoint.y, radiusX: 1, radiusY: 1, force: 1 }],
+        });
+        await Promise.all([start, move]);
+      };
 
       const initialOrder = await layerRows.allTextContents();
       const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
@@ -592,8 +604,9 @@ test.describe('Tablet touch layer reordering', () => {
       const reorderCountBefore = await reorderRows.count();
 
       // Moving before the hold expires cancels the candidate gesture; it must not reorder or scroll.
-      await sendTouch('touchStart', sourcePoint);
-      await sendTouch('touchMove', targetPoint);
+      // Send both CDP requests without waiting for the first acknowledgement, so a slow runner
+      // does not spend most of the hold window in the test harness between pointerdown and move.
+      await dispatchEarlyStartAndMove();
       const earlyTrace = await readPointerTrace();
       const earlyDown = earlyTrace.find((event) => event.type === 'pointerdown');
       const earlyMove = earlyTrace.find((event) => event.type === 'pointermove');
@@ -601,7 +614,25 @@ test.describe('Tablet touch layer reordering', () => {
       expect(earlyDown?.isPrimary).toBe(true);
       expect(earlyMove?.hitLayerId).toBe(targetId);
       expect(earlyMove!.time - earlyDown!.time).toBeLessThan(holdMs);
+      const earlyPointerId = earlyDown!.pointerId;
       await sendTouch('touchEnd');
+      await expect
+        .poll(async () => {
+          const trace = await readPointerTrace();
+          return trace.some((event) => event.type === 'pointerup' && event.pointerId === earlyPointerId);
+        })
+        .toBe(true);
+      const earlyCompletedTrace = await readPointerTrace();
+      expect(
+        earlyCompletedTrace.some((event) => event.type === 'pointercancel' && event.pointerId === earlyPointerId)
+      ).toBe(false);
+      await expect
+        .poll(async () =>
+          (await readPointerTrace()).some(
+            (event) => event.type === 'lostpointercapture' && event.pointerId === earlyPointerId
+          )
+        )
+        .toBe(true);
       await page.waitForTimeout(holdMs + 25);
       expect(await layerRows.allTextContents()).toEqual(initialOrder);
       expect(await reorderRows.count()).toBe(reorderCountBefore);
@@ -630,7 +661,24 @@ test.describe('Tablet touch layer reordering', () => {
       expect(targetMove!.time - activeDown!.time).toBeGreaterThanOrEqual(holdMs);
       expect(activeTrace.some((event) => event.type === 'pointercancel')).toBe(false);
 
+      const activePointerId = activeDown!.pointerId;
       await sendTouch('touchEnd');
+      await expect
+        .poll(async () =>
+          (await readPointerTrace()).some((event) => event.type === 'pointerup' && event.pointerId === activePointerId)
+        )
+        .toBe(true);
+      const completedActiveTrace = await readPointerTrace();
+      expect(
+        completedActiveTrace.some((event) => event.type === 'pointercancel' && event.pointerId === activePointerId)
+      ).toBe(false);
+      await expect
+        .poll(async () =>
+          (await readPointerTrace()).some(
+            (event) => event.type === 'lostpointercapture' && event.pointerId === activePointerId
+          )
+        )
+        .toBe(true);
       await expect
         .poll(async () => {
           const order = await layerRows.allTextContents();
@@ -641,6 +689,12 @@ test.describe('Tablet touch layer reordering', () => {
         .toBe(true);
       await expect(reorderRows).toHaveCount(successfulReorderCountBefore + 1);
       await expect(historyRows).toHaveCount(historyCountBefore + 1);
+      expect(await layerRows.getByTestId('layer-name').allTextContents()).toEqual([
+        'draw 2',
+        'draw 4',
+        'draw 3',
+        'Blank 1',
+      ]);
       expect(await layersList.evaluate((element) => element.scrollTop)).toBe(0);
       expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual(initialPageScroll);
 
