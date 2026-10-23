@@ -57,6 +57,13 @@ const ALLOWED_UNLISTED = new Map([
     'internal hardening plan tracked in .kilo/plans/; not a public document and not ' +
       'linked from docs/README.md. The .kilo/plans/ directory row covers the directory as a whole.',
   ],
+  [
+    'docs/FREE-COMPUTE.md',
+    'broad dated research library, intentionally not linked from routine agent entry points ' +
+      '(AGENTS.md, README.md, MODELS.md does not link it either) so it does not pollute ' +
+      'orchestrator context. MODELS.md is the canonical daily policy; this file is a lookup ' +
+      'reference for provider terms, quotas, and failure observations.',
+  ],
 ]);
 
 const trackedMarkdown = () =>

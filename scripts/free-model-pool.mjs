@@ -4,6 +4,8 @@ const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
 const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
+const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
+const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
 const PREFERRED_KILO_MODELS = ['poolside/laguna-s-2.1:free'];
@@ -13,6 +15,8 @@ const QUARANTINED_MODELS = new Set([
   'kilo:recursive/flint-v1.0:free',
 ]);
 
+const FREE_GROQ_MODEL_IDS = new Set(['openai/gpt-oss-20b', 'openai/gpt-oss-120b']);
+
 export function zeroPriced(pricing) {
   return pricing?.prompt === '0' && pricing?.completion === '0';
 }
@@ -21,8 +25,12 @@ export function catalogCandidates(source, data) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
     .filter((row) => {
-      if (!row?.id || !zeroPriced(row.pricing)) return false;
+      if (!row?.id) return false;
       if (QUARANTINED_MODELS.has(`${source}:${row.id}`)) return false;
+      if (source === 'groq') {
+        return FREE_GROQ_MODEL_IDS.has(row.id);
+      }
+      if (!zeroPriced(row.pricing)) return false;
       if (source === 'openrouter') return row.id.endsWith(':free');
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
     })
@@ -38,13 +46,17 @@ export function catalogCandidates(source, data) {
 export async function loadCatalogs({
   fetchImpl = fetch,
   openRouterKey = process.env.OPENROUTER_API_KEY,
+  groqKey = process.env.GROQ_API_KEY,
   onCatalogError = () => {},
 } = {}) {
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
+  if (groqKey) sources.push({ source: 'groq', url: GROQ_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url }) => {
-      const headers = source === 'openrouter' ? { Authorization: `Bearer ${openRouterKey}` } : {};
+      const headers = {};
+      if (source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
+      if (source === 'groq') headers.Authorization = `Bearer ${groqKey}`;
       const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`${source} catalog returned HTTP ${response.status}`);
       return catalogCandidates(source, await response.json());
@@ -67,11 +79,12 @@ export async function completeWithFreeModel(
   {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
+    groqKey = process.env.GROQ_API_KEY,
     maxTokens = 1200,
     onCatalogError = () => {},
   } = {}
 ) {
-  const available = await loadCatalogs({ fetchImpl, openRouterKey, onCatalogError });
+  const available = await loadCatalogs({ fetchImpl, openRouterKey, groqKey, onCatalogError });
   const exhausted = new Set();
   const attempts = new Map();
   const errors = [];
@@ -80,10 +93,12 @@ export async function completeWithFreeModel(
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
     if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
     if (candidate.source === 'openrouter' && !openRouterKey) continue;
+    if (candidate.source === 'groq' && !groqKey) continue;
     attempts.set(candidate.source, sourceAttempts + 1);
-    const url = candidate.source === 'kilo' ? KILO_CHAT : OPENROUTER_CHAT;
+    const url = candidate.source === 'kilo' ? KILO_CHAT : candidate.source === 'groq' ? GROQ_CHAT : OPENROUTER_CHAT;
     const headers = { 'Content-Type': 'application/json' };
     if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
+    if (candidate.source === 'groq') headers.Authorization = `Bearer ${groqKey}`;
     let response;
     try {
       response = await fetchImpl(url, {
@@ -123,14 +138,16 @@ export async function completeWithFreeModel(
 function usage() {
   return (
     'Usage: node scripts/free-model-pool.mjs --list [--limit N]\n' +
-    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N]\n' +
-    'Uses Kilo anonymous free models and, when OPENROUTER_API_KEY is set, OpenRouter :free models. Never selects paid catalog entries.'
+    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH]\n' +
+    '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
+    'Sources: Kilo anonymous free models; when OPENROUTER_API_KEY is set, OpenRouter :free models; when GROQ_API_KEY is set, Groq GPT-OSS models. Never selects paid catalog entries. --output-file writes results to a file instead of stdout, avoiding context pollution.'
   );
 }
 
 export async function main(args = process.argv.slice(2)) {
   const list = args.includes('--list');
   const promptAt = args.indexOf('--prompt-file');
+  const outputFileAt = args.indexOf('--output-file');
   const limitAt = args.indexOf('--limit');
   const tokenAt = args.indexOf('--max-tokens');
   if ((!list && promptAt < 0) || (list && promptAt >= 0)) {
@@ -145,14 +162,21 @@ export async function main(args = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify(candidates.slice(0, limit), null, 2)}\n`);
     return 0;
   }
-  const { readFile } = await import('node:fs/promises');
+  const { readFile, writeFile } = await import('node:fs/promises');
   const prompt = await readFile(args[promptAt + 1], 'utf8');
   const maxTokens = tokenAt >= 0 ? Math.max(1, Number(args[tokenAt + 1]) || 1200) : 1200;
   const result = await completeWithFreeModel(prompt, {
     maxTokens,
     onCatalogError: (source, error) => process.stderr.write(`${source} catalog unavailable: ${error.message}\n`),
   });
-  process.stdout.write(`[${result.source}/${result.model}]\n${result.content}\n`);
+  const output = `[${result.source}/${result.model}]\n${result.content}\n`;
+  if (outputFileAt >= 0) {
+    const outPath = args[outputFileAt + 1];
+    await writeFile(outPath, output, 'utf8');
+    process.stderr.write(`Result written to ${outPath}\n`);
+  } else {
+    process.stdout.write(output);
+  }
   return 0;
 }
 

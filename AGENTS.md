@@ -1,5 +1,13 @@
 Photoshop clone. The toolbar is a Photoshop clone — HARD REQUIREMENT.
 
+## Mandatory Model Policy
+
+Every orchestrator MUST read and follow [`MODELS.md`](MODELS.md) before selecting
+models/providers or launching subagents. It is the canonical everyday policy for free
+and paid models, subagent budgets, and the token-saving research protocol. The broad
+research library in `docs/FREE-COMPUTE.md` is **not** daily policy and is intentionally
+not linked from routine agent entry points.
+
 ## Worktrees
 
 - Make tracked edits and run Git/npm commands only in `.kilo/worktrees/`; `main` is read-only except for landing.
