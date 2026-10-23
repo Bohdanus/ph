@@ -48,7 +48,7 @@ The Rectangular Marquee tool makes the simplest selection in Photoshop: drag cor
 - `M` — Selects the Rectangular Marquee. All four marquee tools share M, so pressing it again re-selects this one rather than cycling; Shift+M is the cycling key.
 - `Shift+M` — Switches between the marquee tools, which Adobe lists as "Switch between marquee tools".
 
-**In this app:** `partial` — The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Deselect. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:473`-`:475`), and `adjustFreshPoint` (`:387`-`:401`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:573`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:247`-`:250`). The `M` key and Shift+M reach this tool and cycle all four marquees Adobe documents, which this app now ships; the two 1-pixel members sit behind that same key, in the same flyout this tool leads. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.
+**In this app:** `partial` — The tool draws, commits, and copies a rectangle; its options bar renders only static text plus Copy, Paste, and Deselect. It has no tool-specific settings, so the five Photoshop controls listed above are absent. All three fresh-drag modifiers are implemented: `RectangularSelectionToolArea` enables `constrainToSquare` and `fromCentre`, while `sampleFreshDragModifiers` reads Shift and Alt per pointer event and `adjustFreshPoint` applies them. Handle resizing is separate and continues to use the aspect-ratio behavior in `getEdgeAtPoint`. M and Shift+M select and cycle the four marquee tools. There is no Select-menu surface for feathering, inverting, or growing an existing selection.
 
 Implementation:
 
@@ -1178,12 +1178,12 @@ The Blur tool reduces local contrast and smooths detail in the areas you paint i
 Implementation:
 
 - `src/tools/blur.ts:11`
-- `src/tools/settings.ts:54`
+- `src/tools/settings.ts:86`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:101`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:121`
-- `src/components/Main/Main.tsx:250`
+- `src/components/Main/Main.tsx:360`
 - `src/components/Main/SharpenToolArea.tsx:33`
-- `src/tools/toolProcessors.ts:120`
+- `src/tools/toolProcessors.ts:160`
 
 Sources:
 
@@ -1450,7 +1450,7 @@ The Sponge tool subtly changes the colour saturation of an area. Saturate intens
 - `[` — Decreases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 - `]` — Increases the brush tip size by one pixel, and repeats as a scrub while the key is held.
 
-**In this app:** `partial` — This is filed partial on two independent grounds, and both are stated here rather than left for the next reader to infer. The first is the one the Dodge, the Burn and the Smudge already carry: there is no build-up. Photoshop's Sponge compounds for as long as the button is held and every tutorial retouches it at a low Flow with repeated passes, while this app commits once per stroke, on release, at the Flow value in full. That is what keeps the commit a pure function of its args, which is in turn what lets the registry's raster replay reproduce it exactly, and the cost is the tool's defining interaction - the same cost `docs/TOOLS-TOO-HARD.md` records for the other two toning tools. Flow therefore means 'the whole effect of one pass' here rather than Photoshop's 'the strength of one dab', and the two are only the same number at Flow 100. The second is the Vibrance checkbox: it is a control welded to one of its two states. It caps the chroma scale at the pixel's own gamut boundary, which is the strictest reading of Adobe's 'minimize clipping', and that cap can only ever bind in the Saturate direction - Desaturate moves every channel toward the pixel's own luma, so its result is the convex combination of two in-range values and provably cannot leave the range, which makes the checkbox do nothing in that mode. Airbrush and Use Pressure for Size are missing for the reasons given in the option table: the first is the build-up above and the second is a tablet this app does not read. Protect Texture and Tolerance are deliberately absent from this record's option table rather than filed as missing: no source puts Protect Texture on the Sponge's own bar (it is a Brush-panel checkbox) and none puts Tolerance on it at all - it belongs to the Magic Wand and the Color Replacement. Adobe's bare digit keys step Flow on this tool, because the Sponge has a Flow and no Opacity, and the app's Opacity table has no Sponge entry, so 0 and 1 do nothing here; that is recorded rather than listed, since the shortcut table describes Photoshop. Adobe's Grayscale-mode rule is also not implemented, and the reason is structural rather than an oversight: the rule pivots grey levels about mid-grey in a document MODE this app does not have, and on an RGB pixel with no chroma the chroma scale is already an exact no-op, so adding the pivot would make the tool behave the way Photoshop behaves in a mode that cannot be reached. Two seeded values are choices Adobe declines to document rather than divergences from it, and both are recorded in full at `SPONGE_MODE_DEFAULT` and `SPONGE_FLOW_DEFAULT`: no Adobe page states which Mode the bar opens on, and no Adobe page states a Flow default. The Mode seeds at Desaturate because it is the non-destructive direction - a saturated stroke that clips a channel cannot be painted back - and Flow at the midpoint of the range every other percentage control in this app uses. The pixel arithmetic is a chroma scale about a Rec.709 luma of the ENCODED sRGB the editor stores, in the same space and for the same stated reason as the Dodge and the Burn, rather than in a colour space Adobe names and this repo does not have; Adobe publishes no per-pixel specification for this tool, and the one community implementation that states its rule says the same thing. One deliberate departure from `computeLuma`: the pivot reads the stored channels and does not fold alpha in the way the shared helper does, because folding alpha composites a partly transparent pixel toward white and would drag its hue with it - the opposite of what a chroma tool should do to a cut-out edge. A fully transparent pixel is left alone outright. The stroke coverage field is the shared one, extracted out of `dodgeBurn.ts` into `src/util/stroke-coverage.ts` rather than written a second time, and dabs are unioned rather than summed so a replay cannot compound.
+**In this app:** `partial` — This is filed partial on two independent grounds, and both are stated here rather than left for the next reader to infer. The first is the one the Dodge, the Burn and the Smudge already carry: there is no build-up. Photoshop's Sponge compounds for as long as the button is held and every tutorial retouches it at a low Flow with repeated passes, while this app commits once per stroke, on release, at the Flow value in full. That is what keeps the commit a pure function of its args, which is in turn what lets the registry's raster replay reproduce it exactly, and the cost is the tool's defining interaction - the same cost `docs/TOOLS-TOO-HARD.md` records for the other two toning tools. Flow therefore means 'the whole effect of one pass' here rather than Photoshop's 'the strength of one dab', and the two are only the same number at Flow 100. The second is the Vibrance checkbox: it is a control welded to one of its two states. It caps the chroma scale at the pixel's own gamut boundary, which is the strictest reading of Adobe's 'minimize clipping', and that cap can only ever bind in the Saturate direction - Desaturate moves every channel toward the pixel's own luma, so its result is the convex combination of two in-range values and provably cannot leave the range, which makes the checkbox do nothing in that mode. Airbrush and Use Pressure for Size are missing for the reasons given in the option table: the first is the build-up above and the second is a tablet this app does not read. Protect Texture and Tolerance are deliberately absent from this record's option table rather than filed as missing: no source puts Protect Texture on the Sponge's own bar (it is a Brush-panel checkbox) and none puts Tolerance on it at all - it belongs to the Magic Wand and the Color Replacement. Adobe's bare digit keys step Flow on this tool, because the Sponge has a Flow and no Opacity, and the app's Opacity table has no Sponge entry, so 0 and 1 do nothing here; that is recorded rather than listed, since the shortcut table describes Photoshop. Adobe's Grayscale-mode rule is also not implemented, and the reason is structural rather than an oversight: the rule pivots grey levels about mid-grey in a document MODE this app does not have, and on an RGB pixel with no chroma the chroma scale is already an exact no-op, so adding the pivot would make the tool behave the way Photoshop behaves in a mode that cannot be reached. Grayscale PSDs are expanded to RGB on import and the source mode is not retained, so that no-op reasoning does not settle the Photoshop-specific behavior for imported grayscale pixels; the current tool cannot distinguish those from ordinary achromatic RGB. Two seeded values are choices Adobe declines to document rather than divergences from it, and both are recorded in full at `SPONGE_MODE_DEFAULT` and `SPONGE_FLOW_DEFAULT`: no Adobe page states which Mode the bar opens on, and no Adobe page states a Flow default. The Mode seeds at Desaturate because it is the non-destructive direction - a saturated stroke that clips a channel cannot be painted back - and Flow at the midpoint of the range every other percentage control in this app uses. The pixel arithmetic is a chroma scale about a Rec.709 luma of the ENCODED sRGB the editor stores, in the same space and for the same stated reason as the Dodge and the Burn, rather than in a colour space Adobe names and this repo does not have; Adobe publishes no per-pixel specification for this tool, and the one community implementation that states its rule says the same thing. One deliberate departure from `computeLuma`: the pivot reads the stored channels and does not fold alpha in the way the shared helper does, because folding alpha composites a partly transparent pixel toward white and would drag its hue with it - the opposite of what a chroma tool should do to a cut-out edge. A fully transparent pixel is left alone outright. The stroke coverage field is the shared one, extracted out of `dodgeBurn.ts` into `src/util/stroke-coverage.ts` rather than written a second time, and dabs are unioned rather than summed so a replay cannot compound.
 
 Implementation:
 
@@ -2031,7 +2031,7 @@ Implementation:
 - `src/tools/settings.ts:295`
 - `src/contexts/tool-types.ts:68`
 - `src/util/settings.ts:111`
-- `src/components/Main/Main.tsx:250`
+- `src/components/Main/Main.tsx:360`
 - `src/components/Common/AppKeyboardShortcuts.tsx:513`
 - `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:45`
 - `src/tools/__tests__/tool-processors.test.ts:344`
@@ -2089,7 +2089,7 @@ Implementation:
 - `src/tools/settings.ts:296`
 - `src/contexts/tool-types.ts:69`
 - `src/util/settings.ts:112`
-- `src/components/Main/Main.tsx:250`
+- `src/components/Main/Main.tsx:360`
 - `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
 - `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
@@ -2149,7 +2149,7 @@ Implementation:
 - `src/tools/settings.ts:297`
 - `src/contexts/tool-types.ts:70`
 - `src/util/settings.ts:113`
-- `src/components/Main/Main.tsx:250`
+- `src/components/Main/Main.tsx:360`
 - `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
 - `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
@@ -2188,7 +2188,7 @@ Implementation:
 - `src/tools/settings.ts:298`
 - `src/contexts/tool-types.ts:71`
 - `src/util/settings.ts:114`
-- `src/components/Main/Main.tsx:250`
+- `src/components/Main/Main.tsx:360`
 - `src/components/SidebarLeft/toolIcons.tsx:83`
 
 Sources:
@@ -2220,7 +2220,7 @@ Implementation:
 - `src/tools/settings.ts:299`
 - `src/contexts/tool-types.ts:72`
 - `src/util/settings.ts:115`
-- `src/components/Main/Main.tsx:250`
+- `src/components/Main/Main.tsx:360`
 - `src/components/SidebarLeft/toolIcons.tsx:84`
 
 Sources:
@@ -2256,7 +2256,7 @@ Implementation:
 - `src/tools/settings.ts:300`
 - `src/contexts/tool-types.ts:73`
 - `src/util/settings.ts:116`
-- `src/components/Main/Main.tsx:250`
+- `src/components/Main/Main.tsx:360`
 - `src/components/SidebarLeft/toolIcons.tsx:85`
 - `src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242`
 - `src/contexts/history-adapter.ts:550`
@@ -2984,10 +2984,10 @@ The Hand tool moves the viewport over an image that is larger than the window. I
 
 **Options bar**
 
-| Control       | Photoshop                                                                 | In this app                                                |
-| ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Fit On Screen | Restores the default centered view so the whole image fits the workspace. | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
-| 100%          | Returns the view to a centered 100% scale without rotating the document.  | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| Control       | Photoshop                                                                 | In this app                                                 |
+| ------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Fit On Screen | Restores the default centered view so the whole image fits the workspace. | `present` — `src/components/ToolbarsRight/View/View.tsx:8`  |
+| 100%          | Returns the view to a centered 100% scale without rotating the document.  | `present` — `src/components/ToolbarsRight/View/View.tsx:13` |
 
 **Modifiers**
 
@@ -3001,9 +3001,9 @@ The Hand tool moves the viewport over an image that is larger than the window. I
 
 Implementation:
 
-- `src/components/Main/ViewToolArea.tsx:1`
-- `src/contexts/view-state.ts:1`
-- `src/components/Main/Main.tsx:1`
+- `src/components/Main/ViewToolArea.tsx:65`
+- `src/contexts/view-state.ts:29`
+- `src/components/Main/Main.tsx:453`
 
 Sources:
 
@@ -3022,10 +3022,10 @@ The Rotate View tool turns the displayed canvas so a retoucher can work at a com
 
 **Options bar**
 
-| Control        | Photoshop                                                       | In this app                                                |
-| -------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| Rotation Angle | Sets the displayed angle from -180 to 180 degrees.              | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
-| Reset View     | Returns the displayed rotation to zero without changing pixels. | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| Control        | Photoshop                                                       | In this app                                                 |
+| -------------- | --------------------------------------------------------------- | ----------------------------------------------------------- |
+| Rotation Angle | Sets the displayed angle from -180 to 180 degrees.              | `present` — `src/components/ToolbarsRight/View/View.tsx:51` |
+| Reset View     | Returns the displayed rotation to zero without changing pixels. | `present` — `src/components/ToolbarsRight/View/View.tsx:59` |
 
 **Shortcuts**
 
@@ -3036,9 +3036,9 @@ The Rotate View tool turns the displayed canvas so a retoucher can work at a com
 
 Implementation:
 
-- `src/components/Main/ViewToolArea.tsx:1`
-- `src/components/ToolbarsRight/View/View.tsx:1`
-- `src/components/Common/AppKeyboardShortcuts.tsx:1`
+- `src/components/Main/ViewToolArea.tsx:69`
+- `src/components/ToolbarsRight/View/View.tsx:45`
+- `src/components/Common/AppKeyboardShortcuts.tsx:502`
 
 Sources:
 
@@ -3057,11 +3057,11 @@ The Zoom tool changes the displayed scale of the canvas and keeps the clicked po
 
 **Options bar**
 
-| Control       | Photoshop                                                               | In this app                                                |
-| ------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Zoom          | Sets the displayed scale from 10% through 1600% in this implementation. | `partial` — `src/components/ToolbarsRight/View/View.tsx:1` |
-| Fit On Screen | Resets the view to the centered contain-fit scale.                      | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
-| 100%          | Centers the image at 100% display scale.                                | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| Control       | Photoshop                                                               | In this app                                                 |
+| ------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Zoom          | Sets the displayed scale from 10% through 1600% in this implementation. | `partial` — `src/components/ToolbarsRight/View/View.tsx:31` |
+| Fit On Screen | Resets the view to the centered contain-fit scale.                      | `present` — `src/components/ToolbarsRight/View/View.tsx:8`  |
+| 100%          | Centers the image at 100% display scale.                                | `present` — `src/components/ToolbarsRight/View/View.tsx:13` |
 
 **Modifiers**
 
@@ -3075,9 +3075,9 @@ The Zoom tool changes the displayed scale of the canvas and keeps the clicked po
 
 Implementation:
 
-- `src/components/Main/ViewToolArea.tsx:1`
-- `src/components/ToolbarsRight/View/View.tsx:1`
-- `src/hooks/usePointerPosition.ts:1`
+- `src/components/Main/ViewToolArea.tsx:73`
+- `src/components/ToolbarsRight/View/View.tsx:26`
+- `src/hooks/usePointerPosition.ts:354`
 
 Sources:
 

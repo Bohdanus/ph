@@ -95,11 +95,9 @@ import { ConsolePolice } from '../helpers/console-police';
  *   is the class on `<html>` and the string in `localStorage`. A `dark:` Tailwind
  *   variant that stopped applying would leave it green, so that test is a claim about
  *   the DEFAULT and not about dark mode as it reaches the screen. There is very little
- *   of the latter here, and the gap is recorded rather than left to be inferred:
- *   `e2e/accessibility.spec.ts` measures that the dark palette reports two EXTRA
- *   `color-contrast` violations, on the panel tab labels
- *   (`src/components/SidebarRight/PanelGroup.tsx:42`), that a light-only green run says
- *   nothing at all about.
+ *   of the latter here. `e2e/accessibility.spec.ts` runs under the light pin and has no
+ *   dark-theme axe result, so this suite does not establish whether the dark palette has
+ *   contrast violations.
  *
  * WHY `addInitScript` AND NOT A NAVIGATION-TIME `evaluate`
  *   `ThemeProvider` reads `localStorage.getItem('theme')` synchronously inside its

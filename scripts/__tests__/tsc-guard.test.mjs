@@ -353,9 +353,9 @@ describe('the tsc guard installer', () => {
    *
    * A test that plants a link at an ancestor's `.bin/tsc` edits a checkout this
    * session does not own, and the repair cannot follow: `install()` resolves its
-   * own REPO_ROOT. Asserted rather than assumed, so a checkout that loses its own
-   * link fails loudly instead of quietly taking a branch that would edit
-   * somebody else's.
+   * own REPO_ROOT. Resolve physical paths before allowing writes; a shared
+   * ancestor link is not owned and its writing tests must return without editing
+   * somebody else's checkout. The separate ownership test pins that skip path.
    */
   function requireOwnership() {
     if (OWNS_BIN_DIR) return true;

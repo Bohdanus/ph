@@ -16,8 +16,9 @@ import { lockDragCursor, unlockDragCursor } from './dragCursorLock.ts';
  *    resizes are both real, and neither is a drag.
  *  - **`Escape` cancels.** "Press Esc while moving the panel to cancel the operation."
  *    (https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/move-panels.html)
- *    Dragging a divider is destructive enough that a keyboard escape has to exist, even though
- *    the divider itself is not a Photoshop-documented gesture.
+ *    Adobe documents resizing panels from their edges and resizing a dock from its bottom border;
+ *    this app's internal divider is an additional resize affordance, not a separate panel feature.
+ *    Dragging the divider is destructive enough that keyboard Escape must still cancel it.
  *  - **No text selection and a stable cursor for the whole gesture**, including the part where
  *    the pointer is somewhere else entirely.
  *

@@ -2259,9 +2259,9 @@ the working tree rather than from a list you cannot check.
 
 #### The entry shape
 
-Four parts, in this order. `**Why it is not a wiring bug.**` is the part to write first and two live
-entries still carry it — `HANDOFF.md` §151 and §152 — so read either for the shape rather than a
-sample:
+Four parts, in this order. `**Why it is not a wiring bug.**` is the part to write first. Do not copy
+stale section-number examples: inspect the live `HANDOFF.md` for current analogues and use stable
+identifiers rather than relying on an old entry number.
 
 ```markdown
 ## <N>. <the defect, stated as the claim>
