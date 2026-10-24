@@ -1702,3 +1702,12 @@ For primary references, see the [Git worktree manual](https://git-scm.com/docs/g
 which documents `repair`, and the [Git repository layout
 manual](https://git-scm.com/docs/gitrepository-layout), which describes private
 `worktrees/<id>` admin directories and their `commondir` relationship.
+
+For the project shell-command rules, see Kilo's [Agent Permissions
+documentation](https://kilo.ai/docs/customize/agent-permissions), which describes
+glob matching and last-match-wins rule order.
+
+On macOS, Time Machine local snapshots can provide another restore source. Apple
+says they are saved approximately hourly and kept for 24 hours, but may be
+deleted earlier when storage is needed. Confirm that a snapshot is available and
+contains the required files before relying on it.
