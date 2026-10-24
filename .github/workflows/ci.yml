@@ -231,32 +231,20 @@ jobs:
   # this one proves the specs pass, that one proves the helpers the specs call are
   # tested.
   #
-  # This is the job's first run as a gate, and its first run on a Linux runner at
-  # all, so a red first run is a real finding to investigate rather than a reason
-  # to put `continue-on-error` back. What the job no longer rests on: the CDP
-  # capture assertions are mode- and host-independent by construction -- they no
-  # longer name a scale -- so the disjoint per-mode failing sets the old comment
-  # described are empty by design rather than by observation. See
-  # `e2e/OPEN_PROBLEMS.md`, "Verified and still unverified".
-  #
   # The suite runs headless here, and that is not incidental: `playwright.config.ts`
   # defaults to headless so that no operator's mouse, keyboard or focus can reach
   # the page mid-run. A CI runner has no such input, but keeping the same default
   # locally is what stops that class of failure from being misread as flakiness.
   #
-  # MISSING LINUX BASELINES. `visual-regression.spec.ts` reads its oracle from
-  # `export-baselines/<platform>/`. `darwin/` and `win32/` are committed; `linux/`
-  # is not, so the Linux leg fails closed with `Baseline missing for <format> on
-  # linux`. Do not skip the spec or record Linux images from an unmatched machine:
-  # `ubuntu-latest` is x86-64, while the available EC2 host is ARM64. Record the
-  # Linux set with the manual `capture-linux-baselines.yml` workflow, then review
-  # every image before committing it. CPU-only rendering is not sufficient: the
-  # available EC2 host is ARM64 and this runner is x86-64. Until then, this is a
-  # known red check, not a green or suppressed gate.
+  # `visual-regression.spec.ts` reads its oracle from
+  # `export-baselines/<platform>/`. Linux baselines must be captured by the
+  # `capture-linux-baselines.yml` workflow on `ubuntu-latest`, reviewed, and
+  # committed. The available EC2 host is ARM64 and is not pixel-equivalent to
+  # this x86-64 runner; do not skip the spec or use that host's images.
   e2e:
     strategy:
       # One platform failing must not cancel the others; a platform-specific
-      # rasteriser regression remains useful even while Linux baselines are absent.
+      # rasteriser regression remains useful when another leg fails.
       fail-fast: false
       matrix:
         include:

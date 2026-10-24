@@ -272,9 +272,10 @@ a usable token.
 - `e2e`: headless Playwright on Linux, Windows, and macOS — a matrix with
   `fail-fast: false` and `retries: 2` (three total attempts). `failOnFlakyTests`
   makes a test that passes only after a retry fail the job, so investigate it as a
-  defect rather than treating it as a pass. `darwin/` and `win32/` visual-regression
-  baselines are committed; Linux is missing its baseline and fails closed (see
-  `.github/workflows/ci.yml` "MISSING LINUX BASELINES").
+  defect rather than treating it as a pass. `darwin/`, `linux/`, and `win32/`
+  visual-regression baselines are committed. Generate Linux baselines with the
+  `capture-linux-baselines.yml` workflow on `ubuntu-latest`; see
+  [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md).
 - **Dependency licences are not checked by CI.** The `audit` job checks
   vulnerability advisories, not licence terms. The README records this limitation
   and the expectation to review dependency licences.

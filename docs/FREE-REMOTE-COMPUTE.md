@@ -94,9 +94,39 @@ It is not a GPU worker or a parallel CI runner. Headless Chrome is useful for fu
 
 ## Visual regression baselines
 
-The repository keeps baselines under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`. The `darwin/` and `win32/` sets are committed; Linux is missing. Never use this host to overwrite another platform's images.
+The repository keeps baselines under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`. Capture Linux images with the manual [`Capture Linux export baselines` workflow](../.github/workflows/capture-linux-baselines.yml) on GitHub's `ubuntu-latest` runner, review the artifact, and commit only the Linux images. The EC2 host described above is ARM64 and is not pixel-equivalent to CI's x86-64 runner. Never use it to overwrite another platform's images or to create the CI Linux baseline.
 
-Committed visual baselines currently exist for `darwin/` and `win32/`; the Linux baseline directory is missing. The GitHub Linux job uses `ubuntu-latest`, while this EC2 host is ARM64 on Ubuntu 26.04.1, so its screenshots are not evidence for that CI baseline. CPU-only rendering is not a sufficient match. After publishing the manual [`Capture Linux export baselines` workflow](../.github/workflows/capture-linux-baselines.yml) on the repository's default branch, dispatch it on the candidate ref (GitHub write access is required), review the downloaded artifact, and add its images in the task worktree. Until those files are committed, Linux visual-baseline tests remain a known failure; do not skip them or restore `continue-on-error`.
+## GitHub Actions compute mirror
+
+`Bohdanus/ph` is the public compute mirror for this private repository. A mirror branch is a copy for running GitHub-hosted jobs, not a replacement for the source repository. Because the mirror is public, push only code and history that are safe to publish; never include credentials, private user data, or unreviewed local files.
+
+From a verified task worktree, publish the candidate branch and dispatch the existing CI workflow on that exact ref:
+
+```bash
+git remote -v
+git push https://github.com/Bohdanus/ph.git HEAD:refs/heads/<task-branch>
+gh workflow run ci.yml -R Bohdanus/ph --ref <task-branch>
+gh run list -R Bohdanus/ph --workflow CI --branch <task-branch> --limit 5
+gh run watch <run-id> -R Bohdanus/ph --exit-status
+```
+
+Do not assume `origin` points to the source repository; inspect remotes before any push. The mirror is public, while `drguz69/lightshopy.com` is the private source. Push reviewed changes to the source repository separately using its verified remote, then submit them through the normal review and landing process.
+
+The workflow is also triggered by pull requests targeting the mirror's `main`; a manual dispatch is useful when the branch is only for validation. Wait for the run to finish before starting another broad E2E run on a small remote host. A completed run on the mirror is evidence for the tested commit and environment only; changes still need to be submitted to `drguz69/lightshopy.com`.
+
+If a source-repository job fails immediately with no runner and no executed steps, inspect the check-run annotations and account billing before diagnosing code. GitHub can reject jobs before runner startup when payments fail or the spending limit needs attention; a successful mirror run does not clear a billing block on the private source repository.
+
+To capture Linux export baselines on the mirror, dispatch the capture workflow at the candidate ref, wait for success, then download and inspect its artifact:
+
+```bash
+gh workflow run capture-linux-baselines.yml -R Bohdanus/ph --ref <task-branch>
+gh run list -R Bohdanus/ph --workflow "Capture Linux export baselines" --branch <task-branch> --limit 5
+gh run download <run-id> -R Bohdanus/ph --name linux-export-baselines-<commit-sha> --dir /tmp/linux-export-baselines
+```
+
+Copy only the reviewed images into `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/`. The capture workflow verifies the visual-regression spec before uploading. The artifact is temporary; committing the reviewed images to the source branch is what makes the CI baseline durable.
+
+Use GitHub CLI authentication for pushes and dispatches. Store the operator credential through `gh auth login` and its configured OS credential manager; do not put tokens in remote URLs, command arguments, workflow files, repository secrets, or logs. The CI and capture workflows use their read-only `GITHUB_TOKEN` permissions and do not need a personal token secret. If a token is exposed, revoke it and issue a replacement with only the required repository permissions.
 
 ## Other useful tasks
 
