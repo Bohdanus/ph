@@ -9,6 +9,10 @@ Use the local `ssh e2e` alias for broad headless E2E runs and Linux/ARM64 valida
 
 The useful gain is moving long browser runs off the local workstation. A `t4g.small` is not a high-throughput runner: its two vCPUs and 2 GiB RAM do not support several concurrent Chrome workers reliably. Swap can prevent memory exhaustion but does not add CPU or make parallel runs faster.
 
+## Full-suite experiment
+
+The one-worker full-suite run on the older EC2 checkout (`d124d323`) took about 34 minutes and ended with 22 failures: 7 Linux visual-baseline files were missing, and 15 other failures were in crop-history, levels, paint, and text specs. This is not a green run, does not establish that those 15 failures are ARM-specific, and is not evidence about the newer local `main`. The run also exceeded the GitHub Linux job's 30-minute timeout. The current instance is useful for offloading focused checks and asynchronous reproduction, but one `t4g.small` is too slow to replace the blocking Linux CI job as an unsharded full-suite runner. Diagnose the non-baseline failures and add matching Linux baselines before treating the gate as green.
+
 ## Capacity and billing
 
 AWS currently lists `t4g.small` in its time-limited Free Tier trial. The published trial allows up to 750 instance-hours per month through 2026-12-31, subject to account, region, AMI, and usage conditions. Storage and other resources can still incur charges. Verify the account current billing view before a run; do not treat this VM as permanently free. See [EC2 Free Tier usage](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html), [AWS EC2 FAQs](https://aws.amazon.com/ec2/faqs/), and [general-purpose instance specifications](https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html).
