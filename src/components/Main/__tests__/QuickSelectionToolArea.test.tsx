@@ -24,11 +24,21 @@ const storeState = vi.hoisted(
   (): {
     selections: Selection[];
     activeSelectionId: string | null;
+    totalSize: { width: number; height: number };
     documentFrame: { x: number; y: number; width: number; height: number } | null;
+    documentId: string;
+    documentRevision: number;
+    historyIndex: number;
+    branchRevision: number;
   } => ({
     selections: [],
     activeSelectionId: null,
+    totalSize: { width: 50, height: 50 },
     documentFrame: null,
+    documentId: 'quick-selection-document',
+    documentRevision: 0,
+    historyIndex: 0,
+    branchRevision: 0,
   })
 );
 const toolState = vi.hoisted(
@@ -67,11 +77,13 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       selections: storeState.selections,
       activeSelectionId: storeState.activeSelectionId,
       selectionCleared: null,
-      totalSize: IMAGE_SIZE,
+      totalSize: storeState.totalSize,
       documentFrame: storeState.documentFrame,
       history: [],
-      historyIndex: 0,
-      branchRevision: 0,
+      documentId: storeState.documentId,
+      documentRevision: storeState.documentRevision,
+      historyIndex: storeState.historyIndex,
+      branchRevision: storeState.branchRevision,
     },
     dispatchMock,
   ],
@@ -146,10 +158,19 @@ function createOverlayContext(): CanvasRenderingContext2D {
 }
 
 function renderQuickSelectionArea(): HTMLDivElement {
-  const { container } = render(
-    <QuickSelectionToolArea overlayCtxRef={{ current: createOverlayContext() }} className="test-quick-selection-area" />
+  return renderQuickSelectionView().toolArea;
+}
+
+function renderQuickSelectionView() {
+  const overlayCtxRef = { current: createOverlayContext() };
+  const makeElement = () => (
+    <QuickSelectionToolArea overlayCtxRef={overlayCtxRef} className="test-quick-selection-area" />
   );
-  return container.firstElementChild as HTMLDivElement;
+  const view = render(makeElement());
+  return {
+    toolArea: view.container.firstElementChild as HTMLDivElement,
+    rerender: () => view.rerender(makeElement()),
+  };
 }
 
 describe('QuickSelectionToolArea', () => {
@@ -162,7 +183,12 @@ describe('QuickSelectionToolArea', () => {
     vi.mocked(rasterizeSelectionState).mockReset();
     storeState.selections = [];
     storeState.activeSelectionId = null;
+    storeState.totalSize = IMAGE_SIZE;
     storeState.documentFrame = null;
+    storeState.documentId = 'quick-selection-document';
+    storeState.documentRevision = 0;
+    storeState.historyIndex = 0;
+    storeState.branchRevision = 0;
     toolState.toolArgs = { size: 16, tolerance: 0, mode: 'add', alpha: 1, toolName: 'quick-selection' };
     sourceCanvas.width = IMAGE_SIZE.width;
     sourceCanvas.height = IMAGE_SIZE.height;
@@ -260,6 +286,42 @@ describe('QuickSelectionToolArea', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it.each([
+    [
+      'crop changes the frame origin',
+      () => {
+        storeState.documentFrame = { x: 12, y: 7, ...IMAGE_SIZE };
+        storeState.documentRevision += 1;
+      },
+    ],
+    [
+      'resize changes the logical image size',
+      () => {
+        storeState.totalSize = { width: 60, height: 50 };
+        storeState.documentFrame = { x: 0, y: 0, width: 60, height: 50 };
+        storeState.documentRevision += 1;
+      },
+    ],
+    [
+      'document pixels change without changing geometry',
+      () => {
+        storeState.documentRevision += 1;
+      },
+    ],
+  ] as const)('cancels an in-flight stroke when %s', (_label, changeDocument) => {
+    const view = renderQuickSelectionView();
+
+    fireEvent.pointerDown(view.toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    changeDocument();
+    view.rerender();
+    fireEvent.pointerUp(view.toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.some((action) => action.type === 'COMMIT_DOCUMENT_EDIT')).toBe(false);
+    expect(actions.some((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toBe(true);
+    expect(pointerState.activePointerId).toBeNull();
   });
 
   it('stores Quick Selection provenance on the committed selection', () => {

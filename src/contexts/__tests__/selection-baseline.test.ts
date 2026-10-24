@@ -204,6 +204,12 @@ describe('selectionSnapshot', () => {
     expect(copied).not.toBe(source);
   });
 
+  it('infers the unique active selection ID from a key-absent legacy snapshot', () => {
+    const source = snapshotFixture('legacy-active');
+
+    expect(selectionSnapshot([source], undefined)).toEqual({ selections: [source], activeSelectionId: source.id });
+  });
+
   it('copies the packed mask object so later metadata writes cannot rewrite the snapshot', () => {
     const source: Selection = {
       ...snapshotFixture('raster-clone-me'),
@@ -268,6 +274,16 @@ describe('selectionSnapshot', () => {
     expect(isValidSelectionSnapshot({ selections: [inactive], activeSelectionId: null })).toBe(true);
   });
 
+  it('rejects an ambiguous key-absent legacy snapshot with multiple active selections', () => {
+    const active = snapshotFixture('legacy-active-one');
+    const alsoActive = snapshotFixture('legacy-active-two');
+
+    expect(isValidSelectionSnapshot({ selections: [active, alsoActive] })).toBe(false);
+    expect(() => selectionSnapshot([active, alsoActive], undefined)).toThrow(
+      'A selection snapshot without an active ID cannot contain multiple active selections.'
+    );
+  });
+
   it('accepts both the legacy Magic Wand boundary count and the current edge count', () => {
     const common = {
       tolerance: 12,
@@ -326,6 +342,81 @@ describe('deriveSelectionBaseline', () => {
     const history = [openDocumentItem(), renameItem('rename'), selectionItem('clear', previous)];
 
     expect(deriveSelectionBaseline(history)).toEqual({ selections: [previous], activeSelectionId: previous.id });
+  });
+
+  it('normalizes a key-absent active legacy baseline to its unique active ID', () => {
+    const previous = outOfHistorySelection('legacy-active');
+    const history: HistoryItem[] = [
+      openDocumentItem(),
+      {
+        ...selectionItem('clear-legacy-active', previous),
+        args: { previousSelectionState: { selections: [previous] } },
+      },
+    ];
+
+    expect(deriveSelectionBaseline(history)).toEqual({ selections: [previous], activeSelectionId: previous.id });
+    expect(isValidSelectionSnapshot(deriveSelectionBaseline(history))).toBe(true);
+  });
+
+  it('normalizes a key-absent active selection transition during legacy replay', () => {
+    const selection = outOfHistorySelection('legacy-active-transition');
+    const history: HistoryItem[] = [
+      openDocumentItem(),
+      {
+        id: 'select-legacy-active',
+        actionName: SELECTION_ACTION,
+        layerId: 'selection',
+        args: {
+          nextSelectionState: { selections: [selection] } as unknown as SelectionHistoryArgs['nextSelectionState'],
+        },
+      },
+    ];
+
+    const replayed = replayHistory(history, 1, initialSize, createDependencies());
+
+    expect(replayed.selections).toEqual([selection]);
+    expect(replayed.activeSelectionId).toBe(selection.id);
+  });
+
+  it('refuses a malformed active selection ID during legacy replay without replacing the prior state', () => {
+    const currentSelection = outOfHistorySelection('current-selection');
+    const malformedSelection = outOfHistorySelection('malformed-selection');
+    const history: HistoryItem[] = [
+      openDocumentItem(),
+      {
+        id: 'select-current',
+        actionName: SELECTION_ACTION,
+        layerId: 'selection',
+        args: {
+          nextSelectionState: {
+            selections: [currentSelection],
+            activeSelectionId: currentSelection.id,
+          },
+        },
+      },
+      {
+        id: 'select-malformed',
+        actionName: SELECTION_ACTION,
+        layerId: 'selection',
+        args: {
+          nextSelectionState: {
+            selections: [malformedSelection],
+            activeSelectionId: 7,
+          } as unknown as SelectionHistoryArgs['nextSelectionState'],
+        },
+      },
+    ];
+
+    const replayed = replayHistory(history, 2, initialSize, createDependencies());
+
+    expect(replayed.selections).toEqual([currentSelection]);
+    expect(replayed.activeSelectionId).toBe(currentSelection.id);
+    expect(replayed.diagnostics).toHaveLength(1);
+    expect(replayed.diagnostics[0]).toMatchObject({
+      historyId: 'select-malformed',
+      actionName: SELECTION_ACTION,
+      code: 'invalid-selection-snapshot',
+    });
   });
 
   it('skips a disabled selection action and seeds from the first enabled one', () => {

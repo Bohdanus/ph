@@ -54,7 +54,7 @@ import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { isCanonicalRasterSelectionMask } from '../util/selection-mask.ts';
-import { isSelectionSnapshotActiveStateValid } from './selection-baseline.ts';
+import { activeSelectionIdFromSnapshot, isSelectionSnapshotActiveStateValid } from './selection-baseline.ts';
 import { isLayerBlendMode, type Layer, type LayerId, type LayerSource, type ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ToolName } from './tool-types.ts';
@@ -1221,20 +1221,25 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * is the snapshot the legacy item must produce, without depending on which of
  * the two deep-copied it is.
  *
- * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory`'s `SELECTION_ACTION` arm read a key-absent id as `null`.
- * A strict `!==` would report a mismatch between a legacy arg that omits the key
- * and the normalized planned entry, degrading a correct append to reconversion.
+ * A key-absent legacy ID is inferred from its unique `isActive` selection on
+ * both sides. Comparing it as `null` would report a mismatch between that
+ * legacy argument and the normalized planned entry, degrading a correct append
+ * to reconversion.
  */
 function sameSelectionSnapshot(left: unknown, right: unknown): boolean {
   if (!isCanonicalSelectionSnapshot(left) || !isCanonicalSelectionSnapshot(right)) return false;
   if (left === right) return true;
   const leftSnapshot = left as { selections?: unknown; activeSelectionId?: unknown };
   const rightSnapshot = right as { selections?: unknown; activeSelectionId?: unknown };
-  if ((leftSnapshot.activeSelectionId ?? null) !== (rightSnapshot.activeSelectionId ?? null)) return false;
   if (!Array.isArray(leftSnapshot.selections) || !Array.isArray(rightSnapshot.selections)) return false;
   const leftSelections = leftSnapshot.selections;
   const rightSelections = rightSnapshot.selections;
+  if (
+    activeSelectionIdFromSnapshot(leftSelections, leftSnapshot.activeSelectionId) !==
+    activeSelectionIdFromSnapshot(rightSelections, rightSnapshot.activeSelectionId)
+  ) {
+    return false;
+  }
   return sameDenseArray(leftSelections, rightSelections, sameSelection);
 }
 

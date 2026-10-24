@@ -1108,6 +1108,37 @@ describe('decideDurableAppend', () => {
     });
   });
 
+  it('accepts a key-absent legacy active selection as the append before-state', () => {
+    const keylessPrevious = { selections: previousSelectionState.selections } as unknown as SelectionSnapshot;
+    const item = createSelectionHistoryItem(keylessPrevious, nextSelectionState);
+    const plan = planHistoryAppend({
+      item,
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!plan.durableEntry) throw new Error('expected a planned selection append');
+    const baseWithActiveSelection = {
+      ...base,
+      baseline: { ...base.baseline, selections: previousSelectionState },
+    } as DurableDocument;
+
+    const decision = decide({
+      base: baseWithActiveSelection,
+      entry: plan.entry,
+      next: { entries: [...priorEntries, plan.entry], cursor: 1, branchRevision: 0 },
+      planned: plan.durableEntry,
+    });
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history[1]?.operation).toMatchObject({
+      kind: 'set-selection',
+      before: previousSelectionState,
+      after: nextSelectionState,
+    });
+  });
+
   it('refuses a sparse planned selection list against the dense legacy selection', () => {
     if (plannedSelection.operation.kind !== 'set-selection') throw new Error('expected a selection operation');
     const candidate: DurableHistoryEntry = {

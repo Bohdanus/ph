@@ -4,13 +4,13 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import type { Point } from '../../contexts/general-types.ts';
+import type { Point, Size } from '../../contexts/general-types.ts';
 import {
   createCommittedRasterSelection,
   createCommittedPolygonSelectionFromContours,
   getActiveSelection,
 } from '../../util/selection.ts';
-import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
 import { resetOverlayAlpha } from '../../util/canvas.ts';
 import { readCanvasImageDataAtLogicalSize } from '../../util/canvas-image-data.ts';
 import { createSelectionRasterOutlineCanvas, type SelectionRasterOutline } from '../../hooks/useSelectionAnts.ts';
@@ -85,8 +85,21 @@ function drawRasterRegionPreview(
 }
 
 export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelectionToolAreaProps) => {
-  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame, activeSelectionId }, dispatch] =
-    useStore();
+  const [
+    {
+      canvasRef,
+      containerRef,
+      selections,
+      totalSize,
+      documentFrame: currentFrame,
+      activeSelectionId,
+      documentId,
+      documentRevision,
+      historyIndex,
+      branchRevision,
+    },
+    dispatch,
+  ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { getToolArgs } = useCurrentTool();
   const { clearSelections, commitSelection } = useSelectionHistory();
@@ -99,6 +112,15 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     });
 
   const pointerIdRef = useRef<number | null>(null);
+  const strokeDocumentContextRef = useRef<{
+    documentId: string;
+    documentRevision: number;
+    historyIndex: number;
+    branchRevision: number;
+    totalSize: Size;
+    imageSize: Size;
+    documentFrame: DocumentFrame;
+  } | null>(null);
   const seedSamplerRef = useRef<QuickSelectionStrokeSeedSampler | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const accumulatorRef = useRef<QuickSelectionAccumulator | null>(null);
@@ -179,6 +201,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
   function resetGesture() {
     pointerIdRef.current = null;
+    strokeDocumentContextRef.current = null;
     seedSamplerRef.current = null;
     imageDataRef.current = null;
     accumulatorRef.current = null;
@@ -187,6 +210,33 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     selectionChangedRef.current = false;
     previewPointsRef.current = null;
     previewRasterRef.current = null;
+  }
+
+  function isStrokeDocumentContextCurrent(): boolean {
+    const context = strokeDocumentContextRef.current;
+    return (
+      context !== null &&
+      context.documentId === documentId &&
+      context.documentRevision === documentRevision &&
+      context.historyIndex === historyIndex &&
+      context.branchRevision === branchRevision &&
+      context.totalSize.width === totalSize.width &&
+      context.totalSize.height === totalSize.height &&
+      context.imageSize.width === totalSize.width &&
+      context.imageSize.height === totalSize.height &&
+      context.documentFrame.x === documentFrame.x &&
+      context.documentFrame.y === documentFrame.y &&
+      context.documentFrame.width === documentFrame.width &&
+      context.documentFrame.height === documentFrame.height
+    );
+  }
+
+  function cancelCurrentStroke() {
+    const hadGesture = pointerIdRef.current !== null;
+    resetGesture();
+    releasePointer();
+    redrawOverlay();
+    if (hadGesture) dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -206,6 +256,15 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       }
 
       const size = { width: imageData.width, height: imageData.height };
+      strokeDocumentContextRef.current = {
+        documentId,
+        documentRevision,
+        historyIndex,
+        branchRevision,
+        totalSize: { ...totalSize },
+        imageSize: size,
+        documentFrame: { ...documentFrame },
+      };
       // The active selection is the stroke's starting mask, which is what makes `add` extend
       // it and `subtract` shrink it. With nothing active the base is empty, and an empty
       // base makes a `subtract` stroke select nothing — the same no-op Photoshop gives a
@@ -251,6 +310,10 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     if (pointerIdRef.current === null) return;
     if (pointerIdRef.current !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
     if (!isPointerMoveValid(event)) return;
+    if (!isStrokeDocumentContextCurrent()) {
+      cancelCurrentStroke();
+      return;
+    }
 
     growStroke(getLocalCoords(event));
   };
@@ -259,6 +322,10 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     if (pointerIdRef.current === null) return;
     if (pointerIdRef.current !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
     if (!isPointerUpValid(event)) return;
+    if (!isStrokeDocumentContextCurrent()) {
+      cancelCurrentStroke();
+      return;
+    }
 
     // The release position can carry a seed the last move did not, so the stroke is grown
     // once more before it is read for the commit. Nothing is written by that call.
@@ -318,9 +385,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     if (pointerIdRef.current === null) return;
     if (pointerIdRef.current !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
 
-    resetGesture();
-    redrawOverlay();
-    dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+    cancelCurrentStroke();
   };
 
   useEffect(() => {

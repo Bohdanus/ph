@@ -182,10 +182,11 @@ export function isSelectionSnapshotActiveStateValid(
     identifiers.add(selection.id);
   }
 
-  // Key-absent IDs are legacy snapshots whose older consumers relied on `isActive` alone.
-  if (activeSelectionId === undefined) return true;
-
   const activeSelections = selections.filter((selection) => selection.isActive);
+  // Key-absent IDs are legacy snapshots whose older consumers relied on `isActive` alone.
+  // A unique active selection can be normalized to its ID when copied into the durable model;
+  // multiple active flags have no unambiguous ID and cannot be represented canonically.
+  if (activeSelectionId === undefined) return activeSelections.length <= 1;
   if (activeSelectionId === null) return activeSelections.length === 0;
   if (typeof activeSelectionId !== 'string') return false;
 
@@ -194,6 +195,18 @@ export function isSelectionSnapshotActiveStateValid(
     activeSelections[0]?.id === activeSelectionId &&
     selections.some((selection) => selection.id === activeSelectionId)
   );
+}
+
+/** Resolve a legacy snapshot's missing active ID without contradicting its `isActive` flag. */
+export function activeSelectionIdFromSnapshot(
+  selections: readonly Pick<Selection, 'id' | 'isActive'>[],
+  activeSelectionId: unknown
+): string | null {
+  if (activeSelectionId === null) return null;
+  if (typeof activeSelectionId === 'string') return activeSelectionId;
+  if (activeSelectionId !== undefined) return null;
+  const activeSelections = selections.filter((selection) => selection.isActive);
+  return activeSelections.length === 1 ? activeSelections[0]!.id : null;
 }
 
 function cloneSelection(selection: Selection): Selection {
@@ -218,11 +231,16 @@ function cloneSelection(selection: Selection): Selection {
  */
 export function selectionSnapshot(
   selections: readonly Selection[] = [],
-  activeSelectionId: string | null = null
+  activeSelectionId?: string | null
 ): SelectionSnapshot {
+  const activeSelections = selections.filter((selection) => selection.isActive);
+  if (activeSelectionId === undefined && activeSelections.length > 1) {
+    throw new Error('A selection snapshot without an active ID cannot contain multiple active selections.');
+  }
+  const normalizedActiveSelectionId = activeSelectionIdFromSnapshot(selections, activeSelectionId);
   return Object.freeze({
     selections: Object.freeze(selections.map(cloneSelection)),
-    activeSelectionId,
+    activeSelectionId: normalizedActiveSelectionId,
   });
 }
 
@@ -256,5 +274,5 @@ export function deriveSelectionBaseline(history: readonly HistoryItem[]): Select
   if (!isValidSelectionSnapshot(previous)) {
     throw new Error('Legacy selection baseline is not a canonical selection snapshot.');
   }
-  return selectionSnapshot(previous.selections, previous.activeSelectionId ?? null);
+  return selectionSnapshot(previous.selections, previous.activeSelectionId);
 }
