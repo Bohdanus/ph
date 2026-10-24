@@ -31,7 +31,7 @@ baseline mismatches).
 
 ### Known e2e environment-bound issues:
 
-- Visual regression baselines: only macOS (`/darwin/`) baselines are committed; Linux and Windows legs fail-as-missing until an operator records them
+- Visual regression baselines: `darwin/` and `win32/` are committed; `linux/` is missing. The available EC2 host is ARM64 and must not be used to create a baseline for the `ubuntu-latest` x86-64 runner.
 - Canvas rendering differences between headless Chrome on Linux/Windows and macOS
 - The suite runs headless in CI on a cross-platform matrix (Linux, Windows, macOS)
 
@@ -57,17 +57,17 @@ baseline mismatches).
 Some e2e tests fail on CI but are NOT environment-bound — they indicate real logic
 defects. The skill must distinguish:
 
-| Failure Type                               | Classification    | Action                                                   |
-| ------------------------------------------ | ----------------- | -------------------------------------------------------- |
-| Visual regression baseline mismatch        | Environment-bound | IGNORE — document in OPEN_PROBLEMS.md                    |
-| Baseline missing for non-macOS platform    | Environment-bound | IGNORE — record with `npm run test:e2e:update-baselines` |
-| Canvas pixel comparison                    | Environment-bound | IGNORE — document in OPEN_PROBLEMS.md                    |
-| CDP capture-size assertion                 | Environment-bound | IGNORE — documented in OPEN_PROBLEMS.md                  |
-| `undo` button not enabled / state mismatch | **Logic defect**  | **FIX**                                                  |
-| Expected state X but got Y (non-rendering) | **Logic defect**  | **FIX**                                                  |
-| Accessibility axe violations               | **Logic defect**  | **FIX**                                                  |
-| ErrorBoundary omits diagnostics            | **Logic defect**  | **FIX**                                                  |
-| Test interrupted (crash/hang)              | **Logic defect**  | **FIX**                                                  |
+| Failure Type                               | Classification    | Action                                                                                           |
+| ------------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------ |
+| Visual regression baseline mismatch        | Environment-bound | IGNORE — document in OPEN_PROBLEMS.md                                                            |
+| Baseline missing for a platform            | Environment-bound | Do not skip; record on the matching runner, review every image, and commit the platform baseline |
+| Canvas pixel comparison                    | Environment-bound | IGNORE — document in OPEN_PROBLEMS.md                                                            |
+| CDP capture-size assertion                 | Environment-bound | IGNORE — documented in OPEN_PROBLEMS.md                                                          |
+| `undo` button not enabled / state mismatch | **Logic defect**  | **FIX**                                                                                          |
+| Expected state X but got Y (non-rendering) | **Logic defect**  | **FIX**                                                                                          |
+| Accessibility axe violations               | **Logic defect**  | **FIX**                                                                                          |
+| ErrorBoundary omits diagnostics            | **Logic defect**  | **FIX**                                                                                          |
+| Test interrupted (crash/hang)              | **Logic defect**  | **FIX**                                                                                          |
 
 **When in doubt, classify as environment-bound and document it.** Only fix if the
 failure is clearly about application logic, not rendering on a specific OS/browser.
