@@ -39,6 +39,13 @@ otherwise exposed.
 2. For frequent hosted feedback, push the reviewed branch to the mirror and run
    the affected spec on the platform that matters:
 
+   GitHub only dispatches a `workflow_dispatch` workflow if its file is present
+   on the repository's default branch. The focused workflow must first be
+   merged into the mirror's default branch; until then, run the focused spec
+   locally or dispatch the existing full `ci.yml` workflow on the task branch.
+   Once the focused workflow is available on the default branch, dispatch it as
+   follows:
+
    ```bash
    git push mirror HEAD:refs/heads/<task-branch>
    gh workflow run focused-linux-e2e.yml -R Bohdanus/ph --ref <task-branch> \
