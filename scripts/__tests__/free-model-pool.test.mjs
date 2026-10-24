@@ -2,18 +2,42 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { catalogCandidates, completeWithFreeModel, loadCatalogs, main, zeroPriced } from '../free-model-pool.mjs';
+import {
+  catalogCandidates,
+  completeWithFreeModel,
+  loadCatalogs,
+  main,
+  MAX_CATALOG_RESPONSE_BYTES,
+  MAX_COMPLETION_RESPONSE_BYTES,
+  readBoundedPrompt,
+  zeroPriced,
+} from '../free-model-pool.mjs';
 
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
+async function responseWithReadableBody(response) {
+  if (response instanceof Response) return response;
+  const payload = typeof response?.json === 'function' ? await response.json() : undefined;
+  const status = response?.status ?? (response?.ok === false ? 500 : 200);
+  return new Response(payload === undefined ? '' : JSON.stringify(payload), { status });
+}
+
+function readableFetch(fetchImpl) {
+  return vi.fn(async (...args) => responseWithReadableBody(await fetchImpl(...args)));
+}
+
 function catalogFetch({ kilo = [], openrouter = [], chat }) {
-  return vi.fn((url, options = {}) => {
+  return readableFetch(async (url, options = {}) => {
+    let response;
     if (url.endsWith('/models') && url.includes('openrouter')) {
-      return Promise.resolve({ ok: true, json: async () => ({ data: openrouter }) });
+      response = { ok: true, json: async () => ({ data: openrouter }) };
+    } else if (url.endsWith('/models')) {
+      response = { ok: true, json: async () => kilo };
+    } else {
+      response = await chat(url, options);
     }
-    if (url.endsWith('/models')) return Promise.resolve({ ok: true, json: async () => kilo });
-    return chat(url, options);
+    return response;
   });
 }
 
@@ -55,7 +79,7 @@ describe('free model catalog filtering', () => {
   });
 
   it('keeps Kilo candidates available when the optional OpenRouter catalog is down', async () => {
-    const fetchImpl = vi.fn((url) =>
+    const fetchImpl = readableFetch((url) =>
       url.includes('openrouter')
         ? Promise.resolve({ ok: false, status: 401 })
         : Promise.resolve({ ok: true, json: async () => [kiloRow('poolside/laguna-s-2.1:free')] })
@@ -69,6 +93,20 @@ describe('free model catalog filtering', () => {
     expect(candidates.map((row) => row.model)).toEqual(['poolside/laguna-s-2.1:free']);
     expect(errors).toEqual(['openrouter']);
   });
+
+  it('refuses an oversized catalog body', async () => {
+    const fetchImpl = readableFetch(() => new Response(Buffer.alloc(MAX_CATALOG_RESPONSE_BYTES + 1)));
+    const errors = [];
+    const candidates = await loadCatalogs({
+      fetchImpl,
+      openRouterKey: '',
+      groqKey: '',
+      onCatalogError: (_source, error) => errors.push(error.message),
+    });
+
+    expect(candidates).toEqual([]);
+    expect(errors).toEqual([expect.stringContaining(`${MAX_CATALOG_RESPONSE_BYTES}-byte limit`)]);
+  });
 });
 
 describe('free model rotation', () => {
@@ -79,7 +117,7 @@ describe('free model rotation', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' } }] }),
+        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
       });
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1'), kiloRow('k2')], openrouter: [openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('safe prompt', { fetchImpl, openRouterKey: 'test' });
@@ -104,7 +142,7 @@ describe('free model rotation', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' } }] }),
+        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
       });
     const fetchImpl = catalogFetch({
       kilo: [kiloRow('k1'), kiloRow('k2'), kiloRow('k3'), kiloRow('k4')],
@@ -139,12 +177,18 @@ describe('free model rotation', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ model: 'paid-model', choices: [{ message: { content: 'unexpected' } }] }),
+        json: async () => ({
+          model: 'paid-model',
+          choices: [{ message: { content: 'unexpected' }, finish_reason: 'stop' }],
+        }),
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'free result' } }] }),
+        json: async () => ({
+          model: 'o1:free',
+          choices: [{ message: { content: 'free result' }, finish_reason: 'stop' }],
+        }),
       });
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
@@ -159,7 +203,7 @@ describe('free model rotation', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' } }] }),
+        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
       });
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
@@ -168,40 +212,141 @@ describe('free model rotation', () => {
     expect(chat).toHaveBeenCalledTimes(2);
   });
 
-  it('rotates after a successful HTTP response with an empty completion', async () => {
+  it('rotates after a successful HTTP response with a truncated completion', async () => {
     const chat = vi
       .fn()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ choices: [{ message: { content: null }, finish_reason: 'length' }] }),
+        json: async () => ({
+          model: 'k1',
+          choices: [{ message: { content: 'partial text' }, finish_reason: 'length' }],
+        }),
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' } }] }),
+        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
       });
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     expect(result.source).toBe('openrouter');
   });
+
+  it('rotates after a successful HTTP response with no completion text', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'k1', choices: [{ message: { content: null }, finish_reason: 'length' }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
+      });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+    const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
+    expect(result.source).toBe('openrouter');
+    expect(chat).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['numeric zero', { cost: 0 }, true],
+    ['string zero', { cost: '0' }, true],
+    ['empty cost text', { cost: '' }, false],
+    ['null cost', { cost: null }, false],
+    ['boolean cost', { cost: false }, false],
+    ['malformed nested cost', { cost_details: { upstream_inference_cost: '' } }, false],
+    ['additional nested provider cost', { cost_details: { providerCost: '0.02' } }, false],
+  ])('accepts only valid zero usage cost: %s', async (_label, usage, shouldAccept) => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'k1',
+        usage,
+        choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
+    const completion = completeWithFreeModel('prompt', { fetchImpl });
+    if (shouldAccept) {
+      await expect(completion).resolves.toMatchObject({ finishReason: 'stop', content: 'done' });
+    } else {
+      await expect(completion).rejects.toThrow(/non-zero or invalid usage cost/);
+    }
+  });
+
+  it('stops before another provider can hide a reported charge on an incomplete response', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'k1',
+          usage: { cost: '0.02' },
+          choices: [{ message: { content: 'partial result' }, finish_reason: 'length' }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'o1:free',
+          choices: [{ message: { content: 'apparently free result' }, finish_reason: 'stop' }],
+        }),
+      });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' })).rejects.toThrow(
+      /provider reported non-zero or invalid usage cost; refusing further requests/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops when an error response reports a non-zero cost', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ usage: { total_cost: 0.01 }, error: { message: 'request rejected' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'o1:free',
+          choices: [{ message: { content: 'apparently free result' }, finish_reason: 'stop' }],
+        }),
+      });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' })).rejects.toThrow(
+      /provider reported non-zero or invalid usage cost; refusing further requests/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('free model runner CLI', () => {
-  it('writes a bounded completion to --output-file instead of stdout', async () => {
+  it('writes a bounded completion for a catalog-verified free model when usage is omitted', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-'));
     const promptPath = join(directory, 'prompt.txt');
     const outputPath = join(directory, 'result.txt');
     const stdout = { write: vi.fn() };
     const stderr = { write: vi.fn() };
-    const fetchImpl = vi.fn((url) =>
+    const fetchImpl = readableFetch((url) =>
       url.endsWith('/models')
         ? Promise.resolve({ ok: true, json: async () => [kiloRow('poolside/laguna-s-2.1:free')] })
         : Promise.resolve({
             ok: true,
             json: async () => ({
               model: 'poolside/laguna-s-2.1:free',
-              choices: [{ message: { content: 'concise result' } }],
+              choices: [{ message: { content: 'concise result' }, finish_reason: 'stop' }],
             }),
           })
     );
@@ -215,7 +360,9 @@ describe('free model runner CLI', () => {
         stderr,
       });
       expect(code).toBe(0);
-      expect(await readFile(outputPath, 'utf8')).toBe('[kilo/poolside/laguna-s-2.1:free]\nconcise result\n');
+      expect(await readFile(outputPath, 'utf8')).toBe(
+        '[kilo/poolside/laguna-s-2.1:free]\nFinish reason: stop\nUsage: null\n\nconcise result\n'
+      );
       expect(stdout.write).not.toHaveBeenCalled();
       expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Result written to'));
     } finally {
@@ -234,5 +381,40 @@ describe('free model runner CLI', () => {
     });
     expect(code).toBe(2);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects prompts above the bounded character budget before catalog requests', async () => {
+    const fetchImpl = vi.fn();
+    await expect(completeWithFreeModel('x'.repeat(120_001), { fetchImpl })).rejects.toThrow(/120000 characters/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('refuses an oversized completion body', async () => {
+    const chat = vi.fn().mockResolvedValue(new Response(Buffer.alloc(MAX_COMPLETION_RESPONSE_BYTES + 1)));
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl })).rejects.toThrow(
+      `Model response exceeds the ${MAX_COMPLETION_RESPONSE_BYTES}-byte limit`
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an oversized or invalid UTF-8 prompt file before catalog requests', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-'));
+    const promptPath = join(directory, 'prompt.txt');
+    const fetchImpl = vi.fn();
+    const stderr = { write: vi.fn() };
+    try {
+      await writeFile(promptPath, Buffer.alloc(480 * 1024 + 1, 0x61));
+      const code = await main(['--prompt-file', promptPath], { fetchImpl, openRouterKey: '', groqKey: '', stderr });
+      expect(code).toBe(2);
+      expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('at most 491520 bytes'));
+      expect(fetchImpl).not.toHaveBeenCalled();
+
+      await writeFile(promptPath, Buffer.from([0xc3, 0x28]));
+      await expect(readBoundedPrompt(promptPath)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

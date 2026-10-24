@@ -5,17 +5,28 @@ const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion:
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 const groqRow = (id) => ({ id, owned_by: 'system', context_window: 8192 });
 
+async function responseWithReadableBody(response) {
+  if (response instanceof Response) return response;
+  const payload = typeof response?.json === 'function' ? await response.json() : undefined;
+  const status = response?.status ?? (response?.ok === false ? 500 : 200);
+  return new Response(payload === undefined ? '' : JSON.stringify(payload), { status });
+}
+
+function readableFetch(fetchImpl) {
+  return vi.fn(async (...args) => responseWithReadableBody(await fetchImpl(...args)));
+}
+
 function catalogFetch({ kilo = [], openrouter = [], groq = [], chat }) {
-  return vi.fn((url, options = {}) => {
+  return readableFetch(async (url, options = {}) => {
     if (url.includes('openrouter')) {
-      if (url.endsWith('/models')) return Promise.resolve({ ok: true, json: async () => ({ data: openrouter }) });
+      if (url.endsWith('/models')) return { ok: true, json: async () => ({ data: openrouter }) };
       return chat(url, options);
     }
     if (url.includes('groq')) {
-      if (url.endsWith('/models')) return Promise.resolve({ ok: true, json: async () => ({ data: groq }) });
+      if (url.endsWith('/models')) return { ok: true, json: async () => ({ data: groq }) };
       return chat(url, options);
     }
-    if (url.endsWith('/models')) return Promise.resolve({ ok: true, json: async () => kilo });
+    if (url.endsWith('/models')) return { ok: true, json: async () => kilo };
     return chat(url, options);
   });
 }
@@ -44,7 +55,7 @@ describe('groq catalog filtering', () => {
 
 describe('loadCatalogs with groq', () => {
   it('includes groq source when GROQ_API_KEY is set', async () => {
-    const fetchImpl = vi.fn((url) => {
+    const fetchImpl = readableFetch((url) => {
       if (url.includes('groq')) {
         return Promise.resolve({ ok: true, json: async () => ({ data: [groqRow('openai/gpt-oss-20b')] }) });
       }
@@ -62,7 +73,7 @@ describe('loadCatalogs with groq', () => {
   });
 
   it('does not probe Groq when a key is present but its free plan is not explicitly confirmed', async () => {
-    const fetchImpl = vi.fn((url) => {
+    const fetchImpl = readableFetch((url) => {
       if (url.includes('groq'))
         return Promise.resolve({ ok: true, json: async () => ({ data: [groqRow('openai/gpt-oss-20b')] }) });
       return Promise.resolve({ ok: true, json: async () => [kiloRow('poolside/laguna-s-2.1:free')] });
@@ -88,7 +99,7 @@ describe('completeWithFreeModel with groq', () => {
         status: 200,
         json: async () => ({
           model: 'k1',
-          choices: [{ message: { content: 'kilo result' } }],
+          choices: [{ message: { content: 'kilo result' }, finish_reason: 'stop' }],
         }),
       })
       .mockResolvedValueOnce({
@@ -96,7 +107,7 @@ describe('completeWithFreeModel with groq', () => {
         status: 200,
         json: async () => ({
           model: 'openai/gpt-oss-20b',
-          choices: [{ message: { content: 'groq result' } }],
+          choices: [{ message: { content: 'groq result' }, finish_reason: 'stop' }],
         }),
       });
     const fetchImpl = catalogFetch({
@@ -121,7 +132,7 @@ describe('completeWithFreeModel with groq', () => {
       status: 200,
       json: async () => ({
         model: 'openai/gpt-oss-20b',
-        choices: [{ message: { content: 'groq result' } }],
+        choices: [{ message: { content: 'groq result' }, finish_reason: 'stop' }],
       }),
     });
     const fetchImpl = catalogFetch({
