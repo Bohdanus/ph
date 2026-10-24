@@ -6,6 +6,7 @@ import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { SECONDARY_BUTTON } from '../buttonStyles.ts';
+import { TouchSlider } from '../../Common/TouchSlider.tsx';
 
 const Levels: React.FC<{}> = () => {
   const { tempUpdateLayer, cancelLayerPreview } = useLayers();
@@ -107,9 +108,8 @@ const Levels: React.FC<{}> = () => {
           Brightness
           <span className="font-bold text-gray-900 dark:text-gray-200">{brightness}%</span>
         </label>
-        <input
+        <TouchSlider
           id="brightness-slider"
-          type="range"
           min={BRIGHTNESS_SLIDER_RANGE.min}
           max={BRIGHTNESS_SLIDER_RANGE.max}
           value={brightness}
@@ -125,9 +125,8 @@ const Levels: React.FC<{}> = () => {
           Contrast
           <span className="font-bold text-gray-900 dark:text-gray-200">{contrast}%</span>
         </label>
-        <input
+        <TouchSlider
           id="contrast-slider"
-          type="range"
           min={CONTRAST_SLIDER_RANGE.min}
           max={CONTRAST_SLIDER_RANGE.max}
           value={contrast}

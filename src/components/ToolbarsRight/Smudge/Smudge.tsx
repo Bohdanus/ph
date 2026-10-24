@@ -9,6 +9,7 @@ import {
 } from '../../../util/brush-engine.ts';
 import { SMUDGE_STRENGTH_MAX, SMUDGE_STRENGTH_MIN } from '../../../tools/smudge.ts';
 import type { ToolPatch } from '../../../contexts/tool-types.ts';
+import { TouchSlider } from '../../Common/TouchSlider.tsx';
 
 /**
  * Layout copied from `Paint/Paint.tsx`, which is the house shape for a paint family's
@@ -139,14 +140,13 @@ const Smudge: React.FC<{}> = () => {
     <div className="flex h-full flex-row items-center gap-5 overflow-x-auto">
       <label htmlFor="smudge-size" className={FIELD_CLASS}>
         Size <span className={VALUE_CLASS}>{tip.size}px</span>
-        <input
+        <TouchSlider
           id="smudge-size"
           aria-label="Size"
           className={SLIDER_CLASS}
           max={BRUSH_SIZE_MAX}
           min={BRUSH_SIZE_MIN}
           step="1"
-          type="range"
           value={tip.size}
           onChange={handleSizeChange}
         />
@@ -154,14 +154,13 @@ const Smudge: React.FC<{}> = () => {
 
       <label htmlFor="smudge-hardness" className={FIELD_CLASS}>
         Hardness <span className={VALUE_CLASS}>{tip.hardness}%</span>
-        <input
+        <TouchSlider
           id="smudge-hardness"
           aria-label="Hardness"
           className={SLIDER_CLASS}
           max={BRUSH_HARDNESS_MAX}
           min={BRUSH_HARDNESS_MIN}
           step="1"
-          type="range"
           value={tip.hardness}
           onChange={handleHardnessChange}
         />
@@ -169,14 +168,13 @@ const Smudge: React.FC<{}> = () => {
 
       <label htmlFor="smudge-strength" className={FIELD_CLASS}>
         Strength <span className={VALUE_CLASS}>{strength}%</span>
-        <input
+        <TouchSlider
           id="smudge-strength"
           aria-label="Strength"
           className={SLIDER_CLASS}
           max={SMUDGE_STRENGTH_MAX}
           min={SMUDGE_STRENGTH_MIN}
           step="1"
-          type="range"
           value={strength}
           onChange={handleStrengthChange}
         />
