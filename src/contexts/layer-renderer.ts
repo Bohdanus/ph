@@ -214,7 +214,7 @@ function bitmapMatchesShapeSource(bitmap: BitmapSource, source: object, args: Sh
 }
 
 function getLayerBitmap(layer: Layer, position: Pos) {
-  if (layer.tmpCanvas) return layer.tmpCanvas;
+  if (hasUsableRaster(layer.tmpCanvas)) return layer.tmpCanvas;
   const source = layer.source;
   if (!source || source.kind !== 'tool') return layer.bitmap;
 
@@ -242,10 +242,12 @@ export function drawLayerSource(
   documentFrame?: DocumentFrame,
   preferCachedSource = false
 ): boolean {
-  const effectivePosition = layer.presentationBounds ?? position;
+  const hasBakedPresentation =
+    layer.presentationBounds !== null &&
+    (hasUsableRaster(layer.tmpCanvas) || (layer.tmpCanvas === null && hasUsableRaster(layer.bitmap)));
+  const effectivePosition = hasBakedPresentation ? layer.presentationBounds! : position;
   if (effectivePosition.width === 0 || effectivePosition.height === 0) return false;
 
-  const hasBakedPresentation = layer.tmpCanvas !== null && layer.presentationBounds !== null;
   const operations: PresentationOperation[] = [];
   for (const operation of hasBakedPresentation ? [] : layer.operations) {
     if (!operation.enabled) continue;
@@ -342,13 +344,21 @@ export function drawLayerSource(
 
   const cachedRaster = isRetainedVectorSource
     ? preferCachedSource
-      ? (layer.tmpCanvas ?? layer.bitmap)
+      ? hasUsableRaster(layer.tmpCanvas)
+        ? layer.tmpCanvas
+        : hasUsableRaster(layer.bitmap)
+          ? layer.bitmap
+          : null
       : hasUsableRaster(layer.tmpCanvas)
         ? layer.tmpCanvas
         : hasUsableRaster(layer.bitmap)
           ? layer.bitmap
           : null
-    : layer.tmpCanvas;
+    : hasUsableRaster(layer.tmpCanvas)
+      ? layer.tmpCanvas
+      : hasBakedPresentation && hasUsableRaster(layer.bitmap)
+        ? layer.bitmap
+        : null;
   const bitmap =
     cachedRaster ??
     (source?.kind === 'tool' && source.args.toolName === 'shape' && 'figure' in source.args && !shapeGeometry

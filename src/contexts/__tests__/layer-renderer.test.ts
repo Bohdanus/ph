@@ -665,6 +665,102 @@ describe('drawLayerSource', () => {
     expect(drawLayerSource(ctx, layer)).toBe(true);
     expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 10, 20, 30, 40);
   });
+
+  it('uses promoted baked bitmap bounds without reapplying operations', () => {
+    const bitmap = { width: 30, height: 40 } as ImageBitmap;
+    const ctx = makeMockCtx();
+    const filtersAtDraw: string[] = [];
+    vi.mocked(ctx.drawImage).mockImplementation(() => filtersAtDraw.push(ctx.filter));
+    const layer = {
+      id: 'promoted-baked',
+      name: 'Promoted baked presentation',
+      isBedrock: false,
+      bitmap,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over' as const,
+      order: 0,
+      pos: { x: 2, y: 3, width: 30, height: 40 },
+      presentationBounds: { x: 10, y: 20, width: 60, height: 80 },
+      operations: [{ id: 'filter', args: { toolName: 'blur', radius: 2 }, enabled: true }],
+    } satisfies Layer;
+
+    expect(drawLayerSource(ctx, layer)).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 10, 20, 60, 80);
+    expect(filtersAtDraw).toEqual(['none']);
+  });
+
+  it('uses the promoted bitmap for retained Text presentations', () => {
+    const bitmap = { width: 30, height: 40 } as ImageBitmap;
+    const processor = vi.spyOn(toolProcessors.text, 'imageProcessor');
+    const ctx = makeMockCtx();
+    const filtersAtDraw: string[] = [];
+    vi.mocked(ctx.drawImage).mockImplementation(() => filtersAtDraw.push(ctx.filter));
+    const sourcePosition = { x: 2, y: 3, width: 30, height: 40 };
+    const layer: Layer = {
+      id: 'promoted-text',
+      name: 'Promoted text',
+      isBedrock: false,
+      bitmap,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: sourcePosition,
+      presentationBounds: { x: 10, y: 20, width: 60, height: 80 },
+      operations: [{ id: 'filter', args: { toolName: 'blur', radius: 2 }, enabled: true }],
+      source: {
+        kind: 'tool',
+        pos: sourcePosition,
+        args: {
+          toolName: 'text',
+          align: 'left',
+          bold: false,
+          color: '#000000',
+          fontFamily: 'Arial',
+          fontSize: 24,
+          italic: false,
+          lineHeight: 1.2,
+          rect: { x1: 0, y1: 0, x2: 30, y2: 40 },
+        },
+      },
+    };
+
+    expect(drawLayerSource(ctx, layer)).toBe(true);
+    expect(processor).not.toHaveBeenCalled();
+    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 10, 20, 60, 80);
+    expect(filtersAtDraw).toEqual(['none']);
+  });
+
+  it('does not suppress operations or use baked bounds when the tmpCanvas is empty', () => {
+    const bitmap = { width: 30, height: 40 } as ImageBitmap;
+    const ctx = makeMockCtx();
+    const filtersAtDraw: string[] = [];
+    vi.mocked(ctx.drawImage).mockImplementation(() => filtersAtDraw.push(ctx.filter));
+    const layer = {
+      id: 'empty-baked',
+      name: 'Empty baked preview',
+      isBedrock: false,
+      bitmap,
+      tmpCanvas: { width: 0, height: 0 } as OffscreenCanvas,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over' as const,
+      order: 0,
+      pos: { x: 2, y: 3, width: 30, height: 40 },
+      presentationBounds: { x: 10, y: 20, width: 60, height: 80 },
+      operations: [{ id: 'filter', args: { toolName: 'blur', radius: 2 }, enabled: true }],
+    } satisfies Layer;
+
+    expect(drawLayerSource(ctx, layer)).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 2, 3, 30, 40);
+    expect(filtersAtDraw).toEqual(['blur(2px)']);
+  });
 });
 
 describe('drawLayer', () => {
@@ -875,6 +971,40 @@ describe('drawLayersToCanvas vector staging', () => {
     bitmap.pixels.set(rendered.pixels);
     return bitmap;
   }
+
+  it('falls back to a usable bitmap when a non-vector layer has an empty temporary canvas', () => {
+    const bitmap = { width: 100, height: 50 } as ImageBitmap;
+    const layer: Layer = {
+      id: 'image-with-empty-preview',
+      name: 'Image',
+      isBedrock: false,
+      bitmap,
+      tmpCanvas: { width: 0, height: 0 } as OffscreenCanvas,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: { x: 4, y: 6, width: 100, height: 50 },
+      presentationBounds: null,
+      operations: [],
+    };
+    const ctx = makeMockCtx();
+
+    expect(drawLayerSource(ctx, layer)).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 4, 6, 100, 50);
+  });
+
+  it('falls back to a usable cached Shape bitmap when an empty preview is preferred', () => {
+    const shape = createShapeLayer({ x: 4, y: 6, width: 100, height: 50 });
+    const bitmap = { width: 100, height: 50 } as ImageBitmap;
+    shape.bitmap = bitmap;
+    shape.tmpCanvas = { width: 0, height: 0 } as OffscreenCanvas;
+    const ctx = makeMockCtx();
+
+    expect(drawLayerSource(ctx, shape, shape.pos, undefined, true)).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 4, 6, 100, 50);
+  });
 
   it('draws the retained vector source directly on the staged display canvas', () => {
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor');
