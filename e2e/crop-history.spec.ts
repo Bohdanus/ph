@@ -1300,11 +1300,35 @@ test.describe('Crop history', () => {
       'crop preserves every committed point-text pixel at its shifted frame origin'
     );
 
+    const replayView = {
+      panX: await workspace.getAttribute('data-view-pan-x'),
+      panY: await workspace.getAttribute('data-view-pan-y'),
+      rotation: await workspace.getAttribute('data-view-rotation'),
+    };
+    expect(replayView.panX, 'the transformed view has a horizontal pan').not.toBeNull();
+    expect(replayView.panY, 'the transformed view has a vertical pan').not.toBeNull();
+    expect(replayView.rotation, 'the transformed view has a rotation').not.toBeNull();
+    const expectReplayView = async (historyStep: string) => {
+      await expect(workspace, `${historyStep} preserves horizontal pan`).toHaveAttribute(
+        'data-view-pan-x',
+        replayView.panX!
+      );
+      await expect(workspace, `${historyStep} preserves vertical pan`).toHaveAttribute(
+        'data-view-pan-y',
+        replayView.panY!
+      );
+      await expect(workspace, `${historyStep} preserves canvas rotation`).toHaveAttribute(
+        'data-view-rotation',
+        replayView.rotation!
+      );
+    };
+
     // Text then crop are two ordered history entries. Undoing crop retains the text and its
     // magnification; undoing text removes only that layer. Redo must reproduce the same raster at
     // each frame without recording zoom, pan, or view rotation in the document timeline.
     await page.getByTestId('undo-button').click();
     await expect.poll(() => documentSize(page), 'one undo restores the full document frame').toEqual(opening);
+    await expectReplayView('crop undo');
     await expect(layers).toHaveCount(2);
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
     expectRasterRegionToEqual(
@@ -1319,6 +1343,7 @@ test.describe('Crop history', () => {
 
     await page.getByTestId('undo-button').click();
     await expect(layers, 'the next undo removes the text entry, not the view state').toHaveCount(1);
+    await expectReplayView('text undo');
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(openingRedPixels);
     expectRasterRegionToEqual(
       openingRaster,
@@ -1331,6 +1356,7 @@ test.describe('Crop history', () => {
 
     await page.getByTestId('redo-button').click();
     await expect(layers).toHaveCount(2);
+    await expectReplayView('text redo');
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
     expectRasterRegionToEqual(
       committedTextRaster,
@@ -1340,6 +1366,7 @@ test.describe('Crop history', () => {
     );
     await page.getByTestId('redo-button').click();
     await expect.poll(() => documentSize(page), 'redo restores the cropped frame').toEqual(cropped);
+    await expectReplayView('crop redo');
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
     expectRasterRegionToEqual(
       committedTextRaster,
