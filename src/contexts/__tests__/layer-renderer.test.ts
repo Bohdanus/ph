@@ -973,26 +973,28 @@ describe('drawLayersToCanvas vector staging', () => {
   }
 
   it('falls back to a usable bitmap when a non-vector layer has an empty temporary canvas', () => {
-    const bitmap = { width: 100, height: 50 } as ImageBitmap;
+    const bitmap = new PixelSurface(2, 2);
+    const cachedPixels = new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255]);
+    bitmap.pixels.set(cachedPixels);
+    const target = new PixelSurface(8, 8);
     const layer: Layer = {
       id: 'image-with-empty-preview',
       name: 'Image',
       isBedrock: false,
-      bitmap,
-      tmpCanvas: { width: 0, height: 0 } as OffscreenCanvas,
+      bitmap: bitmap as unknown as ImageBitmap,
+      tmpCanvas: new PixelSurface(0, 0) as unknown as OffscreenCanvas,
       visible: true,
       opacity: 1,
       locked: false,
       blendMode: 'source-over',
       order: 0,
-      pos: { x: 4, y: 6, width: 100, height: 50 },
+      pos: { x: 4, y: 6, width: 2, height: 2 },
       presentationBounds: null,
       operations: [],
     };
-    const ctx = makeMockCtx();
 
-    expect(drawLayerSource(ctx, layer)).toBe(true);
-    expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 4, 6, 100, 50);
+    expect(drawLayerSource(target.context as unknown as CanvasRenderingContext2D, layer)).toBe(true);
+    expect(Array.from(target.context.getImageData(4, 6, 2, 2).data)).toEqual(Array.from(cachedPixels));
   });
 
   it('falls back to a usable cached Shape bitmap when an empty preview is preferred', () => {
