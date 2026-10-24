@@ -276,6 +276,11 @@ a usable token.
   visual-regression baselines are committed. Generate Linux baselines with the
   `capture-linux-baselines.yml` workflow on `ubuntu-latest`; see
   [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md).
+
+During `npm ci`, `GITHUB_ACTIONS=true` makes `prepare` skip local Git-hook
+registration: the hosted checkout is ephemeral and CI runs its gates directly.
+The TypeScript guard setup still runs.
+
 - **Dependency licences are not checked by CI.** The `audit` job checks
   vulnerability advisories, not licence terms. The README records this limitation
   and the expectation to review dependency licences.

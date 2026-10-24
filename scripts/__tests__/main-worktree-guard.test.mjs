@@ -345,6 +345,34 @@ describe('the guard is actually installed', () => {
     expect(installer).toMatch(/const HOOKS = \[[^\]]*'commit-msg'/);
   });
 
+  it('skips local hook installation in a GitHub Actions checkout without main', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-actions-install-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=feature'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      writeFileSync(join(fixture, 'README.md'), 'hook fixture\n');
+      git(fixture, ['add', 'README.md']);
+      git(fixture, ['commit', '--quiet', '-m', 'fixture']);
+
+      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: 'true' },
+      });
+      expect(install.status, install.stderr).toBe(0);
+      expect(install.stdout).toContain('GitHub Actions checkout, skipping local hook installation');
+      expect(git(fixture, ['config', '--local', '--get', 'core.hooksPath'])).toBeNull();
+      expect(existsSync(join(fixture, '.git', 'hooks-gate'))).toBe(false);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('installs a working commit-msg dispatcher and tolerates older linked worktrees', () => {
     const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-hooks-')));
     try {
