@@ -34,7 +34,7 @@ Keep pixel-substitution tools such as Color Replacement on their own args, proce
 
 ## Browser And Validation
 
-- Never open a browser. Use `npm run test:e2e` for headless E2E and `npm run probe:console` for one page load. Route broad E2E runs from agents to the EC2 task-worktree workflow in [`docs/FREE-REMOTE-COMPUTE.md`](docs/FREE-REMOTE-COMPUTE.md); keep a single worker on the current small instance. Do not add browser MCPs or weaken console/theme gates.
+- Never open a browser. Run the affected headless spec locally after E2E-relevant changes; use the manual `Focused E2E` workflow on the private mirror for frequent hosted checks and the full CI matrix before broad validation or landing. Follow [`docs/FREE-REMOTE-COMPUTE.md`](docs/FREE-REMOTE-COMPUTE.md) for the mirror boundary. Do not add browser MCPs or weaken console/theme gates.
 - Run npm commands only in a worktree. Use `npm run tsc` for typechecking and `npm run build` for production builds; do not use `npx tsc --noEmit` as project validation.
 - E2E specs use `./fixtures/extended-test`, not `@playwright/test`. Do not spread `useRect` return groups onto DOM elements.
 

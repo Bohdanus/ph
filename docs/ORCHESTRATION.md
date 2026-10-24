@@ -84,6 +84,16 @@ hooks.
 
 ## Worktrees
 
+### Source repository and compute mirror
+
+`drguz69/lightshopy.com` is the private source of truth; `Bohdanus/ph` is
+currently a private compute-only mirror. `origin` is not a reliable role name
+and may point to the mirror. Configure named `upstream` and `mirror` remotes as described in
+[`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md), then always use an explicit
+remote for `git push` and `--repo drguz69/lightshopy.com` for source `gh pr`
+commands. Review content before publishing to the mirror. Mirror CI is
+diagnostic evidence, not a replacement for source-repository landing checks.
+
 **HARD RULE: 100% of work that changes a tracked file is done in its own
 worktree under `.kilo/worktrees/`, on its own branch. The main worktree is for
 reading and merging only.** There is no percentage carve-out and no "it's only a

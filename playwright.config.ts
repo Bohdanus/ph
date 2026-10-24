@@ -95,25 +95,15 @@ export default defineConfig({
   // 4 vCPUs, so it runs 2 of them. Roughly 3x the real test phase, so the bound can
   // only fire on a hang.
   //
-  // LOCAL is a different machine and gets a different number, which is why this is
-  // not one literal. The two bounds are incompatible as one value: anything above a
-  // local run's ceiling is at or past the CI budget, and anything inside the CI
-  // budget is within reach of a loaded local run. `retries` and `workers` above
-  // resolve on `process.env.CI` for the same reason — the right value depends on the
-  // machine, not on the code. 2700 s is ~5x the measured local duration, and it is
-  // still strictly stricter than today's unbounded `0`: this repository serializes
-  // e2e runs with the `scripts/e2e-run.mjs` lock, so a suite never competes with
-  // another suite but does compete with an app vitest run on the same Mac.
+  // CI splits the suite into two Playwright shards so every spec can finish while
+  // leaving time for report and trace upload inside the job timeout. Keep this
+  // deadline below the shortest E2E job timeout; local runs retain extra time for
+  // diagnostics on slower machines.
   //
-  // What the deadline BUYS is a report, and the reason it has one is
-  // `finishTaskRun`: a timed-out run's status is `"timedout"`, which is not
-  // `"passed"`, so `onEnd` still runs and the HTML and JSON reporters still write
-  // their files. That status is not `"interrupted"` either, so the exit code is 1
-  // and not 130: a hung suite is a FAILURE that arrives with its evidence.
-  //
-  // `--debug` RESETS this to 0, so an interactive debugging session is never killed
-  // by it.
-  globalTimeout: process.env.CI ? 15 * 60_000 : 45 * 60_000,
+  // A Playwright global timeout still produces the HTML and JSON reports before
+  // exiting as a failure. GitHub's job timeout does not, so the two limits must
+  // remain ordered. `--debug` resets this to 0 for interactive debugging.
+  globalTimeout: process.env.CI ? 20 * 60_000 : 45 * 60_000,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
   // machine is not running two browsers per core. The port argument that used to sit

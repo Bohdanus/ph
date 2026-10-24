@@ -1,133 +1,99 @@
-# Free Remote Compute for Project Tests
+# Remote Validation and GitHub Actions Compute Mirror
 
-Use the local `ssh e2e` alias for broad headless E2E runs and Linux/ARM64 validation. Measurements below were checked on 2026-10-24; recheck the host before relying on them.
+`drguz69/lightshopy.com` is the private source of truth. `Bohdanus/ph` is
+currently a private compute-only mirror. A mirror run is useful evidence for
+its exact commit, but it does not replace required checks on the source
+repository.
 
-| Host           | Observed setup                                                                                                                              | Use                                                                                                     |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `e2e`          | Ubuntu 26.04.1 LTS, ARM64, 2 vCPU, 1.8 GiB RAM, 4 GiB swap, 46 GiB root disk (37 GiB free), Node 24.22.1, npm 11.19.1, Chrome 156.0.8078.47 | One E2E process at a time, with `--workers=1`; targeted Linux checks; sequential unit/type/build checks |
-| Older instance | Amazon Linux 2023, about 6 GiB free disk during setup; no longer the `e2e` alias target                                                     | Ignore for project runs unless it is reprovisioned                                                      |
+## Remote setup and safety
 
-The useful gain is moving long browser runs off the local workstation. A `t4g.small` is not a high-throughput runner: its two vCPUs and 2 GiB RAM do not support several concurrent Chrome workers reliably. Swap can prevent memory exhaustion but does not add CPU or make parallel runs faster.
-
-## Full-suite experiment
-
-The one-worker full-suite run on the older EC2 checkout (`d124d323`) took about 34 minutes and ended with 22 failures: 7 Linux visual-baseline files were missing, and 15 other failures were in crop-history, levels, paint, and text specs. This is not a green run, does not establish that those 15 failures are ARM-specific, and is not evidence about the newer local `main`. The run also exceeded the GitHub Linux job's 30-minute timeout. The current instance is useful for offloading focused checks and asynchronous reproduction, but one `t4g.small` is too slow to replace the blocking Linux CI job as an unsharded full-suite runner. Diagnose the non-baseline failures and add matching Linux baselines before treating the gate as green.
-
-## Capacity and billing
-
-AWS currently lists `t4g.small` in its time-limited Free Tier trial. The published trial allows up to 750 instance-hours per month through 2026-12-31, subject to account, region, AMI, and usage conditions. Storage and other resources can still incur charges. Verify the account current billing view before a run; do not treat this VM as permanently free. See [EC2 Free Tier usage](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html), [AWS EC2 FAQs](https://aws.amazon.com/ec2/faqs/), and [general-purpose instance specifications](https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html).
-
-The small memory budget makes overlap the main operational risk. Run one gate at a time, and do not start a second shell, install, watcher, or test runner while a gate is active. Do not attach this persistent host as a GitHub self-hosted runner for pull requests: workflow code can execute arbitrary commands, and a persistent runner can expose its home directory and credentials. GitHub Actions remains on GitHub-hosted runners.
-
-## Worktree and runner checks
-
-Follow the repository worktree rules on the remote host too. Use the required bootstrap steps below to locate the main worktree and create a task worktree. After verifying the task worktree, run other Git and npm commands only there; do not run npm from the remote main checkout.
+Configure `upstream` for the private source and `mirror` for hosted compute.
+Set `remote.pushDefault` to `upstream` as a safety default. Branch-specific
+`pushRemote` settings can override it, so always name the remote on every push
+and the repository on every `gh pr` command.
 
 ```bash
-cd /home/ubuntu/ph
-git worktree list --porcelain
-# Replace <main-worktree-path> with the listed path whose branch is refs/heads/main.
-# This one-time bootstrap creates the task worktree; run later commands inside it.
-git -C <main-worktree-path> worktree add /home/ubuntu/ph/.kilo/worktrees/<task-worktree> -b task/<task-branch>
-cd /home/ubuntu/ph/.kilo/worktrees/<task-worktree>
-git rev-parse --show-toplevel
-
-# For an already-created task worktree, enter its path and verify it instead.
-cd /home/ubuntu/ph/.kilo/worktrees/<task-worktree>
-npm run repo:state
-npm run swarm -- status --json
-```
-
-Wait for each command to finish before starting the next. `npm run test:e2e` uses the E2E runner lock; unit tests, typecheck, and build do not share that lock, so the one-runner rule still applies across all gates.
-
-## Agent workflow for broad E2E
-
-Publish the tested commit from the local task worktree before asking the remote checkout to run it. Do not copy an uncommitted tree or run from the remote `main` checkout.
-
-```bash
-# Local task worktree: commit the snapshot, then publish its branch.
-git push -u origin <source-branch>
-
-# EC2: create one remote task worktree for this source branch.
-# Replace <main-worktree-path> with the path reported for refs/heads/main by
-# `git worktree list --porcelain`, as described in "Worktree and runner checks".
-git -C <main-worktree-path> worktree add \
-  /home/ubuntu/ph/.kilo/worktrees/remote-e2e-<task> \
-  -b task/remote-e2e-<task> main
-cd /home/ubuntu/ph/.kilo/worktrees/remote-e2e-<task>
-git rev-parse --show-toplevel
-npm run repo:state
-npm run swarm -- status --json
-git fetch origin <source-branch>
-git merge --ff-only FETCH_HEAD
-npm ci
-npm run test:e2e -- --workers=1
-```
-
-Keep the remote worktree for repeated checks of that branch; after a new branch commit, fetch and fast-forward it in that same worktree, then rerun the suite. If the source branch was rebased or the fast-forward fails, stop and create a new task worktree instead of resetting the existing one. Run `npm ci` again when the lockfile changes. Focused, fast specs and non-browser checks can still run locally; use EC2 for the broad browser run so local agents retain headroom for frequent focused gates.
-
-The current `e2e` host can run one full suite, not multiple shards concurrently. If more suitable EC2 hosts are added, scale by running one `--workers=1 --shard=i/N` process in a separate task worktree on each host. Sharding improves throughput only across independent machines; running those shards concurrently on one `t4g.small` increases CPU and memory contention and can make results less stable.
-
-## Useful runs
-
-Use a targeted Linux check first, then run the full gate when the task requires it:
-
-```bash
-npm run test -- scripts/__tests__/agent-board.test.mjs --maxWorkers=1
-npm run test -- --maxWorkers=1
-npm run test:e2e:unit
-npm run tsc
-npm run build
-npm run test:e2e -- e2e/<focused-spec>.spec.ts
-```
-
-Run only one command at a time. The headless E2E wrapper starts its own server and selects an isolated output directory. Do not run a headed browser for a gate.
-
-The VM is useful for:
-
-- Reproducing Linux-only unit failures and validating filesystem or process behavior.
-- Running a focused headless Playwright spec on Linux/ARM64.
-- Running typecheck or a production build away from the local machine, one at a time.
-- Capturing Linux screenshots as review artifacts when the target environment is also Linux/ARM64.
-
-It is not a GPU worker or a parallel CI runner. Headless Chrome is useful for functional checks, but the ARM64 host is not pixel-equivalent to GitHub's x86-64 `ubuntu-latest` runner. CPU-only rendering does not remove differences from CPU architecture, OS, browser build, and fonts.
-
-## Visual regression baselines
-
-The repository keeps baselines under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`. Capture Linux images with the manual [`Capture Linux export baselines` workflow](../.github/workflows/capture-linux-baselines.yml) on GitHub's `ubuntu-latest` runner, review the artifact, and commit only the Linux images. The EC2 host described above is ARM64 and is not pixel-equivalent to CI's x86-64 runner. Never use it to overwrite another platform's images or to create the CI Linux baseline.
-
-## GitHub Actions compute mirror
-
-`Bohdanus/ph` is the public compute mirror for this private repository. A mirror branch is a copy for running GitHub-hosted jobs, not a replacement for the source repository. Because the mirror is public, push only code and history that are safe to publish; never include credentials, private user data, or unreviewed local files.
-
-From a verified task worktree, publish the candidate branch and dispatch the existing CI workflow on that exact ref:
-
-```bash
+# One-time setup if these remotes are not already present.
+git remote add upstream git@github.com:drguz69/lightshopy.com.git
+git remote add mirror git@github.com:Bohdanus/ph.git
+git config remote.pushDefault upstream
 git remote -v
-git push git@github.com:Bohdanus/ph.git HEAD:refs/heads/<task-branch>
-gh workflow run ci.yml -R Bohdanus/ph --ref <task-branch>
-gh run list -R Bohdanus/ph --workflow CI --branch <task-branch> --limit 5
-gh run watch <run-id> -R Bohdanus/ph --exit-status
 ```
 
-Do not assume `origin` points to the source repository; inspect remotes before any push. The mirror is public, while `drguz69/lightshopy.com` is the private source. Push reviewed changes to the source repository separately using its verified remote, then submit them through the normal review and landing process.
+Review the remotes before pushing, and never push secrets or unreviewed files.
+Private-repository Actions can consume included minutes and may incur charges
+if the allowance is exceeded; monitor account usage and budgets. Use SSH for
+Git pushes and `gh auth login` with the configured OS credential manager for
+workflow dispatches. The workflows use read-only `GITHUB_TOKEN` permissions
+and require no personal-token secret. Revoke any token pasted into chat or
+otherwise exposed.
 
-The workflow is also triggered by pull requests targeting the mirror's `main`; a manual dispatch is useful when the branch is only for validation. Wait for the run to finish before starting another broad E2E run on a small remote host. A completed run on the mirror is evidence for the tested commit and environment only; changes still need to be submitted to `drguz69/lightshopy.com`.
+## Recommended E2E cadence
 
-If a source-repository job fails immediately with no runner and no executed steps, inspect the check-run annotations and account billing before diagnosing code. GitHub can reject jobs before runner startup when payments fail or the spending limit needs attention; a successful mirror run does not clear a billing block on the private source repository.
+1. After an E2E-relevant change, run the affected headless spec locally:
 
-To capture Linux export baselines on the mirror, dispatch the capture workflow at the candidate ref, wait for success, then download and inspect its artifact:
+   ```bash
+   npm run test:e2e -- e2e/<focused-spec>.spec.ts
+   ```
+
+2. For frequent hosted feedback, push the reviewed branch to the mirror and run
+   the affected spec on the platform that matters:
+
+   ```bash
+   git push mirror HEAD:refs/heads/<task-branch>
+   gh workflow run focused-linux-e2e.yml -R Bohdanus/ph --ref <task-branch> \
+     -f platform=windows -f spec=e2e/<focused-spec>.spec.ts
+   gh run list -R Bohdanus/ph --workflow "Focused E2E" --branch <task-branch> --limit 5
+   gh run watch <run-id> -R Bohdanus/ph --exit-status
+   ```
+
+   Choose `linux`, `windows`, or `macos`. The workflow runs one existing spec
+   under `e2e/` on the corresponding hosted runner and uploads the report. It
+   rejects paths outside `e2e/`. This is focused diagnostic feedback, not the
+   full CI gate.
+
+3. Run the full cross-platform workflow for broad validation and before
+   landing:
+
+   ```bash
+   gh workflow run ci.yml -R Bohdanus/ph --ref <task-branch>
+   gh run list -R Bohdanus/ph --workflow CI --branch <task-branch> --limit 5
+   gh run watch <run-id> -R Bohdanus/ph --exit-status
+   ```
+
+   Once source Actions are available, source PR checks remain authoritative.
+   A job rejected before runner startup with no executed steps is likely an
+   account billing or spending-limit issue; inspect its annotations before
+   diagnosing code. A successful mirror run does not clear that source block.
+
+## Platform export baselines
+
+Capture Linux, Windows, and macOS export images with the manual
+[`Capture cross-platform export baselines` workflow](../.github/workflows/capture-linux-baselines.yml).
+It captures each baseline on the corresponding hosted runner and verifies the
+images before upload. Review the artifacts, then commit only approved images
+under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`.
+Artifacts expire after seven days; committed images are the durable baselines.
+Do not use an ARM64 machine to create or overwrite the x86-64 CI baselines.
 
 ```bash
 gh workflow run capture-linux-baselines.yml -R Bohdanus/ph --ref <task-branch>
-gh run list -R Bohdanus/ph --workflow "Capture Linux export baselines" --branch <task-branch> --limit 5
-gh run download <run-id> -R Bohdanus/ph --name linux-export-baselines-<commit-sha> --dir /tmp/linux-export-baselines
+gh run list -R Bohdanus/ph --workflow "Capture cross-platform export baselines" \
+  --branch <task-branch> --limit 5
+gh run download <run-id> -R Bohdanus/ph \
+  --name <linux|win32|darwin>-export-baselines-<commit-sha> --dir /tmp/export-baselines
 ```
 
-Copy only the reviewed images into `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/`. The capture workflow verifies the visual-regression spec before uploading. The artifact is temporary; committing the reviewed images to the source branch is what makes the CI baseline durable.
+## Optional ARM64 EC2 use
 
-Use the configured SSH key for Git pushes and GitHub CLI authentication for workflow dispatches. Store CLI credentials with `gh auth login` and its configured OS credential manager; do not put tokens in remote URLs, command arguments, workflow files, repository secrets, or logs. The CI and capture workflows use their read-only `GITHUB_TOKEN` permissions and do not need a personal token secret. If a token is exposed, revoke it and issue a replacement with only the required repository permissions.
+The `ssh e2e` host was measured on 2026-10-24 as Ubuntu 26.04.1, ARM64, 2 vCPU,
+1.8 GiB RAM, and 4 GiB swap. It can help diagnose ARM64-specific behavior or
+run a focused Linux check, but it is not a routine full-suite runner, a
+self-hosted GitHub runner, or a source for visual baselines. A one-worker full
+suite on an older EC2 checkout took about 34 minutes and had 22 failures; this
+was not a green run and exceeded the Linux CI job's 30-minute limit.
 
-## Other useful tasks
-
-The most useful additional work here is reproducing a platform-specific failure, checking ARM64 dependency compatibility, and collecting headless screenshots for review. A future Linux/ARM64 CI leg could use it to validate its own baseline set. Free LLM inference is separate from this machine; follow [`FREE-COMPUTE.md`](FREE-COMPUTE.md) and verify the route response and cost before trusting it.
+Even with free compute, the current host's performance and architecture are
+poor substitutes for GitHub's x86-64 runner. Verify account-specific billing
+and quotas before provisioning more instances; extra EC2 capacity is not needed
+for the recommended E2E workflow.

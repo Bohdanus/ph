@@ -212,7 +212,7 @@ jobs:
   # Cross-platform e2e
   #
   # A GATE, and the only one for the e2e specs themselves. A matrix runs the
-  # same headless suite on Linux (macOS baselines), Windows and macOS.
+  # same headless suite on Linux, Windows and macOS.
   #
   # It was `continue-on-error: true` on the stated grounds that "5 of the 97 tests
   # fail": 2 CDP capture-size specs, 2 `levels.spec.ts` canvas-lookup specs, and a
@@ -237,27 +237,52 @@ jobs:
   # locally is what stops that class of failure from being misread as flakiness.
   #
   # `visual-regression.spec.ts` reads its oracle from
-  # `export-baselines/<platform>/`. Linux baselines must be captured by the
-  # `capture-linux-baselines.yml` workflow on `ubuntu-latest`, reviewed, and
-  # committed. The available EC2 host is ARM64 and is not pixel-equivalent to
-  # this x86-64 runner; do not skip the spec or use that host's images.
+  # `export-baselines/<platform>/`. Platform baselines must be captured by the
+  # manual `capture-linux-baselines.yml` workflow on the corresponding hosted
+  # runner, reviewed, and committed. An ARM64 host is not pixel-equivalent to
+  # these x86-64 runners; do not skip the spec or use images from another platform.
   e2e:
     strategy:
       # One platform failing must not cancel the others; a platform-specific
-      # rasteriser regression remains useful when another leg fails.
+      # rasteriser regression remains useful when another leg fails. Two shards
+      # keep the full spec set within the job's report-upload margin.
       fail-fast: false
       matrix:
         include:
           - platform: linux
             os: ubuntu-latest
+            shard: 1
+            shards: 2
             timeout: 30
             install-command: npx playwright install --with-deps chrome
           - platform: windows
             os: windows-latest
+            shard: 1
+            shards: 2
             timeout: 35
             install-command: npx playwright install chrome
           - platform: macos
             os: macos-latest
+            shard: 1
+            shards: 2
+            timeout: 35
+            install-command: npx playwright install chrome
+          - platform: linux
+            os: ubuntu-latest
+            shard: 2
+            shards: 2
+            timeout: 30
+            install-command: npx playwright install --with-deps chrome
+          - platform: windows
+            os: windows-latest
+            shard: 2
+            shards: 2
+            timeout: 35
+            install-command: npx playwright install chrome
+          - platform: macos
+            os: macos-latest
+            shard: 2
+            shards: 2
             timeout: 35
             install-command: npx playwright install chrome
     runs-on: ${{ matrix.os }}
@@ -311,8 +336,8 @@ jobs:
         # No --grep-invert: this job reports the true state of the suite. A failure
         # here is a new defect unless e2e/OPEN_PROBLEMS.md says otherwise, and
         # filtering failures out would hide the one signal this job now exists to
-        # give.
-        run: npx playwright test
+        # give. Sharding schedules every spec; it does not filter any tests.
+        run: npx playwright test --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
       - name: Upload Playwright report
         # `always()`, and NOT `!cancelled()`. `cancel-in-progress: true` at the top
@@ -345,7 +370,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.platform }}
+          name: playwright-report-${{ matrix.platform }}-shard-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/

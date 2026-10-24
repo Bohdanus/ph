@@ -1,4 +1,4 @@
-name: Capture Linux export baselines
+name: Capture cross-platform export baselines
 
 on:
   workflow_dispatch:
@@ -8,7 +8,20 @@ permissions:
 
 jobs:
   capture:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            snapshot-platform: linux
+            install-command: npx playwright install --with-deps chrome
+          - os: windows-latest
+            snapshot-platform: win32
+            install-command: npx playwright install chrome
+          - os: macos-latest
+            snapshot-platform: darwin
+            install-command: npx playwright install chrome
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -26,18 +39,18 @@ jobs:
         run: npm ci
 
       - name: Install Chrome
-        run: npx playwright install --with-deps chrome
+        run: ${{ matrix.install-command }}
 
-      - name: Record Linux export baselines
+      - name: Record export baselines
         run: npm run test:e2e:update-baselines -- --workers=1
 
       - name: Verify recorded baselines
         run: npm run test:e2e -- e2e/export/visual-regression.spec.ts --workers=1
 
-      - name: Upload Linux export baselines
+      - name: Upload export baselines
         uses: actions/upload-artifact@v4
         with:
-          name: linux-export-baselines-${{ github.sha }}
-          path: e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/
+          name: ${{ matrix.snapshot-platform }}-export-baselines-${{ github.sha }}
+          path: e2e/export/visual-regression.spec.ts-snapshots/export-baselines/${{ matrix.snapshot-platform }}/
           retention-days: 7
           if-no-files-found: error

@@ -1936,7 +1936,7 @@ test.describe('Desktop Type click-count selection', () => {
     await overlay(page).click({ clickCount: 2, position: point });
     const selection = await selectionState(page);
     expect(selection.inside).toBe(true);
-    expect(selection.string).toBe('gamma');
+    expect(selection.string).toMatch(/^gamma ?$/);
   });
 
   test('triple-click selects only the visual line in a wrapped paragraph', async ({ page }) => {

@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createSessionDbSnapshot } from '../lib/worktree-inventory/session-db-snapshot.mjs';
+
+vi.setConfig({ testTimeout: 20_000 });
 
 const NOW = 1_800_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;

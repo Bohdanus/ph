@@ -141,11 +141,17 @@ async function readRedLine(
  * otherwise a bare number: the stroke's own red is 204, `brightness(86.67%)` scales the
  * LAYER to `204 * 0.8667 = 176.81`, and the stroke composites at the draw tool's
  * `alpha: 0.9` over a white document, so the screenshot reads
- * `0.9 * 176.81 + 0.1 * 255 = 184.63`, i.e. 185. The same model reproduces the
- * measurement this replaced — at the old `brightness(62.83%)` it gives 141 — which is
- * what makes it more than a fit to one run.
+ * `0.9 * 176.81 + 0.1 * 255 = 184.63`, which should rasterize to 184 or 185. Those
+ * are the only accepted channel values; the band allows the browser's fractional
+ * compositing conversion without accepting a materially different adjustment. The
+ * same model reproduces the measurement this replaced — at the old
+ * `brightness(62.83%)` it gives 141 — which is what makes it more than a fit to one run.
  */
-const MEASURED_BRIGHTNESS_MINUS_20_RED = 185;
+const MEASURED_BRIGHTNESS_MINUS_20_RED = { min: 184, max: 185 };
+
+function isWithinMeasuredChannelBand(value: number, band: { min: number; max: number }): boolean {
+  return value >= band.min && value <= band.max;
+}
 
 /**
  * The composed red of the UNADJUSTED stroke, which is what makes the two direction
@@ -182,9 +188,10 @@ const UNADJUSTED_STROKE_RED_TOLERANCE = 2;
  * The pin this replaces was the opposite: the old exponential emitted `contrast(325.39%)`,
  * whose knee of 166.7 put 204 well past it, so the reading was `255` and proved only that
  * the channel saturated. It could not tell a clipped highlight from a curve that preserved
- * one. A reading of 244 is a tonal value, so it is evidence.
+ * one. The fractional 243.53 composition permits only adjacent channel values 243
+ * and 244, so it remains evidence of a tonal adjustment rather than saturation.
  */
-const MEASURED_CONTRAST_50_RED = 244;
+const MEASURED_CONTRAST_50_RED = { min: 243, max: 244 };
 
 /**
  * The stroke's core at brightness `-150`, which emits `brightness(0%)` because the
@@ -197,9 +204,10 @@ const MEASURED_CONTRAST_50_RED = 244;
  *
  * `-150` is where `brightness(0%)` lives now, and it is a different number than it was:
  * under the removed exponential that endpoint was `-100`, whose factor re-anchored to
- * zero only because of the floor term. Nothing about the measured core changed with it.
+ * zero only because of the floor term. Its 25.5 screenshot value permits only 25
+ * or 26 after 8-bit conversion; the test still requires all channels to be equal.
  */
-const MEASURED_BRIGHTNESS_MINUS_150_CORE = { red: 26, green: 26, blue: 26 };
+const MEASURED_BRIGHTNESS_MINUS_150_CORE = { min: 25, max: 26 };
 
 /** Re-measures the canvas box after an adjustment panel has opened. */
 async function remeasureCanvasBox(page: Page): Promise<BoundingBox> {
@@ -300,13 +308,15 @@ test.describe('Levels adjustment', () => {
       adjustedBox,
       'levels-brightness',
       testInfo,
-      (observed) => observed.red < original.red && observed.red === MEASURED_BRIGHTNESS_MINUS_20_RED,
-      'Brightness -20 must darken the line to the red it is measured to produce: no reading through the same clip rect ever came back darker AND on 185'
+      (observed) =>
+        observed.red < original.red && isWithinMeasuredChannelBand(observed.red, MEASURED_BRIGHTNESS_MINUS_20_RED),
+      'Brightness -20 must darken the line to the 184-185 range predicted by its fractional channel value'
     );
     expect(afterBrightness.red, 'brightness -20 makes the line darker, not lighter').toBeLessThan(original.red);
-    expect(afterBrightness.red, 'brightness -20 is measured to produce this red').toBe(
-      MEASURED_BRIGHTNESS_MINUS_20_RED
-    );
+    expect(
+      isWithinMeasuredChannelBand(afterBrightness.red, MEASURED_BRIGHTNESS_MINUS_20_RED),
+      'brightness -20 is measured within the 184-185 range predicted by its fractional channel value'
+    ).toBe(true);
   });
 
   // changes red line via contrast
@@ -364,13 +374,16 @@ test.describe('Levels adjustment', () => {
       adjustedBox,
       'levels-contrast',
       testInfo,
-      (observed) => observed.red > original.red && observed.red === MEASURED_CONTRAST_50_RED,
-      'Contrast +50 must brighten the line to the red it is measured to produce: no reading through the same clip rect ever came back brighter AND on 244'
+      (observed) => observed.red > original.red && isWithinMeasuredChannelBand(observed.red, MEASURED_CONTRAST_50_RED),
+      'Contrast +50 must brighten the line to the 243-244 range predicted by its fractional channel value'
     );
     expect(afterContrast.red, 'contrast +50 makes the line more contrasty, so its red rises').toBeGreaterThan(
       original.red
     );
-    expect(afterContrast.red, 'contrast 50 is measured to produce this red').toBe(MEASURED_CONTRAST_50_RED);
+    expect(
+      isWithinMeasuredChannelBand(afterContrast.red, MEASURED_CONTRAST_50_RED),
+      'contrast 50 is measured within the 243-244 range predicted by its fractional channel value'
+    ).toBe(true);
   });
 
   // brightness -150 emits brightness(0%), which is exact in every colour space
@@ -416,9 +429,12 @@ test.describe('Levels adjustment', () => {
     // neutral grey and identical in all three channels.
     const core = await sampleCssPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 0, { ignoreNearWhite: true });
     expect(core, 'brightness(0%) left no ink at the middle of the stroke').not.toBeNull();
-    expect(core, 'brightness(0%) must drive all three channels of the stroke to the same value').toEqual(
-      MEASURED_BRIGHTNESS_MINUS_150_CORE
-    );
+    expect(
+      isWithinMeasuredChannelBand(core!.red, MEASURED_BRIGHTNESS_MINUS_150_CORE),
+      'the neutral brightness(0%) core is within the 25-26 range predicted by its fractional channel value'
+    ).toBe(true);
+    expect(core!.green).toBe(core!.red);
+    expect(core!.blue).toBe(core!.red);
   });
 
   // Default settings must not touch the stroke: opening the panel without moving a slider

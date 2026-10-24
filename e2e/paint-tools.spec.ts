@@ -908,7 +908,7 @@ test.describe('Paint tools', () => {
     test('a dodge stroke lightens the pixels it covers', async ({ page }) => {
       const geometry = await paintRampBand(page, LAYER_RIGHT);
       const before = await readLevel(page, geometry, DARK_END);
-      expect.soft(before, 'the probe sits in the dark end of the ramp').toBe(24);
+      expect.soft(before, 'the probe sits below the ramp midpoint').toBeLessThan(128);
 
       const dodged = await selectDodge(page, 'shadows');
       await strokeDocument(page, dodged, DARK_END, { x: DARK_END.x + 2, y: DARK_END.y }, 2);

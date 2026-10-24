@@ -753,7 +753,21 @@ describe('file locks make one-file-one-agent real', () => {
     const sibling = join(dir, 'sibling');
     mkdirSync(repo);
     execFileSync('git', ['init', '--quiet'], { cwd: repo });
-    execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: repo });
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Agent Board Test',
+        '-c',
+        'user.email=agent-board@example.test',
+        'commit',
+        '--quiet',
+        '--allow-empty',
+        '-m',
+        'init',
+      ],
+      { cwd: repo }
+    );
     execFileSync('git', ['worktree', 'add', '--quiet', sibling, '-b', 'sibling'], { cwd: repo });
 
     const a = new Board({ dir: join(dir, 'shared'), identity: { agentId: 'A', worktree: repo } }).open();

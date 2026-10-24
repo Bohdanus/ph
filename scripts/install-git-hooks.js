@@ -3,10 +3,10 @@
  *
  * Runs from `npm install` through the `prepare` script. Idempotent and safe to
  * run by hand. A tarball build outside a git checkout prints a warning and exits
- * 0. GitHub Actions checkouts skip local hook installation because workflows
- * run their gates directly and do not create commits. Elsewhere in the
- * repository, failure to identify and persist the designated main-worktree
- * identity aborts setup because detached main would otherwise lose protection.
+ * 0. A GitHub Actions checkout without `main` still installs the shared hook
+ * dispatchers, but cannot register a designated-main identity. Elsewhere in the
+ * repository, failure to identify and persist that identity aborts setup because
+ * detached main would otherwise lose protection.
  *
  * WHY THIS EXISTS INSTEAD OF HUSKY
  * -------------------------------
@@ -196,11 +196,6 @@ exit 0
 }
 
 function main() {
-  if (process.env.GITHUB_ACTIONS === 'true') {
-    console.log('gate: GitHub Actions checkout, skipping local hook installation');
-    return;
-  }
-
   let commonDir;
   try {
     commonDir = git(['rev-parse', '--path-format=absolute', '--git-common-dir']);
@@ -215,7 +210,9 @@ function main() {
   if (mainPath && !registerMainWorktree(mainPath, { required: true })) {
     throw new Error(`could not persist the designated main worktree identity for ${mainPath}`);
   }
-  if (!mainPath) {
+  if (!mainPath && process.env.GITHUB_ACTIONS === 'true') {
+    console.log('gate: GitHub Actions checkout has no main worktree; installing hooks without main identity');
+  } else if (!mainPath) {
     let registeredPath = null;
     let registeredGitDir = null;
     let registeredIdentity = null;

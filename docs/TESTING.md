@@ -55,12 +55,12 @@ npm run build           # production bundle, and a real CI step
 baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
 
-For local agent work, use EC2 for the broad Playwright run and keep focused
-specs and fast gates on the developer machine. The current `e2e` instance is a
-2-vCPU, 2-GiB ARM64 host, so it is configured for one worker at a time; see
-[`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md) for the task-worktree handoff
-and the limits on sharding. GitHub Actions continues to run its own blocking
-matrix on hosted runners.
+After E2E-relevant changes, run the affected spec locally. For frequent hosted
+feedback, use the manual `Focused E2E` workflow on the private compute mirror;
+it runs one selected spec on Linux, Windows, or macOS and is diagnostic, not a
+replacement for the full CI gate. Run the full matrix for broad cross-platform
+validation and before landing. See [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md)
+for the safe mirror workflow.
 
 **`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
 It captures suite output by default and replays it only on failure; use
@@ -269,12 +269,13 @@ a usable token.
 - `ci`: lint, typecheck, TS-project coverage assertion, unit tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
 - `audit`: `npm audit --audit-level=high`, a non-blocking vulnerability-advisory check.
-- `e2e`: headless Playwright on Linux, Windows, and macOS — a matrix with
-  `fail-fast: false` and `retries: 2` (three total attempts). `failOnFlakyTests`
+- `e2e`: headless Playwright on Linux, Windows, and macOS — a two-shard matrix
+  with `fail-fast: false` and `retries: 2` (three total attempts). Sharding runs
+  every spec while leaving time for report upload. `failOnFlakyTests`
   makes a test that passes only after a retry fail the job, so investigate it as a
   defect rather than treating it as a pass. `darwin/`, `linux/`, and `win32/`
-  visual-regression baselines are committed. Generate Linux baselines with the
-  `capture-linux-baselines.yml` workflow on `ubuntu-latest`; see
+  visual-regression baselines are committed. Generate baselines with the
+  `capture-linux-baselines.yml` workflow on the matching hosted OS; see
   [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md).
 
 During `npm ci`, `GITHUB_ACTIONS=true` makes `prepare` skip local Git-hook
