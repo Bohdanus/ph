@@ -13,6 +13,7 @@ import {
   PAINT_FLOW_MAX,
   PAINT_FLOW_MIN,
 } from '../../../util/brush-airbrush.ts';
+import { TouchSlider } from '../../Common/TouchSlider.tsx';
 
 const PREVIEW_WIDTH = 96;
 const PREVIEW_HEIGHT = 48;
@@ -168,9 +169,8 @@ const Draw: React.FC<{}> = () => {
           Size
           <span className="font-bold text-gray-900 dark:text-gray-200">{brushSize}px</span>
         </label>
-        <input
+        <TouchSlider
           id="size-slider"
-          type="range"
           min="0.5"
           max="500"
           step="0.5"
@@ -190,9 +190,8 @@ const Draw: React.FC<{}> = () => {
               Dash
               <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[0]}px</span>
             </label>
-            <input
+            <TouchSlider
               id="dash-size"
-              type="range"
               min="1"
               max="100"
               value={lineDash[0]}
@@ -209,9 +208,8 @@ const Draw: React.FC<{}> = () => {
               Gap
               <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[1]}px</span>
             </label>
-            <input
+            <TouchSlider
               id="gap-size"
-              type="range"
               min="1"
               max="100"
               value={lineDash[1]}
@@ -230,9 +228,8 @@ const Draw: React.FC<{}> = () => {
           Opacity
           <span className="font-bold text-gray-900 dark:text-gray-200">{Math.round(alpha * 100)}%</span>
         </label>
-        <input
+        <TouchSlider
           id="alpha-slider"
-          type="range"
           min="0"
           max="1"
           step="0.01"
@@ -253,9 +250,8 @@ const Draw: React.FC<{}> = () => {
               {Math.round(args.flow ?? PAINT_FLOW_DEFAULT)}%
             </span>
           </label>
-          <input
+          <TouchSlider
             id="flow-slider"
-            type="range"
             min={PAINT_FLOW_MIN}
             max={PAINT_FLOW_MAX}
             step="1"

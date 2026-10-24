@@ -3,6 +3,7 @@ import type { TransformToolArgs } from '../../../tools/transform.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { ICON_BUTTON, SMALL_TOGGLE_BUTTON_ACTIVE, SMALL_TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
+import { TouchSlider } from '../../Common/TouchSlider.tsx';
 
 const Transform: React.FC<{}> = () => {
   const { tempUpdateLayer, cancelLayerPreview, commitDirtyTool } = useLayers();
@@ -214,14 +215,14 @@ const Transform: React.FC<{}> = () => {
           </button>
         </div>
         <div className="flex items-center gap-1 mt-1">
-          <input
+          <TouchSlider
             id="rotate-slider"
-            type="range"
             aria-label="Rotation angle"
             min={-90}
             max={90}
             value={rotate}
             onChange={handleRotateSliderChange}
+            trackHeight={4}
             className="h-1 w-20 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
           />
           <span className="text-[10px] font-bold text-gray-900 dark:text-gray-200 w-6">{rotate}°</span>
@@ -235,13 +236,13 @@ const Transform: React.FC<{}> = () => {
         >
           Skew X <span>{skewX}°</span>
         </label>
-        <input
+        <TouchSlider
           id="skew-x-slider"
-          type="range"
           min={-45}
           max={45}
           value={skewX}
           onChange={handleSkewXChange}
+          trackHeight={4}
           className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
         <label
@@ -250,13 +251,13 @@ const Transform: React.FC<{}> = () => {
         >
           Skew Y <span>{skewY}°</span>
         </label>
-        <input
+        <TouchSlider
           id="skew-y-slider"
-          type="range"
           min={-45}
           max={45}
           value={skewY}
           onChange={handleSkewYChange}
+          trackHeight={4}
           className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
@@ -268,13 +269,13 @@ const Transform: React.FC<{}> = () => {
         >
           Trapezoid <span>{trapezoid}%</span>
         </label>
-        <input
+        <TouchSlider
           id="trapezoid-slider"
-          type="range"
           min={-85}
           max={85}
           value={trapezoid}
           onChange={handleTrapezoidChange}
+          trackHeight={4}
           className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
@@ -286,13 +287,13 @@ const Transform: React.FC<{}> = () => {
         >
           Resize X <span>{resizeX}%</span>
         </label>
-        <input
+        <TouchSlider
           id="resize-x-slider"
-          type="range"
           min={10}
           max={300}
           value={resizeX}
           onChange={handleResizeXChange}
+          trackHeight={4}
           className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
         <label
@@ -301,13 +302,13 @@ const Transform: React.FC<{}> = () => {
         >
           Resize Y <span>{resizeY}%</span>
         </label>
-        <input
+        <TouchSlider
           id="resize-y-slider"
-          type="range"
           min={10}
           max={300}
           value={resizeY}
           onChange={handleResizeYChange}
+          trackHeight={4}
           className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
