@@ -96,7 +96,7 @@ It is not a GPU worker or a parallel CI runner. Headless Chrome is useful for fu
 
 The repository keeps baselines under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`. The `darwin/` and `win32/` sets are committed; Linux is missing. Never use this host to overwrite another platform's images.
 
-Committed visual baselines currently exist for `darwin/` and `win32/`; the Linux baseline directory is missing. The GitHub Linux job uses `ubuntu-latest`, while this EC2 host is ARM64 on Ubuntu 26.04.1, so its screenshots are not evidence for that CI baseline. CPU-only rendering is not a sufficient match. Use the manual [`Capture Linux export baselines` workflow](../.github/workflows/capture-linux-baselines.yml) to record and verify the files on `ubuntu-latest`; review the downloaded artifact and add its images in the task worktree. Until those files are committed, Linux visual-baseline tests remain a known failure; do not skip them or restore `continue-on-error`.
+Committed visual baselines currently exist for `darwin/` and `win32/`; the Linux baseline directory is missing. The GitHub Linux job uses `ubuntu-latest`, while this EC2 host is ARM64 on Ubuntu 26.04.1, so its screenshots are not evidence for that CI baseline. CPU-only rendering is not a sufficient match. After publishing the manual [`Capture Linux export baselines` workflow](../.github/workflows/capture-linux-baselines.yml) on the repository's default branch, dispatch it on the candidate ref (GitHub write access is required), review the downloaded artifact, and add its images in the task worktree. Until those files are committed, Linux visual-baseline tests remain a known failure; do not skip them or restore `continue-on-error`.
 
 ## Other useful tasks
 
