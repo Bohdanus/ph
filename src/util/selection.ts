@@ -2,7 +2,9 @@ import type {
   BitmapSource,
   Ctx2D,
   Point,
+  PositionedRasterSelectionMask,
   Pos,
+  RasterSelectionMask,
   RectXYSorted,
   Selection,
   SelectionPointPaths,
@@ -14,6 +16,11 @@ import { posToSortedRect, sortRect, trimRect } from './rect.ts';
 import { resetOverlayAlpha } from './canvas.ts';
 import type { DocumentFrame } from '../contexts/document-frame.ts';
 import { documentToCanvasPoint } from '../contexts/document-frame.ts';
+import {
+  decodeRasterSelectionMask,
+  isCanonicalRasterSelectionMask,
+  isRasterSelectionPixelSelected,
+} from './selection-mask.ts';
 
 export const SELECTION_ANCHOR_RADIUS = 5;
 export const SELECTION_ANCHOR_HIT_RADIUS = 8;
@@ -59,7 +66,7 @@ export function createCommittedPolygonSelection({
   points: Point[];
   sourceTool: Extract<
     SelectionSourceTool,
-    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand'
+    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand' | 'quick-selection'
   >;
 }): Selection | null {
   return createCommittedPolygonSelectionFromContours({ id, metadata, points: [points], sourceTool });
@@ -76,7 +83,7 @@ export function createCommittedPolygonSelectionFromContours({
   points: Point[][];
   sourceTool: Extract<
     SelectionSourceTool,
-    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand'
+    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand' | 'quick-selection'
   >;
 }): Selection | null {
   const normalized = normalizeSelectionContours(points);
@@ -86,6 +93,43 @@ export function createCommittedPolygonSelectionFromContours({
     id,
     ...normalized,
     isActive: true,
+    lifecycle: 'committed',
+    geometry: 'polygon',
+    sourceTool,
+    metadata,
+  };
+}
+
+/** Create a committed pixel selection without expanding its boundary into a Point object per vertex. */
+export function createCommittedRasterSelection({
+  id,
+  metadata,
+  pos,
+  rasterMask,
+  sourceTool,
+}: {
+  id: string;
+  metadata?: Selection['metadata'];
+  pos: Pos;
+  rasterMask: RasterSelectionMask;
+  sourceTool: Extract<SelectionSourceTool, 'magic-wand' | 'quick-selection'>;
+}): Selection | null {
+  if (
+    !isCanonicalRasterSelectionMask(rasterMask) ||
+    !Number.isFinite(pos.x) ||
+    !Number.isFinite(pos.y) ||
+    pos.width !== rasterMask.width ||
+    pos.height !== rasterMask.height
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    points: [],
+    rasterMask,
+    isActive: true,
+    pos: { ...pos },
     lifecycle: 'committed',
     geometry: 'polygon',
     sourceTool,
@@ -173,6 +217,30 @@ export function getSelectionAbsoluteContours(selection: Selection): Point[][] {
   );
 }
 
+/** Snapshot selection geometry into a processor raster's local coordinate space. */
+export function getSelectionProcessorSnapshot(
+  selection: Selection,
+  rasterOrigin: Point
+): {
+  points: Point[][];
+  rasterMask?: PositionedRasterSelectionMask;
+} {
+  return {
+    points: getSelectionAbsoluteContours(selection).map((contour) =>
+      contour.map((point) => ({ x: point.x - rasterOrigin.x, y: point.y - rasterOrigin.y }))
+    ),
+    ...(selection.rasterMask
+      ? {
+          rasterMask: {
+            ...selection.rasterMask,
+            x: selection.pos.x - rasterOrigin.x,
+            y: selection.pos.y - rasterOrigin.y,
+          },
+        }
+      : {}),
+  };
+}
+
 /**
  * The draggable vertices of a committed selection, drawn on the tool overlay.
  *
@@ -193,7 +261,12 @@ export function drawSelectionAnchors(
   if (!selection.isActive) return;
   // A traced boundary can carry hundreds of sampled points, so freehand and the
   // magic wand get a border and no handles.
-  if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return;
+  if (
+    selection.sourceTool === 'freehand-lasso' ||
+    selection.sourceTool === 'magic-wand' ||
+    selection.sourceTool === 'quick-selection'
+  )
+    return;
 
   const points = getSelectionAbsolutePoints(selection).map((point) =>
     frame ? documentToCanvasPoint(point, frame) : point
@@ -241,7 +314,12 @@ export function distanceBetweenPoints(a: Point, b: Point): number {
  * leaving the radius in document px shrinks the target below the visible dot at every zoom below 1.
  */
 export function findSelectionAnchorAtPoint(selection: Selection, point: Point, scale = 1): number | null {
-  if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return null;
+  if (
+    selection.sourceTool === 'freehand-lasso' ||
+    selection.sourceTool === 'magic-wand' ||
+    selection.sourceTool === 'quick-selection'
+  )
+    return null;
 
   const hitRadius = SELECTION_ANCHOR_HIT_RADIUS / scale;
   const points = getSelectionAbsolutePoints(selection);
@@ -279,6 +357,19 @@ export function isPointInContours(point: Point, contours: Point[][]): boolean {
 }
 
 export function isPointInSelection(point: Point, selection: Selection): boolean {
+  if (selection.rasterMask) {
+    const packed = decodeRasterSelectionMask(selection.rasterMask);
+    return Boolean(
+      packed &&
+      isRasterSelectionPixelSelected(
+        selection.rasterMask,
+        packed,
+        Math.floor(point.x - selection.pos.x),
+        Math.floor(point.y - selection.pos.y)
+      )
+    );
+  }
+
   return isPointInContours(point, getSelectionAbsoluteContours(selection));
 }
 
@@ -375,6 +466,16 @@ export function hasSameSelectionGeometry(a: Selection, b: Selection): boolean {
   const { pos: aPos, points: aPoints } = a;
   const { pos: bPos, points: bPoints } = b;
   if (aPos.x !== bPos.x || aPos.y !== bPos.y || aPos.width !== bPos.width || aPos.height !== bPos.height) return false;
+  if (Boolean(a.rasterMask) !== Boolean(b.rasterMask)) return false;
+  if (
+    a.rasterMask &&
+    b.rasterMask &&
+    (a.rasterMask.width !== b.rasterMask.width ||
+      a.rasterMask.height !== b.rasterMask.height ||
+      a.rasterMask.data !== b.rasterMask.data)
+  ) {
+    return false;
+  }
   if (aPoints.length !== bPoints.length) return false;
 
   return aPoints.every((contour, index) => {
@@ -681,6 +782,50 @@ function rasterizePolygonMask(contours: Point[][], width: number, height: number
   return { values: mask, preservesCoverage: false };
 }
 
+function rasterizePackedMaskCoverage(
+  mask: RasterSelectionMask,
+  packed: Uint8Array,
+  origin: Point,
+  width: number,
+  height: number
+): RasterizedPolygonMask {
+  const values = new Uint8Array(width * height);
+  const minX = Math.max(0, Math.floor(origin.x));
+  const minY = Math.max(0, Math.floor(origin.y));
+  const maxX = Math.min(width, Math.ceil(origin.x + mask.width));
+  const maxY = Math.min(height, Math.ceil(origin.y + mask.height));
+
+  for (let y = minY; y < maxY; y += 1) {
+    const sourceTop = y - origin.y;
+    const sourceBottom = sourceTop + 1;
+    const firstSourceY = Math.floor(sourceTop);
+    const lastSourceY = Math.ceil(sourceBottom) - 1;
+
+    for (let x = minX; x < maxX; x += 1) {
+      const sourceLeft = x - origin.x;
+      const sourceRight = sourceLeft + 1;
+      const firstSourceX = Math.floor(sourceLeft);
+      const lastSourceX = Math.ceil(sourceRight) - 1;
+      let coverage = 0;
+
+      for (let sourceY = firstSourceY; sourceY <= lastSourceY; sourceY += 1) {
+        const overlapY = Math.max(0, Math.min(sourceBottom, sourceY + 1) - Math.max(sourceTop, sourceY));
+        if (overlapY === 0) continue;
+
+        for (let sourceX = firstSourceX; sourceX <= lastSourceX; sourceX += 1) {
+          if (!isRasterSelectionPixelSelected(mask, packed, sourceX, sourceY)) continue;
+          const overlapX = Math.max(0, Math.min(sourceRight, sourceX + 1) - Math.max(sourceLeft, sourceX));
+          coverage += overlapX * overlapY;
+        }
+      }
+
+      values[y * width + x] = Math.round(coverage * 255);
+    }
+  }
+
+  return { values, preservesCoverage: true };
+}
+
 function chamferDistanceFromSeeds(seedMask: Uint8Array, width: number, height: number): Float32Array {
   const distance = new Float32Array(width * height);
   const infinity = 1_000_000;
@@ -750,6 +895,22 @@ export function createFeatheredAlphaMask(
   // remains a 0/1 mask. The explicit flag keeps a canvas pixel with alpha 1 distinguishable
   // from that fallback's selected value.
   const useCoverage = preservesCoverage || binaryMask.some((value) => value > 1);
+
+  // The distance transforms below are only needed to grow a feather or recover a
+  // subpixel edge. A hard mask is already exact; allocating two Float32 distance
+  // planes for a large raster selection would multiply its memory cost needlessly.
+  if (Math.max(0, featherRadius) === 0) {
+    const hardMask = new Uint8Array(binaryMask.length);
+    if (useCoverage && antiAlias) {
+      hardMask.set(binaryMask);
+    } else {
+      for (let index = 0; index < binaryMask.length; index += 1) {
+        hardMask[index] = useCoverage ? (binaryMask[index] >= 128 ? 255 : 0) : binaryMask[index] ? 255 : 0;
+      }
+    }
+    return hardMask;
+  }
+
   const outsideSeeds = new Uint8Array(binaryMask.length);
   const insideSeeds = new Uint8Array(binaryMask.length);
 
@@ -787,13 +948,21 @@ export function createFeatheredAlphaMask(
  * consulting the live selection store.
  */
 export function createSelectionAlphaMask(
-  points: Point[] | Point[][],
+  selection: SelectionPointPaths | { points: SelectionPointPaths; rasterMask?: PositionedRasterSelectionMask },
   size: Size,
   { featherRadius = 0, antiAlias = true }: { featherRadius?: number; antiAlias?: boolean } = {}
 ): Uint8Array {
   const width = Math.max(0, Math.floor(size.width));
   const height = Math.max(0, Math.floor(size.height));
-  const rasterized = rasterizePolygonMask(selectionPointPathsToContours(points), width, height);
+  const rasterMask = Array.isArray(selection) ? undefined : selection.rasterMask;
+  const points = Array.isArray(selection) ? selection : selection.points;
+  const packed = rasterMask
+    ? decodeRasterSelectionMask({ width: rasterMask.width, height: rasterMask.height, data: rasterMask.data })
+    : null;
+  const rasterized =
+    rasterMask && packed
+      ? rasterizePackedMaskCoverage(rasterMask, packed, rasterMask, width, height)
+      : rasterizePolygonMask(selectionPointPathsToContours(points), width, height);
   return createFeatheredAlphaMask(
     rasterized.values,
     width,
@@ -910,6 +1079,47 @@ export function copySelectionToCanvas(
 
   if (selection.geometry === 'rectangle') {
     return copyRectSelectionToCanvas(sourceCanvas, getSelectionRect(selection), imageSize);
+  }
+
+  if (selection.rasterMask) {
+    const packed = decodeRasterSelectionMask(selection.rasterMask);
+    if (!packed) return null;
+
+    const minX = Math.max(0, Math.floor(selection.pos.x));
+    const minY = Math.max(0, Math.floor(selection.pos.y));
+    const maxX = Math.min(imageSize.width, Math.ceil(selection.pos.x + selection.rasterMask.width));
+    const maxY = Math.min(imageSize.height, Math.ceil(selection.pos.y + selection.rasterMask.height));
+    const width = maxX - minX;
+    const height = maxY - minY;
+    if (width <= 0 || height <= 0) return null;
+
+    const destCanvas = createSelectionCanvas(width, height);
+    const ctx = getSelectionCanvasContext(destCanvas);
+    if (!ctx) return unavailableSelectionCanvasContext('copyRasterSelectionToCanvas', destCanvas);
+    ctx.drawImage(sourceCanvas as CanvasImageSource, minX, minY, width, height, 0, 0, width, height);
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const rasterized = rasterizePackedMaskCoverage(
+      selection.rasterMask,
+      packed,
+      { x: selection.pos.x - minX, y: selection.pos.y - minY },
+      width,
+      height
+    );
+    const alphaMask = createFeatheredAlphaMask(
+      rasterized.values,
+      width,
+      height,
+      selection.metadata?.featherRadius ?? 0,
+      selection.metadata?.magneticLasso?.antiAlias ?? true,
+      rasterized.preservesCoverage
+    );
+    for (let index = 0; index < alphaMask.length; index += 1) {
+      const alphaIndex = index * 4 + 3;
+      imageData.data[alphaIndex] = Math.round((imageData.data[alphaIndex] * alphaMask[index]) / 255);
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return { bitmap: destCanvas, pos: { x: minX, y: minY, width, height } };
   }
 
   const contours = getSelectionAbsoluteContours(selection);

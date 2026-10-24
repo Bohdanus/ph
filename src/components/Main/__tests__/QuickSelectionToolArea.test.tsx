@@ -2,25 +2,24 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { QuickSelectionToolArea } from '../QuickSelectionToolArea.tsx';
-import { rasterizeSelectionMask } from '../../../tools/quickSelection.ts';
+import { rasterizeSelectionState } from '../../../tools/quickSelection.ts';
 
 /**
- * The base mask and stroke seeds use frame-local coordinates, so each document-space contour from
- * `getActiveSelection` + `getSelectionAbsoluteContours` MUST be mapped through
- * `documentToCanvasPoint` before `rasterizeSelectionMask` sees them. With a nonzero
- * frame origin the two spaces diverge, and without that single conversion the base
- * mask lands on the wrong pixels (an empty base for `add`, a no-op for `subtract`).
+ * The base mask and stroke seeds use frame-local coordinates, so the active selection must
+ * be rasterized against the frame origin. With a nonzero frame origin the two spaces diverge,
+ * and without that conversion the base mask lands on the wrong pixels (an empty base for `add`,
+ * a no-op for `subtract`).
  *
- * The rasterizer is spied, so no real pixel buffer is required — the contract under
- * test is the argument list, not the filled mask. A closed four-vertex rectangle is
- * used deliberately: it is one point short of the five-vertex closed form
- * `normalizeSelectionPoints` would reject and exactly the path Photoshop hands a
- * traced selection, so the conversion is pinned at every corner of the frame shift.
+ * The selection-state rasterizer is spied, so no real pixel buffer is required — the
+ * component contract is that it passes the active document-space selection and frame
+ * origin to the shared mask conversion. Exact pixel coverage is tested in
+ * `quick-selection.test.ts`.
  */
 const IMAGE_SIZE = { width: 50, height: 50 };
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const sourceCanvas = vi.hoisted(() => document.createElement('canvas'));
+const pointerState = vi.hoisted(() => ({ activePointerId: null as number | null, releaseCalls: 0 }));
 const storeState = vi.hoisted(
   (): {
     selections: Selection[];
@@ -46,7 +45,7 @@ const toolState = vi.hoisted(
   })
 );
 
-// Only the rasterizer is replaced: every helper it feeds (createQuickSelectionAccumulator,
+// Only the active-selection rasterizer is replaced: every helper it feeds (createQuickSelectionAccumulator,
 // growAlongStroke, createQuickSelectionPolygon, sampleStrokeSeeds) and the
 // QUICK_SELECTION_SOURCE_TOOL constant stay real, so a pointer-down still runs the full
 // grow/preview path and the spy is exercised in context rather than isolation.
@@ -56,7 +55,7 @@ vi.mock('../../../tools/quickSelection.ts', async () => {
   );
   return {
     ...actual,
-    rasterizeSelectionMask: vi.fn(),
+    rasterizeSelectionState: vi.fn(),
   };
 });
 
@@ -86,9 +85,21 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
-    isPointerDownValid: vi.fn((event: PointerEvent) => event.button === 0),
+    isPointerDownValid: vi.fn((event: PointerEvent) => {
+      if (event.button !== 0 || pointerState.activePointerId !== null) return false;
+      pointerState.activePointerId = event.pointerId;
+      return true;
+    }),
     isPointerMoveValid: vi.fn(() => true),
-    isPointerUpValid: vi.fn(() => true),
+    isPointerUpValid: vi.fn((event: PointerEvent) => {
+      if (event.button !== 0 || pointerState.activePointerId !== event.pointerId) return false;
+      pointerState.activePointerId = null;
+      return true;
+    }),
+    releasePointer: vi.fn(() => {
+      pointerState.releaseCalls += 1;
+      pointerState.activePointerId = null;
+    }),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: { current: false },
   }),
@@ -146,7 +157,9 @@ describe('QuickSelectionToolArea', () => {
 
   beforeEach(() => {
     dispatchMock.mockClear();
-    vi.mocked(rasterizeSelectionMask).mockClear();
+    pointerState.activePointerId = null;
+    pointerState.releaseCalls = 0;
+    vi.mocked(rasterizeSelectionState).mockReset();
     storeState.selections = [];
     storeState.activeSelectionId = null;
     storeState.documentFrame = null;
@@ -173,7 +186,7 @@ describe('QuickSelectionToolArea', () => {
     id: 'active-selection',
     isActive: true,
     geometry: 'polygon',
-    sourceTool: 'magic-wand',
+    sourceTool: 'quick-selection',
     lifecycle: 'committed',
     pos: { x: 120, y: 60, width: 20, height: 20 },
     points: [
@@ -186,7 +199,7 @@ describe('QuickSelectionToolArea', () => {
     ],
   };
 
-  it('translates a nonzero-frame active selection from document-space vertices to frame-local canvas vertices before rasterizing the base mask', () => {
+  it('passes a nonzero-frame active selection and its document origin to the shared rasterizer', () => {
     storeState.documentFrame = FRAME_WITH_ORIGIN;
     storeState.activeSelectionId = 'active-selection';
     storeState.selections = [activeSelectionInFrame];
@@ -194,32 +207,131 @@ describe('QuickSelectionToolArea', () => {
     const toolArea = renderQuickSelectionArea();
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
 
-    // The base mask is rasterized exactly once, and it carries one contour with the frame-subtracted
-    // vertices rather than the raw document points. The "exactly once" pin is
-    // mutation-sensitive on two axes: a missing map leaves the origin un-stripped
-    // (120/140 survive), and a doubled map pushes every coordinate negative
-    // (120-100-100 = -80), so neither the zero-mapping nor the double-mapping
-    // mutation can pass.
-    expect(rasterizeSelectionMask).toHaveBeenCalledTimes(1);
-    expect(rasterizeSelectionMask).toHaveBeenCalledWith(
-      [
-        [
-          { x: 20, y: 20 },
-          { x: 40, y: 20 },
-          { x: 40, y: 40 },
-          { x: 20, y: 40 },
-        ],
-      ],
-      { width: IMAGE_SIZE.width, height: IMAGE_SIZE.height }
-    );
+    expect(rasterizeSelectionState).toHaveBeenCalledTimes(1);
+    expect(rasterizeSelectionState).toHaveBeenCalledWith(activeSelectionInFrame, IMAGE_SIZE, { x: 100, y: 40 });
   });
 
   it('skips rasterizing the base mask when no selection is active', () => {
     const toolArea = renderQuickSelectionArea();
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
 
-    // `getActiveSelection` returns null, so `baseContours` is `[]` and the
-    // `>= 3` guard short-circuits before the rasterizer is ever reached.
-    expect(rasterizeSelectionMask).not.toHaveBeenCalled();
+    // `getActiveSelection` returns null, so there is no stored mask to rasterize.
+    expect(rasterizeSelectionState).not.toHaveBeenCalled();
+  });
+
+  it('releases a captured pointer when readback fails so a later Quick Selection stroke can start', () => {
+    getContextSpy!.mockReturnValueOnce(null as unknown as CanvasRenderingContext2D);
+    const toolArea = renderQuickSelectionArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    expect(pointerState.releaseCalls).toBe(1);
+    expect(pointerState.activePointerId).toBeNull();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 8, clientY: 8 });
+
+    expect(
+      dispatchMock.mock.calls.some(([action]) => (action as { type: string }).type === 'START_SELECTION_DRAFT')
+    ).toBe(true);
+  });
+
+  it('releases a captured pointer when preparing the base mask throws', () => {
+    storeState.selections = [activeSelectionInFrame];
+    storeState.activeSelectionId = activeSelectionInFrame.id;
+    vi.mocked(rasterizeSelectionState).mockImplementationOnce(() => {
+      throw new RangeError('simulated base-mask allocation failure');
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const toolArea = renderQuickSelectionArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+      expect(pointerState.releaseCalls).toBe(1);
+      expect(pointerState.activePointerId).toBeNull();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 8, clientY: 8 });
+
+      expect(
+        dispatchMock.mock.calls.some(([action]) => (action as { type: string }).type === 'START_SELECTION_DRAFT')
+      ).toBe(true);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('stores Quick Selection provenance on the committed selection', () => {
+    const toolArea = renderQuickSelectionArea();
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    const actions = dispatchMock.mock.calls.map(
+      ([action]) =>
+        action as {
+          type: string;
+          payload?: { sourceTool?: string; updates?: { selections?: Selection[] } };
+        }
+    );
+    expect(actions.find((action) => action.type === 'START_SELECTION_DRAFT')?.payload).toEqual({
+      sourceTool: 'quick-selection',
+    });
+    expect(
+      actions.find((action) => action.type === 'COMMIT_DOCUMENT_EDIT')?.payload?.updates?.selections?.[0]
+    ).toMatchObject({ sourceTool: 'quick-selection', lifecycle: 'committed' });
+  });
+
+  it('clears the active selection when a subtract stroke removes its last selected pixel', () => {
+    storeState.selections = [activeSelectionInFrame];
+    storeState.activeSelectionId = activeSelectionInFrame.id;
+    toolState.toolArgs = { size: 16, tolerance: 0, mode: 'subtract', alpha: 1, toolName: 'quick-selection' };
+    vi.mocked(rasterizeSelectionState).mockReturnValue(new Uint8Array(IMAGE_SIZE.width * IMAGE_SIZE.height).fill(1));
+
+    const toolArea = renderQuickSelectionArea();
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string; payload?: unknown });
+    const clear = actions.find((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
+    expect(clear).toBeDefined();
+    expect(clear?.payload).toMatchObject({
+      updates: { selections: [], activeSelectionId: null, selectionDraft: { status: 'idle' } },
+    });
+    expect(actions.some((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toBe(false);
+  });
+
+  it('does not clear an off-frame selection when a subtract stroke has no selected base pixels', () => {
+    storeState.documentFrame = FRAME_WITH_ORIGIN;
+    const offFrameSelection = {
+      ...activeSelectionInFrame,
+      pos: { x: 20, y: 20, width: 20, height: 20 },
+    };
+    storeState.selections = [offFrameSelection];
+    storeState.activeSelectionId = offFrameSelection.id;
+    toolState.toolArgs = { size: 16, tolerance: 0, mode: 'subtract', alpha: 1, toolName: 'quick-selection' };
+    vi.mocked(rasterizeSelectionState).mockReturnValue(new Uint8Array(IMAGE_SIZE.width * IMAGE_SIZE.height));
+
+    const toolArea = renderQuickSelectionArea();
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.some((action) => action.type === 'COMMIT_DOCUMENT_EDIT')).toBe(false);
+    expect(actions.some((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toBe(true);
+  });
+
+  it('does not commit an Add stroke that leaves the active selection unchanged', () => {
+    storeState.selections = [activeSelectionInFrame];
+    storeState.activeSelectionId = activeSelectionInFrame.id;
+    vi.mocked(rasterizeSelectionState).mockReturnValue(new Uint8Array(IMAGE_SIZE.width * IMAGE_SIZE.height).fill(1));
+
+    const toolArea = renderQuickSelectionArea();
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.some((action) => action.type === 'COMMIT_DOCUMENT_EDIT')).toBe(false);
+    expect(actions.some((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toBe(true);
   });
 });

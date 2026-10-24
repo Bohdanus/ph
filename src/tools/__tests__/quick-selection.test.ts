@@ -6,18 +6,23 @@ import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/
 import { makeMockImageData } from '../../__tests__/canvas-mock.ts';
 import {
   QUICK_SELECTION_SOURCE_TOOL,
+  appendQuickSelectionStrokeSeeds,
   createQuickSelectionAccumulator,
   createQuickSelectionPolygon,
+  createQuickSelectionStrokeSeedSampler,
   growAlongStroke,
   isQuickSelectionMode,
   rasterizeSelectionMask,
+  rasterizeSelectionState,
+  sampleStrokeDabCenters,
   sampleStrokeSeeds,
   traceMaskBoundary,
   type QuickSelectionAccumulator,
 } from '../quickSelection.ts';
 import { floodFill } from '../../util/flood-fill.ts';
-import { isPointInContours } from '../../util/selection.ts';
-import type { Point } from '../../contexts/general-types.ts';
+import { createSelectionAlphaMask, isPointInContours } from '../../util/selection.ts';
+import type { Point, Selection } from '../../contexts/general-types.ts';
+import { encodeRasterSelectionMask, MAX_VECTOR_SELECTION_BOUNDARY_EDGES } from '../../util/selection-mask.ts';
 
 type MockCtx = ReturnType<typeof createMockCanvasContext>;
 
@@ -205,10 +210,10 @@ describe('quickSelection type contract', () => {
 });
 
 describe('sampleStrokeSeeds', () => {
-  it('spaces seeds by arc length rather than by pointer sample', () => {
+  it('spaces dab centres by arc length rather than by pointer sample', () => {
     // A 100px stroke with a 40px brush at 25% spacing is a 10px step, whatever rate the
     // pointer reported it at: one seed per 10px of travel, first and last included.
-    const seeds = sampleStrokeSeeds(
+    const seeds = sampleStrokeDabCenters(
       [
         { x: 0, y: 0 },
         { x: 37, y: 0 },
@@ -232,9 +237,119 @@ describe('sampleStrokeSeeds', () => {
     ]);
   });
 
-  it('leaves a click with exactly one seed and an empty stroke with none', () => {
-    expect(sampleStrokeSeeds([{ x: 7, y: 9 }], 40)).toEqual([{ x: 7, y: 9 }]);
+  it('keeps a click at the centre for a one-pixel tip and emits no seeds for an empty stroke', () => {
+    expect(sampleStrokeSeeds([{ x: 7, y: 9 }], 1)).toEqual([{ x: 7, y: 9 }]);
     expect(sampleStrokeSeeds([], 40)).toEqual([]);
+  });
+
+  it('uses the brush diameter to sample more than its centre', () => {
+    const seeds = sampleStrokeSeeds([{ x: 10, y: 10 }], 20);
+
+    expect(seeds).toHaveLength(9);
+    expect(seeds.every(({ x, y }) => Math.hypot(x - 10, y - 10) <= 10)).toBe(true);
+    expect(seeds).toContainEqual({ x: 18, y: 10 });
+    expect(seeds).toContainEqual({ x: 2, y: 10 });
+  });
+
+  it('keeps previously emitted dab seeds stable while the pointer moves', () => {
+    const before = sampleStrokeSeeds(
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+      ],
+      16,
+      undefined,
+      false
+    );
+    const after = sampleStrokeSeeds(
+      [
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+      ],
+      16,
+      undefined,
+      false
+    );
+    const released = sampleStrokeSeeds(
+      [
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+      ],
+      16,
+      undefined,
+      true
+    );
+
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(
+      sampleStrokeDabCenters(
+        [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+        16,
+        25,
+        false
+      )
+    ).toEqual([{ x: 0, y: 0 }]);
+    expect(
+      sampleStrokeDabCenters(
+        [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+        16,
+        25,
+        false
+      )
+    ).toEqual([
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+    ]);
+    expect(released.length).toBeGreaterThan(after.length);
+  });
+
+  it('produces the same seed pixels when the pointer path is sampled incrementally', () => {
+    const points = [
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+      { x: 9, y: 4 },
+      { x: 12, y: 11 },
+    ];
+    const sampler = createQuickSelectionStrokeSeedSampler(16);
+    const incremental = points.flatMap((point, index) =>
+      appendQuickSelectionStrokeSeeds(sampler, point, index === points.length - 1)
+    );
+
+    expect(incremental).toEqual(sampleStrokeSeeds(points, 16));
+  });
+
+  it('returns only newly reached seed pixels on each pointer event', () => {
+    const sampler = createQuickSelectionStrokeSeedSampler(20);
+    const first = appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 });
+    const second = appendQuickSelectionStrokeSeeds(sampler, { x: 5, y: 0 });
+    const third = appendQuickSelectionStrokeSeeds(sampler, { x: 12, y: 0 }, true);
+    const uniquePixels = new Set(
+      [...first, ...second, ...third].map(({ x, y }) => `${Math.floor(x)},${Math.floor(y)}`)
+    );
+
+    expect(first).toHaveLength(9);
+    expect(second.length).toBeGreaterThan(0);
+    expect(third.length).toBeGreaterThan(0);
+    expect(uniquePixels.size).toBe(first.length + second.length + third.length);
+  });
+
+  it('bounds per-stroke seed deduplication and safely re-emits uncached pixels', () => {
+    const sampler = createQuickSelectionStrokeSeedSampler(1, 100);
+    appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true);
+    appendQuickSelectionStrokeSeeds(sampler, { x: 5_000, y: 0 }, true);
+
+    expect(sampler.emittedPixels.size).toBe(4_096);
+
+    const retraced = appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true);
+
+    expect(sampler.emittedPixels.size).toBe(4_096);
+    expect(retraced.some(({ x, y }) => Math.floor(x) === 4_096 && Math.floor(y) === 0)).toBe(true);
   });
 });
 
@@ -250,6 +365,22 @@ describe('growAlongStroke union', () => {
     expect(countSelected(accumulator.mask)).toBe(4);
     expect(isSelected(accumulator.mask, 12, 1, 0)).toBe(true);
     expect(isSelected(accumulator.mask, 12, 10, 0)).toBe(false);
+  });
+
+  it('uses the brush tip footprint to reach regions away from its centre', () => {
+    const imageData = solidImage(21, 1, BLACK);
+    fillRect(imageData, 0, 0, 4, 0, RED);
+    fillRect(imageData, 16, 0, 20, 0, BLUE);
+    const small = createQuickSelectionAccumulator({ width: 21, height: 1 });
+    const large = createQuickSelectionAccumulator({ width: 21, height: 1 });
+
+    growAlongStroke(small, imageData, sampleStrokeSeeds([{ x: 10, y: 0 }], 1), { tolerance: 0, mode: 'add' });
+    growAlongStroke(large, imageData, sampleStrokeSeeds([{ x: 10, y: 0 }], 20), { tolerance: 0, mode: 'add' });
+
+    expect(isSelected(small.mask, 21, 2, 0)).toBe(false);
+    expect(isSelected(small.mask, 21, 18, 0)).toBe(false);
+    expect(isSelected(large.mask, 21, 2, 0)).toBe(true);
+    expect(isSelected(large.mask, 21, 18, 0)).toBe(true);
   });
 
   it('unions the regions of seeds the pointer crossed between, which is the re-seeding bug', () => {
@@ -278,21 +409,102 @@ describe('growAlongStroke union', () => {
     expect(isSelected(accumulator.mask, 8, 5, 0)).toBe(true);
   });
 
-  it('only grows the seeds a resumed pass has not seen', () => {
-    // The accumulator resumes from `grownSeeds`, which is only sound because appending to
-    // the stroke cannot move the arc-length positions of the dabs already emitted. A second
-    // call over the same seeds must therefore grow nothing, or the tool pays for a
-    // whole-image fill per pointer move.
+  it('reuses a prior fill when a later pointer batch repeats the exact seed pixel', () => {
     const imageData = createTwoSameColourBlocks();
     const accumulator = createQuickSelectionAccumulator({ width: 12, height: 1 });
-    const stroke = strokePoints({ x: 1, y: 0 }, { x: 3, y: 0 });
 
-    const first = grow(accumulator, imageData, stroke, { tolerance: 0, mode: 'add' });
-    const second = grow(accumulator, imageData, stroke, { tolerance: 0, mode: 'add' });
+    const first = growAlongStroke(accumulator, imageData, [{ x: 1, y: 0 }], { tolerance: 0, mode: 'add' });
+    const second = growAlongStroke(accumulator, imageData, [{ x: 1, y: 0 }], { tolerance: 0, mode: 'add' });
 
     expect(first).toBeGreaterThan(0);
     expect(second).toBe(0);
+    expect(accumulator.floodFillWorkspace?.generation).toBe(1);
     expect(countSelected(accumulator.mask)).toBe(4);
+  });
+
+  it('grows a full equal-color region when a new Add stroke starts inside its base selection', () => {
+    const imageData = solidImage(8, 1, RED);
+    const accumulator = createQuickSelectionAccumulator(
+      { width: 8, height: 1 },
+      Uint8Array.from([1, 0, 0, 0, 0, 0, 0, 0])
+    );
+
+    growAlongStroke(accumulator, imageData, [{ x: 0, y: 0 }], { tolerance: 0, mode: 'add' });
+
+    expect(Array.from(accumulator.mask)).toEqual(new Array(8).fill(1));
+    expect(accumulator.selectedPixelCount).toBe(8);
+  });
+
+  it('normalizes nonzero base mask bytes to binary pixels', () => {
+    const accumulator = createQuickSelectionAccumulator({ width: 2, height: 1 }, Uint8Array.from([255, 0]));
+
+    expect(Array.from(accumulator.mask)).toEqual([1, 0]);
+    expect(accumulator.selectedPixelCount).toBe(1);
+  });
+
+  it('stops sampling once an Add fill covers the complete image', () => {
+    const imageData = solidImage(4, 1, RED);
+    const accumulator = createQuickSelectionAccumulator({ width: 4, height: 1 });
+
+    growAlongStroke(
+      accumulator,
+      imageData,
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 2, y: 0 },
+      ],
+      {
+        tolerance: 0,
+        mode: 'add',
+      }
+    );
+
+    expect(accumulator.selectedPixelCount).toBe(4);
+    expect(accumulator.floodFillWorkspace?.generation).toBe(1);
+  });
+
+  it('continues a gradient from later seeds already covered by the current selection', () => {
+    const gradient = solidImage(8, 1, [0, 0, 100, 255]);
+    for (let x = 1; x < gradient.width; x += 1) setPixel(gradient, x, 0, [0, 0, 100 + x * 5, 255]);
+    const accumulator = createQuickSelectionAccumulator({ width: 8, height: 1 });
+    const first = sampleStrokeSeeds([{ x: 0, y: 0 }], 1);
+    const extended = sampleStrokeSeeds(
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+      ],
+      1
+    );
+
+    growAlongStroke(accumulator, gradient, first, { tolerance: 1, mode: 'add' });
+    growAlongStroke(accumulator, gradient, extended, { tolerance: 1, mode: 'add' });
+
+    expect(isSelected(accumulator.mask, 8, 1, 0)).toBe(true);
+    expect(isSelected(accumulator.mask, 8, 2, 0)).toBe(true);
+    expect(isSelected(accumulator.mask, 8, 3, 0)).toBe(false);
+  });
+
+  it('reuses full-frame flood-fill scratch buffers across distinct seeds', () => {
+    const imageData = createTwoBlocks();
+    const accumulator = createQuickSelectionAccumulator({ width: 12, height: 4 });
+
+    growAlongStroke(accumulator, imageData, [{ x: 1, y: 1 }], { tolerance: 0, mode: 'add' });
+    const workspace = accumulator.floodFillWorkspace;
+    growAlongStroke(
+      accumulator,
+      imageData,
+      [
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+      { tolerance: 0, mode: 'add' }
+    );
+
+    expect(accumulator.floodFillWorkspace).toBe(workspace);
+    expect(workspace?.visited).toHaveLength(48);
+    expect(workspace?.queue).toHaveLength(48);
+    expect(countSelected(accumulator.mask)).toBe(32);
   });
 
   it('removes rather than adds in subtract mode', () => {
@@ -572,6 +784,30 @@ describe('rasterizeSelectionMask', () => {
 
     expect(countSelected(mask)).toBe(16);
   });
+
+  it('quantizes a fractional packed-mask position to binary membership for a Quick Selection edit', () => {
+    const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
+    const selection: Selection = {
+      id: 'fractional-raster-selection',
+      isActive: true,
+      geometry: 'polygon',
+      lifecycle: 'committed',
+      sourceTool: 'quick-selection',
+      pos: { x: 0.5, y: 0.5, width: 1, height: 1 },
+      points: [],
+      rasterMask,
+    };
+
+    // The general pixel-coverage path preserves area coverage, but Quick Selection's
+    // accumulator is one bit per pixel and samples at destination pixel centres.
+    expect([...rasterizeSelectionState(selection, { width: 2, height: 2 }, { x: 0, y: 0 })]).toEqual([1, 0, 0, 0]);
+    expect([
+      ...createSelectionAlphaMask(
+        { points: [], rasterMask: { ...rasterMask, x: 0.5, y: 0.5 } },
+        { width: 2, height: 2 }
+      ),
+    ]).toEqual([64, 64, 64, 64]);
+  });
 });
 
 describe('createQuickSelectionPolygon', () => {
@@ -588,11 +824,32 @@ describe('createQuickSelectionPolygon', () => {
     expect(isPointInContours({ x: 2.5, y: 2.5 }, polygon.points)).toBe(false);
   });
 
-  it('borrows the magic wand as its source tool, which is the value that draws no anchors', () => {
-    // `SelectionSourceTool` has no `'quick-selection'` member, and the borrowed value is
-    // also the behaviourally right one: a traced staircase boundary must not carry a white
-    // anchor dot per step.
-    expect(QUICK_SELECTION_SOURCE_TOOL).toBe('magic-wand');
+  it('records its own source tool without attaching polygon anchors to the pixel boundary', () => {
+    expect(QUICK_SELECTION_SOURCE_TOOL).toBe('quick-selection');
+  });
+
+  it('keeps a dense mask exact without materializing its contours and can rasterize it as an active base', () => {
+    const size = 192;
+    const mask = new Uint8Array(size * size);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        if ((x + y) % 2 === 0) mask[y * size + x] = 1;
+      }
+    }
+
+    const polygon = createQuickSelectionPolygon(mask, size, size)!;
+    const selection: Selection = {
+      id: 'fragmented-selection',
+      points: polygon.points,
+      rasterMask: polygon.rasterMask,
+      isActive: true,
+      pos: polygon.bounds,
+      sourceTool: QUICK_SELECTION_SOURCE_TOOL,
+    };
+
+    expect(polygon.points).toEqual([]);
+    expect(polygon.boundaryEdgeCount).toBe(MAX_VECTOR_SELECTION_BOUNDARY_EDGES + 1);
+    expect(rasterizeSelectionState(selection, { width: size, height: size }, { x: 0, y: 0 })).toEqual(mask);
   });
 });
 

@@ -221,7 +221,7 @@ describe('MagicWandToolArea', () => {
                 pos: { x: 1, y: 1, width: 4, height: 4 },
                 metadata: expect.objectContaining({
                   magicWand: expect.objectContaining({
-                    boundaryPointCount: 4,
+                    boundaryEdgeCount: 8,
                     selectedPixelCount: 4,
                     tolerance: 0,
                   }),

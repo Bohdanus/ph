@@ -222,9 +222,19 @@ export const getIncrementalEraserArgs = (toolArgs: ToolArgs, previousToolArgs?: 
   if (currentSelection && previousSelection) {
     const currentContours = selectionPointPathsToContours(currentSelection.points);
     const previousContours = selectionPointPathsToContours(previousSelection.points);
+    const currentMask = currentSelection.rasterMask;
+    const previousMask = previousSelection.rasterMask;
     if (
       currentSelection.featherRadius !== previousSelection.featherRadius ||
       currentSelection.antiAlias !== previousSelection.antiAlias ||
+      (currentMask === undefined) !== (previousMask === undefined) ||
+      (currentMask !== undefined &&
+        previousMask !== undefined &&
+        (currentMask.x !== previousMask.x ||
+          currentMask.y !== previousMask.y ||
+          currentMask.width !== previousMask.width ||
+          currentMask.height !== previousMask.height ||
+          currentMask.data !== previousMask.data)) ||
       currentContours.length !== previousContours.length ||
       !currentContours.every(
         (contour, contourIndex) =>

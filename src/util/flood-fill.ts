@@ -55,6 +55,17 @@ export type MaskResult = {
   bounds: Pos;
 };
 
+/** Reusable queue and generation-marked visited map for sequential contiguous fills. */
+export type ContiguousFloodFillWorkspace = {
+  visited: Uint8Array;
+  queue: Int32Array;
+  generation: number;
+};
+
+export function createContiguousFloodFillWorkspace(pixelCount: number): ContiguousFloodFillWorkspace {
+  return { visited: new Uint8Array(pixelCount), queue: new Int32Array(pixelCount), generation: 0 };
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -188,50 +199,107 @@ export function createContiguousMask(
   sampleColor: RgbaColor,
   tolerance: number
 ): MaskResult {
-  const { data, width, height } = imageData;
+  const { width, height } = imageData;
   const pixelCount = width * height;
   const mask = new Uint8Array(pixelCount);
-  const visited = new Uint8Array(pixelCount);
-  const queue = new Int32Array(pixelCount);
-  let queueStart = 0;
-  let queueEnd = 0;
   let selectedPixelCount = 0;
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
-  const seedIndex = getIndex(seedX, seedY, width);
-
-  queue[queueEnd++] = seedIndex;
-  visited[seedIndex] = 1;
-
-  while (queueStart < queueEnd) {
-    const index = queue[queueStart++];
-    if (!isPixelWithinTolerance(data, index, sampleColor, tolerance)) continue;
-
-    const x = index % width;
-    const y = Math.floor(index / width);
-    mask[index] = 1;
-    selectedPixelCount += 1;
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-
-    if (x > 0) queueEnd = enqueuePixel(index - 1, visited, queue, queueEnd);
-    if (x < width - 1) queueEnd = enqueuePixel(index + 1, visited, queue, queueEnd);
-    if (y > 0) queueEnd = enqueuePixel(index - width, visited, queue, queueEnd);
-    if (y < height - 1) queueEnd = enqueuePixel(index + width, visited, queue, queueEnd);
-  }
+  const workspace = createContiguousFloodFillWorkspace(pixelCount);
+  selectedPixelCount = visitContiguousMaskPixels(
+    imageData,
+    seedX,
+    seedY,
+    sampleColor,
+    tolerance,
+    workspace,
+    (index) => {
+      const x = index % width;
+      const y = Math.floor(index / width);
+      mask[index] = 1;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  );
 
   return { mask, selectedPixelCount, sampleColor, bounds: finalizeBounds(minX, minY, maxX, maxY) };
 }
 
-function enqueuePixel(index: number, visited: Uint8Array, queue: Int32Array, queueEnd: number): number {
-  if (visited[index]) return queueEnd;
+/**
+ * Visit every pixel in one contiguous colour region. The callback is invoked only for
+ * pixels within tolerance; rejected boundary pixels are marked visited but do not expand.
+ * Workspace generation marks avoid clearing or allocating a full-frame visited map for
+ * every Quick Selection dab. It clears once per 255 fills to prevent byte-token rollover.
+ */
+export function visitContiguousMaskPixels(
+  imageData: ImageData,
+  seedX: number,
+  seedY: number,
+  sampleColor: RgbaColor,
+  tolerance: number,
+  workspace: ContiguousFloodFillWorkspace,
+  visit: (pixelIndex: number) => void
+): number {
+  const { data, width, height } = imageData;
+  const pixelCount = width * height;
+  if (width <= 0 || height <= 0 || workspace.visited.length < pixelCount || workspace.queue.length < pixelCount)
+    return 0;
+  if (
+    !Number.isFinite(seedX) ||
+    !Number.isFinite(seedY) ||
+    seedX < 0 ||
+    seedY < 0 ||
+    seedX >= width ||
+    seedY >= height
+  ) {
+    return 0;
+  }
 
-  visited[index] = 1;
-  queue[queueEnd] = index;
+  let generation = workspace.generation + 1;
+  if (generation > 255) {
+    workspace.visited.fill(0);
+    generation = 1;
+  }
+  workspace.generation = generation;
+
+  let queueStart = 0;
+  let queueEnd = 0;
+  const seedIndex = getIndex(seedX, seedY, width);
+  workspace.queue[queueEnd++] = seedIndex;
+  workspace.visited[seedIndex] = generation;
+  let selectedPixelCount = 0;
+
+  while (queueStart < queueEnd) {
+    const index = workspace.queue[queueStart++];
+    if (!isPixelWithinTolerance(data, index, sampleColor, tolerance)) continue;
+
+    selectedPixelCount += 1;
+    visit(index);
+    const x = index % width;
+    const y = Math.floor(index / width);
+    if (x > 0) queueEnd = enqueuePixel(index - 1, workspace, generation, queueEnd);
+    if (x < width - 1) queueEnd = enqueuePixel(index + 1, workspace, generation, queueEnd);
+    if (y > 0) queueEnd = enqueuePixel(index - width, workspace, generation, queueEnd);
+    if (y < height - 1) queueEnd = enqueuePixel(index + width, workspace, generation, queueEnd);
+  }
+
+  return selectedPixelCount;
+}
+
+function enqueuePixel(
+  index: number,
+  workspace: ContiguousFloodFillWorkspace,
+  generation: number,
+  queueEnd: number
+): number {
+  if (workspace.visited[index] === generation) return queueEnd;
+
+  workspace.visited[index] = generation;
+  workspace.queue[queueEnd] = index;
   return queueEnd + 1;
 }
 
@@ -251,7 +319,16 @@ export const floodFill = (imageData: ImageData, seed: Point, options: FloodFillO
 
   const seedX = Math.floor(seed.x);
   const seedY = Math.floor(seed.y);
-  if (seedX < 0 || seedY < 0 || seedX >= width || seedY >= height) return null;
+  if (
+    !Number.isFinite(seedX) ||
+    !Number.isFinite(seedY) ||
+    seedX < 0 ||
+    seedY < 0 ||
+    seedX >= width ||
+    seedY >= height
+  ) {
+    return null;
+  }
 
   const sampleColor = getPixelColor(imageData.data, getIndex(seedX, seedY, width));
   const tolerance = getToleranceDistance(options.tolerance);

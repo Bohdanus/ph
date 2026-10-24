@@ -9,7 +9,7 @@ import type { BitmapSource, Point, Size } from '../../contexts/general-types.ts'
 import type { Layer } from '../../contexts/layer-types.ts';
 import { stageProcessorInput, type ProcessorStaging } from '../../contexts/presentation-evaluator.ts';
 import { documentPointToLayerLocal } from '../../util/layer-space.ts';
-import { getActiveSelection, getSelectionAbsoluteContours } from '../../util/selection.ts';
+import { getActiveSelection, getSelectionProcessorSnapshot } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type FillToolAreaProps = {
@@ -228,9 +228,7 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     if (!activeSelection) return undefined;
 
     return {
-      points: getSelectionAbsoluteContours(activeSelection).map((contour) =>
-        contour.map((point) => documentPointToLayerLocal(point, presentationBounds))
-      ),
+      ...getSelectionProcessorSnapshot(activeSelection, presentationBounds),
       featherRadius: activeSelection.metadata?.featherRadius ?? 0,
       antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
     };

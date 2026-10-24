@@ -6,7 +6,7 @@
  * neither can be served by a traced polygon. What follows turns a mask into an even-odd set of
  * closed point paths, which is the part that was always specific to the wand.
  */
-import type { Point, Pos } from '../contexts/general-types.ts';
+import type { Point, Pos, RasterSelectionMask, Size } from '../contexts/general-types.ts';
 import {
   createAllMatchingMask,
   createContiguousMask,
@@ -17,6 +17,12 @@ import {
   type RgbaColor,
 } from './flood-fill.ts';
 import { simplifyPath } from './magneticLasso.ts';
+import {
+  countSelectionBoundaryEdges,
+  encodeRasterSelectionMask,
+  MAX_VECTOR_SELECTION_BOUNDARY_EDGES,
+} from './selection-mask.ts';
+import { readCanvasImageDataAtLogicalSize } from './canvas-image-data.ts';
 
 // The colour metric and its colour type now live in `flood-fill.ts` alongside the fill that
 // consumes them, so that a Paint Bucket or a Quick Selection can reach them without importing
@@ -34,6 +40,10 @@ export type MagicWandSelectionOptions = {
 export type MagicWandSelectionResult = {
   /** Every boundary loop in the matched region, including enclosed holes. */
   points: Point[][];
+  /** Exact packed pixels when tracing the boundary would create an unsafe number of vector points. */
+  rasterMask?: RasterSelectionMask;
+  /** Exact exposed edge count up to the limit; larger counts return the limit plus one sentinel. */
+  boundaryEdgeCount: number;
   selectedPixelCount: number;
   sampleColor: RgbaColor;
   bounds: Pos;
@@ -162,6 +172,21 @@ export function createMagicWandSelectionFromImageData(
 
   if (maskResult.selectedPixelCount === 0) return null;
 
+  const boundaryEdgeCount = countSelectionBoundaryEdges(maskResult.mask, width, height, maskResult.bounds);
+  if (boundaryEdgeCount > MAX_VECTOR_SELECTION_BOUNDARY_EDGES) {
+    const rasterMask = encodeRasterSelectionMask(maskResult.mask, width, height, maskResult.bounds);
+    if (!rasterMask) return null;
+
+    return {
+      points: [],
+      rasterMask,
+      boundaryEdgeCount,
+      selectedPixelCount: maskResult.selectedPixelCount,
+      sampleColor: maskResult.sampleColor,
+      bounds: maskResult.bounds,
+    };
+  }
+
   const loops = createBoundaryLoops(maskResult.mask, width, height, maskResult.bounds);
   const points = loops
     .map((contour) => simplifyClosedPath(contour, options.smoothing ?? 0))
@@ -170,6 +195,7 @@ export function createMagicWandSelectionFromImageData(
 
   return {
     points,
+    boundaryEdgeCount,
     selectedPixelCount: maskResult.selectedPixelCount,
     sampleColor: maskResult.sampleColor,
     bounds: maskResult.bounds,
@@ -179,22 +205,9 @@ export function createMagicWandSelectionFromImageData(
 export function createMagicWandSelectionFromCanvas(
   canvas: HTMLCanvasElement | null,
   seed: Point,
+  logicalSize: Size,
   options: MagicWandSelectionOptions = {}
 ): MagicWandSelectionResult | null {
-  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return null;
-
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
-
-  try {
-    return createMagicWandSelectionFromImageData(ctx.getImageData(0, 0, canvas.width, canvas.height), seed, options);
-  } catch (error) {
-    // `getImageData` throws on a tainted or zero-area canvas, and the caller
-    // (`MagicWandToolArea.tsx:58`) reads `null` as "no selection", so a failure
-    // here is a click that selects nothing and says nothing. HANDOFF.md §98: the
-    // console is the only error channel, so the null is not the report. One line
-    // per click, and a click is one user intent.
-    console.error(error);
-    return null;
-  }
+  const imageData = readCanvasImageDataAtLogicalSize(canvas, logicalSize);
+  return imageData ? createMagicWandSelectionFromImageData(imageData, seed, options) : null;
 }

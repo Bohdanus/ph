@@ -6,20 +6,25 @@ import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import {
+  createCommittedRasterSelection,
   createCommittedPolygonSelectionFromContours,
   getActiveSelection,
-  getSelectionAbsoluteContours,
 } from '../../util/selection.ts';
-import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
+import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { readCanvasImageDataAtLogicalSize } from '../../util/canvas-image-data.ts';
+import { createSelectionRasterOutlineCanvas, type SelectionRasterOutline } from '../../hooks/useSelectionAnts.ts';
 import {
   QUICK_SELECTION_SOURCE_TOOL,
+  appendQuickSelectionStrokeSeeds,
   createQuickSelectionAccumulator,
   createQuickSelectionPolygon,
+  createQuickSelectionStrokeSeedSampler,
   growAlongStroke,
-  rasterizeSelectionMask,
-  sampleStrokeSeeds,
+  rasterizeSelectionState,
   type QuickSelectionAccumulator,
+  type QuickSelectionStrokeSeedSampler,
+  type QuickSelectionToolArgs,
 } from '../../tools/quickSelection.ts';
 
 type QuickSelectionToolAreaProps = {
@@ -36,24 +41,6 @@ type QuickSelectionToolAreaProps = {
  * pixels, and the right answer for a selection tool in all three is a stroke that selects
  * nothing rather than a throw mid-gesture.
  */
-function readDocumentImageData(canvas: HTMLCanvasElement | null): ImageData | null {
-  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return null;
-
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
-
-  try {
-    return ctx.getImageData(0, 0, canvas.width, canvas.height);
-  } catch (error) {
-    // Same shape as `magicWand.ts` and `magneticLasso.ts`: the `null` propagates
-    // to the paint path at :151, which then has no image data to grow a region
-    // from and produces no selection. Reported per HANDOFF.md §98 rather than
-    // left to be read as a quiet no-op.
-    console.error(error);
-    return null;
-  }
-}
-
 /**
  * The grown region's outline, drawn as a closed path.
  *
@@ -85,24 +72,42 @@ function drawRegionPreview(ctx: CanvasRenderingContext2D, contours: Point[][]): 
   ctx.restore();
 }
 
+function drawRasterRegionPreview(
+  ctx: CanvasRenderingContext2D,
+  preview: { outline: SelectionRasterOutline; x: number; y: number }
+): void {
+  ctx.save();
+  ctx.drawImage(preview.outline.canvas, preview.x, preview.y, preview.outline.width, preview.outline.height);
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.fillStyle = 'rgba(0,123,255,0.95)';
+  ctx.fillRect(preview.x, preview.y, preview.outline.width, preview.outline.height);
+  ctx.restore();
+}
+
 export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelectionToolAreaProps) => {
   const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame, activeSelectionId }, dispatch] =
     useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { getToolArgs } = useCurrentTool();
-  const { commitSelection } = useSelectionHistory();
+  const { clearSelections, commitSelection } = useSelectionHistory();
   const args = getToolArgs('quick-selection');
 
-  const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid } = usePointerPosition({
-    ref: containerRef,
-    imageSize: totalSize,
-  });
+  const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid, releasePointer } =
+    usePointerPosition({
+      ref: containerRef,
+      imageSize: totalSize,
+    });
 
   const pointerIdRef = useRef<number | null>(null);
-  const strokeRef = useRef<Point[]>([]);
+  const seedSamplerRef = useRef<QuickSelectionStrokeSeedSampler | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const accumulatorRef = useRef<QuickSelectionAccumulator | null>(null);
+  const baseSelectionIdRef = useRef<string | null>(null);
+  const strokeModeRef = useRef<QuickSelectionToolArgs['mode'] | null>(null);
+  const strokeToleranceRef = useRef<number>(args?.tolerance ?? 0);
+  const selectionChangedRef = useRef(false);
   const previewPointsRef = useRef<Point[][] | null>(null);
+  const previewRasterRef = useRef<{ outline: SelectionRasterOutline; x: number; y: number } | null>(null);
 
   /**
    * Repaint the whole overlay: the live preview, and nothing else.
@@ -119,13 +124,20 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
    * committed geometry follows the store on the ants loop instead.
    */
   const redrawOverlay = useCallback(
-    ({ previewPoints }: { previewPoints?: Point[][] | null } = {}) => {
+    ({
+      previewPoints,
+      previewRaster,
+    }: {
+      previewPoints?: Point[][] | null;
+      previewRaster?: { outline: SelectionRasterOutline; x: number; y: number } | null;
+    } = {}) => {
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       resetOverlayAlpha(ctx);
-      if (previewPoints && previewPoints.length > 0) drawRegionPreview(ctx, previewPoints);
+      if (previewRaster) drawRasterRegionPreview(ctx, previewRaster);
+      else if (previewPoints && previewPoints.length > 0) drawRegionPreview(ctx, previewPoints);
     },
     [overlayCtxRef]
   );
@@ -133,34 +145,48 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
   /**
    * Re-seed along the stroke and repaint what grew.
    *
-   * The trace is the expensive half of this, and it only runs when a seed actually
-   * contributed a region: a dab that lands on pixels the accumulator already holds is
-   * skipped inside `growAlongStroke`, so the pointer moving over its own selection
-   * repaints nothing.
+   * The trace is the expensive half of this, and it only runs when the accumulated mask
+   * changes. Overlapping fills may still run because a different seed colour can extend a
+   * selection across a gradient, but they do not retrace or repaint an unchanged outline.
    */
-  function growStroke(): void {
+  function growStroke(point: Point, includeEndpoint = false): boolean {
     const accumulator = accumulatorRef.current;
     const imageData = imageDataRef.current;
-    if (!accumulator || !imageData || !args) return;
+    const seedSampler = seedSamplerRef.current;
+    if (!accumulator || !imageData || !seedSampler) return false;
 
-    const seeds = sampleStrokeSeeds(strokeRef.current, args.size);
+    const seeds = appendQuickSelectionStrokeSeeds(seedSampler, point, includeEndpoint);
+    if (seeds.length === 0) return false;
     const grownRegions = growAlongStroke(accumulator, imageData, seeds, {
-      tolerance: args.tolerance,
-      mode: args.mode,
+      tolerance: strokeToleranceRef.current,
+      mode: strokeModeRef.current ?? 'add',
     });
-    if (grownRegions === 0) return;
+    if (grownRegions === 0) return false;
+    selectionChangedRef.current = true;
 
     const polygon = createQuickSelectionPolygon(accumulator.mask, accumulator.width, accumulator.height);
-    previewPointsRef.current = polygon ? polygon.points : null;
-    redrawOverlay({ previewPoints: previewPointsRef.current });
+    if (polygon?.rasterMask) {
+      const outline = createSelectionRasterOutlineCanvas(polygon.rasterMask);
+      previewRasterRef.current = outline ? { outline, x: polygon.bounds.x - 1, y: polygon.bounds.y - 1 } : null;
+      previewPointsRef.current = null;
+    } else {
+      previewRasterRef.current = null;
+      previewPointsRef.current = polygon ? polygon.points : null;
+    }
+    redrawOverlay({ previewPoints: previewPointsRef.current, previewRaster: previewRasterRef.current });
+    return true;
   }
 
   function resetGesture() {
     pointerIdRef.current = null;
-    strokeRef.current = [];
+    seedSamplerRef.current = null;
     imageDataRef.current = null;
     accumulatorRef.current = null;
+    baseSelectionIdRef.current = null;
+    strokeModeRef.current = null;
+    selectionChangedRef.current = false;
     previewPointsRef.current = null;
+    previewRasterRef.current = null;
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -169,36 +195,56 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     event.preventDefault();
 
-    const imageData = readDocumentImageData(canvasRef.current);
-    if (!imageData) return;
+    let draftStarted = false;
+    try {
+      const imageData = readCanvasImageDataAtLogicalSize(canvasRef.current, totalSize);
+      if (!imageData) {
+        // The hook captured the pointer before the readback. No component pointer id has
+        // been installed yet, so pointer-up cannot reach its normal release path.
+        releasePointer();
+        return;
+      }
 
-    const size = { width: imageData.width, height: imageData.height };
-    // The active selection is the stroke's starting mask, which is what makes `add` extend
-    // it and `subtract` shrink it. With nothing active the base is empty, and an empty
-    // base makes a `subtract` stroke select nothing — the same no-op Photoshop gives a
-    // subtract brush with no selection to subtract from.
-    const activeSelection = getActiveSelection(selections, activeSelectionId);
-    // Stored points are document-space; the rasterizer and stroke seeds use frame-local coordinates.
-    const baseContours = activeSelection
-      ? getSelectionAbsoluteContours(activeSelection).map((contour) =>
-          contour.map((point) => documentToCanvasPoint(point, documentFrame))
-        )
-      : [];
-    const baseMask = baseContours.some((contour) => contour.length >= 3)
-      ? rasterizeSelectionMask(baseContours, size)
-      : null;
+      const size = { width: imageData.width, height: imageData.height };
+      // The active selection is the stroke's starting mask, which is what makes `add` extend
+      // it and `subtract` shrink it. With nothing active the base is empty, and an empty
+      // base makes a `subtract` stroke select nothing — the same no-op Photoshop gives a
+      // subtract brush with no selection to subtract from.
+      const activeSelection = getActiveSelection(selections, activeSelectionId);
+      // Stored points are document-space; the rasterizer and stroke seeds use frame-local coordinates.
+      const baseMask = activeSelection
+        ? rasterizeSelectionState(activeSelection, size, { x: documentFrame.x, y: documentFrame.y })
+        : null;
+      const accumulator = createQuickSelectionAccumulator(size, baseMask);
+      const seedSampler = createQuickSelectionStrokeSeedSampler(args.size);
+      const point = getLocalCoords(event);
 
-    pointerIdRef.current = typeof event.pointerId === 'number' ? event.pointerId : null;
-    strokeRef.current = [getLocalCoords(event)];
-    imageDataRef.current = imageData;
-    accumulatorRef.current = createQuickSelectionAccumulator(size, baseMask);
-    previewPointsRef.current = null;
+      pointerIdRef.current = typeof event.pointerId === 'number' ? event.pointerId : null;
+      imageDataRef.current = imageData;
+      accumulatorRef.current = accumulator;
+      baseSelectionIdRef.current = activeSelection?.id ?? null;
+      strokeModeRef.current = args.mode;
+      strokeToleranceRef.current = args.tolerance;
+      seedSamplerRef.current = seedSampler;
+      selectionChangedRef.current = false;
+      previewPointsRef.current = null;
+      previewRasterRef.current = null;
 
-    dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: QUICK_SELECTION_SOURCE_TOOL } });
+      dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: QUICK_SELECTION_SOURCE_TOOL } });
+      draftStarted = true;
 
-    // A click is a complete stroke here, so the press point's own dab is grown before
-    // the pointer has moved at all.
-    growStroke();
+      // A click is a complete stroke here, so the press point's own dab is grown before
+      // the pointer has moved at all.
+      growStroke(point);
+    } catch (error) {
+      // Setup or the initial preview can fail after the hook has captured the pointer. Give
+      // it back even when the component never reaches its pointer-up handler.
+      resetGesture();
+      releasePointer();
+      if (draftStarted) dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+      redrawOverlay();
+      console.error('Unable to start Quick Selection stroke', error);
+    }
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -206,8 +252,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     if (pointerIdRef.current !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
     if (!isPointerMoveValid(event)) return;
 
-    strokeRef.current.push(getLocalCoords(event));
-    growStroke();
+    growStroke(getLocalCoords(event));
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -217,24 +262,47 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
     // The release position can carry a seed the last move did not, so the stroke is grown
     // once more before it is read for the commit. Nothing is written by that call.
-    growStroke();
+    growStroke(getLocalCoords(event), true);
 
     const accumulator = accumulatorRef.current;
-    const polygon = accumulator
-      ? createQuickSelectionPolygon(accumulator.mask, accumulator.width, accumulator.height)
-      : null;
+    const selectionChanged = selectionChangedRef.current;
+    const polygon =
+      accumulator && selectionChanged
+        ? createQuickSelectionPolygon(accumulator.mask, accumulator.width, accumulator.height)
+        : null;
+    const hasSelectedPixels = accumulator?.mask.some((pixel) => pixel === 1) ?? false;
+    const shouldClearSubtractedSelection =
+      selectionChanged &&
+      !hasSelectedPixels &&
+      strokeModeRef.current === 'subtract' &&
+      baseSelectionIdRef.current !== null;
     resetGesture();
 
     const selection = polygon
-      ? createCommittedPolygonSelectionFromContours({
-          id: uuidv4(),
-          points: polygon.points.map((contour) => contour.map((point) => canvasToDocumentPoint(point, documentFrame))),
-          sourceTool: QUICK_SELECTION_SOURCE_TOOL,
-        })
+      ? polygon.rasterMask
+        ? createCommittedRasterSelection({
+            id: uuidv4(),
+            rasterMask: polygon.rasterMask,
+            pos: {
+              x: polygon.bounds.x + documentFrame.x,
+              y: polygon.bounds.y + documentFrame.y,
+              width: polygon.bounds.width,
+              height: polygon.bounds.height,
+            },
+            sourceTool: QUICK_SELECTION_SOURCE_TOOL,
+          })
+        : createCommittedPolygonSelectionFromContours({
+            id: uuidv4(),
+            points: polygon.points.map((contour) =>
+              contour.map((point) => canvasToDocumentPoint(point, documentFrame))
+            ),
+            sourceTool: QUICK_SELECTION_SOURCE_TOOL,
+          })
       : null;
 
-    if (!selection) {
-      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+    if (!selection || !selectionChanged) {
+      if (shouldClearSubtractedSelection) clearSelections();
+      else dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
       redrawOverlay();
       return;
     }

@@ -44,7 +44,7 @@ const POLYGON_SELECTION: Selection = {
       tolerance: 28,
       smoothing: 1.5,
       selectedPixelCount: 321,
-      boundaryPointCount: 3,
+      boundaryEdgeCount: 3,
       seed: { x: 4, y: 8 },
       sampleColor: { r: 10, g: 20, b: 30, a: 255 },
     },

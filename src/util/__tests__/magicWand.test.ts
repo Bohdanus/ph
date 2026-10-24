@@ -7,6 +7,7 @@ import {
 } from '../magicWand.ts';
 import { getToleranceDistance } from '../flood-fill.ts';
 import { createSelectionAlphaMask } from '../selection.ts';
+import { MAX_VECTOR_SELECTION_BOUNDARY_EDGES } from '../selection-mask.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
   const imageData = {
@@ -594,22 +595,59 @@ describe('boundary smoothing', () => {
 
 describe('createMagicWandSelectionFromCanvas', () => {
   const solidCanvas = (width: number, height: number, color: [number, number, number, number]) =>
-    makeMockCanvas(width, height, { getImageData: vi.fn(() => createImageData(width, height, color)) });
+    makeMockCanvas(width, height, {
+      createImageData: vi.fn((targetWidth: number, targetHeight: number) =>
+        createImageData(targetWidth, targetHeight, color)
+      ) as unknown as CanvasRenderingContext2D['createImageData'],
+      getImageData: vi.fn(() => createImageData(width, height, color)),
+    });
 
   it('reads the whole canvas and returns the same result as the image-data entry point', () => {
     const canvas = solidCanvas(3, 3, [5, 6, 7, 255]);
 
-    const fromCanvas = createMagicWandSelectionFromCanvas(canvas, { x: 1, y: 1 });
+    const fromCanvas = createMagicWandSelectionFromCanvas(canvas, { x: 1, y: 1 }, { width: 3, height: 3 });
     const fromData = createMagicWandSelectionFromImageData(createImageData(3, 3, [5, 6, 7, 255]), { x: 1, y: 1 });
 
     expect(fromCanvas).toEqual(fromData);
     expect(fromCanvas?.selectedPixelCount).toBe(9);
   });
 
+  it('keeps Magic Wand coordinates on the logical grid when the backing bitmap is 2x', () => {
+    const logicalPixels = [
+      [20, 20],
+      [20, 200],
+    ];
+    const backing = createImageData(4, 4, [0, 0, 0, 255]);
+    for (let y = 0; y < 4; y += 1) {
+      for (let x = 0; x < 4; x += 1) {
+        setPixel(backing, x, y, [logicalPixels[Math.floor(y / 2)]![Math.floor(x / 2)]!, 0, 0, 255]);
+      }
+    }
+    const canvas = makeMockCanvas(4, 4, {
+      createImageData: vi.fn((width: number, height: number) =>
+        createImageData(width, height, [0, 0, 0, 255])
+      ) as unknown as CanvasRenderingContext2D['createImageData'],
+      getImageData: vi.fn(() => backing),
+    });
+
+    const result = createMagicWandSelectionFromCanvas(
+      canvas,
+      { x: 0, y: 0 },
+      { width: 2, height: 2 },
+      {
+        tolerance: 0,
+        contiguous: true,
+      }
+    );
+
+    expect(result?.selectedPixelCount).toBe(3);
+    expect(result?.bounds).toEqual({ x: 0, y: 0, width: 2, height: 2 });
+  });
+
   it('requests a frequently-read 2D context so the read-back stays on the CPU', () => {
     const canvas = solidCanvas(2, 2, [0, 0, 0, 255]);
 
-    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 });
+    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 2, height: 2 });
 
     expect(canvas.getContext).toHaveBeenCalledWith('2d', { willReadFrequently: true });
   });
@@ -617,27 +655,29 @@ describe('createMagicWandSelectionFromCanvas', () => {
   it('reads back the full canvas extent', () => {
     const canvas = solidCanvas(2, 3, [0, 0, 0, 255]);
 
-    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 });
+    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 2, height: 3 });
 
     const context = canvas.getContext('2d') as unknown as { getImageData: Mock };
     expect(context.getImageData).toHaveBeenCalledWith(0, 0, 2, 3);
   });
 
   it('returns null for a null canvas', () => {
-    expect(createMagicWandSelectionFromCanvas(null, { x: 0, y: 0 })).toBeNull();
+    expect(createMagicWandSelectionFromCanvas(null, { x: 0, y: 0 }, { width: 2, height: 2 })).toBeNull();
   });
 
   it.each([
     ['zero width', 0, 4],
     ['zero height', 4, 0],
   ])('returns null for a canvas with %s', (_label, width, height) => {
-    expect(createMagicWandSelectionFromCanvas(makeMockCanvas(width, height), { x: 0, y: 0 })).toBeNull();
+    expect(
+      createMagicWandSelectionFromCanvas(makeMockCanvas(width, height), { x: 0, y: 0 }, { width, height })
+    ).toBeNull();
   });
 
   it('returns null when the canvas has no 2D context', () => {
     const canvas = { width: 4, height: 4, getContext: () => null } as unknown as HTMLCanvasElement;
 
-    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 })).toBeNull();
+    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 4, height: 4 })).toBeNull();
   });
 
   it('returns null instead of throwing when the read-back is rejected', () => {
@@ -647,11 +687,13 @@ describe('createMagicWandSelectionFromCanvas', () => {
       },
     });
 
-    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 })).toBeNull();
+    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 4, height: 4 })).toBeNull();
   });
 
   it('propagates the image-data guards for an out-of-bounds seed on a real canvas', () => {
-    expect(createMagicWandSelectionFromCanvas(solidCanvas(3, 3, [0, 0, 0, 255]), { x: 3, y: 0 })).toBeNull();
+    expect(
+      createMagicWandSelectionFromCanvas(solidCanvas(3, 3, [0, 0, 0, 255]), { x: 3, y: 0 }, { width: 3, height: 3 })
+    ).toBeNull();
   });
 });
 
@@ -863,6 +905,39 @@ describe('non-contiguous edge cases', () => {
     expect(createSelectionAlphaMask(result!.points, { width: 5, height: 5 })).toEqual(
       exactColorAlphaMask(imageData, [255, 0, 0, 255])
     );
+  });
+});
+
+describe('high-fragmentation mask fallback', () => {
+  it('keeps a dense non-contiguous selection exact without materializing its contours', () => {
+    const size = 192;
+    const imageData = createImageData(size, size, [0, 0, 0, 255]);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        if ((x + y) % 2 === 0) setPixel(imageData, x, y, [255, 0, 0, 255]);
+      }
+    }
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 0, y: 0 },
+      { tolerance: 0, contiguous: false }
+    );
+
+    expect(result?.selectedPixelCount).toBe((size * size) / 2);
+    expect(result?.points).toEqual([]);
+    expect(result?.boundaryEdgeCount).toBe(MAX_VECTOR_SELECTION_BOUNDARY_EDGES + 1);
+    expect(result?.rasterMask).toMatchObject({ width: size, height: size });
+    expect(
+      createSelectionAlphaMask(
+        {
+          points: [],
+          rasterMask: { ...result!.rasterMask!, x: result!.bounds.x, y: result!.bounds.y },
+        },
+        { width: size, height: size },
+        { antiAlias: false }
+      )
+    ).toEqual(exactColorAlphaMask(imageData, [255, 0, 0, 255]));
   });
 });
 

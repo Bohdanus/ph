@@ -174,18 +174,28 @@ it "SVG
 Add / Subtract / Intersect), inverts, modifies (Feather / Expand / Contract),
 refines, saves to and loads from a named channel, and is viewed in a Channels panel.
 
-**This app:** a selection is a set of closed contour paths with a shared bounding
-box, not a persistent pixel channel — `general-types.ts` — `Selection`. The
-compound paths represent disconnected regions and holes, and the marching ants
-read every contour (`useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`).
-Raster coverage is derived on demand: clipboard and copy-to-layer use
-`copySelectionToCanvas()`, while Fill, Eraser and Clone Stamp use
-`createSelectionAlphaMask()` to clip their pixel operations. Feather is still a
-copy parameter, not a modification of the stored selection.
+**This app:** `Selection` has one authoritative geometry per committed selection
+(`general-types.ts`). Ordinary selections store compound contour paths. Highly
+fragmented Magic Wand and Quick Selection results store a cropped, row-major,
+one-bit-per-pixel mask when their exposed boundary exceeds the safe vector budget;
+those records have no point paths. Both forms preserve disconnected regions and
+holes. Marching ants use contour paths for vector selections and a cached raster
+edge image for mask-backed selections (`useSelectionAnts.ts`). Clipboard and
+copy-to-layer derive alpha from either form through `copySelectionToCanvas()`;
+Fill, Eraser and Clone Stamp use `createSelectionAlphaMask()` to clip pixel
+operations. Feather is still a copy parameter, not a modification of the stored
+selection.
 
 Rectangular, elliptical, and single-row/column marquee drags stay captured when
 the pointer leaves the canvas and commit on a valid release; `pointercancel`
 aborts the gesture.
+
+Magic Wand, Quick Selection, and Magnetic Lasso sample the composited canvas on
+the logical document-pixel grid, including on high-DPI displays. They support
+documents up to 16,777,216 pixels for pixel sampling; larger documents remain
+openable but these three tools do not start, and their options bars show the
+limit. The 100,000,000-pixel document ceiling is higher because canvas loading
+and selection's multi-buffer algorithms have different memory budgets.
 
 **Status:** `divergent`
 
@@ -196,10 +206,16 @@ admits only `history` and `layers`). Quick Selection alone offers Add and
 Subtract. Fill, Eraser and Clone Stamp consume derived masks; Brush, Draw and
 the other paint tools do not apply selection coverage.
 
-The stored selection remains vector contours rather than an authoritative alpha
-channel. Derived masks let several raster tools honor hard-edged selections, but
-there is no persistent per-pixel coverage for channel editing, feathering or the
-full set of Photoshop selection operations.
+The stored selection is not Photoshop's general 8-bit alpha channel. The packed
+mask is binary and used only for high-complexity Magic Wand and Quick Selection
+results; other selections remain vector paths. There is no partial coverage in
+the stored geometry, Quick Mask, channel editing, selection-channel save/load,
+or the full set of Photoshop selection operations. The Magic Wand Smooth control
+simplifies vector-backed contours; the high-complexity mask path keeps the exact
+matched pixels and therefore does not apply that contour simplification. Quick
+Selection rasterizes an active selection by destination pixel-center membership
+before Add or Subtract, so fractional positioning and antialiased edge coverage are
+quantized to binary membership when the brush edits the selection.
 
 ## Layers
 

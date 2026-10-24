@@ -53,15 +53,25 @@ the image" as you paint, so a stroke over a subject snaps to the subject's bound
 spreading across everything of a similar tone.
 <https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html>
 
-**What this app does.** Each dab runs a contiguous flood fill and nothing else
-(`quickSelection.ts` — the `floodFill()` call inside `growAlongStroke()`):
+**What this app does.** Each brush stamp samples nine seed points inside its round tip
+(the centre, four axial points and four diagonal points); each seed runs a contiguous
+flood fill, and the resulting regions are combined. Size therefore changes both the
+distance between stamps and the area from which those regions are seeded. This sparse
+sampling is an app-level approximation inferred from Adobe's adjustable brush tip, not a
+description of Photoshop's unpublished segmentation implementation. The bar also exposes
+an app-specific Tolerance control; Adobe's current desktop Quick Selection page documents
+brush settings instead.
+
+Each seed still uses only colour distance from the seed, not edge strength or gradient
+structure (`quickSelection.ts` — `growAlongStroke()`):
 
 ```ts
 const result = floodFill(imageData, seed, { tolerance, contiguous: true });
 ```
 
 Growth is a function of colour similarity to the seed and of nothing in the image's neighbourhood, so
-there is no term that can stop it at an edge. On any gradient the selection bleeds across the object.
+there is no term that can stop it at an edge. Across a gradient, each additional stamp can grow a
+different region; this can extend a selection but still does not reproduce Photoshop's edge-following.
 
 **Why it is too hard.** Edge-following is not a threshold to tune; it is a different algorithm. It
 needs a gradient or structure tensor over the image, a per-dab decision about whether the local
@@ -69,9 +79,10 @@ neighbourhood supports expansion, and the confidence model that decides when a b
 when it is texture. None of that exists in the app, and every layer of it would sit under the growth
 loop above rather than beside it.
 
-**What the app does instead.** A tolerance-driven flood fill that merges everything within tolerance
-of the seed. Users tune Tolerance to keep it from bleeding, which trades a leaking edge for a ragged
-one. The bar's controls match Photoshop's; the segmentation underneath does not.
+**What the app does instead.** A tolerance-driven union of contiguous fills, with a sparse brush-tip
+seed pattern. Users tune Tolerance to keep it from bleeding, which trades a leaking edge for a ragged
+one. The brush size has a real spatial effect, but this selection growth and the Tolerance control do
+not match Photoshop's documented edge-following behavior.
 
 ### Selection combination modes
 
@@ -164,23 +175,30 @@ describes a pixel-based selection that can represent "area or areas" with 8-bit 
 expectation that a differently colored hole remains unselected follows from those color-match and
 pixel-selection descriptions; Adobe does not prescribe a contour representation.
 
-**What this app does.** `Selection.points` stores compound contour paths. The Magic Wand and Quick
-Selection retain every traced loop, including disconnected components, enclosed holes and nested
-islands. Hit-testing, copy clipping and derived raster masks use even-odd membership; marching ants
-stroke each contour as a boundary. Exact pixel round trips are tested for rings, nested islands and
-disconnected regions. Fill, Eraser and Clone Stamp derive alpha masks when they need to clip pixel
-operations; the stored selection itself is still contour geometry rather than a persistent channel.
+**What this app does.** `Selection` stores one authoritative form: ordinary selections use compound
+contour paths; highly fragmented Magic Wand and Quick Selection results use a cropped, row-major,
+one-bit-per-pixel mask when their exposed boundary exceeds the safe vector budget. The mask-backed
+form has no point paths, so hit-testing, copying, processor clipping, history replay and marching ants
+read that mask directly. Vector selections retain every traced loop, including disconnected
+components, enclosed holes and nested islands; exact pixel round trips are tested for those shapes.
+Fill, Eraser and Clone Stamp derive alpha masks from either selection form when they clip pixel
+operations. The packed representation is binary and exists to keep large boundaries bounded; it is
+not Photoshop's general 8-bit selection channel.
 
 **What remains missing.** Photoshop's selection is a pixel channel, so partial alpha can remain part of
 the active selection. This app does not store per-pixel coverage or expose Quick Mask, selection
 channels, save/load, invert, expand, contract or general combination controls. Quick Selection alone
-provides Add and Subtract. Its contour-based selection model preserves hard-edged traced masks, but a
-nonzero Magic Wand Smooth value simplifies the paths and can differ from the original color-match mask.
+provides Add and Subtract. Before combining a stroke, Quick Selection rasterizes the active selection
+by testing destination pixel centers. A fractional position or antialiased edge therefore becomes
+binary pixel membership, and the committed one-bit mask cannot retain the previous partial alpha.
+Vector-backed Magic Wand results apply the app's nonzero Smooth value by simplifying the paths, which
+can differ from the original color-match mask. The high-complexity mask-backed path keeps exact
+matched pixels and currently bypasses that simplification.
 
-**Architectural boundary.** Any move to persistent pixel coverage must define one authority for that
-coverage across selection history, undo/redo, copy, marching ants, hit-testing and every pixel tool that
-reads a selection. The current derived masks avoid a competing stored representation; the open gap is
-the Photoshop channel and selection-operation model, not loss of traced holes or disconnected regions.
+**Architectural boundary.** The stored geometry is mutually exclusive: a committed selection has
+either vector points or one authoritative packed mask, never both. History, undo/redo, copy, marching
+ants, hit-testing and the supported pixel tools all consume the same form. This binary fallback does
+not provide Photoshop's partial alpha, saved selection channels, or general selection operations.
 
 ### The Pen family
 

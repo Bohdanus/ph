@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { AssetRegistry } from '../asset-registry.ts';
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
-import { deriveSelectionBaseline, selectionSnapshot, type SelectionHistoryArgs } from '../selection-baseline.ts';
+import {
+  deriveSelectionBaseline,
+  isValidSelectionSnapshot,
+  selectionSnapshot,
+  type SelectionHistoryArgs,
+} from '../selection-baseline.ts';
 import type { Selection, SelectionMetadata } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
@@ -197,6 +202,114 @@ describe('selectionSnapshot', () => {
     expect(copied.metadata?.magneticLasso).not.toBe(source.metadata?.magneticLasso);
     // The wrapper element is rebuilt too, not carried over.
     expect(copied).not.toBe(source);
+  });
+
+  it('copies the packed mask object so later metadata writes cannot rewrite the snapshot', () => {
+    const source: Selection = {
+      ...snapshotFixture('raster-clone-me'),
+      points: [],
+      pos: { x: 8, y: 4, width: 2, height: 2 },
+      rasterMask: { width: 2, height: 2, data: 'AQ==' },
+    };
+    const snapshot = selectionSnapshot([source], source.id);
+    const copied = snapshot.selections[0]!;
+
+    expect(copied.rasterMask).toEqual(source.rasterMask);
+    expect(copied.rasterMask).not.toBe(source.rasterMask);
+    source.rasterMask!.data = 'Ag==';
+    expect(copied.rasterMask?.data).toBe('AQ==');
+  });
+
+  it('accepts only canonical masks that fit their committed selection bounds', () => {
+    const canonical: Selection = {
+      ...snapshotFixture('validated-raster'),
+      points: [],
+      geometry: 'polygon',
+      sourceTool: 'magic-wand',
+      pos: { x: 8, y: 4, width: 2, height: 2 },
+      rasterMask: { width: 2, height: 2, data: 'AQ==' },
+    };
+
+    expect(isValidSelectionSnapshot({ selections: [canonical], activeSelectionId: canonical.id })).toBe(true);
+    expect(
+      isValidSelectionSnapshot({
+        selections: [{ ...canonical, pos: { ...canonical.pos, width: 3 } }],
+        activeSelectionId: canonical.id,
+      })
+    ).toBe(false);
+    expect(
+      isValidSelectionSnapshot({
+        selections: [{ ...canonical, rasterMask: { ...canonical.rasterMask!, data: 'AAAA' } }],
+        activeSelectionId: canonical.id,
+      })
+    ).toBe(false);
+    expect(
+      isValidSelectionSnapshot({
+        selections: [{ ...canonical, geometry: 'rectangle' }],
+        activeSelectionId: canonical.id,
+      })
+    ).toBe(false);
+    expect(
+      isValidSelectionSnapshot({
+        selections: [{ ...canonical, sourceTool: 'polygonal-lasso' }],
+        activeSelectionId: canonical.id,
+      })
+    ).toBe(false);
+  });
+
+  it('rejects dangling, inactive, and contradicting active selection IDs', () => {
+    const active = snapshotFixture('active');
+    const inactive = { ...active, isActive: false };
+
+    expect(isValidSelectionSnapshot({ selections: [active], activeSelectionId: 'missing' })).toBe(false);
+    expect(isValidSelectionSnapshot({ selections: [inactive], activeSelectionId: inactive.id })).toBe(false);
+    expect(isValidSelectionSnapshot({ selections: [active], activeSelectionId: null })).toBe(false);
+    expect(isValidSelectionSnapshot({ selections: [active], activeSelectionId: active.id })).toBe(true);
+    expect(isValidSelectionSnapshot({ selections: [inactive], activeSelectionId: null })).toBe(true);
+  });
+
+  it('accepts both the legacy Magic Wand boundary count and the current edge count', () => {
+    const common = {
+      tolerance: 12,
+      smoothing: 1,
+      selectedPixelCount: 9,
+      seed: { x: 2, y: 3 },
+      sampleColor: { r: 4, g: 5, b: 6, a: 255 },
+    };
+    const legacy = {
+      ...snapshotFixture('legacy-wand-metadata'),
+      metadata: { magicWand: { ...common, boundaryPointCount: 12 } },
+    } satisfies Selection;
+    const current = {
+      ...snapshotFixture('current-wand-metadata'),
+      metadata: { magicWand: { ...common, boundaryEdgeCount: 12 } },
+    } satisfies Selection;
+
+    expect(isValidSelectionSnapshot({ selections: [legacy], activeSelectionId: legacy.id })).toBe(true);
+    expect(deriveSelectionBaseline([openDocumentItem(), selectionItem('legacy-wand-baseline', legacy)])).toEqual({
+      selections: [legacy],
+      activeSelectionId: legacy.id,
+    });
+    expect(isValidSelectionSnapshot({ selections: [current], activeSelectionId: current.id })).toBe(true);
+    expect(
+      isValidSelectionSnapshot({
+        selections: [
+          {
+            ...legacy,
+            metadata: {
+              magicWand: { ...common, boundaryPointCount: 12, boundaryEdgeCount: 12 },
+            },
+          },
+        ],
+        activeSelectionId: legacy.id,
+      })
+    ).toBe(false);
+    expect(
+      isValidSelectionSnapshot({
+        selections: [{ ...legacy, metadata: { magicWand: common } as never }],
+        activeSelectionId: legacy.id,
+      })
+    ).toBe(false);
   });
 
   it('freezes the snapshot and its selections array', () => {

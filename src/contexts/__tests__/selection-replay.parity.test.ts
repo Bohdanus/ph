@@ -8,6 +8,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
 import type { Selection } from '../general-types.ts';
 import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION } from '../../util/constants.ts';
+import { encodeRasterSelectionMask } from '../../util/selection-mask.ts';
 
 const layerId = 'layer-1';
 const size = { width: 400, height: 300 };
@@ -89,6 +90,20 @@ function selectionItem(
 const selectionA = selection('selection-a', 10, 20);
 const selectionAMoved = selection('selection-a', 30, 40);
 const selectionB = selection('selection-b', 50, 60);
+const rasterMask = encodeRasterSelectionMask(Uint8Array.from([1, 0, 1, 0, 1, 0]), 3, 2, {
+  x: 0,
+  y: 0,
+  width: 3,
+  height: 2,
+})!;
+const rasterSelection: Selection = {
+  ...selection('raster-selection', 4, 6),
+  sourceTool: 'magic-wand',
+  points: [],
+  pos: { x: 4, y: 6, width: 3, height: 2 },
+  rasterMask,
+};
+const movedRasterSelection: Selection = { ...rasterSelection, pos: { ...rasterSelection.pos, x: 12 } };
 
 const shapes: ReadonlyArray<{ name: string; history: readonly HistoryItem[] }> = [
   {
@@ -117,6 +132,23 @@ const shapes: ReadonlyArray<{ name: string; history: readonly HistoryItem[] }> =
       baseline(),
       selectionItem('create', selectionSnapshot(), selectionSnapshot([selectionA], selectionA.id)),
       selectionItem('clear', selectionSnapshot([selectionA], selectionA.id), selectionSnapshot()),
+    ],
+  },
+  {
+    name: 'raster create, move, and clear chain',
+    history: [
+      baseline(),
+      selectionItem('raster-create', selectionSnapshot(), selectionSnapshot([rasterSelection], rasterSelection.id)),
+      selectionItem(
+        'raster-move',
+        selectionSnapshot([rasterSelection], rasterSelection.id),
+        selectionSnapshot([movedRasterSelection], movedRasterSelection.id)
+      ),
+      selectionItem(
+        'raster-clear',
+        selectionSnapshot([movedRasterSelection], movedRasterSelection.id),
+        selectionSnapshot()
+      ),
     ],
   },
   {

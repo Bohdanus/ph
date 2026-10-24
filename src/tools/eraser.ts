@@ -12,7 +12,7 @@ import {
 import { pixelIndex } from '../util/pixels.ts';
 import { createSelectionAlphaMask } from '../util/selection.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
-import type { Point, SelectionPointPaths, Size } from '../contexts/general-types.ts';
+import type { Point, PositionedRasterSelectionMask, SelectionPointPaths, Size } from '../contexts/general-types.ts';
 import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 /**
@@ -68,6 +68,7 @@ export type EraserToolArgs = {
   /** The committed selection snapshot that clips this stroke during replay. */
   selection?: {
     points: SelectionPointPaths;
+    rasterMask?: PositionedRasterSelectionMask;
     featherRadius: number;
     antiAlias: boolean;
   };
@@ -218,7 +219,7 @@ export const eraser =
     const eraserArgs = args as unknown as EraserToolArgs;
     const { mode } = eraserArgs;
     const selectionMask = eraserArgs.selection
-      ? createSelectionAlphaMask(eraserArgs.selection.points, size, eraserArgs.selection)
+      ? createSelectionAlphaMask(eraserArgs.selection, size, eraserArgs.selection)
       : null;
     const original = selectionMask ? ctx.getImageData(0, 0, size.width, size.height) : null;
 

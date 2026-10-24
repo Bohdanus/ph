@@ -317,6 +317,7 @@ export function cloneSelectionSnapshot(snapshot: SelectionSnapshot): SelectionSn
           points: Object.freeze(
             selection.points.map((contour) => Object.freeze(contour.map((point) => Object.freeze({ ...point }))))
           ),
+          ...(selection.rasterMask ? { rasterMask: Object.freeze({ ...selection.rasterMask }) } : {}),
           pos: Object.freeze({ ...selection.pos }),
           ...(selection.metadata ? { metadata: clonePlainValue(selection.metadata) } : {}),
         })
