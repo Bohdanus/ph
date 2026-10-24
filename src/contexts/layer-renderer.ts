@@ -282,7 +282,7 @@ export function drawLayerSource(
     isRetainedVectorSource &&
     shapeGeometry &&
     operations.length === 0 &&
-    layer.presentationBounds === null &&
+    (presentationBounds === null || presentationBounds === undefined) &&
     (layer.bitmap === null || bitmapIsSourceOnly) &&
     !preferCachedSource &&
     (shapeGeometry.args.toolMode === undefined || shapeGeometry.args.toolMode === 'shape')

@@ -609,6 +609,48 @@ describe('drawLayerSource', () => {
     expect(surfaceContext.strokeRect).toHaveBeenCalledWith(2, 2, 60, 60);
   });
 
+  it('renders a retained shape with omitted presentation bounds at output scale', () => {
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor');
+    const ctx = makeMockCtx({
+      getTransform: vi.fn(() => ({ a: 2, b: 0, c: 0, d: 2 }) as DOMMatrix),
+    });
+    const position = { x: 58, y: 78, width: 64, height: 64 };
+    const layer = {
+      id: 'shape',
+      name: 'Shape',
+      isBedrock: false,
+      bitmap: null,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: position,
+      operations: [],
+      source: {
+        kind: 'tool',
+        pos: position,
+        args: {
+          toolName: 'shape',
+          figure: 'rectangle',
+          alpha: 1,
+          color: '#000000',
+          backgroundColor: null,
+          lineWidth: 2,
+          start: { x: 2, y: 2 },
+          end: { x: 62, y: 62 },
+        },
+      },
+    } as unknown as Layer;
+
+    expect(drawLayerSource(ctx, layer, position)).toBe(true);
+    expect(processor).not.toHaveBeenCalled();
+    const surface = vi.mocked(ctx.drawImage).mock.calls[0]![0] as OffscreenCanvas;
+    const surfaceContext = surface.getContext('2d') as unknown as CanvasRenderingContext2D;
+    expect(surfaceContext.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+  });
+
   it('maps world layer positions into a non-zero document frame', () => {
     const bitmap = { width: 20, height: 10 } as ImageBitmap;
     const ctx = {
