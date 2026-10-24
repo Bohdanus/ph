@@ -19,6 +19,14 @@
 | Groq GPT-OSS 20B             | One project-account smoke returned HTTP 200; `code_interpreter` ran Python. Default urllib UA hit Cloudflare 403/1010; `Mozilla/5.0` worked. This account-specific observation does not prove another account's billing plan. These IDs have paid Developer-plan rates. [Code execution](https://console.groq.com/docs/tool-use/built-in-tools/code-execution) |
 | Kilo pool failures           | `kilo-auto/free` and `recursive/flint-v1.0:free`: empty output; `nvidia/nemotron-3.5-super-vl:free`: HTTP 502. Latency was not recorded. These IDs remain quarantined in `scripts/free-model-pool.mjs`.                                                                                                                                                        |
 
+### Codex free-route check (2026-10-24)
+
+The live catalog listed Laguna S, Xing 4.0, Dots 3 Note Preview, Liquid LFM 2.5 2.6B, and Nemotron 3.5 Lightning at zero input/output price. A harmless 64-token smoke resolved to `kilo/poolside/laguna-s-2.1:free`, returned `finish_reason: stop`, 56 total tokens, and reported $0. This confirms that the route worked for a short prompt at that time; it does not establish ongoing capacity.
+
+A larger 47 KB source-security-review prompt did not complete: Laguna timed out, Kilo Xing returned HTTP 429, and OpenRouter Flint returned its daily free-model limit response. No route produced a completed answer, and there was no paid fallback. Stop after quota/capacity failures rather than rotating accounts or repeatedly retrying. `scripts/free-model-pool.mjs` is a completion client, not a tool-using subagent; the Codex host did not expose a verified free-provider route for subagents during this check. Before trusting an inference result, inspect the resolved provider/model, nonempty final text, `finish_reason`, and usage when reported. Free eligibility comes from the zero-priced catalog entry or explicit Groq free-plan confirmation; absent usage metadata is not a cost report. A catalog row or HTTP 200 alone is not enough.
+
+One local `Jan-v3.5-4B-Q4_K_XL` server started at `127.0.0.1:6767`; a harmless authenticated smoke returned the exact model, `finish_reason: stop`, and 17 tokens. A bounded review prompt of about 4.1K input tokens took roughly 32 seconds, ended with `finish_reason: length`, and included a false claim, so that review was unusable. The server was stopped and the port was checked clear. Local inference avoids provider API charges but uses host resources; trust output only when it is complete and verified, and run no more than one Jan model at a time.
+
 Free-model research returned false quota claims, including NVIDIA production use and Hugging Face credits; other suggested free API quotas lacked official sources. Treat answers as leads; verify quotas with provider docs.
 
 ## Other free capacity

@@ -800,7 +800,8 @@ describe('file locks make one-file-one-agent real', () => {
     const b = boardFor('b');
     b.touchAgent();
     expect(b.checkPath('src/Draw.ts').free).toBe(!caseInsensitive);
-    expect(b.checkPath(`${root}/src/draw.ts`).free).toBe(!caseInsensitive);
+    // This absolute path names the exact lowercase entry that agent a locked.
+    expect(b.checkPath(`${root}/src/draw.ts`).free).toBe(false);
   });
 
   it('reports your own lease as heldByYou, so your lock is not indistinguishable from a free file', () => {
