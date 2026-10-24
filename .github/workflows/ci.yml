@@ -249,9 +249,10 @@ jobs:
   # is not, so the Linux leg fails closed with `Baseline missing for <format> on
   # linux`. Do not skip the spec or record Linux images from an unmatched machine:
   # `ubuntu-latest` is x86-64, while the available EC2 host is ARM64. Record the
-  # Linux set on the matching CI runner/browser/font stack and review every image
-  # before committing it. Until that is done, this is a known red check, not a
-  # green or suppressed gate.
+  # Linux set with the manual `capture-linux-baselines.yml` workflow, then review
+  # every image before committing it. CPU-only rendering is not sufficient: the
+  # available EC2 host is ARM64 and this runner is x86-64. Until then, this is a
+  # known red check, not a green or suppressed gate.
   e2e:
     strategy:
       # One platform failing must not cancel the others; a platform-specific
