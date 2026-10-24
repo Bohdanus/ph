@@ -15,6 +15,8 @@ type ViewGeometry = {
   rectY: number;
   rectWidth: number;
   rectHeight: number;
+  scrollLeft: number;
+  scrollTop: number;
   viewZoom: number;
   viewPanX: number;
   viewPanY: number;
@@ -55,6 +57,8 @@ async function readViewGeometry(page: Page): Promise<ViewGeometry> {
       rectY: read('data-fit-rect-y'),
       rectWidth: read('data-fit-outer-width'),
       rectHeight: read('data-fit-outer-height'),
+      scrollLeft: node.scrollLeft,
+      scrollTop: node.scrollTop,
       viewZoom: read('data-view-effective-zoom'),
       viewPanX: read('data-view-pan-x'),
       viewPanY: read('data-view-pan-y'),
@@ -105,8 +109,8 @@ function documentToPagePoint(view: ViewGeometry, point: Point): Point {
   const rotatedX = relativeX * Math.cos(angle) - relativeY * Math.sin(angle);
   const rotatedY = relativeX * Math.sin(angle) + relativeY * Math.cos(angle);
   return {
-    x: view.rectX + centerX + view.viewPanX + view.viewZoom * rotatedX,
-    y: view.rectY + centerY + view.viewPanY + view.viewZoom * rotatedY,
+    x: view.rectX + centerX + view.viewPanX + view.viewZoom * rotatedX - view.scrollLeft,
+    y: view.rectY + centerY + view.viewPanY + view.viewZoom * rotatedY - view.scrollTop,
   };
 }
 
@@ -397,6 +401,87 @@ test.describe('Zoomed pointer tools', () => {
     await waitForCommittedAnts(page, 'the zoomed elliptical marquee after redo');
     const redoneBounds = await readSelectionBounds(page, selectionView);
     expect(redoneBounds, 'redo restores the marquee in document coordinates').toEqual(bounds);
+  });
+
+  test('pointer tools keep document coordinates after the workspace itself scrolls', async ({ page }) => {
+    await openWorkspace(page);
+    await zoomAndRotate(page);
+
+    const workspace = page.getByTestId('workspace-container');
+    const scroll = await workspace.evaluate((node) => {
+      const maxScrollLeft = node.scrollWidth - node.clientWidth;
+      const maxScrollTop = node.scrollHeight - node.clientHeight;
+      if (maxScrollLeft <= 0 || maxScrollTop <= 0) {
+        throw new Error(
+          `zoomed workspace did not overflow both axes: ${node.scrollWidth}x${node.scrollHeight} scroll area, ` +
+            `${node.clientWidth}x${node.clientHeight} viewport`
+        );
+      }
+      node.scrollLeft = Math.min(24, maxScrollLeft);
+      node.scrollTop = Math.min(36, maxScrollTop);
+      return { scrollLeft: node.scrollLeft, scrollTop: node.scrollTop };
+    });
+    expect(scroll.scrollLeft, 'the workspace has horizontal content overflow').toBeGreaterThan(0);
+    expect(scroll.scrollTop, 'the workspace has vertical content overflow').toBeGreaterThan(0);
+
+    await clickToolButton(page, 'draw');
+    await expectToolSelected(page, 'draw');
+    await setForegroundColor(page, '#ff0000', true);
+    await page.locator('#size-slider').fill('24');
+    await page.locator('#alpha-slider').fill('1');
+
+    const view = await readViewGeometry(page);
+    expect(view.scrollLeft).toBe(scroll.scrollLeft);
+    expect(view.scrollTop).toBe(scroll.scrollTop);
+    const sample = { x: view.documentWidth / 2, y: view.documentHeight / 2 };
+    const sampleViewport = documentToPagePoint(view, sample);
+    const workspaceBox = await workspace.boundingBox();
+    expect(workspaceBox, 'the scrolled workspace remains measurable').not.toBeNull();
+    if (!workspaceBox) return;
+    expect(sampleViewport.x, 'the document centre remains in the horizontal scrollport').toBeGreaterThan(workspaceBox.x);
+    expect(sampleViewport.x, 'the document centre remains in the horizontal scrollport').toBeLessThan(
+      workspaceBox.x + workspaceBox.width
+    );
+    expect(sampleViewport.y, 'the document centre remains in the vertical scrollport').toBeGreaterThan(workspaceBox.y);
+    expect(sampleViewport.y, 'the document centre remains in the vertical scrollport').toBeLessThan(
+      workspaceBox.y + workspaceBox.height
+    );
+
+    await dragDocumentPoints(
+      page,
+      { x: sample.x - 48, y: sample.y },
+      { x: sample.x + 48, y: sample.y },
+      12
+    );
+    await page.mouse.up();
+    await expect
+      .poll(async () => {
+        const raster = await readCanvasRaster(page, 'workspace-canvas');
+        const pixel = documentPixel(raster, view, sample);
+        return pixel[0] > 180 && pixel[1] < 100 && pixel[2] < 100;
+      })
+      .toBe(true);
+    expectRedPixel(
+      documentPixel(await readCanvasRaster(page, 'workspace-canvas'), view, sample),
+      'the scrolled gesture paints the addressed document point'
+    );
+
+    await page.getByTestId('undo-button').click();
+    await expect
+      .poll(async () => {
+        const raster = await readCanvasRaster(page, 'workspace-canvas');
+        const pixel = documentPixel(raster, view, sample);
+        return pixel[0] > 235 && pixel[1] > 235 && pixel[2] > 235;
+      })
+      .toBe(true);
+    await page.getByTestId('redo-button').click();
+    await expect
+      .poll(async () => {
+        const raster = await readCanvasRaster(page, 'workspace-canvas');
+        const pixel = documentPixel(raster, view, sample);
+        return pixel[0] > 180 && pixel[1] < 100 && pixel[2] < 100;
+      })
+      .toBe(true);
   });
 
   test('eyedropper clicks and eraser strokes address the intended pixels after zoom and rotation', async ({ page }) => {

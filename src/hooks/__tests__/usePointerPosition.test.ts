@@ -210,6 +210,31 @@ describe('usePointerPosition', () => {
       });
     });
 
+    it('maps from a measurement-only ref attached after mount', () => {
+      const ref = createRef(null);
+      const { result } = renderHook(() => usePointerPosition({ ref, imageSize: IMAGE }));
+      const measuredStub = {
+        getBoundingClientRect: () => toDomRect({ left: 10, top: 20, width: 400, height: 200 }),
+      } as unknown as HTMLDivElement;
+
+      act(() => {
+        ref.current = measuredStub;
+      });
+
+      // The measurement-only stub deliberately has no scroll or listener API; those must not
+      // be required for a live geometry read or the default zero-scroll coordinate mapping.
+      expect(result.current.getLocalCoordsFromClientPoint(120, 34)).toEqual({ x: 5, y: 7 });
+    });
+
+    it('maps geometry when a measurement-only ref is present at mount', () => {
+      const { el } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
+      Object.defineProperty(el, 'addEventListener', { configurable: true, value: undefined });
+      Object.defineProperty(el, 'removeEventListener', { configurable: true, value: undefined });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      expect(result.current.getLocalCoordsFromClientPoint(120, 34)).toEqual({ x: 5, y: 7 });
+    });
+
     it('keeps the last measured rect when the element is later detached from the ref', () => {
       const { el } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
       const ref = createRef(el);
@@ -233,6 +258,37 @@ describe('usePointerPosition', () => {
       // scale 2, offsetX 100, offsetY 0, rect origin (50, 25)
       const event = pointerEvent(el, { clientX: 50 + 100 + 2 * 10, clientY: 25 + 2 * 20 });
       expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
+    });
+
+    it('accounts for the container scroll offset without adding window scroll twice', () => {
+      const { el } = createContainer({ left: 50, top: 25, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+      el.scrollLeft = 8;
+      el.scrollTop = 20;
+      el.dispatchEvent(new Event('scroll'));
+
+      // The element's own scroll shifts the document point (10, 20) from content-space
+      // coordinates (20, 40) to scrollport-relative coordinates (12, 20), or client (62, 45).
+      const event = pointerEvent(el, { clientX: 50 + 2 * 10 - 8, clientY: 25 + 2 * 20 - 20 });
+      expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
+    });
+
+    it('retains the latest container scroll offset if its ref is detached', () => {
+      const { el } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
+      const ref = createRef(el);
+      const { result } = renderHook(() => usePointerPosition({ ref, imageSize: IMAGE }));
+
+      act(() => {
+        el.scrollLeft = 8;
+        el.scrollTop = 20;
+        el.dispatchEvent(new Event('scroll'));
+        ref.current = null;
+      });
+
+      // Cached rect has offsetX 100, offsetY 0, scale 2. The pointer maps to (5, 7)
+      // only when the cached content-space scroll offset is restored after detachment.
+      const event = pointerEvent(el, { clientX: 10 + 100 + 2 * 5 - 8, clientY: 20 + 2 * 7 - 20 });
+      expect(result.current.getLocalCoords(event)).toEqual({ x: 5, y: 7 });
     });
 
     it('inverts a transient pan and zoom before returning document coordinates', () => {
@@ -261,11 +317,10 @@ describe('usePointerPosition', () => {
       expect(result.current.getLocalCoords(pointerEvent(el, { clientX: -20, clientY: -6 }))).toEqual({ x: -10, y: -3 });
     });
 
-    it('does not compensate for scrolling twice', () => {
-      // `getLocalCoords` reads viewport coordinates, and `getBoundingClientRect()`
-      // is already expressed in the scrolled viewport, so a scrolled page must not
-      // shift the mapping by another scrollX/scrollY. This pins that contract:
-      // adding scroll compensation here would break every scrolled document.
+    it('does not add window scroll to viewport coordinates a second time', () => {
+      // Window scrolling shifts both the event's client coordinates and the element's
+      // getBoundingClientRect() position. Unlike the element's own scrollTop/scrollLeft,
+      // window.scrollX/scrollY must not be added to that already viewport-relative pair.
       const { el } = createContainer({ left: 50, top: 40, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
@@ -639,6 +694,72 @@ describe('usePointerPosition', () => {
       expect(accepted).toBe(true);
     });
 
+    it('tracks pointercancel when the ref appears and changes during an active gesture', () => {
+      const first = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const second = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const ref = createRef(null);
+      const { result } = renderHook(() => usePointerPosition({ ref, imageSize: IMAGE }));
+
+      act(() => {
+        ref.current = first.el;
+        result.current.isPointerDownValid(pointerEvent(first.el, { pointerId: 1 }));
+      });
+      expect(first.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+
+      act(() => {
+        ref.current = second.el;
+      });
+      act(() => {
+        const event = new Event('pointercancel', { bubbles: true });
+        Object.defineProperty(event, 'pointerId', { value: 1 });
+        first.el.dispatchEvent(event);
+      });
+
+      expect(result.current.pointerIdRef.current).toBeNull();
+      expect(first.removed.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+      expect(second.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+
+      let accepted: boolean | undefined;
+      act(() => {
+        accepted = result.current.isPointerDownValid(pointerEvent(second.el, { pointerId: 2 }));
+      });
+      expect(accepted).toBe(true);
+
+      act(() => {
+        const event = new Event('pointercancel', { bubbles: true });
+        Object.defineProperty(event, 'pointerId', { value: 2 });
+        second.el.dispatchEvent(event);
+      });
+      expect(result.current.pointerIdRef.current).toBeNull();
+    });
+
+    it('keeps the active cancellation listener when the ref object is replaced', () => {
+      const first = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const second = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result, rerender } = renderHook(
+        ({ ref }: { ref: RefObject<HTMLDivElement | null> }) => usePointerPosition({ ref, imageSize: IMAGE }),
+        { initialProps: { ref: createRef(first.el) } }
+      );
+
+      act(() => {
+        result.current.isPointerDownValid(pointerEvent(first.el, { pointerId: 1 }));
+      });
+      rerender({ ref: createRef(second.el) });
+
+      expect(first.removed.filter((listener) => listener.type === 'pointercancel')).toHaveLength(0);
+      expect(second.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(0);
+
+      act(() => {
+        const event = new Event('pointercancel', { bubbles: true });
+        Object.defineProperty(event, 'pointerId', { value: 1 });
+        first.el.dispatchEvent(event);
+      });
+
+      expect(result.current.pointerIdRef.current).toBeNull();
+      expect(first.removed.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+      expect(second.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+    });
+
     it('ignores pointercancel from a pointer that is not active', () => {
       const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
@@ -678,6 +799,34 @@ describe('usePointerPosition', () => {
       const { added } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       renderHook(() => usePointerPosition({ ref: createRef(null), imageSize: IMAGE }));
       expect(added.filter((l) => l.type === 'pointercancel')).toHaveLength(0);
+    });
+  });
+
+  describe('container scroll listener', () => {
+    it('registers once and removes the same handler on unmount', () => {
+      const { el, added, removed } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { unmount } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const registered = added.find((listener) => listener.type === 'scroll');
+      expect(registered).toBeDefined();
+      expect(added.filter((listener) => listener.type === 'scroll')).toHaveLength(1);
+
+      unmount();
+
+      const unregistered = removed.find((listener) => listener.type === 'scroll');
+      expect(unregistered?.handler).toBe(registered?.handler);
+      expect(removed.filter((listener) => listener.type === 'scroll')).toHaveLength(1);
+    });
+
+    it('does not subscribe when the ref only supports adding listeners', () => {
+      const { el, added } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
+      Object.defineProperty(el, 'removeEventListener', { configurable: true, value: undefined });
+      const { result, unmount } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      expect(result.current.getLocalCoordsFromClientPoint(120, 34)).toEqual({ x: 5, y: 7 });
+      expect(added.filter((listener) => listener.type === 'scroll')).toHaveLength(0);
+      expect(added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(0);
+      expect(() => unmount()).not.toThrow();
     });
   });
 
