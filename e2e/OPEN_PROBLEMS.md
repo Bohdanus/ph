@@ -618,7 +618,7 @@ still worth having.
 
 ---
 
-## P2 — the visual baselines record no Chrome version, and a pin cannot be invented
+## P2 — Chrome stable remains unpinned and can drift from the visual baselines
 
 `e2e/export/visual-regression.spec.ts`, `.github/workflows/ci.yml`
 
@@ -639,17 +639,25 @@ SVG (386). The AVIF visual case failed at the wasm request instead of producing 
 comparison. This records the current encoder version, not the version used to
 create the baselines.
 
-What is still open is the half that cannot be closed from inside a code change:
-**nothing in this repository records which Chrome produced the committed baselines.** No
-provenance file, no version in `e2e/README.md`, nothing in the commit that added them.
-Pinning `google-chrome-stable` to a version now would be a guess, and a pin that does not
-match the recording version turns a green gate red for a reason nothing in the tree can
-diagnose — strictly worse than the drift risk it pretends to remove.
+The platform capture on 2026-10-24 recorded the baselines at commit
+`6d27cd82c023890cad33717911452130fb6d9063` in
+[mirror run 40134364993](https://github.com/Bohdanus/ph/actions/runs/40134364993):
 
-Closing it is an operator decision and needs a browser: record the version that produced
-the current baselines, write it down next to them, then pin CI to it. **Re-recording the
-baselines under a known version is the only way to establish the record, and that is not a
-change an agent makes.**
+| Platform | Chrome        |
+| -------- | ------------- |
+| Linux    | 156.0.8078.47 |
+| Windows  | 156.0.8078.48 |
+| macOS    | 156.0.8078.48 |
+
+The Windows images were reviewed and regenerated from that run; the Linux and macOS
+images already matched their captured artifacts. This records provenance but does not
+pin it: CI still installs the current OS-managed Chrome stable, and the Linux runner
+received a different patch version from Windows and macOS during the same capture.
+Future stable-channel updates can therefore change encoded pixels. Keep the strict
+comparison budget, use the platform capture workflow to establish new evidence, and
+review any changed images before committing them. Selecting and maintaining an exact
+per-platform Chrome installation policy remains open; do not infer a durable pin from
+this one capture.
 
 ## P3 — no dedicated mobile/HiDPI project; touch coverage and the full 2x suite remain partial
 
