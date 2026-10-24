@@ -475,7 +475,7 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
     expect(store().layers[layerId].bitmap).toBe(owned);
 
     // A replay whose cursor predates the layer's creation drops it from the record.
-    const attemptId = store().beginHistoryReplayPresentation(store().documentId);
+    const attemptId = store().beginHistoryReplayPresentation(store().documentId, store().documentRevision);
     replayTo(dispatch(), {}, {}, -1);
 
     expect(store().layers[layerId]).toBeUndefined();
@@ -1505,11 +1505,11 @@ describe('renderSelector contract', () => {
     let newerAttempt = 0;
     let publication!: Promise<DurableNavigationPresentationOutcome>;
     act(() => {
-      olderAttempt = store().beginHistoryReplayPresentation(store().documentId);
+      olderAttempt = store().beginHistoryReplayPresentation(store().documentId, store().documentRevision);
       publication = store().publishDurableNavigationPresentation(olderAttempt);
     });
     act(() => {
-      newerAttempt = store().beginHistoryReplayPresentation(store().documentId);
+      newerAttempt = store().beginHistoryReplayPresentation(store().documentId, store().documentRevision);
     });
 
     let outcome: DurableNavigationPresentationOutcome | undefined;
@@ -1532,19 +1532,24 @@ describe('renderSelector contract', () => {
     });
   });
 
-  it('scopes pending replay ownership to the document that started it', () => {
+  it('scopes pending replay ownership to the document identity and revision that started it', () => {
     const { store, dispatch } = renderWithProbe();
     replaceDocument(dispatch(), {}, 'doc-1');
 
-    const attemptId = store().beginHistoryReplayPresentation(store().documentId);
-    expect(store().hasPendingHistoryReplayPresentation('doc-1')).toBe(true);
+    const firstDocumentRevision = store().documentRevision;
+    const attemptId = store().beginHistoryReplayPresentation(store().documentId, firstDocumentRevision);
+    expect(store().hasPendingHistoryReplayPresentation('doc-1', firstDocumentRevision)).toBe(true);
 
-    replaceDocument(dispatch(), {}, 'doc-2');
+    // Replacing a document can preserve its ID. The revision is the generation
+    // that distinguishes the replacement from the pending replay's owner.
+    replaceDocument(dispatch(), {}, 'doc-1');
+    const replacementDocumentRevision = store().documentRevision;
 
-    expect(store().hasPendingHistoryReplayPresentation('doc-1')).toBe(true);
-    expect(store().hasPendingHistoryReplayPresentation('doc-2')).toBe(false);
+    expect(replacementDocumentRevision).toBeGreaterThan(firstDocumentRevision);
+    expect(store().hasPendingHistoryReplayPresentation('doc-1', firstDocumentRevision)).toBe(true);
+    expect(store().hasPendingHistoryReplayPresentation('doc-1', replacementDocumentRevision)).toBe(false);
     store().cancelHistoryReplayPresentation(attemptId);
-    expect(store().hasPendingHistoryReplayPresentation('doc-1')).toBe(false);
+    expect(store().hasPendingHistoryReplayPresentation('doc-1', firstDocumentRevision)).toBe(false);
   });
 
   it('retains a published projection lease until its document exits', async () => {

@@ -243,12 +243,12 @@ export type StoreData = {
   /** Internal adoption registration; the action is not part of public dispatch. */
   adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => void;
   publishDurableNavigationPresentation: (attemptId?: number) => Promise<DurableNavigationPresentationOutcome>;
-  /** Starts a unique, document-scoped replay attempt so older work cannot affect its replacement. */
-  beginHistoryReplayPresentation: (documentId: string) => number;
+  /** Starts a unique replay attempt scoped to a document generation. */
+  beginHistoryReplayPresentation: (documentId: string, documentRevision: number) => number;
   /** True only while the supplied attempt is the current, unfinished replay. */
   isHistoryReplayPresentationCurrent: (attemptId: number) => boolean;
-  /** Whether this document has replay work still waiting for publication or finalization. */
-  hasPendingHistoryReplayPresentation: (documentId: string) => boolean;
+  /** Whether this document generation has replay work waiting for publication or finalization. */
+  hasPendingHistoryReplayPresentation: (documentId: string, documentRevision: number) => boolean;
   /** Ends the current attempt without retiring caches when its publication became stale. */
   cancelHistoryReplayPresentation: (attemptId: number) => void;
   /** Retire replay-departed caches after accepted pixels or a completed rollback. */
@@ -1477,14 +1477,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const historyReplayAttemptRef = useRef(0);
   const historyReplayAttemptPendingRef = useRef(false);
   const historyReplayAttemptDocumentIdRef = useRef<string | null>(null);
+  const historyReplayAttemptDocumentRevisionRef = useRef<number | null>(null);
   const isHistoryReplayPresentationCurrent = (attemptId: number) =>
     historyReplayAttemptPendingRef.current && attemptId === historyReplayAttemptRef.current;
-  const hasPendingHistoryReplayPresentation = (documentId: string) =>
-    historyReplayAttemptPendingRef.current && historyReplayAttemptDocumentIdRef.current === documentId;
+  const hasPendingHistoryReplayPresentation = (documentId: string, documentRevision: number) =>
+    historyReplayAttemptPendingRef.current &&
+    historyReplayAttemptDocumentIdRef.current === documentId &&
+    historyReplayAttemptDocumentRevisionRef.current === documentRevision;
   const cancelHistoryReplayPresentation = (attemptId: number) => {
     if (attemptId === historyReplayAttemptRef.current) {
       historyReplayAttemptPendingRef.current = false;
       historyReplayAttemptDocumentIdRef.current = null;
+      historyReplayAttemptDocumentRevisionRef.current = null;
     }
   };
   // Presentation ownership is provider-scoped, not document-scoped. A document
@@ -2253,10 +2257,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       attemptId
     );
   };
-  const beginHistoryReplayPresentation = (documentId: string): number => {
+  const beginHistoryReplayPresentation = (documentId: string, documentRevision: number): number => {
     historyReplayAttemptRef.current += 1;
     historyReplayAttemptPendingRef.current = true;
     historyReplayAttemptDocumentIdRef.current = documentId;
+    historyReplayAttemptDocumentRevisionRef.current = documentRevision;
     return historyReplayAttemptRef.current;
   };
   const finalizeHistoryReplayPresentation = (token: HistoryReplayPresentationToken): boolean => {
@@ -2265,6 +2270,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (
       latest.documentId !== token.documentId ||
       latest.documentRevision !== token.documentRevision ||
+      historyReplayAttemptDocumentIdRef.current !== token.documentId ||
+      historyReplayAttemptDocumentRevisionRef.current !== token.documentRevision ||
       latest.branchRevision !== token.branchRevision ||
       latest.historyIndex !== token.historyIndex
     ) {
@@ -2272,6 +2279,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     historyReplayAttemptPendingRef.current = false;
     historyReplayAttemptDocumentIdRef.current = null;
+    historyReplayAttemptDocumentRevisionRef.current = null;
     retireDepartedPresentationBitmaps(presentationScope, latest.documentId, latest);
     return true;
   };

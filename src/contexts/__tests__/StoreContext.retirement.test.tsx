@@ -184,7 +184,8 @@ function replay(
   branchRevision = 0,
   existingAttemptId?: number
 ): number {
-  const attemptId = existingAttemptId ?? store().beginHistoryReplayPresentation(store().documentId);
+  const attemptId =
+    existingAttemptId ?? store().beginHistoryReplayPresentation(store().documentId, store().documentRevision);
   const payload: ReplayPayload = {
     updates,
     timeline: { entries: [baselineItem({})], cursor, branchRevision },
@@ -442,6 +443,46 @@ describe('retirement after an accepted history replay presentation', () => {
 
     finalizeReplay(store, latestAttemptId);
     expect(closeOf(cache)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let an older document finalizer retire a replacement document cache', async () => {
+    const cacheA = createMockImageBitmap(100, 80);
+    const stagedA = createMockOffscreenCanvas(100, 80);
+    const cacheB = createMockImageBitmap(100, 80);
+    const stagedB = createMockOffscreenCanvas(100, 80);
+    stubPromotion(
+      new Map([
+        [stagedA, cacheA],
+        [stagedB, cacheB],
+      ])
+    );
+    const { store, dispatch } = renderWithProbe();
+
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, stagedA) }, 'doc-1');
+    await publish(store(), [{ layerId, canvas: stagedA }]);
+    const oldAttemptId = replay(store, dispatch(), { layers: {} }, -1);
+    const oldState = store();
+    const oldToken = {
+      attemptId: oldAttemptId,
+      documentId: oldState.documentId,
+      documentRevision: oldState.documentRevision,
+      branchRevision: oldState.branchRevision,
+      historyIndex: oldState.historyIndex,
+    };
+
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, stagedB) }, 'doc-2');
+    await publish(store(), [{ layerId, canvas: stagedB }]);
+    const replacementAttemptId = replay(store, dispatch(), { layers: {} }, -1);
+
+    expect(replacementAttemptId).toBeGreaterThan(oldAttemptId);
+    expect(store().documentId).toBe('doc-2');
+    expect(store().layers[layerId]).toBeUndefined();
+    expect(closeOf(cacheB)).not.toHaveBeenCalled();
+    expect(store().finalizeHistoryReplayPresentation(oldToken)).toBe(false);
+    expect(closeOf(cacheB)).not.toHaveBeenCalled();
+
+    finalizeReplay(store, replacementAttemptId);
+    expect(closeOf(cacheB)).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a same-cursor finalizer that could close a newer replay rollback cache', async () => {

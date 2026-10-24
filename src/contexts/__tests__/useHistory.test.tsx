@@ -57,6 +57,7 @@ const historyReplayAttemptState = vi.hoisted(() => ({
   value: 0,
   pending: false,
   pendingDocumentId: null as string | null,
+  pendingDocumentRevision: null as number | null,
 }));
 
 const storeStateMock = vi.hoisted(() => ({
@@ -90,10 +91,11 @@ const storeStateMock = vi.hoisted(() => ({
         | { status: 'legacy-fallback'; reason: 'stale'; cursor: number }
       >)
     | undefined,
-  beginHistoryReplayPresentation: vi.fn((documentId: string) => {
+  beginHistoryReplayPresentation: vi.fn((documentId: string, documentRevision: number) => {
     historyReplayAttemptState.value += 1;
     historyReplayAttemptState.pending = true;
     historyReplayAttemptState.pendingDocumentId = documentId;
+    historyReplayAttemptState.pendingDocumentRevision = documentRevision;
     historyPresentationEvents.push('begin');
     return historyReplayAttemptState.value;
   }),
@@ -101,13 +103,16 @@ const storeStateMock = vi.hoisted(() => ({
     (attemptId: number) => historyReplayAttemptState.pending && attemptId === historyReplayAttemptState.value
   ),
   hasPendingHistoryReplayPresentation: vi.fn(
-    (documentId: string) =>
-      historyReplayAttemptState.pending && historyReplayAttemptState.pendingDocumentId === documentId
+    (documentId: string, documentRevision: number) =>
+      historyReplayAttemptState.pending &&
+      historyReplayAttemptState.pendingDocumentId === documentId &&
+      historyReplayAttemptState.pendingDocumentRevision === documentRevision
   ),
   cancelHistoryReplayPresentation: vi.fn((attemptId: number) => {
     if (attemptId === historyReplayAttemptState.value) {
       historyReplayAttemptState.pending = false;
       historyReplayAttemptState.pendingDocumentId = null;
+      historyReplayAttemptState.pendingDocumentRevision = null;
     }
   }),
   finalizeHistoryReplayPresentation: vi.fn((token: { attemptId: number }) => {
@@ -115,6 +120,7 @@ const storeStateMock = vi.hoisted(() => ({
     if (token.attemptId !== historyReplayAttemptState.value || !historyReplayAttemptState.pending) return false;
     historyReplayAttemptState.pending = false;
     historyReplayAttemptState.pendingDocumentId = null;
+    historyReplayAttemptState.pendingDocumentRevision = null;
     return true;
   }),
 }));
@@ -292,6 +298,7 @@ function resetStoreState(history: HistoryItem[]) {
   historyReplayAttemptState.value = 0;
   historyReplayAttemptState.pending = false;
   historyReplayAttemptState.pendingDocumentId = null;
+  historyReplayAttemptState.pendingDocumentRevision = null;
   Object.assign(storeStateMock, {
     canvasRef: { current: document.createElement('canvas') },
     history,
@@ -308,10 +315,11 @@ function resetStoreState(history: HistoryItem[]) {
     branchRevision: 0,
     hasUnsavedChanges: false,
     publishDurableNavigationPresentation: undefined,
-    beginHistoryReplayPresentation: vi.fn((documentId: string) => {
+    beginHistoryReplayPresentation: vi.fn((documentId: string, documentRevision: number) => {
       historyReplayAttemptState.value += 1;
       historyReplayAttemptState.pending = true;
       historyReplayAttemptState.pendingDocumentId = documentId;
+      historyReplayAttemptState.pendingDocumentRevision = documentRevision;
       historyPresentationEvents.push('begin');
       return historyReplayAttemptState.value;
     }),
@@ -319,13 +327,16 @@ function resetStoreState(history: HistoryItem[]) {
       (attemptId: number) => historyReplayAttemptState.pending && attemptId === historyReplayAttemptState.value
     ),
     hasPendingHistoryReplayPresentation: vi.fn(
-      (documentId: string) =>
-        historyReplayAttemptState.pending && historyReplayAttemptState.pendingDocumentId === documentId
+      (documentId: string, documentRevision: number) =>
+        historyReplayAttemptState.pending &&
+        historyReplayAttemptState.pendingDocumentId === documentId &&
+        historyReplayAttemptState.pendingDocumentRevision === documentRevision
     ),
     cancelHistoryReplayPresentation: vi.fn((attemptId: number) => {
       if (attemptId === historyReplayAttemptState.value) {
         historyReplayAttemptState.pending = false;
         historyReplayAttemptState.pendingDocumentId = null;
+        historyReplayAttemptState.pendingDocumentRevision = null;
       }
     }),
     finalizeHistoryReplayPresentation: vi.fn((token: { attemptId: number }) => {
@@ -333,6 +344,7 @@ function resetStoreState(history: HistoryItem[]) {
       if (token.attemptId !== historyReplayAttemptState.value || !historyReplayAttemptState.pending) return false;
       historyReplayAttemptState.pending = false;
       historyReplayAttemptState.pendingDocumentId = null;
+      historyReplayAttemptState.pendingDocumentRevision = null;
       return true;
     }),
   });
@@ -1194,10 +1206,11 @@ describe('useHistory undo replay', () => {
       act(() => {
         void result.current.resetHistoryTo(0);
       });
-      expect(storeStateMock.hasPendingHistoryReplayPresentation('document-1')).toBe(true);
+      expect(storeStateMock.hasPendingHistoryReplayPresentation('document-1', 0)).toBe(true);
 
       act(() => {
         state.documentId = 'document-2';
+        state.documentRevision = 1;
       });
       rerender();
 
@@ -1209,8 +1222,9 @@ describe('useHistory undo replay', () => {
       });
 
       expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(1);
-      expect(storeStateMock.hasPendingHistoryReplayPresentation).toHaveBeenLastCalledWith('document-2');
+      expect(storeStateMock.hasPendingHistoryReplayPresentation).toHaveBeenLastCalledWith('document-2', 1);
       expect(historyReplayAttemptState.pendingDocumentId).toBe('document-1');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(0);
       expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
       expect(dispatchedActions()[1].payload).toMatchObject({
         status: 'unavailable',
@@ -1227,6 +1241,114 @@ describe('useHistory undo replay', () => {
 
       expect(historyReplayAttemptState.pending).toBe(false);
       expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not let an older revision pending replay suppress a replacement with the same document ID', async () => {
+      const { state } = setup();
+      const publication = deferred<{ status: 'stale'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn(() => publication.promise);
+      const { result, rerender } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      expect(storeStateMock.hasPendingHistoryReplayPresentation('document-1', 0)).toBe(true);
+
+      // REPLACE_DOCUMENT may reuse the ID, but always advances the revision.
+      act(() => {
+        state.documentRevision = 1;
+      });
+      rerender();
+
+      const failure = new Error('replacement replay conversion failed');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = failure;
+      await act(async () => {
+        await result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.hasPendingHistoryReplayPresentation).toHaveBeenLastCalledWith('document-1', 1);
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-1');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(0);
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedActions()[1].payload).toMatchObject({
+        status: 'unavailable',
+        diagnostics: [expect.objectContaining({ code: 'conversion-failed', message: failure.message })],
+      });
+      expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
+
+      replayControl.failure = null;
+      await act(async () => {
+        publication.resolve({ status: 'stale', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(historyReplayAttemptState.pending).toBe(false);
+      expect(state.documentRevision).toBe(1);
+    });
+
+    it('ignores an older document replay while a replacement replay is still pending', async () => {
+      const { state } = setup();
+      const older = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      const newer = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn((attemptId) =>
+        attemptId === 1 ? older.promise : newer.promise
+      );
+      const { result, rerender } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      act(() => {
+        state.documentId = 'document-2';
+        state.documentRevision = 1;
+      });
+      rerender();
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(2);
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-2');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(1);
+
+      await act(async () => {
+        older.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // The old result cannot draw into the new document, clear its preview,
+      // finalize its replay, roll back its state, or publish an old failure.
+      expect(rendererControl.drawCalls).toHaveLength(0);
+      expect(storeStateMock.clearPreviewLayers).not.toHaveBeenCalled();
+      expect(storeStateMock.finalizeHistoryReplayPresentation).not.toHaveBeenCalled();
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY']);
+      expect(dispatchedTypes()).not.toContain('SET_DURABLE_STATUS');
+      expect(historyReplayAttemptState.pending).toBe(true);
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-2');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(1);
+
+      await act(async () => {
+        newer.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(rendererControl.drawCalls).toHaveLength(1);
+      expect(storeStateMock.clearPreviewLayers).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledWith({
+        attemptId: 2,
+        documentId: 'document-2',
+        documentRevision: 1,
+        branchRevision: 0,
+        historyIndex: 0,
+      });
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY']);
+      expect(historyReplayAttemptState.pending).toBe(false);
     });
 
     it('ignores an older same-cursor publication that completes after its replacement', async () => {
