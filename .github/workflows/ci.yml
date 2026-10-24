@@ -244,21 +244,18 @@ jobs:
   # the page mid-run. A CI runner has no such input, but keeping the same default
   # locally is what stops that class of failure from being misread as flakiness.
   #
-  # MISSING BASELINES. `visual-regression.spec.ts` reads its oracle from
-  # `export-baselines/<platform>/`. Only `darwin/` baselines are committed; the
-  # Linux and Windows directories will be empty on the first CI run, so those legs
-  # hit the fail-as-missing contract (`Baseline missing for <format> on linux`)
-  # until an operator records them. That is a RED first run by design: the test
-  # would rather fail than silently fall back to another OS's rasteriser. Record
-  # each platform's set from a green CI run with:
-  #   npm run test:e2e:update-baselines
-  # and commit the result after reviewing the diff. The macOS leg should be
-  # green from the start — those baselines are already recorded.
+  # MISSING LINUX BASELINES. `visual-regression.spec.ts` reads its oracle from
+  # `export-baselines/<platform>/`. `darwin/` and `win32/` are committed; `linux/`
+  # is not, so the Linux leg fails closed with `Baseline missing for <format> on
+  # linux`. Do not skip the spec or record Linux images from an unmatched machine:
+  # `ubuntu-latest` is x86-64, while the available EC2 host is ARM64. Record the
+  # Linux set on the matching CI runner/browser/font stack and review every image
+  # before committing it. Until that is done, this is a known red check, not a
+  # green or suppressed gate.
   e2e:
     strategy:
-      # One platform failing must not cancel the others; a Windows-specific
-      # rasteriser regression is a finding even alongside an expected Linux
-      # baseline-missing red.
+      # One platform failing must not cancel the others; a platform-specific
+      # rasteriser regression remains useful even while Linux baselines are absent.
       fail-fast: false
       matrix:
         include:

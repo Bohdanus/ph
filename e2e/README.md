@@ -640,11 +640,12 @@ what also builds `tsconfig.e2e.json`. The separate `audit` job runs `npm audit
 Linux, Windows, and macOS. It was `continue-on-error` on the stated grounds that a
 handful of specs failed for documented reasons; those are all fixed and the job went
 on reporting a state the suite no longer had. The matrix runs with `fail-fast: false`
-so one platform's failure does not cancel the others. Only `darwin/` visual-regression
-baselines are committed, so the Linux and Windows legs hit the fail-as-missing
-contract on `visual-regression.spec.ts` until their baselines are recorded; the
-macOS leg should pass from the start. See "Missing baselines" in
-`../.github/workflows/ci.yml` for the recording procedure.
+so one platform's failure does not cancel the others. `darwin/` and `win32/`
+visual-regression baselines are committed; `linux/` is missing, so Linux hits the
+fail-as-missing contract on `visual-regression.spec.ts`. Record Linux baselines on
+the matching `ubuntu-latest` runner/browser/font stack and review the images before
+committing. The available EC2 host is ARM64 and is not a substitute for the CI
+runner. See "Missing Linux baselines" in `../.github/workflows/ci.yml`.
 
 `e2e` installs Chrome (`channel: 'chrome'`, the stable channel Playwright
 installs) and runs the browser tests against the dev server started by
