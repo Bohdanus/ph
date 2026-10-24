@@ -103,7 +103,7 @@ export default defineConfig({
   // A Playwright global timeout still produces the HTML and JSON reports before
   // exiting as a failure. GitHub's job timeout does not, so the two limits must
   // remain ordered. `--debug` resets this to 0 for interactive debugging.
-  globalTimeout: process.env.CI ? 20 * 60_000 : 45 * 60_000,
+  globalTimeout: process.env.CI ? 15 * 60_000 : 45 * 60_000,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
   // machine is not running two browsers per core. The port argument that used to sit

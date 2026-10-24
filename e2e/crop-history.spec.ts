@@ -203,9 +203,20 @@ async function readFit(page: Page): Promise<Fit> {
     .poll(
       () =>
         container.evaluate((node) => {
+          if (!(node instanceof HTMLElement)) return false;
           const canvas = node.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
           if (!canvas) return false;
           const rect = node.getBoundingClientRect();
+          const viewportX = rect.left + node.clientLeft;
+          const viewportY = rect.top + node.clientTop;
+          const viewportWidth = Math.max(
+            0,
+            node.clientWidth + rect.width - (node.offsetWidth > 0 ? node.offsetWidth : Math.round(rect.width))
+          );
+          const viewportHeight = Math.max(
+            0,
+            node.clientHeight + rect.height - (node.offsetHeight > 0 ? node.offsetHeight : Math.round(rect.height))
+          );
           const devicePixelRatio = window.devicePixelRatio || 1;
           const read = (name: string) => {
             const raw = node.getAttribute(name);
@@ -214,10 +225,10 @@ async function readFit(page: Page): Promise<Fit> {
           return (
             read('data-fit-document-width') * devicePixelRatio === canvas.width &&
             read('data-fit-document-height') * devicePixelRatio === canvas.height &&
-            read('data-fit-rect-x') === rect.x &&
-            read('data-fit-rect-y') === rect.y &&
-            read('data-fit-outer-width') === rect.width &&
-            read('data-fit-outer-height') === rect.height
+            read('data-fit-rect-x') === viewportX &&
+            read('data-fit-rect-y') === viewportY &&
+            read('data-fit-outer-width') === viewportWidth &&
+            read('data-fit-outer-height') === viewportHeight
           );
         }),
       { message: 'the published fit matches the current canvas and workspace geometry' }

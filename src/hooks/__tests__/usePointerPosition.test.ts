@@ -28,6 +28,14 @@ function createContainer(rect: Rect) {
   const el = document.createElement('div');
   const getBoundingClientRect = vi.fn(() => toDomRect(rect));
   el.getBoundingClientRect = getBoundingClientRect;
+  Object.defineProperties(el, {
+    clientLeft: { configurable: true, value: 0 },
+    clientTop: { configurable: true, value: 0 },
+    clientWidth: { configurable: true, value: Math.round(rect.width) },
+    clientHeight: { configurable: true, value: Math.round(rect.height) },
+    offsetWidth: { configurable: true, value: Math.round(rect.width) },
+    offsetHeight: { configurable: true, value: Math.round(rect.height) },
+  });
   el.setPointerCapture = vi.fn();
   el.releasePointerCapture = vi.fn();
 
@@ -54,6 +62,25 @@ function createContainer(rect: Rect) {
     });
 
   return { el, getBoundingClientRect, addEventListener, removeEventListener, added, removed };
+}
+
+function setClientBox(
+  el: HTMLDivElement,
+  width: number,
+  height: number,
+  left = 0,
+  top = 0,
+  outerWidth = width,
+  outerHeight = height
+) {
+  Object.defineProperties(el, {
+    clientLeft: { configurable: true, value: left },
+    clientTop: { configurable: true, value: top },
+    clientWidth: { configurable: true, value: width },
+    clientHeight: { configurable: true, value: height },
+    offsetWidth: { configurable: true, value: Math.round(outerWidth) },
+    offsetHeight: { configurable: true, value: Math.round(outerHeight) },
+  });
 }
 
 function createRef(el: HTMLDivElement | null): RefObject<HTMLDivElement | null> {
@@ -260,6 +287,38 @@ describe('usePointerPosition', () => {
       expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
     });
 
+    it('preserves fractional client viewport dimensions when fitting and mapping', () => {
+      const rect = { left: 50.25, top: 25.5, width: 400.75, height: 200.5 };
+      const { el } = createContainer(rect);
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+      const dimensions = result.current.dimensionsRef.current;
+      const event = pointerEvent(el, {
+        clientX: rect.left + dimensions.offsetX + dimensions.scale * 10,
+        clientY: rect.top + dimensions.offsetY + dimensions.scale * 20,
+      });
+
+      expect(dimensions.outerWidth).toBe(rect.width);
+      expect(dimensions.outerHeight).toBe(rect.height);
+      expect(result.current.getLocalCoords(event).x).toBeCloseTo(10);
+      expect(result.current.getLocalCoords(event).y).toBeCloseTo(20);
+    });
+
+    it('fits and maps against the client viewport when borders and scrollbars shrink it', () => {
+      const { el } = createContainer({ left: 50, top: 25, width: 415, height: 220 });
+      setClientBox(el, 400, 200, 2, 3, 415, 220);
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const event = pointerEvent(el, { clientX: 50 + 2 + 100 + 20, clientY: 25 + 3 + 40 });
+
+      expect(result.current.dimensionsRef.current).toMatchObject({
+        outerWidth: 400,
+        outerHeight: 200,
+        scale: 2,
+        offsetX: 100,
+      });
+      expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
+    });
+
     it('accounts for the container scroll offset without adding window scroll twice', () => {
       const { el } = createContainer({ left: 50, top: 25, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
@@ -387,6 +446,7 @@ describe('usePointerPosition', () => {
       expect(onResize).not.toHaveBeenCalled();
 
       getBoundingClientRect.mockReturnValue(toDomRect({ left: 50, top: 25, width: 500, height: 200 }));
+      setClientBox(el, 500, 200);
       act(() => {
         result.current.getLocalCoords(event);
       });
@@ -845,6 +905,8 @@ describe('usePointerPosition', () => {
       expect(observer.observed).toEqual([el]);
       onResize.mockClear();
       getBoundingClientRect.mockClear();
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 0, top: 0, width: 500, height: 100 }));
+      setClientBox(el, 500, 100);
 
       act(() => {
         observer.emit({ width: 500, height: 100 });
@@ -860,19 +922,17 @@ describe('usePointerPosition', () => {
 
       expect(onResize).toHaveBeenCalledTimes(1);
       expect(getBoundingClientRect).toHaveBeenCalled();
-      // The observed rect drives the recompute: 500x100 around a 100x100 image
-      // scales by 1 and leaves a 200px gap on each horizontal side.
+      // The resize notification schedules a live client-viewport measurement: 500x100
+      // around a 100x100 image scales by 1 and leaves a 200px gap on each horizontal side.
       expect(onResize).toHaveBeenCalledWith(
         expect.objectContaining({ scale: 1, innerWidth: 100, innerHeight: 100, offsetX: 200, offsetY: 0 })
       );
     });
 
-    it('sizes the recompute from the observed border box, not the content box or a re-read', () => {
+    it('fits the client viewport rather than the border box after a resize', () => {
       vi.useFakeTimers();
       vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
 
-      // The element's own rect keeps reporting 200x200, so a re-read of
-      // getBoundingClientRect() would silently replace the observed measurement.
       const { el, getBoundingClientRect } = createContainer({ left: 5, top: 6, width: 200, height: 200 });
       const onResize = vi.fn();
 
@@ -881,25 +941,47 @@ describe('usePointerPosition', () => {
       getBoundingClientRect.mockClear();
 
       act(() => {
-        // 4px border: the border box is 400x300, the content box 392x292.
+        getBoundingClientRect.mockReturnValue(toDomRect({ left: 5, top: 6, width: 400, height: 300 }));
+        setClientBox(el, 392, 292, 4, 4, 400, 300);
         ControllableResizeObserver.instances[0].emit({ width: 400, height: 300 }, { width: 392, height: 292 });
         vi.advanceTimersByTime(32);
       });
 
       expect(onResize).toHaveBeenCalledTimes(1);
-      // 400x300 around a 100x100 image scales by 3 and centres the 300x300 image
-      // with a 50px gap on each side. The re-read 200x200 would give scale 2, and
-      // the 392x292 content box would give 2.92.
+      // The 392x292 client viewport around a 100x100 image scales by 2.92 and
+      // centres the 292x292 image with a 50px gap on each side.
       expect(onResize).toHaveBeenCalledWith(
         expect.objectContaining({
-          outerWidth: 400,
-          outerHeight: 300,
-          scale: 3,
-          innerWidth: 300,
-          innerHeight: 300,
+          outerWidth: 392,
+          outerHeight: 292,
+          scale: 2.92,
+          innerWidth: 292,
+          innerHeight: 292,
           offsetX: 50,
           offsetY: 0,
         })
+      );
+    });
+
+    it('recomputes when a scrollbar changes the client width without resizing the border box', () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
+
+      const { el } = createContainer({ left: 5, top: 6, width: 415, height: 300 });
+      setClientBox(el, 400, 300, 0, 0, 415, 300);
+      const onResize = vi.fn();
+      renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
+      onResize.mockClear();
+
+      act(() => {
+        setClientBox(el, 385, 300, 0, 0, 415, 300);
+        ControllableResizeObserver.instances[0].emit({ width: 415, height: 300 }, { width: 385, height: 300 });
+        vi.advanceTimersByTime(32);
+      });
+
+      expect(onResize).toHaveBeenCalledTimes(1);
+      expect(onResize).toHaveBeenCalledWith(
+        expect.objectContaining({ outerWidth: 385, outerHeight: 300, scale: 3, offsetX: 42.5 })
       );
     });
 
@@ -912,12 +994,15 @@ describe('usePointerPosition', () => {
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
       act(() => {
+        getBoundingClientRect.mockReturnValue(toDomRect({ left: 33, top: 44, width: 200, height: 200 }));
+        setClientBox(el, 200, 200);
         ControllableResizeObserver.instances[0].emit({ width: 200, height: 200 });
         vi.advanceTimersByTime(32);
       });
 
       // Container actually resized to 200x200; scale 2, offsets 0.
       getBoundingClientRect.mockReturnValue(toDomRect({ left: 33, top: 44, width: 200, height: 200 }));
+      setClientBox(el, 200, 200);
 
       // scale 2, offsets 0 => x = (clientX - 33) / 2
       expect(result.current.getLocalCoords(pointerEvent(el, { clientX: 33 + 2 * 5, clientY: 44 + 2 * 6 }))).toEqual({
@@ -947,12 +1032,14 @@ describe('usePointerPosition', () => {
       vi.useFakeTimers();
       vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
 
-      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { el, getBoundingClientRect } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const onResize = vi.fn();
       renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
       onResize.mockClear();
 
       act(() => {
+        getBoundingClientRect.mockReturnValue(toDomRect({ left: 0, top: 0, width: 500, height: 500 }));
+        setClientBox(el, 500, 500);
         ControllableResizeObserver.instances[0].emit({ width: 300, height: 300 });
         ControllableResizeObserver.instances[0].emit({ width: 400, height: 400 });
         ControllableResizeObserver.instances[0].emit({ width: 500, height: 500 });

@@ -39,7 +39,17 @@ const REPO_ROOT = realpathSync(join(import.meta.dirname, '..', '..'));
 
 /** A `git` that cannot answer is the fail-open arm, and it is a real directory. */
 function git(cwd, args) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Test Runner',
+      GIT_AUTHOR_EMAIL: 'test-runner@example.invalid',
+      GIT_COMMITTER_NAME: 'Test Runner',
+      GIT_COMMITTER_EMAIL: 'test-runner@example.invalid',
+    },
+  });
   return result.status === 0 ? result.stdout.trim() : null;
 }
 

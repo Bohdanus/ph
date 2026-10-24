@@ -56,6 +56,25 @@ export const FIT_ATTRIBUTES = {
   rectY: 'data-fit-rect-y',
 } as const;
 
+function readContainerViewportRect(element: HTMLElement): Pos {
+  const rect = element.getBoundingClientRect();
+  const clientLeft = typeof element.clientLeft === 'number' ? element.clientLeft : 0;
+  const clientTop = typeof element.clientTop === 'number' ? element.clientTop : 0;
+  const offsetWidth = element.offsetWidth > 0 ? element.offsetWidth : Math.round(rect.width);
+  const offsetHeight = element.offsetHeight > 0 ? element.offsetHeight : Math.round(rect.height);
+  // clientWidth/Height are integer CSSOM values. Add the fractional remainder of
+  // the border box so fit and pointer mapping use the rendered viewport dimensions.
+  const width = clientViewportSize(element.clientWidth, rect.width, offsetWidth);
+  const height = clientViewportSize(element.clientHeight, rect.height, offsetHeight);
+
+  return { x: rect.left + clientLeft, y: rect.top + clientTop, width, height };
+}
+
+function clientViewportSize(clientSize: number, rectSize: number, offsetSize: number): number {
+  if (!Number.isFinite(clientSize)) return rectSize;
+  return Math.max(0, clientSize + rectSize - offsetSize);
+}
+
 export function usePointerPosition<T extends HTMLElement>(
   {
     ref,
@@ -259,66 +278,57 @@ export function usePointerPosition<T extends HTMLElement>(
   const readContainerRect = useCallback((): Pos | null => {
     syncContainerScroll();
     syncPointerCancelListener();
-    const rect = ref.current?.getBoundingClientRect();
-    if (!rect) return containerRectRef.current;
+    const node = ref.current;
+    if (!node) return containerRectRef.current;
+    const rect = readContainerViewportRect(node);
 
     const previous = containerRectRef.current;
     if (
       previous &&
-      previous.x === rect.left &&
-      previous.y === rect.top &&
+      previous.x === rect.x &&
+      previous.y === rect.y &&
       previous.width === rect.width &&
       previous.height === rect.height
     )
       return previous;
 
-    const nextRect: Pos = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
-    containerRectRef.current = nextRect;
-    return nextRect;
+    containerRectRef.current = rect;
+    return rect;
   }, [ref, syncContainerScroll, syncPointerCancelListener]);
 
-  const calculateDimensions = useCallback(
-    (observed?: Pos): Pos | null => {
-      // A rect handed in by the ResizeObserver is the measurement for this event,
-      // so it is used as is. Re-reading `getBoundingClientRect()` here discarded
-      // the observed size and substituted a second, possibly different one.
-      if (observed) containerRectRef.current = observed;
-      const rect = observed ?? readContainerRect() ?? containerRectRef.current;
-      if (!rect) return null;
+  const calculateDimensions = useCallback((): Pos | null => {
+    const rect = readContainerRect() ?? containerRectRef.current;
+    if (!rect) return null;
 
-      const { width: outerWidth, height: outerHeight } = rect;
+    const { width: outerWidth, height: outerHeight } = rect;
 
-      const nextInputs = {
-        outerWidth,
-        outerHeight,
-        imageWidth: imageSize.width,
-        imageHeight: imageSize.height,
-      };
-      const inputsChanged = !fitInputsRef.current || !sameFitInputs(fitInputsRef.current, nextInputs);
-      let dimensionsChanged = false;
-      if (inputsChanged) {
-        const nextDimensions = containFit({ width: outerWidth, height: outerHeight }, imageSize);
-        dimensionsChanged = !sameContainDimensions(dimensionsRef.current, nextDimensions);
-        // Keep the fit object stable between real layout changes. Consumers use this identity to
-        // avoid repainting overlays for a pointer event that only needs a fresh coordinate read.
-        if (dimensionsChanged) dimensionsRef.current = nextDimensions;
-        fitInputsRef.current = nextInputs;
-      }
+    const nextInputs = {
+      outerWidth,
+      outerHeight,
+      imageWidth: imageSize.width,
+      imageHeight: imageSize.height,
+    };
+    const inputsChanged = !fitInputsRef.current || !sameFitInputs(fitInputsRef.current, nextInputs);
+    let dimensionsChanged = false;
+    if (inputsChanged) {
+      const nextDimensions = containFit({ width: outerWidth, height: outerHeight }, imageSize);
+      dimensionsChanged = !sameContainDimensions(dimensionsRef.current, nextDimensions);
+      // Keep the fit object stable between real layout changes. Consumers use this identity to
+      // avoid repainting overlays for a pointer event that only needs a fresh coordinate read.
+      if (dimensionsChanged) dimensionsRef.current = nextDimensions;
+      fitInputsRef.current = nextInputs;
+    }
 
-      publishFit(dimensionsRef.current, rect, imageSize);
-      if (dimensionsChanged) onResizeRef.current?.(dimensionsRef.current);
-      return rect;
-    },
-    [imageSize, publishFit, readContainerRect]
-  );
+    publishFit(dimensionsRef.current, rect, imageSize);
+    if (dimensionsChanged) onResizeRef.current?.(dimensionsRef.current);
+    return rect;
+  }, [imageSize, publishFit, readContainerRect]);
 
   useEffect(() => {
     calculateDimensions();
   }, [calculateDimensions]);
 
-  useResizeObserverRAF(ref, (rect: Pos) => {
-    calculateDimensions(rect);
-  });
+  useResizeObserverRAF(ref, () => calculateDimensions());
 
   /**
    * Drop the tracked pointer, releasing the capture if it is still held.

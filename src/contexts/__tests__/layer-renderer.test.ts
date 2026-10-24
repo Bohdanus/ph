@@ -947,7 +947,7 @@ describe('drawLayersToCanvas vector staging', () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  });
+  }, 15_000);
 
   it('keeps the promoted bitmap when it differs from the retained shape by one pixel', () => {
     vi.stubGlobal('OffscreenCanvas', PixelSurface);

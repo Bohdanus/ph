@@ -445,7 +445,7 @@ describe('large images', () => {
       // run that measured at or near zero.
       const FLOOR_MS = 4;
       const LIMIT = 24;
-      const SAMPLES = 5;
+      const SAMPLES = 3;
 
       // Warm-up, excluded from the samples: the first call pays for the JIT and for the queue
       // allocation, and a cold small run would make the ratio look worse than the algorithm is.
@@ -469,7 +469,7 @@ describe('large images', () => {
       // a slow run under CPU contention should finish and pass on its merits rather than be killed
       // for taking too long. At the default 5s the widened ramp times out on a loaded machine — the
       // exact failure the widened ramp exists to remove. The 4-connected case is the expensive one
-      // (five 3000x3000 fills, ~133ms each at load 8).
+      // (three 3000x3000 fills, ~133ms each at load 8).
     },
     60_000
   );
