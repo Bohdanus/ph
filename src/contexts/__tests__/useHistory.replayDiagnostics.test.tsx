@@ -42,6 +42,8 @@ vi.mock('../../hooks/useDevicePixelRatio.ts', () => ({
   useDevicePixelRatio: vi.fn(() => 1),
 }));
 
+const historyReplayAttemptCounter = vi.hoisted(() => ({ value: 0 }));
+
 const storeStateMock = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
   history: [] as HistoryItem[],
@@ -55,6 +57,7 @@ const storeStateMock = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   branchRevision: 0,
   hasUnsavedChanges: false,
+  beginHistoryReplayPresentation: vi.fn(() => ++historyReplayAttemptCounter.value),
   clearPreviewLayers: vi.fn(),
 }));
 
@@ -132,6 +135,7 @@ function toolEntry(id: string, args: object): HistoryItem {
 const blurEntry = (id = 'tool-blur'): HistoryItem => toolEntry(id, { toolName: 'blur', radius: 3 });
 
 function resetStoreState(history: HistoryItem[]) {
+  historyReplayAttemptCounter.value = 0;
   Object.assign(storeStateMock, {
     canvasRef: { current: document.createElement('canvas') },
     history,
