@@ -5,8 +5,8 @@ import { QuickSelectionToolArea } from '../QuickSelectionToolArea.tsx';
 import { rasterizeSelectionMask } from '../../../tools/quickSelection.ts';
 
 /**
- * The base mask and stroke seeds use frame-local coordinates, so the document-space points from
- * `getActiveSelection` + `getSelectionAbsolutePoints` MUST be mapped through
+ * The base mask and stroke seeds use frame-local coordinates, so each document-space contour from
+ * `getActiveSelection` + `getSelectionAbsoluteContours` MUST be mapped through
  * `documentToCanvasPoint` before `rasterizeSelectionMask` sees them. With a nonzero
  * frame origin the two spaces diverge, and without that single conversion the base
  * mask lands on the wrong pixels (an empty base for `add`, a no-op for `subtract`).
@@ -194,7 +194,7 @@ describe('QuickSelectionToolArea', () => {
     const toolArea = renderQuickSelectionArea();
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
 
-    // The base mask is rasterized exactly once, and it carries the frame-subtracted
+    // The base mask is rasterized exactly once, and it carries one contour with the frame-subtracted
     // vertices rather than the raw document points. The "exactly once" pin is
     // mutation-sensitive on two axes: a missing map leaves the origin un-stripped
     // (120/140 survive), and a doubled map pushes every coordinate negative
@@ -203,10 +203,12 @@ describe('QuickSelectionToolArea', () => {
     expect(rasterizeSelectionMask).toHaveBeenCalledTimes(1);
     expect(rasterizeSelectionMask).toHaveBeenCalledWith(
       [
-        { x: 20, y: 20 },
-        { x: 40, y: 20 },
-        { x: 40, y: 40 },
-        { x: 20, y: 40 },
+        [
+          { x: 20, y: 20 },
+          { x: 40, y: 20 },
+          { x: 40, y: 40 },
+          { x: 20, y: 40 },
+        ],
       ],
       { width: IMAGE_SIZE.width, height: IMAGE_SIZE.height }
     );
@@ -216,7 +218,7 @@ describe('QuickSelectionToolArea', () => {
     const toolArea = renderQuickSelectionArea();
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
 
-    // `getActiveSelection` returns null, so `basePoints` is `[]` and the
+    // `getActiveSelection` returns null, so `baseContours` is `[]` and the
     // `>= 3` guard short-circuits before the rasterizer is ever reached.
     expect(rasterizeSelectionMask).not.toHaveBeenCalled();
   });

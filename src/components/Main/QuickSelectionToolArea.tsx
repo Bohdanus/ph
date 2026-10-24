@@ -6,9 +6,9 @@ import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import {
-  createCommittedPolygonSelection,
+  createCommittedPolygonSelectionFromContours,
   getActiveSelection,
-  getSelectionAbsolutePoints,
+  getSelectionAbsoluteContours,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
 import { resetOverlayAlpha } from '../../util/canvas.ts';
@@ -64,16 +64,19 @@ function readDocumentImageData(canvas: HTMLCanvasElement | null): ImageData | nu
  * `util/selection.ts`'s outline painters because those put a white anchor dot on every
  * vertex, and a traced mask boundary is a staircase with a vertex per step.
  */
-function drawRegionPreview(ctx: CanvasRenderingContext2D, points: Point[]): void {
-  if (points.length < 2) return;
+function drawRegionPreview(ctx: CanvasRenderingContext2D, contours: Point[][]): void {
+  if (!contours.some((points) => points.length >= 2)) return;
 
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let index = 1; index < points.length; index++) {
-    ctx.lineTo(points[index].x, points[index].y);
+  for (const points of contours) {
+    if (points.length < 2) continue;
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let index = 1; index < points.length; index++) {
+      ctx.lineTo(points[index].x, points[index].y);
+    }
+    ctx.closePath();
   }
-  ctx.closePath();
   ctx.strokeStyle = 'rgba(0,123,255,0.95)';
   ctx.lineWidth = 2;
   ctx.setLineDash([6, 4]);
@@ -99,7 +102,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
   const strokeRef = useRef<Point[]>([]);
   const imageDataRef = useRef<ImageData | null>(null);
   const accumulatorRef = useRef<QuickSelectionAccumulator | null>(null);
-  const previewPointsRef = useRef<Point[] | null>(null);
+  const previewPointsRef = useRef<Point[][] | null>(null);
 
   /**
    * Repaint the whole overlay: the live preview, and nothing else.
@@ -116,7 +119,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
    * committed geometry follows the store on the ants loop instead.
    */
   const redrawOverlay = useCallback(
-    ({ previewPoints }: { previewPoints?: Point[] | null } = {}) => {
+    ({ previewPoints }: { previewPoints?: Point[][] | null } = {}) => {
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
 
@@ -176,10 +179,14 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     // subtract brush with no selection to subtract from.
     const activeSelection = getActiveSelection(selections, activeSelectionId);
     // Stored points are document-space; the rasterizer and stroke seeds use frame-local coordinates.
-    const basePoints = activeSelection
-      ? getSelectionAbsolutePoints(activeSelection).map((point) => documentToCanvasPoint(point, documentFrame))
+    const baseContours = activeSelection
+      ? getSelectionAbsoluteContours(activeSelection).map((contour) =>
+          contour.map((point) => documentToCanvasPoint(point, documentFrame))
+        )
       : [];
-    const baseMask = basePoints.length >= 3 ? rasterizeSelectionMask(basePoints, size) : null;
+    const baseMask = baseContours.some((contour) => contour.length >= 3)
+      ? rasterizeSelectionMask(baseContours, size)
+      : null;
 
     pointerIdRef.current = typeof event.pointerId === 'number' ? event.pointerId : null;
     strokeRef.current = [getLocalCoords(event)];
@@ -218,25 +225,13 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
       : null;
     resetGesture();
 
-    // A hole is reported, never papered over: committing the outer contour alone would
-    // cover the pixels the mask reports as unselected, so the stroke is dropped and the
-    // reason is logged. A `Selection` is one point path; see
-    // `createQuickSelectionPolygon`'s doc for the shape that would fix it.
-    if (polygon?.hasHoles) {
-      console.warn(
-        `quick-selection: the grown region has an enclosed hole, which a single-polygon selection cannot ` +
-          `represent, so nothing was committed (${polygon.pixelCount} pixels grown)`
-      );
-    }
-
-    const selection =
-      polygon && !polygon.hasHoles
-        ? createCommittedPolygonSelection({
-            id: uuidv4(),
-            points: polygon.points.map((point) => canvasToDocumentPoint(point, documentFrame)),
-            sourceTool: QUICK_SELECTION_SOURCE_TOOL,
-          })
-        : null;
+    const selection = polygon
+      ? createCommittedPolygonSelectionFromContours({
+          id: uuidv4(),
+          points: polygon.points.map((contour) => contour.map((point) => canvasToDocumentPoint(point, documentFrame))),
+          sourceTool: QUICK_SELECTION_SOURCE_TOOL,
+        })
+      : null;
 
     if (!selection) {
       dispatch({ type: 'CANCEL_SELECTION_DRAFT' });

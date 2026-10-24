@@ -115,9 +115,7 @@ const MagicWand: React.FC<{}> = () => {
         {args.contiguous ? (
           <div>Click a color area to select connected similar pixels.</div>
         ) : (
-          <div role="status">
-            Non-contiguous mode keeps only the largest matching region; results with holes are canceled.
-          </div>
+          <div role="status">Selects matching colors across the image, including disconnected regions.</div>
         )}
         <div className="mt-1 text-[9px] opacity-75">
           {matchingPixelCount

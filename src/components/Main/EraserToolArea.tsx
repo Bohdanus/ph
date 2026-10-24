@@ -8,7 +8,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point } from '../../contexts/general-types.ts';
 import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
-import { getActiveSelection, getSelectionAbsolutePoints } from '../../util/selection.ts';
+import { getActiveSelection, getSelectionAbsoluteContours } from '../../util/selection.ts';
 
 type EraserToolAreaProps = {
   className?: string;
@@ -105,10 +105,12 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     if (!activeSelection) return undefined;
 
     return {
-      points: getSelectionAbsolutePoints(activeSelection).map((point) => ({
-        x: point.x - rasterBounds.x,
-        y: point.y - rasterBounds.y,
-      })),
+      points: getSelectionAbsoluteContours(activeSelection).map((contour) =>
+        contour.map((point) => ({
+          x: point.x - rasterBounds.x,
+          y: point.y - rasterBounds.y,
+        }))
+      ),
       featherRadius: activeSelection.metadata?.featherRadius ?? 0,
       antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
     };

@@ -12,6 +12,7 @@ import {
   copyRectSelectionToCanvas,
   copySelectionToCanvas,
   createCommittedPolygonSelection,
+  createCommittedPolygonSelectionFromContours,
   createCommittedRectangleSelection,
   distanceBetweenPoints,
   drawSelectionAnchors,
@@ -19,14 +20,18 @@ import {
   getActiveRectangularSelection,
   getActiveSelection,
   getSelectionAbsolutePoints,
+  getSelectionAbsoluteContours,
   getSelectionAtPoint,
   getSelectionRect,
   hasSameSelectionGeometry,
   isPointInPolygon,
+  isPointInContours,
+  isPointInSelection,
   moveSelectionAnchor,
   moveSelectionByDelta,
   normalizeRectangleSelectionRect,
   normalizeSelectionPoints,
+  createSelectionAlphaMask,
   type SelectionCanvasSnapshot,
 } from '../selection.ts';
 import { makeMockCanvas, makeMockCtx, makeMockImageData, makeMockOffscreenCanvas } from '@/__tests__/canvas-mock.ts';
@@ -352,6 +357,60 @@ describe('createCommittedPolygonSelection', () => {
         sourceTool: 'polygonal-lasso',
       })
     ).toBeNull();
+  });
+});
+
+describe('compound polygon selections', () => {
+  const rect = (left: number, top: number, right: number, bottom: number): Point[] => [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom },
+  ];
+
+  const contours = [rect(0, 0, 5, 5), rect(1, 1, 4, 4), rect(2, 2, 3, 3), rect(7, 1, 9, 3)];
+
+  it('normalizes every contour against one shared bound without flattening the paths', () => {
+    const created = createCommittedPolygonSelectionFromContours({
+      id: 'compound',
+      points: contours,
+      sourceTool: 'magic-wand',
+    })!;
+
+    // Polygon selections reserve one document pixel around the traced path for the outline.
+    expect(created.pos).toEqual({ x: -1, y: -1, width: 11, height: 7 });
+    expect(getSelectionAbsoluteContours(created)).toEqual(contours);
+    expect(created.points).toHaveLength(4);
+  });
+
+  it('uses even-odd membership for holes, nested islands and disconnected regions', () => {
+    const created = createCommittedPolygonSelectionFromContours({
+      id: 'compound',
+      points: contours,
+      sourceTool: 'magic-wand',
+    })!;
+
+    expect(isPointInSelection({ x: 0.5, y: 0.5 }, created)).toBe(true);
+    expect(isPointInSelection({ x: 1.5, y: 1.5 }, created)).toBe(false);
+    expect(isPointInSelection({ x: 2.5, y: 2.5 }, created)).toBe(true);
+    expect(isPointInSelection({ x: 6.5, y: 1.5 }, created)).toBe(false);
+    expect(isPointInSelection({ x: 7.5, y: 1.5 }, created)).toBe(true);
+    expect(isPointInContours({ x: 1.5, y: 1.5 }, contours)).toBe(false);
+  });
+
+  it('rasterizes disconnected regions and nested holes with matching even-odd coverage', () => {
+    const expected = new Uint8Array(9 * 5);
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 9; x++) {
+        const inOuter = x < 5 && y < 5;
+        const inHole = x >= 1 && x < 4 && y >= 1 && y < 4;
+        const inIsland = x === 2 && y === 2;
+        const inSecondRegion = x >= 7 && x < 9 && y >= 1 && y < 3;
+        if ((inOuter && !inHole) || inIsland || inSecondRegion) expected[y * 9 + x] = 255;
+      }
+    }
+
+    expect(createSelectionAlphaMask(contours, { width: 9, height: 5 }, { antiAlias: false })).toEqual(expected);
   });
 });
 
@@ -1384,6 +1443,44 @@ describe('canvas snapshot helpers', () => {
       );
 
       expect(result!.pos).toEqual({ x: 5, y: 5, width: 10, height: 10 });
+    });
+
+    it('copies every Magic Wand contour with the same even-odd rule used by raster masks', () => {
+      const source = makeMockCanvas(100, 100);
+      const result = copySelectionToCanvas(
+        source,
+        selection({
+          sourceTool: 'magic-wand',
+          pos: { x: 0, y: 0, width: 5, height: 5 },
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 5, y: 0 },
+              { x: 5, y: 5 },
+              { x: 0, y: 5 },
+            ],
+            [
+              { x: 1, y: 1 },
+              { x: 4, y: 1 },
+              { x: 4, y: 4 },
+              { x: 1, y: 4 },
+            ],
+          ],
+        }),
+        dispatchImageSize
+      );
+
+      expect(result!.pos).toEqual({ x: 0, y: 0, width: 5, height: 5 });
+      const ctx = firstConstructed().contexts[0];
+      expect(ctx.clip).toHaveBeenCalledWith('evenodd');
+      expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+      expect(ctx.closePath).toHaveBeenCalledTimes(2);
+      const drawImage = ctx.drawImage as unknown as Mock;
+      expect(drawImage).toHaveBeenCalledTimes(1);
+      const [drawnSource, drawX, drawY] = drawImage.mock.calls[0] as [CanvasImageSource, number, number];
+      expect(drawnSource).toBe(source);
+      expect(Math.abs(drawX)).toBe(0);
+      expect(Math.abs(drawY)).toBe(0);
     });
 
     it('returns null for a selection whose polygon cannot be rasterized', () => {

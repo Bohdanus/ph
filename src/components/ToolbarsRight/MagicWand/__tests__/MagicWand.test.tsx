@@ -198,12 +198,12 @@ describe('MagicWand toolbar', () => {
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
     });
 
-    it('warns that non-contiguous mode keeps only the largest region', () => {
+    it('explains that non-contiguous mode checks matching colors across the image', () => {
       toolArgs.contiguous = false;
       render(<MagicWand />);
 
       expect(screen.getByRole('status')).toHaveTextContent(
-        'Non-contiguous mode keeps only the largest matching region; results with holes are canceled.'
+        'Selects matching colors across the image, including disconnected regions.'
       );
     });
 

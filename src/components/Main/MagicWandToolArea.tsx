@@ -8,7 +8,7 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { MagicWandToolArgs } from '../../tools/magicWand.ts';
 import { createMagicWandSelectionFromCanvas } from '../../util/magicWand.ts';
-import { createCommittedPolygonSelection, drawSelectionAnchors } from '../../util/selection.ts';
+import { createCommittedPolygonSelectionFromContours, drawSelectionAnchors } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type MagicWandToolAreaProps = {
@@ -67,11 +67,11 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
       return;
     }
 
-    const selection = createCommittedPolygonSelection({
+    const selection = createCommittedPolygonSelectionFromContours({
       id: uuidv4(),
       metadata: {
         magicWand: {
-          boundaryPointCount: result.points.length,
+          boundaryPointCount: result.points.reduce((count, contour) => count + contour.length, 0),
           sampleColor: result.sampleColor,
           seed: { x: Math.floor(seed.x + documentFrame.x), y: Math.floor(seed.y + documentFrame.y) },
           selectedPixelCount: result.selectedPixelCount,
@@ -79,7 +79,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
           tolerance: args.tolerance,
         },
       },
-      points: result.points.map((point) => canvasToDocumentPoint(point, documentFrame)),
+      points: result.points.map((contour) => contour.map((point) => canvasToDocumentPoint(point, documentFrame))),
       sourceTool: 'magic-wand',
     });
 

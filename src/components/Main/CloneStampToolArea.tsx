@@ -10,7 +10,7 @@ import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } f
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../tools/cloneStamp.ts';
-import { getActiveSelection, getSelectionAbsolutePoints } from '../../util/selection.ts';
+import { getActiveSelection, getSelectionAbsoluteContours } from '../../util/selection.ts';
 
 type cloneStampToolAreaProps = {
   className?: string;
@@ -223,7 +223,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
   const markerFrameRef = useRef<number | null>(null);
   const selectionSnapshotRef = useRef<
     | {
-        points: Point[];
+        points: Point[][];
         featherRadius: number;
         antiAlias: boolean;
       }
@@ -327,7 +327,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         ? {
             selection: {
               ...selectionSnapshotRef.current,
-              points: documentPointsToLayerLocal(selectionSnapshotRef.current.points, origin),
+              points: selectionSnapshotRef.current.points.map((contour) => documentPointsToLayerLocal(contour, origin)),
             },
           }
         : {}),
@@ -341,7 +341,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
         selectionSnapshotRef.current = activeSelection
           ? {
-              points: getSelectionAbsolutePoints(activeSelection),
+              points: getSelectionAbsoluteContours(activeSelection),
               featherRadius: activeSelection.metadata?.featherRadius ?? 0,
               antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
             }

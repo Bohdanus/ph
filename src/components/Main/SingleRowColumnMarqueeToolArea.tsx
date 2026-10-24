@@ -13,9 +13,8 @@ import type { Point, Selection } from '../../contexts/general-types.ts';
 import {
   createCommittedRectangleSelection,
   getActiveSelection,
-  getSelectionAbsolutePoints,
   hasSameSelectionGeometry,
-  isPointInPolygon,
+  isPointInSelection,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
 import { resetOverlayAlpha } from '../../util/canvas.ts';
@@ -235,7 +234,7 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     if (!selection || selection.geometry !== 'rectangle') return false;
     if (!isSingleRowOrColumnMarqueeRect(getRectOf(selection), totalSize)) return false;
 
-    return isPointInPolygon(point, getSelectionAbsolutePoints(selection));
+    return isPointInSelection(point, selection);
   }
 
   function getRectOf(selection: Selection) {

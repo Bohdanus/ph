@@ -16,7 +16,7 @@ import {
   type QuickSelectionAccumulator,
 } from '../quickSelection.ts';
 import { floodFill } from '../../util/flood-fill.ts';
-import { isPointInPolygon } from '../../util/selection.ts';
+import { isPointInContours } from '../../util/selection.ts';
 import type { Point } from '../../contexts/general-types.ts';
 
 type MockCtx = ReturnType<typeof createMockCanvasContext>;
@@ -418,10 +418,12 @@ describe('traceMaskBoundary', () => {
     const traced = traceMaskBoundary(rectMask(3, 3, [{ left: 1, top: 2, right: 1, bottom: 2 }]), 3, 3)!;
 
     expect(traced.points).toEqual([
-      { x: 1, y: 2 },
-      { x: 2, y: 2 },
-      { x: 2, y: 3 },
-      { x: 1, y: 3 },
+      [
+        { x: 1, y: 2 },
+        { x: 2, y: 2 },
+        { x: 2, y: 3 },
+        { x: 1, y: 3 },
+      ],
     ]);
     expect(traced.pixelCount).toBe(1);
     expect(traced.bounds).toEqual({ x: 1, y: 2, width: 1, height: 1 });
@@ -433,13 +435,14 @@ describe('traceMaskBoundary', () => {
     // pixels exactly rather than straddling their centres.
     const traced = traceMaskBoundary(rectMask(5, 5, [{ left: 0, top: 0, right: 4, bottom: 4 }]), 5, 5)!;
 
-    expect(traced.points).toHaveLength(20);
+    expect(traced.points).toHaveLength(1);
+    expect(traced.points[0]).toHaveLength(20);
     expect(traced.pixelCount).toBe(25);
     expect(traced.loopCount).toBe(1);
     expect(traced.hasHoles).toBe(false);
   });
 
-  it('reports the largest of several disjoint regions', () => {
+  it('retains every disjoint region and bounds all of their contours', () => {
     const traced = traceMaskBoundary(
       rectMask(8, 4, [
         { left: 0, top: 0, right: 1, bottom: 1 },
@@ -452,14 +455,13 @@ describe('traceMaskBoundary', () => {
     expect(traced.pixelCount).toBe(4 + 16);
     expect(traced.loopCount).toBe(2);
     expect(traced.hasHoles).toBe(false);
-    expect(traced.bounds).toEqual({ x: 4, y: 0, width: 4, height: 4 });
-    expect(traced.points).toHaveLength(16);
+    expect(traced.bounds).toEqual({ x: 0, y: 0, width: 8, height: 4 });
+    expect(traced.points.map((contour) => contour.length).sort((a, b) => a - b)).toEqual([8, 16]);
   });
 
-  it('flags an enclosed hole instead of folding it into the outer contour', () => {
-    // A 5x5 block with its middle pixel removed. The outer contour covers 25 squares, the
-    // hole one, and a `Selection` is one point path — so this is the case the flag exists
-    // to refuse.
+  it('flags an enclosed hole and retains both boundary contours', () => {
+    // A 5x5 block with its middle pixel removed. The outer contour and the hole contour
+    // are both carried so the committed compound path can exclude the missing pixel.
     const withHole = rectMask(5, 5, [{ left: 0, top: 0, right: 4, bottom: 4 }]);
     withHole[2 * 5 + 2] = 0;
 
@@ -468,7 +470,7 @@ describe('traceMaskBoundary', () => {
     expect(traced.pixelCount).toBe(24);
     expect(traced.hasHoles).toBe(true);
     expect(traced.loopCount).toBe(2);
-    expect(traced.points).toHaveLength(20);
+    expect(traced.points.map((contour) => contour.length)).toEqual([20, 4]);
   });
 
   it('returns nothing for an empty mask, and refuses a mask that does not fit its size', () => {
@@ -492,8 +494,8 @@ describe('traceMaskBoundary', () => {
 
     expect(countSelected(rasterized)).toBe(16);
     expect(Array.from(rasterized)).toEqual(Array.from(accumulator.mask));
-    expect(isPointInPolygon({ x: 3.5, y: 2.5 }, polygon.points)).toBe(true);
-    expect(isPointInPolygon({ x: 1.5, y: 0.5 }, polygon.points)).toBe(false);
+    expect(isPointInContours({ x: 3.5, y: 2.5 }, polygon.points)).toBe(true);
+    expect(isPointInContours({ x: 1.5, y: 0.5 }, polygon.points)).toBe(false);
   });
 
   it('pixelCount equals countSelected for a single pixel', () => {
@@ -573,7 +575,7 @@ describe('rasterizeSelectionMask', () => {
 });
 
 describe('createQuickSelectionPolygon', () => {
-  it('carries the hole flag through to the caller that has to refuse the commit', () => {
+  it('carries every contour through so an enclosed hole remains unselected', () => {
     const ring = new Uint8Array(25);
     for (let index = 0; index < 25; index++) {
       if (index !== 2 * 5 + 2) ring[index] = 1;
@@ -582,11 +584,8 @@ describe('createQuickSelectionPolygon', () => {
     const polygon = createQuickSelectionPolygon(ring, 5, 5)!;
 
     expect(polygon.hasHoles).toBe(true);
-    expect(polygon.points).toHaveLength(20);
-    // The outer contour of the ring is the whole square, so it covers the hole: committing
-    // it would select 25 pixels for a mask that reports 24. That is the over-selection the
-    // flag is refusing, stated as a fact about the geometry rather than as a policy.
-    expect(isPointInPolygon({ x: 2.5, y: 2.5 }, polygon.points)).toBe(true);
+    expect(polygon.points.map((contour) => contour.length)).toEqual([20, 4]);
+    expect(isPointInContours({ x: 2.5, y: 2.5 }, polygon.points)).toBe(false);
   });
 
   it('borrows the magic wand as its source tool, which is the value that draws no anchors', () => {
@@ -670,7 +669,7 @@ describe('non-finite input handling', () => {
   });
 });
 
-describe('known limitations (it.fails tripwires)', () => {
+describe('contour mask round trips', () => {
   const rectMask = (
     width: number,
     height: number,
@@ -688,9 +687,8 @@ describe('known limitations (it.fails tripwires)', () => {
     return mask;
   };
 
-  it.fails('round-trips a mask with a hole back to the same pixels', () => {
-    // traceMaskBoundary returns only the largest outer contour, so rasterizing it fills the
-    // hole back in. The `hasHoles` flag exists precisely so the caller can refuse this commit.
+  it('round-trips a mask with a hole back to the same pixels', () => {
+    // Every boundary loop is serialized and rasterized with the same even-odd rule.
     const mask = rectMask(5, 5, [{ left: 0, top: 0, right: 4, bottom: 4 }]);
     mask[2 * 5 + 2] = 0;
 
@@ -700,9 +698,23 @@ describe('known limitations (it.fails tripwires)', () => {
     expect(Array.from(rasterized)).toEqual(Array.from(mask));
   });
 
-  it.fails('round-trips a multi-region mask back to the same pixels', () => {
-    // traceMaskBoundary returns only the largest outer contour, so a mask with two disjoint
-    // regions cannot be reconstructed from a single polygon.
+  it('round-trips a nested island inside a hole back to the same pixels', () => {
+    const mask = rectMask(7, 7, [{ left: 0, top: 0, right: 6, bottom: 6 }]);
+    for (let y = 2; y <= 4; y++) {
+      for (let x = 2; x <= 4; x++) mask[y * 7 + x] = 0;
+    }
+    mask[3 * 7 + 3] = 1;
+
+    const traced = traceMaskBoundary(mask, 7, 7)!;
+    const rasterized = rasterizeSelectionMask(traced.points, { width: 7, height: 7 });
+
+    expect(traced.loopCount).toBe(3);
+    expect(traced.hasHoles).toBe(true);
+    expect(Array.from(rasterized)).toEqual(Array.from(mask));
+  });
+
+  it('round-trips a multi-region mask back to the same pixels', () => {
+    // Every disjoint contour is retained instead of reducing the mask to its largest region.
     const mask = rectMask(8, 4, [
       { left: 0, top: 0, right: 1, bottom: 1 },
       { left: 4, top: 0, right: 7, bottom: 3 },
@@ -711,6 +723,19 @@ describe('known limitations (it.fails tripwires)', () => {
     const traced = traceMaskBoundary(mask, 8, 4)!;
     const rasterized = rasterizeSelectionMask(traced.points, { width: 8, height: 4 });
 
+    expect(Array.from(rasterized)).toEqual(Array.from(mask));
+  });
+
+  it('round-trips two 4-connected regions that touch only at a corner', () => {
+    const mask = rectMask(4, 4, [
+      { left: 0, top: 0, right: 1, bottom: 1 },
+      { left: 2, top: 2, right: 2, bottom: 2 },
+    ]);
+
+    const traced = traceMaskBoundary(mask, 4, 4)!;
+    const rasterized = rasterizeSelectionMask(traced.points, { width: 4, height: 4 });
+
+    expect(traced.points).toHaveLength(2);
     expect(Array.from(rasterized)).toEqual(Array.from(mask));
   });
 });

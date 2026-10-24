@@ -46,22 +46,22 @@ platform limit.
 
 ## Summary
 
-| Area              | Status      | The gap in one line                                                                        |
-| ----------------- | ----------- | ------------------------------------------------------------------------------------------ |
-| Document model    | `partial`   | One document, no colour mode, no Image Size                                                |
-| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                                 |
-| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                                   |
-| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels             |
-| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; no separate Fill opacity                  |
-| History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush        |
-| Panels            | `partial`   | Two panels. Photoshop has seventeen                                                        |
-| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                                      |
-| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                                    |
-| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                       |
-| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                             |
-| Export options    | `partial`   | JPEG quality is the only user-controllable option                                          |
-| Tablet touch      | `partial`   | Tablet-sized touch shell; Retina/high-DPI matters; handheld phone layouts are out of scope |
-| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                                    |
+| Area              | Status      | The gap in one line                                                                                          |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| Document model    | `partial`   | One document, no colour mode, no Image Size                                                                  |
+| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                                                   |
+| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                                                     |
+| Selection         | `divergent` | Compound contours with derived masks, not a persistent alpha channel; no full selection commands or channels |
+| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; no separate Fill opacity                                    |
+| History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush                          |
+| Panels            | `partial`   | Two panels. Photoshop has seventeen                                                                          |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                                                        |
+| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                                                      |
+| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                                         |
+| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                                               |
+| Export options    | `partial`   | JPEG quality is the only user-controllable option                                                            |
+| Tablet touch      | `partial`   | Tablet-sized touch shell; Retina/high-DPI matters; handheld phone layouts are out of scope                   |
+| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                                                      |
 
 ## Documents
 
@@ -174,16 +174,14 @@ it "SVG
 Add / Subtract / Intersect), inverts, modifies (Feather / Expand / Contract),
 refines, saves to and loads from a named channel, and is viewed in a Channels panel.
 
-**This app:** a selection is **a polygon point list with a bounding box**, not a
-pixel channel — `general-types.ts` — `Selection`. Seven selection tools write
-it (`toolProcessors.ts` — the selection entries carrying `creator: true`).
-Marching ants read the points
-(`useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`). An alpha
-mask does exist, but only as a derived copy for clipboard and copy-to-layer
-(`selection.ts` — `createFeatheredAlphaMask()`), reached from
-`copySelectionToCanvas()` and
-nowhere else. Feather is a parameter on that copy, not a modification of the
-selection.
+**This app:** a selection is a set of closed contour paths with a shared bounding
+box, not a persistent pixel channel — `general-types.ts` — `Selection`. The
+compound paths represent disconnected regions and holes, and the marching ants
+read every contour (`useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`).
+Raster coverage is derived on demand: clipboard and copy-to-layer use
+`copySelectionToCanvas()`, while Fill, Eraser and Clone Stamp use
+`createSelectionAlphaMask()` to clip their pixel operations. Feather is still a
+copy parameter, not a modification of the stored selection.
 
 Rectangular, elliptical, and single-row/column marquee drags stay captured when
 the pointer leaves the canvas and commit on a valid release; `pointercancel`
@@ -191,14 +189,17 @@ aborts the gesture.
 
 **Status:** `divergent`
 
-**Gap:** No Combine (Add / Subtract / Intersect), no Invert, no Modify (Feather /
-Expand / Contract), no Save or Load Selection, no Quick Mask, no Channels panel
-(`PanelLayout.tsx` — `PanelId` admits only `history` and `layers`). **A
-selection does not clip a stroke**: no tool in `src/tools/` reads `selections`.
+**Gap:** No general New / Add / Subtract / Intersect controls across selection
+tools, no Invert, no Modify (Feather / Expand / Contract), no Save or Load
+Selection, no Quick Mask, and no Channels panel (`PanelLayout.tsx` — `PanelId`
+admits only `history` and `layers`). Quick Selection alone offers Add and
+Subtract. Fill, Eraser and Clone Stamp consume derived masks; Brush, Draw and
+the other paint tools do not apply selection coverage.
 
-That last one is the largest single selection gap and it is a model problem, not
-a missing control — a shape list cannot mask pixels. Fixing it means the selection
-becomes a channel, which is the same change Photoshop's data model makes.
+The stored selection remains vector contours rather than an authoritative alpha
+channel. Derived masks let several raster tools honor hard-edged selections, but
+there is no persistent per-pixel coverage for channel editing, feathering or the
+full set of Photoshop selection operations.
 
 ## Layers
 

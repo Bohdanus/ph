@@ -1,8 +1,8 @@
-import type { Point, Pos, Size } from '../contexts/general-types.ts';
+import type { Point, Pos, SelectionPointPaths, Size } from '../contexts/general-types.ts';
 import { brushDabCenters } from '../util/brush-engine.ts';
 import { floodFill } from '../util/flood-fill.ts';
 import { forEachPixelInRect } from '../util/pixels.ts';
-import { isPointInPolygon } from '../util/selection.ts';
+import { isPointInContours, selectionPointPathsToContours } from '../util/selection.ts';
 import type { ProcessorToolParams } from './toolProcessors.ts';
 
 export type QuickSelectionToolArgs = {
@@ -203,24 +203,25 @@ function pointsBounds(points: Point[]) {
  * Rasterize a committed polygon's absolute points into a one-byte-per-pixel mask.
  *
  * This is how a stroke gets something to union into or subtract from: `Selection` stores
- * a point path and no pixels, so the path has to become a mask before it can be combined
- * with a grown region. Only the polygon's own bounding box is visited, never the whole
+ * contour paths and no pixels, so the paths have to become a mask before they can be
+ * combined with a grown region. Only the contours' shared bounding box is visited, never the whole
  * canvas, and each pixel is tested at its centre (`x + 0.5`, `y + 0.5`) because the
  * polygon traces pixel corners — a test at the integer coordinate would sample the
  * corner shared with the neighbouring pixel instead of the pixel itself.
  *
- * A polygon with fewer than three points has no interior and yields an empty mask rather
- * than a throw, which is the same state a fresh document is in.
+ * If none of the contours has at least three points, the selection has no interior and
+ * yields an empty mask rather than a throw, which is the same state a fresh document is in.
  */
-export function rasterizeSelectionMask(points: Point[], size: Size): Uint8Array {
+export function rasterizeSelectionMask(points: SelectionPointPaths, size: Size): Uint8Array {
   const width = toPixelExtent(size.width);
   const height = toPixelExtent(size.height);
   const mask = new Uint8Array(width * height);
-  if (points.length < 3 || width === 0 || height === 0) return mask;
+  const contours = selectionPointPathsToContours(points);
+  if (!contours.some((contour) => contour.length >= 3) || width === 0 || height === 0) return mask;
 
-  forEachPixelInRect({ width, height }, pointsBounds(points), (x, y, offset) => {
+  forEachPixelInRect({ width, height }, pointsBounds(contours.flat()), (x, y, offset) => {
     // `forEachPixelInRect` hands a byte offset, the mask is one byte per pixel.
-    if (isPointInPolygon({ x: x + 0.5, y: y + 0.5 }, points)) mask[offset / 4] = 1;
+    if (isPointInContours({ x: x + 0.5, y: y + 0.5 }, contours)) mask[offset / 4] = 1;
   });
 
   return mask;
@@ -359,28 +360,28 @@ function traceLoops(edges: EdgeMap): Point[][] {
 }
 
 export type TracedMaskBoundary = {
-  /** The largest outer contour, as a closed path with no repeated first vertex. */
-  points: Point[];
+  /** Every closed boundary loop, with no repeated first vertex. */
+  points: Point[][];
   pixelCount: number;
   bounds: Pos;
   /**
-   * Whether the mask encloses anything the returned contour does not describe. A
-   * `Selection` is one point path, so a region with a hole cannot be committed exactly.
+   * Whether the mask contains one or more enclosed hole loops. The corresponding paths are
+   * included in `points` and interpreted with the even-odd rule.
    */
   hasHoles: boolean;
   loopCount: number;
 };
 
 /**
- * Trace a mask's boundary into point paths, largest outer contour first.
+ * Trace every boundary loop in the mask into a closed point path.
  *
  * A mask has no single outline: it can be several disjoint regions and each can have
  * holes. The directed-edge walk turns every selected/unselected adjacency into an edge
  * and chains them, which yields one loop per contour, and the signed area of each loop
  * is what tells an outer contour (positive, because the region is on the edge's right)
  * from an enclosed hole (negative). This is the same classification the Magic Wand's
- * tracer performs on the same edge orientation, and it is why the largest loop is chosen
- * from the outer set rather than from all of them.
+ * tracer performs on the same edge orientation. Keeping all loops lets the consumer use an
+ * even-odd compound path for disconnected regions, holes and nested islands.
  *
  * The chain takes the first unused edge leaving a vertex, which is ambiguous at a pinch
  * — two regions touching only diagonally. Both continuations describe the same pixels,
@@ -410,32 +411,23 @@ export function traceMaskBoundary(mask: Uint8Array, width: number, height: numbe
   const loops = traceLoops(edges);
   if (loops.length === 0) return null;
 
-  let points: Point[] = [];
-  let largestArea = 0;
+  const points: Point[][] = [];
   let hasHoles = false;
   for (const loop of loops) {
     const area = signedArea(loop);
-    if (area <= 0) {
-      hasHoles = true;
-      continue;
-    }
-    if (area <= largestArea) continue;
-
-    points = loop;
-    largestArea = area;
+    if (area <= 0) hasHoles = true;
+    if (loop.length >= 3) points.push(loop);
   }
-  if (points.length < 3) return null;
+  if (points.length === 0) return null;
 
   return {
     points,
     pixelCount,
     hasHoles,
     loopCount: loops.length,
-    // The returned points' own bounds, not the mask's: a mask of several disjoint regions
-    // has a bounding box far larger than the contour the caller is about to commit, and
-    // this is the rectangle the commit has to copy into.
+    // Bound every returned contour, including disconnected regions and enclosed holes.
     bounds: (() => {
-      const { left, top, right, bottom } = pointsBounds(points);
+      const { left, top, right, bottom } = pointsBounds(points.flat());
 
       return { x: left, y: top, width: right - left, height: bottom - top };
     })(),
@@ -443,26 +435,18 @@ export function traceMaskBoundary(mask: Uint8Array, width: number, height: numbe
 }
 
 export type QuickSelectionPolygon = {
-  points: Point[];
+  points: Point[][];
   pixelCount: number;
   bounds: Pos;
   /**
-   * Set when the mask has an enclosed hole, in which case `points` is the outer contour
-   * ALONE and does NOT describe the mask. The caller must not commit it.
+   * Describes whether one or more nested loops exclude pixels. The full geometry is in `points`.
    */
   hasHoles: boolean;
 };
 
 /**
- * The polygon a stroke's accumulated mask may be committed as.
- *
- * `hasHoles` is reported rather than resolved, because this data model cannot resolve
- * it: a `Selection` carries one point path, so committing the outer contour of a region
- * with a hole would cover pixels the mask reports as unselected — the user would drag a
- * brush around a mug handle and select the handle's background with it. Refusing is the
- * same choice `createMagicWandSelectionFromImageData` makes
- * (`src/util/magicWand.ts:218`), and the honest fix is a multi-polygon selection, which
- * is a change to `Selection` itself.
+ * The compound polygon a stroke's accumulated mask commits. Every loop is retained, so a
+ * disconnected selection and a hole have the same pixel coverage as the accumulated mask.
  */
 export function createQuickSelectionPolygon(
   mask: Uint8Array,

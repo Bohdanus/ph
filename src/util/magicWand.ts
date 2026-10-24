@@ -3,8 +3,8 @@
  * The fill itself -- the tolerance mapping, the colour metric, and the 4-neighbour and global
  * mask builders -- moved to `./flood-fill.ts`, because a Paint Bucket needs the mask with no
  * outline at all and a Quick Selection needs to re-seed the same growth along a stroke, and
- * neither can be served by a traced polygon. What follows turns a mask into a single closed
- * point path, which is the part that was always specific to the wand.
+ * neither can be served by a traced polygon. What follows turns a mask into an even-odd set of
+ * closed point paths, which is the part that was always specific to the wand.
  */
 import type { Point, Pos } from '../contexts/general-types.ts';
 import {
@@ -32,7 +32,8 @@ export type MagicWandSelectionOptions = {
 };
 
 export type MagicWandSelectionResult = {
-  points: Point[];
+  /** Every boundary loop in the matched region, including enclosed holes. */
+  points: Point[][];
   selectedPixelCount: number;
   sampleColor: RgbaColor;
   bounds: Pos;
@@ -65,16 +66,6 @@ function isMaskSelected(mask: Uint8Array, width: number, height: number, x: numb
 
 function samePoint(a: Point, b: Point): boolean {
   return a.x === b.x && a.y === b.y;
-}
-
-function getPolygonArea(points: Point[]): number {
-  let area = 0;
-
-  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-    area += points[j].x * points[i].y - points[i].x * points[j].y;
-  }
-
-  return area / 2;
 }
 
 function traceBoundaryLoops(edges: DirectedEdge[], startMap: Map<string, DirectedEdge[]>): Point[][] {
@@ -139,42 +130,6 @@ function createBoundaryLoops(mask: Uint8Array, width: number, height: number, bo
   return traceBoundaryLoops(edges, startMap);
 }
 
-type ClassifiedBoundaryLoops = {
-  outer: Point[][];
-  holes: Point[][];
-};
-
-/**
- * Splits traced loops by winding direction, which is the only signal distinguishing an enclosed
- * hole from a disjoint sibling region. `createBoundaryLoops` emits a directed edge for every
- * selected/unselected adjacency (top->right, right->down, bottom->left, left->up), so an outer
- * contour and the hole it encloses come out with opposite signed areas, while two disjoint
- * regions are two independent outer contours and share a sign. Discarding the sign is what let a
- * hole's loop lose to the outer loop on magnitude and then get dropped on the floor.
- */
-function classifyBoundaryLoops(loops: Point[][]): ClassifiedBoundaryLoops {
-  const signed = loops.map((loop) => ({ loop, area: getPolygonArea(loop) }));
-  const outer = signed.filter((entry) => entry.area > 0);
-  const holes = signed.filter((entry) => entry.area <= 0);
-
-  return { outer: outer.map((entry) => entry.loop), holes: holes.map((entry) => entry.loop) };
-}
-
-function selectLargestBoundaryLoop(loops: Point[][]): Point[] {
-  let bestLoop: Point[] = [];
-  let bestArea = 0;
-
-  for (const loop of loops) {
-    const area = Math.abs(getPolygonArea(loop));
-    if (area <= bestArea) continue;
-
-    bestLoop = loop;
-    bestArea = area;
-  }
-
-  return bestLoop;
-}
-
 function simplifyClosedPath(points: Point[], tolerance: number): Point[] {
   if (points.length <= 3 || tolerance <= 0) return points;
 
@@ -208,17 +163,10 @@ export function createMagicWandSelectionFromImageData(
   if (maskResult.selectedPixelCount === 0) return null;
 
   const loops = createBoundaryLoops(maskResult.mask, width, height, maskResult.bounds);
-  const { outer, holes } = classifyBoundaryLoops(loops);
-  const boundaryPoints = selectLargestBoundaryLoop(outer);
-  if (boundaryPoints.length < 3) return null;
-  // `Selection` carries a single point path, so an enclosed hole cannot be represented: committing
-  // the outer contour alone would cover pixels this mask reported as unselected, and would make
-  // `selectedPixelCount` under-report the committed polygon's area. Refuse the selection instead,
-  // which the caller already handles as a cancelled selection draft.
-  if (holes.length > 0) return null;
-
-  const points = simplifyClosedPath(boundaryPoints, options.smoothing ?? 0);
-  if (points.length < 3) return null;
+  const points = loops
+    .map((contour) => simplifyClosedPath(contour, options.smoothing ?? 0))
+    .filter((contour) => contour.length >= 3);
+  if (points.length === 0) return null;
 
   return {
     points,

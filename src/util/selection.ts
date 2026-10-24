@@ -5,6 +5,7 @@ import type {
   Pos,
   RectXYSorted,
   Selection,
+  SelectionPointPaths,
   SelectionSourceTool,
   Size,
 } from '../contexts/general-types.ts';
@@ -25,12 +26,26 @@ export const SELECTION_ANCHOR_HIT_RADIUS = 8;
 const OUTLINE_LINE_WIDTH = 2;
 
 export function normalizeSelectionPoints(points: Point[]): Pick<Selection, 'points' | 'pos'> | null {
-  if (points.length < 3) return null;
+  return normalizeSelectionContours([points]);
+}
 
-  const pos = pointsBoundingPos({ points });
-  const normalizedPoints = points.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
+/** Normalize every closed contour against the selection's shared bounds. */
+export function normalizeSelectionContours(contours: Point[][]): Pick<Selection, 'points' | 'pos'> | null {
+  const validContours = contours.filter((contour) => contour.length >= 3);
+  if (validContours.length === 0) return null;
 
-  return { points: [normalizedPoints], pos };
+  const pos = pointsBoundingPos({ points: validContours.flat() });
+  const normalizedPoints = validContours.map((contour) =>
+    contour.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }))
+  );
+
+  return { points: normalizedPoints, pos };
+}
+
+/** Accept legacy one-path processor snapshots and preserve compound snapshots as contours. */
+export function selectionPointPathsToContours(points: SelectionPointPaths): Point[][] {
+  if (points.length === 0) return [];
+  return Array.isArray(points[0]) ? (points as Point[][]) : [points as Point[]];
 }
 
 export function createCommittedPolygonSelection({
@@ -47,7 +62,24 @@ export function createCommittedPolygonSelection({
     'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand'
   >;
 }): Selection | null {
-  const normalized = normalizeSelectionPoints(points);
+  return createCommittedPolygonSelectionFromContours({ id, metadata, points: [points], sourceTool });
+}
+
+export function createCommittedPolygonSelectionFromContours({
+  id,
+  metadata,
+  points,
+  sourceTool,
+}: {
+  id: string;
+  metadata?: Selection['metadata'];
+  points: Point[][];
+  sourceTool: Extract<
+    SelectionSourceTool,
+    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand'
+  >;
+}): Selection | null {
+  const normalized = normalizeSelectionContours(points);
   if (!normalized) return null;
 
   return {
@@ -128,10 +160,17 @@ export function getActiveRectangularSelection(
 }
 
 export function getSelectionAbsolutePoints(selection: Selection): Point[] {
-  return selection.points.flat().map((point) => ({
-    x: point.x + selection.pos.x,
-    y: point.y + selection.pos.y,
-  }));
+  return getSelectionAbsoluteContours(selection).flat();
+}
+
+/** The selection's closed paths in document space, preserving each contour boundary. */
+export function getSelectionAbsoluteContours(selection: Selection): Point[][] {
+  return selection.points.map((contour) =>
+    contour.map((point) => ({
+      x: point.x + selection.pos.x,
+      y: point.y + selection.pos.y,
+    }))
+  );
 }
 
 /**
@@ -230,13 +269,25 @@ export function isPointInPolygon(point: Point, polygon: Point[]): boolean {
   return isInside;
 }
 
+/** Membership in a compound selection path using the even-odd rule. */
+export function isPointInContours(point: Point, contours: Point[][]): boolean {
+  let isInside = false;
+  for (const contour of contours) {
+    if (isPointInPolygon(point, contour)) isInside = !isInside;
+  }
+  return isInside;
+}
+
+export function isPointInSelection(point: Point, selection: Selection): boolean {
+  return isPointInContours(point, getSelectionAbsoluteContours(selection));
+}
+
 export function getSelectionAtPoint(selections: Selection[], point: Point): Selection | null {
   for (let i = selections.length - 1; i >= 0; i--) {
     const selection = selections[i];
     if (!selection.isActive) continue;
 
-    const points = getSelectionAbsolutePoints(selection);
-    if (isPointInPolygon(point, points)) {
+    if (isPointInSelection(point, selection)) {
       return selection;
     }
   }
@@ -245,7 +296,8 @@ export function getSelectionAtPoint(selections: Selection[], point: Point): Sele
 }
 
 export function moveSelectionAnchor(selection: Selection, anchorIndex: number, point: Point): Selection {
-  const points = getSelectionAbsolutePoints(selection);
+  const contours = getSelectionAbsoluteContours(selection);
+  const points = contours.flat();
   if (!points[anchorIndex]) return selection;
 
   points[anchorIndex] = point;
@@ -271,7 +323,13 @@ export function moveSelectionAnchor(selection: Selection, anchorIndex: number, p
     };
   }
 
-  const normalized = normalizeSelectionPoints(points);
+  let offset = 0;
+  const updatedContours = contours.map((contour) => {
+    const localIndex = anchorIndex - offset;
+    offset += contour.length;
+    return contour.map((current, index) => (index === localIndex ? point : current));
+  });
+  const normalized = normalizeSelectionContours(updatedContours);
   if (!normalized) return selection;
 
   return {
@@ -438,6 +496,16 @@ function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
   ctx.closePath();
 }
 
+function drawPolygonContoursPath(ctx: Ctx2D, contours: Point[][]): void {
+  ctx.beginPath();
+  for (const points of contours) {
+    if (points.length < 3) continue;
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    ctx.closePath();
+  }
+}
+
 /**
  * The snapshot the selection would occupy, or `null` when the polygon encloses nothing.
  *
@@ -536,12 +604,48 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
   throw new SelectionCanvasContextError('copyPolygonToCanvas', bounds.width, bounds.height);
 }
 
+export function copyPolygonContoursSelectionToCanvas(
+  sourceCanvas: BitmapSource,
+  contours: Point[][],
+  { imageSize }: { imageSize?: Size } = {}
+): SelectionCanvasSnapshot | null {
+  const validContours = contours.filter((contour) => contour.length >= 3);
+  if (validContours.length === 0) return null;
+  if (validContours.length === 1) {
+    return copyPolygonSelectionToCanvas(sourceCanvas, validContours[0], { imageSize });
+  }
+
+  const bounds = getSelectionCanvasBounds(validContours.flat(), 0, imageSize);
+  if (!bounds) return null;
+
+  const destCanvas = createSelectionCanvas(bounds.width, bounds.height);
+  const ctx = getSelectionCanvasContext(destCanvas);
+  if (!ctx) return unavailableSelectionCanvasContext('copyPolygonContoursSelectionToCanvas', destCanvas);
+
+  ctx.save();
+  drawPolygonContoursPath(
+    ctx,
+    validContours.map((contour) => contour.map((point) => ({ x: point.x - bounds.x, y: point.y - bounds.y })))
+  );
+  // Even-odd fill preserves disconnected islands and makes each nested contour an exclusion.
+  ctx.clip('evenodd');
+  ctx.drawImage(sourceCanvas as CanvasImageSource, -bounds.x, -bounds.y);
+  ctx.restore();
+
+  return { bitmap: destCanvas, pos: bounds };
+}
+
 type RasterizedPolygonMask = {
   values: Uint8Array;
   preservesCoverage: boolean;
 };
 
-function rasterizePolygonMask(points: Point[], width: number, height: number): RasterizedPolygonMask {
+function rasterizePolygonMask(contours: Point[][], width: number, height: number): RasterizedPolygonMask {
+  const validContours = contours.filter((contour) => contour.length >= 3);
+  if (validContours.length === 0 || width === 0 || height === 0) {
+    return { values: new Uint8Array(width * height), preservesCoverage: false };
+  }
+
   const canvas = createSelectionCanvas(width, height);
   const ctx = getSelectionCanvasContext(canvas);
 
@@ -550,8 +654,9 @@ function rasterizePolygonMask(points: Point[], width: number, height: number): R
       ctx.save();
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = 'black';
-      drawPolygonPath(ctx, points);
-      ctx.fill();
+      drawPolygonContoursPath(ctx, validContours);
+      if (validContours.length === 1) ctx.fill();
+      else ctx.fill('evenodd');
       ctx.restore();
 
       const imageData = ctx.getImageData(0, 0, width, height);
@@ -569,7 +674,7 @@ function rasterizePolygonMask(points: Point[], width: number, height: number): R
   const mask = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      mask[y * width + x] = isPointInPolygon({ x: x + 0.5, y: y + 0.5 }, points) ? 1 : 0;
+      mask[y * width + x] = isPointInContours({ x: x + 0.5, y: y + 0.5 }, validContours) ? 1 : 0;
     }
   }
 
@@ -682,13 +787,13 @@ export function createFeatheredAlphaMask(
  * consulting the live selection store.
  */
 export function createSelectionAlphaMask(
-  points: Point[],
+  points: Point[] | Point[][],
   size: Size,
   { featherRadius = 0, antiAlias = true }: { featherRadius?: number; antiAlias?: boolean } = {}
 ): Uint8Array {
   const width = Math.max(0, Math.floor(size.width));
   const height = Math.max(0, Math.floor(size.height));
-  const rasterized = rasterizePolygonMask(points, width, height);
+  const rasterized = rasterizePolygonMask(selectionPointPathsToContours(points), width, height);
   return createFeatheredAlphaMask(
     rasterized.values,
     width,
@@ -759,7 +864,7 @@ export function copyFeatheredPolygonSelectionToCanvas(
   ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
 
   const imageData = ctx.getImageData(0, 0, width, height);
-  const mask = rasterizePolygonMask(relativePoints, width, height);
+  const mask = rasterizePolygonMask([relativePoints], width, height);
   const alphaMask = createFeatheredAlphaMask(
     mask.values,
     width,
@@ -807,16 +912,16 @@ export function copySelectionToCanvas(
     return copyRectSelectionToCanvas(sourceCanvas, getSelectionRect(selection), imageSize);
   }
 
-  const points = getSelectionAbsolutePoints(selection);
+  const contours = getSelectionAbsoluteContours(selection);
   if (selection.sourceTool === 'feather-magnetic-lasso') {
-    return copyFeatheredPolygonSelectionToCanvas(sourceCanvas, points, {
+    return copyFeatheredPolygonSelectionToCanvas(sourceCanvas, contours[0] ?? [], {
       antiAlias: selection.metadata?.magneticLasso?.antiAlias ?? true,
       featherRadius: selection.metadata?.featherRadius ?? 0,
       imageSize,
     });
   }
 
-  return copyPolygonSelectionToCanvas(sourceCanvas, points, { imageSize });
+  return copyPolygonContoursSelectionToCanvas(sourceCanvas, contours, { imageSize });
 }
 
 function canvasToBlob(canvas: ClipboardCanvas): Promise<Blob> {

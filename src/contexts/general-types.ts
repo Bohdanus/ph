@@ -1,4 +1,6 @@
 export type Point = { x: number; y: number };
+/** Historical processors may carry one flat path; new selection snapshots preserve all contours. */
+export type SelectionPointPaths = Point[] | Point[][];
 export type Size = { width: number; height: number };
 export type Pos = Point & Size;
 

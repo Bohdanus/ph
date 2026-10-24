@@ -236,16 +236,14 @@ function enqueuePixel(index: number, visited: Uint8Array, queue: Int32Array, que
 }
 
 /**
- * The mask itself, which is what the Magic Wand's polygon tracer is built on top of and
- * cannot be asked for: it returns a traced outline, and it returns `null` outright for a
- * region with an enclosed hole, because a `Selection` carries a single point path and
- * committing the outer contour alone would cover pixels the mask reported as unselected.
+ * The mask itself, before a caller decides whether it needs pixels or a traced boundary.
+ * Magic Wand traces every contour in this mask, including disconnected regions and holes;
+ * raster tools can also consume derived selection masks without losing those exclusions.
+ * A hole is not a failure: its bytes stay zero while selectedPixelCount reports the full
+ * selected region.
  *
- * `null` is the one failure mode, and it covers both "there is no such seed" and "nothing
- * matched" -- the two are indistinguishable to a caller, which is what makes it safe for a
- * bucket to read as a no-op. Note that a hole is *not* a failure here: the mask keeps the
- * hole bytes at 0 and reports the full region, which is precisely the result the polygon
- * entry point has to throw away.
+ * `null` covers both "there is no such seed" and "nothing matched" -- the two states are
+ * indistinguishable to a caller, which is what makes it safe for a bucket to read as a no-op.
  */
 export const floodFill = (imageData: ImageData, seed: Point, options: FloodFillOptions): FloodFillResult | null => {
   const { width, height } = imageData;

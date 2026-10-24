@@ -81,30 +81,31 @@ and Shift+Alt/Option can set the same modes during a drag on tools that support 
 
 **What this app does.** Quick Selection's Mode dropdown offers Add and Subtract. No bar implements
 the complete Photoshop set; the other selection tools do not render combination controls. On tools
-without a mode selector, a second selection appends and activates. The union is not a missing
-control over a present model — it is a change to the model.
-`Selection` is a single point path (`general-types.ts` — `Selection`):
+without a mode selector, a second selection replaces the active one. Quick Selection rasterizes the
+active contour paths and applies Add or Subtract before committing the result.
+`Selection` stores compound contour paths (`general-types.ts` — `Selection`):
 
 ```ts
 export type Selection = {
   id: string;
-  points: Point[];
+  points: Point[][];
   isActive: boolean;
   // …pos, lifecycle, geometry, sourceTool, metadata
 ```
 
-Union and intersect are per-pixel operations, and a single point path cannot express them without
-rasterising. The shared module `src/util/selection.ts` is where a committed polygon becomes a
-selection, and every selection tool area, the clipboard and the pixel utilities read through it, so the
-change is not confined to one tool.
+Union and intersect are per-pixel operations, so combination modes rasterize the contours before
+applying the boolean operation. The shared module `src/util/selection.ts` creates committed paths,
+derives alpha masks, and owns clipboard clipping and hit testing; the marching-ants renderer also reads
+every contour. A change to the selection model therefore crosses all these consumers.
 
-**Why it is too hard.** It is a change to the type every selection consumer reads, made by tools that
-each own a different geometry (an axis-aligned box, an inscribed ring, a traced contour, a freehand
-lasso path). Booleans need a mask; the app has a polygon. The `metadata` field on `Selection` is where
-a hidden mask would have to ride, and every writer of `points` would then have to write it in step.
+**Why it is too hard.** A complete shared selection operator needs one coverage rule across the
+different geometry writers, history snapshots, copy, hit testing, marching ants and pixel tools.
+The current model stores contours and derives masks on demand; adding a second persistent mask beside
+those paths would create two authorities that could drift.
 
-**What the app does instead.** New-selection semantics only. Making a second selection replaces the
-first in practice for every workflow the app supports, because there is no way to express a union.
+**What the app does instead.** Quick Selection can add to or subtract from its current compound path.
+Other selection tools create a replacement selection. There is no Intersect mode or shared mode
+control across the selection family.
 
 ### Select and Mask, and the Select menu
 
@@ -153,107 +154,33 @@ type change.
 fact. A selection is what the last tool drew, and the only edits available are copy, paste and deselect
 from the marquee's bar.
 
-### Regions with holes
+### Persistent pixel-channel selection behavior
 
-**What Photoshop does.** Adobe's UXP Selection reference describes selections as pixel-based
-"area or areas" with possible 8-bit transparency, and exposes replace, extend, subtract and
-intersect operations. That model can represent disconnected regions and holes. The specific
-donut/mug-handle Magic Wand example below is an inference from that pixel-region model and the
-Wand's contiguous color-region behavior, not a sentence Adobe states explicitly in the accessible
-reference. The HelpX Magic Wand page I tried to retrieve returned HTTP 403 during this research
-pass, so the exact gesture-level claim remains inferred rather than directly quoted.
+**What Photoshop does.** Adobe's current [desktop Magic Wand guide](https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/select-areas-by-color-with-the-magic-wand-tool.html)
+says Contiguous selects only adjacent areas of similar color. Adobe's [Magic Wand guide for Photoshop on the web](https://helpx.adobe.com/id_en/photoshop/web/edit-images/make-selections/enhance-selections-with-magic-wand-tool.html)
+states that, with Contiguous off, all pixels in the image using the sampled colors are selected.
+Separately, the [UXP Selection reference](https://developer.adobe.com/photoshop/uxp/ps_reference/classes/selection/)
+describes a pixel-based selection that can represent "area or areas" with 8-bit transparency. The
+expectation that a differently colored hole remains unselected follows from those color-match and
+pixel-selection descriptions; Adobe does not prescribe a contour representation.
 
-Sources: [Adobe UXP Selection](https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/),
-[Adobe Magic Wand tool](https://helpx.adobe.com/photoshop/using/tool-techniques/magic-wand-tool.html).
+**What this app does.** `Selection.points` stores compound contour paths. The Magic Wand and Quick
+Selection retain every traced loop, including disconnected components, enclosed holes and nested
+islands. Hit-testing, copy clipping and derived raster masks use even-odd membership; marching ants
+stroke each contour as a boundary. Exact pixel round trips are tested for rings, nested islands and
+disconnected regions. Fill, Eraser and Clone Stamp derive alpha masks when they need to clip pixel
+operations; the stored selection itself is still contour geometry rather than a persistent channel.
 
-For a contiguous Wand click on a region shaped like a donut or a mug handle, the inferred correct
-result is that the selected material remains selected and the enclosed background remains
-unselected. Clicking the surrounding background likewise should not select the enclosed object.
+**What remains missing.** Photoshop's selection is a pixel channel, so partial alpha can remain part of
+the active selection. This app does not store per-pixel coverage or expose Quick Mask, selection
+channels, save/load, invert, expand, contract or general combination controls. Quick Selection alone
+provides Add and Subtract. Its contour-based selection model preserves hard-edged traced masks, but a
+nonzero Magic Wand Smooth value simplifies the paths and can differ from the original color-match mask.
 
-**What this app does.** Refuses. The boundary tracer classifies loops and then rejects the whole
-region if any of them is a hole (`magicWand.ts` — `createMagicWandSelectionFromImageData()`):
-
-```ts
-if (holes.length > 0) return null;
-```
-
-The quick selection reaches the same conclusion by a different route and reports it rather than
-resolving it. `hasHoles` is carried on the result and explained in `quickSelection.ts` —
-`createQuickSelectionPolygon()`'s doc comment:
-
-> `hasHoles` is reported rather than resolved, because this data model cannot resolve it: a
-> `Selection` carries one point path, so committing the outer contour of a region with a hole would
-> cover pixels the mask reports as unselected — the user would drag a brush around a mug handle and
-> select the handle's background with it.
-
-The tool area acts on the flag and drops the stroke, logging the reason
-(`QuickSelectionToolArea.tsx` — the `polygon.hasHoles` guard in `handlePointerUp()`):
-
-```ts
-if (polygon?.hasHoles) {
-  console.warn(
-    `quick-selection: the grown region has an enclosed hole, which a single-polygon selection cannot ` +
-      `represent, so nothing was committed (${polygon.pixelCount} pixels grown)`
-  );
-}
-```
-
-**Why it is too hard.** Refusing is the only safe answer a single-polygon model can give: committing
-only the outer contour would select pixels the Wand mask excluded. This refusal prevents a false
-selection, but it is not Photoshop-faithful behavior or an operator-approved override. Supporting
-holes requires one authoritative representation that preserves both disconnected components and
-enclosed exclusions, plus consistent rasterisation, clipping, hit-testing, outline display and
-history handling.
-
-**What the app does instead.** The stroke is dropped, the warning names the reason, and a selection
-is never wrong. It is missing, not silently degenerate: a user who draws a ring gets nothing rather
-than a filled disc.
-
-This is specifically the **hole refusal**, not the separate disconnected-region loss: the Wand
-also keeps only the largest outer contour when one click matches several disconnected components.
-That loss is tracked separately in `HANDOFF.md` §185. Quick Selection's tracer likewise returns
-only its largest outer contour; `hasHoles` reports enclosed exclusions, while `loopCount` records
-that the source mask may have more contours than the returned polygon.
-
-**Open-source implementation evidence.** Pinta's `DocumentSelection` is a vector precedent: it
-stores a collection of polygon contours and sets Cairo's even-odd fill rule when clipping the
-selection. Its source therefore supports sibling contours for disconnected regions and holes, but
-does not prove that the same representation will round-trip this app's traced masks exactly
-([Pinta `DocumentSelection.cs`](https://github.com/PintaProject/Pinta/blob/master/Pinta.Core/Classes/DocumentSelection.cs)).
-The MIT license is stated in that source file's header. The `magic-wand-js` implementation instead
-keeps the binary flood-fill mask and returns traced contours tagged `inner` for hole boundaries
-([source](https://github.com/Tamersoul/magic-wand-js/blob/master/src/MagicWand.js)).
-
-GIMP is the mask-first precedent: its contiguous-region operation produces a `Y float` mask, and
-its channel derives cached boundary segments from that mask rather than treating one polygon as the
-selection ([region fill source](https://github.com/GNOME/gimp/blob/master/app/core/gimppickable-contiguous-region.cc),
-[channel boundary source](https://github.com/GNOME/gimp/blob/master/app/core/gimpchannel.c)).
-fabric.js is a useful browser-rasterization reference, not a photo editor: its `Path` supports
-multiple `M`-started subpaths and its object renderer selects `ctx.fill('evenodd')`
-([Path](https://github.com/fabricjs/fabric.js/blob/master/packages/core/src/shapes/Path.ts),
-[renderer](https://github.com/fabricjs/fabric.js/blob/master/packages/core/src/shapes/Object/Object.ts)).
-
-**What the evidence does not decide.** For hard-edged contours, a multi-contour path with one
-consistent even-odd rule is a plausible, compact migration path; Pinta demonstrates that shape.
-A selection mask is closer to Photoshop's documented pixel model and avoids making traced geometry
-the authority, but storing masks in history introduces byte accounting, cloning, asset-lifetime and
-durable-replay contracts. Neither option is proven for this app. Any implementation proposal must
-round-trip the original Wand mask for disconnected regions, a ring, nested islands and diagonal
-contacts, and must preserve the same result through copy, fill, erase, clone, ants and undo/redo.
-
-The change cannot stop at the Wand tracer. `Selection` currently exposes one `points` path. That
-geometry is consumed by polygon and feathered copy/rasterization, point-in-selection hit testing,
-marching-ants `Path2D` construction, and selection snapshot cloning and validation. Selection
-snapshots are also carried by history and translated into durable `set-selection` operations. A
-mask representation must define how these consumers obtain coverage and outlines; a compound-path
-representation must update them all and preserve clone/equality/validation behavior.
-
-There is also a rasterization parity trap. The CPU fallback tests pixel centers with the existing
-single-polygon ray-crossing predicate, while the Canvas copy path clips with Canvas's default
-nonzero fill rule. A compound path must use equivalent membership rules in both implementations;
-using even-odd for the vector path but leaving the CPU path or Canvas clip on a different rule can
-make paint/copy results disagree with marching ants. Tests should compare resulting pixel masks,
-not only contour bounds or screenshots.
+**Architectural boundary.** Any move to persistent pixel coverage must define one authority for that
+coverage across selection history, undo/redo, copy, marching ants, hit-testing and every pixel tool that
+reads a selection. The current derived masks avoid a competing stored representation; the open gap is
+the Photoshop channel and selection-operation model, not loss of traced holes or disconnected regions.
 
 ### The Pen family
 
@@ -279,8 +206,8 @@ every unrouted tool gets.
 
 **Why it is too hard.** A work path is a first-class document object: anchors, bezier direction
 handles, open and closed state, and the Auto Add/Delete and Rubber Band gestures that decide what a
-click means. The app has no path model at all — `Selection` is one point path and a shape is a
-rasterised polygon — so the Pen family is not six tools to implement but a document layer to design,
+click means. The app has no work-path model — selections are raster-bound compound contour paths
+and shapes are rasterised polygons — so the Pen family is not six tools to implement but a document layer to design,
 and the Path Type entry below is the same work seen from the shape tools.
 
 **What the app does instead.** The six tools are in the rail under Adobe's names and mount a stub

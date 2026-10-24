@@ -7,7 +7,7 @@ import {
 } from '../util/brush-engine.ts';
 import { blendPixel, clampPointToSize, forEachPixelInRect, readRgba } from '../util/pixels.ts';
 import { createSelectionAlphaMask } from '../util/selection.ts';
-import type { Point, Size } from '../contexts/general-types.ts';
+import type { Point, SelectionPointPaths, Size } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type CloneStampToolArgs = {
@@ -20,7 +20,7 @@ export type CloneStampToolArgs = {
   toolName: 'clone-stamp';
   /** Selection snapshot in processor-raster coordinates. */
   selection?: {
-    points: Point[];
+    points: SelectionPointPaths;
     featherRadius: number;
     antiAlias: boolean;
   };

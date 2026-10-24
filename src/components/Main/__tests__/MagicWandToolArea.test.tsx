@@ -252,7 +252,7 @@ describe('MagicWandToolArea', () => {
    * read off the committed metadata, which is the same number the user sees in the bar.
    */
   describe('contiguous', () => {
-    function clickSeedWith(contiguous: boolean) {
+    function clickSeedWith(contiguous: boolean): Selection {
       toolState.toolArgs = { contiguous, smoothing: 1, tolerance: 0, toolName: 'magic-wand' };
       const mockCtx = createMockContext();
       const { container } = render(
@@ -262,16 +262,20 @@ describe('MagicWandToolArea', () => {
 
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
 
-      const selection = singleSelectionEdit().payload.updates.selections[0] as Selection;
-      return selection.metadata?.magicWand?.selectedPixelCount;
+      return singleSelectionEdit().payload.updates.selections[0] as Selection;
     }
 
     it('selects only the connected region under the seed when contiguous is on', () => {
-      expect(clickSeedWith(true)).toBe(4);
+      const selection = clickSeedWith(true);
+      expect(selection.metadata?.magicWand?.selectedPixelCount).toBe(4);
+      expect(selection.points).toHaveLength(1);
     });
 
     it('selects every region of the seed colour when contiguous is off', () => {
-      expect(clickSeedWith(false)).toBe(8);
+      const selection = clickSeedWith(false);
+      expect(selection.metadata?.magicWand?.selectedPixelCount).toBe(8);
+      expect(selection.points).toHaveLength(2);
+      expect(selection.pos).toEqual({ x: -1, y: -1, width: 6, height: 6 });
     });
   });
 

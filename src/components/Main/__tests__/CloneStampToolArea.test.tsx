@@ -440,15 +440,54 @@ describe('CloneStampToolArea', () => {
 
       const expectedSelection = {
         points: [
-          { x: 10, y: 15 },
-          { x: 30, y: 15 },
-          { x: 30, y: 35 },
+          [
+            { x: 10, y: 15 },
+            { x: 30, y: 15 },
+            { x: 30, y: 35 },
+          ],
         ],
         featherRadius: 7,
         antiAlias: false,
       };
       expect(previewCalls()[0]?.toolArgs.selection).toEqual(expectedSelection);
       expect(commitCalls()[0]?.toolArgs.selection).toEqual(expectedSelection);
+    });
+
+    it('preserves every contour in the selection snapshot sent to preview and commit', () => {
+      const compoundSelection: Selection = {
+        ...ACTIVE_SELECTION,
+        points: [
+          ...ACTIVE_SELECTION.points,
+          [
+            { x: 40, y: 5 },
+            { x: 50, y: 5 },
+            { x: 50, y: 15 },
+            { x: 40, y: 15 },
+          ],
+        ],
+        pos: { x: 10, y: 15, width: 50, height: 20 },
+      };
+      storeState.selections = [compoundSelection];
+      storeState.activeSelectionId = compoundSelection.id;
+      const { toolArea } = renderArea();
+
+      stroke(toolArea, [20, 20], [100, 60]);
+
+      const expectedContours = [
+        [
+          { x: 10, y: 15 },
+          { x: 30, y: 15 },
+          { x: 30, y: 35 },
+        ],
+        [
+          { x: 50, y: 20 },
+          { x: 60, y: 20 },
+          { x: 60, y: 30 },
+          { x: 50, y: 30 },
+        ],
+      ];
+      expect(previewCalls()[0]?.toolArgs.selection?.points).toEqual(expectedContours);
+      expect(commitCalls()[0]?.toolArgs.selection?.points).toEqual(expectedContours);
     });
 
     it('rebases the source and the stroke by the layer origin, in one translation', () => {

@@ -12,7 +12,7 @@ import {
 import { pixelIndex } from '../util/pixels.ts';
 import { createSelectionAlphaMask } from '../util/selection.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
-import type { Point, Size } from '../contexts/general-types.ts';
+import type { Point, SelectionPointPaths, Size } from '../contexts/general-types.ts';
 import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 /**
@@ -67,7 +67,7 @@ export type EraserToolArgs = {
   points: Point[];
   /** The committed selection snapshot that clips this stroke during replay. */
   selection?: {
-    points: Point[];
+    points: SelectionPointPaths;
     featherRadius: number;
     antiAlias: boolean;
   };
