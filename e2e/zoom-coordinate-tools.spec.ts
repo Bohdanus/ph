@@ -114,6 +114,16 @@ function expectWhitePixel(pixel: readonly number[], message: string): void {
 
 async function zoomAndRotate(page: Page): Promise<string> {
   await clickToolButton(page, 'zoom');
+  await page.getByRole('button', { name: '100%', exact: true }).click();
+  await expect(page.locator('label[for="view-zoom-slider"]')).toHaveText('Zoom 100%');
+  const hundredPercentView = await readViewGeometry(page);
+  const physicalMagnification =
+    hundredPercentView.scale * hundredPercentView.viewZoom * (await page.evaluate(() => window.devicePixelRatio));
+  expect(
+    physicalMagnification,
+    'at 100% on a 2x display one document pixel maps to one physical monitor pixel'
+  ).toBeCloseTo(1, 2);
+
   const slider = page.locator('#view-zoom-slider');
   const target = await slider.evaluate((element) => {
     const input = element as HTMLInputElement;

@@ -623,6 +623,52 @@ async function workspaceRasterSignature(page: Page): Promise<string> {
   return `${width}x${height}:${hash}`;
 }
 
+type WorkspaceRaster = Awaited<ReturnType<typeof loadImageData>>;
+type RasterRegion = Readonly<{ x: number; y: number; width: number; height: number }>;
+
+/** Compare exact document pixels after normalizing a crop's changed frame origin. */
+function expectRasterRegionToEqual(
+  expected: WorkspaceRaster,
+  expectedRegion: RasterRegion,
+  actual: WorkspaceRaster,
+  assertionMessage: string
+): void {
+  expect(expectedRegion.x, `${assertionMessage}: source x is an integer`).toBe(Math.trunc(expectedRegion.x));
+  expect(expectedRegion.y, `${assertionMessage}: source y is an integer`).toBe(Math.trunc(expectedRegion.y));
+  expect(expectedRegion.width, `${assertionMessage}: width is an integer`).toBe(Math.trunc(expectedRegion.width));
+  expect(expectedRegion.height, `${assertionMessage}: height is an integer`).toBe(Math.trunc(expectedRegion.height));
+  expect(expectedRegion.x, `${assertionMessage}: source x is inside the original frame`).toBeGreaterThanOrEqual(0);
+  expect(expectedRegion.y, `${assertionMessage}: source y is inside the original frame`).toBeGreaterThanOrEqual(0);
+  expect(
+    expectedRegion.x + expectedRegion.width,
+    `${assertionMessage}: source region fits horizontally`
+  ).toBeLessThanOrEqual(expected.width);
+  expect(
+    expectedRegion.y + expectedRegion.height,
+    `${assertionMessage}: source region fits vertically`
+  ).toBeLessThanOrEqual(expected.height);
+  expect(actual.width, `${assertionMessage}: normalized raster width`).toBe(expectedRegion.width);
+  expect(actual.height, `${assertionMessage}: normalized raster height`).toBe(expectedRegion.height);
+
+  let firstMismatch: string | null = null;
+  for (let y = 0; y < expectedRegion.height && firstMismatch === null; y++) {
+    for (let x = 0; x < expectedRegion.width; x++) {
+      const sourceOffset = ((expectedRegion.y + y) * expected.width + expectedRegion.x + x) * 4;
+      const actualOffset = (y * actual.width + x) * 4;
+      for (let channel = 0; channel < 4; channel++) {
+        const sourceValue = expected.data[sourceOffset + channel];
+        const actualValue = actual.data[actualOffset + channel];
+        if (sourceValue !== actualValue) {
+          firstMismatch = `pixel (${x}, ${y}) channel ${channel}: expected ${sourceValue}, received ${actualValue}`;
+          break;
+        }
+      }
+      if (firstMismatch !== null) break;
+    }
+  }
+  expect(firstMismatch, assertionMessage).toBeNull();
+}
+
 type CropParityFrame = Readonly<{ x: number; y: number; width: number; height: number }>;
 
 type CropParityLayerFixture =
@@ -1141,6 +1187,7 @@ test.describe('Crop history', () => {
   test('zoomed text commits before crop and crop/text history replays keep the transformed view', async ({ page }) => {
     await openDocument(page);
     const opening = await documentSize(page);
+    const openingRaster = await readWorkspaceRaster(page);
     const openingRedPixels = await countRedWorkspacePixels(page);
     expect(openingRedPixels, 'the new document starts without red text ink').toBe(0);
 
@@ -1203,6 +1250,9 @@ test.describe('Crop history', () => {
     await expect(page.getByTestId('undo-button'), 'text commit is the first edit').toBeEnabled();
     await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
     const committedTextPixels = await countRedWorkspacePixels(page);
+    const committedTextRaster = await readWorkspaceRaster(page);
+    expect(committedTextRaster.width, 'the text commit keeps the original raster width').toBe(openingRaster.width);
+    expect(committedTextRaster.height, 'the text commit keeps the original raster height').toBe(openingRaster.height);
     const magnificationBeforeCrop = await readEffectiveDocumentScale(page);
 
     const cropFit = await readFit(page);
@@ -1242,6 +1292,13 @@ test.describe('Crop history', () => {
     await expect
       .poll(() => countRedWorkspacePixels(page), 'cropping around the text preserves its committed ink')
       .toBe(committedTextPixels);
+    const croppedTextRaster = await readWorkspaceRaster(page);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      croppedTextRaster,
+      'crop preserves every committed point-text pixel at its shifted frame origin'
+    );
 
     // Text then crop are two ordered history entries. Undoing crop retains the text and its
     // magnification; undoing text removes only that layer. Redo must reproduce the same raster at
@@ -1250,6 +1307,12 @@ test.describe('Crop history', () => {
     await expect.poll(() => documentSize(page), 'one undo restores the full document frame').toEqual(opening);
     await expect(layers).toHaveCount(2);
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'crop undo restores the exact full-frame point-text raster'
+    );
     await expect
       .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
       .toBeLessThan(0.000001);
@@ -1257,15 +1320,33 @@ test.describe('Crop history', () => {
     await page.getByTestId('undo-button').click();
     await expect(layers, 'the next undo removes the text entry, not the view state').toHaveCount(1);
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(openingRedPixels);
+    expectRasterRegionToEqual(
+      openingRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'text undo restores the exact opening raster'
+    );
     await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
     await expect(workspace).not.toHaveAttribute('data-view-rotation', '0');
 
     await page.getByTestId('redo-button').click();
     await expect(layers).toHaveCount(2);
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'text redo reproduces the exact committed point-text raster'
+    );
     await page.getByTestId('redo-button').click();
     await expect.poll(() => documentSize(page), 'redo restores the cropped frame').toEqual(cropped);
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'crop redo reproduces the exact cropped point-text raster'
+    );
     await expect
       .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
       .toBeLessThan(0.000001);
@@ -1291,6 +1372,12 @@ test.describe('Crop history', () => {
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(textOverlay).toHaveCount(0);
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      croppedTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'cancelling a re-entered text edit leaves the cropped raster unchanged'
+    );
   });
 
   test('paragraph Type keeps its edited source through a zoomed crop and text undo/redo', async ({ page }) => {
@@ -1322,6 +1409,7 @@ test.describe('Crop history', () => {
     await expect(layers).toHaveCount(2);
     await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
     const originalTextPixels = await countRedWorkspacePixels(page);
+    const originalTextRaster = await readWorkspaceRaster(page);
     const originalMagnification = await readEffectiveDocumentScale(page);
 
     const cropRect = { left: 220, top: 180, right: 580, bottom: 420 };
@@ -1331,6 +1419,13 @@ test.describe('Crop history', () => {
     const cropped = { width: cropRect.right - cropRect.left, height: cropRect.bottom - cropRect.top };
     await expect.poll(() => documentSize(page)).toEqual(cropped);
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(originalTextPixels);
+    const croppedOriginalTextRaster = await readWorkspaceRaster(page);
+    expectRasterRegionToEqual(
+      originalTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      croppedOriginalTextRaster,
+      'crop preserves every committed paragraph-text pixel at its shifted frame origin'
+    );
     await expect
       .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - originalMagnification))
       .toBeLessThan(0.000001);
@@ -1360,6 +1455,7 @@ test.describe('Crop history', () => {
     await expect(layers, 'editing changes the source in place, not by adding another layer').toHaveCount(2);
     await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
     const editedTextPixels = await countRedWorkspacePixels(page);
+    const editedTextRaster = await readWorkspaceRaster(page);
     const editedTextSignature = await workspaceRasterSignature(page);
     expect(editedTextSignature, 'the committed replacement produces a different text raster').not.toBe(
       originalTextSignature
@@ -1369,6 +1465,12 @@ test.describe('Crop history', () => {
     await page.getByTestId('undo-button').click();
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(originalTextPixels);
     await expect.poll(() => workspaceRasterSignature(page)).toBe(originalTextSignature);
+    expectRasterRegionToEqual(
+      croppedOriginalTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'text undo restores every pixel of the cropped original paragraph'
+    );
     await expect.poll(() => documentSize(page)).toEqual(cropped);
     await expect
       .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - originalMagnification))
@@ -1384,6 +1486,12 @@ test.describe('Crop history', () => {
     await page.getByTestId('redo-button').click();
     await expect.poll(() => countRedWorkspacePixels(page)).toBe(editedTextPixels);
     await expect.poll(() => workspaceRasterSignature(page)).toBe(editedTextSignature);
+    expectRasterRegionToEqual(
+      editedTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'text redo reproduces every pixel of the edited cropped paragraph'
+    );
     await clickToolButton(page, 'text');
     const redoFit = await readFit(page);
     const redoHit = documentPoint(redoFit, 60, 65);
