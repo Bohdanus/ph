@@ -242,10 +242,12 @@ export function drawLayerSource(
   documentFrame?: DocumentFrame,
   preferCachedSource = false
 ): boolean {
+  const presentationBounds = layer.presentationBounds;
   const hasBakedPresentation =
-    layer.presentationBounds !== null &&
+    presentationBounds !== null &&
+    presentationBounds !== undefined &&
     (hasUsableRaster(layer.tmpCanvas) || (layer.tmpCanvas === null && hasUsableRaster(layer.bitmap)));
-  const effectivePosition = hasBakedPresentation ? layer.presentationBounds! : position;
+  const effectivePosition = hasBakedPresentation ? presentationBounds : position;
   if (effectivePosition.width === 0 || effectivePosition.height === 0) return false;
 
   const operations: PresentationOperation[] = [];
