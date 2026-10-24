@@ -424,16 +424,21 @@ per-session module state accurately.
 
 ## Selection
 
-A selection is a polygon point list with a bounding box, which is the `Selection`
-type in `src/contexts/general-types.ts`, and it is stored in the store as
-`selections` plus `activeSelectionId`. Readers are ants, hit-testing
-(`isPointInPolygon()`, in `src/util/selection.ts`) and geometry
-(`getSelectionRect()`, in the same module).
+A selection snapshot is either one or more polygon paths or an exact packed raster
+mask, as represented by `Selection` in `src/contexts/general-types.ts`; it is stored
+in the store as `selections` plus `activeSelectionId`. Magic Wand and Quick Selection
+retain a raster mask when their boundary exceeds
+`MAX_VECTOR_SELECTION_BOUNDARY_EDGES` in `src/util/selection-mask.ts`, rather than
+materializing an unsafe number of points. The mask is row-major, one bit per pixel,
+Base64 encoded for history, positioned by the selection's `pos`, and bounded to
+`MAX_RASTER_SELECTION_PIXELS`. `isCanonicalRasterSelectionMask()` validates it before
+history accepts it. Ants, hit-testing, processors, copy/move, and history replay read
+the same committed selection snapshot through `src/util/selection.ts` and the history
+selection helpers.
 
-An alpha mask exists but is **derived on demand**, and one production path reaches
-it: `copySelectionToCanvas()` → `copyFeatheredPolygonSelectionToCanvas()`, both in
-`src/util/selection.ts`, for clipboard and copy-to-layer. Feather is a parameter of
-that copy.
+Polygon alpha coverage is rasterized on demand, including for clipboard and copy-to-
+layer. Raster selections instead use their packed mask as the exact coverage source;
+feathering is applied by the same alpha-mask builder.
 
 `src/contexts/selection-baseline.ts` owns one rule: the baseline a selection
 history entry restores to. `deriveSelectionBaseline()` scans the **unbounded**

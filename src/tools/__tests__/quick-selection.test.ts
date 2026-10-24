@@ -354,6 +354,13 @@ describe('sampleStrokeSeeds', () => {
 });
 
 describe('growAlongStroke union', () => {
+  it('keeps the coarse preview within its pixel budget when odd dimensions round up', () => {
+    const accumulator = createQuickSelectionAccumulator({ width: 1001, height: 999 });
+
+    expect(accumulator.preview.scale).toBe(3);
+    expect(accumulator.preview.width * accumulator.preview.height).toBeLessThanOrEqual(250_000);
+  });
+
   it('selects the near block and not the far one', () => {
     // The two blocks are the same colour and only connectivity separates them, so a grow
     // that ignored the seed's region — a global colour sweep — would take both.
@@ -440,6 +447,26 @@ describe('growAlongStroke union', () => {
 
     expect(Array.from(accumulator.mask)).toEqual([1, 0]);
     expect(accumulator.selectedPixelCount).toBe(1);
+  });
+
+  it('updates coarse preview coverage incrementally without changing the exact selection mask', () => {
+    const imageData = solidImage(4, 1, BLACK);
+    setPixel(imageData, 0, 0, RED);
+    setPixel(imageData, 1, 0, BLUE);
+    const accumulator = createQuickSelectionAccumulator({ width: 4, height: 1 }, Uint8Array.from([1, 1, 0, 0]), 2);
+
+    expect(accumulator.preview.scale).toBe(2);
+    expect(Array.from(accumulator.preview.mask)).toEqual([1, 0]);
+
+    growAlongStroke(accumulator, imageData, [{ x: 0, y: 0 }], { tolerance: 0, mode: 'subtract' });
+
+    expect(Array.from(accumulator.mask)).toEqual([0, 1, 0, 0]);
+    expect(Array.from(accumulator.preview.mask)).toEqual([1, 0]);
+
+    growAlongStroke(accumulator, imageData, [{ x: 1, y: 0 }], { tolerance: 0, mode: 'subtract' });
+
+    expect(Array.from(accumulator.mask)).toEqual([0, 0, 0, 0]);
+    expect(Array.from(accumulator.preview.mask)).toEqual([0, 0]);
   });
 
   it('stops sampling once an Add fill covers the complete image', () => {

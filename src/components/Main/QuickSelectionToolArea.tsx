@@ -33,6 +33,15 @@ type QuickSelectionToolAreaProps = {
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 
+type QuickSelectionDocumentContext = {
+  documentId: string;
+  documentRevision: number;
+  historyIndex: number;
+  branchRevision: number;
+  totalSize: Size;
+  documentFrame: DocumentFrame;
+};
+
 /**
  * The document's pixels, read once per gesture.
  *
@@ -74,13 +83,19 @@ function drawRegionPreview(ctx: CanvasRenderingContext2D, contours: Point[][]): 
 
 function drawRasterRegionPreview(
   ctx: CanvasRenderingContext2D,
-  preview: { outline: SelectionRasterOutline; x: number; y: number }
+  preview: { outline: SelectionRasterOutline; x: number; y: number; scale: number }
 ): void {
   ctx.save();
-  ctx.drawImage(preview.outline.canvas, preview.x, preview.y, preview.outline.width, preview.outline.height);
+  ctx.drawImage(
+    preview.outline.canvas,
+    preview.x,
+    preview.y,
+    preview.outline.width * preview.scale,
+    preview.outline.height * preview.scale
+  );
   ctx.globalCompositeOperation = 'source-in';
   ctx.fillStyle = 'rgba(0,123,255,0.95)';
-  ctx.fillRect(preview.x, preview.y, preview.outline.width, preview.outline.height);
+  ctx.fillRect(preview.x, preview.y, preview.outline.width * preview.scale, preview.outline.height * preview.scale);
   ctx.restore();
 }
 
@@ -104,6 +119,15 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
   const { getToolArgs } = useCurrentTool();
   const { clearSelections, commitSelection } = useSelectionHistory();
   const args = getToolArgs('quick-selection');
+  const currentDocumentContextRef = useRef<QuickSelectionDocumentContext | null>(null);
+  currentDocumentContextRef.current = {
+    documentId,
+    documentRevision,
+    historyIndex,
+    branchRevision,
+    totalSize: { ...totalSize },
+    documentFrame: { ...documentFrame },
+  };
 
   const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid, releasePointer } =
     usePointerPosition({
@@ -129,7 +153,10 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
   const strokeToleranceRef = useRef<number>(args?.tolerance ?? 0);
   const selectionChangedRef = useRef(false);
   const previewPointsRef = useRef<Point[][] | null>(null);
-  const previewRasterRef = useRef<{ outline: SelectionRasterOutline; x: number; y: number } | null>(null);
+  const previewRasterRef = useRef<{ outline: SelectionRasterOutline; x: number; y: number; scale: number } | null>(
+    null
+  );
+  const previewAnimationFrameRef = useRef<number | null>(null);
 
   /**
    * Repaint the whole overlay: the live preview, and nothing else.
@@ -149,20 +176,70 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     ({
       previewPoints,
       previewRaster,
+      previewSize,
     }: {
       previewPoints?: Point[][] | null;
-      previewRaster?: { outline: SelectionRasterOutline; x: number; y: number } | null;
+      previewRaster?: { outline: SelectionRasterOutline; x: number; y: number; scale: number } | null;
+      previewSize?: Size;
     } = {}) => {
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       resetOverlayAlpha(ctx);
-      if (previewRaster) drawRasterRegionPreview(ctx, previewRaster);
-      else if (previewPoints && previewPoints.length > 0) drawRegionPreview(ctx, previewPoints);
+      if (previewSize && (previewRaster || (previewPoints && previewPoints.length > 0))) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, previewSize.width, previewSize.height);
+        ctx.clip();
+        if (previewRaster) drawRasterRegionPreview(ctx, previewRaster);
+        else if (previewPoints) drawRegionPreview(ctx, previewPoints);
+        ctx.restore();
+      }
     },
     [overlayCtxRef]
   );
+
+  function refreshPreview(accumulator: QuickSelectionAccumulator): void {
+    const { mask, width, height, scale } = accumulator.preview;
+    const polygon = createQuickSelectionPolygon(mask, width, height);
+    if (polygon?.rasterMask) {
+      const outline = createSelectionRasterOutlineCanvas(polygon.rasterMask);
+      previewRasterRef.current =
+        outline === null
+          ? null
+          : { outline, x: (polygon.bounds.x - 1) * scale, y: (polygon.bounds.y - 1) * scale, scale };
+      previewPointsRef.current = null;
+    } else {
+      previewRasterRef.current = null;
+      previewPointsRef.current =
+        polygon?.points.map((contour) =>
+          contour.map((point) => ({
+            x: Math.min(point.x * scale, accumulator.width),
+            y: Math.min(point.y * scale, accumulator.height),
+          }))
+        ) ?? null;
+    }
+    redrawOverlay({
+      previewPoints: previewPointsRef.current,
+      previewRaster: previewRasterRef.current,
+      previewSize: { width: accumulator.width, height: accumulator.height },
+    });
+  }
+
+  function schedulePreview(accumulator: QuickSelectionAccumulator): void {
+    if (previewAnimationFrameRef.current !== null) return;
+
+    previewAnimationFrameRef.current = requestAnimationFrame(() => {
+      previewAnimationFrameRef.current = null;
+      if (pointerIdRef.current === null || accumulatorRef.current !== accumulator) return;
+      if (!isStrokeDocumentContextCurrent()) {
+        cancelCurrentStroke();
+        return;
+      }
+      refreshPreview(accumulator);
+    });
+  }
 
   /**
    * Re-seed along the stroke and repaint what grew.
@@ -186,20 +263,15 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     if (grownRegions === 0) return false;
     selectionChangedRef.current = true;
 
-    const polygon = createQuickSelectionPolygon(accumulator.mask, accumulator.width, accumulator.height);
-    if (polygon?.rasterMask) {
-      const outline = createSelectionRasterOutlineCanvas(polygon.rasterMask);
-      previewRasterRef.current = outline ? { outline, x: polygon.bounds.x - 1, y: polygon.bounds.y - 1 } : null;
-      previewPointsRef.current = null;
-    } else {
-      previewRasterRef.current = null;
-      previewPointsRef.current = polygon ? polygon.points : null;
-    }
-    redrawOverlay({ previewPoints: previewPointsRef.current, previewRaster: previewRasterRef.current });
+    schedulePreview(accumulator);
     return true;
   }
 
   function resetGesture() {
+    if (previewAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(previewAnimationFrameRef.current);
+      previewAnimationFrameRef.current = null;
+    }
     pointerIdRef.current = null;
     strokeDocumentContextRef.current = null;
     seedSamplerRef.current = null;
@@ -214,20 +286,22 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
   function isStrokeDocumentContextCurrent(): boolean {
     const context = strokeDocumentContextRef.current;
+    const current = currentDocumentContextRef.current;
     return (
       context !== null &&
-      context.documentId === documentId &&
-      context.documentRevision === documentRevision &&
-      context.historyIndex === historyIndex &&
-      context.branchRevision === branchRevision &&
-      context.totalSize.width === totalSize.width &&
-      context.totalSize.height === totalSize.height &&
-      context.imageSize.width === totalSize.width &&
-      context.imageSize.height === totalSize.height &&
-      context.documentFrame.x === documentFrame.x &&
-      context.documentFrame.y === documentFrame.y &&
-      context.documentFrame.width === documentFrame.width &&
-      context.documentFrame.height === documentFrame.height
+      current !== null &&
+      context.documentId === current.documentId &&
+      context.documentRevision === current.documentRevision &&
+      context.historyIndex === current.historyIndex &&
+      context.branchRevision === current.branchRevision &&
+      context.totalSize.width === current.totalSize.width &&
+      context.totalSize.height === current.totalSize.height &&
+      context.imageSize.width === current.totalSize.width &&
+      context.imageSize.height === current.totalSize.height &&
+      context.documentFrame.x === current.documentFrame.x &&
+      context.documentFrame.y === current.documentFrame.y &&
+      context.documentFrame.width === current.documentFrame.width &&
+      context.documentFrame.height === current.documentFrame.height
     );
   }
 

@@ -696,6 +696,14 @@ test.describe('Selection tools', () => {
       'the disconnected color match also has a committed border'
     ).toBe(true);
 
+    // A single outline around both bars would put its vertical sides through this empty gap.
+    // The correct disconnected selection has no marching ants between the two components.
+    const gapRuns = await readAntRuns(page, { x: 100, y: 270, width: 500, height: 60 }, 'row');
+    expect(
+      gapRuns.every((row) => row.length === 0),
+      'the committed selection keeps the blank gap between matching regions unselected'
+    ).toBe(true);
+
     await expect(page.getByRole('status')).toContainText(
       'Selects matching colors across the image, including disconnected regions.'
     );

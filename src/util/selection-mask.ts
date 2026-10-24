@@ -49,6 +49,19 @@ export function isCanonicalRasterSelectionMask(value: unknown): value is RasterS
     return false;
   }
 
+  const byteLength = Math.ceil((width * height) / 8);
+  const expectedLength = Math.ceil(byteLength / 3) * 4;
+  // Check this before scanning either the Base64 or selected-bit payload. The
+  // dimensions cap the canonical payload; a tiny mask must not make validation
+  // walk an arbitrarily large malformed string on the history thread.
+  if (data.length !== expectedLength) return false;
+
+  const expectedPadding = byteLength % 3 === 0 ? 0 : 3 - (byteLength % 3);
+  const actualPadding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  if (!BASE64.test(data) || actualPadding !== expectedPadding) {
+    return false;
+  }
+
   let hasSelectedPixel = false;
   for (let index = 0; index < data.length; index += 1) {
     const character = data[index];
@@ -58,13 +71,6 @@ export function isCanonicalRasterSelectionMask(value: unknown): value is RasterS
     }
   }
   if (!hasSelectedPixel) return false;
-
-  const byteLength = Math.ceil((width * height) / 8);
-  const expectedPadding = byteLength % 3 === 0 ? 0 : 3 - (byteLength % 3);
-  const actualPadding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
-  if (data.length !== Math.ceil(byteLength / 3) * 4 || !BASE64.test(data) || actualPadding !== expectedPadding) {
-    return false;
-  }
 
   const group = data.slice(-4);
   const values = [...group].map((character) => (character === '=' ? 0 : BASE64_ALPHABET.indexOf(character)));

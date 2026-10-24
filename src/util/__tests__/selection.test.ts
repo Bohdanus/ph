@@ -1385,6 +1385,35 @@ describe('canvas snapshot helpers', () => {
   describe('copySelectionToCanvas dispatch', () => {
     const dispatchImageSize: Size = { width: 100, height: 100 };
 
+    it('samples logical rectangle bounds from a high-DPI source while keeping the snapshot logical', () => {
+      const source = makeMockCanvas(200, 200);
+      const result = copySelectionToCanvas(
+        source,
+        selection({
+          geometry: 'rectangle',
+          sourceTool: 'rectangular-selection',
+          pos: { x: 10, y: 20, width: 10, height: 10 },
+        }),
+        dispatchImageSize,
+        { x: 2, y: 2 }
+      );
+
+      expect(result?.pos).toEqual({ x: 10, y: 20, width: 10, height: 10 });
+      expect(result?.bitmap.width).toBe(10);
+      expect(result?.bitmap.height).toBe(10);
+      expect(firstConstructed().contexts[0].drawImage).toHaveBeenCalledExactlyOnceWith(
+        source,
+        20,
+        40,
+        20,
+        20,
+        0,
+        0,
+        10,
+        10
+      );
+    });
+
     it('returns null when there is no source canvas', () => {
       expect(copySelectionToCanvas(null, selection(), imageSize)).toBeNull();
       expect(copySelectionToCanvas(undefined, selection(), imageSize)).toBeNull();

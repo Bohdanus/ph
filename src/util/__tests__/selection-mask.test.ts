@@ -49,6 +49,10 @@ describe('packed raster selection masks', () => {
     expect(encodeRasterSelectionMask(new Uint8Array(1), 1, 1, { x: 0, y: 0, width: 4097, height: 4096 })).toBeNull();
   });
 
+  it('rejects oversized payloads before scanning their contents', () => {
+    expect(isCanonicalRasterSelectionMask({ width: 1, height: 1, data: 'A'.repeat(4 * 1024 * 1024) })).toBe(false);
+  });
+
   it('rejects empty masks at validation and encoding boundaries', () => {
     expect(isCanonicalRasterSelectionMask({ width: 1, height: 1, data: 'AA==' })).toBe(false);
     expect(encodeRasterSelectionMask(new Uint8Array(4), 2, 2, { x: 0, y: 0, width: 2, height: 2 })).toBeNull();

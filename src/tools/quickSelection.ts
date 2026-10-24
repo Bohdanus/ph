@@ -185,6 +185,15 @@ export type QuickSelectionAccumulator = {
   mask: Uint8Array;
   width: number;
   height: number;
+  preview: {
+    mask: Uint8Array;
+    width: number;
+    height: number;
+    /** Number of source pixels represented by each preview pixel. */
+    scale: number;
+    /** Selected source-pixel counts keep coarse preview coverage correct during subtraction. */
+    pixelCounts: Uint32Array | null;
+  };
   /** Reused scratch buffers; lazily allocated because an empty subtract stroke needs none. */
   floodFillWorkspace: ContiguousFloodFillWorkspace | null;
   /** Pixels already included by zero-tolerance fills, separate from a pre-existing base selection. */
@@ -194,13 +203,38 @@ export type QuickSelectionAccumulator = {
   selectedPixelCount: number;
 };
 
+/** Cap transient outline tracing during a drag; the committed selection remains full-resolution. */
+export const MAX_QUICK_SELECTION_PREVIEW_PIXELS = 250_000;
+
 export function createQuickSelectionAccumulator(
   size: Size,
-  baseMask: Uint8Array | null = null
+  baseMask: Uint8Array | null = null,
+  previewPixelBudget = MAX_QUICK_SELECTION_PREVIEW_PIXELS
 ): QuickSelectionAccumulator {
   const width = toPixelExtent(size.width);
   const height = toPixelExtent(size.height);
   const mask = new Uint8Array(width * height);
+  const area = width * height;
+  const previewLimit =
+    Number.isSafeInteger(previewPixelBudget) && previewPixelBudget > 0
+      ? previewPixelBudget
+      : MAX_QUICK_SELECTION_PREVIEW_PIXELS;
+  let previewScale = 1;
+  if (area > previewLimit) {
+    let lowerBound = 1;
+    let upperBound = Math.max(width, height);
+    while (lowerBound < upperBound) {
+      const candidate = Math.floor((lowerBound + upperBound) / 2);
+      const candidateArea = Math.ceil(width / candidate) * Math.ceil(height / candidate);
+      if (candidateArea <= previewLimit) upperBound = candidate;
+      else lowerBound = candidate + 1;
+    }
+    previewScale = lowerBound;
+  }
+  const previewWidth = Math.ceil(width / previewScale);
+  const previewHeight = Math.ceil(height / previewScale);
+  const previewPixelCounts = previewScale === 1 ? null : new Uint32Array(previewWidth * previewHeight);
+  const previewMask = previewScale === 1 ? mask : new Uint8Array(previewWidth * previewHeight);
   let selectedPixelCount = 0;
   if (baseMask) {
     const copyLength = Math.min(mask.length, baseMask.length);
@@ -208,6 +242,13 @@ export function createQuickSelectionAccumulator(
       if (!baseMask[index]) continue;
       mask[index] = 1;
       selectedPixelCount += 1;
+      if (previewPixelCounts) {
+        const y = Math.floor(index / width);
+        const x = index - y * width;
+        const previewIndex = Math.floor(y / previewScale) * previewWidth + Math.floor(x / previewScale);
+        previewPixelCounts[previewIndex] = previewPixelCounts[previewIndex]! + 1;
+        previewMask[previewIndex] = 1;
+      }
     }
   }
 
@@ -215,11 +256,35 @@ export function createQuickSelectionAccumulator(
     mask,
     width,
     height,
+    preview: {
+      mask: previewMask,
+      width: previewWidth,
+      height: previewHeight,
+      scale: previewScale,
+      pixelCounts: previewPixelCounts,
+    },
     floodFillWorkspace: null,
     exactFilledPixels: null,
     processedSeedIndices: new Set(),
     selectedPixelCount,
   };
+}
+
+function updateQuickSelectionPreviewPixel(
+  accumulator: QuickSelectionAccumulator,
+  pixelIndex: number,
+  nextValue: 0 | 1
+): void {
+  const { preview, width } = accumulator;
+  const counts = preview.pixelCounts;
+  if (!counts) return;
+
+  const y = Math.floor(pixelIndex / width);
+  const x = pixelIndex - y * width;
+  const previewIndex = Math.floor(y / preview.scale) * preview.width + Math.floor(x / preview.scale);
+  const nextCount = counts[previewIndex]! + (nextValue === 1 ? 1 : -1);
+  counts[previewIndex] = nextCount;
+  preview.mask[previewIndex] = nextCount > 0 ? 1 : 0;
 }
 
 /**
@@ -297,6 +362,7 @@ export function growAlongStroke(
         }
         const nextValue = mode === 'subtract' ? 0 : 1;
         if (mask[pixel] !== nextValue) {
+          updateQuickSelectionPreviewPixel(accumulator, pixel, nextValue);
           changed = true;
           accumulator.selectedPixelCount += nextValue === 1 ? 1 : -1;
         }

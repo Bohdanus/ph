@@ -2,7 +2,12 @@ import type { Selection } from './general-types.ts';
 import { useStore } from './StoreContext.tsx';
 import { useLayers } from './useLayer.ts';
 import { cloneBitmapToCanvas, copySelectionToCanvas, getActiveSelection } from '../util/selection.ts';
-import { canvasToDocumentPos, documentFrameFromSize, documentToCanvasPos } from './document-frame.ts';
+import {
+  canvasToDocumentPos,
+  documentFrameFromSize,
+  documentFrameSize,
+  documentToCanvasPos,
+} from './document-frame.ts';
 import { assertWithinDocumentPixelBudget } from './raster-utils.ts';
 import { readImageFromClipboard } from '../util/clipboard.ts';
 
@@ -40,14 +45,32 @@ export const useSelectionClipboard = () => {
 
   const activeSelection = getActiveSelection(selections, activeSelectionId);
 
+  function copySelectionSnapshot(selection: Selection) {
+    const sourceCanvas = canvasRef.current;
+    const imageSize = documentFrameSize(documentFrame);
+    const backingScale = Number(sourceCanvas?.getAttribute('data-hidpi-ratio'));
+    const sourceScale = {
+      x:
+        Number.isFinite(backingScale) && backingScale > 0
+          ? backingScale
+          : sourceCanvas
+            ? sourceCanvas.width / imageSize.width
+            : 1,
+      y:
+        Number.isFinite(backingScale) && backingScale > 0
+          ? backingScale
+          : sourceCanvas
+            ? sourceCanvas.height / imageSize.height
+            : 1,
+    };
+    const canvasSelection = { ...selection, pos: documentToCanvasPos(selection.pos, documentFrame) };
+    return copySelectionToCanvas(sourceCanvas, canvasSelection, imageSize, sourceScale);
+  }
+
   function copySelection(selection: Selection | null | undefined = activeSelection): boolean {
     if (!selection) return false;
 
-    const canvasSelection = { ...selection, pos: documentToCanvasPos(selection.pos, documentFrame) };
-    const canvasSize = canvasRef.current
-      ? { width: canvasRef.current.width, height: canvasRef.current.height }
-      : totalSize;
-    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, canvasSize);
+    const snapshot = copySelectionSnapshot(selection);
     if (!snapshot) return false;
 
     dispatch({
@@ -122,11 +145,7 @@ export const useSelectionClipboard = () => {
   async function layerViaCopy(): Promise<boolean> {
     if (!activeSelection) return false;
 
-    const canvasSelection = { ...activeSelection, pos: documentToCanvasPos(activeSelection.pos, documentFrame) };
-    const canvasSize = canvasRef.current
-      ? { width: canvasRef.current.width, height: canvasRef.current.height }
-      : totalSize;
-    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, canvasSize);
+    const snapshot = copySelectionSnapshot(activeSelection);
     if (!snapshot) return false;
 
     try {

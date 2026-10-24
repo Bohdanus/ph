@@ -14,7 +14,7 @@ import {
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
-import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
+import { committedAntsOutline, hasNoCommittedAnts, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
   navigateAndSelectInFlyout,
@@ -960,6 +960,87 @@ test.describe('Quick selection', () => {
     // Undo is NOT asserted to be disabled here: this test paints a band first, and that
     // layer creation is its own history entry, so the cursor is still on it after the undo
     // that removed the selection.
+  });
+
+  test('a raster-backed quick selection commits, undoes and redoes through the UI', async ({ page }) => {
+    await selectQuickSelectionFromSidebar(page);
+    const sizeSlider = page.locator('#quick-selection-size');
+    await sizeSlider.focus();
+    await sizeSlider.press('Home');
+    await expect(sizeSlider).toHaveValue('1');
+
+    const pattern = { x: 280, y: 180, size: 200, color: KNOWN_RED };
+    const canvas = getWorkspaceCanvas(page);
+    await canvas.evaluate((element, region) => {
+      if (!(element instanceof HTMLCanvasElement)) throw new Error('the workspace canvas is not a canvas');
+      const context = element.getContext('2d');
+      if (!context) throw new Error('the workspace canvas has no 2d context');
+
+      // The 200px crosshatch is one 4-connected selection with 40,400 boundary edges, above
+      // the 32,768-edge vector budget. Build it in logical document pixels so this still holds
+      // if the browser canvas backing store is scaled for a high-DPI device.
+      context.save();
+      context.setTransform(element.width / 800, 0, 0, element.height / 600, 0, 0);
+      context.fillStyle = '#ffffff';
+      context.fillRect(region.x, region.y, region.size, region.size);
+      context.fillStyle = region.color;
+      for (let x = 0; x < region.size; x += 2) {
+        context.fillRect(region.x + x, region.y, 1, region.size);
+      }
+      for (let y = 0; y < region.size; y += 2) {
+        context.fillRect(region.x, region.y + y, region.size, 1);
+      }
+      context.restore();
+    }, pattern);
+
+    const toPagePoint = async (x: number, y: number): Promise<PagePoint> =>
+      canvas.evaluate(
+        (element, point) => {
+          if (!(element instanceof HTMLCanvasElement)) throw new Error('the workspace canvas is not a canvas');
+          const rect = element.getBoundingClientRect();
+          const scale = Math.min(rect.width / 800, rect.height / 600);
+          const offsetX = (rect.width - 800 * scale) / 2;
+          const offsetY = (rect.height - 600 * scale) / 2;
+          return { x: rect.left + offsetX + point.x * scale, y: rect.top + offsetY + point.y * scale };
+        },
+        { x, y }
+      );
+
+    const start = await toPagePoint(pattern.x + 4, pattern.y + 1);
+    const end = await toPagePoint(pattern.x + 4, pattern.y + 5);
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+    await dragOnCanvas(page, start, end, { steps: 4 });
+    await waitForCommittedAnts(page, 'the committed raster-backed Quick Selection');
+
+    const interiorGridRows = [25, 27, 29, 31].map((offset) => ({
+      x: pattern.x,
+      y: pattern.y + offset,
+      width: pattern.size,
+      height: 1,
+    }));
+    const expectManyInteriorBoundaries = async () => {
+      await expect
+        .poll(
+          async () => {
+            const runCounts = await Promise.all(
+              interiorGridRows.map(async (row) => (await readAntRuns(page, row, 'row'))[0]?.length ?? 0)
+            );
+            return runCounts.filter((count) => count > 20).length;
+          },
+          { message: 'multiple interior rows should retain many crosshatch boundaries' }
+        )
+        .toBeGreaterThan(1);
+    };
+    await expectManyInteriorBoundaries();
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
+
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => hasNoCommittedAnts(page)).toBe(true);
+    await expect(page.getByTestId('redo-button')).toBeEnabled();
+
+    await page.getByTestId('redo-button').click();
+    await waitForCommittedAnts(page, 'the redone raster-backed Quick Selection');
+    await expectManyInteriorBoundaries();
   });
 
   test('a quick selection is reachable with the W shortcut', async ({ page }) => {

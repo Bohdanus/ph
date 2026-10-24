@@ -7,7 +7,7 @@ import {
 } from '../magicWand.ts';
 import { getToleranceDistance } from '../flood-fill.ts';
 import { createSelectionAlphaMask } from '../selection.ts';
-import { MAX_VECTOR_SELECTION_BOUNDARY_EDGES } from '../selection-mask.ts';
+import { decodeRasterSelectionMask, MAX_VECTOR_SELECTION_BOUNDARY_EDGES } from '../selection-mask.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
   const imageData = {
@@ -938,6 +938,43 @@ describe('high-fragmentation mask fallback', () => {
         { antiAlias: false }
       )
     ).toEqual(exactColorAlphaMask(imageData, [255, 0, 0, 255]));
+  });
+
+  it('preserves an exact 2048x2048 checkerboard without tracing millions of contours', () => {
+    const size = 2048;
+    const imageData = createImageData(size, size, [0, 0, 0, 255]);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = y % 2; x < size; x += 2) {
+        imageData.data[(y * size + x) * 4] = 255;
+      }
+    }
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 0, y: 0 },
+      { tolerance: 0, contiguous: false }
+    );
+
+    expect(result?.selectedPixelCount).toBe((size * size) / 2);
+    expect(result?.points).toEqual([]);
+    expect(result?.boundaryEdgeCount).toBe(MAX_VECTOR_SELECTION_BOUNDARY_EDGES + 1);
+    expect(result?.bounds).toEqual({ x: 0, y: 0, width: size, height: size });
+    expect(result?.rasterMask).toMatchObject({ width: size, height: size });
+
+    const packed = decodeRasterSelectionMask(result!.rasterMask!);
+    expect(packed).not.toBeNull();
+    let selectedPixelCount = 0;
+    let mismatchCount = 0;
+    for (let pixel = 0; pixel < size * size; pixel += 1) {
+      const selected = (packed![pixel >>> 3]! & (1 << (pixel & 7))) !== 0;
+      if (selected) selectedPixelCount += 1;
+      const y = Math.floor(pixel / size);
+      const x = pixel % size;
+      if (selected !== ((x + y) % 2 === 0)) mismatchCount += 1;
+    }
+
+    expect(selectedPixelCount).toBe((size * size) / 2);
+    expect(mismatchCount).toBe(0);
   });
 });
 

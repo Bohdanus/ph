@@ -492,6 +492,28 @@ export type SelectionCanvasSnapshot = {
   pos: Pos;
 };
 
+type SelectionSourceScale = Readonly<{ x: number; y: number }>;
+const IDENTITY_SELECTION_SOURCE_SCALE: SelectionSourceScale = Object.freeze({ x: 1, y: 1 });
+
+function drawSelectionSourceRegion(
+  ctx: Ctx2D,
+  sourceCanvas: BitmapSource,
+  bounds: Pos,
+  sourceScale: SelectionSourceScale
+): void {
+  ctx.drawImage(
+    sourceCanvas as CanvasImageSource,
+    bounds.x * sourceScale.x,
+    bounds.y * sourceScale.y,
+    bounds.width * sourceScale.x,
+    bounds.height * sourceScale.y,
+    0,
+    0,
+    bounds.width,
+    bounds.height
+  );
+}
+
 function createSelectionCanvas(width: number, height: number): ClipboardCanvas {
   const safeWidth = Math.max(1, Math.ceil(width));
   const safeHeight = Math.max(1, Math.ceil(height));
@@ -649,7 +671,10 @@ export function cloneBitmapToCanvas(source: BitmapSource): ClipboardCanvas {
 export function copyPolygonSelectionToCanvas(
   sourceCanvas: BitmapSource,
   points: Point[],
-  { imageSize }: { imageSize?: Size } = {}
+  {
+    imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
+  }: { imageSize?: Size; sourceScale?: SelectionSourceScale } = {}
 ): SelectionCanvasSnapshot | null {
   if (points.length < 3) return null;
 
@@ -675,8 +700,10 @@ export function copyPolygonSelectionToCanvas(
   // The clipping will simply exclude regions based on the winding number, which prevents crashes.
   ctx.clip();
 
-  // Draw source canvas shifted so polygon aligns
-  ctx.drawImage(sourceCanvas as CanvasImageSource, -minX, -minY);
+  // Draw the logical source region so high-DPI backing pixels map to the
+  // selection's document-pixel coordinates before clipping.
+  if (sourceScale.x === 1 && sourceScale.y === 1) ctx.drawImage(sourceCanvas as CanvasImageSource, -minX, -minY);
+  else drawSelectionSourceRegion(ctx, sourceCanvas, bounds, sourceScale);
 
   ctx.restore();
 
@@ -708,12 +735,15 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
 export function copyPolygonContoursSelectionToCanvas(
   sourceCanvas: BitmapSource,
   contours: Point[][],
-  { imageSize }: { imageSize?: Size } = {}
+  {
+    imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
+  }: { imageSize?: Size; sourceScale?: SelectionSourceScale } = {}
 ): SelectionCanvasSnapshot | null {
   const validContours = contours.filter((contour) => contour.length >= 3);
   if (validContours.length === 0) return null;
   if (validContours.length === 1) {
-    return copyPolygonSelectionToCanvas(sourceCanvas, validContours[0], { imageSize });
+    return copyPolygonSelectionToCanvas(sourceCanvas, validContours[0], { imageSize, sourceScale });
   }
 
   const bounds = getSelectionCanvasBounds(validContours.flat(), 0, imageSize);
@@ -730,7 +760,11 @@ export function copyPolygonContoursSelectionToCanvas(
   );
   // Even-odd fill preserves disconnected islands and makes each nested contour an exclusion.
   ctx.clip('evenodd');
-  ctx.drawImage(sourceCanvas as CanvasImageSource, -bounds.x, -bounds.y);
+  if (sourceScale.x === 1 && sourceScale.y === 1) {
+    ctx.drawImage(sourceCanvas as CanvasImageSource, -bounds.x, -bounds.y);
+  } else {
+    drawSelectionSourceRegion(ctx, sourceCanvas, bounds, sourceScale);
+  }
   ctx.restore();
 
   return { bitmap: destCanvas, pos: bounds };
@@ -980,10 +1014,12 @@ export function copyFeatheredPolygonToCanvas(
     antiAlias = true,
     featherRadius = 0,
     imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
   }: {
     antiAlias?: boolean;
     featherRadius?: number;
     imageSize?: Size;
+    sourceScale?: SelectionSourceScale;
   } = {}
 ): ClipboardCanvas {
   // Derived with the same rule `copyFeatheredPolygonSelectionToCanvas` uses, so the two
@@ -993,6 +1029,7 @@ export function copyFeatheredPolygonToCanvas(
     antiAlias,
     featherRadius,
     imageSize,
+    sourceScale,
   });
   if (snapshot) return snapshot.bitmap;
 
@@ -1010,10 +1047,12 @@ export function copyFeatheredPolygonSelectionToCanvas(
     antiAlias = true,
     featherRadius = 0,
     imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
   }: {
     antiAlias?: boolean;
     featherRadius?: number;
     imageSize?: Size;
+    sourceScale?: SelectionSourceScale;
   } = {}
 ): SelectionCanvasSnapshot | null {
   if (points.length < 3) {
@@ -1030,7 +1069,7 @@ export function copyFeatheredPolygonSelectionToCanvas(
   const ctx = getSelectionCanvasContext(destCanvas);
   if (!ctx) return unavailableSelectionCanvasContext('copyFeatheredPolygonSelectionToCanvas', destCanvas);
 
-  ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
+  drawSelectionSourceRegion(ctx, sourceCanvas, bounds, sourceScale);
 
   const imageData = ctx.getImageData(0, 0, width, height);
   const mask = rasterizePolygonMask([relativePoints], width, height);
@@ -1056,7 +1095,8 @@ export function copyFeatheredPolygonSelectionToCanvas(
 export function copyRectSelectionToCanvas(
   sourceCanvas: BitmapSource,
   rect: RectXYSorted,
-  imageSize: Size
+  imageSize: Size,
+  sourceScale: SelectionSourceScale = IDENTITY_SELECTION_SOURCE_SCALE
 ): SelectionCanvasSnapshot | null {
   const { x, y, width, height } = trimRect(sortRect(rect), imageSize);
   if (width <= 0 || height <= 0) return null;
@@ -1065,7 +1105,7 @@ export function copyRectSelectionToCanvas(
   const ctx = getSelectionCanvasContext(destCanvas);
   if (!ctx) return unavailableSelectionCanvasContext('copyRectSelectionToCanvas', destCanvas);
 
-  ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
+  drawSelectionSourceRegion(ctx, sourceCanvas, { x, y, width, height }, sourceScale);
 
   return { bitmap: destCanvas, pos: { x, y, width, height } };
 }
@@ -1073,12 +1113,16 @@ export function copyRectSelectionToCanvas(
 export function copySelectionToCanvas(
   sourceCanvas: BitmapSource | null | undefined,
   selection: Selection,
-  imageSize: Size
+  imageSize: Size,
+  sourceScale: SelectionSourceScale = IDENTITY_SELECTION_SOURCE_SCALE
 ): SelectionCanvasSnapshot | null {
   if (!sourceCanvas) return null;
+  if (!Number.isFinite(sourceScale.x) || sourceScale.x <= 0 || !Number.isFinite(sourceScale.y) || sourceScale.y <= 0) {
+    return null;
+  }
 
   if (selection.geometry === 'rectangle') {
-    return copyRectSelectionToCanvas(sourceCanvas, getSelectionRect(selection), imageSize);
+    return copyRectSelectionToCanvas(sourceCanvas, getSelectionRect(selection), imageSize, sourceScale);
   }
 
   if (selection.rasterMask) {
@@ -1096,7 +1140,7 @@ export function copySelectionToCanvas(
     const destCanvas = createSelectionCanvas(width, height);
     const ctx = getSelectionCanvasContext(destCanvas);
     if (!ctx) return unavailableSelectionCanvasContext('copyRasterSelectionToCanvas', destCanvas);
-    ctx.drawImage(sourceCanvas as CanvasImageSource, minX, minY, width, height, 0, 0, width, height);
+    drawSelectionSourceRegion(ctx, sourceCanvas, { x: minX, y: minY, width, height }, sourceScale);
 
     const imageData = ctx.getImageData(0, 0, width, height);
     const rasterized = rasterizePackedMaskCoverage(
@@ -1128,10 +1172,11 @@ export function copySelectionToCanvas(
       antiAlias: selection.metadata?.magneticLasso?.antiAlias ?? true,
       featherRadius: selection.metadata?.featherRadius ?? 0,
       imageSize,
+      sourceScale,
     });
   }
 
-  return copyPolygonContoursSelectionToCanvas(sourceCanvas, contours, { imageSize });
+  return copyPolygonContoursSelectionToCanvas(sourceCanvas, contours, { imageSize, sourceScale });
 }
 
 function canvasToBlob(canvas: ClipboardCanvas): Promise<Blob> {
