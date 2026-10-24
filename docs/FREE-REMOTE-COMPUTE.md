@@ -104,7 +104,7 @@ From a verified task worktree, publish the candidate branch and dispatch the exi
 
 ```bash
 git remote -v
-git push https://github.com/Bohdanus/ph.git HEAD:refs/heads/<task-branch>
+git push git@github.com:Bohdanus/ph.git HEAD:refs/heads/<task-branch>
 gh workflow run ci.yml -R Bohdanus/ph --ref <task-branch>
 gh run list -R Bohdanus/ph --workflow CI --branch <task-branch> --limit 5
 gh run watch <run-id> -R Bohdanus/ph --exit-status
@@ -126,7 +126,7 @@ gh run download <run-id> -R Bohdanus/ph --name linux-export-baselines-<commit-sh
 
 Copy only the reviewed images into `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/`. The capture workflow verifies the visual-regression spec before uploading. The artifact is temporary; committing the reviewed images to the source branch is what makes the CI baseline durable.
 
-Use GitHub CLI authentication for pushes and dispatches. Store the operator credential through `gh auth login` and its configured OS credential manager; do not put tokens in remote URLs, command arguments, workflow files, repository secrets, or logs. The CI and capture workflows use their read-only `GITHUB_TOKEN` permissions and do not need a personal token secret. If a token is exposed, revoke it and issue a replacement with only the required repository permissions.
+Use the configured SSH key for Git pushes and GitHub CLI authentication for workflow dispatches. Store CLI credentials with `gh auth login` and its configured OS credential manager; do not put tokens in remote URLs, command arguments, workflow files, repository secrets, or logs. The CI and capture workflows use their read-only `GITHUB_TOKEN` permissions and do not need a personal token secret. If a token is exposed, revoke it and issue a replacement with only the required repository permissions.
 
 ## Other useful tasks
 
