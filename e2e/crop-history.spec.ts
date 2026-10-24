@@ -418,9 +418,9 @@ async function readCropGuidePathCoordinates(page: Page): Promise<number[]> {
     .getByTestId('crop-composition-guide')
     .locator('path')
     .getAttribute('d')
-    .then((path) => {
-      if (!path) throw new Error('the crop composition guide has no path');
-      return (path.match(/-?(?:\d+\.?\d*|\.\d+)/g) ?? []).map(Number);
+    .then((pathData) => {
+      if (!pathData) throw new Error('the crop composition guide has no path');
+      return (pathData.match(/-?(?:\d+\.?\d*|\.\d+)/g) ?? []).map(Number);
     });
 }
 
@@ -536,6 +536,137 @@ async function commitCrop(page: Page): Promise<void> {
   const fit = await openCropTool(page);
   await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
   await applyCrop(page);
+}
+
+/** Drag the logarithmic zoom control to an absolute image-pixel magnification. */
+async function setZoomMagnification(page: Page, magnification: number): Promise<void> {
+  await clickToolButton(page, 'zoom');
+  const slider = page.locator('#view-zoom-slider');
+  const target = await slider.evaluate((element, targetMagnification) => {
+    const input = element as HTMLInputElement;
+    const workspace = document.querySelector<HTMLElement>('[data-testid="workspace-container"]');
+    const width = Number(workspace?.getAttribute('data-fit-document-width'));
+    const height = Number(workspace?.getAttribute('data-fit-document-height'));
+    const minimumMagnification = width > 0 && height > 0 ? 1 / Math.max(1, Math.min(width, height)) : 0.1;
+    const rect = input.getBoundingClientRect();
+    const thumbWidth = 16;
+    const minimumPosition = Number(input.min);
+    const maximumPosition = Number(input.max);
+    const currentPosition = Number(input.value);
+    const targetProgress = Math.log(targetMagnification / minimumMagnification) / Math.log(32 / minimumMagnification);
+    const positionToX = (position: number) =>
+      rect.left +
+      thumbWidth / 2 +
+      ((position - minimumPosition) / (maximumPosition - minimumPosition)) * (rect.width - thumbWidth);
+    return {
+      startX: positionToX(currentPosition),
+      targetX: positionToX(minimumPosition + targetProgress * (maximumPosition - minimumPosition)),
+      y: rect.top + rect.height / 2,
+    };
+  }, magnification);
+
+  await page.mouse.move(target.startX, target.y);
+  await page.mouse.down();
+  await page.mouse.move(target.targetX, target.y, { steps: 32 });
+  await page.mouse.up();
+  await expect.poll(() => readEffectiveDocumentScale(page)).toBeCloseTo(magnification, 1);
+}
+
+/** Set the Type bar's own color input, then verify the browser accepted it. */
+async function setTextToolColor(page: Page, hex: string): Promise<void> {
+  await page.evaluate((color) => {
+    const input = document.querySelector<HTMLInputElement>('#text-color');
+    if (!input) throw new Error('the Text toolbar color input is missing');
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+    if (!descriptor?.set) throw new Error('the native input value setter is missing');
+    descriptor.set.call(input, color);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, hex);
+  await expect(page.locator('#text-color')).toHaveValue(hex);
+}
+
+/** Decode the document canvas without repeated Canvas2D getImageData readbacks. */
+async function readWorkspaceRaster(page: Page): Promise<Awaited<ReturnType<typeof loadImageData>>> {
+  const pngBase64 = await getWorkspaceCanvas(page).evaluate((node) => {
+    const canvas = node as HTMLCanvasElement;
+    const png = canvas.toDataURL('image/png');
+    const comma = png.indexOf(',');
+    if (comma < 0) throw new Error('document canvas did not produce a PNG data URL');
+    return png.slice(comma + 1);
+  });
+  return await loadImageData(Buffer.from(pngBase64, 'base64'));
+}
+
+/** Count opaque red pixels in the committed document raster, not the DOM text preview. */
+async function countRedWorkspacePixels(page: Page): Promise<number> {
+  const { data } = await readWorkspaceRaster(page);
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    if (
+      (data[index + 3] ?? 0) > 0 &&
+      (data[index] ?? 0) > 100 &&
+      (data[index + 1] ?? 0) < 100 &&
+      (data[index + 2] ?? 0) < 100
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/** A stable whole-raster fingerprint for text edit undo/redo within the same cropped frame. */
+async function workspaceRasterSignature(page: Page): Promise<string> {
+  const { width, height, data } = await readWorkspaceRaster(page);
+  let hash = 2_166_136_261;
+  for (const byte of data) hash = Math.imul(hash ^ byte, 16_777_619) >>> 0;
+  return `${width}x${height}:${hash}`;
+}
+
+type WorkspaceRaster = Awaited<ReturnType<typeof loadImageData>>;
+type RasterRegion = Readonly<{ x: number; y: number; width: number; height: number }>;
+
+/** Compare exact document pixels after normalizing a crop's changed frame origin. */
+function expectRasterRegionToEqual(
+  expected: WorkspaceRaster,
+  expectedRegion: RasterRegion,
+  actual: WorkspaceRaster,
+  assertionMessage: string
+): void {
+  expect(expectedRegion.x, `${assertionMessage}: source x is an integer`).toBe(Math.trunc(expectedRegion.x));
+  expect(expectedRegion.y, `${assertionMessage}: source y is an integer`).toBe(Math.trunc(expectedRegion.y));
+  expect(expectedRegion.width, `${assertionMessage}: width is an integer`).toBe(Math.trunc(expectedRegion.width));
+  expect(expectedRegion.height, `${assertionMessage}: height is an integer`).toBe(Math.trunc(expectedRegion.height));
+  expect(expectedRegion.x, `${assertionMessage}: source x is inside the original frame`).toBeGreaterThanOrEqual(0);
+  expect(expectedRegion.y, `${assertionMessage}: source y is inside the original frame`).toBeGreaterThanOrEqual(0);
+  expect(
+    expectedRegion.x + expectedRegion.width,
+    `${assertionMessage}: source region fits horizontally`
+  ).toBeLessThanOrEqual(expected.width);
+  expect(
+    expectedRegion.y + expectedRegion.height,
+    `${assertionMessage}: source region fits vertically`
+  ).toBeLessThanOrEqual(expected.height);
+  expect(actual.width, `${assertionMessage}: normalized raster width`).toBe(expectedRegion.width);
+  expect(actual.height, `${assertionMessage}: normalized raster height`).toBe(expectedRegion.height);
+
+  let firstMismatch: string | null = null;
+  for (let y = 0; y < expectedRegion.height && firstMismatch === null; y++) {
+    for (let x = 0; x < expectedRegion.width; x++) {
+      const sourceOffset = ((expectedRegion.y + y) * expected.width + expectedRegion.x + x) * 4;
+      const actualOffset = (y * actual.width + x) * 4;
+      for (let channel = 0; channel < 4; channel++) {
+        const sourceValue = expected.data[sourceOffset + channel];
+        const actualValue = actual.data[actualOffset + channel];
+        if (sourceValue !== actualValue) {
+          firstMismatch = `pixel (${x}, ${y}) channel ${channel}: expected ${sourceValue}, received ${actualValue}`;
+          break;
+        }
+      }
+      if (firstMismatch !== null) break;
+    }
+  }
+  expect(firstMismatch, assertionMessage).toBeNull();
 }
 
 type CropParityFrame = Readonly<{ x: number; y: number; width: number; height: number }>;
@@ -1051,6 +1182,325 @@ test.describe('Crop history', () => {
       page.getByTestId('undo-button'),
       'two undos from a fresh document reach the opening entry, so the crop was one and the stroke was one'
     ).toBeDisabled();
+  });
+
+  test('zoomed text commits before crop and crop/text history replays keep the transformed view', async ({ page }) => {
+    await openDocument(page);
+    const opening = await documentSize(page);
+    const openingRaster = await readWorkspaceRaster(page);
+    const openingRedPixels = await countRedWorkspacePixels(page);
+    expect(openingRedPixels, 'the new document starts without red text ink').toBe(0);
+
+    await setZoomMagnification(page, 2);
+    const workspace = page.getByTestId('workspace-container');
+    const workspaceBox = await workspace.boundingBox();
+    expect(workspaceBox, 'the workspace has a measurable view surface').not.toBeNull();
+    if (!workspaceBox) return;
+    const viewCenter = { x: workspaceBox.x + workspaceBox.width / 2, y: workspaceBox.y + workspaceBox.height / 2 };
+
+    // Keep zoom active while adding both a pan and a view rotation. The later Text and Crop
+    // gestures are named in document pixels, then projected through the view that the app
+    // publishes; a test that uses raw canvas percentages would silently name different pixels.
+    await clickToolButton(page, 'hand');
+    await page.mouse.move(viewCenter.x - 20, viewCenter.y - 10);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 12, viewCenter.y + 8, { steps: 5 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
+
+    await page.keyboard.press('r');
+    await expect(page.getByRole('button', { name: 'Reset View', exact: true })).toBeVisible();
+    await page.mouse.move(viewCenter.x - 16, viewCenter.y);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 8, viewCenter.y, { steps: 6 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-rotation', '0');
+
+    await clickToolButton(page, 'text');
+    await setTextToolColor(page, '#ff0000');
+    const textFit = await readFit(page);
+    const textAnchor = documentPoint(textFit, opening.width / 2, opening.height / 2);
+    const textOverlay = page.getByTestId('text-edit-overlay');
+    await page.mouse.click(textAnchor.x, textAnchor.y);
+    await expect(textOverlay, 'the zoomed Text click opens an editor').toBeVisible();
+    const placedTextBox = await textOverlay.boundingBox();
+    expect(placedTextBox, 'the zoomed Text editor has screen-space geometry').not.toBeNull();
+    expect(Math.abs(placedTextBox!.x + placedTextBox!.width / 2 - textAnchor.x)).toBeLessThanOrEqual(3);
+    expect(Math.abs(placedTextBox!.y + placedTextBox!.height / 2 - textAnchor.y)).toBeLessThanOrEqual(3);
+    await textOverlay.focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('ZOOM');
+    await expect(textOverlay).toHaveText('ZOOM');
+
+    const documentViewStyle = await page.locator('.zoom-container').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    const textViewStyle = await page.getByTestId('text-edit-view-transform').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    expect(textViewStyle, 'the Type editor and document share zoom, pan, and rotation').toEqual(documentViewStyle);
+
+    // Switching tools must commit the draft before Crop can create its own history entry.
+    await clickToolButton(page, 'crop');
+    await expect(textOverlay, 'leaving Text commits and closes the draft editor').toHaveCount(0);
+    const layers = page.getByTitle('Drag to reorder');
+    await expect(layers, 'the text draft became one editable layer').toHaveCount(2);
+    await expect(page.getByTestId('undo-button'), 'text commit is the first edit').toBeEnabled();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
+    const committedTextPixels = await countRedWorkspacePixels(page);
+    const committedTextRaster = await readWorkspaceRaster(page);
+    expect(committedTextRaster.width, 'the text commit keeps the original raster width').toBe(openingRaster.width);
+    expect(committedTextRaster.height, 'the text commit keeps the original raster height').toBe(openingRaster.height);
+    const magnificationBeforeCrop = await readEffectiveDocumentScale(page);
+
+    const cropFit = await readFit(page);
+    expect(cropFit.viewPanX).not.toBe(0);
+    expect(cropFit.viewRotation).not.toBe(0);
+    const cropRect = { left: 270, top: 220, right: 530, bottom: 380 };
+    await dragOnCanvas(page, cropFit, { x: cropRect.left, y: cropRect.top }, { x: cropRect.right, y: cropRect.bottom });
+
+    // The crop guide is a DOM/SVG preview transformed by the same view matrix as the canvas.
+    // Check all four projected corners so translation, zoom, rotation, and crop coordinates each
+    // have to agree; checking only the stored frame would miss a misaligned visible guide.
+    const pageCorners = [
+      documentPoint(cropFit, cropRect.left, cropRect.top),
+      documentPoint(cropFit, cropRect.right, cropRect.top),
+      documentPoint(cropFit, cropRect.left, cropRect.bottom),
+      documentPoint(cropFit, cropRect.right, cropRect.bottom),
+    ];
+    const expectedGuide = {
+      left: Math.min(...pageCorners.map(({ x }) => x)),
+      top: Math.min(...pageCorners.map(({ y }) => y)),
+      right: Math.max(...pageCorners.map(({ x }) => x)),
+      bottom: Math.max(...pageCorners.map(({ y }) => y)),
+    };
+    const guideBox = await page.getByTestId('crop-composition-guide').boundingBox();
+    expect(guideBox, 'the zoomed crop guide has screen-space geometry').not.toBeNull();
+    expect(Math.abs(guideBox!.x - expectedGuide.left)).toBeLessThanOrEqual(3);
+    expect(Math.abs(guideBox!.y - expectedGuide.top)).toBeLessThanOrEqual(3);
+    expect(Math.abs(guideBox!.x + guideBox!.width - expectedGuide.right)).toBeLessThanOrEqual(3);
+    expect(Math.abs(guideBox!.y + guideBox!.height - expectedGuide.bottom)).toBeLessThanOrEqual(3);
+
+    await applyCrop(page);
+    const cropped = { width: cropRect.right - cropRect.left, height: cropRect.bottom - cropRect.top };
+    await expect.poll(() => documentSize(page), 'Apply commits the exact document-space rectangle').toEqual(cropped);
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
+      .toBeLessThan(0.000001);
+    await expect
+      .poll(() => countRedWorkspacePixels(page), 'cropping around the text preserves its committed ink')
+      .toBe(committedTextPixels);
+    const croppedTextRaster = await readWorkspaceRaster(page);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      croppedTextRaster,
+      'crop preserves every committed point-text pixel at its shifted frame origin'
+    );
+
+    // Text then crop are two ordered history entries. Undoing crop retains the text and its
+    // magnification; undoing text removes only that layer. Redo must reproduce the same raster at
+    // each frame without recording zoom, pan, or view rotation in the document timeline.
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => documentSize(page), 'one undo restores the full document frame').toEqual(opening);
+    await expect(layers).toHaveCount(2);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'crop undo restores the exact full-frame point-text raster'
+    );
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
+      .toBeLessThan(0.000001);
+
+    await page.getByTestId('undo-button').click();
+    await expect(layers, 'the next undo removes the text entry, not the view state').toHaveCount(1);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(openingRedPixels);
+    expectRasterRegionToEqual(
+      openingRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'text undo restores the exact opening raster'
+    );
+    await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
+    await expect(workspace).not.toHaveAttribute('data-view-rotation', '0');
+
+    await page.getByTestId('redo-button').click();
+    await expect(layers).toHaveCount(2);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'text redo reproduces the exact committed point-text raster'
+    );
+    await page.getByTestId('redo-button').click();
+    await expect.poll(() => documentSize(page), 'redo restores the cropped frame').toEqual(cropped);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'crop redo reproduces the exact cropped point-text raster'
+    );
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
+      .toBeLessThan(0.000001);
+
+    // The crop shifted the document origin. Re-entering Type at the correspondingly shifted
+    // point must find the original vector-backed text layer, not place a second layer elsewhere.
+    await clickToolButton(page, 'text');
+    const croppedFit = await readFit(page);
+    const croppedTextAnchor = documentPoint(
+      croppedFit,
+      opening.width / 2 - cropRect.left,
+      opening.height / 2 - cropRect.top
+    );
+    await page.mouse.click(croppedTextAnchor.x, croppedTextAnchor.y);
+    await expect(textOverlay, 'the cropped text remains editable after redo').toHaveText('ZOOM');
+    const reenteredTextBox = await textOverlay.boundingBox();
+    expect(reenteredTextBox, 're-entered text has screen-space geometry').not.toBeNull();
+    expect(croppedTextAnchor.x).toBeGreaterThanOrEqual(reenteredTextBox!.x - 2);
+    expect(croppedTextAnchor.x).toBeLessThanOrEqual(reenteredTextBox!.x + reenteredTextBox!.width + 2);
+    expect(croppedTextAnchor.y).toBeGreaterThanOrEqual(reenteredTextBox!.y - 2);
+    expect(croppedTextAnchor.y).toBeLessThanOrEqual(reenteredTextBox!.y + reenteredTextBox!.height + 2);
+    await expect(layers, 'editing the cropped source must not duplicate its layer').toHaveCount(2);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(textOverlay).toHaveCount(0);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      croppedTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'cancelling a re-entered text edit leaves the cropped raster unchanged'
+    );
+  });
+
+  test('paragraph Type keeps its edited source through a zoomed crop and text undo/redo', async ({ page }) => {
+    await openDocument(page);
+    const opening = await documentSize(page);
+    expect(opening).toEqual({ width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT });
+    await setZoomMagnification(page, 2);
+    await clickToolButton(page, 'text');
+    await setTextToolColor(page, '#ff0000');
+    await page.locator('#font-size-input').fill('48');
+    await expect(page.locator('#font-size-input')).toHaveValue('48');
+
+    const textFit = await readFit(page);
+    await dragOnCanvas(page, textFit, { x: 250, y: 220 }, { x: 550, y: 400 }, 14);
+    const textOverlay = page.getByTestId('text-edit-overlay');
+    await expect(textOverlay, 'the zoomed drag creates a paragraph editor').toBeVisible();
+    await expect(textOverlay).toHaveAttribute('data-text-kind', 'paragraph');
+    await textOverlay.focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('PARAGRAPH TYPE');
+    await expect(textOverlay).toHaveText('PARAGRAPH TYPE');
+
+    // As above, selecting Crop commits the active Type source first. The crop leaves room around
+    // the entire paragraph box, so pixel comparison below distinguishes coordinate drift from an
+    // intentional crop of glyphs at the frame edge.
+    await clickToolButton(page, 'crop');
+    await expect(textOverlay).toHaveCount(0);
+    const layers = page.getByTitle('Drag to reorder');
+    await expect(layers).toHaveCount(2);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
+    const originalTextPixels = await countRedWorkspacePixels(page);
+    const originalTextRaster = await readWorkspaceRaster(page);
+    const originalMagnification = await readEffectiveDocumentScale(page);
+
+    const cropRect = { left: 220, top: 180, right: 580, bottom: 420 };
+    const cropFit = await readFit(page);
+    await dragOnCanvas(page, cropFit, { x: cropRect.left, y: cropRect.top }, { x: cropRect.right, y: cropRect.bottom });
+    await applyCrop(page);
+    const cropped = { width: cropRect.right - cropRect.left, height: cropRect.bottom - cropRect.top };
+    await expect.poll(() => documentSize(page)).toEqual(cropped);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(originalTextPixels);
+    const croppedOriginalTextRaster = await readWorkspaceRaster(page);
+    expectRasterRegionToEqual(
+      originalTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      croppedOriginalTextRaster,
+      'crop preserves every committed paragraph-text pixel at its shifted frame origin'
+    );
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - originalMagnification))
+      .toBeLessThan(0.000001);
+    const originalTextSignature = await workspaceRasterSignature(page);
+
+    // The old text box is now [30,40]-[330,220] in the cropped document. Click inside its first
+    // line after the frame and fit have changed, then edit through the original source layer.
+    await clickToolButton(page, 'text');
+    const croppedFit = await readFit(page);
+    const textHit = documentPoint(croppedFit, 60, 65);
+    await page.mouse.click(textHit.x, textHit.y);
+    await expect(textOverlay, 'the cropped paragraph remains editable under zoom').toHaveText('PARAGRAPH TYPE');
+    await expect(textOverlay).toHaveAttribute('data-text-kind', 'paragraph');
+    const editBox = await textOverlay.boundingBox();
+    expect(editBox, 'the cropped paragraph editor has screen-space geometry').not.toBeNull();
+    expect(textHit.x).toBeGreaterThanOrEqual(editBox!.x - 2);
+    expect(textHit.x).toBeLessThanOrEqual(editBox!.x + editBox!.width + 2);
+    expect(textHit.y).toBeGreaterThanOrEqual(editBox!.y - 2);
+    expect(textHit.y).toBeLessThanOrEqual(editBox!.y + editBox!.height + 2);
+
+    await textOverlay.focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('AFTER CROP');
+    await expect(textOverlay).toHaveText('AFTER CROP');
+    await page.getByRole('button', { name: 'Commit', exact: true }).click();
+    await expect(textOverlay).toHaveCount(0);
+    await expect(layers, 'editing changes the source in place, not by adding another layer').toHaveCount(2);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
+    const editedTextPixels = await countRedWorkspacePixels(page);
+    const editedTextRaster = await readWorkspaceRaster(page);
+    const editedTextSignature = await workspaceRasterSignature(page);
+    expect(editedTextSignature, 'the committed replacement produces a different text raster').not.toBe(
+      originalTextSignature
+    );
+
+    await clickToolButton(page, 'zoom');
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(originalTextPixels);
+    await expect.poll(() => workspaceRasterSignature(page)).toBe(originalTextSignature);
+    expectRasterRegionToEqual(
+      croppedOriginalTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'text undo restores every pixel of the cropped original paragraph'
+    );
+    await expect.poll(() => documentSize(page)).toEqual(cropped);
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - originalMagnification))
+      .toBeLessThan(0.000001);
+
+    await clickToolButton(page, 'text');
+    const undoFit = await readFit(page);
+    const undoHit = documentPoint(undoFit, 60, 65);
+    await page.mouse.click(undoHit.x, undoHit.y);
+    await expect(textOverlay).toHaveText('PARAGRAPH TYPE');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+    await page.getByTestId('redo-button').click();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(editedTextPixels);
+    await expect.poll(() => workspaceRasterSignature(page)).toBe(editedTextSignature);
+    expectRasterRegionToEqual(
+      editedTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'text redo reproduces every pixel of the edited cropped paragraph'
+    );
+    await clickToolButton(page, 'text');
+    const redoFit = await readFit(page);
+    const redoHit = documentPoint(redoFit, 60, 65);
+    await page.mouse.click(redoHit.x, redoHit.y);
+    await expect(textOverlay).toHaveText('AFTER CROP');
+    await expect(layers, 'redo keeps the same editable text layer').toHaveCount(2);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(editedTextPixels);
+    expect(await documentSize(page), 'text edit replay does not change the crop frame').toEqual(cropped);
   });
 
   test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back', async ({ page }) => {
