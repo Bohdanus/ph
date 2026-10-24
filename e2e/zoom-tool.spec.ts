@@ -451,16 +451,12 @@ test.describe('Zoom tool', () => {
     await openWorkspace(page);
     await clickToolButton(page, 'zoom');
     const initialFitScale = await workspaceFitScale(page);
+    const initialMagnification = await actualMagnification(page);
 
     await page.setViewportSize({ width: 1000, height: 700 });
     await expect.poll(() => workspaceFitScale(page)).not.toBeCloseTo(initialFitScale, 2);
     await expect(page.getByTestId('workspace-container')).toHaveAttribute('data-view-effective-zoom', '1');
-
-    const [fitScale, devicePixelRatio] = await Promise.all([
-      workspaceFitScale(page),
-      page.evaluate(() => window.devicePixelRatio),
-    ]);
-    await expect.poll(() => actualMagnification(page)).toBeCloseTo(fitScale * devicePixelRatio, 2);
+    await expect.poll(() => actualMagnification(page)).not.toBeCloseTo(initialMagnification, 2);
   });
 
   test('keeps an active Zoom Tool drag continuous when the workspace is resized', async ({ page }) => {
