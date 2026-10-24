@@ -90,13 +90,13 @@ The VM is useful for:
 - Running typecheck or a production build away from the local machine, one at a time.
 - Capturing Linux screenshots as review artifacts when the target environment is also Linux/ARM64.
 
-It is not a GPU worker or a parallel CI runner. The CPU-rendered browser is useful for functional checks, but its screenshots may differ from macOS and from an x86-64 Linux CI image.
+It is not a GPU worker or a parallel CI runner. Headless Chrome is useful for functional checks, but the ARM64 host is not pixel-equivalent to GitHub's x86-64 `ubuntu-latest` runner. CPU-only rendering does not remove differences from CPU architecture, OS, browser build, and fonts.
 
 ## Visual regression baselines
 
 The repository keeps baselines under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`. The `darwin/` and `win32/` sets are committed; Linux is missing. Never use this host to overwrite another platform's images.
 
-Committed visual baselines currently exist for `darwin/` and `win32/`; the Linux baseline directory is missing. The GitHub Linux job uses `ubuntu-latest`, while this EC2 host is ARM64 on Ubuntu 26.04.1, so its screenshots are not evidence for that CI baseline. Do not use this host to record a Linux CI baseline or overwrite another platform's images. Record Linux baselines only on a matching CI runner/browser/font stack, review every image, and commit them from the intended task worktree. Until then, the Linux visual-baseline tests remain an honest known failure; do not skip them or restore `continue-on-error`.
+Committed visual baselines currently exist for `darwin/` and `win32/`; the Linux baseline directory is missing. The GitHub Linux job uses `ubuntu-latest`, while this EC2 host is ARM64 on Ubuntu 26.04.1, so its screenshots are not evidence for that CI baseline. CPU-only rendering is not a sufficient match. Use the manual [`Capture Linux export baselines` workflow](../.github/workflows/capture-linux-baselines.yml) to record and verify the files on `ubuntu-latest`; review the downloaded artifact and add its images in the task worktree. Until those files are committed, Linux visual-baseline tests remain a known failure; do not skip them or restore `continue-on-error`.
 
 ## Other useful tasks
 
