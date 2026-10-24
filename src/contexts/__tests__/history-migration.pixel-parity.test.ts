@@ -96,6 +96,8 @@ import {
 
 // --- the store `useHistory()` reads -------------------------------------------------------------------
 
+const replayAttemptCounter = vi.hoisted(() => ({ value: 0 }));
+
 const storeStateMock = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
   history: [] as HistoryItem[],
@@ -106,6 +108,7 @@ const storeStateMock = vi.hoisted(() => ({
   totalSize: { width: 400, height: 300 },
   documentFrame: null as { x: number; y: number; width: number; height: number } | null,
   branchRevision: 0,
+  beginHistoryReplayPresentation: vi.fn(() => ++replayAttemptCounter.value),
   clearPreviewLayers: vi.fn(),
 }));
 
@@ -359,6 +362,7 @@ beforeAll(() => overrideCanvasFilterSupport(true));
 afterAll(() => overrideCanvasFilterSupport(null));
 
 beforeEach(() => {
+  replayAttemptCounter.value = 0;
   stubPixelOffscreenCanvas();
   // The setup polyfill answers with a colourless carrier, which would make `toOwnedBitmap()`
   // hand every durable surface to the comparator with no pixels in it.
