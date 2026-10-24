@@ -190,6 +190,14 @@ type DurablePresentationPublication = Readonly<{
   record: DurablePresentationRecord;
 }>;
 
+type HistoryReplayPresentationToken = Readonly<{
+  attemptId: number;
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  historyIndex: number;
+}>;
+
 export function durablePresentationMismatch(
   replayLayer: DurableReplayLayer,
   existing: Layer,
@@ -234,7 +242,17 @@ export type StoreData = {
   publishRuntimePresentation: (layers: LayersRecord) => void;
   /** Internal adoption registration; the action is not part of public dispatch. */
   adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => void;
-  publishDurableNavigationPresentation: () => Promise<DurableNavigationPresentationOutcome>;
+  publishDurableNavigationPresentation: (attemptId?: number) => Promise<DurableNavigationPresentationOutcome>;
+  /** Starts a unique replay attempt so an older async publication cannot affect its replacement. */
+  beginHistoryReplayPresentation: () => number;
+  /** True only while the supplied attempt is the current, unfinished replay. */
+  isHistoryReplayPresentationCurrent: (attemptId: number) => boolean;
+  /** Whether a replay attempt is still waiting for publication or finalization. */
+  hasPendingHistoryReplayPresentation: () => boolean;
+  /** Ends the current attempt without retiring caches when its publication became stale. */
+  cancelHistoryReplayPresentation: (attemptId: number) => void;
+  /** Retire replay-departed caches after accepted pixels or a completed rollback. */
+  finalizeHistoryReplayPresentation: (token: HistoryReplayPresentationToken) => boolean;
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
@@ -309,6 +327,8 @@ type StoreUpdates = Partial<
     | 'promoteLayerPresentation'
     | 'publishRuntimePresentation'
     | 'adoptLayerBitmaps'
+    | 'beginHistoryReplayPresentation'
+    | 'finalizeHistoryReplayPresentation'
   >
 >;
 
@@ -502,6 +522,11 @@ const initialState: StoreData = {
   publishRuntimePresentation: () => undefined,
   adoptLayerBitmaps: () => undefined,
   publishDurableNavigationPresentation: async () => ({ status: 'legacy-fallback', reason: 'stale', cursor: -1 }),
+  beginHistoryReplayPresentation: () => 0,
+  isHistoryReplayPresentationCurrent: () => true,
+  hasPendingHistoryReplayPresentation: () => false,
+  cancelHistoryReplayPresentation: () => undefined,
+  finalizeHistoryReplayPresentation: () => false,
   previewLayers: { current: {} },
 
   hasImage: false,
@@ -1449,6 +1474,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [reconcileViewScaleForWorkspace]);
   useResizeObserverRAF(containerRef, reconcileViewScaleForWorkspace);
   const latestStateRef = useRef(storeState);
+  const historyReplayAttemptRef = useRef(0);
+  const historyReplayAttemptPendingRef = useRef(false);
+  const isHistoryReplayPresentationCurrent = (attemptId: number) =>
+    historyReplayAttemptPendingRef.current && attemptId === historyReplayAttemptRef.current;
+  const hasPendingHistoryReplayPresentation = () => historyReplayAttemptPendingRef.current;
+  const cancelHistoryReplayPresentation = (attemptId: number) => {
+    if (attemptId === historyReplayAttemptRef.current) historyReplayAttemptPendingRef.current = false;
+  };
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before
   // it, so a per-document scope would dispose a bitmap the new document
@@ -1468,7 +1501,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state: StoreData,
     document: DurableDocument,
     durableCursor: number,
-    allowLegacySelector: boolean
+    allowLegacySelector: boolean,
+    historyReplayAttemptId?: number
   ): Promise<DurableNavigationPresentationOutcome> => {
     const replay = replayDurableAtCursor(document, durableCursor);
     const publishRecord = (
@@ -1489,6 +1523,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
       };
       const latest = latestStateRef.current;
+      if (historyReplayAttemptId !== undefined && !isHistoryReplayPresentationCurrent(historyReplayAttemptId)) {
+        return false;
+      }
       const next = reducer(latest, action);
       if (next === latest) return false;
       latestStateRef.current = next;
@@ -1516,6 +1553,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const assertFresh = () => {
       const latest = latestStateRef.current;
       if (
+        (historyReplayAttemptId !== undefined && !isHistoryReplayPresentationCurrent(historyReplayAttemptId)) ||
         latest.documentId !== state.documentId ||
         latest.historyIndex !== state.historyIndex ||
         latest.documentRevision !== document.documentRevision ||
@@ -1638,7 +1676,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         detached = undefined;
         return { status: 'stale', reason: 'stale', cursor: durableCursor };
       }
-      retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      // Navigation has only published a candidate projection here. Its caller
+      // still has to draw that projection onto the visible canvas; a refusal
+      // must be able to roll back to the current layer caches without finding
+      // that their ImageBitmaps were already closed. The accepted append path
+      // remains safe to retire here because its legacy frame is already visible.
+      if (allowLegacySelector) {
+        retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      }
       detached = undefined;
       return { status: 'durable', layers: projection.layers, frame: projection.frame, cursor: durableCursor };
     } catch (error) {
@@ -1653,8 +1698,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const publishDurableNavigationPresentation = (state: StoreData, document: DurableDocument, durableCursor: number) =>
-    publishDurablePresentation(state, document, durableCursor, false);
+  const publishDurableNavigationPresentation = (
+    state: StoreData,
+    document: DurableDocument,
+    durableCursor: number,
+    attemptId?: number
+  ) => publishDurablePresentation(state, document, durableCursor, false, attemptId);
 
   /**
    * A committed append is already visible through the legacy layer records. Compose its
@@ -2130,12 +2179,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           renderSelector,
         },
       });
-      // Replay is the other way a cache leaves the record, and the identity case
-      // is the common one: navigating back over a removal re-creates the layer
-      // under the same id with no cache at all, or with a different one. The
-      // replayed record is already painted, so retiring against it cannot blank
-      // a layer that is still on screen.
-      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, navigationState);
+      // The target record is not painted yet. `useHistory` finalizes retirement
+      // only after drawing succeeds; a refused draw must keep the previous
+      // caches alive until its rollback has restored the visible state.
       return;
     }
     if (action.type === 'REPLACE_DOCUMENT') {
@@ -2187,12 +2233,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   const dispatchInternalAction = (action: InternalAction) => dispatchAction(action);
   const dispatch: StoreDispatch = (action) => dispatchAction(action);
-  const publishDurableNavigation = (): Promise<DurableNavigationPresentationOutcome> => {
+  const publishDurableNavigation = (attemptId?: number): Promise<DurableNavigationPresentationOutcome> => {
     const latest = latestStateRef.current;
+    if (attemptId !== undefined && !isHistoryReplayPresentationCurrent(attemptId)) {
+      return Promise.resolve({ status: 'stale', reason: 'stale', cursor: latest.historyIndex });
+    }
     if (latest.durableStatus !== 'current' || !latest.durableDocument) {
       return Promise.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: latest.historyIndex });
     }
-    return publishDurableNavigationPresentation(latest, latest.durableDocument, latest.durableDocument.cursor);
+    return publishDurableNavigationPresentation(
+      latest,
+      latest.durableDocument,
+      latest.durableDocument.cursor,
+      attemptId
+    );
+  };
+  const beginHistoryReplayPresentation = (): number => {
+    historyReplayAttemptRef.current += 1;
+    historyReplayAttemptPendingRef.current = true;
+    return historyReplayAttemptRef.current;
+  };
+  const finalizeHistoryReplayPresentation = (token: HistoryReplayPresentationToken): boolean => {
+    const latest = latestStateRef.current;
+    if (token.attemptId !== historyReplayAttemptRef.current || !historyReplayAttemptPendingRef.current) return false;
+    if (
+      latest.documentId !== token.documentId ||
+      latest.documentRevision !== token.documentRevision ||
+      latest.branchRevision !== token.branchRevision ||
+      latest.historyIndex !== token.historyIndex
+    ) {
+      return false;
+    }
+    historyReplayAttemptPendingRef.current = false;
+    retireDepartedPresentationBitmaps(presentationScope, latest.documentId, latest);
+    return true;
   };
   const publishRuntimePresentation = (layers: LayersRecord) =>
     dispatchInternalAction({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers } });
@@ -2249,6 +2323,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     publishRuntimePresentation,
     adoptLayerBitmaps,
     publishDurableNavigationPresentation: publishDurableNavigation,
+    beginHistoryReplayPresentation,
+    isHistoryReplayPresentationCurrent,
+    hasPendingHistoryReplayPresentation,
+    cancelHistoryReplayPresentation,
+    finalizeHistoryReplayPresentation,
     previewLayers: previewLayersRef,
     viewStateRef,
     viewState: viewStateRef.current,

@@ -459,10 +459,10 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
     expect(store().layers[layerId].bitmap).toBe(restoredA);
   });
 
-  it('closes a layer cache that a redo drops from the record', async () => {
-    // A replay is the other way a layer leaves the live record. Without the same
-    // retirement on `APPLY_HISTORY_REPLAY`, a redo past a removal strands the
-    // bitmap exactly the way a delete does.
+  it('closes a layer cache dropped by an accepted replay presentation', async () => {
+    // `APPLY_HISTORY_REPLAY` updates the logical record before its caller has
+    // proved that the target pixels were accepted. Keep the departed cache live
+    // until the post-paint finalizer decides it is no longer reachable.
     const owned = createMockImageBitmap(100, 80);
     vi.stubGlobal(
       'createImageBitmap',
@@ -474,10 +474,22 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
     await promote(store(), { layerId, canvas: staged });
     expect(store().layers[layerId].bitmap).toBe(owned);
 
-    // A redo whose cursor predates the layer's creation drops it from the record.
+    // A replay whose cursor predates the layer's creation drops it from the record.
+    const attemptId = store().beginHistoryReplayPresentation();
     replayTo(dispatch(), {}, {}, -1);
 
     expect(store().layers[layerId]).toBeUndefined();
+    expect(owned.close).not.toHaveBeenCalled();
+    const afterReplay = store();
+    expect(
+      afterReplay.finalizeHistoryReplayPresentation({
+        attemptId,
+        documentId: afterReplay.documentId,
+        documentRevision: afterReplay.documentRevision,
+        branchRevision: afterReplay.branchRevision,
+        historyIndex: afterReplay.historyIndex,
+      })
+    ).toBe(true);
     expect(owned.close).toHaveBeenCalledTimes(1);
   });
 });
@@ -1473,6 +1485,51 @@ describe('renderSelector contract', () => {
     expect(store().durablePresentation.status).toBe('unpublished');
     expect(store().durableRenderProjection).toBeNull();
     expect(store().durableStatus).toBe('stale');
+  });
+
+  it('rejects a durable publication superseded by a newer replay at the same cursor', async () => {
+    let resolveComposition!: (composite: DurableComposite) => void;
+    const composition = new Promise<DurableComposite>((resolve) => {
+      resolveComposition = resolve;
+    });
+    const composite = makeComposite();
+    const takeLayers = vi.spyOn(composite, 'takeLayers');
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockReturnValue(composition);
+
+    const { store, dispatch } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    let olderAttempt = 0;
+    let newerAttempt = 0;
+    let publication!: Promise<DurableNavigationPresentationOutcome>;
+    act(() => {
+      olderAttempt = store().beginHistoryReplayPresentation();
+      publication = store().publishDurableNavigationPresentation(olderAttempt);
+    });
+    act(() => {
+      newerAttempt = store().beginHistoryReplayPresentation();
+    });
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      resolveComposition(composite);
+      outcome = await publication;
+      await Promise.resolve();
+    });
+
+    expect(newerAttempt).toBeGreaterThan(olderAttempt);
+    expect(outcome).toEqual({ status: 'stale', reason: 'stale', cursor: -1 });
+    expect(takeLayers).not.toHaveBeenCalled();
+    expect(composite.release).toHaveBeenCalledTimes(1);
+    expect(store().layers[layerId].tmpCanvas).toBeNull();
+    expect(store().renderSelector.source).toBe('pending');
+    expect(store().durableRenderProjection).toBeNull();
+
+    act(() => {
+      store().cancelHistoryReplayPresentation(newerAttempt);
+    });
   });
 
   it('retains a published projection lease until its document exits', async () => {

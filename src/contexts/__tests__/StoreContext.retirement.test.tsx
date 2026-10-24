@@ -176,14 +176,36 @@ async function publish(store: StoreData, requests: readonly PromotionRequest[]) 
   });
 }
 
-function replay(dispatch: StoreDispatch, updates: StoreUpdates, cursor = 0) {
+function replay(
+  store: () => StoreData,
+  dispatch: StoreDispatch,
+  updates: StoreUpdates,
+  cursor = 0,
+  branchRevision = 0,
+  existingAttemptId?: number
+): number {
+  const attemptId = existingAttemptId ?? store().beginHistoryReplayPresentation();
   const payload: ReplayPayload = {
     updates,
-    timeline: { entries: [baselineItem({})], cursor, branchRevision: 0 },
+    timeline: { entries: [baselineItem({})], cursor, branchRevision },
   };
   act(() => {
     dispatch({ type: 'APPLY_HISTORY_REPLAY', payload });
   });
+  return attemptId;
+}
+
+function finalizeReplay(store: () => StoreData, attemptId: number): void {
+  const current = store();
+  expect(
+    current.finalizeHistoryReplayPresentation({
+      attemptId,
+      documentId: current.documentId,
+      documentRevision: current.documentRevision,
+      branchRevision: current.branchRevision,
+      historyIndex: current.historyIndex,
+    })
+  ).toBe(true);
 }
 
 /**
@@ -360,7 +382,108 @@ describe('ADOPT_LAYER_BITMAPS is a deliberate no-op transition', () => {
   });
 });
 
-describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
+describe('retirement after an accepted history replay presentation', () => {
+  it('keeps the previous cache alive through a refused replay and rollback', async () => {
+    const cache = createMockImageBitmap(100, 80);
+    const staged = createMockOffscreenCanvas(100, 80);
+    stubPromotion(new Map([[staged, cache]]));
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, staged) });
+    await publish(store(), [{ layerId, canvas: staged }]);
+    const previousLayer = layerAt(store, layerId);
+
+    replay(store, dispatch(), { layers: {} });
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+
+    // Model the navigation compensation: restore the prior runtime layer before
+    // reporting the rejected target. Its cache must still be drawable.
+    const rollbackAttemptId = replay(store, dispatch(), { layers: { [layerId]: previousLayer } });
+    expect(store().layers[layerId].bitmap).toBe(cache);
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+    finalizeReplay(store, rollbackAttemptId);
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+
+    // A later accepted transition that leaves the layer behind can now retire it.
+    const acceptedAttemptId = replay(store, dispatch(), { layers: {} });
+    finalizeReplay(store, acceptedAttemptId);
+    expect(closeOf(cache)).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a stale finalizer after a newer replay changes the branch revision', async () => {
+    const cache = createMockImageBitmap(100, 80);
+    const staged = createMockOffscreenCanvas(100, 80);
+    stubPromotion(new Map([[staged, cache]]));
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, staged) });
+    await publish(store(), [{ layerId, canvas: staged }]);
+
+    const staleAttemptId = replay(store, dispatch(), { layers: {} }, -1);
+    const superseded = store();
+    const staleToken = {
+      attemptId: staleAttemptId,
+      documentId: superseded.documentId,
+      documentRevision: superseded.documentRevision,
+      branchRevision: superseded.branchRevision,
+      historyIndex: superseded.historyIndex,
+    };
+
+    // A newer navigation supersedes the first completion token while still
+    // leaving the cache departed. The old completion must not retire anything.
+    const latestAttemptId = replay(store, dispatch(), { layers: {} }, -1, staleToken.branchRevision + 1);
+    const latest = store();
+    expect(latest.finalizeHistoryReplayPresentation(staleToken)).toBe(false);
+    expect(
+      latest.finalizeHistoryReplayPresentation({
+        ...staleToken,
+        attemptId: latestAttemptId,
+      })
+    ).toBe(false);
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+
+    finalizeReplay(store, latestAttemptId);
+    expect(closeOf(cache)).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a same-cursor finalizer that could close a newer replay rollback cache', async () => {
+    const cache = createMockImageBitmap(100, 80);
+    const staged = createMockOffscreenCanvas(100, 80);
+    stubPromotion(new Map([[staged, cache]]));
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, staged) });
+    await publish(store(), [{ layerId, canvas: staged }]);
+
+    // Attempt A completes its logical replay but is still waiting for its draw.
+    const firstAttemptId = replay(store, dispatch(), { layers: { [layerId]: layerAt(store, layerId) } });
+    const firstState = store();
+    const staleToken = {
+      attemptId: firstAttemptId,
+      documentId: firstState.documentId,
+      documentRevision: firstState.documentRevision,
+      branchRevision: firstState.branchRevision,
+      historyIndex: firstState.historyIndex,
+    };
+    const rollbackLayer = layerAt(store, layerId);
+
+    // Attempt B targets the same document, branch, and cursor, but its failed
+    // publication would need the cache captured above to restore the previous view.
+    const secondAttemptId = replay(store, dispatch(), { layers: {} });
+    expect(store().documentId).toBe(staleToken.documentId);
+    expect(store().documentRevision).toBe(staleToken.documentRevision);
+    expect(store().branchRevision).toBe(staleToken.branchRevision);
+    expect(store().historyIndex).toBe(staleToken.historyIndex);
+    expect(secondAttemptId).toBeGreaterThan(firstAttemptId);
+
+    expect(store().finalizeHistoryReplayPresentation(staleToken)).toBe(false);
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+
+    // Roll back B using its original attempt token, then finalize the restored
+    // record. The cache must remain open because the live state names it again.
+    replay(store, dispatch(), { layers: { [layerId]: rollbackLayer } }, 0, 0, secondAttemptId);
+    expect(store().layers[layerId].bitmap).toBe(cache);
+    finalizeReplay(store, secondAttemptId);
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+  });
+
   it('closes a cache a replayed removal dropped, and never closes the one a redo re-creates the layer with', async () => {
     const cacheA = createMockImageBitmap(100, 80);
     const stagedA = createMockOffscreenCanvas(100, 80);
@@ -372,15 +495,20 @@ describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
     expect(closeOf(cacheA)).not.toHaveBeenCalled();
 
     // Navigating over the removal drops the layer and its cache from the record.
-    replay(dispatch(), { layers: {}, deletedLayers: { [layerId]: layerAt(store, layerId) } });
+    const removeAttemptId = replay(store, dispatch(), {
+      layers: {},
+      deletedLayers: { [layerId]: layerAt(store, layerId) },
+    });
     expect(store().layers[layerId]).toBeUndefined();
+    expect(closeOf(cacheA)).not.toHaveBeenCalled();
+    finalizeReplay(store, removeAttemptId);
     expect(closeOf(cacheA)).toHaveBeenCalledTimes(1);
 
     // Navigating back re-creates the layer under the SAME id with no cache at
     // all — the case the call site names, and the one an identity-based
     // retirement would blank.
     const stagedRedo = createMockOffscreenCanvas(100, 80);
-    replay(dispatch(), {
+    replay(store, dispatch(), {
       layers: { [layerId]: layerWithCanvas(layerId, stagedRedo) },
       deletedLayers: {},
     });
@@ -408,7 +536,7 @@ describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
 
     // The replay rebuilds the layer as a NEW object and changes durable state,
     // while carrying the already-painted cache over by reference.
-    replay(dispatch(), { layers: { [layerId]: { ...before, name: 'Renamed by replay', order: 3 } } });
+    replay(store, dispatch(), { layers: { [layerId]: { ...before, name: 'Renamed by replay', order: 3 } } });
 
     const after = layerAt(store, layerId);
     expect(after).not.toBe(before);
@@ -440,13 +568,15 @@ describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
 
     // The same id comes back pointing at a DIFFERENT scope-published cache,
     // because the layer that held it was merged away.
-    replay(dispatch(), {
+    const mergeAttemptId = replay(store, dispatch(), {
       layers: { [layerId]: { ...layerAt(store, layerId), bitmap: cacheB, tmpCanvas: null } },
       deletedLayers: { [secondLayerId]: layerAt(store, secondLayerId) },
     });
 
     expect(store().layers[secondLayerId]).toBeUndefined();
     expect(store().layers[layerId].bitmap).toBe(cacheB);
+    expect(closeOf(cacheA)).not.toHaveBeenCalled();
+    finalizeReplay(store, mergeAttemptId);
     expect(closeOf(cacheA)).toHaveBeenCalledTimes(1);
     expect(closeOf(cacheB)).not.toHaveBeenCalled();
   });
@@ -474,7 +604,7 @@ describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
 
     // A pure move: both layers survive and each cache is now named by the other
     // layer, so neither one departed the record.
-    replay(dispatch(), {
+    replay(store, dispatch(), {
       layers: {
         [layerId]: { ...layerAt(store, layerId), bitmap: cacheB, tmpCanvas: null },
         [secondLayerId]: { ...layerAt(store, secondLayerId), bitmap: cacheA, tmpCanvas: null },
@@ -511,7 +641,7 @@ describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
 
     // The deleted record still names layer-2's cache while the live record
     // names it too, because a deleted record accumulates and survives undo.
-    replay(dispatch(), {
+    replay(store, dispatch(), {
       layers: {
         [layerId]: layerAt(store, layerId),
         [secondLayerId]: { ...removed, name: 'Restored by replay' },
@@ -540,7 +670,7 @@ describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
 
     // The borrowed layer is named by `previous` and gone from `next`, so `retire`
     // IS asked to close it — and declines, because the scope never published it.
-    replay(dispatch(), {
+    replay(store, dispatch(), {
       layers: { [layerId]: layerAt(store, layerId) },
       deletedLayers: { [secondLayerId]: layerAt(store, secondLayerId) },
     });
@@ -925,7 +1055,9 @@ describe('retirement against every alias of a raster, not only layer.bitmap', ()
     // back replaces the timeline with one that does not contain the import entry,
     // nothing names the raster any more, and the same scope closes it. So the
     // scope did own it, the retirement did run, and what spared it was the name.
-    replay(dispatch(), { layers: { [layerId]: layerWithCanvas(layerId, null) } });
+    const replayAttemptId = replay(store, dispatch(), { layers: { [layerId]: layerWithCanvas(layerId, null) } });
+    expect(closeOf(imported)).not.toHaveBeenCalled();
+    finalizeReplay(store, replayAttemptId);
 
     expect(store().layers[layerId].bitmap).toBeNull();
     expect(closeOf(imported)).toHaveBeenCalledTimes(1);
@@ -972,7 +1104,10 @@ describe('retirement against every alias of a raster, not only layer.bitmap', ()
 
     // The timeline is replaced, so no entry names the imported raster any more and
     // the layer's own `source` is its last name.
-    replay(dispatch(), { layers: { [layerId]: { ...layerAt(store, layerId), name: 'Restored by replay' } } });
+    const replayAttemptId = replay(store, dispatch(), {
+      layers: { [layerId]: { ...layerAt(store, layerId), name: 'Restored by replay' } },
+    });
+    finalizeReplay(store, replayAttemptId);
 
     expect(store().history).toHaveLength(1);
     expect(closeOf(imported)).not.toHaveBeenCalled();
@@ -1148,7 +1283,7 @@ describe('retirement when a promotion replaces an adopted raster', () => {
     // Undo the merge, then append on that cursor so the tail the merge entry was
     // part of is truncated. Neither the layer record nor any surviving entry names
     // the raster afterwards.
-    replay(dispatch(), { layers: { [layerId]: layerWithCanvas(layerId, null) } });
+    replay(store, dispatch(), { layers: { [layerId]: layerWithCanvas(layerId, null) } });
     // `updates.layers` REPLACES the record, so the surviving layer is named here too
     // or this would read as "the layer is gone" rather than "the raster is".
     commit(dispatch(), {
