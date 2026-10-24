@@ -666,15 +666,19 @@ skipped its own safety steps.
   `git stash push` on a CLEAN tree exits 0, prints nothing, and creates NO entry —
   so the `git stash pop` that follows is unpaired, and it pops a _different_
   session's work. This has destroyed work in this repository.
-- **Resolve anything in the main worktree.** See step 0. Never _repair_ one there
-  either: `reset --hard` and `checkout --ours`/`--theirs` destroy another
-  session's uncommitted work, and `hash-object` and `update-index` write an index
-  entry no later `git status` reconciles. If a merge conflicts in `main`,
-  `git merge --abort` and redo it in the worktree. After any interrupted or
-  abandoned merge, run `git rev-parse -q --verify MERGE_HEAD` and
-  `git rev-list --parents -n 1 HEAD` before committing — an interrupted merge can
-  leave `AUTO_MERGE` and `MERGE_MSG` behind with no `MERGE_HEAD`, and `git commit`
-  then lands a single-parent commit that reads as a resolution.
+- **Resolve anything in the main worktree.** See step 0. Never reset, check out
+  conflict sides, or resolve a merge there: those operations can destroy another
+  session's uncommitted work or record an unreviewed resolution. The sole
+  metadata-recovery exception is `git worktree repair` when the Git manual
+  requires running it from main. Follow [Recovering Git metadata](../docs/ORCHESTRATION.md#recovering-git-metadata): stop writers, take and compare an independent
+  backup, and run only the documented repair after confirming the affected paths
+  and admin directories. It may repair worktree links; it is never a merge or a
+  working-tree-content fix. If a merge conflicts in `main`, `git merge --abort`
+  and redo it in the worktree. After any interrupted or abandoned merge, run
+  `git rev-parse -q --verify MERGE_HEAD` and `git rev-list --parents -n 1 HEAD`
+  before committing — an interrupted merge can leave `AUTO_MERGE` and
+  `MERGE_MSG` behind with no `MERGE_HEAD`, and `git commit` then lands a
+  single-parent commit that reads as a resolution.
 - **Hand-edit `WORKTREES.json`.** It is generated and untracked; the edit is lost
   on the next run, and a hand-edited `prunable: true` is a licence to delete.
 - **`git add -A` in a worktree whose root checkout is dirty.** This is the more

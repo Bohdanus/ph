@@ -28,6 +28,7 @@ save you the next one.
 | refused by `swarm resolve` or `swarm close`                         | [The swarm board](#the-swarm-board), the sequence table                                                        |
 | wondering which model or provider a subagent ran on                 | [Which provider did a subagent run on?](#which-provider-did-a-subagent-run-on)                                 |
 | inheriting a stalled or dead session's work                         | [Unexpected agent recovery](#unexpected-agent-recovery)                                                        |
+| Git reports broken `.git` or worktree metadata                      | [Recovering Git metadata](#recovering-git-metadata)                                                            |
 | reading a worktree list                                             | [The list of worktrees: `WORKTREES.json`](#the-list-of-worktrees-worktreesjson)                                |
 | starting a Photoshop or algorithmic change                          | [Research before implementation](#research-before-implementation)                                              |
 | running an overnight task to completion                             | [The task lifecycle](#the-task-lifecycle)                                                                      |
@@ -1629,3 +1630,75 @@ Keep the worktree while salvaging uncommitted changes; never use `git stash`.
 After preservation or discard, remove only an accounted-for worktree and refresh
 `WORKTREES.json`. Put durable findings in the handoff documents and use `swarm
 note` for the recovery event.
+
+## Recovering Git metadata
+
+The `.git` entry at a checkout root may be a directory in the main worktree or a
+small `gitdir:` file in a linked worktree. A linked worktree's private admin data
+and the common repository metadata are coupled; deleting or rebuilding either
+by hand can make every checkout unusable. Never delete or edit `.git`, `gitdir`,
+or `commondir` as a recovery technique, and do not set `GIT_DIR`,
+`GIT_COMMON_DIR`, or `GIT_WORK_TREE` to guess which repository a command should use.
+
+First stop writers and preserve the repository directory, all worktree
+directories, and uncommitted files in an independent, coherent backup or
+filesystem snapshot. Include the common Git directory, each checkout's `.git`
+entry, worktree admin directories, indexes, refs, and dirty files. Do not snapshot
+while a writer is active. A remote push or `git bundle` preserves committed refs
+and objects, not dirty files or the worktree registry. Keep the backup untouched.
+
+This is a narrow exception to the normal worktree bootstrap rule in `AGENTS.md`:
+if metadata damage makes `git worktree list` unreliable or prevents creating a
+task branch, do not try to create one yet. Start with filesystem-only inspection
+of `.git` entries and their referenced paths. Once the backup is complete, use
+only read-only Git diagnostics from a checkout that still resolves the shared
+repository, or from a known-good clone. Set `GIT_OPTIONAL_LOCKS=0` for status
+inspection so Git does not refresh optional index data. Record which checkout
+and common directory each command resolved. If no checkout resolves the shared
+repository, stop and recover from the independent backup or known-good clone.
+
+After the repository is identified, resume the usual task-branch bootstrap as
+soon as `git worktree list` is trustworthy. Do not mutate metadata until the
+affected checkout and matching admin directory have been compared with the
+backup. If the specific repair documented by Git is required before a task
+branch can be created, perform only that repair, then immediately list the
+worktrees again and create and verify the task branch before ordinary work.
+
+```sh
+pwd
+git rev-parse --show-toplevel
+git rev-parse --git-dir --git-common-dir
+GIT_OPTIONAL_LOCKS=0 git --no-optional-locks status --short --branch
+git worktree list --porcelain -z
+```
+
+Compare the affected checkout path and its existing admin entry with the backup.
+Use `git worktree repair` only for a case covered by the Git manual and after
+that comparison. Run it from the documented location: with no path argument in
+the moved main worktree when the main checkout moved; in the moved linked
+worktree when one linked checkout moved; with every new linked-worktree path
+from any worktree when several linked checkouts moved; or from main with every
+new linked path when both main and linked worktrees moved. Read-only diagnostics
+do not modify the main checkout. `git worktree repair` is the sole metadata
+mutation allowed in main during recovery; it does not allow file edits or merge
+resolution there.
+`repair` can restore broken or outdated linking files when the matching
+`worktrees/<id>` admin directory exists; it cannot reconstruct a missing common
+Git directory or missing admin directory. If either is missing or cannot be
+accounted for, stop and restore from the backup or a known-good clone. Do not
+construct `.git` metadata by hand. After recovery, run `npm run repo:state` from
+a verified task worktree.
+
+Do not run `git worktree prune`, `git worktree remove`, or `git worktree move`
+during recovery. They alter the registry or its evidence. After recovery, verify
+refs, objects, worktree mappings, and every preserved dirty file before resuming
+writers.
+
+The Kilo shell-permission patterns for `rm`, `unlink`, and `git worktree repair`
+are a speed bump only: they inspect command text and are not a filesystem
+boundary. Scripts, aliases, or an unrecognized spelling can bypass them.
+
+For primary references, see the [Git worktree manual](https://git-scm.com/docs/git-worktree),
+which documents `repair`, and the [Git repository layout
+manual](https://git-scm.com/docs/gitrepository-layout), which describes private
+`worktrees/<id>` admin directories and their `commondir` relationship.

@@ -172,6 +172,19 @@
       "*rm -fr*.kilo*": "deny",
       "*rm -r -f*.kilo*": "deny",
 
+      // Keep direct shell commands from removing Git metadata shared by linked
+      // worktrees. These command-text glob matches are defense in depth, not a
+      // filesystem boundary; wrappers and scripts can bypass them.
+      "*rm *.git*": "deny",
+      "*rm *GIT_DIR*": "deny",
+      "*rm *GIT_COMMON_DIR*": "deny",
+      "*rm *GIT_WORK_TREE*": "deny",
+      "*unlink *.git*": "deny",
+      "*unlink *GIT_DIR*": "deny",
+      "*unlink *GIT_COMMON_DIR*": "deny",
+      "*unlink *GIT_WORK_TREE*": "deny",
+      "*worktree repair*": "ask",
+
       // This permission layer matches command strings and is a speed bump, not a
       // repository-aware guard. Retire worktrees through `npm run dispose`.
       //
