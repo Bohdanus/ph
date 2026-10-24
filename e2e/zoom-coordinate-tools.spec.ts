@@ -438,7 +438,9 @@ test.describe('Zoomed pointer tools', () => {
     const workspaceBox = await workspace.boundingBox();
     expect(workspaceBox, 'the scrolled workspace remains measurable').not.toBeNull();
     if (!workspaceBox) return;
-    expect(sampleViewport.x, 'the document centre remains in the horizontal scrollport').toBeGreaterThan(workspaceBox.x);
+    expect(sampleViewport.x, 'the document centre remains in the horizontal scrollport').toBeGreaterThan(
+      workspaceBox.x
+    );
     expect(sampleViewport.x, 'the document centre remains in the horizontal scrollport').toBeLessThan(
       workspaceBox.x + workspaceBox.width
     );
@@ -447,12 +449,7 @@ test.describe('Zoomed pointer tools', () => {
       workspaceBox.y + workspaceBox.height
     );
 
-    await dragDocumentPoints(
-      page,
-      { x: sample.x - 48, y: sample.y },
-      { x: sample.x + 48, y: sample.y },
-      12
-    );
+    await dragDocumentPoints(page, { x: sample.x - 48, y: sample.y }, { x: sample.x + 48, y: sample.y }, 12);
     await page.mouse.up();
     await expect
       .poll(async () => {
