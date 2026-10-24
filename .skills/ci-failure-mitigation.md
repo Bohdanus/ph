@@ -39,7 +39,7 @@ baseline mismatches).
 
 ### `ci` job failures (ubuntu-latest):
 
-1. **Lint** (`npm run lint:check`) — eslint warnings treated as errors
+1. **Lint** (`npm run lint:check`) — ESLint errors or Prettier formatting failures; ESLint warnings are reported but do not fail the current script by themselves
 2. **Type-check** (`npm run tsc`) — TypeScript compilation errors
 3. **Tracked-TS assertion** — TS files not in any project's `include`
 4. **Test** (`npm run test -- --coverage`) — unit test failures
@@ -142,7 +142,10 @@ GH_TOKEN=<token> gh run view <run-id> --log --job <job-id> | \
   grep -E "^(error|warning|Error|##\[error|##\[warning)" -A 3
 ```
 
-**Subagent #1 (CI job analyzer)** receives the extracted logs and returns JSON:
+**Subagent #1 (CI job analyzer)** receives the extracted logs and returns JSON.
+The example below is from an earlier run that explicitly failed on warnings; current
+CI invokes `npm run lint:check`, which reports ESLint warnings without failing on
+them alone:
 
 ```json
 {
@@ -204,8 +207,8 @@ git worktree add -b fix/ci-failures-$(date +%Y%m%d) \
 
 Each subagent targets ONE file or ONE category of failure:
 
-**Subagent #4 (Lint fixes)** — receives the list of files with lint warnings and
-fixes them one at a time. Returns JSON per file:
+**Subagent #4 (Lint fixes)** — receives the files with ESLint errors or Prettier
+failures and fixes them one at a time. Returns JSON per file:
 
 ```json
 {
@@ -235,7 +238,7 @@ The coordinator runs:
 
 ```bash
 cd <worktree>
-npm run lint:check     # must pass with 0 warnings
+npm run lint:check     # must exit 0 with no ESLint errors or Prettier failures
 npm run tsc            # must pass
 npm run test           # must pass
 npm run build          # must pass
