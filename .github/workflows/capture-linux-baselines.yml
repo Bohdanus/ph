@@ -1,0 +1,43 @@
+name: Capture Linux export baselines
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chrome
+        run: npx playwright install --with-deps chrome
+
+      - name: Record Linux export baselines
+        run: npm run test:e2e:update-baselines -- --workers=1
+
+      - name: Verify recorded baselines
+        run: npm run test:e2e -- e2e/export/visual-regression.spec.ts --workers=1
+
+      - name: Upload Linux export baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-export-baselines-${{ github.sha }}
+          path: e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/
+          retention-days: 7
+          if-no-files-found: error
