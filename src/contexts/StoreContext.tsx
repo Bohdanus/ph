@@ -243,12 +243,12 @@ export type StoreData = {
   /** Internal adoption registration; the action is not part of public dispatch. */
   adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => void;
   publishDurableNavigationPresentation: (attemptId?: number) => Promise<DurableNavigationPresentationOutcome>;
-  /** Starts a unique replay attempt so an older async publication cannot affect its replacement. */
-  beginHistoryReplayPresentation: () => number;
+  /** Starts a unique, document-scoped replay attempt so older work cannot affect its replacement. */
+  beginHistoryReplayPresentation: (documentId: string) => number;
   /** True only while the supplied attempt is the current, unfinished replay. */
   isHistoryReplayPresentationCurrent: (attemptId: number) => boolean;
-  /** Whether a replay attempt is still waiting for publication or finalization. */
-  hasPendingHistoryReplayPresentation: () => boolean;
+  /** Whether this document has replay work still waiting for publication or finalization. */
+  hasPendingHistoryReplayPresentation: (documentId: string) => boolean;
   /** Ends the current attempt without retiring caches when its publication became stale. */
   cancelHistoryReplayPresentation: (attemptId: number) => void;
   /** Retire replay-departed caches after accepted pixels or a completed rollback. */
@@ -1476,11 +1476,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const latestStateRef = useRef(storeState);
   const historyReplayAttemptRef = useRef(0);
   const historyReplayAttemptPendingRef = useRef(false);
+  const historyReplayAttemptDocumentIdRef = useRef<string | null>(null);
   const isHistoryReplayPresentationCurrent = (attemptId: number) =>
     historyReplayAttemptPendingRef.current && attemptId === historyReplayAttemptRef.current;
-  const hasPendingHistoryReplayPresentation = () => historyReplayAttemptPendingRef.current;
+  const hasPendingHistoryReplayPresentation = (documentId: string) =>
+    historyReplayAttemptPendingRef.current && historyReplayAttemptDocumentIdRef.current === documentId;
   const cancelHistoryReplayPresentation = (attemptId: number) => {
-    if (attemptId === historyReplayAttemptRef.current) historyReplayAttemptPendingRef.current = false;
+    if (attemptId === historyReplayAttemptRef.current) {
+      historyReplayAttemptPendingRef.current = false;
+      historyReplayAttemptDocumentIdRef.current = null;
+    }
   };
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before
@@ -2248,9 +2253,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       attemptId
     );
   };
-  const beginHistoryReplayPresentation = (): number => {
+  const beginHistoryReplayPresentation = (documentId: string): number => {
     historyReplayAttemptRef.current += 1;
     historyReplayAttemptPendingRef.current = true;
+    historyReplayAttemptDocumentIdRef.current = documentId;
     return historyReplayAttemptRef.current;
   };
   const finalizeHistoryReplayPresentation = (token: HistoryReplayPresentationToken): boolean => {
@@ -2265,6 +2271,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return false;
     }
     historyReplayAttemptPendingRef.current = false;
+    historyReplayAttemptDocumentIdRef.current = null;
     retireDepartedPresentationBitmaps(presentationScope, latest.documentId, latest);
     return true;
   };

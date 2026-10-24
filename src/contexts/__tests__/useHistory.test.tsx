@@ -53,7 +53,11 @@ vi.mock('../../hooks/useDevicePixelRatio.ts', () => ({
  * assertion, and the reducer's own `APPLY_HISTORY_REPLAY` arm.
  */
 const historyPresentationEvents = vi.hoisted(() => [] as string[]);
-const historyReplayAttemptState = vi.hoisted(() => ({ value: 0, pending: false }));
+const historyReplayAttemptState = vi.hoisted(() => ({
+  value: 0,
+  pending: false,
+  pendingDocumentId: null as string | null,
+}));
 
 const storeStateMock = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
@@ -86,23 +90,31 @@ const storeStateMock = vi.hoisted(() => ({
         | { status: 'legacy-fallback'; reason: 'stale'; cursor: number }
       >)
     | undefined,
-  beginHistoryReplayPresentation: vi.fn(() => {
+  beginHistoryReplayPresentation: vi.fn((documentId: string) => {
     historyReplayAttemptState.value += 1;
     historyReplayAttemptState.pending = true;
+    historyReplayAttemptState.pendingDocumentId = documentId;
     historyPresentationEvents.push('begin');
     return historyReplayAttemptState.value;
   }),
   isHistoryReplayPresentationCurrent: vi.fn(
     (attemptId: number) => historyReplayAttemptState.pending && attemptId === historyReplayAttemptState.value
   ),
-  hasPendingHistoryReplayPresentation: vi.fn(() => historyReplayAttemptState.pending),
+  hasPendingHistoryReplayPresentation: vi.fn(
+    (documentId: string) =>
+      historyReplayAttemptState.pending && historyReplayAttemptState.pendingDocumentId === documentId
+  ),
   cancelHistoryReplayPresentation: vi.fn((attemptId: number) => {
-    if (attemptId === historyReplayAttemptState.value) historyReplayAttemptState.pending = false;
+    if (attemptId === historyReplayAttemptState.value) {
+      historyReplayAttemptState.pending = false;
+      historyReplayAttemptState.pendingDocumentId = null;
+    }
   }),
   finalizeHistoryReplayPresentation: vi.fn((token: { attemptId: number }) => {
     historyPresentationEvents.push('finalize');
     if (token.attemptId !== historyReplayAttemptState.value || !historyReplayAttemptState.pending) return false;
     historyReplayAttemptState.pending = false;
+    historyReplayAttemptState.pendingDocumentId = null;
     return true;
   }),
 }));
@@ -279,6 +291,7 @@ function makeReplayLayer(id: string, order: number, bitmap: ImageBitmap): Layer 
 function resetStoreState(history: HistoryItem[]) {
   historyReplayAttemptState.value = 0;
   historyReplayAttemptState.pending = false;
+  historyReplayAttemptState.pendingDocumentId = null;
   Object.assign(storeStateMock, {
     canvasRef: { current: document.createElement('canvas') },
     history,
@@ -295,23 +308,31 @@ function resetStoreState(history: HistoryItem[]) {
     branchRevision: 0,
     hasUnsavedChanges: false,
     publishDurableNavigationPresentation: undefined,
-    beginHistoryReplayPresentation: vi.fn(() => {
+    beginHistoryReplayPresentation: vi.fn((documentId: string) => {
       historyReplayAttemptState.value += 1;
       historyReplayAttemptState.pending = true;
+      historyReplayAttemptState.pendingDocumentId = documentId;
       historyPresentationEvents.push('begin');
       return historyReplayAttemptState.value;
     }),
     isHistoryReplayPresentationCurrent: vi.fn(
       (attemptId: number) => historyReplayAttemptState.pending && attemptId === historyReplayAttemptState.value
     ),
-    hasPendingHistoryReplayPresentation: vi.fn(() => historyReplayAttemptState.pending),
+    hasPendingHistoryReplayPresentation: vi.fn(
+      (documentId: string) =>
+        historyReplayAttemptState.pending && historyReplayAttemptState.pendingDocumentId === documentId
+    ),
     cancelHistoryReplayPresentation: vi.fn((attemptId: number) => {
-      if (attemptId === historyReplayAttemptState.value) historyReplayAttemptState.pending = false;
+      if (attemptId === historyReplayAttemptState.value) {
+        historyReplayAttemptState.pending = false;
+        historyReplayAttemptState.pendingDocumentId = null;
+      }
     }),
     finalizeHistoryReplayPresentation: vi.fn((token: { attemptId: number }) => {
       historyPresentationEvents.push('finalize');
       if (token.attemptId !== historyReplayAttemptState.value || !historyReplayAttemptState.pending) return false;
       historyReplayAttemptState.pending = false;
+      historyReplayAttemptState.pendingDocumentId = null;
       return true;
     }),
   });
@@ -1161,6 +1182,50 @@ describe('useHistory undo replay', () => {
         branchRevision: 0,
         historyIndex: 0,
       });
+      expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not let another document pending replay suppress a failure before dispatch', async () => {
+      const { state } = setup();
+      const publication = deferred<{ status: 'stale'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn(() => publication.promise);
+      const { result, rerender } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      expect(storeStateMock.hasPendingHistoryReplayPresentation('document-1')).toBe(true);
+
+      act(() => {
+        state.documentId = 'document-2';
+      });
+      rerender();
+
+      const failure = new Error('new document replay conversion failed');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = failure;
+      await act(async () => {
+        await result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.hasPendingHistoryReplayPresentation).toHaveBeenLastCalledWith('document-2');
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-1');
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedActions()[1].payload).toMatchObject({
+        status: 'unavailable',
+        diagnostics: [expect.objectContaining({ code: 'conversion-failed', message: failure.message })],
+      });
+      expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
+
+      replayControl.failure = null;
+      await act(async () => {
+        publication.resolve({ status: 'stale', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(historyReplayAttemptState.pending).toBe(false);
       expect(state.historyIndex).toBe(0);
     });
 

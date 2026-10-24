@@ -184,7 +184,7 @@ function replay(
   branchRevision = 0,
   existingAttemptId?: number
 ): number {
-  const attemptId = existingAttemptId ?? store().beginHistoryReplayPresentation();
+  const attemptId = existingAttemptId ?? store().beginHistoryReplayPresentation(store().documentId);
   const payload: ReplayPayload = {
     updates,
     timeline: { entries: [baselineItem({})], cursor, branchRevision },

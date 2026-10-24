@@ -286,7 +286,7 @@ export const useHistory = () => {
       // The dispatch is synchronous. Starting the token immediately after it
       // keeps a dispatch failure from superseding an accepted async replay,
       // while still fencing that older publication before it can resume.
-      attemptId = beginHistoryReplayPresentation();
+      attemptId = beginHistoryReplayPresentation(documentId);
       const outcome = publishDurableNavigationPresentation
         ? await publishDurableNavigationPresentation(attemptId)
         : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
@@ -353,7 +353,7 @@ export const useHistory = () => {
         cancelHistoryReplayPresentation?.(attemptId);
         return Promise.resolve();
       }
-      if (attemptId === null && hasPendingHistoryReplayPresentation?.()) {
+      if (attemptId === null && hasPendingHistoryReplayPresentation?.(documentId)) {
         // A newer request failed while a previously accepted replay is still
         // composing. Its failure must not invalidate the replay already in
         // flight or publish a status against that replay's logical state.

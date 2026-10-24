@@ -475,7 +475,7 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
     expect(store().layers[layerId].bitmap).toBe(owned);
 
     // A replay whose cursor predates the layer's creation drops it from the record.
-    const attemptId = store().beginHistoryReplayPresentation();
+    const attemptId = store().beginHistoryReplayPresentation(store().documentId);
     replayTo(dispatch(), {}, {}, -1);
 
     expect(store().layers[layerId]).toBeUndefined();
@@ -1505,11 +1505,11 @@ describe('renderSelector contract', () => {
     let newerAttempt = 0;
     let publication!: Promise<DurableNavigationPresentationOutcome>;
     act(() => {
-      olderAttempt = store().beginHistoryReplayPresentation();
+      olderAttempt = store().beginHistoryReplayPresentation(store().documentId);
       publication = store().publishDurableNavigationPresentation(olderAttempt);
     });
     act(() => {
-      newerAttempt = store().beginHistoryReplayPresentation();
+      newerAttempt = store().beginHistoryReplayPresentation(store().documentId);
     });
 
     let outcome: DurableNavigationPresentationOutcome | undefined;
@@ -1530,6 +1530,21 @@ describe('renderSelector contract', () => {
     act(() => {
       store().cancelHistoryReplayPresentation(newerAttempt);
     });
+  });
+
+  it('scopes pending replay ownership to the document that started it', () => {
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), {}, 'doc-1');
+
+    const attemptId = store().beginHistoryReplayPresentation(store().documentId);
+    expect(store().hasPendingHistoryReplayPresentation('doc-1')).toBe(true);
+
+    replaceDocument(dispatch(), {}, 'doc-2');
+
+    expect(store().hasPendingHistoryReplayPresentation('doc-1')).toBe(true);
+    expect(store().hasPendingHistoryReplayPresentation('doc-2')).toBe(false);
+    store().cancelHistoryReplayPresentation(attemptId);
+    expect(store().hasPendingHistoryReplayPresentation('doc-1')).toBe(false);
   });
 
   it('retains a published projection lease until its document exits', async () => {
