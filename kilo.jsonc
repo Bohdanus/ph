@@ -195,11 +195,11 @@
 
     "external_directory": {
       "/tmp/kilo/**": "allow",
-      ".kilo/worktrees/**": "allow"
+      ".kilo/worktrees/**": "allow",
     },
     "edit": {
-      ".kilo/**": "allow"
-    }
+      ".kilo/**": "allow",
+    },
   },
 
   // Chrome DevTools, scoped to this project rather than the global config, and

@@ -1,12 +1,23 @@
 # Free Remote Compute for Project Tests
 
-Use the local `ssh e2e` alias for sequential Linux validation and for reproducing Linux-specific failures. The host is an AWS EC2 `t4g.small`: 2 vCPU, 2 GiB RAM, ARM64 Graviton2, and no GPU. Check the live OS, swap, disk, Node, Chrome, and Playwright versions before relying on recorded setup details.
+Use the local `ssh e2e` alias for broad headless E2E runs and Linux/ARM64 validation. Measurements below were checked on 2026-10-24; recheck the host before relying on them.
+
+| Host           | Observed setup                                                                                                                              | Use                                                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `e2e`          | Ubuntu 26.04.1 LTS, ARM64, 2 vCPU, 1.8 GiB RAM, 4 GiB swap, 46 GiB root disk (37 GiB free), Node 24.22.1, npm 11.19.1, Chrome 156.0.8078.47 | One E2E process at a time, with `--workers=1`; targeted Linux checks; sequential unit/type/build checks |
+| Older instance | Amazon Linux 2023, about 6 GiB free disk during setup; no longer the `e2e` alias target                                                     | Ignore for project runs unless it is reprovisioned                                                      |
+
+The useful gain is moving long browser runs off the local workstation. A `t4g.small` is not a high-throughput runner: its two vCPUs and 2 GiB RAM do not support several concurrent Chrome workers reliably. Swap can prevent memory exhaustion but does not add CPU or make parallel runs faster.
+
+## Full-suite experiment
+
+The one-worker full-suite run on the older EC2 checkout (`d124d323`) took about 34 minutes and ended with 22 failures: 7 Linux visual-baseline files were missing, and 15 other failures were in crop-history, levels, paint, and text specs. This is not a green run, does not establish that those 15 failures are ARM-specific, and is not evidence about the newer local `main`. The run also exceeded the GitHub Linux job's 30-minute timeout. The current instance is useful for offloading focused checks and asynchronous reproduction, but one `t4g.small` is too slow to replace the blocking Linux CI job as an unsharded full-suite runner. Diagnose the non-baseline failures and add matching Linux baselines before treating the gate as green.
 
 ## Capacity and billing
 
 AWS currently lists `t4g.small` in its time-limited Free Tier trial. The published trial allows up to 750 instance-hours per month through 2026-12-31, subject to account, region, AMI, and usage conditions. Storage and other resources can still incur charges. Verify the account current billing view before a run; do not treat this VM as permanently free. See [EC2 Free Tier usage](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html), [AWS EC2 FAQs](https://aws.amazon.com/ec2/faqs/), and [general-purpose instance specifications](https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html).
 
-The small memory budget makes overlap the main operational risk. Run one gate at a time, and do not start a second shell, install, watcher, or test runner while a gate is active.
+The small memory budget makes overlap the main operational risk. Run one gate at a time, and do not start a second shell, install, watcher, or test runner while a gate is active. Do not attach this persistent host as a GitHub self-hosted runner for pull requests: workflow code can execute arbitrary commands, and a persistent runner can expose its home directory and credentials. GitHub Actions remains on GitHub-hosted runners.
 
 ## Worktree and runner checks
 
@@ -28,6 +39,34 @@ npm run swarm -- status --json
 ```
 
 Wait for each command to finish before starting the next. `npm run test:e2e` uses the E2E runner lock; unit tests, typecheck, and build do not share that lock, so the one-runner rule still applies across all gates.
+
+## Agent workflow for broad E2E
+
+Publish the tested commit from the local task worktree before asking the remote checkout to run it. Do not copy an uncommitted tree or run from the remote `main` checkout.
+
+```bash
+# Local task worktree: commit the snapshot, then publish its branch.
+git push -u origin <source-branch>
+
+# EC2: create one remote task worktree for this source branch.
+# Replace <main-worktree-path> with the path reported for refs/heads/main by
+# `git worktree list --porcelain`, as described in "Worktree and runner checks".
+git -C <main-worktree-path> worktree add \
+  /home/ubuntu/ph/.kilo/worktrees/remote-e2e-<task> \
+  -b task/remote-e2e-<task> main
+cd /home/ubuntu/ph/.kilo/worktrees/remote-e2e-<task>
+git rev-parse --show-toplevel
+npm run repo:state
+npm run swarm -- status --json
+git fetch origin <source-branch>
+git merge --ff-only FETCH_HEAD
+npm ci
+npm run test:e2e -- --workers=1
+```
+
+Keep the remote worktree for repeated checks of that branch; after a new branch commit, fetch and fast-forward it in that same worktree, then rerun the suite. If the source branch was rebased or the fast-forward fails, stop and create a new task worktree instead of resetting the existing one. Run `npm ci` again when the lockfile changes. Focused, fast specs and non-browser checks can still run locally; use EC2 for the broad browser run so local agents retain headroom for frequent focused gates.
+
+The current `e2e` host can run one full suite, not multiple shards concurrently. If more suitable EC2 hosts are added, scale by running one `--workers=1 --shard=i/N` process in a separate task worktree on each host. Sharding improves throughput only across independent machines; running those shards concurrently on one `t4g.small` increases CPU and memory contention and can make results less stable.
 
 ## Useful runs
 
@@ -55,9 +94,9 @@ It is not a GPU worker or a parallel CI runner. The CPU-rendered browser is usef
 
 ## Visual regression baselines
 
-The repository keeps baselines under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`. Only `darwin/` is currently committed; Linux and Windows fail as missing until their platform-specific sets are recorded. Never use this host to overwrite `darwin/` images.
+The repository keeps baselines under `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/<platform>/`. The `darwin/` and `win32/` sets are committed; Linux is missing. Never use this host to overwrite another platform's images.
 
-The VM is ARM64, so its output is suitable for an ARM64 Linux baseline only when the consuming CI job uses a matching browser, fonts, and rendering stack. Before adding Linux baselines, compare the VM to the actual CI runner and review every generated image. Use `npm run test:e2e:update-baselines` only from the intended Linux task worktree; do not assume this VM screenshots will satisfy an x86-64 Linux job.
+Committed visual baselines currently exist for `darwin/` and `win32/`; the Linux baseline directory is missing. The GitHub Linux job uses `ubuntu-latest`, while this EC2 host is ARM64 on Ubuntu 26.04.1, so its screenshots are not evidence for that CI baseline. Do not use this host to record a Linux CI baseline or overwrite another platform's images. Record Linux baselines only on a matching CI runner/browser/font stack, review every image, and commit them from the intended task worktree. Until then, the Linux visual-baseline tests remain an honest known failure; do not skip them or restore `continue-on-error`.
 
 ## Other useful tasks
 

@@ -123,7 +123,10 @@ export async function loadCatalogs({
         await discardResponseBody(response);
         throw new Error(`${source} catalog returned HTTP ${response.status}`);
       }
-      return catalogCandidates(source, await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`));
+      return catalogCandidates(
+        source,
+        await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`)
+      );
     })
   );
   return results.flatMap((result, index) => {

@@ -177,10 +177,7 @@ export function usePointerPosition<T extends HTMLElement>(
       if (typeof previous?.removeEventListener === 'function') {
         previous.removeEventListener('scroll', onContainerScroll);
       }
-      if (
-        typeof node.addEventListener === 'function' &&
-        typeof node.removeEventListener === 'function'
-      ) {
+      if (typeof node.addEventListener === 'function' && typeof node.removeEventListener === 'function') {
         node.addEventListener('scroll', onContainerScroll, { passive: true });
         containerScrollTargetRef.current = node;
       } else {
