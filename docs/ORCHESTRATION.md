@@ -1637,7 +1637,8 @@ The `.git` entry at a checkout root may be a directory in the main worktree or a
 small `gitdir:` file in a linked worktree. A linked worktree's private admin data
 and the common repository metadata are coupled; deleting or rebuilding either
 by hand can make every checkout unusable. Never delete or edit `.git`, `gitdir`,
-or `commondir` as a recovery technique.
+or `commondir` as a recovery technique, and do not set `GIT_DIR`,
+`GIT_COMMON_DIR`, or `GIT_WORK_TREE` to guess which repository a command should use.
 
 First stop writers and preserve the repository directory, all worktree
 directories, and uncommitted files in an independent, coherent backup or

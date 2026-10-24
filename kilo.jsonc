@@ -173,15 +173,13 @@
       "*rm -r -f*.kilo*": "deny",
 
       // Keep direct shell commands from removing Git metadata shared by linked
-      // worktrees. These literal command-text matches are defense in depth, not
-      // a filesystem boundary; wrappers and scripts can bypass them.
-      "*rm *.git": "deny",
-      "*rm *.git/*": "deny",
+      // worktrees. These command-text glob matches are defense in depth, not a
+      // filesystem boundary; wrappers and scripts can bypass them.
+      "*rm *.git*": "deny",
       "*rm *GIT_DIR*": "deny",
       "*rm *GIT_COMMON_DIR*": "deny",
       "*rm *GIT_WORK_TREE*": "deny",
-      "*unlink *.git": "deny",
-      "*unlink *.git/*": "deny",
+      "*unlink *.git*": "deny",
       "*unlink *GIT_DIR*": "deny",
       "*unlink *GIT_COMMON_DIR*": "deny",
       "*unlink *GIT_WORK_TREE*": "deny",
