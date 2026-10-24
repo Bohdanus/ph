@@ -1544,69 +1544,6 @@ That asymmetry is the whole hazard. A GPT whose gateway spelling is
 `OpenAI: …` and whose openrouter spelling is bare is one typo away from a paid
 call that fails on credits, and no rule that only inspects `provider` can see it.
 
-## GPT token budget, held live: `swarm tokens`
-
-`swarm tokens` is the swarm's read on "how much GPT did this repository consume
-in the last 5 hours, and how much of the window's budget is left". It holds
-that reading in the board's `token_window` table so an operator or agent can
-consult it before spending another paid GPT call. Polling is a manual command;
-this repository does not schedule it automatically.
-
-**It does NOT query an account balance endpoint.** OpenAI's documented remaining
-token signal is in per-request rate-limit headers, not the 5-hour account window.
-The local Kilo `message` table does record assistant-message token totals, model
-IDs, provider IDs and timestamps. `swarm tokens --poll` sums those message totals
-for GPT models on the OpenAI provider or Kilo's OpenAI-backed model IDs inside the look-back. It does not sum
-session lifetime counters, which cannot be apportioned to a window. The total is
-still a rough estimate against the operator-configured budget, not an invoice or
-an authoritative account balance.
-
-A reading's `status` says what it could see, and is the signal itself:
-
-- `ok` — message usage read, budget set, `remaining = budget − consumed` (clamped to 0).
-- `incomplete` — a matching in-window GPT message has no final usage; remaining is
-  unknown so the router fails closed.
-- `no-budget` — session DB read, no budget configured (`KILO_TOKEN_WINDOW_BUDGET` unset
-  and no `--budget`); the reading holds consumed-only usage.
-- `no-session-db` — the session database is absent (e.g. a machine with no Kilo
-  history); consumed and remaining are unknown, not zero.
-- `invalid-window` — the requested look-back is outside the supported 0–72 hour range.
-- `invalid-budget` / `invalid-time` — the budget or pinned poll time is not a valid safe integer.
-- `error` — the read failed; the error is captured in `detail` for diagnosis.
-
-`reset_at` is an estimate: oldest matching message time plus the look-back width,
-which approximates when the first usage rolls out. It is not the provider's reset
-boundary; `detail.resetAtEstimated` marks it. Readings older than 90 minutes are
-stale. `--json` includes `routingPolicy`: no/uncertain readings fail closed to
-recommends free models; at 20% or less remaining, a reset estimate over 60 minutes
-away (or unknown) recommends free models and blocks Terra/Sol unless the operator
-explicitly overrides for that subtask and acknowledges the budget risk. Free
-models remain preferred otherwise. A non-five-hour look-back is not used for
-five-hour routing decisions.
-
-**Record a reading** manually or from an operator-managed cadence (never via
-cron, per the project's cron constraint):
-
-```bash
-npm run tokens:poll                       # uses KILO_TOKEN_WINDOW_BUDGET
-npm run tokens:poll -- --budget 20000000  # explicit window ceiling, in tokens
-npm run tokens:poll -- --window 2         # a narrower usage sample; routing stays unknown
-```
-
-**Read what the swarm holds:**
-
-```bash
-npm run swarm -- tokens                   # all held readings, newest first
-npm run swarm -- tokens --json            # machine-readable
-npm run swarm -- tokens --provider gpt    # filter
-npm run swarm -- tokens --prune           # drop readings older than the window
-```
-
-`--prune` keeps the table bounded to one look-back window; `tokens --poll` prunes
-before it records. The five-hour default is shared by the poller and both CLIs;
-the 72-hour maximum matches the session-database safety bound. Nothing in a
-reading is a secret: no provider API key is read or stored by this machinery.
-
 ## Unexpected agent recovery
 
 Do not delete a dead agent's worktree or force-release its claim before preserving
