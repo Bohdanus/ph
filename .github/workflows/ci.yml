@@ -1,5 +1,5 @@
 name: CI
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('CI {0} @ {1}', inputs.request_id, inputs.source_sha) || format('CI #{0}', github.run_number) }}
+run-name: CI ${{ github.event_name == 'workflow_dispatch' && inputs.request_id || github.run_number }} @ ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
 
 on:
   push:
