@@ -1,4 +1,4 @@
-import type { Point } from '../contexts/general-types.ts';
+import type { Point, Size } from '../contexts/general-types.ts';
 import { EYEDROPPER_SAMPLE_SIZE_OPTIONS, type EyedropperSampleSize } from './eyedropper.ts';
 
 /**
@@ -103,6 +103,97 @@ export type ColorSampler = {
  */
 export const roundChannel = (sum: number, count: number): number => Math.round(sum / count);
 
+export type ColorSampleBounds = {
+  centerX: number;
+  centerY: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+/** The clipped square footprint in document pixels, or null when the click is outside the frame. */
+export const colorSampleBounds = (frameSize: Size, point: Point, sampleSize: number): ColorSampleBounds | null => {
+  if (
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    !Number.isFinite(sampleSize) ||
+    sampleSize < 1 ||
+    frameSize.width < 1 ||
+    frameSize.height < 1
+  ) {
+    return null;
+  }
+
+  const centerX = Math.floor(point.x);
+  const centerY = Math.floor(point.y);
+  if (centerX < 0 || centerY < 0 || centerX >= frameSize.width || centerY >= frameSize.height) return null;
+
+  const half = Math.floor(sampleSize / 2);
+  return {
+    centerX,
+    centerY,
+    left: Math.max(0, centerX - half),
+    top: Math.max(0, centerY - half),
+    right: Math.min(frameSize.width, centerX + half + 1),
+    bottom: Math.min(frameSize.height, centerY + half + 1),
+  };
+};
+
+export type ColorSamplePixelMapper = (documentX: number, documentY: number) => Point | null;
+
+/** Average logical document pixels from a bitmap through an explicit document-to-bitmap mapping. */
+export const sampleColorAtMappedPixels = (
+  data: Uint8ClampedArray,
+  bitmapWidth: number,
+  bitmapHeight: number,
+  frameSize: Size,
+  point: Point,
+  sampleSize: number,
+  mapPixel: ColorSamplePixelMapper
+): string | null => {
+  const bounds = colorSampleBounds(frameSize, point, sampleSize);
+  if (!bounds || bitmapWidth < 1 || bitmapHeight < 1) return null;
+
+  const pixelOffset = (x: number, y: number): number | null => {
+    const bitmapPoint = mapPixel(x, y);
+    if (
+      !bitmapPoint ||
+      !Number.isInteger(bitmapPoint.x) ||
+      !Number.isInteger(bitmapPoint.y) ||
+      bitmapPoint.x < 0 ||
+      bitmapPoint.y < 0 ||
+      bitmapPoint.x >= bitmapWidth ||
+      bitmapPoint.y >= bitmapHeight
+    ) {
+      return null;
+    }
+    const offset = (bitmapPoint.y * bitmapWidth + bitmapPoint.x) * 4;
+    return offset + 3 < data.length ? offset : null;
+  };
+
+  const centerOffset = pixelOffset(bounds.centerX, bounds.centerY);
+  if (centerOffset === null || data[centerOffset + 3] === 0) return null;
+
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let count = 0;
+  for (let y = bounds.top; y < bounds.bottom; y++) {
+    for (let x = bounds.left; x < bounds.right; x++) {
+      const offset = pixelOffset(x, y);
+      if (offset === null) return null;
+      red += data[offset];
+      green += data[offset + 1];
+      blue += data[offset + 2];
+      count++;
+    }
+  }
+  if (count === 0) return null;
+
+  return toHexColor(roundChannel(red, count), roundChannel(green, count), roundChannel(blue, count));
+};
+
 /**
  * Three channel values as the `#rrggbb` string this app's colour controls already speak.
  *
@@ -132,8 +223,8 @@ const toHexColor = (red: number, green: number, blue: number): string =>
  *
  * Returns `null` — never a fabricated colour — when the point is outside the bitmap, when the
  * clipped block is empty, when the block holds no pixels at all, or when the CENTRE pixel is
- * transparent. The centre test is the Eyedropper's and it is the one that matters: averaging a
- * transparent pixel in would report a colour the user never sampled.
+ * transparent. Refusing a transparent center is an app policy; the Adobe help pages reviewed for
+ * this tool do not specify transparent-pixel sampling.
  */
 export const sampleColorAt = (
   data: Uint8ClampedArray,
@@ -142,41 +233,7 @@ export const sampleColorAt = (
   point: Point,
   sampleSize: number
 ): string | null => {
-  const centerX = Math.floor(point.x);
-  const centerY = Math.floor(point.y);
-  if (centerX < 0 || centerY < 0 || centerX >= width || centerY >= height) return null;
-
-  const half = Math.floor(sampleSize / 2);
-  const left = Math.max(0, centerX - half);
-  const top = Math.max(0, centerY - half);
-  const right = Math.min(width, centerX + half + 1);
-  const bottom = Math.min(height, centerY + half + 1);
-  if (right <= left || bottom <= top) return null;
-
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-  let count = 0;
-  for (let y = top; y < bottom; y++) {
-    const rowStart = (y * width + left) * 4;
-    for (let x = left; x < right; x++) {
-      const index = rowStart + (x - left) * 4;
-      red += data[index];
-      green += data[index + 1];
-      blue += data[index + 2];
-      count++;
-    }
-  }
-  if (count === 0) return null;
-
-  // The CENTRE pixel's alpha, not the block's mean: the Eyedropper reads this same byte and refuses
-  // the sample when it is zero. A block whose edges are transparent and whose centre is opaque is a
-  // real and common case — a 1-pixel object on a transparent layer — and averaging the transparent
-  // surround into it would report black.
-  const centerIndex = (centerY * width + centerX) * 4;
-  if (data[centerIndex + 3] === 0) return null;
-
-  return toHexColor(roundChannel(red, count), roundChannel(green, count), roundChannel(blue, count));
+  return sampleColorAtMappedPixels(data, width, height, { width, height }, point, sampleSize, (x, y) => ({ x, y }));
 };
 
 /** `null` while there is room for another sampler, and a reason string once there is not. */

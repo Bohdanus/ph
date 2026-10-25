@@ -31,7 +31,7 @@ overlay.height = 1200;
 /** `#1a2b3c`, so a sampled colour cannot be confused with the black of a stub that read nothing. */
 const COMPOSITED_RGB: [number, number, number] = [0x1a, 0x2b, 0x3c];
 
-const composited = new Uint8ClampedArray(workspace.width * workspace.height * 4);
+let composited = new Uint8ClampedArray(workspace.width * workspace.height * 4);
 
 const fillCompositedOpaque = () => {
   for (let index = 0; index < composited.length; index += 4) {
@@ -102,6 +102,7 @@ const storeState = {
   canvasRef: { current: workspace },
   containerRef: { current: document.createElement('div') },
   totalSize: { width: 800, height: 600 },
+  renderSelector: { source: 'legacy' as 'legacy' | 'pending' | 'durable' },
 };
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
@@ -192,6 +193,10 @@ describe('ColorSamplerToolArea', () => {
 
   beforeEach(() => {
     resetColorSamplersForTest();
+    workspace.width = 800;
+    workspace.height = 600;
+    workspace.removeAttribute('data-hidpi-ratio');
+    composited = new Uint8ClampedArray(workspace.width * workspace.height * 4);
     fillCompositedOpaque();
     strokes.length = 0;
     outlines.length = 0;
@@ -218,6 +223,7 @@ describe('ColorSamplerToolArea', () => {
     h.isPointerDownValid.mockReturnValue(true);
     h.trackedPointerId.current = null;
     h.dimensions.current.scale = 1;
+    storeState.renderSelector.source = 'legacy';
   });
 
   afterEach(() => {
@@ -256,7 +262,41 @@ describe('ColorSamplerToolArea', () => {
     // than the active layer because that is the pixel the user clicked. A sampler that reported
     // `#000000` would be reporting the absence of a read, not a colour.
     expect(samplersAt(el)).toEqual([{ id: 1, point: { x: 120, y: 80 }, color: '#1a2b3c' }]);
-    expect(readbackStub.getImageData).toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(readbackStub.getImageData).toHaveBeenCalledWith(120, 80, 1, 1);
+  });
+
+  it('samples one logical document pixel from a DPR-scaled composite canvas', () => {
+    workspace.width = 1600;
+    workspace.height = 1200;
+    workspace.setAttribute('data-hidpi-ratio', '2');
+    composited = new Uint8ClampedArray(workspace.width * workspace.height * 4);
+    for (let y = 0; y < workspace.height; y++) {
+      for (let x = 0; x < workspace.width; x++) {
+        const value = Math.floor((x + 0.5) / 2) < 120 ? 0 : 255;
+        const offset = (y * workspace.width + x) * 4;
+        composited[offset] = value;
+        composited[offset + 1] = value;
+        composited[offset + 2] = value;
+        composited[offset + 3] = 255;
+      }
+    }
+    const { container: el } = renderArea();
+
+    click(el, { x: 120, y: 80 });
+
+    expect(samplersAt(el)).toEqual([{ id: 1, point: { x: 120, y: 80 }, color: '#ffffff' }]);
+    expect(readbackStub.getImageData).toHaveBeenCalledWith(241, 161, 1, 1);
+  });
+
+  it('does not read the previous canvas while a history presentation is pending', () => {
+    storeState.renderSelector.source = 'pending';
+    const { container: el } = renderArea();
+
+    click(el, { x: 120, y: 80 });
+
+    expect(samplersAt(el)).toEqual([]);
+    expect(getContextSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it('refuses loudly and places nothing when the composited canvas cannot be read back', () => {
@@ -349,14 +389,17 @@ describe('ColorSamplerToolArea', () => {
     expect(samplersAt(el)).toEqual([]);
   });
 
-  it('keeps the sampler when a drag is released exactly on the document frame border', () => {
+  it.each([
+    ['right', { x: 800, y: 200 }],
+    ['bottom', { x: 200, y: 600 }],
+  ] as const)('deletes a sampler released on the exclusive %s frame edge', (_edge, releasePoint) => {
     const { container: el } = renderArea();
     click(el, { x: 0, y: 0 });
 
-    // The corner of the mocked `totalSize`, which is the inclusive edge of `[0, 0, totalSize]`.
-    drag(el, { x: 0, y: 0 }, { x: 800, y: 600 });
+    // Pixel coordinates cover [0,width) × [0,height); the far edge names no pixel.
+    drag(el, { x: 0, y: 0 }, releasePoint);
 
-    expect(samplersAt(el)).toEqual([{ id: 1, point: { x: 800, y: 600 }, color: '#1a2b3c' }]);
+    expect(samplersAt(el)).toEqual([]);
   });
 
   it('deletes the sampler an Alt-click lands on, and treats an Alt-click on empty canvas as a placement', () => {
