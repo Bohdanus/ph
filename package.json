@@ -14,7 +14,6 @@
     "swarm:release-merged": "node scripts/merge-release.mjs",
     "dispose": "node scripts/dispose-worktree.mjs",
     "session:id": "node scripts/find-session-id.mjs",
-    "tokens:poll": "node scripts/poll-gpt-tokens.mjs",
     "docs:tools": "node scripts/generate-tool-docs.mjs",
     "lint": "node scripts/lint-tracked.js --eslint-only",
     "lint:check": "node scripts/lint-tracked.js",
