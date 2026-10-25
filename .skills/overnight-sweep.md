@@ -1,3 +1,8 @@
+---
+name: overnight-sweep
+description: An autonomous, token-conscious pass over documented defects and unfinished work. Fix high-priority, well-evidenced problems first; land verified work; record uncertain problems as actionable handoffs and continue. Use when asked to do an overnight sweep of loose ends.
+---
+
 # Overnight Loose-Ends Sweep
 
 Autonomous, token-conscious pass over documented defects and unfinished work. Fix high-priority, well-evidenced problems first; land verified work; record uncertain problems as actionable handoffs and continue.

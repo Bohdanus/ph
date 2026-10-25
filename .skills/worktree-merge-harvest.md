@@ -1,3 +1,8 @@
+---
+name: worktree-merge-harvest
+description: Land useful work from free worktrees onto main: establish ownership and net content, recover the requirement, review the candidate, sync it with current main, validate the final composition, and record whether work landed, was reimplemented, rejected, archived, or remains unresolved. Abandoned-worktree reclamation is the separate `stale-worktree-reclaim` skill.
+---
+
 # Worktree merge harvest
 
 Land the work sitting on **free** worktrees of this repository onto `main`.
@@ -37,14 +42,12 @@ moves underneath it, and the `mergeConflict` answer in particular is the fastest
 field in the file to go stale. Regenerate before you trust it, and re-read `dirty`
 and `mergeConflict` before you act.
 
-There is a second governing rule, and it decides how hard you try before you ask.
-**Time and compute are effectively unlimited in this repository; the scarce
-resources are autonomy and correctness.** Nothing in a harvest is to be
-abandoned for being expensive, slow, or hard to establish. Escalating to the
-operator is the last move on the board, not the first: it hands a decision to
-somebody who cannot see the branch, the transcript, or the diff you can see, so
-every question you ask instead of answering is one whose answer will be stale by
-the time it is acted on.
+There is a second governing rule: preserve autonomy while respecting finite budgets and
+provider quotas. Follow `MODELS.md`, prefer verified free routes for eligible research and
+review, and never silently fall back to paid inference. Keep moving on independent work when a
+route is unavailable; if a budget or blocker prevents safe validation, leave an evidence-based
+handoff naming the remaining check or decision. Do not abandon a branch just because its history
+is unfamiliar or its content needs careful review.
 
 **What makes the first rule enforceable is one layer down.**
 `scripts/main-worktree-guard.mjs` runs from `.husky/pre-commit` and refuses
@@ -58,16 +61,16 @@ and that staged tree. Direct self-committing merges are refused in every worktre
 `MERGE_HEAD` and abort only that refused attempt before retrying. Fast-forwards
 also do not provide this check, so neither shape is a landing path. The pins are
 an operator-supplied record of the reviewed candidate, not a cryptographic
-approval token. The operator hotfix override remains `ALLOW_MAIN_COMMIT=1`, and
-only the exact value `1`; an ordinary hotfix commit still needs its `Chat:` trailer.
+approval token. The main worktree permits only reviewed pinned landings; ordinary and hotfix
+changes must be made on a task branch and landed through the same reviewed procedure.
 The hook installer records the designated main worktree's private Git directory
 and path in shared local Git config (`ph.mainWorktreeGitDir` and
 `ph.mainWorktreePath`). The Git directory keeps the same checkout protected if
 `HEAD` is detached or switched during a hook. If that private directory changes,
 the saved path still protects a detached checkout there; it does not transfer
 protection to a feature branch that reuses the path. A first install fails when
-`main` is detached and no saved identity exists. A landing or hotfix still
-requires `refs/heads/main` to be checked out.
+`main` is detached and no saved identity exists. A pinned landing still requires
+`refs/heads/main` to be checked out.
 A completed merge also fires `post-merge`, which
 releases eligible board claims but cannot block the merge.
 Everything else that changes a tracked file belongs in the branch's own worktree,
