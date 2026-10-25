@@ -33,6 +33,8 @@ A refreshed catalog again listed multiple zero-priced Kilo and OpenRouter models
 
 A 104 KB read-only code-review prompt did not complete: Laguna timed out, Xing4 returned HTTP 429, and OpenRouter Flint returned HTTP 429. The runner stopped without a paid fallback. Keep large review prompts bounded, and stop using a provider for the run after its timeout or quota response.
 
+A bounded review of roughly 3,978 prompt tokens did complete through `kilo/poolside/laguna-s-2.1:free` with `finish_reason: stop`, 213 completion tokens, and reported cost `$0` (`is_byok: true`). It raised a possible hook bypass, but checking the source showed the call was inside the `mainPath` guard, so that finding was a false positive. The route supplied useful zero-cost inference; verify its claims against source before treating them as findings.
+
 One local `Jan-v3.5-4B-Q4_K_XL` server started at `127.0.0.1:6767`; a harmless authenticated smoke returned the exact model, `finish_reason: stop`, and 17 tokens. A bounded review prompt of about 4.1K input tokens took roughly 32 seconds, ended with `finish_reason: length`, and included a false claim, so that review was unusable. The server was stopped and the port was checked clear. Local inference avoids provider API charges but uses host resources; trust output only when it is complete and verified, and run no more than one Jan model at a time.
 
 Free-model research returned false quota claims, including NVIDIA production use and Hugging Face credits; other suggested free API quotas lacked official sources. Treat answers as leads; verify quotas with provider docs.
