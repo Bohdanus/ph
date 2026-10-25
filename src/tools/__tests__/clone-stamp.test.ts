@@ -661,11 +661,19 @@ describe('active selection clipping', () => {
 
     expect(at(canvas, 6, 3)).toEqual(src(1, 1));
     expect(at(canvas, 5, 3)).toEqual(DEST);
-    expect(createSelectionAlphaMaskMock).toHaveBeenCalledWith([{ x: 0, y: 0 }], DOCUMENT, {
-      points: [{ x: 0, y: 0 }],
-      featherRadius: 0,
-      antiAlias: true,
-    });
+    expect(createSelectionAlphaMaskMock).toHaveBeenCalledWith(
+      {
+        points: [{ x: 0, y: 0 }],
+        featherRadius: 0,
+        antiAlias: true,
+      },
+      DOCUMENT,
+      {
+        points: [{ x: 0, y: 0 }],
+        featherRadius: 0,
+        antiAlias: true,
+      }
+    );
   });
 
   it('multiplies feathered selection coverage with the clone tip weight', () => {
@@ -687,7 +695,8 @@ describe('active selection clipping', () => {
 
   it('replays the same selection snapshot after JSON serialization', () => {
     const selection = {
-      points: [{ x: 0, y: 0 }],
+      points: [],
+      rasterMask: { width: 2, height: 2, data: 'AQ==', x: 0, y: 0 },
       featherRadius: 3,
       antiAlias: false,
     };
@@ -699,6 +708,6 @@ describe('active selection clipping', () => {
     const canvas = run({ selection: replayed });
 
     expect(at(canvas, 6, 3)).toEqual(src(1, 1));
-    expect(createSelectionAlphaMaskMock).toHaveBeenCalledWith(replayed.points, DOCUMENT, replayed);
+    expect(createSelectionAlphaMaskMock).toHaveBeenCalledWith(replayed, DOCUMENT, replayed);
   });
 });

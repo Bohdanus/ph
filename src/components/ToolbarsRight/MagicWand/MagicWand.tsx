@@ -3,6 +3,7 @@ import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
 import { useSelectionHistory } from '../../../contexts/useSelectionHistory.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
+import { SelectionPixelBudgetNotice } from '../SelectionPixelBudgetNotice.tsx';
 
 const SLIDER_CLASS = 'h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700';
 
@@ -115,9 +116,7 @@ const MagicWand: React.FC<{}> = () => {
         {args.contiguous ? (
           <div>Click a color area to select connected similar pixels.</div>
         ) : (
-          <div role="status">
-            Non-contiguous mode keeps only the largest matching region; results with holes are canceled.
-          </div>
+          <div role="status">Selects matching colors across the image, including disconnected regions.</div>
         )}
         <div className="mt-1 text-[9px] opacity-75">
           {matchingPixelCount
@@ -125,6 +124,7 @@ const MagicWand: React.FC<{}> = () => {
             : 'Increase tolerance for broader regions.'}
         </div>
       </div>
+      <SelectionPixelBudgetNotice />
     </div>
   );
 };

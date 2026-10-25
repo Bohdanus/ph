@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { EraserToolArea } from '../EraserToolArea.tsx';
 import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
+import type { Selection } from '../../../contexts/general-types.ts';
 
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
@@ -13,10 +14,14 @@ const storeState = vi.hoisted(
     documentFrame: { x: number; y: number; width: number; height: number } | null;
     layers: LayersRecord;
     activeLayerId: string | null;
+    selections: Selection[];
+    activeSelectionId: string | null;
   } => ({
     documentFrame: null,
     layers: {},
     activeLayerId: null,
+    selections: [],
+    activeSelectionId: null,
   })
 );
 const toolState = vi.hoisted((): { toolArgs: Record<string, unknown> } => ({
@@ -36,6 +41,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       },
       get documentFrame() {
         return storeState.documentFrame;
+      },
+      get selections() {
+        return storeState.selections;
+      },
+      get activeSelectionId() {
+        return storeState.activeSelectionId;
       },
     },
     vi.fn(),
@@ -127,6 +138,8 @@ describe('EraserToolArea', () => {
     storeState.documentFrame = null;
     storeState.layers = { base: makeLayer('base', { x: 0, y: 0, width: 300, height: 200 }) };
     storeState.activeLayerId = 'base';
+    storeState.selections = [];
+    storeState.activeSelectionId = null;
     toolState.toolArgs = {
       toolName: 'eraser',
       mode: 'pencil',
@@ -206,6 +219,58 @@ describe('EraserToolArea', () => {
       { x: 40, y: 50 },
       { x: 120, y: 80 },
     ]);
+  });
+
+  it('snapshots every selection contour into the eraser raster coordinate space', () => {
+    storeState.documentFrame = { x: 10, y: 20, width: 300, height: 200 };
+    storeState.layers = { base: makeLayer('base', { x: 10, y: 20, width: 300, height: 200 }) };
+    storeState.selections = [
+      {
+        id: 'compound',
+        points: [
+          [
+            { x: 1, y: 1 },
+            { x: 5, y: 1 },
+            { x: 5, y: 5 },
+            { x: 1, y: 5 },
+          ],
+          [
+            { x: 2, y: 2 },
+            { x: 4, y: 2 },
+            { x: 4, y: 4 },
+            { x: 2, y: 4 },
+          ],
+        ],
+        isActive: true,
+        pos: { x: 9, y: 19, width: 6, height: 6 },
+        geometry: 'polygon',
+        sourceTool: 'magic-wand',
+      },
+    ];
+    storeState.activeSelectionId = 'compound';
+    const { toolArea } = renderArea();
+
+    stroke(toolArea, [1, 1], [2, 2]);
+
+    const [params] = updateLayerByToolMock.mock.calls[0] as [{ toolArgs: { selection: unknown } }];
+    expect(params.toolArgs.selection).toEqual({
+      points: [
+        [
+          { x: 0, y: 0 },
+          { x: 4, y: 0 },
+          { x: 4, y: 4 },
+          { x: 0, y: 4 },
+        ],
+        [
+          { x: 1, y: 1 },
+          { x: 3, y: 1 },
+          { x: 3, y: 3 },
+          { x: 1, y: 3 },
+        ],
+      ],
+      featherRadius: 0,
+      antiAlias: true,
+    });
   });
 
   it('ignores a stroke that starts with a non-primary mouse button', () => {

@@ -1108,6 +1108,37 @@ describe('decideDurableAppend', () => {
     });
   });
 
+  it('accepts a key-absent legacy active selection as the append before-state', () => {
+    const keylessPrevious = { selections: previousSelectionState.selections } as unknown as SelectionSnapshot;
+    const item = createSelectionHistoryItem(keylessPrevious, nextSelectionState);
+    const plan = planHistoryAppend({
+      item,
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!plan.durableEntry) throw new Error('expected a planned selection append');
+    const baseWithActiveSelection = {
+      ...base,
+      baseline: { ...base.baseline, selections: previousSelectionState },
+    } as DurableDocument;
+
+    const decision = decide({
+      base: baseWithActiveSelection,
+      entry: plan.entry,
+      next: { entries: [...priorEntries, plan.entry], cursor: 1, branchRevision: 0 },
+      planned: plan.durableEntry,
+    });
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history[1]?.operation).toMatchObject({
+      kind: 'set-selection',
+      before: previousSelectionState,
+      after: nextSelectionState,
+    });
+  });
+
   it('refuses a sparse planned selection list against the dense legacy selection', () => {
     if (plannedSelection.operation.kind !== 'set-selection') throw new Error('expected a selection operation');
     const candidate: DurableHistoryEntry = {
@@ -1222,6 +1253,85 @@ describe('decideDurableAppend', () => {
     });
 
     expect(decision.outcome).toBe('published');
+  });
+
+  it('accepts the legacy Magic Wand boundaryPointCount in a durable selection append', () => {
+    const current = nextSelectionState.selections[0]!;
+    const legacyNextState: SelectionSnapshot = {
+      ...nextSelectionState,
+      selections: [
+        {
+          ...current,
+          metadata: {
+            magicWand: {
+              tolerance: 12,
+              smoothing: 1,
+              selectedPixelCount: 9,
+              boundaryPointCount: 12,
+              seed: { x: 2, y: 3 },
+              sampleColor: { r: 4, g: 5, b: 6, a: 255 },
+            },
+          },
+        },
+      ],
+    };
+    const item = createSelectionHistoryItem(previousSelectionState, legacyNextState);
+    const plan = planHistoryAppend({
+      item,
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!plan.durableEntry) throw new Error('expected a planned legacy selection entry');
+
+    const decision = decide({
+      entry: plan.entry,
+      next: { entries: [...priorEntries, plan.entry], cursor: 1, branchRevision: 0 },
+      planned: plan.durableEntry,
+    });
+
+    expect(decision.outcome).toBe('published');
+  });
+
+  it.each([
+    ['rectangle geometry', { geometry: 'rectangle' }],
+    ['polygonal-lasso source', { sourceTool: 'polygonal-lasso' }],
+  ] as const)('rejects a packed raster mask paired with %s', (_label, mismatch) => {
+    const packedSelection = {
+      ...nextSelectionState.selections[0]!,
+      points: [],
+      geometry: 'polygon' as const,
+      sourceTool: 'quick-selection' as const,
+      pos: { x: 1, y: 2, width: 2, height: 2 },
+      rasterMask: { width: 2, height: 2, data: 'AQ==' },
+    } satisfies Selection;
+    const validNextState: SelectionSnapshot = {
+      ...nextSelectionState,
+      selections: [packedSelection],
+    };
+    const validPlan = planHistoryAppend({
+      item: createSelectionHistoryItem(previousSelectionState, validNextState),
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!validPlan.durableEntry) throw new Error('expected a valid packed selection plan');
+
+    const malformedNextState: SelectionSnapshot = {
+      ...validNextState,
+      selections: [{ ...packedSelection, ...mismatch } as Selection],
+    };
+    const malformedItem = {
+      ...validPlan.entry,
+      args: {
+        ...(validPlan.entry.args as Record<string, unknown>),
+        nextSelectionState: malformedNextState,
+      },
+    };
+
+    expect(validatePlannedDurableEntry(malformedItem, validPlan.durableEntry)).toBe(
+      'the durable next selection state does not match the legacy entry'
+    );
   });
 
   it('rejects an accessor-backed legacy selection array without invoking it', () => {

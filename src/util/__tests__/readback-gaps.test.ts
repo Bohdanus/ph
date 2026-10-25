@@ -55,6 +55,7 @@ vi.mock('../../hooks/usePointerPosition.ts', () => ({
     isPointerDownValid: vi.fn((event: PointerEvent) => event.button === 0),
     isPointerMoveValid: vi.fn(() => true),
     isPointerUpValid: vi.fn(() => true),
+    releasePointer: vi.fn(),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: { current: false },
   }),
@@ -163,7 +164,11 @@ describe('read-back failures are reported, not swallowed', () => {
     it('returns null and reports the raw error object exactly once', () => {
       const thrown = createSecurityError();
 
-      const result = createMagicWandSelectionFromCanvas(throwingCanvas(thrown), { x: 1, y: 1 });
+      const result = createMagicWandSelectionFromCanvas(
+        throwingCanvas(thrown),
+        { x: 1, y: 1 },
+        { width: 4, height: 4 }
+      );
 
       // The recovery, unchanged: a click that cannot read the canvas selects nothing rather than
       // throwing mid-gesture.
@@ -177,10 +182,13 @@ describe('read-back failures are reported, not swallowed', () => {
 
     it('reports nothing when the read-back succeeds', () => {
       const canvas = makeMockCanvas(4, 4, {
+        createImageData: vi.fn((width: number, height: number) =>
+          createImageData(width, height, [5, 6, 7, 255])
+        ) as unknown as CanvasRenderingContext2D['createImageData'],
         getImageData: vi.fn(() => createImageData(4, 4, [5, 6, 7, 255])),
       });
 
-      const result = createMagicWandSelectionFromCanvas(canvas, { x: 1, y: 1 });
+      const result = createMagicWandSelectionFromCanvas(canvas, { x: 1, y: 1 }, { width: 4, height: 4 });
 
       // A solid field selects every pixel, which is what makes this a control rather than another
       // null: the read succeeded, the click selected something, and the console stayed quiet.
@@ -201,7 +209,7 @@ describe('read-back failures are reported, not swallowed', () => {
     it('returns null and reports the raw error object exactly once', () => {
       const thrown = createSecurityError();
 
-      const result = createEdgeMapFromCanvas(throwingCanvas(thrown));
+      const result = createEdgeMapFromCanvas(throwingCanvas(thrown), { width: 4, height: 4 });
 
       // The recovery, unchanged: an empty edge map rather than a throw mid-gesture.
       expect(result).toBeNull();
@@ -215,9 +223,14 @@ describe('read-back failures are reported, not swallowed', () => {
       // A vertical edge down the middle, so the map has a non-zero maximum and the success path
       // produced a real edge map rather than a degenerate all-zero one.
       for (let y = 0; y < 4; y++) imageData.data[(y * 4 + 2) * 4] = 255;
-      const canvas = makeMockCanvas(4, 4, { getImageData: vi.fn(() => imageData) });
+      const canvas = makeMockCanvas(4, 4, {
+        createImageData: vi.fn((width: number, height: number) =>
+          createImageData(width, height, [0, 0, 0, 255])
+        ) as unknown as CanvasRenderingContext2D['createImageData'],
+        getImageData: vi.fn(() => imageData),
+      });
 
-      const result = createEdgeMapFromCanvas(canvas);
+      const result = createEdgeMapFromCanvas(canvas, { width: 4, height: 4 });
 
       expect(result).not.toBeNull();
       expect(result!.maxGradient).toBeGreaterThan(0);
@@ -249,9 +262,8 @@ describe('read-back failures are reported, not swallowed', () => {
       const toolArea = renderQuickSelectionArea();
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 2, clientY: 2 });
 
-      // `readDocumentImageData` is module-private, so its `return null` is observed through what it
-      // gates: `handlePointerDown` returns before `START_SELECTION_DRAFT` (`:156-157`), so a failed
-      // read-back starts nothing and the pointer id stays unclaimed.
+      // Observe the null readback through the pointer-down contract: a failed read starts no
+      // selection draft and leaves the pointer id unclaimed.
       expect(dispatchMock).not.toHaveBeenCalled();
       // One line per press, and a press is one user intent.
       expect(errorSpy).toHaveBeenCalledTimes(1);
@@ -270,7 +282,7 @@ describe('read-back failures are reported, not swallowed', () => {
       // failure case passes. The draft dispatch is downstream of a truthy `imageData`.
       expect(dispatchMock).toHaveBeenCalledWith({
         type: 'START_SELECTION_DRAFT',
-        payload: { sourceTool: 'magic-wand' },
+        payload: { sourceTool: 'quick-selection' },
       });
       expect(errorSpy).not.toHaveBeenCalled();
     });

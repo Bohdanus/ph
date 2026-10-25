@@ -2,6 +2,7 @@ import { SELECTION_ACTION } from '../util/constants.ts';
 import type { Point, Selection, SelectionMetadata } from './general-types.ts';
 import type { SelectionSnapshot } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
+import { isCanonicalRasterSelectionMask } from '../util/selection-mask.ts';
 
 /**
  * The selection payload carried by a legacy `SELECTION_ACTION` entry. Both the
@@ -60,6 +61,7 @@ const SELECTION_SOURCE_TOOLS = [
   'freehand-lasso',
   'feather-magnetic-lasso',
   'magic-wand',
+  'quick-selection',
   'rectangular-selection',
 ] as const;
 
@@ -88,8 +90,21 @@ function isCanonicalMetadata(value: unknown): value is SelectionMetadata {
 
   if (Object.hasOwn(value, 'magicWand') && value.magicWand !== undefined) {
     const settings = value.magicWand;
-    const numericKeys = ['tolerance', 'smoothing', 'selectedPixelCount', 'boundaryPointCount'];
+    const commonNumericKeys = ['tolerance', 'smoothing', 'selectedPixelCount'];
+    const hasEdgeCount =
+      !!settings &&
+      typeof settings === 'object' &&
+      !Array.isArray(settings) &&
+      Object.hasOwn(settings, 'boundaryEdgeCount');
+    const hasLegacyPointCount =
+      !!settings &&
+      typeof settings === 'object' &&
+      !Array.isArray(settings) &&
+      Object.hasOwn(settings, 'boundaryPointCount');
+    const boundaryCountKey = hasEdgeCount ? 'boundaryEdgeCount' : 'boundaryPointCount';
+    const numericKeys = [...commonNumericKeys, boundaryCountKey];
     if (
+      hasEdgeCount === hasLegacyPointCount ||
       !hasOwnDataKeys(settings, [...numericKeys, 'seed', 'sampleColor']) ||
       !numericKeys.every((key) => typeof settings[key] === 'number' && Number.isFinite(settings[key])) ||
       !hasFiniteKeys(settings.seed, ['x', 'y']) ||
@@ -104,10 +119,33 @@ function isCanonicalMetadata(value: unknown): value is SelectionMetadata {
 
 function isCanonicalSelection(value: unknown): value is Selection {
   if (
-    !hasOwnDataKeys(value, ['id', 'points', 'isActive', 'pos'], ['lifecycle', 'geometry', 'sourceTool', 'metadata'])
+    !hasOwnDataKeys(
+      value,
+      ['id', 'points', 'isActive', 'pos'],
+      ['lifecycle', 'geometry', 'sourceTool', 'metadata', 'rasterMask']
+    )
   ) {
     return false;
   }
+  const validPoints = hasDenseArray(
+    value.points,
+    (contour): contour is Selection['points'][number] =>
+      Array.isArray(contour) && hasDenseArray(contour, (point): point is Point => hasFiniteKeys(point, ['x', 'y']))
+  );
+  const validPos = hasFiniteKeys(value.pos, ['x', 'y', 'width', 'height']);
+  const pos = value.pos;
+  const validRasterMask =
+    value.rasterMask === undefined ||
+    (isCanonicalRasterSelectionMask(value.rasterMask) &&
+      value.geometry === 'polygon' &&
+      (value.sourceTool === 'magic-wand' || value.sourceTool === 'quick-selection') &&
+      Array.isArray(value.points) &&
+      value.points.length === 0 &&
+      hasOwnDataKeys(pos, ['x', 'y', 'width', 'height']) &&
+      ['x', 'y', 'width', 'height'].every((key) => typeof pos[key] === 'number' && Number.isFinite(pos[key])) &&
+      pos.width === value.rasterMask.width &&
+      pos.height === value.rasterMask.height);
+
   return (
     typeof value.id === 'string' &&
     typeof value.isActive === 'boolean' &&
@@ -115,30 +153,67 @@ function isCanonicalSelection(value: unknown): value is Selection {
     (value.geometry === undefined || value.geometry === 'polygon' || value.geometry === 'rectangle') &&
     (value.sourceTool === undefined ||
       (typeof value.sourceTool === 'string' && SELECTION_SOURCE_TOOLS.some((tool) => tool === value.sourceTool))) &&
-    hasDenseArray(
-      value.points,
-      (contour): contour is Selection['points'][number] =>
-        Array.isArray(contour) && hasDenseArray(contour, (point): point is Point => hasFiniteKeys(point, ['x', 'y']))
-    ) &&
-    hasFiniteKeys(value.pos, ['x', 'y', 'width', 'height']) &&
+    validPoints &&
+    validPos &&
+    validRasterMask &&
     (value.metadata === undefined || isCanonicalMetadata(value.metadata))
   );
 }
 
 export function isValidSelectionSnapshot(value: unknown): value is SelectionSnapshot {
   if (!hasOwnDataKeys(value, ['selections'], ['activeSelectionId'])) return false;
+  if (!hasDenseArray(value.selections, isCanonicalSelection)) return false;
   return (
     (value.activeSelectionId === undefined ||
       value.activeSelectionId === null ||
       typeof value.activeSelectionId === 'string') &&
-    hasDenseArray(value.selections, isCanonicalSelection)
+    isSelectionSnapshotActiveStateValid(value.selections, value.activeSelectionId)
   );
+}
+
+/** Keep the ID used by pixel tools aligned with the `isActive` flag used by the ants renderer. */
+export function isSelectionSnapshotActiveStateValid(
+  selections: readonly Pick<Selection, 'id' | 'isActive'>[],
+  activeSelectionId: unknown
+): boolean {
+  const identifiers = new Set<string>();
+  for (const selection of selections) {
+    if (identifiers.has(selection.id)) return false;
+    identifiers.add(selection.id);
+  }
+
+  const activeSelections = selections.filter((selection) => selection.isActive);
+  // Key-absent IDs are legacy snapshots whose older consumers relied on `isActive` alone.
+  // A unique active selection can be normalized to its ID when copied into the durable model;
+  // multiple active flags have no unambiguous ID and cannot be represented canonically.
+  if (activeSelectionId === undefined) return activeSelections.length <= 1;
+  if (activeSelectionId === null) return activeSelections.length === 0;
+  if (typeof activeSelectionId !== 'string') return false;
+
+  return (
+    activeSelections.length === 1 &&
+    activeSelections[0]?.id === activeSelectionId &&
+    selections.some((selection) => selection.id === activeSelectionId)
+  );
+}
+
+/** Resolve a legacy snapshot's missing active ID without contradicting its `isActive` flag. */
+export function activeSelectionIdFromSnapshot(
+  selections: readonly Pick<Selection, 'id' | 'isActive'>[],
+  activeSelectionId: unknown
+): string | null {
+  if (activeSelectionId === null) return null;
+  if (typeof activeSelectionId === 'string') return activeSelectionId;
+  if (activeSelectionId !== undefined) return null;
+  const activeSelections = selections.filter((selection) => selection.isActive);
+  return activeSelections.length === 1 ? activeSelections[0]!.id : null;
 }
 
 function cloneSelection(selection: Selection): Selection {
   return {
     ...selection,
     points: selection.points.map((contour) => contour.map((point) => ({ ...point }))),
+    ...(selection.rasterMask ? { rasterMask: { ...selection.rasterMask } } : {}),
     pos: { ...selection.pos },
     ...(selection.metadata ? { metadata: JSON.parse(JSON.stringify(selection.metadata)) } : {}),
   };
@@ -148,7 +223,7 @@ function cloneSelection(selection: Selection): Selection {
  * The shared owner of the selection baseline rule, and the clone both replay
  * paths use to keep a selection snapshot off the legacy history args.
  *
- * `points`, `pos`, and `metadata` are deep-copied and the wrapper and the
+ * `points`, `pos`, `metadata`, and the mask object are copied and the wrapper and the
  * selections array are frozen, so nothing returned here aliases the array it
  * was given. The `Selection` elements and their nested objects are copied but
  * not frozen; the durable model deep-freezes those itself when it clones an
@@ -156,11 +231,16 @@ function cloneSelection(selection: Selection): Selection {
  */
 export function selectionSnapshot(
   selections: readonly Selection[] = [],
-  activeSelectionId: string | null = null
+  activeSelectionId?: string | null
 ): SelectionSnapshot {
+  const activeSelections = selections.filter((selection) => selection.isActive);
+  if (activeSelectionId === undefined && activeSelections.length > 1) {
+    throw new Error('A selection snapshot without an active ID cannot contain multiple active selections.');
+  }
+  const normalizedActiveSelectionId = activeSelectionIdFromSnapshot(selections, activeSelectionId);
   return Object.freeze({
     selections: Object.freeze(selections.map(cloneSelection)),
-    activeSelectionId,
+    activeSelectionId: normalizedActiveSelectionId,
   });
 }
 
@@ -194,5 +274,5 @@ export function deriveSelectionBaseline(history: readonly HistoryItem[]): Select
   if (!isValidSelectionSnapshot(previous)) {
     throw new Error('Legacy selection baseline is not a canonical selection snapshot.');
   }
-  return selectionSnapshot(previous.selections, previous.activeSelectionId ?? null);
+  return selectionSnapshot(previous.selections, previous.activeSelectionId);
 }

@@ -144,6 +144,83 @@ export const tipAlphaAt = (distance: number, radius: number, hardness: number): 
 /** Two points closer than this are the same dab, so a stroke does not end twice over. */
 const SAME_POINT = 1e-9;
 
+/** State carried between pointer events while sampling one brush path. */
+export type BrushDabCenterSampler = {
+  step: number;
+  carried: number;
+  lastPoint: Point | null;
+  lastCenter: Point | null;
+};
+
+/** Create a sampler whose spacing is fixed for the lifetime of a stroke. */
+export const createBrushDabCenterSampler = (size: number, spacingPercent: number): BrushDabCenterSampler => {
+  const diameter = Number.isFinite(size) && size > 0 ? size : BRUSH_SIZE_DEFAULT;
+  const percent = clampSlider(spacingPercent, BRUSH_SPACING_MIN, BRUSH_SPACING_MAX, BRUSH_SPACING_DEFAULT);
+  return { step: (diameter * percent) / 100, carried: 0, lastPoint: null, lastCenter: null };
+};
+
+/**
+ * Append new polyline points and emit only newly reached dab centres.
+ *
+ * A pointer consumer can pass one point per event. `carried` preserves the partial
+ * spacing step across those calls, so resampling the whole accumulated path is not
+ * necessary. When `includeEndpoint` is set, the last point is emitted unless a spacing
+ * dab already reached it. A replacement within `SAME_POINT` updates the returned batch
+ * only; a consumer that already processed an earlier batch has necessarily already
+ * applied the previous centre and should treat this near-duplicate as unchanged.
+ */
+export const appendBrushDabCenters = (
+  sampler: BrushDabCenterSampler,
+  points: Point[],
+  includeEndpoint = false
+): Point[] => {
+  const centers: Point[] = [];
+
+  for (const point of points) {
+    const nextPoint = { x: point.x, y: point.y };
+    if (!sampler.lastPoint) {
+      sampler.lastPoint = nextPoint;
+      sampler.lastCenter = { ...nextPoint };
+      centers.push({ ...nextPoint });
+      continue;
+    }
+
+    const from = sampler.lastPoint;
+    const deltaX = nextPoint.x - from.x;
+    const deltaY = nextPoint.y - from.y;
+    const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    if (Number.isFinite(length) && length > 0) {
+      let travelled = 0;
+      while (sampler.carried + (length - travelled) >= sampler.step) {
+        travelled += sampler.step - sampler.carried;
+        sampler.carried = 0;
+        const center = {
+          x: from.x + (deltaX * travelled) / length,
+          y: from.y + (deltaY * travelled) / length,
+        };
+        centers.push(center);
+        sampler.lastCenter = center;
+      }
+      sampler.carried += length - travelled;
+    }
+    sampler.lastPoint = nextPoint;
+  }
+
+  if (includeEndpoint && points.length > 0 && sampler.lastPoint) {
+    const endpoint = { ...sampler.lastPoint };
+    const tail = sampler.lastCenter;
+    if (!tail || Math.abs(endpoint.x - tail.x) > SAME_POINT || Math.abs(endpoint.y - tail.y) > SAME_POINT) {
+      centers.push(endpoint);
+      sampler.lastCenter = endpoint;
+    } else if (centers.length > 0) {
+      centers[centers.length - 1] = endpoint;
+      sampler.lastCenter = endpoint;
+    }
+  }
+
+  return centers;
+};
+
 /**
  * Walk a polyline and emit dab centres `spacingPercent` of the tip diameter apart.
  *
@@ -155,57 +232,24 @@ const SAME_POINT = 1e-9;
  * makes the count a function of the path alone, so the same path stamped twice
  * produces the same stroke.
  *
- * The first and last points are always emitted, so a click always leaves a dab and a
- * stroke always ends where the pointer lifted. Degenerate input cannot throw: an
- * empty array yields none, a single point yields that point, and a run of duplicate
- * points carries no arc length and is skipped.
+ * The first point is always emitted, so a click always leaves a dab. The final point is
+ * emitted by default; incremental consumers can omit it until pointer-up so appending
+ * samples does not move previously emitted dab indices. Degenerate input cannot throw:
+ * an empty array yields none, a single point yields that point, and duplicate points
+ * carry no arc length.
  *
  * `spacingPercent` is clamped into Photoshop's 1-100 range and a non-finite or
  * non-positive `size` falls back to `BRUSH_SIZE_DEFAULT`; without that a zero step
  * would loop forever on the first segment.
  */
-export const brushDabCenters = (points: Point[], size: number, spacingPercent: number): Point[] => {
+export const brushDabCenters = (
+  points: Point[],
+  size: number,
+  spacingPercent: number,
+  includeEndpoint = true
+): Point[] => {
   if (points.length === 0) return [];
-  if (points.length === 1) return [{ x: points[0].x, y: points[0].y }];
-
-  const diameter = Number.isFinite(size) && size > 0 ? size : BRUSH_SIZE_DEFAULT;
-  const percent = clampSlider(spacingPercent, BRUSH_SPACING_MIN, BRUSH_SPACING_MAX, BRUSH_SPACING_DEFAULT);
-  const step = (diameter * percent) / 100;
-
-  const centers: Point[] = [{ x: points[0].x, y: points[0].y }];
-  // Distance accumulated since the last emitted dab, carried across segments so a
-  // segment boundary does not hand back a full step of travel.
-  let carried = 0;
-
-  for (let i = 1; i < points.length; i++) {
-    const from = points[i - 1];
-    const to = points[i];
-    const deltaX = to.x - from.x;
-    const deltaY = to.y - from.y;
-    const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-    if (!(length > 0)) continue;
-
-    let travelled = 0;
-    while (carried + (length - travelled) >= step) {
-      travelled += step - carried;
-      carried = 0;
-      centers.push({
-        x: from.x + (deltaX * travelled) / length,
-        y: from.y + (deltaY * travelled) / length,
-      });
-    }
-    carried += length - travelled;
-  }
-
-  const last = points[points.length - 1];
-  const tail = centers[centers.length - 1];
-  if (Math.abs(last.x - tail.x) > SAME_POINT || Math.abs(last.y - tail.y) > SAME_POINT) {
-    centers.push({ x: last.x, y: last.y });
-  } else {
-    centers[centers.length - 1] = { x: last.x, y: last.y };
-  }
-
-  return centers;
+  return appendBrushDabCenters(createBrushDabCenterSampler(size, spacingPercent), points, includeEndpoint);
 };
 
 /** A `Size` reduced to whole-pixel extents, matching how `canvas.width` truncates. */

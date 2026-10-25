@@ -2,21 +2,13 @@ import type { Point } from '../contexts/general-types.ts';
 import type { RgbaColor } from './magicWand.ts';
 
 /**
- * Fill-grade flood fill: the raw per-pixel mask behind the paint bucket, the magic eraser and
- * the background eraser. It is a sibling of `magicWand.ts` and not a replacement for it, because
- * that module answers a different question. `createMagicWandSelectionFromImageData` reduces the
- * region to a single simplified polygon outline for a `Selection` — it keeps only the largest
- * outer loop (`selectLargestBoundaryLoop`), simplifies it (`simplifyClosedPath`), and refuses any
- * region with an enclosed hole outright (`holes.length > 0` check) because a one-point path
- * cannot represent an annulus. A fill needs the unreduced mask, holes included, so none of that
- * is a bug there; all of it is pinned by 136 assertions in `src/util/__tests__/magicWand.test.ts`.
- * The colour metric differs for a second, independent reason: the wand folds the alpha delta
- * into a 4-D distance (`getMagicWandColorDistance`) and clamps its tolerance to 0-100 against
- * a 4-channel maximum (`getToleranceDistance`), which is right for a selection and wrong twice
- * over for a fill, where Adobe's tolerance is 0-255 and a pixel differing only in alpha is
- * inside the region. So the fill scales 0-255 onto a 3-channel maximum and ignores alpha, and
- * its tolerance test compares squared distances, so a 4000x4000 fill costs no `Math.sqrt` and
- * no per-pixel object.
+ * RGB flood fill behind the Paint Bucket, Magic Eraser and Color Replacement. This is deliberately
+ * separate from the RGBA region mask used by `magicWand.ts` and Quick Selection: those selection
+ * tools trace and retain every boundary loop, while fill and color-replacement processors need a
+ * pixel mask. Their color metrics differ too. Magic Wand folds alpha into a 4-D distance and uses
+ * a 0-100 tolerance scale; this fill follows Photoshop's 0-255 scale over RGB and treats a pixel
+ * with the same RGB values as matching regardless of alpha. The fill compares squared distances,
+ * so a 4000x4000 operation costs no `Math.sqrt` and creates no per-pixel color object.
  */
 const MAX_COLOR_DISTANCE = Math.sqrt(255 * 255 * 3);
 const MAX_TOLERANCE = 255;

@@ -11,6 +11,7 @@ import {
   isQuickSelectionMode,
 } from '../../../tools/quickSelection.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
+import { SelectionPixelBudgetNotice } from '../SelectionPixelBudgetNotice.tsx';
 
 const LABEL_CLASS = 'text-[10px] font-medium text-gray-700 dark:text-gray-300';
 const VALUE_CLASS = 'font-bold text-gray-900 dark:text-gray-200';
@@ -167,6 +168,7 @@ const QuickSelection: React.FC<{}> = () => {
       </div>
 
       <div className={HINT_CLASS}>{hint}</div>
+      <SelectionPixelBudgetNotice />
     </div>
   );
 };

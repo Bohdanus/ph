@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createSelectionHistoryItem } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
+import { isValidSelectionSnapshot } from '../selection-baseline.ts';
 import {
   convertLegacyHistorySafely,
   deriveSetSelectionEntry,
@@ -791,14 +792,15 @@ describe('deriveSetSelectionEntry', () => {
     expect(before?.selections[0]).not.toBe(previousSelection.selections[0]);
   });
 
-  it('normalizes a key-absent activeSelectionId to null', () => {
+  it('normalizes a key-absent activeSelectionId from its unique active selection', () => {
     const bare = { selections: selectionState('next').selections };
 
     const derived = deriveSetSelectionEntry(createSelectionHistoryItem(undefined, bare), currentSelection);
     const after = afterOf(derived);
 
-    expect(after?.activeSelectionId).toBeNull();
+    expect(after?.activeSelectionId).toBe('next');
     expect(after?.selections.map((selection) => selection.id)).toEqual(['next']);
+    expect(isValidSelectionSnapshot(after)).toBe(true);
   });
 
   it('carries the disabled state of the legacy item', () => {

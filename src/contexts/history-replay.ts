@@ -22,7 +22,12 @@ import type { ActionType } from '../util/constants.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
-import { deriveSelectionBaseline, type SelectionHistoryArgs } from './selection-baseline.ts';
+import {
+  activeSelectionIdFromSnapshot,
+  deriveSelectionBaseline,
+  isValidSelectionSnapshot,
+  type SelectionHistoryArgs,
+} from './selection-baseline.ts';
 import { documentAffineToLayerLocal, isIdentityAffineTransform, validateAffineTransform } from './affine-transform.ts';
 import {
   HIDE_LAYER_ACTION,
@@ -63,7 +68,8 @@ export type ReplayDiagnostic = Readonly<{
     | 'invalid-layer-blend-mode'
     | 'invalid-document-transform'
     | 'invalid-layer-opacity'
-    | 'invalid-layer-source';
+    | 'invalid-layer-source'
+    | 'invalid-selection-snapshot';
   error: unknown;
 }>;
 
@@ -193,8 +199,17 @@ export function replayHistory(
 
     if (actionName === SELECTION_ACTION) {
       const next = (args as SelectionHistoryArgs | undefined)?.nextSelectionState;
+      if (next != null && !isValidSelectionSnapshot(next)) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-selection-snapshot',
+          error: new TypeError('Selection history value is not a valid selection snapshot'),
+        });
+        continue;
+      }
       selections = next?.selections.map((selection) => ({ ...selection })) ?? [];
-      activeSelectionId = next?.activeSelectionId ?? null;
+      activeSelectionId = activeSelectionIdFromSnapshot(selections, next?.activeSelectionId);
       continue;
     }
 

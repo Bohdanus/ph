@@ -11,7 +11,9 @@ import {
   copyPolygonToCanvas,
   copyRectSelectionToCanvas,
   copySelectionToCanvas,
+  createCommittedRasterSelection,
   createCommittedPolygonSelection,
+  createCommittedPolygonSelectionFromContours,
   createCommittedRectangleSelection,
   distanceBetweenPoints,
   drawSelectionAnchors,
@@ -19,20 +21,25 @@ import {
   getActiveRectangularSelection,
   getActiveSelection,
   getSelectionAbsolutePoints,
+  getSelectionAbsoluteContours,
   getSelectionAtPoint,
   getSelectionRect,
   hasSameSelectionGeometry,
   isPointInPolygon,
+  isPointInContours,
+  isPointInSelection,
   moveSelectionAnchor,
   moveSelectionByDelta,
   normalizeRectangleSelectionRect,
   normalizeSelectionPoints,
+  createSelectionAlphaMask,
   type SelectionCanvasSnapshot,
 } from '../selection.ts';
 import { makeMockCanvas, makeMockCtx, makeMockImageData, makeMockOffscreenCanvas } from '@/__tests__/canvas-mock.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import type { Point, Pos, RectXYSorted, Selection, Size } from '../../contexts/general-types.ts';
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
+import { encodeRasterSelectionMask } from '../selection-mask.ts';
 
 /** A shared-mock 2D context whose read-back and write-back entry points stay spyable. */
 type RecordedCtx = ReturnType<typeof makeMockCtx> & { getImageData: Mock; putImageData: Mock };
@@ -355,6 +362,60 @@ describe('createCommittedPolygonSelection', () => {
   });
 });
 
+describe('compound polygon selections', () => {
+  const rect = (left: number, top: number, right: number, bottom: number): Point[] => [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom },
+  ];
+
+  const contours = [rect(0, 0, 5, 5), rect(1, 1, 4, 4), rect(2, 2, 3, 3), rect(7, 1, 9, 3)];
+
+  it('normalizes every contour against one shared bound without flattening the paths', () => {
+    const created = createCommittedPolygonSelectionFromContours({
+      id: 'compound',
+      points: contours,
+      sourceTool: 'magic-wand',
+    })!;
+
+    // Polygon selections reserve one document pixel around the traced path for the outline.
+    expect(created.pos).toEqual({ x: -1, y: -1, width: 11, height: 7 });
+    expect(getSelectionAbsoluteContours(created)).toEqual(contours);
+    expect(created.points).toHaveLength(4);
+  });
+
+  it('uses even-odd membership for holes, nested islands and disconnected regions', () => {
+    const created = createCommittedPolygonSelectionFromContours({
+      id: 'compound',
+      points: contours,
+      sourceTool: 'magic-wand',
+    })!;
+
+    expect(isPointInSelection({ x: 0.5, y: 0.5 }, created)).toBe(true);
+    expect(isPointInSelection({ x: 1.5, y: 1.5 }, created)).toBe(false);
+    expect(isPointInSelection({ x: 2.5, y: 2.5 }, created)).toBe(true);
+    expect(isPointInSelection({ x: 6.5, y: 1.5 }, created)).toBe(false);
+    expect(isPointInSelection({ x: 7.5, y: 1.5 }, created)).toBe(true);
+    expect(isPointInContours({ x: 1.5, y: 1.5 }, contours)).toBe(false);
+  });
+
+  it('rasterizes disconnected regions and nested holes with matching even-odd coverage', () => {
+    const expected = new Uint8Array(9 * 5);
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 9; x++) {
+        const inOuter = x < 5 && y < 5;
+        const inHole = x >= 1 && x < 4 && y >= 1 && y < 4;
+        const inIsland = x === 2 && y === 2;
+        const inSecondRegion = x >= 7 && x < 9 && y >= 1 && y < 3;
+        if ((inOuter && !inHole) || inIsland || inSecondRegion) expected[y * 9 + x] = 255;
+      }
+    }
+
+    expect(createSelectionAlphaMask(contours, { width: 9, height: 5 }, { antiAlias: false })).toEqual(expected);
+  });
+});
+
 describe('rectangle selection normalization', () => {
   const imageSize: Size = { width: 100, height: 100 };
 
@@ -567,7 +628,7 @@ describe('drawSelectionAnchors', () => {
     expect(ctx.stroke).toHaveBeenCalledTimes(3);
   });
 
-  it.each(['freehand-lasso', 'magic-wand'] as const)('draws nothing at all for %s', (sourceTool) => {
+  it.each(['freehand-lasso', 'magic-wand', 'quick-selection'] as const)('draws nothing at all for %s', (sourceTool) => {
     const ctx = makeMockCtx();
     drawSelectionAnchors(ctx, selection({ sourceTool }));
 
@@ -695,9 +756,12 @@ describe('findSelectionAnchorAtPoint', () => {
     expect(findSelectionAnchorAtPoint(tiny, { x: 1, y: 0 })).toBe(0);
   });
 
-  it.each(['freehand-lasso', 'magic-wand'] as const)('never reports anchors for %s', (sourceTool) => {
-    expect(findSelectionAnchorAtPoint(selection({ sourceTool }), { x: 5, y: 5 })).toBeNull();
-  });
+  it.each(['freehand-lasso', 'magic-wand', 'quick-selection'] as const)(
+    'never reports anchors for %s',
+    (sourceTool) => {
+      expect(findSelectionAnchorAtPoint(selection({ sourceTool }), { x: 5, y: 5 })).toBeNull();
+    }
+  );
 });
 
 describe('isPointInPolygon', () => {
@@ -1321,6 +1385,35 @@ describe('canvas snapshot helpers', () => {
   describe('copySelectionToCanvas dispatch', () => {
     const dispatchImageSize: Size = { width: 100, height: 100 };
 
+    it('samples logical rectangle bounds from a high-DPI source while keeping the snapshot logical', () => {
+      const source = makeMockCanvas(200, 200);
+      const result = copySelectionToCanvas(
+        source,
+        selection({
+          geometry: 'rectangle',
+          sourceTool: 'rectangular-selection',
+          pos: { x: 10, y: 20, width: 10, height: 10 },
+        }),
+        dispatchImageSize,
+        { x: 2, y: 2 }
+      );
+
+      expect(result?.pos).toEqual({ x: 10, y: 20, width: 10, height: 10 });
+      expect(result?.bitmap.width).toBe(10);
+      expect(result?.bitmap.height).toBe(10);
+      expect(firstConstructed().contexts[0].drawImage).toHaveBeenCalledExactlyOnceWith(
+        source,
+        20,
+        40,
+        20,
+        20,
+        0,
+        0,
+        10,
+        10
+      );
+    });
+
     it('returns null when there is no source canvas', () => {
       expect(copySelectionToCanvas(null, selection(), imageSize)).toBeNull();
       expect(copySelectionToCanvas(undefined, selection(), imageSize)).toBeNull();
@@ -1384,6 +1477,44 @@ describe('canvas snapshot helpers', () => {
       );
 
       expect(result!.pos).toEqual({ x: 5, y: 5, width: 10, height: 10 });
+    });
+
+    it('copies every Magic Wand contour with the same even-odd rule used by raster masks', () => {
+      const source = makeMockCanvas(100, 100);
+      const result = copySelectionToCanvas(
+        source,
+        selection({
+          sourceTool: 'magic-wand',
+          pos: { x: 0, y: 0, width: 5, height: 5 },
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 5, y: 0 },
+              { x: 5, y: 5 },
+              { x: 0, y: 5 },
+            ],
+            [
+              { x: 1, y: 1 },
+              { x: 4, y: 1 },
+              { x: 4, y: 4 },
+              { x: 1, y: 4 },
+            ],
+          ],
+        }),
+        dispatchImageSize
+      );
+
+      expect(result!.pos).toEqual({ x: 0, y: 0, width: 5, height: 5 });
+      const ctx = firstConstructed().contexts[0];
+      expect(ctx.clip).toHaveBeenCalledWith('evenodd');
+      expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+      expect(ctx.closePath).toHaveBeenCalledTimes(2);
+      const drawImage = ctx.drawImage as unknown as Mock;
+      expect(drawImage).toHaveBeenCalledTimes(1);
+      const [drawnSource, drawX, drawY] = drawImage.mock.calls[0] as [CanvasImageSource, number, number];
+      expect(drawnSource).toBe(source);
+      expect(Math.abs(drawX)).toBe(0);
+      expect(Math.abs(drawY)).toBe(0);
     });
 
     it('returns null for a selection whose polygon cannot be rasterized', () => {
@@ -1765,6 +1896,18 @@ describe('hasSameSelectionGeometry', () => {
     expect(hasSameSelectionGeometry(base, base)).toBe(true);
   });
 
+  it('compares packed pixels as part of raster selection geometry', () => {
+    const a = selection({
+      points: [],
+      pos: { x: 10, y: 20, width: 2, height: 2 },
+      rasterMask: { width: 2, height: 2, data: 'AQ==' },
+    });
+    const b = { ...a, rasterMask: { width: 2, height: 2, data: 'Ag==' } };
+
+    expect(hasSameSelectionGeometry(a, { ...a, rasterMask: { ...a.rasterMask! } })).toBe(true);
+    expect(hasSameSelectionGeometry(a, b)).toBe(false);
+  });
+
   it.each([
     ['a moved pos', { pos: { x: 6, y: 5, width: 10, height: 10 } }],
     ['a resized pos', { pos: { x: 5, y: 5, width: 11, height: 10 } }],
@@ -1805,5 +1948,50 @@ describe('hasSameSelectionGeometry', () => {
     ],
   ])('is false for %s', (_label, overrides) => {
     expect(hasSameSelectionGeometry(selection(), selection(overrides as Partial<Selection>))).toBe(false);
+  });
+});
+
+describe('raster-backed selections', () => {
+  it('hit-tests packed pixel membership and returns an empty contour list', () => {
+    const rasterMask = { width: 2, height: 2, data: 'AQ==' };
+    const committed = createCommittedRasterSelection({
+      id: 'raster-selection',
+      pos: { x: 10, y: 20, width: 2, height: 2 },
+      rasterMask,
+      sourceTool: 'magic-wand',
+    });
+
+    expect(committed).not.toBeNull();
+    expect(getSelectionAbsoluteContours(committed!)).toEqual([]);
+    expect(isPointInSelection({ x: 10.5, y: 20.5 }, committed!)).toBe(true);
+    expect(isPointInSelection({ x: 11.5, y: 20.5 }, committed!)).toBe(false);
+    expect(isPointInSelection({ x: 10.5, y: 22 }, committed!)).toBe(false);
+    expect(
+      createCommittedRasterSelection({
+        id: 'invalid-dimensions',
+        pos: { x: 0, y: 0, width: 3, height: 2 },
+        rasterMask,
+        sourceTool: 'magic-wand',
+      })
+    ).toBeNull();
+  });
+
+  it('preserves exact subpixel coverage when raster masks are translated', () => {
+    const mask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
+
+    expect(
+      createSelectionAlphaMask(
+        { points: [], rasterMask: { ...mask, x: 0.5, y: 0.5 } },
+        { width: 2, height: 2 },
+        { antiAlias: true }
+      )
+    ).toEqual(Uint8Array.from([64, 64, 64, 64]));
+    expect(
+      createSelectionAlphaMask(
+        { points: [], rasterMask: { ...mask, x: 0.5, y: 0.5 } },
+        { width: 2, height: 2 },
+        { antiAlias: false }
+      )
+    ).toEqual(Uint8Array.from([0, 0, 0, 0]));
   });
 });
