@@ -1,0 +1,85 @@
+name: Focused E2E
+run-name: Focused E2E ${{ inputs.request_id }} @ ${{ inputs.source_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Unique request identifier from the mirror runner
+        required: true
+        type: string
+      source_sha:
+        description: Exact committed tree to test
+        required: true
+        type: string
+      platform:
+        description: Hosted operating system
+        required: true
+        type: choice
+        options:
+          - linux
+          - windows
+          - macos
+        default: linux
+      spec:
+        description: One Playwright spec path under e2e/
+        required: true
+        type: string
+
+concurrency:
+  group: focused-e2e-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  focused-e2e:
+    runs-on: ${{ inputs.platform == 'linux' && 'ubuntu-latest' || inputs.platform == 'windows' && 'windows-latest' || 'macos-latest' }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chrome and Linux dependencies
+        if: ${{ inputs.platform == 'linux' }}
+        run: npx playwright install --with-deps chrome
+
+      - name: Install Chrome
+        if: ${{ inputs.platform != 'linux' }}
+        run: npx playwright install chrome
+
+      - name: Validate focused spec
+        env:
+          E2E_SPEC: ${{ inputs.spec }}
+        shell: bash
+        run: node scripts/validate-e2e-spec.mjs "$E2E_SPEC"
+
+      - name: Run focused Playwright spec
+        env:
+          E2E_SPEC: ${{ inputs.spec }}
+        shell: bash
+        run: npx playwright test --workers=1 "$E2E_SPEC"
+
+      - name: Upload Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-e2e-${{ inputs.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: error

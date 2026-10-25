@@ -55,12 +55,8 @@ npm run build           # production bundle, and a real CI step
 baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
 
-For local agent work, use EC2 for the broad Playwright run and keep focused
-specs and fast gates on the developer machine. The current `e2e` instance is a
-2-vCPU, 2-GiB ARM64 host, so it is configured for one worker at a time; see
-[`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md) for the task-worktree handoff
-and the limits on sharding. GitHub Actions continues to run its own blocking
-matrix on hosted runners.
+For local work, run focused specs and fast gates on the developer machine. Broad
+headless Playwright runs use the `mirror` workflow; see [`E2E-MIRROR.md`](E2E-MIRROR.md).
 
 **`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
 It captures suite output by default and replays it only on failure; use

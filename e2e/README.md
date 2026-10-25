@@ -640,18 +640,9 @@ what also builds `tsconfig.e2e.json`. The separate `audit` job runs `npm audit
 Linux, Windows, and macOS. It was `continue-on-error` on the stated grounds that a
 handful of specs failed for documented reasons; those are all fixed and the job went
 on reporting a state the suite no longer had. The matrix runs with `fail-fast: false`
-so one platform's failure does not cancel the others. `darwin/` and `win32/`
-visual-regression baselines are committed; `linux/` is missing, so Linux hits the
-fail-as-missing contract on `visual-regression.spec.ts`. After the workflow is
-published on the repository's default branch, dispatch
-[`capture-linux-baselines.yml`](../.github/workflows/capture-linux-baselines.yml)
-on the candidate branch to record and verify the files on `ubuntu-latest`, then
-download its artifact, review all seven PNGs, and add them under
-`export-baselines/linux/` in the task worktree. The workflow is artifact-only and
-does not write to the repository. CPU-only rendering alone is not a match: the
-available EC2 host is ARM64 and is not a substitute for the x86-64 CI runner.
-Normal CI must pass with the committed images. See "Missing Linux baselines" in
-`../.github/workflows/ci.yml`.
+so one platform's failure does not cancel the others. `darwin/`, `win32/`, and
+`linux/` visual-regression baselines are committed. Refresh Linux images only with
+the `mirror` workflow command documented in `../docs/E2E-MIRROR.md`.
 
 `e2e` installs Chrome (`channel: 'chrome'`, the stable channel Playwright
 installs) and runs the browser tests against the dev server started by

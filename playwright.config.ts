@@ -77,43 +77,11 @@ export default defineConfig({
   // trace, no diff image. The timeout and the evidence it was meant to preserve cancel
   // out, and that is the whole reason this number is not 1800 or more.
   //
-  // The arithmetic, with the Linux leg's 1800 s split three ways:
-  //   SETUP  <= 480 s  checkout, setup-node, `npm ci` (431 packages, 347 MB of
-  //                   node_modules, and `cache: 'npm'` misses on every
-  //                   package-lock.json change) and `npx playwright install
-  //                   --with-deps chrome`, which the workflow deliberately does not
-  //                   cache at all
-  //   TESTS  <= 900 s  this key, under CI
-  //   UPLOAD <= 180 s  actions/upload-artifact@v4 zipping `playwright-report/` plus
-  //                   `test-results/`, whose per-retry traces are the bulk of it
-  // 480 + 900 + 180 = 1560 s = 26 min, which leaves 4 min INSIDE the 30-minute job
-  // kill. Raise it to 1800 s and GitHub wins that race, so a hang produces no diff
-  // image at all — the exact loss the timeout was added to prevent.
-  //
-  // 900 s against a measured ~8 min for all 447 tests at `workers: 1` on this
-  // machine, which is an UPPER bound for the job: CI resolves `workers` to "50%" of
-  // 4 vCPUs, so it runs 2 of them. Roughly 3x the real test phase, so the bound can
-  // only fire on a hang.
-  //
-  // LOCAL is a different machine and gets a different number, which is why this is
-  // not one literal. The two bounds are incompatible as one value: anything above a
-  // local run's ceiling is at or past the CI budget, and anything inside the CI
-  // budget is within reach of a loaded local run. `retries` and `workers` above
-  // resolve on `process.env.CI` for the same reason — the right value depends on the
-  // machine, not on the code. 2700 s is ~5x the measured local duration, and it is
-  // still strictly stricter than today's unbounded `0`: this repository serializes
-  // e2e runs with the `scripts/e2e-run.mjs` lock, so a suite never competes with
-  // another suite but does compete with an app vitest run on the same Mac.
-  //
-  // What the deadline BUYS is a report, and the reason it has one is
-  // `finishTaskRun`: a timed-out run's status is `"timedout"`, which is not
-  // `"passed"`, so `onEnd` still runs and the HTML and JSON reporters still write
-  // their files. That status is not `"interrupted"` either, so the exit code is 1
-  // and not 130: a hung suite is a FAILURE that arrives with its evidence.
-  //
-  // `--debug` RESETS this to 0, so an interactive debugging session is never killed
-  // by it.
-  globalTimeout: process.env.CI ? 15 * 60_000 : 45 * 60_000,
+  // Hosted two-way shards use one worker on some runners; a Windows shard recently
+  // needed 15 minutes. Keep enough headroom for retries, with the Playwright limit
+  // below every workflow job timeout so its reports upload before GitHub kills it.
+  // Local diagnostics retain the longer limit, and --debug disables it.
+  globalTimeout: process.env.CI ? 20 * 60_000 : 45 * 60_000,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
   // machine is not running two browsers per core. The port argument that used to sit

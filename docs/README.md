@@ -67,7 +67,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`CODE-REVIEW.md`](CODE-REVIEW.md)                                                                     | The verbatim prompt and rules for the code review subagent                                  |
 | [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)                                                   | The protocol a per-tool-family research agent works under                                   |
 | [`TESTING.md`](TESTING.md)                                                                             | Every gate, what it proves, and what to read when it fails                                  |
-| [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md)                                                     | The remote Linux/ARM64 host for sequential project validation                               |
+| [`E2E-MIRROR.md`](E2E-MIRROR.md)                                                                       | The `mirror` workflow: broad headless E2E runs and Linux baseline capture                   |
 | [`../.kilo/plans/durable-replay-authority.md`](../.kilo/plans/durable-replay-authority.md)             | The problem-focused implementation plan for the durable replay authority cutover            |
 | [`../.kilo/skills/parallel-test-hardening/SKILL.md`](../.kilo/skills/parallel-test-hardening/SKILL.md) | The wave-based workflow for hardening tests with small parallel agents                      |
 | [`../.skills/parallel-test-hardening.md`](../.skills/parallel-test-hardening.md)                       | The tracked copy of the parallel test-hardening workflow                                    |

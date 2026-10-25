@@ -1,7 +1,34 @@
 name: Capture Linux export baselines
+run-name: Linux baselines ${{ inputs.request_id }} @ ${{ inputs.source_sha }}
 
 on:
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: Unique request identifier from the mirror runner
+        required: true
+        type: string
+      source_sha:
+        description: Exact committed tree to render and verify
+        required: true
+        type: string
+      source_branch:
+        description: Mirror feature branch receiving a promoted baseline commit
+        required: true
+        type: string
+      promote:
+        description: Commit changed Linux baselines to the same feature branch
+        required: false
+        default: false
+        type: boolean
+      chat_id:
+        description: Native chat ID for the generated commit trailer
+        required: false
+        type: string
+
+concurrency:
+  group: linux-baselines-${{ inputs.request_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -10,10 +37,22 @@ jobs:
   capture:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
+      - name: Require the private compute mirror
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "${REPOSITORY,,}" != "bohdanus/ph" ]]; then
+            echo "::error::Linux baseline promotion is restricted to Bohdanus/ph"
+            exit 1
+          fi
+
+      - name: Checkout exact source commit
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -25,7 +64,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Chrome
+      - name: Install Chrome and Linux dependencies
         run: npx playwright install --with-deps chrome
 
       - name: Record Linux export baselines
@@ -34,10 +73,117 @@ jobs:
       - name: Verify recorded baselines
         run: npm run test:e2e -- e2e/export/visual-regression.spec.ts --workers=1
 
+      - name: Validate exact Linux baseline set
+        run: |
+          node --input-type=module <<'NODE'
+          import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+
+          const dir = 'e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux';
+          const expected = [
+            'drawing.avif.png',
+            'drawing.bmp.png',
+            'drawing.gif.png',
+            'drawing.jpeg.png',
+            'drawing.png.png',
+            'drawing.svg.png',
+            'drawing.webp.png',
+          ].sort();
+          const actual = readdirSync(dir).sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new Error(`Expected exactly ${expected.join(', ')} in ${dir}; found ${actual.join(', ')}`);
+          }
+          for (const name of expected) {
+            const file = `${dir}/${name}`;
+            if (!lstatSync(file).isFile()) throw new Error(`${file} is not a regular file`);
+            const signature = readFileSync(file).subarray(0, 8).toString('hex');
+            if (signature !== '89504e470d0a1a0a') throw new Error(`${file} is not a PNG`);
+          }
+          NODE
+
       - name: Upload Linux export baselines
         uses: actions/upload-artifact@v4
         with:
-          name: linux-export-baselines-${{ github.sha }}
+          name: linux-export-baselines-${{ inputs.request_id }}
           path: e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/
           retention-days: 7
           if-no-files-found: error
+
+  promote:
+    if: ${{ inputs.promote }}
+    needs: capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Validate branch, source SHA and chat ID
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CHAT_ID: ${{ inputs.chat_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${REPOSITORY,,}" == "bohdanus/ph" ]] || { echo "::error::Promotion is restricted to Bohdanus/ph"; exit 1; }
+          [[ -n "$SOURCE_BRANCH" && "$SOURCE_BRANCH" != "main" ]] || { echo "::error::Promotion requires a non-main branch"; exit 1; }
+          git check-ref-format "refs/heads/$SOURCE_BRANCH"
+          [[ "$SOURCE_SHA" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "::error::Invalid source SHA"; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo "::error::Checkout does not match source SHA"; exit 1; }
+          remote_sha="$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | cut -f1)"
+          [[ "$remote_sha" == "$SOURCE_SHA" ]] || { echo "::error::Mirror branch moved; no baseline was promoted"; exit 1; }
+          [[ -n "$CHAT_ID" && "$CHAT_ID" != *$'\n'* && "$CHAT_ID" != *$'\r'* ]] || { echo "::error::A single native chat ID is required"; exit 1; }
+
+      - name: Download captured Linux baselines
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-export-baselines-${{ inputs.request_id }}
+          path: ${{ runner.temp }}/linux-export-baselines
+
+      - name: Validate and stage baseline allowlist
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/linux-export-baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob dotglob
+          target_dir='e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux'
+          workspace="$(pwd -P)"
+          target_real="$(realpath -e "$target_dir")"
+          [[ "$target_real" == "$workspace/$target_dir" && ! -L "$target_dir" ]] || { echo "::error::Linux baseline target resolves outside its expected repository path"; exit 1; }
+          expected=(drawing.avif.png drawing.bmp.png drawing.gif.png drawing.jpeg.png drawing.png.png drawing.svg.png drawing.webp.png)
+          actual=("$ARTIFACT_DIR"/*)
+          [[ ${#actual[@]} -eq ${#expected[@]} ]] || { echo "::error::Unexpected Linux baseline artifact contents"; exit 1; }
+          for name in "${expected[@]}"; do
+            file="$ARTIFACT_DIR/$name"
+            target="$target_dir/$name"
+            [[ -f "$file" && ! -L "$file" ]] || { echo "::error::Missing or unsafe baseline $name"; exit 1; }
+            [[ ! -L "$target" && ( ! -e "$target" || -f "$target" ) ]] || { echo "::error::Unsafe target baseline $name"; exit 1; }
+            [[ "$(file --brief --mime-type "$file")" == "image/png" ]] || { echo "::error::$name is not a PNG"; exit 1; }
+            attributes="$(git check-attr text eol filter working-tree-encoding -- "$target")"
+            [[ "$attributes" == *": text: unset"* && "$attributes" == *": eol: unspecified"* && "$attributes" == *": filter: unspecified"* && "$attributes" == *": working-tree-encoding: unspecified"* ]] || { echo "::error::Unsafe Git byte-conversion attributes for $name"; exit 1; }
+            cp -- "$file" "$target"
+            git add -- "$target"
+          done
+
+      - name: Commit and push baseline changes
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          CHAT_ID: ${{ inputs.chat_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            echo "Linux export baselines already match; no commit created."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'test: refresh Linux export baselines' -m "Chat: $CHAT_ID"
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"

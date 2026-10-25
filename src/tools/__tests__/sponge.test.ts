@@ -286,7 +286,7 @@ describe('chromaHeadroom', () => {
       for (let g = 0; g <= 255; g += 5) {
         for (let b = 0; b <= 255; b += 5) {
           const headroom = chromaHeadroom(r, g, b, spongeLuma(r, g, b));
-          expect(headroom, `${r},${g},${b}`).toBeGreaterThanOrEqual(1);
+          if (!(headroom >= 1)) throw new Error(`chroma headroom for ${r},${g},${b} was ${headroom}`);
         }
       }
     }

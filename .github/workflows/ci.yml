@@ -1,20 +1,27 @@
 name: CI
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('CI {0} @ {1}', inputs.request_id, inputs.source_sha) || format('CI #{0}', github.run_number) }}
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  # Re-run a gate on demand without pushing an empty commit. The `e2e` matrix is
-  # the one whose result a reviewer may want to confirm, especially on a platform
-  # whose baselines were just recorded.
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: Unique request identifier from the mirror runner
+        required: true
+        type: string
+      source_sha:
+        description: Exact committed tree to validate
+        required: true
+        type: string
 
 # Superseded runs are pointless work, and this workflow is triggered on every push
 # to a PR branch as well as `main`.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.request_id || 'automatic' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 # Read-only by default. No job in this workflow needs to write to the repository,
 # and an un-scoped GITHUB_TOKEN inherits whatever the org default happens to be.
@@ -29,6 +36,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           # The citation guard compares additions against the PR/push base commit below.
           fetch-depth: 0
           # Nothing in this workflow pushes, tags or reads a private ref, so the
@@ -122,9 +130,6 @@ jobs:
       - name: Build
         run: npm run build
 
-  # Dependency licence terms are not checked by CI. The `npm audit` step above
-  # checks vulnerability advisories only; see the README's dependency licensing note.
-
   # The blocking gate for everything under e2e/.
   #
   # A separate job rather than a step in `ci`, so that a break anywhere in the app
@@ -140,6 +145,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -194,6 +200,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -244,33 +251,51 @@ jobs:
   # the page mid-run. A CI runner has no such input, but keeping the same default
   # locally is what stops that class of failure from being misread as flakiness.
   #
-  # MISSING LINUX BASELINES. `visual-regression.spec.ts` reads its oracle from
-  # `export-baselines/<platform>/`. `darwin/` and `win32/` are committed; `linux/`
-  # is not, so the Linux leg fails closed with `Baseline missing for <format> on
-  # linux`. Do not skip the spec or record Linux images from an unmatched machine:
-  # `ubuntu-latest` is x86-64, while the available EC2 host is ARM64. Record the
-  # Linux set with the manual `capture-linux-baselines.yml` workflow, then review
-  # every image before committing it. CPU-only rendering is not sufficient: the
-  # available EC2 host is ARM64 and this runner is x86-64. Until then, this is a
-  # known red check, not a green or suppressed gate.
+  # Linux baselines are captured on ubuntu-latest and committed only by the
+  # isolated promotion job in capture-linux-baselines.yml. Missing images remain
+  # a hard failure; do not skip the visual-regression spec.
   e2e:
     strategy:
-      # One platform failing must not cancel the others; a platform-specific
-      # rasteriser regression remains useful even while Linux baselines are absent.
+      # One platform failing must not cancel the others; each runner can expose
+      # platform-specific rasterisation regressions independently.
       fail-fast: false
       matrix:
         include:
           - platform: linux
             os: ubuntu-latest
-            timeout: 30
+            shard: 1
+            shards: 2
+            timeout: 35
             install-command: npx playwright install --with-deps chrome
           - platform: windows
             os: windows-latest
-            timeout: 35
+            shard: 1
+            shards: 2
+            timeout: 40
             install-command: npx playwright install chrome
           - platform: macos
             os: macos-latest
+            shard: 1
+            shards: 2
+            timeout: 40
+            install-command: npx playwright install chrome
+          - platform: linux
+            os: ubuntu-latest
+            shard: 2
+            shards: 2
             timeout: 35
+            install-command: npx playwright install --with-deps chrome
+          - platform: windows
+            os: windows-latest
+            shard: 2
+            shards: 2
+            timeout: 40
+            install-command: npx playwright install chrome
+          - platform: macos
+            os: macos-latest
+            shard: 2
+            shards: 2
+            timeout: 40
             install-command: npx playwright install chrome
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
@@ -278,6 +303,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -324,7 +350,7 @@ jobs:
         # here is a new defect unless e2e/OPEN_PROBLEMS.md says otherwise, and
         # filtering failures out would hide the one signal this job now exists to
         # give.
-        run: npx playwright test
+        run: npx playwright test --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
       - name: Upload Playwright report
         # `always()`, and NOT `!cancelled()`. `cancel-in-progress: true` at the top
@@ -357,7 +383,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.platform }}
+          name: playwright-report-${{ matrix.platform }}-shard-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/

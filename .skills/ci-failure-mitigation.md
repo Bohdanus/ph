@@ -31,7 +31,7 @@ baseline mismatches).
 
 ### Known e2e environment-bound issues:
 
-- Visual regression baselines: `darwin/` and `win32/` are committed; `linux/` is missing. The available EC2 host is ARM64 and must not be used to create a baseline for the `ubuntu-latest` x86-64 runner.
+- Visual baselines: capture Linux on the mirror's `ubuntu-latest` runner with `npm run test:e2e:mirror -- --linux-baselines --chat-id <native-id>`. EC2 is retired.
 - Canvas rendering differences between headless Chrome on Linux/Windows and macOS
 - The suite runs headless in CI on a cross-platform matrix (Linux, Windows, macOS)
 
