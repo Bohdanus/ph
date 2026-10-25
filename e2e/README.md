@@ -541,13 +541,12 @@ Two more consequences of the same geometry, both of which have bitten a spec her
   cheap way to get a full-document layer (`GradientToolArea` also refuses to run
   on the bedrock layer at all).
 
-3 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
-photopea.com), one right-click flyout case, and `viewport-drawing.spec.ts` — the last
-is skipped by the operator's decision of 2026-09-29 because it is intermittently red (1
-run in 4, failing case moving between cases). That is a **gate decision, not a fix and
-not a waiver**: the defect is open in `TEST-FLAKES.md` §12 with its exact remaining
-verification, and the skip is not permission to loosen the assertion, raise the bound
-or add retries.
+2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
+photopea.com) and `viewport-drawing.spec.ts`, which is skipped by the operator's
+decision of 2026-09-29 because it is intermittently red (1 run in 4, failing case
+moving between cases). That is a **gate decision, not a fix and not a waiver**: the
+defect is open in `TEST-FLAKES.md` §12 with its exact remaining verification, and the
+skip is not permission to loosen the assertion, raise the bound or add retries.
 
 A local run uses `retries: 0`; only `CI` sets `retries: 2`, so a local failure is
 never retried away.
@@ -610,14 +609,14 @@ PLAYWRIGHT_CHANNEL=msedge npm run test:e2e
 
 ## CI
 
-`.github/workflows/ci.yml` declares four jobs — `ci`, `e2e-unit`, `audit`, and
-`e2e`. The `e2e` job expands into three platform runs (Linux, Windows and macOS),
-for six job executions in total.
+`.github/workflows/ci.yml` declares five jobs — `validate-dispatch`, `ci`,
+`e2e-unit`, `audit`, and `e2e`. The `e2e` job expands into six runs: two shards
+on each of Linux, Windows, and macOS. That makes ten job executions in total.
 
 `e2e-unit` is the **blocking** gate for this directory: it runs
 `npm run test:e2e:unit`, then `npm run test:e2e:unit:coverage`, and uploads
-`coverage-e2e/` as the `e2e-helper-coverage` artifact. It needs no browser and no
-application instance. The coverage step is ordered after the gate on purpose, so a
+`coverage-e2e/` as the `e2e-helper-coverage-<run-id>-attempt-<attempt>` artifact. It
+needs no browser and no application instance. The coverage step is ordered after the gate on purpose, so a
 failure there is reported against a job whose tests already passed and can never
 stand in for the gate; and because `vitest.e2e.config.ts` declares no coverage
 thresholds, that step cannot go red on a percentage — only a failing test turns it
@@ -640,18 +639,9 @@ what also builds `tsconfig.e2e.json`. The separate `audit` job runs `npm audit
 Linux, Windows, and macOS. It was `continue-on-error` on the stated grounds that a
 handful of specs failed for documented reasons; those are all fixed and the job went
 on reporting a state the suite no longer had. The matrix runs with `fail-fast: false`
-so one platform's failure does not cancel the others. `darwin/` and `win32/`
-visual-regression baselines are committed; `linux/` is missing, so Linux hits the
-fail-as-missing contract on `visual-regression.spec.ts`. After the workflow is
-published on the repository's default branch, dispatch
-[`capture-linux-baselines.yml`](../.github/workflows/capture-linux-baselines.yml)
-on the candidate branch to record and verify the files on `ubuntu-latest`, then
-download its artifact, review all seven PNGs, and add them under
-`export-baselines/linux/` in the task worktree. The workflow is artifact-only and
-does not write to the repository. CPU-only rendering alone is not a match: the
-available EC2 host is ARM64 and is not a substitute for the x86-64 CI runner.
-Normal CI must pass with the committed images. See "Missing Linux baselines" in
-`../.github/workflows/ci.yml`.
+so one platform's failure does not cancel the others. `darwin/`, `win32/`, and
+`linux/` visual-regression baselines are committed. Refresh Linux images only with
+the `mirror` workflow command documented in `../docs/E2E-MIRROR.md`.
 
 `e2e` installs Chrome (`channel: 'chrome'`, the stable channel Playwright
 installs) and runs the browser tests against the dev server started by
@@ -665,7 +655,7 @@ both concern configurations the job does not run in:
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-Each matrix leg reports the true state including the 3 declared skips. It runs the full
+Each matrix leg reports the true state including the 2 declared skips. It runs the full
 suite with no `--grep-invert`, so the report is unfiltered — but note that
 `playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
 green run _after_ retries. A flake that only shows on the first attempt is

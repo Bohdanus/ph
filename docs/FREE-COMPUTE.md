@@ -1,6 +1,6 @@
 # Free and Low-Cost Model Compute
 
-**Checked: 2026-10-23.** Catalogs and quotas change; refresh before use.
+**Checked: 2026-10-25.** Catalogs and quotas change; refresh before use.
 
 ## Routing
 
@@ -10,14 +10,15 @@
 
 ## Observed results
 
-| Route                        | Evidence                                                                                                                                                                                                                                                                                                                                                       |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Kilo Laguna S                | Repeated use in Kilo history; previous smoke returned `LAGUNA_OK` at $0. A follow-up returned 429 (quota/capacity). Published Kilo cap: up to 200 requests/hour/IP. [Limits](https://kilo.ai/docs/gateway/usage-and-billing)                                                                                                                                   |
-| OpenRouter exact `:free` IDs | On 2026-10-23, 17 catalog IDs had zero input/output prices. With optional reasoning disabled, Nemotron 3 Ultra, Cohere North Mini Code, and Dots3-Note Preview returned short completions at $0. Short smoke tests; Laguna remains preferred. [Catalog](https://openrouter.ai/collections/free-models/)                                                        |
-| OpenRouter `openrouter/free` | Selected Liquid LFM2.5-2.6B; spent 420 reasoning tokens over 51s and returned no final text (`finish_reason=length`). Use exact IDs when possible.                                                                                                                                                                                                             |
-| Other OpenRouter probes      | Laguna XS, Gemma 4, and Xing returned 429; Inkling Small returned 403 (harness restricted). Outcomes may change.                                                                                                                                                                                                                                               |
-| Groq GPT-OSS 20B             | One project-account smoke returned HTTP 200; `code_interpreter` ran Python. Default urllib UA hit Cloudflare 403/1010; `Mozilla/5.0` worked. This account-specific observation does not prove another account's billing plan. These IDs have paid Developer-plan rates. [Code execution](https://console.groq.com/docs/tool-use/built-in-tools/code-execution) |
-| Kilo pool failures           | `kilo-auto/free` and `recursive/flint-v1.0:free`: empty output; `nvidia/nemotron-3.5-super-vl:free`: HTTP 502. Latency was not recorded. These IDs remain quarantined in `scripts/free-model-pool.mjs`.                                                                                                                                                        |
+| Route                          | Evidence                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kilo Laguna S                  | Repeated use in Kilo history; previous smoke returned `LAGUNA_OK` at $0. A follow-up returned 429 (quota/capacity). Published Kilo cap: up to 200 requests/hour/IP. [Limits](https://kilo.ai/docs/gateway/usage-and-billing)                                                                                                                                   |
+| Kilo live catalog / completion | The 2026-10-25 zero-priced catalog listed `poolside/laguna-s-2.1:free`. A one-sentence smoke returned `finish_reason=length`; the next Kilo model returned 429, then OpenRouter's free route returned its daily 429.                                                                                                                                           | Catalog eligibility did not guarantee capacity or a usable completion. Stop after the provider quota errors; do not retry or fall through to a paid route. |
+| OpenRouter exact `:free` IDs   | On 2026-10-23, 17 catalog IDs had zero input/output prices. With optional reasoning disabled, Nemotron 3 Ultra, Cohere North Mini Code, and Dots3-Note Preview returned short completions at $0. Short smoke tests; Laguna remains preferred. [Catalog](https://openrouter.ai/collections/free-models/)                                                        |
+| OpenRouter `openrouter/free`   | Selected Liquid LFM2.5-2.6B; spent 420 reasoning tokens over 51s and returned no final text (`finish_reason=length`). Use exact IDs when possible.                                                                                                                                                                                                             |
+| Other OpenRouter probes        | Laguna XS, Gemma 4, and Xing returned 429; Inkling Small returned 403 (harness restricted). Outcomes may change.                                                                                                                                                                                                                                               |
+| Groq GPT-OSS 20B               | One project-account smoke returned HTTP 200; `code_interpreter` ran Python. Default urllib UA hit Cloudflare 403/1010; `Mozilla/5.0` worked. This account-specific observation does not prove another account's billing plan. These IDs have paid Developer-plan rates. [Code execution](https://console.groq.com/docs/tool-use/built-in-tools/code-execution) |
+| Kilo pool failures             | `kilo-auto/free` and `recursive/flint-v1.0:free`: empty output; `nvidia/nemotron-3.5-super-vl:free`: HTTP 502. Latency was not recorded. These IDs remain quarantined in `scripts/free-model-pool.mjs`.                                                                                                                                                        |
 
 ### Codex free-route check (2026-10-24)
 
@@ -38,6 +39,12 @@ A bounded review of roughly 3,978 prompt tokens did complete through `kilo/pools
 One local `Jan-v3.5-4B-Q4_K_XL` server started at `127.0.0.1:6767`; a harmless authenticated smoke returned the exact model, `finish_reason: stop`, and 17 tokens. A bounded review prompt of about 4.1K input tokens took roughly 32 seconds, ended with `finish_reason: length`, and included a false claim, so that review was unusable. The server was stopped and the port was checked clear. Local inference avoids provider API charges but uses host resources; trust output only when it is complete and verified, and run no more than one Jan model at a time.
 
 Free-model research returned false quota claims, including NVIDIA production use and Hugging Face credits; other suggested free API quotas lacked official sources. Treat answers as leads; verify quotas with provider docs.
+
+## Free test compute
+
+For broad E2E, the public `Bohdanus/ph` mirror runs standard GitHub-hosted runners. GitHub documents runner minutes as free for public repositories; artifact storage is a separate allowance. This was the most reliable free route found for cross-platform E2E and GitHub-compatible Linux visual baselines. See [`E2E-MIRROR.md`](E2E-MIRROR.md) and recheck [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) if repository visibility, runner type, or artifact retention changes.
+
+The SSH `e2e` EC2 host is useful for targeted Linux/ARM64 checks, but its Free Tier status was not verified in the AWS account dashboard. AWS eligibility depends on account age and plan; never infer it from the instance type or old 750-hour examples. Check the actual [EC2 Free Tier usage](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html) and [AWS Free Tier plan](https://docs.aws.amazon.com/us_en/awsaccountbilling/latest/aboutv2/free-tier.html). Host details and limits are in [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md).
 
 ## Other free capacity
 
@@ -121,8 +128,12 @@ excessive root-context tokens. Key lessons that every orchestrator should apply:
 12. **Hugging Face ZeroGPU is not a T4.** The official docs describe RTX Pro 6000 Blackwell-backed
     dynamic hardware and a 5-minute daily quota for free accounts, resetting 24 hours after first
     use. It is a narrow Spaces quota, not general-purpose GPU capacity. [ZeroGPU docs](https://huggingface.co/docs/hub/spaces-zerogpu)
-13. **AWS Free Tier is no longer 12-month/750-hours.** Current model is $200 credit over 6 months.
-    Old tutorials citing 750 hrs EC2/month are stale.
+13. **AWS Free Tier terms depend on account creation date and plan.** Some accounts receive
+    time-limited credits or usage allowances; older accounts may have different terms. Do not
+    generalize the current offer or old 750-hours/month examples. Check the account dashboard and
+    official [EC2 Free Tier usage](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html)
+    and [AWS Free Tier](https://docs.aws.amazon.com/us_en/awsaccountbilling/latest/aboutv2/free-tier.html)
+    docs before treating a host as no-cost.
 
 **Rule of thumb:** bulk URL fetches and chat searches belong in a verified free read-only
 delegate with a file-based evidence handoff. `free-research.mjs` handles public URL lists;

@@ -203,13 +203,14 @@ function main() {
     return;
   }
 
+  const isGithubActions = process.env.GITHUB_ACTIONS === 'true';
   const records = git(['worktree', 'list', '--porcelain']).split('\n\n');
   const mainRecord = records.find((record) => /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record));
   const mainPath = mainRecord?.match(/^worktree (.+)$/m)?.[1];
-  if (mainPath && !registerMainWorktree(mainPath, { required: true })) {
+  if (mainPath && !isGithubActions && !registerMainWorktree(mainPath, { required: true })) {
     throw new Error(`could not persist the designated main worktree identity for ${mainPath}`);
   }
-  if (!mainPath) {
+  if (!mainPath && !isGithubActions) {
     let registeredPath = null;
     let registeredGitDir = null;
     let registeredIdentity = null;

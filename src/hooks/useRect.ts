@@ -611,7 +611,7 @@ export function useRect({
         const localPoint = hitPoint;
         const rotationGrip = { x: (x1 + x2) / 2, y: y1 - ROTATE_HANDLE_OFFSET / scale };
         if (
-          localPoint.y < y1 &&
+          localPoint.y < y1 - h2 &&
           Math.hypot(localPoint.x - rotationGrip.x, localPoint.y - rotationGrip.y) <= ROTATE_HOTZONE / scale
         ) {
           return 'rotate';

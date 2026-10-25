@@ -19,6 +19,7 @@ import {
   verifyPrimaryTool,
 } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * Seven pixel-level tests for the five selection tools.
@@ -732,7 +733,7 @@ test.describe('Selection tools', () => {
   });
 
   test('magic wand selects only the region inside a closed color boundary', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     const document = await documentBox(page);
     const loop = boxRect(document, 0.32, 0.28, 0.58, 0.64);
     const loopPath = [

@@ -563,6 +563,42 @@ describe('useRect', () => {
       expect(onRotationChange.mock.lastCall?.[0]).toBeCloseTo(90, 0);
     });
 
+    it('keeps a fractional top-edge drag out of the rotation hotzone', () => {
+      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+      const onChangeEnd = vi.fn();
+      const onRotationChange = vi.fn();
+      const { result } = renderUseRect({ initialRect, rotationEnabled: true, onChangeEnd, onRotationChange });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 99.5, target }))
+        ).toBe(true);
+      });
+      expect(target.style.cursor).toBe(CURSOR_MAP.top);
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 200, clientY: 99.5, target })
+          )
+        ).toBe(true);
+      });
+      expect(result.current.pointerState.currentEdgeRef.current).toBe('top');
+
+      act(() => {
+        usePointerPositionMock.mockData.isMouseDown.current = true;
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 80, target }));
+        vi.advanceTimersByTime(20);
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 80, target })
+        );
+      });
+
+      expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 80, x2: 300, y2: 250 });
+      expect(onRotationChange).not.toHaveBeenCalled();
+    });
+
     it('keeps the painted handles hit-testable after the rect rotates', () => {
       const { result } = renderUseRect({
         initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },

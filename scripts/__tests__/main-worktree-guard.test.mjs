@@ -48,6 +48,22 @@ function commonDir(cwd) {
   return raw === null ? null : resolve(cwd, raw);
 }
 
+function localInstall(cwd) {
+  return spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: undefined },
+  });
+}
+
+function ciInstall(cwd) {
+  return spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: 'true' },
+  });
+}
+
 describe('the main-worktree guard refuses a commit recorded in the main worktree', () => {
   it('refuses in the designated main worktree', () => {
     expect(decide({ worktree: { isMainWorktree: true } })).toEqual({ action: 'refuse' });
@@ -196,6 +212,8 @@ describe('the guard tells a main worktree from a linked one on a real repository
     root = realpathSync(mkdtempSync(join(tmpdir(), 'main-worktree-guard-')));
     const init = ['-c', 'init.defaultBranch=main', '-c', 'user.email=g@e.test', '-c', 'user.name=G', 'init'];
     expect(git(root, init)).not.toBeNull();
+    expect(git(root, ['config', 'user.email', 'g@e.test'])).not.toBeNull();
+    expect(git(root, ['config', 'user.name', 'G'])).not.toBeNull();
     writeFileSync(join(root, 'a.txt'), 'a\n');
     expect(git(root, ['add', 'a.txt'])).not.toBeNull();
     expect(git(root, ['commit', '-m', 'first'])).not.toBeNull();
@@ -358,17 +376,11 @@ describe('the guard is actually installed', () => {
 
       const configLock = join(fixture, '.git', 'config.lock');
       writeFileSync(configLock, '');
-      const blockedInstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const blockedInstall = localInstall(fixture);
       expect(blockedInstall.status).not.toBe(0);
       rmSync(configLock);
 
-      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const install = localInstall(fixture);
       expect(install.status).toBe(0);
       expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])).toBe(
         git(fixture, ['rev-parse', '--absolute-git-dir'])
@@ -380,10 +392,7 @@ describe('the guard is actually installed', () => {
       const mainGitDir = realpathSync(git(fixture, ['rev-parse', '--absolute-git-dir']));
       rmSync(join(mainGitDir, 'kilo-main-worktree-identity'), { force: true });
       git(fixture, ['config', '--local', '--unset', 'ph.mainWorktreeIdentity']);
-      const upgradeInstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const upgradeInstall = localInstall(fixture);
       expect(upgradeInstall.status, upgradeInstall.stderr).toBe(0);
       expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeIdentity'])).toMatch(/^[0-9a-f-]{36}$/i);
       expect(existsSync(join(mainGitDir, 'kilo-main-worktree-identity'))).toBe(true);
@@ -425,10 +434,7 @@ describe('the guard is actually installed', () => {
         }
       );
       expect(featureCheckout.status, featureCheckout.stderr).toBe(0);
-      const reinstallWithSavedIdentity = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: featureWorktree,
-        encoding: 'utf8',
-      });
+      const reinstallWithSavedIdentity = localInstall(featureWorktree);
       expect(reinstallWithSavedIdentity.status, reinstallWithSavedIdentity.stderr).toBe(0);
       writeFileSync(join(featureWorktree, 'message-file'), 'Feature change\n');
       const featureCall = spawnSync(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
@@ -479,13 +485,38 @@ describe('the guard is actually installed', () => {
       const detach = spawnSync('git', ['switch', '--quiet', '--detach'], { cwd: detachedMain, encoding: 'utf8' });
       expect(detach.status, detach.stderr).toBe(0);
 
-      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const install = localInstall(fixture);
       expect(install.status).not.toBe(0);
       expect(install.stderr).toContain('cannot identify the designated main worktree');
       expect(git(detachedMain, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])).toBeNull();
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('allows hook installation in CI when no designated main worktree is reachable', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-ci-install-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      writeFileSync(join(fixture, 'README.md'), 'hook fixture\n');
+      git(fixture, ['add', 'README.md']);
+      git(fixture, ['commit', '--quiet', '-m', 'fixture']);
+      git(fixture, ['switch', '--quiet', '--detach']);
+
+      const install = ciInstall(fixture);
+      expect(install.status, install.stderr).toBe(0);
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeIdentity'])).toBeNull();
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBeNull();
+      const commonGitDir = commonDir(fixture);
+      expect(commonGitDir).not.toBeNull();
+      expect(existsSync(join(commonGitDir, 'hooks-gate', 'pre-commit'))).toBe(true);
+      expect(git(fixture, ['config', '--get', 'core.hooksPath'])).not.toBeNull();
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
@@ -510,10 +541,7 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(initialCheckout.status, initialCheckout.stderr).toBe(0);
-      const initialInstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const initialInstall = localInstall(fixture);
       expect(initialInstall.status, initialInstall.stderr).toBe(0);
       const hooksPath = git(fixture, ['config', '--get', 'core.hooksPath']);
       const dispatcher = resolve(fixture, hooksPath, 'commit-msg');
@@ -550,10 +578,7 @@ describe('the guard is actually installed', () => {
       });
       expect(decide({ worktree: recreatedMain })).toEqual({ action: 'refuse' });
 
-      const installWithStaleIdentity = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const installWithStaleIdentity = localInstall(fixture);
       expect(installWithStaleIdentity.status).not.toBe(0);
       expect(installWithStaleIdentity.stderr).toContain('cannot identify the designated main worktree');
 
@@ -668,10 +693,7 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(mainCheckout.status, mainCheckout.stderr).toBe(0);
-      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const install = localInstall(fixture);
       expect(install.status, install.stderr).toBe(0);
       const detachMain = spawnSync('git', ['switch', '--quiet', '--detach'], {
         cwd: oldMainPath,
@@ -689,10 +711,7 @@ describe('the guard is actually installed', () => {
       });
       expect(reuseOldPath.status, reuseOldPath.stderr).toBe(0);
 
-      const reinstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
-        cwd: fixture,
-        encoding: 'utf8',
-      });
+      const reinstall = localInstall(fixture);
       expect(reinstall.status, reinstall.stderr).toBe(0);
       expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(movedMainPath);
 

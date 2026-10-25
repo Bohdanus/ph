@@ -202,13 +202,12 @@ export function createContiguousMask(
   const { width, height } = imageData;
   const pixelCount = width * height;
   const mask = new Uint8Array(pixelCount);
-  let selectedPixelCount = 0;
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
   const workspace = createContiguousFloodFillWorkspace(pixelCount);
-  selectedPixelCount = visitContiguousMaskPixels(
+  const selectedPixelCount = visitContiguousMaskPixels(
     imageData,
     seedX,
     seedY,

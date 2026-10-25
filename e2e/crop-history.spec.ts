@@ -164,6 +164,23 @@ interface DocumentSize {
   readonly height: number;
 }
 
+type PixelDifference = {
+  readonly differingBytes: number;
+  readonly differingPixels: number;
+  readonly maxChannelDelta: number;
+  readonly differingSamples: readonly {
+    readonly x: number;
+    readonly y: number;
+    readonly channel: 'r' | 'g' | 'b' | 'a';
+    readonly legacy: number | null;
+    readonly durable: number | null;
+  }[];
+};
+
+function pixelDifferenceSummary(result: PixelDifference): string {
+  return `differingPixels=${result.differingPixels}, maxChannelDelta=${result.maxChannelDelta}, samples=${JSON.stringify(result.differingSamples)}`;
+}
+
 /** The contain fit the APP computed for the CURRENT document, plus the rect it was computed from. */
 interface Fit {
   readonly scale: number;
@@ -192,13 +209,29 @@ interface Fit {
  * otherwise turn every number below into a silently wrong gesture.
  *
  * The attributes are published by the mounted tool area's effect, which React schedules rather
- * than runs inside the tool click, so waiting for the first one removes that race without a sleep.
- * All nine are set in one synchronous block, so the first to exist implies the rest do, and `read`
- * still throws naming any that is missing or non-numeric.
+ * than runs inside the tool click. A populated scale can still be left over from the PREVIOUS
+ * document or container size, so wait until the published document and viewport geometry match
+ * the live canvas before using the fit. `read` then names any missing or non-numeric field.
  */
 async function readFit(page: Page): Promise<Fit> {
   const container = page.getByTestId('workspace-container');
-  await expect(container).toHaveAttribute('data-fit-scale', /.+/);
+  await expect
+    .poll(() =>
+      container.evaluate((node) => {
+        const canvas = node.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+        if (!canvas) return false;
+        const rect = node.getBoundingClientRect();
+        return (
+          node.getAttribute('data-fit-document-width') === String(canvas.width) &&
+          node.getAttribute('data-fit-document-height') === String(canvas.height) &&
+          node.getAttribute('data-fit-rect-x') === String(rect.left) &&
+          node.getAttribute('data-fit-rect-y') === String(rect.top) &&
+          node.getAttribute('data-fit-outer-width') === String(rect.width) &&
+          node.getAttribute('data-fit-outer-height') === String(rect.height)
+        );
+      })
+    )
+    .toBe(true);
   return await container.evaluate((node) => {
     const read = (name: string) => {
       const raw = node.getAttribute(name);
@@ -953,8 +986,34 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
           const durablePixels = Array.from(durableContext.getImageData(0, 0, frame.width, frame.height).data);
           let differingBytes = 0;
+          let differingPixels = 0;
+          let lastDifferingPixel = -1;
+          let maxChannelDelta = 0;
+          const differingSamples: PixelDifference['differingSamples'][number][] = [];
+          const channels = ['r', 'g', 'b', 'a'] as const;
           for (let byte = 0; byte < Math.max(legacyPixels.length, durablePixels.length); byte += 1) {
-            if (legacyPixels[byte] !== durablePixels[byte]) differingBytes += 1;
+            const legacy = legacyPixels[byte] ?? null;
+            const durable = durablePixels[byte] ?? null;
+            if (legacy === durable) continue;
+            differingBytes += 1;
+            const pixel = Math.floor(byte / 4);
+            if (pixel !== lastDifferingPixel) {
+              differingPixels += 1;
+              lastDifferingPixel = pixel;
+            }
+            maxChannelDelta = Math.max(
+              maxChannelDelta,
+              legacy === null || durable === null ? 255 : Math.abs(legacy - durable)
+            );
+            if (differingSamples.length < 8) {
+              differingSamples.push({
+                x: pixel % frame.width,
+                y: Math.floor(pixel / frame.width),
+                channel: channels[byte % 4],
+                legacy,
+                durable,
+              });
+            }
           }
           const materializedBounds = Object.fromEntries(
             fixture.layers.map(({ id }) => {
@@ -971,6 +1030,9 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             legacyByteLength: legacyPixels.length,
             durableByteLength: durablePixels.length,
             differingBytes,
+            differingPixels,
+            maxChannelDelta,
+            differingSamples,
             materializedBounds,
           });
           if (index === transitions.length - 1) {
@@ -1037,6 +1099,9 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         legacyPixels: finalLegacyPixels,
         durablePixels: finalDurablePixels,
         differingBytes: finalTransition.differingBytes,
+        differingPixels: finalTransition.differingPixels,
+        maxChannelDelta: finalTransition.maxChannelDelta,
+        differingSamples: finalTransition.differingSamples,
         colorPresence,
         materializedBounds: finalMaterializedBounds,
         transitionResults,
@@ -2610,7 +2675,10 @@ test.describe('Crop history', () => {
       expect(result.colorPresence['#0000ff']?.legacy, 'legacy crop must contain fixture blue pixels').toBe(true);
       expect(result.colorPresence['#ff0000']?.durable, 'durable crop must contain fixture red pixels').toBe(true);
       expect(result.colorPresence['#0000ff']?.durable, 'durable crop must contain fixture blue pixels').toBe(true);
-      expect(result.differingBytes, 'durable and legacy crop rasters must be byte-identical').toBe(0);
+      expect(
+        result.differingBytes,
+        `durable and legacy crop rasters must be byte-identical; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.materializedBounds['quarter-turn-crop-layer']).toEqual({ x: 0, y: 0, width: 64, height: 64 });
       expect(result.transitionResults).toHaveLength(1);
@@ -2651,7 +2719,10 @@ test.describe('Crop history', () => {
         expect(presence.legacy, `legacy crop should contain ${color}`).toBe(true);
         expect(presence.durable, `durable crop should contain ${color}`).toBe(true);
       }
-      expect(result.differingBytes, '37-degree multi-layer rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `37-degree multi-layer rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'center-patch']);
       expect(result.transitionResults).toHaveLength(1);
@@ -2689,7 +2760,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#ff00ff']?.legacy, 'legacy crop must contain text-source pixels').toBe(true);
       expect(result.colorPresence['#ff00ff']?.durable, 'durable crop must contain text-source pixels').toBe(true);
-      expect(result.differingBytes, 'text-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `text-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds)).toEqual(['text-layer']);
       expect(result.transitionResults).toHaveLength(1);
@@ -2727,7 +2801,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#00ccff']?.legacy, 'legacy crop must contain paragraph text pixels').toBe(true);
       expect(result.colorPresence['#00ccff']?.durable, 'durable crop must contain paragraph text pixels').toBe(true);
-      expect(result.differingBytes, 'paragraph text crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `paragraph text crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.materializedBounds['paragraph-serif']).toBeDefined();
     });
@@ -2764,7 +2841,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#ff8800']?.legacy, 'legacy crop must contain offset text pixels').toBe(true);
       expect(result.colorPresence['#ff8800']?.durable, 'durable crop must contain offset text pixels').toBe(true);
-      expect(result.differingBytes, 'offset text crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `offset text crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.materializedBounds['offset-monospace']).toBeDefined();
     });
@@ -2790,7 +2870,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#00ff00']?.legacy, 'legacy crop must contain blank-source pixels').toBe(true);
       expect(result.colorPresence['#00ff00']?.durable, 'durable crop must contain blank-source pixels').toBe(true);
-      expect(result.differingBytes, 'blank-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `blank-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
     });
 
@@ -2825,7 +2908,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#00ffff']?.legacy, 'legacy crop must contain vector-source pixels').toBe(true);
       expect(result.colorPresence['#00ffff']?.durable, 'durable crop must contain vector-source pixels').toBe(true);
-      expect(result.differingBytes, 'vector-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `vector-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
     });
 
@@ -2859,7 +2945,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#ff8800']?.legacy, 'legacy crop must contain paint-source pixels').toBe(true);
       expect(result.colorPresence['#ff8800']?.durable, 'durable crop must contain paint-source pixels').toBe(true);
-      expect(result.differingBytes, 'paint-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `paint-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
     });
 
@@ -2947,7 +3036,10 @@ test.describe('Crop history', () => {
         expect(transition.durableFrame).toEqual(transition.frame);
         expect(transition.legacyByteLength).toBe(transition.frame.width * transition.frame.height * 4);
         expect(transition.durableByteLength).toBe(transition.legacyByteLength);
-        expect(transition.differingBytes, `frame transition ${transition.index} must match byte-for-byte`).toBe(0);
+        expect(
+          transition.differingBytes,
+          `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
+        ).toBe(0);
       }
       for (const [color, presence] of Object.entries(result.colorPresence)) {
         expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);

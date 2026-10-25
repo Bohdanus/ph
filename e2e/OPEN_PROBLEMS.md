@@ -20,9 +20,9 @@ The numbers this file used to open with — tests passed, expected-fail pins,
 files, mode-specific failure sets — were each a snapshot of one tree, and each has
 been wrong since it was written while the number beside it stayed silent. A count
 that does appear here is a count somebody measured; read the current one off the
-command. The latest recorded full headless run, `2026-10-08T05-48-57-832Z-32316`,
-ran on this macOS arm64 machine and reported `469 passed, 0 failed, 3 skipped` in
-7.2 minutes. This is one machine's observation, not a new baseline.
+command. The latest recorded full headless run, `2026-10-25T16-14-11-312Z-11020`,
+ran on this macOS arm64 machine and reported `573 passed, 0 failed, 2 skipped` in
+9.1 minutes. This is one machine's observation, not a new baseline.
 
 **A full headed run of the suite as it stands has never been measured, and
 `AGENTS.md` forbids an agent from running one.** The headed observations quoted
@@ -602,7 +602,7 @@ them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-r
 below.
 
 **Four `## P…` entries appear below this line, and only two of them are those two** —
-`P2 — the visual baselines record no Chrome version, and a pin cannot be invented` and
+`P2 — Chrome stable remains unpinned and can drift from the visual baselines` and
 `P3 — no mobile or HiDPI project, and no touch anywhere`. The other two,
 `P3 — re-verification: the tablet band's option-row floor…` and
 `P2 — the mobile bottom bar scrolls 615px with no affordance…`, were filed by later passes
@@ -618,7 +618,7 @@ still worth having.
 
 ---
 
-## P2 — the visual baselines record no Chrome version, and a pin cannot be invented
+## P2 — Chrome stable remains unpinned and can drift from the visual baselines
 
 `e2e/export/visual-regression.spec.ts`, `.github/workflows/ci.yml`
 
@@ -633,23 +633,14 @@ tolerance**, and the argument is written out at the call site so it is not widen
 make a red go green. `browser.version()` is now in the failure message, so a red run can
 answer "did the encoder change?" instead of leaving it to be guessed.
 
-In run `2026-10-07T17-21-09-904Z-84103`, Chrome `155.0.8059.39` exceeded the
-100-pixel budget for PNG (386), JPEG (321), WebP (896), BMP (386), GIF (384), and
-SVG (386). The AVIF visual case failed at the wasm request instead of producing a
-comparison. This records the current encoder version, not the version used to
-create the baselines.
-
-What is still open is the half that cannot be closed from inside a code change:
-**nothing in this repository records which Chrome produced the committed baselines.** No
-provenance file, no version in `e2e/README.md`, nothing in the commit that added them.
-Pinning `google-chrome-stable` to a version now would be a guess, and a pin that does not
-match the recording version turns a green gate red for a reason nothing in the tree can
-diagnose — strictly worse than the drift risk it pretends to remove.
-
-Closing it is an operator decision and needs a browser: record the version that produced
-the current baselines, write it down next to them, then pin CI to it. **Re-recording the
-baselines under a known version is the only way to establish the record, and that is not a
-change an agent makes.**
+Manual `workflow_dispatch` run `40134364993` on
+`task/linux-snapshot-ci-20261024` recorded and verified Chrome `156.0.8078.47` on Linux
+and `156.0.8078.48` on Windows and macOS. The Linux images in
+`export-baselines/linux/` match its artifact byte-for-byte. An earlier Chrome
+`155.0.8059.39` run exceeded the strict 100-pixel budget on six formats. This records
+provenance, not a pin: CI installs each OS's current stable Chrome, which can drift.
+Choosing a per-platform version policy remains open; do not widen the pixel budget to
+mask drift.
 
 ## P3 — no dedicated mobile/HiDPI project; touch coverage and the full 2x suite remain partial
 

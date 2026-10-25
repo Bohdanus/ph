@@ -55,12 +55,10 @@ npm run build           # production bundle, and a real CI step
 baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
 
-For local agent work, use EC2 for the broad Playwright run and keep focused
-specs and fast gates on the developer machine. The current `e2e` instance is a
-2-vCPU, 2-GiB ARM64 host, so it is configured for one worker at a time; see
-[`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md) for the task-worktree handoff
-and the limits on sharding. GitHub Actions continues to run its own blocking
-matrix on hosted runners.
+For local work, run focused specs and fast gates on the developer machine. Broad
+headless Playwright runs use the `mirror` workflow; see [`E2E-MIRROR.md`](E2E-MIRROR.md).
+Use the SSH `e2e` host only for targeted Linux/ARM64 reproduction and checks, as
+described in [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md).
 
 **`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
 It captures suite output by default and replays it only on failure; use
@@ -261,20 +259,27 @@ unquoted `$(...)` word-splits and globs into a silent pass.
 
 ### CI
 
-CI in `.github/workflows/ci.yml` is read-only by design: the workflow sets
-`permissions: contents: read`, and every checkout step passes
-`persist-credentials: false`, so no job can write to the repository or exfiltrate
-a usable token.
+The checked-in default-branch CI workflow in `.github/workflows/ci.yml` is
+read-only: it sets `contents: read` and `persist-credentials: false`. CLI-launched
+mirror runs use a pinned `repository_dispatch` workflow from the default branch.
+Automatic `pull_request` runs use GitHub's PR merge ref; fork PRs receive read-only
+tokens, but same-repository PR authors can edit workflow permissions. Treat
+contributors with repository write access as trusted workflow authors.
 
+- `validate-dispatch`: verifies manual mirror dispatches use `Bohdanus/ph` and a
+  full commit SHA, then passes that exact SHA to every checkout. Automatic runs
+  use the event SHA.
 - `ci`: lint, typecheck, TS-project coverage assertion, unit tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
 - `audit`: `npm audit --audit-level=high`, a non-blocking vulnerability-advisory check.
-- `e2e`: headless Playwright on Linux, Windows, and macOS — a matrix with
-  `fail-fast: false` and `retries: 2` (three total attempts). `failOnFlakyTests`
+- `e2e`: headless Playwright on Linux, Windows, and macOS, split into two shards
+  per platform (`--shard=1/2` and `--shard=2/2`) with `fail-fast: false` and
+  `retries: 2` (three total attempts). `failOnFlakyTests`
   makes a test that passes only after a retry fail the job, so investigate it as a
-  defect rather than treating it as a pass. `darwin/` and `win32/` visual-regression
-  baselines are committed; Linux is missing its baseline and fails closed (see
-  `.github/workflows/ci.yml` "MISSING LINUX BASELINES").
+  defect rather than treating it as a pass. `darwin/`, `win32/`, and Linux
+  visual-regression baselines are committed; Linux capture is verified on
+  `ubuntu-latest` and can be promoted only through the isolated writer in
+  `.github/workflows/capture-linux-baselines.yml`.
 - **Dependency licences are not checked by CI.** The `audit` job checks
   vulnerability advisories, not licence terms. The README records this limitation
   and the expectation to review dependency licences.
@@ -300,11 +305,9 @@ decision to the operator.
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
 - **The latest recorded full headless run passed; its machine-specific result is
-  in `e2e/OPEN_PROBLEMS.md`.** Three tests are `test.skip` by declaration. The Photopea
-  round-trip needs an external service; the single-tool
-  right-click case is recorded under "Known-skip tests" in
-  `e2e/OPEN_PROBLEMS.md`; and `e2e/viewport-drawing.spec.ts` is skipped by the
-  operator's decision of 2026-09-29 because of intermittent capture drift. Its
+  in `e2e/OPEN_PROBLEMS.md`.** Two tests are `test.skip` by declaration: the Photopea
+  round-trip needs an external service, and `e2e/viewport-drawing.spec.ts` is skipped
+  by the operator's decision of 2026-09-29 because of intermittent capture drift. Its
   frequency is unknown: `TEST-FLAKES.md` §12 explicitly says the observations have
   not been reconciled into a rate. The skip is a gate decision, not a fix or waiver;
   do not loosen the assertion or add retries.

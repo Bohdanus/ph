@@ -1,0 +1,81 @@
+name: Focused E2E
+run-name: Focused E2E ${{ github.event.client_payload.request_id }} @ ${{ github.event.client_payload.source_sha }}
+
+on:
+  repository_dispatch:
+    types: [mirror-e2e-focused]
+
+concurrency:
+  group: focused-e2e-${{ github.event.client_payload.request_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  focused-e2e:
+    runs-on: ${{ github.event.client_payload.platform == 'linux' && 'ubuntu-latest' || github.event.client_payload.platform == 'windows' && 'windows-latest' || github.event.client_payload.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    steps:
+      - name: Validate repository dispatch target
+        env:
+          REQUEST_ID: ${{ github.event.client_payload.request_id }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ github.event.client_payload.expected_workflow_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          PLATFORM: ${{ github.event.client_payload.platform }}
+        shell: bash
+        run: |
+          [[ "$GITHUB_REPOSITORY" == "Bohdanus/ph" ]] || { echo "Refusing focused E2E outside Bohdanus/ph" >&2; exit 1; }
+          [[ "$REF" == "refs/heads/main" ]] || { echo "Refusing focused E2E outside trusted main" >&2; exit 1; }
+          [[ "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || { echo "Mirror main advanced after workflow preflight" >&2; exit 1; }
+          [[ "$REQUEST_ID" =~ ^[a-fA-F0-9]{32}$ ]] || { echo "request_id must be 32 hexadecimal characters" >&2; exit 1; }
+          [[ "$SOURCE_SHA" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "source_sha must be a full Git object ID" >&2; exit 1; }
+          [[ "$PLATFORM" == "linux" || "$PLATFORM" == "windows" || "$PLATFORM" == "macos" ]] || { echo "Unsupported E2E platform" >&2; exit 1; }
+
+      - name: Checkout exact source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate focused spec
+        env:
+          E2E_SPEC: ${{ github.event.client_payload.spec }}
+        shell: bash
+        run: node scripts/validate-e2e-spec.mjs "$E2E_SPEC"
+
+      - name: Install Chrome and Linux dependencies
+        if: ${{ github.event.client_payload.platform == 'linux' }}
+        run: npx playwright install --with-deps chrome
+
+      - name: Install Chrome
+        if: ${{ github.event.client_payload.platform != 'linux' }}
+        run: npx playwright install chrome
+
+      - name: Run focused Playwright spec
+        env:
+          E2E_SPEC: ${{ github.event.client_payload.spec }}
+        shell: bash
+        run: npx playwright test --workers=1 "$E2E_SPEC"
+
+      - name: Upload Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-e2e-${{ github.event.client_payload.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: error

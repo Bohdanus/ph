@@ -333,12 +333,11 @@ async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: n
     `file-roundtrip-after-reopen-dpr-${expectedDpr}`
   );
   const after = await requireDominantRed(afterCapture, 'after reopening the saved file');
-  expect(after, 'the stroke should come back in the colour it was drawn').toEqual({
-    red: before.red,
-    green: before.green,
-    blue: before.blue,
-    count: before.count,
-  });
+  // CDP captures rendered-surface pixels; the exact document-space raster is compared below.
+  expect(
+    { red: after.red, green: after.green, blue: after.blue },
+    'the stroke should come back in the colour it was drawn'
+  ).toEqual({ red: before.red, green: before.green, blue: before.blue });
   expect(after.red, 'the reopened stroke should be the red that was drawn').toBeGreaterThan(180);
   expect(after.green, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
   expect(after.blue, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);

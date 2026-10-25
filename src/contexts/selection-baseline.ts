@@ -247,12 +247,12 @@ export function selectionSnapshot(
 /**
  * The single derivation of the selection state a legacy timeline starts from.
  *
- * The lookup is deliberately unbounded. A selection is created by a gesture that
- * writes no history entry, so the first non-disabled `SELECTION_ACTION` entry's
- * `previousSelectionState` is the only record that the selection ever existed;
- * bounding this at a replay target would make undoing a tool-switch deselect a
- * silent visual no-op. The same reasoning is why the durable baseline is seeded
- * from the same unbounded lookup, so both branches agree at every cursor.
+ * The lookup is deliberately unbounded. The first non-disabled `SELECTION_ACTION`
+ * entry's `previousSelectionState` may be the only record of the selection that
+ * existed before that action. A replay target before that entry still needs this
+ * snapshot; bounding the lookup at the target would discard it and make undoing a
+ * tool-switch deselect a silent visual no-op. The durable baseline uses the same
+ * whole-timeline lookup so both branches agree at every cursor.
  */
 export function deriveSelectionBaseline(history: readonly HistoryItem[]): SelectionSnapshot {
   const first = history.find((item) => {

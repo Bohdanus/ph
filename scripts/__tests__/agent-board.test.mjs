@@ -529,6 +529,8 @@ describe('file locks make one-file-one-agent real', () => {
     const sibling = join(dir, 'sibling');
     mkdirSync(repo);
     execFileSync('git', ['init', '--quiet'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Test Agent'], { cwd: repo });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
     execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: repo });
     execFileSync('git', ['worktree', 'add', '--quiet', sibling, '-b', 'sibling'], { cwd: repo });
 
