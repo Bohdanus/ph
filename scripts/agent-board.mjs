@@ -43,7 +43,6 @@ import {
   NO_LIMIT,
   SCOPES,
   STATUSES,
-  TOKEN_WINDOW_HOURS,
   isImportedOrigin,
   parseDuration,
   priorityFromTitle,
@@ -51,7 +50,6 @@ import {
   resolveBoardDir,
 } from './lib/agent-board/db.mjs';
 import { resolveIdentity } from './lib/agent-board/identity.mjs';
-import { MAX_TOKEN_WINDOW_HOURS } from './lib/agent-board/token-poll.mjs';
 
 /**
  * How a reader has to spell a command, in ONE place.
@@ -114,16 +112,7 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
    health                 is this board being USED, or only carried?
    doctor                 release claims from dead worktrees and expired leases  --dry-run
    import                 the handoff documents into the board     --dry-run --file
-   export                 dump the board as JSON
-   tokens                 held GPT token-budget readings           --poll --budget --window --provider --model --prune
-                            bare: held readings, newest first (repeated polls may appear);
-                            --poll records a new 5-hour-lookback usage estimate;
-                            --budget <n> sets the window ceiling (else KILO_TOKEN_WINDOW_BUDGET);
-                            --window <hours> accepts 0 < hours <= 72 (default 5);
-                            --prune drops readings older than the window;
-                            --json includes freshness and subagent routing policy;
-                            usage and next-expiry time are estimates, not account limits
-
+    export                 dump the board as JSON
   --json                 machine-readable output on every command except help and --version,
                          and \`watch --follow\`, which is an unbounded stream: it prints one
                          line per event instead, and says so above
@@ -164,10 +153,6 @@ const VALUE_FLAGS = new Set([
   'title',
   'until',
   'file',
-  'budget',
-  'model',
-  'provider',
-  'window',
 ]);
 
 /**
@@ -1384,84 +1369,6 @@ export async function run(
           // IS the output, and a human who wants prose has `--json` off the
           // critical path rather than having to know that.
           json ? undefined : null
-        );
-        return 0;
-      }
-
-      case 'tokens': {
-        const windowHours = flags.window === undefined ? TOKEN_WINDOW_HOURS : Number(flags.window);
-        // A window of 0 is a no-op; a negative or non-numeric one is a mistake
-        // this board has no read on, so refuse it rather than silently polling
-        // an empty range and reporting zero consumed.
-        if (
-          flags.window !== undefined &&
-          (!Number.isFinite(windowHours) || windowHours <= 0 || windowHours > MAX_TOKEN_WINDOW_HOURS)
-        ) {
-          throw new BoardError(`--window needs a positive number of hours no greater than ${MAX_TOKEN_WINDOW_HOURS}`, {
-            code: 1,
-          });
-        }
-
-        if (flags.prune) {
-          const pruned = board.pruneTokenWindow({ windowHours });
-          emit({ pruned, windowHours }, `${pruned} reading(s) older than ${windowHours}h pruned`);
-          // `--prune` is maintenance; do not also poll, so the user can clean the
-          // table without re-recording. Return after reporting.
-          if (!flags.poll) {
-            return 0;
-          }
-        }
-
-        if (flags.poll) {
-          const { pollGptTokens, resolveBudget, subagentTokenPolicy } =
-            await import('./lib/agent-board/token-poll.mjs');
-          const budget = resolveBudget(flags.budget);
-          const reading = pollGptTokens({ windowHours, budgetTokens: budget });
-          const routingPolicy = subagentTokenPolicy(reading);
-          board.pruneTokenWindow({ windowHours });
-          board.recordTokenWindow(reading);
-          emit(
-            { reading, routingPolicy },
-            reading.status === 'no-session-db'
-              ? `token poll found no session database at ${reading.detail.dbPath}; recorded unavailable usage and reset timing`
-              : reading.status === 'error'
-                ? `token poll errored (${reading.detail.error ?? 'see --json'}); recorded for diagnosis`
-                : `token poll recorded: ${reading.consumedTokens} consumed${budget != null ? ` of ${budget}` : ''}` +
-                  (reading.remainingTokens != null ? `, ${reading.remainingTokens} left` : ' (no budget set)') +
-                  `; estimated next expiry ${reading.resetAt == null ? 'unknown' : `~${reading.resetAt}`}; subagents ${routingPolicy.recommendation}`
-          );
-          return 0;
-        }
-
-        const readings = board.tokenWindowReadings({
-          provider: typeof flags.provider === 'string' && flags.provider ? flags.provider : null,
-          model: typeof flags.model === 'string' && flags.model ? flags.model : null,
-          limit: limitFlag(flags.limit, 50),
-        });
-        const { subagentTokenPolicy } = await import('./lib/agent-board/token-poll.mjs');
-        const nowMs = Date.now();
-        const displayedReadings = readings.map((r) => {
-          const policy = subagentTokenPolicy(r, nowMs);
-          return { ...r, stale: policy.stale, age_ms: policy.ageMs };
-        });
-        const routingPolicy = subagentTokenPolicy(readings[0], nowMs);
-        const rows = displayedReadings.map((r) => [
-          r.polled_at,
-          r.provider,
-          r.model,
-          r.consumed_tokens != null ? `${r.consumed_tokens}` : 'unknown',
-          r.remaining_tokens != null ? `${r.remaining_tokens}` : 'n/a',
-          r.status,
-          `${r.window_hours}h`,
-          r.reset_at == null ? 'unknown' : `${r.detail?.resetAtEstimated ? '~' : ''}${r.reset_at}`,
-          r.stale ? 'STALE' : 'fresh',
-        ]);
-        emit(
-          { readings: displayedReadings, routingPolicy },
-          rows.length === 0
-            ? 'no token readings held — prefer free models until a fresh budget is known; run: npm run swarm -- tokens --poll'
-            : `${columns(rows, ['POLLED AT', 'PROVIDER', 'MODEL', 'CONSUMED', 'REMAINING', 'STATUS', 'LOOKBACK', 'RESET', 'FRESHNESS'])}\n` +
-                `subagents: ${routingPolicy.recommendation}; Terra/Sol: ${routingPolicy.terraSol}; reason: ${routingPolicy.reason}`
         );
         return 0;
       }
