@@ -152,13 +152,15 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   `create` commit. Quick Selection has an Add/Subtract mode that rasterizes the current
   compound contour path into its base mask, but the other selection tools replace the active
   selection and there is no general Intersect or cross-tool combination mode.
-- **The selection stores compound contours, not a persistent alpha channel.** `Selection` in
-  `src/contexts/general-types.ts` carries one or more closed paths normalized to a shared
-  bounding box. Even-odd membership preserves disconnected areas and holes; Magic Wand and
-  Quick Selection commit every contour they trace, and clipboard and selected raster operations
-  derive masks from those paths. `SelectionSourceTool` still has no `elliptical-selection` or
-  `quick-selection` member, so those tools use the existing source identities needed to suppress
-  draggable anchors and anchor hit-testing.
+- **The selection stores compound contours or a packed one-bit mask, not a persistent alpha
+  channel.** `Selection` in `src/contexts/general-types.ts` carries closed paths normalized to a
+  shared bounding box and can carry an authoritative packed mask when contour complexity exceeds
+  the safe vector boundary budget. Even-odd membership preserves disconnected areas and holes;
+  Magic Wand and Quick Selection preserve every traced contour, and clipboard and selected raster
+  operations derive coverage from that geometry or mask. `SelectionSourceTool` includes
+  `'quick-selection'`, so Quick Selection keeps its own source identity. Elliptical Marquee still
+  uses the `'magic-wand'` identity because the union has no dedicated `'elliptical-selection'`
+  member; that source remains excluded from draggable anchors and anchor hit-testing.
 
 ## Rectangular Marquee Tool — `rectangular-selection`
 
