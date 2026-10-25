@@ -2,8 +2,8 @@
 name: ci-failure-mitigation
 description: >-
   Analyzes non-browser CI failures (lint, typecheck, test, build, audit) from the
-  `ci` and `e2e-unit` jobs in GitHub Actions, fixes them via subagents who read CI
-  error logs to protect main context, then writes, reviews, commits, and merges.
+  `ci` and `e2e-unit` jobs in GitHub Actions with read-only subagents who inspect
+  bounded CI error logs, then has the coordinator apply, review, commit, and merge fixes.
   Intentionally IGNORES browser-environment-dependent e2e spec failures (visual
   regression baselines, pixel diffs, canvas rendering on Linux headless) unless
   the failure is a logic defect that is OS-agnostic.
@@ -32,7 +32,7 @@ baseline mismatches).
 
 ### Known e2e environment-bound issues:
 
-- Visual regression baselines: `darwin/` and `win32/` are committed; `linux/` is missing. The available EC2 host is ARM64 and must not be used to create a baseline for the `ubuntu-latest` x86-64 runner.
+- Visual baselines: capture Linux on the mirror's `ubuntu-latest` runner with `npm run test:e2e:mirror -- --linux-baselines --chat-id <native-id>`. Use the live EC2 host only for targeted ARM64 checks; see [`FREE-REMOTE-COMPUTE.md`](../docs/FREE-REMOTE-COMPUTE.md).
 - Canvas rendering differences between headless Chrome on Linux/Windows and macOS
 - The suite runs headless in CI on a cross-platform matrix (Linux, Windows, macOS)
 
@@ -80,8 +80,8 @@ failure is clearly about application logic, not rendering on a specific OS/brows
 2. Subagent #1: Analyze CI job — read logs, extract failure reasons
 3. Subagent #2: Analyze e2e-unit job — read logs, extract failure reasons
 4. Subagent #3 (optional): Analyze e2e job — classify failures as env-bound vs logic
-5. Subagent #4: Fix CI failures (lint, typecheck, test, build)
-6. Subagent #5: Review changes — run lint, tsc, test locally
+5. Coordinator: Apply fixes from accepted proposals in the task worktree
+6. Read-only subagent: Review changes; coordinator runs lint, tsc, test locally
 7. Commit with Chat trailer
 8. Merge via worktree-merge-harvest skill
 ```
@@ -90,13 +90,14 @@ failure is clearly about application logic, not rendering on a specific OS/brows
 
 ### Subagents MUST NOT:
 
-- Edit production/source files (`src/` non-test files) — only for lint warning fixes, never for logic changes
+- Edit files or run Git commands — return findings and proposed patches; the coordinator applies edits and owns Git
+- For production/source lint failures, return a minimal proposed patch; the coordinator decides whether to apply it
 - Run `git push` — coordinator commits and merges only
 - Merge to main directly — use worktree-merge-harvest skill
 - Weaken assertions to make tests pass
-- Add `data-testid` to production components (unless required for e2e stability)
+- For a needed `data-testid`, return a minimal proposal; the coordinator decides whether and how to apply it
 - Run from the main checkout (must be in a worktree)
-- Modify `package.json`, `tsconfig.json`, `vitest.config.*`, or other config files — unless config is the actual fix
+- For config failures, return a specific proposed change; the coordinator decides whether and how to apply it
 
 ### Only the coordinator MAY:
 
@@ -199,37 +200,42 @@ or logic defects, returns:
 ### Step 2.1: Create fix worktree
 
 ```bash
-MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
-git worktree add -b fix/ci-failures-$(date +%Y%m%d) \
-  "$MAIN/.kilo/worktrees/fix-ci-failures-$(date +%Y%m%d)"
+git worktree list --porcelain
+# Set this to the absolute path from the stanza with: branch refs/heads/main
+MAIN_WORKTREE="<absolute-main-worktree-path>"
+TASK_NAME="fix-ci-failures-$(date +%Y%m%d)"
+TASK_WORKTREE="$MAIN_WORKTREE/.kilo/worktrees/$TASK_NAME"
+git -C "$MAIN_WORKTREE" worktree add -b "task/$TASK_NAME" "$TASK_WORKTREE" main
+cd "$TASK_WORKTREE"
+git rev-parse --show-toplevel
 ```
 
-### Step 2.2: Dispatch fix subagents
+### Step 2.2: Dispatch read-only fix analysis
 
-Each subagent targets ONE file or ONE category of failure:
+Each subagent analyzes ONE file or ONE category of failure, then returns a focused patch proposal. Subagents do not edit files or run commands; the coordinator applies accepted changes and runs verification.
 
-**Subagent #4 (Lint fixes)** — receives the files with ESLint errors or Prettier
-failures and fixes them one at a time. Returns JSON per file:
+**Subagent #4 (Lint analysis)** — receives the files with ESLint errors or Prettier
+failures and proposes minimal fixes one at a time. Returns JSON per file:
 
 ```json
 {
   "file": "<affected-file>",
-  "action": "fixed",
+  "action": "proposed",
   "change": "<description, e.g., moved export to constants.ts to resolve react-refresh/only-export-components>",
-  "verificationCommand": "npx eslint <affected-file>"
+  "verificationCommand": "coordinator runs npm run lint:check"
 }
 ```
 
-**Subagent #5 (Typecheck fixes)** — receives TSC errors and fixes them.
-**Subagent #6 (Test fixes)** — receives test failures and fixes them.
-**Subagent #7 (Build fixes)** — receives build errors and fixes them.
+**Subagent #5 (Typecheck analysis)** — receives TSC errors and proposes fixes.
+**Subagent #6 (Test analysis)** — receives test failures and proposes fixes.
+**Subagent #7 (Build analysis)** — receives build errors and proposes fixes.
 
-Each fix subagent:
+Each analysis subagent:
 
 1. Reads the specific file(s) involved
-2. Makes minimal, targeted changes
-3. Runs the verification command locally
-4. Returns JSON with the result
+2. Returns a minimal, targeted unified diff or exact edit instructions
+3. Does not edit files or run commands
+4. Returns JSON with the proposal and relevant evidence
 
 ## Phase 3: Review & Merge
 
@@ -250,16 +256,12 @@ npm run build          # must pass
 ```bash
 cd <worktree>
 # Stage only specific files, never git add -A
-git add <fix-files...>    # the source files the subagents edited
+git add <fix-files...>    # the specific files the coordinator changed and reviewed
 git add .skills/parallel-test-hardening.md
 
-# Commit with Chat trailer
-CHAT_ID=$(sqlite3 -readonly ~/.local/share/kilo/kilo.db \
-  "SELECT s.id FROM session s JOIN message m ON m.session_id=s.id \
-   JOIN part p ON p.message_id=m.id WHERE s.parent_id IS NULL \
-   AND json_extract(p.data,'\$.type')='text' \
-   AND lower(json_extract(p.data,'\$.text')) LIKE '%<search-phrase-from-your-chat>%' \
-   ORDER BY s.time_updated DESC LIMIT 1;")
+# Resolve the native session ID for the current host using docs/CHAT-ID.md.
+# Verify the match; do not guess or select the first database row.
+CHAT_ID="<verified-native-session-id>"
 
 git -c user.name="Kilo" -c user.email="kilo@kilo.ai" commit \
   -m "Fix CI failures: <description of the fixes>" \
@@ -292,15 +294,12 @@ being "fixed" by weakening assertions.
 
 ## Model Selection Guide
 
-| Model                   | Provider | Variant  | Best For                        | Notes                                      |
-| ----------------------- | -------- | -------- | ------------------------------- | ------------------------------------------ |
-| Poolside Laguna S 2.1   | kilo     | thinking | Primary subagent work           | Preferred; rate-limited (max 2 concurrent) |
-| Step 3.7 Flash          | kilo     | high     | Simple, single-file lint fixes  | Fast, accurate                             |
-| Nemotron 3 Ultra (free) | kilo     | high     | Analysis, review, complex fixes | Thorough, slower; low confidence           |
-| Dots3-Note Preview      | kilo     | thinking | Lightweight classification      | Summaries only                             |
-
-**Avoid:** `LiquidAI LFM2.5-2.6B` — known rate-limited.
-Free models must not perform Git operations (commit, merge, branch creation) per the free-model Git restriction in AGENTS.md.
+Read `MODELS.md` before selecting a model or provider. Refresh the free catalog, inspect the newest
+token-capacity reading, and pass the exact model/provider pair together. Keep free subagents
+read-only; the coordinator owns edits and all Git operations. If a free route is unavailable or
+exhausted, do not silently fall back to paid inference; follow `MODELS.md` for the required operator
+authorization and budget checks. In Codex, follow `docs/CODEX-ORCHESTRATION.md` instead of assuming
+Kilo task routing is available.
 
 ## Example Workflow
 
@@ -314,13 +313,9 @@ GH_TOKEN=$GH_TOKEN gh api repos/<owner>/<repo>/actions/runs/<run-id>/jobs
 # 3. Get logs for the failing job
 GH_TOKEN=$GH_TOKEN gh run view <run-id> --log --job <job-id> | grep -E "error|warning" -A 3
 
-# 4. Create worktree and fix
-MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
-git worktree add -b fix/ci-failures-$(date +%Y%m%d) \
-  "$MAIN/.kilo/worktrees/fix-ci-failures-$(date +%Y%m%d)"
+# 4. Create the worktree using the verified MAIN_WORKTREE and TASK_WORKTREE from Step 2.1.
 
 # 5. Fix files, verify locally
-cd <worktree>
 npm run lint:check && npm run tsc && npm run test
 
 # 6. Commit with Chat trailer

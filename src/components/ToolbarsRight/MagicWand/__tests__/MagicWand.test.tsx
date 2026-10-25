@@ -44,7 +44,7 @@ const POLYGON_SELECTION: Selection = {
       tolerance: 28,
       smoothing: 1.5,
       selectedPixelCount: 321,
-      boundaryPointCount: 3,
+      boundaryEdgeCount: 3,
       seed: { x: 4, y: 8 },
       sampleColor: { r: 10, g: 20, b: 30, a: 255 },
     },
@@ -198,12 +198,12 @@ describe('MagicWand toolbar', () => {
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
     });
 
-    it('warns that non-contiguous mode keeps only the largest region', () => {
+    it('explains that non-contiguous mode checks matching colors across the image', () => {
       toolArgs.contiguous = false;
       render(<MagicWand />);
 
       expect(screen.getByRole('status')).toHaveTextContent(
-        'Non-contiguous mode keeps only the largest matching region; results with holes are canceled.'
+        'Selects matching colors across the image, including disconnected regions.'
       );
     });
 

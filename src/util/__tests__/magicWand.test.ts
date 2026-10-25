@@ -6,6 +6,8 @@ import {
   getMagicWandColorDistance,
 } from '../magicWand.ts';
 import { getToleranceDistance } from '../flood-fill.ts';
+import { createSelectionAlphaMask } from '../selection.ts';
+import { decodeRasterSelectionMask, MAX_VECTOR_SELECTION_BOUNDARY_EDGES } from '../selection-mask.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
   const imageData = {
@@ -33,13 +35,30 @@ function setPixel(imageData: ImageData, x: number, y: number, color: [number, nu
   imageData.data[index + 3] = color[3];
 }
 
-function getPointBounds(points: Array<{ x: number; y: number }>) {
+function getPointBounds(contours: Array<Array<{ x: number; y: number }>>) {
+  const flatPoints = contours.flat();
   return {
-    minX: Math.min(...points.map((point) => point.x)),
-    minY: Math.min(...points.map((point) => point.y)),
-    maxX: Math.max(...points.map((point) => point.x)),
-    maxY: Math.max(...points.map((point) => point.y)),
+    minX: Math.min(...flatPoints.map((point) => point.x)),
+    minY: Math.min(...flatPoints.map((point) => point.y)),
+    maxX: Math.max(...flatPoints.map((point) => point.x)),
+    maxY: Math.max(...flatPoints.map((point) => point.y)),
   };
+}
+
+function exactColorAlphaMask(imageData: ImageData, color: [number, number, number, number]): Uint8Array {
+  const mask = new Uint8Array(imageData.width * imageData.height);
+  for (let i = 0; i < mask.length; i++) {
+    const offset = i * 4;
+    if (
+      imageData.data[offset] === color[0] &&
+      imageData.data[offset + 1] === color[1] &&
+      imageData.data[offset + 2] === color[2] &&
+      imageData.data[offset + 3] === color[3]
+    ) {
+      mask[i] = 255;
+    }
+  }
+  return mask;
 }
 
 /** A 5x5 image whose only lit pixels form a 13-pixel diamond, so its traced outline is a staircase. */
@@ -206,10 +225,7 @@ describe('neighbour connectivity', () => {
     expect(result?.bounds).toEqual({ x: 0, y: 0, width: 3, height: 3 });
   });
 
-  it('returns the largest traced loop as the outline even when other regions matched', () => {
-    // The diagonal neighbour produces a second boundary fragment, but only the 2x2
-    // block's loop is large enough to win `selectLargestBoundaryLoop`, so the
-    // returned polygon is the block outline and not the whole 3x3 bounding box.
+  it('retains every matched contour, including a one-pixel diagonal component', () => {
     const result = createMagicWandSelectionFromImageData(
       twoRegions(),
       { x: 0, y: 0 },
@@ -217,14 +233,22 @@ describe('neighbour connectivity', () => {
     );
 
     expect(result!.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 2, y: 0 },
-      { x: 2, y: 1 },
-      { x: 2, y: 2 },
-      { x: 1, y: 2 },
-      { x: 0, y: 2 },
-      { x: 0, y: 1 },
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 2, y: 0 },
+        { x: 2, y: 1 },
+        { x: 2, y: 2 },
+        { x: 1, y: 2 },
+        { x: 0, y: 2 },
+        { x: 0, y: 1 },
+      ],
+      [
+        { x: 2, y: 2 },
+        { x: 3, y: 2 },
+        { x: 3, y: 3 },
+        { x: 2, y: 3 },
+      ],
     ]);
   });
 
@@ -244,10 +268,12 @@ describe('region shapes', () => {
     const result = createMagicWandSelectionFromImageData(imageData, { x: 1, y: 1 }, { tolerance: 0 });
 
     expect(result?.points).toEqual([
-      { x: 1, y: 1 },
-      { x: 2, y: 1 },
-      { x: 2, y: 2 },
-      { x: 1, y: 2 },
+      [
+        { x: 1, y: 1 },
+        { x: 2, y: 1 },
+        { x: 2, y: 2 },
+        { x: 1, y: 2 },
+      ],
     ]);
     expect(result?.bounds).toEqual({ x: 1, y: 1, width: 1, height: 1 });
   });
@@ -269,7 +295,7 @@ describe('region shapes', () => {
 
     expect(result?.selectedPixelCount).toBe(9);
     expect(result?.bounds).toEqual({ x: 0, y: 0, width: 3, height: 3 });
-    expect(result!.points).toHaveLength(12);
+    expect(result!.points[0]).toHaveLength(12);
     expect(getPointBounds(result!.points)).toEqual({ minX: 0, minY: 0, maxX: 3, maxY: 3 });
   });
 
@@ -292,18 +318,20 @@ describe('region shapes', () => {
     // The concave corner at (1,1) is inside the bounding box but not selected, so the
     // outline has to step in to exclude it rather than tracing the bounding box.
     expect(result!.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 2, y: 0 },
-      { x: 3, y: 0 },
-      { x: 3, y: 1 },
-      { x: 2, y: 1 },
-      { x: 1, y: 1 },
-      { x: 1, y: 2 },
-      { x: 1, y: 3 },
-      { x: 0, y: 3 },
-      { x: 0, y: 2 },
-      { x: 0, y: 1 },
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 2, y: 0 },
+        { x: 3, y: 0 },
+        { x: 3, y: 1 },
+        { x: 2, y: 1 },
+        { x: 1, y: 1 },
+        { x: 1, y: 2 },
+        { x: 1, y: 3 },
+        { x: 0, y: 3 },
+        { x: 0, y: 2 },
+        { x: 0, y: 1 },
+      ],
     ]);
   });
 
@@ -316,7 +344,7 @@ describe('region shapes', () => {
 
     expect(result?.selectedPixelCount).toBe(2);
     expect(result?.bounds).toEqual({ x: 1, y: 1, width: 2, height: 1 });
-    expect(result!.points).toHaveLength(6);
+    expect(result!.points[0]).toHaveLength(6);
     expect(getPointBounds(result!.points)).toEqual({ minX: 1, minY: 1, maxX: 3, maxY: 2 });
   });
 
@@ -348,35 +376,51 @@ describe('interior holes', () => {
   };
 
   it.each([
-    // The mask holds `size * size - holeSize * holeSize` pixels, but the outer contour alone
-    // encloses all `size * size` of them, so committing it would cover the hole with pixels this
-    // fill reported as unselected and make `selectedPixelCount` under-report the polygon.
     ['a single-pixel hole in a 5x5 ring', 5, 1],
     ['a single-pixel hole in a 3x3 ring', 3, 1],
     ['a 2x2 hole in a 5x5 ring', 5, 2],
-  ])('returns null rather than a hole-covering outline for %s', (_label, size, holeSize) => {
+  ])('round-trips the exact pixel mask for %s', (_label, size, holeSize) => {
+    const imageData = squareRing(size, holeSize);
+    const result = createMagicWandSelectionFromImageData(imageData, { x: 0, y: 0 }, { tolerance: 0 });
+
+    expect(result).not.toBeNull();
+    expect(result?.selectedPixelCount).toBe(size * size - holeSize * holeSize);
+    expect(result?.points).toHaveLength(2);
+    expect(createSelectionAlphaMask(result!.points, { width: size, height: size })).toEqual(
+      exactColorAlphaMask(imageData, [255, 0, 0, 255])
+    );
+  });
+
+  it('preserves the hole through smoothing', () => {
+    const imageData = squareRing(5, 1);
+    const result = createMagicWandSelectionFromImageData(imageData, { x: 0, y: 0 }, { tolerance: 0, smoothing: 1 });
+
+    expect(result?.points).toHaveLength(2);
+    expect(createSelectionAlphaMask(result!.points, { width: 5, height: 5 })).toEqual(
+      exactColorAlphaMask(imageData, [255, 0, 0, 255])
+    );
+  });
+
+  it('round-trips a nested island inside a noncontiguous color match', () => {
+    const imageData = squareRing(7, 3);
+    setPixel(imageData, 3, 3, [255, 0, 0, 255]);
     const result = createMagicWandSelectionFromImageData(
-      squareRing(size, holeSize),
+      imageData,
       { x: 0, y: 0 },
-      {
-        tolerance: 0,
-      }
+      { tolerance: 0, contiguous: false }
     );
 
-    expect(result).toBeNull();
+    expect(result?.points).toHaveLength(3);
+    expect(result?.selectedPixelCount).toBe(41);
+    expect(createSelectionAlphaMask(result!.points, { width: 7, height: 7 })).toEqual(
+      exactColorAlphaMask(imageData, [255, 0, 0, 255])
+    );
   });
 
-  it('refuses a hole even when smoothing is on, since smoothing never widens the path', () => {
-    expect(
-      createMagicWandSelectionFromImageData(squareRing(5, 1), { x: 0, y: 0 }, { tolerance: 0, smoothing: 1 })
-    ).toBeNull();
-  });
-
-  it('still returns a selection when disjoint same-winding regions matched, not a hole', () => {
+  it('retains disjoint same-winding regions that meet at a corner', () => {
     // A 2-pixel block and a 3-pixel L that share a corner are two independent outer contours, so
-    // their loops have the same winding sign. They are siblings to pick between, not a hole, and
-    // the larger one must still win. This is the other side of the discriminator the hole case
-    // relies on: reading the sign the other way round would null this and commit the annulus.
+    // their loops have the same winding sign. Both paths belong to the result; the touching point
+    // must not make the tracer merge them into an outline that fills intervening pixels.
     const imageData = createImageData(4, 4, [0, 0, 0, 255]);
 
     for (const [x, y] of [
@@ -400,7 +444,11 @@ describe('interior holes', () => {
 
     expect(result).not.toBeNull();
     expect(result?.selectedPixelCount).toBe(5);
-    expect(getPointBounds(result!.points)).toEqual({ minX: 2, minY: 2, maxX: 4, maxY: 4 });
+    expect(getPointBounds(result!.points)).toEqual({ minX: 0, minY: 0, maxX: 4, maxY: 4 });
+    expect(result!.points).toHaveLength(2);
+    expect(createSelectionAlphaMask(result!.points, { width: 4, height: 4 })).toEqual(
+      exactColorAlphaMask(imageData, [255, 0, 0, 255])
+    );
   });
 
   it('keeps a shape whose bounding box is full but whose missing pixels touch the outline', () => {
@@ -421,7 +469,7 @@ describe('interior holes', () => {
     const result = createMagicWandSelectionFromImageData(imageData, { x: 0, y: 0 }, { tolerance: 0 });
 
     expect(result?.selectedPixelCount).toBe(5);
-    expect(result!.points).toHaveLength(12);
+    expect(result!.points[0]).toHaveLength(12);
   });
 });
 
@@ -458,7 +506,7 @@ describe('boundary smoothing', () => {
   it('keeps the raw staircase outline when smoothing is omitted', () => {
     const result = createMagicWandSelectionFromImageData(createDiamondImageData(), { x: 2, y: 2 }, { tolerance: 0 });
 
-    expect(result?.points).toHaveLength(20);
+    expect(result?.points[0]).toHaveLength(20);
     expect(result?.selectedPixelCount).toBe(13);
   });
 
@@ -474,7 +522,7 @@ describe('boundary smoothing', () => {
       { tolerance: 0, smoothing }
     );
 
-    expect(result?.points).toHaveLength(expectedPoints);
+    expect(result?.points[0]).toHaveLength(expectedPoints);
   });
 
   it('reduces the diamond to its four extreme vertices at a smoothing tolerance of 1', () => {
@@ -485,10 +533,12 @@ describe('boundary smoothing', () => {
     );
 
     expect(result!.points).toEqual([
-      { x: 2, y: 0 },
-      { x: 5, y: 2 },
-      { x: 3, y: 5 },
-      { x: 0, y: 3 },
+      [
+        { x: 2, y: 0 },
+        { x: 5, y: 2 },
+        { x: 3, y: 5 },
+        { x: 0, y: 3 },
+      ],
     ]);
   });
 
@@ -539,28 +589,65 @@ describe('boundary smoothing', () => {
       }
     );
 
-    expect(result?.points).toHaveLength(20);
+    expect(result?.points[0]).toHaveLength(20);
   });
 });
 
 describe('createMagicWandSelectionFromCanvas', () => {
   const solidCanvas = (width: number, height: number, color: [number, number, number, number]) =>
-    makeMockCanvas(width, height, { getImageData: vi.fn(() => createImageData(width, height, color)) });
+    makeMockCanvas(width, height, {
+      createImageData: vi.fn((targetWidth: number, targetHeight: number) =>
+        createImageData(targetWidth, targetHeight, color)
+      ) as unknown as CanvasRenderingContext2D['createImageData'],
+      getImageData: vi.fn(() => createImageData(width, height, color)),
+    });
 
   it('reads the whole canvas and returns the same result as the image-data entry point', () => {
     const canvas = solidCanvas(3, 3, [5, 6, 7, 255]);
 
-    const fromCanvas = createMagicWandSelectionFromCanvas(canvas, { x: 1, y: 1 });
+    const fromCanvas = createMagicWandSelectionFromCanvas(canvas, { x: 1, y: 1 }, { width: 3, height: 3 });
     const fromData = createMagicWandSelectionFromImageData(createImageData(3, 3, [5, 6, 7, 255]), { x: 1, y: 1 });
 
     expect(fromCanvas).toEqual(fromData);
     expect(fromCanvas?.selectedPixelCount).toBe(9);
   });
 
+  it('keeps Magic Wand coordinates on the logical grid when the backing bitmap is 2x', () => {
+    const logicalPixels = [
+      [20, 20],
+      [20, 200],
+    ];
+    const backing = createImageData(4, 4, [0, 0, 0, 255]);
+    for (let y = 0; y < 4; y += 1) {
+      for (let x = 0; x < 4; x += 1) {
+        setPixel(backing, x, y, [logicalPixels[Math.floor(y / 2)]![Math.floor(x / 2)]!, 0, 0, 255]);
+      }
+    }
+    const canvas = makeMockCanvas(4, 4, {
+      createImageData: vi.fn((width: number, height: number) =>
+        createImageData(width, height, [0, 0, 0, 255])
+      ) as unknown as CanvasRenderingContext2D['createImageData'],
+      getImageData: vi.fn(() => backing),
+    });
+
+    const result = createMagicWandSelectionFromCanvas(
+      canvas,
+      { x: 0, y: 0 },
+      { width: 2, height: 2 },
+      {
+        tolerance: 0,
+        contiguous: true,
+      }
+    );
+
+    expect(result?.selectedPixelCount).toBe(3);
+    expect(result?.bounds).toEqual({ x: 0, y: 0, width: 2, height: 2 });
+  });
+
   it('requests a frequently-read 2D context so the read-back stays on the CPU', () => {
     const canvas = solidCanvas(2, 2, [0, 0, 0, 255]);
 
-    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 });
+    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 2, height: 2 });
 
     expect(canvas.getContext).toHaveBeenCalledWith('2d', { willReadFrequently: true });
   });
@@ -568,27 +655,29 @@ describe('createMagicWandSelectionFromCanvas', () => {
   it('reads back the full canvas extent', () => {
     const canvas = solidCanvas(2, 3, [0, 0, 0, 255]);
 
-    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 });
+    createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 2, height: 3 });
 
     const context = canvas.getContext('2d') as unknown as { getImageData: Mock };
     expect(context.getImageData).toHaveBeenCalledWith(0, 0, 2, 3);
   });
 
   it('returns null for a null canvas', () => {
-    expect(createMagicWandSelectionFromCanvas(null, { x: 0, y: 0 })).toBeNull();
+    expect(createMagicWandSelectionFromCanvas(null, { x: 0, y: 0 }, { width: 2, height: 2 })).toBeNull();
   });
 
   it.each([
     ['zero width', 0, 4],
     ['zero height', 4, 0],
   ])('returns null for a canvas with %s', (_label, width, height) => {
-    expect(createMagicWandSelectionFromCanvas(makeMockCanvas(width, height), { x: 0, y: 0 })).toBeNull();
+    expect(
+      createMagicWandSelectionFromCanvas(makeMockCanvas(width, height), { x: 0, y: 0 }, { width, height })
+    ).toBeNull();
   });
 
   it('returns null when the canvas has no 2D context', () => {
     const canvas = { width: 4, height: 4, getContext: () => null } as unknown as HTMLCanvasElement;
 
-    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 })).toBeNull();
+    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 4, height: 4 })).toBeNull();
   });
 
   it('returns null instead of throwing when the read-back is rejected', () => {
@@ -598,11 +687,13 @@ describe('createMagicWandSelectionFromCanvas', () => {
       },
     });
 
-    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 })).toBeNull();
+    expect(createMagicWandSelectionFromCanvas(canvas, { x: 0, y: 0 }, { width: 4, height: 4 })).toBeNull();
   });
 
   it('propagates the image-data guards for an out-of-bounds seed on a real canvas', () => {
-    expect(createMagicWandSelectionFromCanvas(solidCanvas(3, 3, [0, 0, 0, 255]), { x: 3, y: 0 })).toBeNull();
+    expect(
+      createMagicWandSelectionFromCanvas(solidCanvas(3, 3, [0, 0, 0, 255]), { x: 3, y: 0 }, { width: 3, height: 3 })
+    ).toBeNull();
   });
 });
 
@@ -672,10 +763,12 @@ describe('single-pixel images', () => {
     const result = createMagicWandSelectionFromImageData(createImageData(1, 1, [255, 0, 0, 255]), { x: 0, y: 0 });
 
     expect(result?.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 1, y: 1 },
-      { x: 0, y: 1 },
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 },
+      ],
     ]);
     expect(result?.selectedPixelCount).toBe(1);
     expect(result?.bounds).toEqual({ x: 0, y: 0, width: 1, height: 1 });
@@ -690,10 +783,12 @@ describe('single-pixel images', () => {
     );
 
     expect(result?.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 1, y: 1 },
-      { x: 0, y: 1 },
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 },
+      ],
     ]);
     expect(result?.selectedPixelCount).toBe(1);
   });
@@ -705,7 +800,7 @@ describe('single-pixel images', () => {
       { smoothing: 5 }
     );
 
-    expect(result?.points).toHaveLength(4);
+    expect(result?.points[0]).toHaveLength(4);
   });
 });
 
@@ -734,10 +829,12 @@ describe('empty selections', () => {
 
     expect(result?.selectedPixelCount).toBe(1);
     expect(result?.points).toEqual([
-      { x: 1, y: 1 },
-      { x: 2, y: 1 },
-      { x: 2, y: 2 },
-      { x: 1, y: 2 },
+      [
+        { x: 1, y: 1 },
+        { x: 2, y: 1 },
+        { x: 2, y: 2 },
+        { x: 1, y: 2 },
+      ],
     ]);
   });
 });
@@ -757,15 +854,17 @@ describe('non-contiguous edge cases', () => {
 
     expect(result?.selectedPixelCount).toBe(1);
     expect(result?.points).toEqual([
-      { x: 1, y: 0 },
-      { x: 2, y: 0 },
-      { x: 2, y: 1 },
-      { x: 1, y: 1 },
+      [
+        { x: 1, y: 0 },
+        { x: 2, y: 0 },
+        { x: 2, y: 1 },
+        { x: 1, y: 1 },
+      ],
     ]);
     expect(result?.sampleColor).toEqual({ r: 255, g: 0, b: 0, a: 255 });
   });
 
-  it('returns null for a non-contiguous selection of a ring, since the outline cannot carry a hole', () => {
+  it('preserves a non-contiguous ring and excludes the enclosed area', () => {
     const ring = createImageData(5, 5, [0, 0, 0, 255]);
     for (let y = 0; y < 5; y++) {
       for (let x = 0; x < 5; x++) {
@@ -774,13 +873,19 @@ describe('non-contiguous edge cases', () => {
       }
     }
 
-    expect(createMagicWandSelectionFromImageData(ring, { x: 0, y: 0 }, { tolerance: 0, contiguous: false })).toBeNull();
+    const result = createMagicWandSelectionFromImageData(ring, { x: 0, y: 0 }, { tolerance: 0, contiguous: false });
+
+    expect(result?.selectedPixelCount).toBe(16);
+    expect(result?.points).toHaveLength(2);
+    expect(createSelectionAlphaMask(result!.points, { width: 5, height: 5 })).toEqual(
+      exactColorAlphaMask(ring, [255, 0, 0, 255])
+    );
   });
 
-  it('returns the largest region even when the seed lands on a smaller matching region', () => {
+  it('retains every matching region when the seed lands on the smaller one', () => {
     // Seed on the lone 1x1 red pixel, but a 3x3 red block exists elsewhere; the global
-    // mask pulls in all 10 red pixels and the longest contour wins, so the returned
-    // polygon bounds the block, not the seed.
+    // mask pulls in all 10 red pixels. The committed geometry must include both regions,
+    // including the one the click landed on.
     const imageData = createImageData(5, 5, [0, 0, 255, 255]);
     setPixel(imageData, 0, 0, [255, 0, 0, 255]);
     for (let y = 2; y < 5; y++) {
@@ -794,8 +899,82 @@ describe('non-contiguous edge cases', () => {
     );
 
     expect(result?.selectedPixelCount).toBe(10);
-    expect(getPointBounds(result!.points)).toEqual({ minX: 2, minY: 2, maxX: 5, maxY: 5 });
+    expect(result?.points).toHaveLength(2);
+    expect(getPointBounds(result!.points)).toEqual({ minX: 0, minY: 0, maxX: 5, maxY: 5 });
     expect(result?.bounds).toEqual({ x: 0, y: 0, width: 5, height: 5 });
+    expect(createSelectionAlphaMask(result!.points, { width: 5, height: 5 })).toEqual(
+      exactColorAlphaMask(imageData, [255, 0, 0, 255])
+    );
+  });
+});
+
+describe('high-fragmentation mask fallback', () => {
+  it('keeps a dense non-contiguous selection exact without materializing its contours', () => {
+    const size = 192;
+    const imageData = createImageData(size, size, [0, 0, 0, 255]);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        if ((x + y) % 2 === 0) setPixel(imageData, x, y, [255, 0, 0, 255]);
+      }
+    }
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 0, y: 0 },
+      { tolerance: 0, contiguous: false }
+    );
+
+    expect(result?.selectedPixelCount).toBe((size * size) / 2);
+    expect(result?.points).toEqual([]);
+    expect(result?.boundaryEdgeCount).toBe(MAX_VECTOR_SELECTION_BOUNDARY_EDGES + 1);
+    expect(result?.rasterMask).toMatchObject({ width: size, height: size });
+    expect(
+      createSelectionAlphaMask(
+        {
+          points: [],
+          rasterMask: { ...result!.rasterMask!, x: result!.bounds.x, y: result!.bounds.y },
+        },
+        { width: size, height: size },
+        { antiAlias: false }
+      )
+    ).toEqual(exactColorAlphaMask(imageData, [255, 0, 0, 255]));
+  });
+
+  it('preserves an exact 2048x2048 checkerboard without tracing millions of contours', () => {
+    const size = 2048;
+    const imageData = createImageData(size, size, [0, 0, 0, 255]);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = y % 2; x < size; x += 2) {
+        imageData.data[(y * size + x) * 4] = 255;
+      }
+    }
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 0, y: 0 },
+      { tolerance: 0, contiguous: false }
+    );
+
+    expect(result?.selectedPixelCount).toBe((size * size) / 2);
+    expect(result?.points).toEqual([]);
+    expect(result?.boundaryEdgeCount).toBe(MAX_VECTOR_SELECTION_BOUNDARY_EDGES + 1);
+    expect(result?.bounds).toEqual({ x: 0, y: 0, width: size, height: size });
+    expect(result?.rasterMask).toMatchObject({ width: size, height: size });
+
+    const packed = decodeRasterSelectionMask(result!.rasterMask!);
+    expect(packed).not.toBeNull();
+    let selectedPixelCount = 0;
+    let mismatchCount = 0;
+    for (let pixel = 0; pixel < size * size; pixel += 1) {
+      const selected = (packed![pixel >>> 3]! & (1 << (pixel & 7))) !== 0;
+      if (selected) selectedPixelCount += 1;
+      const y = Math.floor(pixel / size);
+      const x = pixel % size;
+      if (selected !== ((x + y) % 2 === 0)) mismatchCount += 1;
+    }
+
+    expect(selectedPixelCount).toBe((size * size) / 2);
+    expect(mismatchCount).toBe(0);
   });
 });
 
@@ -815,11 +994,9 @@ describe('known gaps (it.fails tripwires)', () => {
     expect(getToleranceDistance(Number.NaN)).toBe(getToleranceDistance(0));
   });
 
-  it.fails('returns the seed region on an equal-area non-contiguous tie', () => {
-    // `selectLargestBoundaryLoop` breaks ties with a strict `>` against a `bestArea`
-    // initialised to 0, so the first loop the tracer emits wins regardless of the seed.
-    // Two 1px regions of equal area: the seed sits on (3,0) yet the (0,0) region is
-    // traced first and comes back. Clicking a region should round-trip to that region.
+  it('retains every equal-sized region when Contiguous is unchecked', () => {
+    // Global matching is independent of the clicked component: both one-pixel red regions
+    // remain selected even though the click lands on the right-hand one.
     const imageData = createImageData(4, 1, [0, 0, 0, 255]);
     setPixel(imageData, 0, 0, [255, 0, 0, 255]);
     setPixel(imageData, 3, 0, [255, 0, 0, 255]);
@@ -830,11 +1007,7 @@ describe('known gaps (it.fails tripwires)', () => {
       { tolerance: 0, contiguous: false }
     );
 
-    expect(result?.points).toEqual([
-      { x: 3, y: 0 },
-      { x: 4, y: 0 },
-      { x: 4, y: 1 },
-      { x: 3, y: 1 },
-    ]);
+    expect(result?.points).toHaveLength(2);
+    expect(createSelectionAlphaMask(result!.points, { width: 4, height: 1 })).toEqual(new Uint8Array([255, 0, 0, 255]));
   });
 });

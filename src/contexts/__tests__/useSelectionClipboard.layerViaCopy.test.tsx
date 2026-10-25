@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockCanvas, createMockImageBitmap } from '@/__tests__/fixtures/canvas.ts';
 import type { Selection, SelectionClipboard } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
+import * as selectionUtils from '../../util/selection.ts';
 import { useSelectionClipboard } from '../useSelectionClipboard.ts';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -168,6 +169,48 @@ describe('useSelectionClipboard copy guards', () => {
     // The passed selection is the one marked as copied, not the active one.
     expect(dispatchMock).toHaveBeenCalledWith({ type: 'MARK_SELECTION_COPIED', payload: { id: 'selection-2' } });
     expect(dispatchMock).not.toHaveBeenCalledWith({ type: 'MARK_SELECTION_COPIED', payload: { id: 'selection-1' } });
+  });
+
+  it('uses logical bounds and backing scale for Copy and Layer Via Copy', async () => {
+    const sourceCanvas = createMockCanvas({ width: 200, height: 200 });
+    storeState.canvasRef = { current: sourceCanvas };
+    storeState.documentFrame = { x: 0, y: 0, width: 100, height: 100 };
+    storeState.totalSize = { width: 100, height: 100 };
+    storeState.selections = [
+      polygonSelection({
+        geometry: 'rectangle',
+        sourceTool: 'rectangular-selection',
+        pos: { x: 10, y: 20, width: 10, height: 10 },
+      }),
+    ];
+    const copy = vi.spyOn(selectionUtils, 'copySelectionToCanvas');
+
+    try {
+      const api = renderProbe();
+      expect(api.copyActiveSelection()).toBe(true);
+      await expect(api.layerViaCopy()).resolves.toBe(true);
+
+      const expectedSelection = expect.objectContaining({
+        geometry: 'rectangle',
+        pos: { x: 10, y: 20, width: 10, height: 10 },
+      });
+      expect(copy).toHaveBeenNthCalledWith(
+        1,
+        sourceCanvas,
+        expectedSelection,
+        { width: 100, height: 100 },
+        { x: 2, y: 2 }
+      );
+      expect(copy).toHaveBeenNthCalledWith(
+        2,
+        sourceCanvas,
+        expectedSelection,
+        { width: 100, height: 100 },
+        { x: 2, y: 2 }
+      );
+    } finally {
+      copy.mockRestore();
+    }
   });
 
   it('preserves the cropped document lower-right edge in both copy paths', async () => {

@@ -5,7 +5,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     pool: 'vmThreads',
-    maxWorkers: 4,
+    // Hosted runners have limited CPU; avoid oversubscribing CPU-heavy test workers.
+    maxWorkers: process.env.CI === 'true' ? 2 : 4,
     isolate: true,
     // Vitest 5 changed the `clearMocks` default to `true`; this suite already depends on that
     // behaviour, so it is stated here rather than inherited from an unstated version, and it

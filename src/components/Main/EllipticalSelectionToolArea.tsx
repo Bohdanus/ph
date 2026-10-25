@@ -9,9 +9,8 @@ import type { Point, Selection } from '../../contexts/general-types.ts';
 import {
   createCommittedPolygonSelection,
   getActiveSelection,
-  getSelectionAbsolutePoints,
   hasSameSelectionGeometry,
-  isPointInPolygon,
+  isPointInSelection,
   moveSelectionByDelta,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
@@ -152,7 +151,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     // A press inside the existing selection moves it, as every selection tool in this
     // editor does. It is also the one route that dispatches no draft, because there is
     // nothing being drawn — the same split `RectangularSelectionToolArea:91` makes.
-    if (activeSelection && isPointInPolygon(documentStart, getSelectionAbsolutePoints(activeSelection))) {
+    if (activeSelection && isPointInSelection(documentStart, activeSelection)) {
       dragRef.current = {
         mode: 'move',
         pointerId,

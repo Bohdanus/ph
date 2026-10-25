@@ -35,6 +35,7 @@ import { calculateNewRect, reduceRect, sortRect, sortRoundRect, sortedRectToPos 
 import type { Optional } from '../util/type-utils.ts';
 import { isTextToolArgs } from '../util/typeGuards.ts';
 import { isValidTextLayerGeometry } from './text-layer-edit.ts';
+import { selectionPointPathsToContours } from '../util/selection.ts';
 import {
   type ActionType,
   HIDE_LAYER_ACTION,
@@ -219,13 +220,30 @@ export const getIncrementalEraserArgs = (toolArgs: ToolArgs, previousToolArgs?: 
   const previousSelection = previous.selection;
   if ((currentSelection === undefined) !== (previousSelection === undefined)) return null;
   if (currentSelection && previousSelection) {
+    const currentContours = selectionPointPathsToContours(currentSelection.points);
+    const previousContours = selectionPointPathsToContours(previousSelection.points);
+    const currentMask = currentSelection.rasterMask;
+    const previousMask = previousSelection.rasterMask;
     if (
       currentSelection.featherRadius !== previousSelection.featherRadius ||
       currentSelection.antiAlias !== previousSelection.antiAlias ||
-      currentSelection.points.length !== previousSelection.points.length ||
-      !currentSelection.points.every(
-        (point, index) =>
-          point.x === previousSelection.points[index]?.x && point.y === previousSelection.points[index]?.y
+      (currentMask === undefined) !== (previousMask === undefined) ||
+      (currentMask !== undefined &&
+        previousMask !== undefined &&
+        (currentMask.x !== previousMask.x ||
+          currentMask.y !== previousMask.y ||
+          currentMask.width !== previousMask.width ||
+          currentMask.height !== previousMask.height ||
+          currentMask.data !== previousMask.data)) ||
+      currentContours.length !== previousContours.length ||
+      !currentContours.every(
+        (contour, contourIndex) =>
+          contour.length === previousContours[contourIndex]?.length &&
+          contour.every(
+            (point, pointIndex) =>
+              point.x === previousContours[contourIndex]?.[pointIndex]?.x &&
+              point.y === previousContours[contourIndex]?.[pointIndex]?.y
+          )
       )
     ) {
       return null;

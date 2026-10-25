@@ -13,6 +13,7 @@ import { defaultSettings } from '../settings.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
+import { encodeRasterSelectionMask } from '../../util/selection-mask.ts';
 
 type MockCtx = ReturnType<typeof createPixelCanvasContext> & {
   drawImage: ReturnType<typeof vi.fn>;
@@ -364,6 +365,17 @@ describe('fill with selection snapshot', () => {
     ...overrides,
   });
 
+  const topRowRasterSelection = () => ({
+    points: [],
+    rasterMask: {
+      ...encodeRasterSelectionMask(Uint8Array.of(1, 1), 2, 1, { x: 0, y: 0, width: 2, height: 1 })!,
+      x: 0,
+      y: 0,
+    },
+    featherRadius: 0,
+    antiAlias: false,
+  });
+
   describe('paint bucket', () => {
     it('clips pixels outside the selection snapshot to the untouched source', () => {
       const restore = withCpuSelectionMask();
@@ -386,6 +398,20 @@ describe('fill with selection snapshot', () => {
       } finally {
         restore();
       }
+    });
+
+    it('clips fill pixels through the positioned packed-mask representation', () => {
+      run('paint-bucket', {
+        color: '#0000FF',
+        tolerance: 0,
+        alpha: 1,
+        selection: topRowRasterSelection(),
+      });
+
+      expect(rgbAt(0, 0, 2)).toBe(255);
+      expect(rgbAt(1, 0, 2)).toBe(255);
+      expect(rgbAt(0, 1, 0)).toBe(255);
+      expect(rgbAt(0, 1, 2)).toBe(0);
     });
 
     it('preserves fractional selection edge alpha so opacity composes with coverage', () => {
@@ -431,6 +457,14 @@ describe('fill with selection snapshot', () => {
       } finally {
         restore();
       }
+    });
+
+    it('clips erase pixels through the positioned packed-mask representation', () => {
+      run('magic-eraser', { tolerance: 0, alpha: 1, selection: topRowRasterSelection() });
+
+      expect(alphaAt(0, 0)).toBe(0);
+      expect(alphaAt(1, 0)).toBe(0);
+      expect(alphaAt(0, 1)).toBe(255);
     });
 
     it('preserves fractional selection edge alpha so opacity composes with coverage', () => {
