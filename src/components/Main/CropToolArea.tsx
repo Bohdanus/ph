@@ -326,6 +326,10 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
    */
   const cropKeysRef = useRef({ commit: () => {}, cancel: () => {} });
   const overlayKeysRef = useRef({ args, overlayType, overlayOrientation });
+  const setCurrentCropArgs = (nextArgs: typeof args) => {
+    overlayKeysRef.current = { ...overlayKeysRef.current, args: nextArgs };
+    setToolArgs(nextArgs);
+  };
 
   useEffect(() => {
     overlayKeysRef.current = { args, overlayType, overlayOrientation };
@@ -610,7 +614,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     hideRotationHandle: angle === 0,
     rotationEnabled: true,
     rotation: angle,
-    onRotationChange: (nextAngle: number) => setToolArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
+    onRotationChange: (nextAngle: number) => setCurrentCropArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
     overlayType: angle === 0 ? undefined : overlayType,
     overlayColorForRect: angle === 0 ? undefined : sampleCropOverlayColor,
     overlayOrientation,
@@ -646,9 +650,9 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
       // restore. Left in place, it survives into the next ratio change as a stale framing.
       if (width === 0 || height === 0) {
         // return null if nothing selected or if selection is degenerate
-        setToolArgs({ ...args, rect: null, preRatioRect: null });
+        setCurrentCropArgs({ ...overlayKeysRef.current.args, rect: null, preRatioRect: null });
       } else {
-        setToolArgs({ ...args, rect: newRect, preRatioRect: null });
+        setCurrentCropArgs({ ...overlayKeysRef.current.args, rect: newRect, preRatioRect: null });
       }
     },
     onCancel: () => setPainted(null),

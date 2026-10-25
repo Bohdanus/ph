@@ -502,10 +502,20 @@ test.describe('Undo and redo', () => {
 
     await page.mouse.up();
     await expect(historyRows, 'committing the preview appends one history row').toHaveCount(3);
-    const committed = await loadImageData(await capture(page, clip));
-    expect(Buffer.from(committed.data), 'committing the stroke must preserve the visible preview pixels').toEqual(
-      Buffer.from(preview.data)
-    );
+    const previewPixels = Buffer.from(preview.data);
+    await expect
+      .poll(
+        async () => {
+          const committed = await loadImageData(await capture(page, clip));
+          return (
+            committed.width === preview.width &&
+            committed.height === preview.height &&
+            Buffer.from(committed.data).equals(previewPixels)
+          );
+        },
+        { message: 'committing the stroke must preserve the visible preview pixels' }
+      )
+      .toBe(true);
 
     const chooser = page.waitForEvent('filechooser');
     await page.getByTestId('header-file-menu-button').click();

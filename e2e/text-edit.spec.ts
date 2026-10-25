@@ -1566,7 +1566,7 @@ test.describe('Text tool in-place editing', () => {
         const computedTracking = Number.parseFloat(computed.letterSpacing);
         const style = {
           align: computed.textAlign,
-          allCaps: computed.fontVariantCaps === 'all-small-caps',
+          allCaps: computed.textTransform === 'uppercase',
           bold: computed.fontWeight === '700',
           color: computed.color,
           fontFamily: computed.fontFamily,
@@ -1936,7 +1936,9 @@ test.describe('Desktop Type click-count selection', () => {
     await overlay(page).click({ clickCount: 2, position: point });
     const selection = await selectionState(page);
     expect(selection.inside).toBe(true);
-    expect(selection.string).toBe('gamma');
+    // Native word selection may include the one collapsed separator under `pre-line`, but no
+    // additional text or whitespace is allowed.
+    expect(selection.string).toMatch(/^gamma ?$/);
   });
 
   test('triple-click selects only the visual line in a wrapped paragraph', async ({ page }) => {

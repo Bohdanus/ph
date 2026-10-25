@@ -58,8 +58,8 @@ describe('SidebarLeft keyboard activation', () => {
   useSidebarLeftHarness();
 
   beforeEach(() => {
-    // Fake timers for the whole file, because the tile's open handler schedules an animation
-    // frame and never cancels it, and `requestAnimationFrame` is polyfilled as a 16ms
+    // Fake timers for the whole file, because the tile's open handler schedules bounded animation
+    // frame retries and `requestAnimationFrame` is polyfilled as a 16ms
     // `setTimeout` (`src/test/setup.ts`). Under real timers every keyboard open therefore
     // left a real macrotask behind: it fired during a LATER test and called `.focus()` on
     // whatever flyout happened to exist at that moment. `vi.clearAllTimers()` in `afterEach`
@@ -86,12 +86,9 @@ describe('SidebarLeft keyboard activation', () => {
    * file — is what Playwright's `sidebar-keyboard` spec exercises, which is why the ArrowUp
    * branch of THIS one had no jsdom coverage at all.
    *
-   * The frame is captured rather than waited for, because the deferral is half the
-   * behaviour: the flyout is mounted in the same commit the key was handled in, so the items
-   * exist immediately, and the focus lands a frame later. Asserting that nothing is focused
-   * before the frame runs is what separates "deferred by one frame" from "focused
-   * synchronously" — and the deferral is load-bearing, since measuring in a passive effect
-   * would cost a frame of `visibility: hidden` in which the overlay cannot take focus at all.
+   * The first frame is captured rather than waited for: when the portal is ready, focus should
+   * move there immediately, while the bounded retry covers a portal that has not exposed its
+   * items yet. The next test pins that retry without leaving a real animation frame behind.
    */
   it.each(FOCUS_TARGET)('opens the flyout on %s and focuses the item that key targets', (key, end) => {
     const frames: FrameRequestCallback[] = [];
@@ -115,7 +112,7 @@ describe('SidebarLeft keyboard activation', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
     const items = screen.getAllByRole('menuitemradio');
     expect(items).toHaveLength(brushGroup.length);
-    // Not yet. One frame from now.
+    // Not yet. The first attempt is deferred.
     items.forEach((item) => {
       expect(item).not.toHaveFocus();
     });
@@ -126,6 +123,37 @@ describe('SidebarLeft keyboard activation', () => {
     });
 
     expect(end === 'last' ? lastBrushRow() : brushRow(0)).toHaveFocus();
+  });
+
+  it('retries briefly when the flyout portal has not exposed its items on the first frame', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+
+    render(<SidebarLeft />);
+    const brushButton = toolbarButtonByName('brush');
+    brushButton.focus();
+    fireEvent.keyDown(brushButton, { key: 'ArrowDown' });
+
+    const menu = screen.getByRole('menu');
+    const queryItems = menu.querySelectorAll.bind(menu);
+    let firstRead = true;
+    vi.spyOn(menu, 'querySelectorAll').mockImplementation((selector: string) => {
+      if (selector === '[role="menuitemradio"]' && firstRead) {
+        firstRead = false;
+        return [] as unknown as NodeListOf<Element>;
+      }
+      return queryItems(selector);
+    });
+
+    act(() => frames.shift()?.(0));
+    expect(frames).toHaveLength(1);
+    expect(brushRow(0)).not.toHaveFocus();
+
+    act(() => frames.shift()?.(16));
+    expect(brushRow(0)).toHaveFocus();
   });
 
   it('does not open flyout via keyboard on single-tool group buttons', () => {

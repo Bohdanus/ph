@@ -81,6 +81,23 @@ const TOOL_BUTTON_BASE_CLASS =
 const TOOL_BUTTON_ACTIVE_CLASS =
   'border-blue-500 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.45)] text-blue-700 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100';
 
+function focusFlyoutItemAfterOpen(groupIndex: string, key: string) {
+  let attempts = 0;
+  const focus = () => {
+    attempts += 1;
+    const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
+    const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
+    if (items.length > 0) {
+      const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+      const nextIndex = key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
+      items[nextIndex]?.focus();
+      return;
+    }
+    if (attempts < 3) requestAnimationFrame(focus);
+  };
+  requestAnimationFrame(focus);
+}
+
 const TOOL_BUTTON_INACTIVE_CLASS =
   'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
@@ -689,14 +706,7 @@ const SidebarLeft = () => {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 openFlyout(groupIndex);
-                requestAnimationFrame(() => {
-                  const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
-                  const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
-                  if (items.length === 0) return;
-                  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-                  const nextIndex = event.key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
-                  items[nextIndex]?.focus();
-                });
+                focusFlyoutItemAfterOpen(groupIndex, event.key);
               }
             }}
             onPointerDown={(event) => {

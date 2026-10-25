@@ -563,6 +563,27 @@ describe('useRect', () => {
       expect(onRotationChange.mock.lastCall?.[0]).toBeCloseTo(90, 0);
     });
 
+    it('keeps the top resize handle out of the rotation hotspot', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 94, target }));
+      });
+      expect(target.style.cursor).toMatch(/ns-resize/);
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 94, target })
+        );
+      });
+
+      expect(result.current.pointerState.currentEdgeRef.current).toBe('top');
+    });
+
     it('keeps the painted handles hit-testable after the rect rotates', () => {
       const { result } = renderUseRect({
         initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },

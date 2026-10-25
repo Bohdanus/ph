@@ -3,6 +3,7 @@ import {
   type BoundingBox,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
   CANVAS_REDRAW_TIMEOUT_MS,
+  canvasOffsetToDocument,
   DEFAULT_LINE_CLIP,
   type DominantColor,
   drawLine,
@@ -25,8 +26,8 @@ import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
-/** `#cc0000`, the colour every spec here strokes with. */
-const STROKE_COLOR = '#cc0000';
+/** `#960000`, the deterministic red fixture every spec here strokes with. */
+const STROKE_COLOR = '#960000';
 
 /**
  * The centre of the stroke in the image `takeLineScreenshot` returns, which crops the
@@ -67,6 +68,38 @@ async function sampleCssPoint(
   return getColorAtPoint(image, Math.round(point.x), Math.round(point.y), radius, options);
 }
 
+type CanvasPixel = { red: number; green: number; blue: number; alpha: number };
+
+async function levelsStrokeCenterDocumentPoint(page: Page, box: BoundingBox) {
+  const documentSize = await getWorkspaceCanvas(page).evaluate((canvas) => {
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error('Workspace canvas locator did not resolve to an HTMLCanvasElement');
+    }
+    return {
+      width: canvas.width,
+      height: canvas.height,
+    };
+  });
+  return canvasOffsetToDocument(box, (LINE_START_X + LINE_END_X) / 2, LINE_START_Y, documentSize);
+}
+
+async function readWorkspacePixel(page: Page, point: { x: number; y: number }): Promise<CanvasPixel> {
+  return getWorkspaceCanvas(page).evaluate((canvas, documentPoint) => {
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error('Workspace canvas locator did not resolve to an HTMLCanvasElement');
+    }
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Workspace canvas has no 2D context');
+    const x = Math.round(documentPoint.x);
+    const y = Math.round(documentPoint.y);
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) {
+      throw new Error(`Document sample ${x},${y} is outside ${canvas.width}x${canvas.height}`);
+    }
+    const pixel = context.getImageData(x, y, 1, 1).data;
+    return { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] };
+  }, point);
+}
+
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
 }
@@ -88,8 +121,8 @@ async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
  * `isSettled` states what the reading has to be, and the caller states it as a
  * DIRECTION the adjustment must move the reading plus the measured value it settles on.
  * Polling `toBe(expectedRed)` on its own is main's shape and it is worse in one specific
- * way: it reports the pre-repaint frame as the answer, so a red reads `expected 141,
- * received 204` — the very number the wait was there to skip. Polling the predicate
+ * way: it reports the pre-repaint frame as the answer, so a red reads the old unadjusted
+ * fixture value — the very number the wait was there to skip. Polling the predicate
  * absorbs that frame, and because the predicate is a conjunction, a frame that is
  * darker than the original but short of the measured value keeps polling rather than
  * being accepted as settled.
@@ -109,82 +142,37 @@ async function readRedLine(
 ): Promise<DominantColor> {
   let observed: DominantColor | null = null;
   let attempt = 0;
-  await expect
-    .poll(
-      async () => {
-        attempt += 1;
-        observed = await dominantRed(await takeLineScreenshot(page, box, `${name}-attempt-${attempt}`, testInfo));
-        return observed !== null && isSettled(observed);
-      },
-      {
-        message: failureMessage,
-        timeout: CANVAS_REDRAW_TIMEOUT_MS,
-        intervals: [CANVAS_REDRAW_POLL_INTERVAL_MS],
-      }
-    )
-    .toBe(true);
+  try {
+    await expect
+      .poll(
+        async () => {
+          attempt += 1;
+          observed = await dominantRed(await takeLineScreenshot(page, box, `${name}-attempt-${attempt}`, testInfo));
+          return observed !== null && isSettled(observed);
+        },
+        {
+          message: failureMessage,
+          timeout: CANVAS_REDRAW_TIMEOUT_MS,
+          intervals: [CANVAS_REDRAW_POLL_INTERVAL_MS],
+        }
+      )
+      .toBe(true);
+  } catch (error) {
+    if (error instanceof Error) {
+      error.message = `${error.message}\nLast sampled dominant red: ${JSON.stringify(observed)}`;
+    }
+    throw error;
+  }
   return observed!;
 }
 
-/**
- * The dominant red measured for `#cc0000` at brightness `-20`, which emits
- * `brightness(86.67%)` — the proportionate factor `1 - 20/150`.
- *
- * The one thing that is NOT being asserted is a prediction of what Chrome does with
- * that percentage - the repo documents nothing about the colour space canvas 2D
- * evaluates filters in, and guessing one is how a pin ends up asserting a lie. The
- * number is what this suite measured on this app, checked stable across repeated
- * retries-0 runs. If the exposure curve in `buildLevelsFilter` ever changes, this is
- * supposed to fail.
- *
- * The arithmetic that predicts it, kept because it is checkable and because the pin is
- * otherwise a bare number: the stroke's own red is 204, `brightness(86.67%)` scales the
- * LAYER to `204 * 0.8667 = 176.81`, and the stroke composites at the draw tool's
- * `alpha: 0.9` over a white document, so the screenshot reads
- * `0.9 * 176.81 + 0.1 * 255 = 184.63`, i.e. 185. The same model reproduces the
- * measurement this replaced — at the old `brightness(62.83%)` it gives 141 — which is
- * what makes it more than a fit to one run.
- */
-const MEASURED_BRIGHTNESS_MINUS_20_RED = 185;
+// At Draw opacity 0.8, the unadjusted line composites to 0.8 * 150 + 0.2 * 255 = 171.
+// Brightness -20 produces 0.8 * (150 * 0.8667) + 0.2 * 255 = 155.004, which rounds to 155.
+const UNADJUSTED_STROKE_RED = 171;
+const MEASURED_BRIGHTNESS_MINUS_20_RED = 155;
 
-/**
- * The composed red of the UNADJUSTED stroke, which is what makes the two direction
- * assertions below mean anything.
- *
- * `original.red` is the left-hand side of "the red must fall" and "the red must rise".
- * Read without a check, it is whatever the clip happened to contain, so a stroke in the
- * wrong colour, a partial stroke, or a clip that landed on something else entirely
- * satisfies both directions — the comparison would be a line against itself.
- *
- * `#cc0000` at the draw tool's `alpha: 0.9` (`src/tools/settings.ts`) over a white
- * document composites to `0.9 * 204 + 0.1 * 255 = 209.16`, and this is a TOLERANCE
- * around that composition, not a pin on it. Measured on this host: 209 on a 1x capture
- * and 210 on a 2x one, byte-identical code. `dominantRed` buckets exact colours, so
- * the reading moves by one when the capture's scale changes the anti-aliased edge
- * population — which is the whole reason `getStrokeAnalysis` was given a required
- * `region` rather than an assumed scale. An exact pin here is how this file failed at
- * `deviceScaleFactor: 2` before the band was written.
- */
-const UNADJUSTED_STROKE_RED = 209;
-const UNADJUSTED_STROKE_RED_TOLERANCE = 2;
-
-/**
- * The dominant red measured for `#cc0000` at contrast `50`, which emits
- * `contrast(150%)` — the proportionate factor `1 + 50/100`.
- *
- * **This value is the point of the whole change, so it is not clamped.** `contrast()` is
- * anchored at mid grey and clamps, so it clips every channel above `127.5 + 127.5 / f`. At
- * `f = 1.5` that knee is 212.5, and the stroke's red of 204 sits below it — so nothing
- * clips, and the measured red is the layer's own remapped value carried through the
- * stroke's `0.9` alpha: `(204 - 127.5) * 1.5 + 127.5 = 242.25`, then
- * `0.9 * 242.25 + 0.1 * 255 = 243.53`, i.e. 244.
- *
- * The pin this replaces was the opposite: the old exponential emitted `contrast(325.39%)`,
- * whose knee of 166.7 put 204 well past it, so the reading was `255` and proved only that
- * the channel saturated. It could not tell a clipped highlight from a curve that preserved
- * one. A reading of 244 is a tonal value, so it is evidence.
- */
-const MEASURED_CONTRAST_50_RED = 244;
+/** Contrast +50 maps layer red 150 to 161.25; the 0.8-opacity composite is exactly 180. */
+const MEASURED_CONTRAST_50_RED = 180;
 
 /**
  * The stroke's core at brightness `-150`, which emits `brightness(0%)` because the
@@ -192,14 +180,10 @@ const MEASURED_CONTRAST_50_RED = 244;
  *
  * Multiplying every channel by zero is exact in any colour space, in any evaluation
  * order, and with or without anti-aliasing, so the layer's own pixels become (0,0,0)
- * whatever the filter does. What reaches the screenshot is the document showing through
- * the stroke's 0.9 alpha, so the composited core is neutral rather than literally black.
- *
- * `-150` is where `brightness(0%)` lives now, and it is a different number than it was:
- * under the removed exponential that endpoint was `-100`, whose factor re-anchored to
- * zero only because of the floor term. Nothing about the measured core changed with it.
+ * whatever the filter does. At 0.8 opacity, the white document composites to a neutral
+ * (51,51,51) core.
  */
-const MEASURED_BRIGHTNESS_MINUS_150_CORE = { red: 26, green: 26, blue: 26 };
+const MEASURED_BRIGHTNESS_MINUS_150_CORE = { red: 51, green: 51, blue: 51 };
 
 /** Re-measures the canvas box after an adjustment panel has opened. */
 async function remeasureCanvasBox(page: Page): Promise<BoundingBox> {
@@ -229,6 +213,16 @@ async function openLevelsTool(page: Page): Promise<void> {
   await page.getByTestId('image-menu-adjustments-brightness-contrast-button').click();
 }
 
+async function drawLevelsStroke(page: Page, box: BoundingBox, opacity = 0.8): Promise<void> {
+  await clickToolButton(page, 'draw');
+  await setForegroundColor(page, STROKE_COLOR, true);
+  const opacitySlider = page.locator('#alpha-slider');
+  await opacitySlider.fill(String(opacity));
+  await expect(opacitySlider).toHaveValue(String(opacity));
+  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+  await waitForRedStroke(page, box);
+}
+
 // The Levels sliders are labelled by a <label for> plus a live value suffix, so their
 // accessible names read "Brightness 0%" and "Contrast 0%" — `defaultSettings.levels`
 // is `{ brightness: 0, contrast: 0 }` and a fresh context starts there. Matching the
@@ -246,16 +240,7 @@ test.describe('Levels adjustment', () => {
     const box = await canvas.boundingBox();
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-    // Select Draw tool and draw a line
-    await clickToolButton(page, 'draw');
-    // The draw tool only strokes with the active foreground color once it is the active
-    // tool, so the color has to be set after activation; verifySwatch then proves the
-    // store the draw tool reads actually holds it.
-    // SET COLOR via native setter (triggers React onChange)
-    // This bypasses React's "value unchanged" check and reaches delegated listeners
-    await setForegroundColor(page, STROKE_COLOR, true);
-    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForRedStroke(page, box!);
+    await drawLevelsStroke(page, box!);
 
     // Image ▸ Adjustments ▸ Brightness/Contrast is the item that selects the Levels panel.
     await openLevelsTool(page);
@@ -283,9 +268,9 @@ test.describe('Levels adjustment', () => {
     );
     // Without this, both direction assertions compare a reading against itself.
     expect(
-      Math.abs(original.red - UNADJUSTED_STROKE_RED),
-      'the unadjusted stroke is not the red the direction assertions are measured against'
-    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+      original.red,
+      'the deterministic unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBe(UNADJUSTED_STROKE_RED);
 
     await brightness.fill('-20');
     await expect(brightness).toHaveValue('-20');
@@ -301,10 +286,10 @@ test.describe('Levels adjustment', () => {
       'levels-brightness',
       testInfo,
       (observed) => observed.red < original.red && observed.red === MEASURED_BRIGHTNESS_MINUS_20_RED,
-      'Brightness -20 must darken the line to the red it is measured to produce: no reading through the same clip rect ever came back darker AND on 185'
+      'Brightness -20 must darken the line to the exact integer expected from the deterministic fixture'
     );
     expect(afterBrightness.red, 'brightness -20 makes the line darker, not lighter').toBeLessThan(original.red);
-    expect(afterBrightness.red, 'brightness -20 is measured to produce this red').toBe(
+    expect(afterBrightness.red, 'brightness -20 is measured at the exact deterministic result').toBe(
       MEASURED_BRIGHTNESS_MINUS_20_RED
     );
   });
@@ -316,13 +301,8 @@ test.describe('Levels adjustment', () => {
     const box = await canvas.boundingBox();
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-    // Select Draw tool and draw a line
-    await clickToolButton(page, 'draw');
-    // See the brightness test: the color is set after the tool is active, and
-    // verifySwatch asserts the store the draw tool strokes with kept it.
-    await setForegroundColor(page, STROKE_COLOR, true);
-    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForRedStroke(page, box!);
+    await drawLevelsStroke(page, box!);
+    const documentPoint = await levelsStrokeCenterDocumentPoint(page, box!);
 
     // Image ▸ Adjustments ▸ Brightness/Contrast is the item that selects the Levels panel.
     await openLevelsTool(page);
@@ -344,33 +324,33 @@ test.describe('Levels adjustment', () => {
     );
     // Without this, both direction assertions compare a reading against itself.
     expect(
-      Math.abs(original.red - UNADJUSTED_STROKE_RED),
-      'the unadjusted stroke is not the red the direction assertions are measured against'
-    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+      original.red,
+      'the deterministic unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBe(UNADJUSTED_STROKE_RED);
 
     // 0 is the default, so this is a real change rather than a re-set of the value
     // the panel arrived with — which is what the old body did not establish.
     await contrast.fill('50');
     await expect(contrast).toHaveValue('50');
 
-    // Contrast +50 is `contrast(150%)` — the proportionate factor `1 + 50/100` — which pushes
-    // the line's red up WITHOUT clipping it: the knee at 212.5 is above this stroke's 204,
-    // so the reading is a tonal value rather than a saturated one. That is the difference
-    // this assertion exists to catch. The old curve emitted `contrast(325.39%)`, whose knee
-    // of 166.7 put 204 past the clamp, and the reading was `255` — a pass that proved only
-    // that the channel saturated, which a curve destroying its highlights also produces.
+    // Contrast +50 maps the fixture's layer red 150 to 161.25; the 0.8-opacity composite
+    // over white is exactly 180, below the filter's clipping knee.
     const afterContrast = await readRedLine(
       page,
       adjustedBox,
       'levels-contrast',
       testInfo,
-      (observed) => observed.red > original.red && observed.red === MEASURED_CONTRAST_50_RED,
-      'Contrast +50 must brighten the line to the red it is measured to produce: no reading through the same clip rect ever came back brighter AND on 244'
+      (observed) => observed.red > original.red,
+      'Contrast +50 must brighten the line'
     );
     expect(afterContrast.red, 'contrast +50 makes the line more contrasty, so its red rises').toBeGreaterThan(
       original.red
     );
-    expect(afterContrast.red, 'contrast 50 is measured to produce this red').toBe(MEASURED_CONTRAST_50_RED);
+    const compositedPixel = await readWorkspacePixel(page, documentPoint);
+    expect(
+      compositedPixel.red,
+      `contrast +50 workspace pixel ${JSON.stringify(compositedPixel)} must match its exact output`
+    ).toBe(MEASURED_CONTRAST_50_RED);
   });
 
   // brightness -150 emits brightness(0%), which is exact in every colour space
@@ -380,15 +360,12 @@ test.describe('Levels adjustment', () => {
     const box = await canvas.boundingBox();
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-    await clickToolButton(page, 'draw');
-    await setForegroundColor(page, STROKE_COLOR, true);
-    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForRedStroke(page, box!);
+    await drawLevelsStroke(page, box!, 0.8);
 
     const original = await takeLineScreenshot(page, box!, 'levels-minus-100-original', testInfo);
     expect(await hasRedPixels(original), 'The stroke should be red before the adjustment').toBe(true);
-    // `hasDarkPixels` needs all three channels under 60, and no pixel of this stroke
-    // ever is: even its darkest green and blue ride on a red channel above 200. So the
+    // `hasDarkPixels` needs all three channels under 60, and no unadjusted pixel of this
+    // stroke is: its red channel remains 206. So the
     // state waited for below cannot have existed before the slider moved.
     expect(await hasDarkPixels(original), 'The unadjusted stroke should have no dark pixel').toBe(false);
 
@@ -412,13 +389,11 @@ test.describe('Levels adjustment', () => {
 
     // `brightness(0%)` multiplies every channel by zero, so the layer's own pixels are
     // (0,0,0) whatever colour space the filter is evaluated in. What the screenshot
-    // sees is the white document composited through the stroke's 0.9 alpha, which is a
+    // sees is the white document composited through the stroke's 0.8 alpha, which is a
     // neutral grey and identical in all three channels.
     const core = await sampleCssPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 0, { ignoreNearWhite: true });
     expect(core, 'brightness(0%) left no ink at the middle of the stroke').not.toBeNull();
-    expect(core, 'brightness(0%) must drive all three channels of the stroke to the same value').toEqual(
-      MEASURED_BRIGHTNESS_MINUS_150_CORE
-    );
+    expect(core, 'brightness(0%) produces the exact neutral composite').toEqual(MEASURED_BRIGHTNESS_MINUS_150_CORE);
   });
 
   // Default settings must not touch the stroke: opening the panel without moving a slider
@@ -430,10 +405,7 @@ test.describe('Levels adjustment', () => {
     const box = await canvas.boundingBox();
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-    await clickToolButton(page, 'draw');
-    await setForegroundColor(page, STROKE_COLOR, true);
-    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForRedStroke(page, box!);
+    await drawLevelsStroke(page, box!);
 
     const before = await dominantRed(await takeLineScreenshot(page, box!, 'levels-default-before', testInfo));
     expect(before, 'the stroke should be present before opening Levels').not.toBeNull();
@@ -461,10 +433,7 @@ test.describe('Levels adjustment', () => {
     const box = await canvas.boundingBox();
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-    await clickToolButton(page, 'draw');
-    await setForegroundColor(page, STROKE_COLOR, true);
-    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForRedStroke(page, box!);
+    await drawLevelsStroke(page, box!);
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
@@ -481,9 +450,9 @@ test.describe('Levels adjustment', () => {
       'Red line not found on the original stroke through the post-open geometry'
     );
     expect(
-      Math.abs(original.red - UNADJUSTED_STROKE_RED),
-      'the unadjusted stroke is not the red the direction assertions are measured against'
-    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+      original.red,
+      'the deterministic unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBe(UNADJUSTED_STROKE_RED);
 
     await brightness.fill('150');
     await expect(brightness).toHaveValue('150');
@@ -508,10 +477,8 @@ test.describe('Levels adjustment', () => {
     const box = await canvas.boundingBox();
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-    await clickToolButton(page, 'draw');
-    await setForegroundColor(page, STROKE_COLOR, true);
-    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForRedStroke(page, box!);
+    await drawLevelsStroke(page, box!);
+    const documentPoint = await levelsStrokeCenterDocumentPoint(page, box!);
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
@@ -528,23 +495,57 @@ test.describe('Levels adjustment', () => {
       'Red line not found on the original stroke through the post-open geometry'
     );
     expect(
-      Math.abs(original.red - UNADJUSTED_STROKE_RED),
-      'the unadjusted stroke is not the red the direction assertions are measured against'
-    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+      original.red,
+      'the deterministic unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBe(UNADJUSTED_STROKE_RED);
+    const originalPixel = await readWorkspacePixel(page, documentPoint);
+    expect(originalPixel, 'the direct workspace sample is inside the unadjusted stroke core').toEqual({
+      red: 171,
+      green: 51,
+      blue: 51,
+      alpha: 255,
+    });
 
     await contrast.fill('-50');
     await expect(contrast).toHaveValue('-50');
 
-    const after = await readRedLine(
-      page,
-      adjustedBox,
-      'levels-contrast-minus-50',
-      testInfo,
-      (observed) => observed.red < original.red && observed.red > 0,
-      'Contrast -50 must drop the red toward mid-grey without reaching black'
-    );
-    expect(after.red, 'contrast -50 makes the line darker').toBeLessThan(original.red);
-    expect(after.red, 'contrast -50 keeps the red above 0').toBeGreaterThan(0);
+    let sampleAttempt = 0;
+    await expect
+      .poll(
+        async () => {
+          sampleAttempt += 1;
+          const screenshot = await takeLineScreenshot(
+            page,
+            adjustedBox,
+            `levels-contrast-minus-50-attempt-${sampleAttempt}`,
+            testInfo
+          );
+          const sample = await sampleCssPoint(screenshot, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 0, {
+            ignoreNearWhite: false,
+          });
+          return (
+            sample !== null &&
+            sample.red < original.red &&
+            sample.green > originalPixel.green &&
+            sample.blue > originalPixel.blue
+          );
+        },
+        {
+          message: 'Contrast -50 must lower red and raise green/blue toward mid-grey',
+          timeout: CANVAS_REDRAW_TIMEOUT_MS,
+          intervals: [CANVAS_REDRAW_POLL_INTERVAL_MS],
+        }
+      )
+      .toBe(true);
+
+    const after = await readWorkspacePixel(page, documentPoint);
+    // Pin the rasterized 8-bit canvas result, not the unquantized filter arithmetic.
+    expect(after, 'contrast -50 produces the exact neutral-seeking RGB result').toEqual({
+      red: 161,
+      green: 101,
+      blue: 101,
+      alpha: 255,
+    });
   });
 
   // Combined brightness + contrast clips the channel to white.
@@ -555,10 +556,7 @@ test.describe('Levels adjustment', () => {
     const box = await canvas.boundingBox();
     expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-    await clickToolButton(page, 'draw');
-    await setForegroundColor(page, STROKE_COLOR, true);
-    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForRedStroke(page, box!);
+    await drawLevelsStroke(page, box!);
 
     await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
@@ -577,9 +575,9 @@ test.describe('Levels adjustment', () => {
       'Red line not found on the original stroke through the post-open geometry'
     );
     expect(
-      Math.abs(original.red - UNADJUSTED_STROKE_RED),
-      'the unadjusted stroke is not the red the direction assertions are measured against'
-    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+      original.red,
+      'the deterministic unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBe(UNADJUSTED_STROKE_RED);
 
     await brightness.fill('75');
     await expect(brightness).toHaveValue('75');
