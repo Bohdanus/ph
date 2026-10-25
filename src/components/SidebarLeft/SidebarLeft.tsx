@@ -81,21 +81,23 @@ const TOOL_BUTTON_BASE_CLASS =
 const TOOL_BUTTON_ACTIVE_CLASS =
   'border-blue-500 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.45)] text-blue-700 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100';
 
-function focusFlyoutItemAfterOpen(groupIndex: string, key: string) {
-  let attempts = 0;
-  const focus = () => {
-    attempts += 1;
+function focusFlyoutItemAfterOpen(groupIndex: string, key: string, isCurrentRequest: () => boolean, attempt = 0) {
+  requestAnimationFrame(() => {
+    if (!isCurrentRequest()) return;
+
     const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
     const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
-    if (items.length > 0) {
-      const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-      const nextIndex = key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
-      items[nextIndex]?.focus();
+    const menuVisible = menu && getComputedStyle(menu).visibility !== 'hidden';
+    if (!menuVisible || items.length === 0) {
+      if (attempt < 3) focusFlyoutItemAfterOpen(groupIndex, key, isCurrentRequest, attempt + 1);
       return;
     }
-    if (attempts < 3) requestAnimationFrame(focus);
-  };
-  requestAnimationFrame(focus);
+
+    if (!isCurrentRequest()) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
+    items[nextIndex]?.focus();
+  });
 }
 
 const TOOL_BUTTON_INACTIVE_CLASS =
@@ -247,6 +249,7 @@ const SidebarLeft = () => {
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { isToolNew, markToolAsSeen } = useFirstUse();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const flyoutFocusRequestRef = useRef(0);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
   const { highlightedTools } = useFirstUseContext();
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
@@ -465,6 +468,9 @@ const SidebarLeft = () => {
   };
 
   const openFlyout = (groupIndex: string) => {
+    // Any earlier deferred keyboard focus belongs to the open it came from. A pointer or
+    // another key can supersede that open before its visibility retries have drained.
+    flyoutFocusRequestRef.current += 1;
     clearLongPressFlyout();
     suppressLongPressRef.current = false;
     longPressOpenedRef.current = true;
@@ -495,6 +501,7 @@ const SidebarLeft = () => {
    */
   const closeFlyout = useCallback(
     (restoreFocus = false) => {
+      flyoutFocusRequestRef.current += 1;
       if (restoreFocus) {
         flyoutAnchor?.element.querySelector<HTMLButtonElement>('button')?.focus();
       }
@@ -519,6 +526,7 @@ const SidebarLeft = () => {
   useEffect(() => {
     return () => {
       if (longPressFlyoutTimeoutRef.current !== null) clearTimeout(longPressFlyoutTimeoutRef.current);
+      flyoutFocusRequestRef.current += 1;
     };
   }, []);
 
@@ -706,7 +714,8 @@ const SidebarLeft = () => {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 openFlyout(groupIndex);
-                focusFlyoutItemAfterOpen(groupIndex, event.key);
+                const request = ++flyoutFocusRequestRef.current;
+                focusFlyoutItemAfterOpen(groupIndex, event.key, () => flyoutFocusRequestRef.current === request);
               }
             }}
             onPointerDown={(event) => {

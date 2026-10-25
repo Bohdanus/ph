@@ -54,6 +54,13 @@ const FOCUS_TARGET: readonly (readonly [string, 'first' | 'last'])[] = [
   [' ', 'first'],
 ];
 
+function flushFrames(frames: FrameRequestCallback[], maxFrames = 5) {
+  for (let attempt = 0; attempt < maxFrames && frames.length > 0; attempt += 1) {
+    const pending = frames.splice(0);
+    pending.forEach((frame) => frame(0));
+  }
+}
+
 describe('SidebarLeft keyboard activation', () => {
   useSidebarLeftHarness();
 
@@ -86,9 +93,8 @@ describe('SidebarLeft keyboard activation', () => {
    * file — is what Playwright's `sidebar-keyboard` spec exercises, which is why the ArrowUp
    * branch of THIS one had no jsdom coverage at all.
    *
-   * The first frame is captured rather than waited for: when the portal is ready, focus should
-   * move there immediately, while the bounded retry covers a portal that has not exposed its
-   * items yet. The next test pins that retry without leaving a real animation frame behind.
+   * The test advances frames explicitly so it can distinguish deferred focus from synchronous
+   * focus. The anchored portal may need another frame before its visibility is ready.
    */
   it.each(FOCUS_TARGET)('opens the flyout on %s and focuses the item that key targets', (key, end) => {
     const frames: FrameRequestCallback[] = [];
@@ -118,9 +124,7 @@ describe('SidebarLeft keyboard activation', () => {
     });
 
     expect(frames).toHaveLength(1);
-    act(() => {
-      frames.forEach((frame) => frame(0));
-    });
+    act(() => flushFrames(frames));
 
     expect(end === 'last' ? lastBrushRow() : brushRow(0)).toHaveFocus();
   });
@@ -154,6 +158,66 @@ describe('SidebarLeft keyboard activation', () => {
 
     act(() => frames.shift()?.(16));
     expect(brushRow(0)).toHaveFocus();
+  });
+
+  it('retries while the mounted flyout is hidden until its position is ready', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+
+    render(<SidebarLeft />);
+    const brushButton = toolbarButtonByName('brush');
+    brushButton.focus();
+    fireEvent.keyDown(brushButton, { key: 'ArrowDown' });
+
+    const menu = screen.getByRole('menu');
+    const firstItem = brushRow(0);
+    const focus = vi.spyOn(firstItem, 'focus');
+    menu.style.visibility = 'hidden';
+
+    act(() => frames.shift()?.(0));
+    expect(frames).toHaveLength(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(firstItem).not.toHaveFocus();
+
+    menu.style.visibility = 'visible';
+    act(() => frames.shift()?.(16));
+    expect(focus).toHaveBeenCalledOnce();
+    expect(firstItem).toHaveFocus();
+  });
+
+  it('does not apply a stale keyboard focus retry after a pointer reopen', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+
+    render(<SidebarLeft />);
+    const brushButton = toolbarButtonByName('brush');
+    brushButton.focus();
+    fireEvent.keyDown(brushButton, { key: 'ArrowDown' });
+
+    const keyboardMenu = screen.getByRole('menu');
+    keyboardMenu.style.visibility = 'hidden';
+    act(() => frames.shift()?.(0));
+    expect(frames).toHaveLength(1);
+
+    act(() => fireEvent.keyDown(window, { key: 'Escape' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    longPress(brushButton);
+    const pointerMenu = screen.getByRole('menu');
+    pointerMenu.style.visibility = 'visible';
+    const pointerItem = brushRow(0);
+    const focus = vi.spyOn(pointerItem, 'focus');
+
+    act(() => flushFrames(frames));
+
+    expect(focus).not.toHaveBeenCalled();
+    expect(brushButton).toHaveFocus();
   });
 
   it('does not open flyout via keyboard on single-tool group buttons', () => {
@@ -305,7 +369,7 @@ describe('SidebarLeft keyboard activation', () => {
 
     // The frame the key press scheduled still fires, now against an unmounted menu.
     act(() => {
-      frames.forEach((frame) => frame(0));
+      flushFrames(frames);
     });
     expect(brushButton).toHaveFocus();
     expect(goToTool).not.toHaveBeenCalled();
@@ -504,7 +568,7 @@ describe('SidebarLeft keyboard activation', () => {
         fireEvent.keyDown(brushButton, { key: 'ArrowDown' });
       });
       act(() => {
-        frames.forEach((frame) => frame(0));
+        flushFrames(frames);
       });
       expect(brushRow(0)).toHaveFocus();
 

@@ -892,7 +892,7 @@ test.describe('Paint tools', () => {
   });
 
   test.describe('Dodge', () => {
-    /** `t = (180 - 140) / 420 = 0.0952`, so the nominal ramp value is about 24, below the 128 split. */
+    /** `t = (180 - 140) / 420 = 0.0952`, so the full-axis ramp reads `255 * 0.0952 = 24` here. */
     const DARK_END = { x: 180, y: BAND_Y };
     /** `t = (520 - 140) / 420 = 0.9048` -> 231, past the 128 split and short of the white stop. */
     const LIGHT_END = { x: 520, y: BAND_Y };
@@ -908,7 +908,10 @@ test.describe('Paint tools', () => {
     test('a dodge stroke lightens the pixels it covers', async ({ page }) => {
       const geometry = await paintRampBand(page, LAYER_RIGHT);
       const before = await readLevel(page, geometry, DARK_END);
-      expect.soft(before, 'the dark-end probe should remain near its nominal level of 24').toBeLessThan(50);
+      expect.soft(before, 'the dark-end probe should remain near its nominal level of 24').toBeGreaterThanOrEqual(23);
+      expect
+        .soft(before, 'the probe remains within one channel step of the measured ramp value')
+        .toBeLessThanOrEqual(24);
 
       const dodged = await selectDodge(page, 'shadows');
       await strokeDocument(page, dodged, DARK_END, { x: DARK_END.x + 2, y: DARK_END.y }, 2);
