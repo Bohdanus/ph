@@ -269,7 +269,7 @@ contributors with repository write access as trusted workflow authors.
 - `validate-dispatch`: verifies manual mirror dispatches use `Bohdanus/ph` and a
   full commit SHA, then passes that exact SHA to every checkout. Automatic runs
   use the event SHA.
-- `ci`: lint, typecheck, TS-project coverage assertion, unit tests, build.
+- `ci-checks`: lint, typecheck, TS-project coverage assertion, unit tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
 - `audit`: `npm audit --audit-level=high`, a non-blocking vulnerability-advisory check.
 - `e2e`: headless Playwright on Linux, Windows, and macOS, split into two shards
@@ -280,6 +280,12 @@ contributors with repository write access as trusted workflow authors.
   visual-regression baselines are committed; Linux capture is verified on
   `ubuntu-latest` and can be promoted only through the isolated writer in
   `.github/workflows/capture-linux-baselines.yml`.
+- `e2e-skip-baseline`: downloads all six Playwright report artifacts and compares
+  their per-platform skipped-test identities with `e2e/skip-baseline.json`.
+- `ci`: lightweight summary check that fails unless `ci-checks`, `e2e-unit`,
+  `e2e`, and `e2e-skip-baseline` all succeed. The expensive jobs still run in
+  parallel; their results are collected here so skip-baseline failures reach the
+  existing `ci` status context.
 - **Dependency licences are not checked by CI.** The `audit` job checks
   vulnerability advisories, not licence terms. The README records this limitation
   and the expectation to review dependency licences.
@@ -311,5 +317,9 @@ decision to the operator.
   frequency is unknown: `TEST-FLAKES.md` §12 explicitly says the observations have
   not been reconciled into a rate. The skip is a gate decision, not a fix or waiver;
   do not loosen the assertion or add retries.
+- The CI skip baseline check recombines the JSON reports from all three platforms
+  and both shards before comparing them with `e2e/skip-baseline.json`. Each reviewed
+  skip must appear exactly once per platform; adding or removing one requires a
+  matching baseline review.
 - Read failures from `test-results/`. Do not open `trace.zip` in a trace viewer,
   because that opens a browser window; ask the operator to inspect it if needed.
