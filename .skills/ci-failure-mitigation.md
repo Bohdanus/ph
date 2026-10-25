@@ -1,11 +1,12 @@
+---
 name: ci-failure-mitigation
 description: >-
-Analyzes non-browser CI failures (lint, typecheck, test, build, audit) from the
-`ci` and `e2e-unit` jobs in GitHub Actions, fixes them via subagents who read CI
-error logs to protect main context, then writes, reviews, commits, and merges.
-Intentionally IGNORES browser-environment-dependent e2e spec failures (visual
-regression baselines, pixel diffs, canvas rendering on Linux headless) unless
-the failure is a logic defect that is OS-agnostic.
+  Analyzes non-browser CI failures (lint, typecheck, test, build, audit) from the
+  `ci` and `e2e-unit` jobs in GitHub Actions, fixes them via subagents who read CI
+  error logs to protect main context, then writes, reviews, commits, and merges.
+  Intentionally IGNORES browser-environment-dependent e2e spec failures (visual
+  regression baselines, pixel diffs, canvas rendering on Linux headless) unless
+  the failure is a logic defect that is OS-agnostic.
 ---
 
 # CI Failure Mitigation Skill

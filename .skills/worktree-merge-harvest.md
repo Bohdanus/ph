@@ -1,3 +1,8 @@
+---
+name: worktree-merge-harvest
+description: Land useful work from free worktrees onto main: establish ownership and net content, recover the requirement, review the candidate, sync it with current main, validate the final composition, and record whether work landed, was reimplemented, rejected, archived, or remains unresolved. Abandoned-worktree reclamation is the separate `stale-worktree-reclaim` skill.
+---
+
 # Worktree merge harvest
 
 Land the work sitting on **free** worktrees of this repository onto `main`.

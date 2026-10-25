@@ -1,3 +1,8 @@
+---
+name: broad-test-improvement
+description: Improve unit tests in the `ph` photo editor - fix broken tests, raise coverage, and strengthen assertions without touching source. E2E specs and helper unit tests are included only when requested and need their own runners/baselines. Use when asked to improve, harden or extend the test suite or fix flaky tests. The tracked procedure is `.skills/broad-test-improvement.md`.
+---
+
 # Broad Test Improvement Skill
 
 This skill performs comprehensive test suite improvements: fixing broken tests, shallow review for common defects, and increasing coverage where needed. **Only modifies test files** — never touches source code.
