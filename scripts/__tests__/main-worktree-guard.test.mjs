@@ -457,7 +457,10 @@ describe('the guard is actually installed', () => {
     }
   });
 
-  it('refuses first-time hook installation when the linked main checkout is detached', () => {
+  it.each([
+    ['local', undefined],
+    ['CI', 'true'],
+  ])('refuses first-time hook installation when the linked main checkout is detached (%s)', (_environment, ci) => {
     const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-detached-install-')));
     try {
       const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: fixture, encoding: 'utf8' });
@@ -482,7 +485,7 @@ describe('the guard is actually installed', () => {
       const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
         cwd: fixture,
         encoding: 'utf8',
-        env: { ...process.env, CI: undefined },
+        env: { ...process.env, CI: ci },
       });
       expect(install.status).not.toBe(0);
       expect(install.stderr).toContain('cannot identify the designated main worktree');
@@ -518,6 +521,44 @@ describe('the guard is actually installed', () => {
       const preCommitDispatcher = resolve(fixture, hooksPath, 'pre-commit');
       expect(existsSync(preCommitDispatcher)).toBe(true);
       expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])).toBeNull();
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses CI hook installation when a linked checkout could be designated main but has no saved identity', () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-ci-linked-install-')));
+    try {
+      const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: fixture, encoding: 'utf8' });
+      expect(init.status).toBe(0);
+      git(fixture, ['config', 'user.name', 'Hook Fixture']);
+      git(fixture, ['config', 'user.email', 'hook-fixture@example.test']);
+      writeFileSync(join(fixture, 'README.md'), 'hook fixture\n');
+      git(fixture, ['add', 'README.md']);
+      git(fixture, ['commit', '--quiet', '-m', 'fixture']);
+      git(fixture, ['branch', 'feature']);
+      git(fixture, ['switch', '--quiet', 'feature']);
+
+      const formerlyMain = join(fixture, 'formerly-main');
+      const mainCheckout = spawnSync('git', ['worktree', 'add', '--quiet', formerlyMain, 'main'], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+      expect(mainCheckout.status, mainCheckout.stderr).toBe(0);
+      const moveOffMain = spawnSync('git', ['switch', '--quiet', '-c', 'task/formerly-main'], {
+        cwd: formerlyMain,
+        encoding: 'utf8',
+      });
+      expect(moveOffMain.status, moveOffMain.stderr).toBe(0);
+
+      const install = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
+        cwd: fixture,
+        encoding: 'utf8',
+        env: { ...process.env, CI: 'true' },
+      });
+      expect(install.status).not.toBe(0);
+      expect(install.stderr).toContain('cannot identify the designated main worktree');
+      expect(git(fixture, ['config', '--local', '--get', 'core.hooksPath'])).toBeNull();
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
@@ -725,9 +766,13 @@ describe('the guard is actually installed', () => {
       const reinstall = spawnSync('node', [join(REPO_ROOT, 'scripts', 'install-git-hooks.js')], {
         cwd: fixture,
         encoding: 'utf8',
+        env: { ...process.env, CI: 'true' },
       });
       expect(reinstall.status, reinstall.stderr).toBe(0);
       expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(movedMainPath);
+      const movedMainWorktree = resolveWorktree(movedMainPath);
+      expect(movedMainWorktree).toMatchObject({ isDesignatedMainWorktree: true, isProtectedWorktree: true });
+      expect(decide({ worktree: movedMainWorktree }).action).toBe('refuse');
 
       const movedScripts = join(movedMainPath, 'scripts');
       mkdirSync(movedScripts);

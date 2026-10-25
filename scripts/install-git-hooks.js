@@ -194,6 +194,28 @@ exit 0
 `;
 }
 
+function hasLinkedWorktree(records, commonDir) {
+  const canonicalCommonDir = realpathSync(commonDir);
+  return records.some((record) => {
+    if (!record.trim()) return false;
+    const recordPath = record.match(/^worktree (.+)$/m)?.[1];
+    if (!recordPath) return true;
+    try {
+      const actualPath = realpathSync(recordPath);
+      const actualGitDir = realpathSync(
+        execFileSync('git', ['-C', actualPath, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }).trim()
+      );
+      return actualGitDir !== canonicalCommonDir;
+    } catch {
+      // An existing but unreadable linked checkout is still ambiguous.
+      return existsSync(recordPath);
+    }
+  });
+}
+
 function main() {
   let commonDir;
   try {
@@ -206,13 +228,14 @@ function main() {
   const records = git(['worktree', 'list', '--porcelain']).split('\n\n');
   const mainRecord = records.find((record) => /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record));
   const mainPath = mainRecord?.match(/^worktree (.+)$/m)?.[1];
+  const hasLinkedCheckout = !mainPath && hasLinkedWorktree(records, commonDir);
   if (mainPath && !registerMainWorktree(mainPath, { required: true })) {
     throw new Error(`could not persist the designated main worktree identity for ${mainPath}`);
   }
-  if (!mainPath && process.env.CI === 'true') {
-    // In CI, refs/heads/main may not be checked out as a worktree. Skip
-    // worktree identity registration; the hooks will fail open via
-    // resolveWorktree when git cannot place the checkout.
+  if (!mainPath && process.env.CI === 'true' && !hasLinkedCheckout) {
+    // A single-worktree CI checkout has no secondary checkout to mistake for
+    // designated main. Keep the primary checkout's protection; skip only the
+    // missing registration that would otherwise block hook installation.
     console.warn(
       'gate: running in CI without a refs/heads/main worktree; installing hooks without main-worktree identity registration.'
     );
