@@ -203,14 +203,20 @@ function main() {
     return;
   }
 
-  const isGithubActions = process.env.GITHUB_ACTIONS === 'true';
   const records = git(['worktree', 'list', '--porcelain']).split('\n\n');
   const mainRecord = records.find((record) => /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record));
   const mainPath = mainRecord?.match(/^worktree (.+)$/m)?.[1];
-  if (mainPath && !isGithubActions && !registerMainWorktree(mainPath, { required: true })) {
+  if (mainPath && !registerMainWorktree(mainPath, { required: true })) {
     throw new Error(`could not persist the designated main worktree identity for ${mainPath}`);
   }
-  if (!mainPath && !isGithubActions) {
+  if (!mainPath && process.env.CI === 'true') {
+    // In CI, refs/heads/main may not be checked out as a worktree. Skip
+    // worktree identity registration; the hooks will fail open via
+    // resolveWorktree when git cannot place the checkout.
+    console.warn(
+      'gate: running in CI without a refs/heads/main worktree; installing hooks without main-worktree identity registration.'
+    );
+  } else if (!mainPath) {
     let registeredPath = null;
     let registeredGitDir = null;
     let registeredIdentity = null;
