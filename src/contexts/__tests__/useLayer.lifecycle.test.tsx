@@ -9,6 +9,7 @@ import type { ToolArgs } from '../tool-types.ts';
 import type { BitmapSource } from '../general-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import type { ToolResult } from '../../tools/toolProcessors.ts';
+import { createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
@@ -133,6 +134,24 @@ function lastDrawnLayers(): readonly Layer[] {
   return drawnLayers(drawLayersToCanvas.mock.calls.length - 1);
 }
 
+const incrementalToolNames = ['eraser', 'dodge', 'burn', 'sponge'] as const;
+type IncrementalToolName = (typeof incrementalToolNames)[number];
+
+function incrementalStrokeArgs(
+  toolName: IncrementalToolName,
+  points: { x: number; y: number }[],
+  overrides: Record<string, unknown> = {}
+): ToolArgs {
+  const settings = {
+    eraser: { mode: 'brush', lineWidth: 12, alpha: 0.7, hardness: 55, spacing: 30, color: '#000000' },
+    dodge: { exposure: 45, range: 'midtones', size: 16, hardness: 60 },
+    burn: { exposure: 45, range: 'midtones', size: 16, hardness: 60 },
+    sponge: { mode: 'saturate', flow: 50, vibrance: true, size: 16, hardness: 60 },
+  } satisfies Record<IncrementalToolName, Record<string, unknown>>;
+
+  return { ...settings[toolName], ...overrides, toolName, points } as ToolArgs;
+}
+
 beforeEach(() => {
   drawLayersToCanvas.mockClear();
 });
@@ -140,6 +159,7 @@ beforeEach(() => {
 afterEach(() => {
   drawLayersToCanvas.mockReset();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('useLayers mergeAllLayers', () => {
@@ -525,6 +545,142 @@ describe('useLayers tempUpdateLayer tool boundaries', () => {
 
     expect(result.current.store.previewLayers.current).toEqual({});
   });
+});
+
+describe('useLayers incremental raster previews', () => {
+  it.each(incrementalToolNames)('%s sends only the appended segment over its previous preview', (toolName) => {
+    const sourceBitmap = { width: 40, height: 20 } as ImageBitmap;
+    const firstPreview = createMockOffscreenCanvas(40, 20);
+    const secondPreview = createMockOffscreenCanvas(40, 20);
+    const outputs = [firstPreview, secondPreview];
+    const processorCalls: Array<{ params: unknown; args: ToolArgs }> = [];
+    vi.spyOn(toolProcessors[toolName], 'imageProcessor').mockImplementation((params) => {
+      const output = outputs.shift();
+      if (!output) throw new Error('incremental preview processor ran more than twice');
+      return (args) => {
+        processorCalls.push({ params, args });
+        return [output] as ToolResult;
+      };
+    });
+
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0, { bitmap: sourceBitmap }) },
+      activeLayerId: 'edited',
+    });
+    const previousPoints = [
+      { x: 2, y: 3 },
+      { x: 8, y: 9 },
+    ];
+    const nextPoint = { x: 14, y: 15 };
+    const previousArgs = incrementalStrokeArgs(toolName, previousPoints);
+    const currentArgs = incrementalStrokeArgs(toolName, [...previousPoints, nextPoint]);
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: previousArgs });
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: currentArgs });
+    });
+
+    expect(processorCalls).toHaveLength(2);
+    expect(processorCalls[0]!.args).toBe(previousArgs);
+    expect((processorCalls[0]!.params as { bitmap: unknown }).bitmap).toBe(sourceBitmap);
+    expect(processorCalls[1]!.args).toMatchObject({
+      ...currentArgs,
+      points: [previousPoints[1], nextPoint],
+    });
+    expect((processorCalls[1]!.args as { points: unknown[] }).points).not.toBe(
+      (currentArgs as { points: unknown[] }).points
+    );
+    expect((processorCalls[1]!.params as { bitmap: unknown }).bitmap).toBe(firstPreview);
+    expect((processorCalls[1]!.params as { previousCanvas: unknown }).previousCanvas).toBe(firstPreview);
+    expect(result.current.store.previewLayers.current.edited?.toolArgs).toBe(currentArgs);
+    expect(result.current.store.previewLayers.current.edited?.layer.tmpCanvas).toBe(secondPreview);
+  });
+
+  it.each(incrementalToolNames)('%s falls back to the committed raster when a stroke setting changes', (toolName) => {
+    const sourceBitmap = { width: 40, height: 20 } as ImageBitmap;
+    const firstPreview = createMockOffscreenCanvas(40, 20);
+    const secondPreview = createMockOffscreenCanvas(40, 20);
+    const outputs = [firstPreview, secondPreview];
+    const processorCalls: Array<{ params: unknown; args: ToolArgs }> = [];
+    vi.spyOn(toolProcessors[toolName], 'imageProcessor').mockImplementation((params) => {
+      const output = outputs.shift();
+      if (!output) throw new Error('incremental preview processor ran more than twice');
+      return (args) => {
+        processorCalls.push({ params, args });
+        return [output] as ToolResult;
+      };
+    });
+
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0, { bitmap: sourceBitmap }) },
+      activeLayerId: 'edited',
+    });
+    const previousPoints = [
+      { x: 2, y: 3 },
+      { x: 8, y: 9 },
+    ];
+    const nextPoint = { x: 14, y: 15 };
+    const changedSetting = {
+      eraser: { hardness: 56 },
+      dodge: { exposure: 46 },
+      burn: { exposure: 46 },
+      sponge: { flow: 51 },
+    } satisfies Record<IncrementalToolName, Record<string, unknown>>;
+    const previousArgs = incrementalStrokeArgs(toolName, previousPoints);
+    const currentArgs = incrementalStrokeArgs(toolName, [...previousPoints, nextPoint], changedSetting[toolName]);
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: previousArgs });
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: currentArgs });
+    });
+
+    expect(processorCalls).toHaveLength(2);
+    expect(processorCalls[1]!.args).toBe(currentArgs);
+    expect((processorCalls[1]!.params as { bitmap: unknown }).bitmap).toBe(sourceBitmap);
+    expect(processorCalls[1]!.params).not.toHaveProperty('previousCanvas');
+  });
+
+  it.each(incrementalToolNames)(
+    '%s falls back to the committed raster when the previous point prefix changes',
+    (toolName) => {
+      const sourceBitmap = { width: 40, height: 20 } as ImageBitmap;
+      const firstPreview = createMockOffscreenCanvas(40, 20);
+      const secondPreview = createMockOffscreenCanvas(40, 20);
+      const outputs = [firstPreview, secondPreview];
+      const processorCalls: Array<{ params: unknown; args: ToolArgs }> = [];
+      vi.spyOn(toolProcessors[toolName], 'imageProcessor').mockImplementation((params) => {
+        const output = outputs.shift();
+        if (!output) throw new Error('incremental preview processor ran more than twice');
+        return (args) => {
+          processorCalls.push({ params, args });
+          return [output] as ToolResult;
+        };
+      });
+
+      const { result } = setup({
+        layers: { edited: makeLayer('edited', 0, { bitmap: sourceBitmap }) },
+        activeLayerId: 'edited',
+      });
+      const previousPoints = [
+        { x: 2, y: 3 },
+        { x: 8, y: 9 },
+      ];
+      const nextPoint = { x: 14, y: 15 };
+      const changedPrefix = [{ x: 90, y: 91 }, previousPoints[1]!, nextPoint];
+      const previousArgs = incrementalStrokeArgs(toolName, previousPoints);
+      const currentArgs = incrementalStrokeArgs(toolName, changedPrefix);
+
+      act(() => {
+        result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: previousArgs });
+        result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: currentArgs });
+      });
+
+      expect(processorCalls).toHaveLength(2);
+      expect(processorCalls[1]!.args).toBe(currentArgs);
+      expect((processorCalls[1]!.params as { bitmap: unknown }).bitmap).toBe(sourceBitmap);
+      expect(processorCalls[1]!.params).not.toHaveProperty('previousCanvas');
+    }
+  );
 });
 
 describe('useLayers updateLayerByTool', () => {

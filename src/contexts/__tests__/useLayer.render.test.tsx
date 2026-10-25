@@ -9,7 +9,7 @@ import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts'
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
 import type { HistoryItem } from '../history-types.ts';
-import { OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { Pos } from '../general-types.ts';
 
@@ -90,25 +90,39 @@ function drawnFrame(callIndex = 0): DocumentFrame {
   return drawLayersToCanvas.mock.calls[callIndex][2];
 }
 
-function makeComposite(pos: Pos, id = 'layer-1', frame: DocumentFrame): DurableComposite {
-  const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
+function makeComposite(
+  pos: Pos,
+  id = 'layer-1',
+  frame: DocumentFrame,
+  options: {
+    opacity?: number;
+    layers?: readonly { id: string; pos: Pos; visible?: boolean; opacity?: number }[];
+  } = {}
+): DurableComposite {
   const releaseMaterialized = vi.fn();
-  const materialized: MaterializedLayer = {
-    layerId: id,
-    bitmap: materializedBitmap,
-    bounds: pos,
-    visible: true,
-    opacity: 1,
-    blendMode: 'source-over',
-    lease: {
-      key: 'render-all-layers-test',
-      bitmap: materializedBitmap,
-      byteSize: pos.width * pos.height * 4,
-      metadata: pos,
-      release: releaseMaterialized,
-    },
-  };
-  const layers = { [id]: materialized };
+  const layerSpecs = [{ id, pos, visible: true, opacity: options.opacity ?? 1 }, ...(options.layers ?? [])];
+  const layers = Object.fromEntries(
+    layerSpecs.map((spec) => {
+      const materializedBitmap = createMockImageBitmap(spec.pos.width, spec.pos.height);
+      const materialized: MaterializedLayer = {
+        layerId: spec.id,
+        bitmap: materializedBitmap,
+        bounds: spec.pos,
+        visible: spec.visible ?? true,
+        opacity: spec.opacity ?? 1,
+        blendMode: 'source-over',
+        lease: {
+          key: `render-all-layers-test:${spec.id}`,
+          bitmap: materializedBitmap,
+          byteSize: spec.pos.width * spec.pos.height * 4,
+          metadata: spec.pos,
+          release: releaseMaterialized,
+        },
+      };
+      return [spec.id, materialized];
+    })
+  );
+  const materializedBitmap = layers[id]!.bitmap;
   const releaseDetached = vi.fn(() => releaseMaterialized());
   const releaseComposite = vi.fn(() => releaseMaterialized());
   return {
@@ -419,5 +433,238 @@ describe('useLayers drawAllLayers', () => {
     expect(phase4Rendered[0].tmpCanvas).toBeNull();
     expect(phase4Rendered[0].source).toBeUndefined();
     expect(phase4Rendered[1].source).toBeUndefined();
+  });
+
+  it('renders a live preview over the complete legacy base while an append is accepted, then reveals the new durable base', async () => {
+    const layerId = 'layer-1';
+    const layerPos = { x: 0, y: 0, width: 40, height: 20 };
+    const backgroundId = 'layer-2';
+    const backgroundPos = { x: 40, y: 0, width: 40, height: 20 };
+    const docFrame = documentFrameFromSize(size);
+    const committedLayer = makeLayer(layerId, 2, { source: createBlankLayerSource(layerPos) });
+    const backgroundLayer = makeLayer(backgroundId, 1, {
+      pos: backgroundPos,
+      source: createBlankLayerSource(backgroundPos),
+    });
+    const layers: LayersRecord = { [layerId]: committedLayer, [backgroundId]: backgroundLayer };
+    const baseline: HistoryItem = {
+      id: 'baseline',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId,
+      documentSource: { layers, size, frame: docFrame },
+    };
+    const initialComposite = makeComposite(layerPos, layerId, docFrame, {
+      layers: [{ id: backgroundId, pos: backgroundPos }],
+    });
+    const appendComposite = makeComposite(layerPos, layerId, docFrame, {
+      opacity: 0.5,
+      layers: [{ id: backgroundId, pos: backgroundPos }],
+    });
+    let resolveAppendComposition!: (composite: DurableComposite) => void;
+    const appendComposition = new Promise<DurableComposite>((resolve) => {
+      resolveAppendComposition = resolve;
+    });
+    vi.spyOn(durableCompositor, 'composeDurableDocument')
+      .mockResolvedValueOnce(initialComposite)
+      .mockReturnValueOnce(appendComposition);
+
+    const { result } = renderHook(useLayerHarness, { wrapper: StoreProvider });
+    act(() => {
+      result.current.store.canvasRef.current = document.createElement('canvas');
+      result.current.store.previewLayers.current = {};
+      result.current.dispatch({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-append-preview',
+          history: [baseline],
+          historyIndex: 0,
+          updates: { layers, activeLayerId: layerId, totalSize: size, documentFrame: docFrame, hasImage: true },
+        },
+      });
+      result.current.dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { layers, activeLayerId: layerId },
+          timeline: { entries: [baseline], cursor: 0, branchRevision: 0 },
+        },
+      });
+    });
+
+    await act(async () => {
+      await result.current.store.publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+    expect(result.current.store.renderSelector.source).toBe('durable');
+
+    const updatedLayer = { ...committedLayer, opacity: 0.5 };
+    act(() => {
+      result.current.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { ...layers, [layerId]: updatedLayer } },
+          historyItem: {
+            id: 'opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+    expect(result.current.store.renderSelector.source).toBe('legacy');
+
+    const previewLayer = makeLayer(layerId, 2, {
+      opacity: 0.5,
+      tmpCanvas: { width: 12, height: 8 } as unknown as Layer['tmpCanvas'],
+    });
+    act(() => {
+      result.current.store.previewLayers.current = { [layerId]: { layer: previewLayer } };
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawnLayers(0).map((layer) => layer.id)).toEqual([backgroundId, layerId]);
+    expect(drawnLayers(0)[0]).toBe(backgroundLayer);
+    expect(drawnLayers(0)[0].source).toBe(backgroundLayer.source);
+    expect(drawnLayers(0)[1]).toBe(previewLayer);
+
+    await act(async () => {
+      resolveAppendComposition(appendComposite);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.store.renderSelector.source).toBe('durable');
+    expect(result.current.store.previewLayers.current[layerId]?.layer).toBe(previewLayer);
+
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+    expect(drawnLayers(1).map((layer) => layer.id)).toEqual([backgroundId, layerId]);
+    expect(drawnLayers(1)[0].source).toBe(backgroundLayer.source);
+    expect(drawnLayers(1)[1]).toBe(previewLayer);
+
+    act(() => {
+      result.current.store.previewLayers.current = {};
+      result.current.layers.drawAllLayers();
+    });
+    expect(drawnLayers(2).map((layer) => layer.id)).toEqual([backgroundId, layerId]);
+    expect(drawnLayers(2)[0].source).toBeUndefined();
+    expect(drawnLayers(2)[1].source).toBeUndefined();
+    expect(drawnLayers(2)[1].opacity).toBe(0.5);
+  });
+
+  it('keeps drawing the complete legacy base when a stale append is refused and its preview is cancelled', async () => {
+    const layerId = 'layer-1';
+    const layerPos = { x: 0, y: 0, width: 40, height: 20 };
+    const backgroundId = 'layer-2';
+    const backgroundPos = { x: 40, y: 0, width: 40, height: 20 };
+    const docFrame = documentFrameFromSize(size);
+    const committedLayer = makeLayer(layerId, 2, { source: createBlankLayerSource(layerPos) });
+    const backgroundLayer = makeLayer(backgroundId, 1, {
+      pos: backgroundPos,
+      source: createBlankLayerSource(backgroundPos),
+    });
+    const layers: LayersRecord = { [layerId]: committedLayer, [backgroundId]: backgroundLayer };
+    const baseline: HistoryItem = {
+      id: 'baseline',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId,
+      documentSource: { layers, size, frame: docFrame },
+    };
+    const initialComposite = makeComposite(layerPos, layerId, docFrame, {
+      layers: [{ id: backgroundId, pos: backgroundPos }],
+    });
+    let resolveAppendComposition!: (composite: DurableComposite) => void;
+    const appendComposition = new Promise<DurableComposite>((resolve) => {
+      resolveAppendComposition = resolve;
+    });
+    vi.spyOn(durableCompositor, 'composeDurableDocument')
+      .mockResolvedValueOnce(initialComposite)
+      .mockReturnValueOnce(appendComposition);
+
+    const { result } = renderHook(useLayerHarness, { wrapper: StoreProvider });
+    act(() => {
+      result.current.store.canvasRef.current = document.createElement('canvas');
+      result.current.store.previewLayers.current = {};
+      result.current.dispatch({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-stale-append-preview',
+          history: [baseline],
+          historyIndex: 0,
+          updates: { layers, activeLayerId: layerId, totalSize: size, documentFrame: docFrame, hasImage: true },
+        },
+      });
+      result.current.dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { layers, activeLayerId: layerId },
+          timeline: { entries: [baseline], cursor: 0, branchRevision: 0 },
+        },
+      });
+    });
+
+    await act(async () => {
+      await result.current.store.publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+    expect(result.current.store.renderSelector.source).toBe('durable');
+
+    const updatedLayer = { ...committedLayer, opacity: 0.5 };
+    act(() => {
+      result.current.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { ...layers, [layerId]: updatedLayer } },
+          historyItem: {
+            id: 'opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+    const previewLayer = makeLayer(layerId, 2, {
+      opacity: 0.5,
+      tmpCanvas: { width: 12, height: 8 } as unknown as Layer['tmpCanvas'],
+    });
+    act(() => {
+      result.current.store.previewLayers.current = { [layerId]: { layer: previewLayer } };
+      result.current.dispatch({ type: 'SET_SIZE', payload: { width: 500, height: 400 } });
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(result.current.store.durableStatus).toBe('stale');
+    expect(drawnLayers(0).map((layer) => layer.id)).toEqual([backgroundId, layerId]);
+    expect(drawnLayers(0)[0]).toBe(backgroundLayer);
+    expect(drawnLayers(0)[1]).toBe(previewLayer);
+
+    await act(async () => {
+      resolveAppendComposition(
+        makeComposite(layerPos, layerId, docFrame, {
+          layers: [{ id: backgroundId, pos: backgroundPos }],
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.store.renderSelector.source).toBe('legacy');
+    expect(result.current.store.durableRenderProjection).toBeNull();
+    expect(result.current.store.previewLayers.current[layerId]?.layer).toBe(previewLayer);
+
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+    expect(drawnLayers(1).map((layer) => layer.id)).toEqual([backgroundId, layerId]);
+    expect(drawnLayers(1)[1]).toBe(previewLayer);
+
+    act(() => {
+      result.current.store.previewLayers.current = {};
+      result.current.layers.drawAllLayers();
+    });
+    expect(drawnLayers(2).map((layer) => layer.id)).toEqual([backgroundId, layerId]);
+    expect(drawnLayers(2)[0]).toBe(backgroundLayer);
+    expect(drawnLayers(2)[1].opacity).toBe(0.5);
+    expect(drawnLayers(2)[1].source).toBe(committedLayer.source);
   });
 });

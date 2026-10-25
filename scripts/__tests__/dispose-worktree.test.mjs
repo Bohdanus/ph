@@ -22,7 +22,7 @@
  * case with every other arm green.
  */
 
-import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
+import { describe, expect, it, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   mkdirSync,
@@ -71,13 +71,16 @@ const np = (p) => p.split('/').join(sep);
 
 // Real files for the availability rule, which is about whether a path EXISTS —
 // something no injected stub can express. Under the OS temp dir, never the repo.
-const TMP = join(tmpdir(), 'dispose-worktree-availability');
-mkdirSync(TMP, { recursive: true });
+const TMP = mkdtempSync(join(tmpdir(), 'dispose-worktree-availability-'));
 const writeFixture = (name, body) => {
   const p = join(TMP, name);
   writeFileSync(p, body);
   return p;
 };
+
+afterAll(() => {
+  rmSync(TMP, { recursive: true, force: true });
+});
 
 /** A target that every gate is happy about. One gate is broken per test. */
 function greenState(overrides = {}) {
