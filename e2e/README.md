@@ -547,6 +547,9 @@ decision of 2026-09-29 because it is intermittently red (1 run in 4, failing cas
 moving between cases). That is a **gate decision, not a fix and not a waiver**: the
 defect is open in `TEST-FLAKES.md` §12 with its exact remaining verification, and the
 skip is not permission to loosen the assertion, raise the bound or add retries.
+CI compares these identities with `skip-baseline.json` after collecting all three
+platforms and both shards. Each reviewed skip must appear once per platform, so a
+change in shard assignment does not count as a new or missing skip.
 
 A local run uses `retries: 0`; only `CI` sets `retries: 2`, so a local failure is
 never retried away.
