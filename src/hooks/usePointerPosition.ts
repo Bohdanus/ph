@@ -363,7 +363,15 @@ export function usePointerPosition<T extends HTMLElement>(
     pointerTypeRef.current = e.pointerType;
     activePointerId.current = e.pointerId;
     captureTargetRef.current = e.currentTarget as unknown as { releasePointerCapture?: (id: number) => void };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture can fail when the target detaches or the UA rejects the id. The
+      // pointer claim is installed above so the catch must unwind it before refusing the
+      // press; otherwise every later press loses at the first-pointer-wins guard.
+      clearEvent(e.currentTarget as unknown as { releasePointerCapture?: (id: number) => void });
+      return false;
+    }
 
     return true;
   };

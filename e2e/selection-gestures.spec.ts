@@ -5,12 +5,13 @@ import {
   getWorkspaceCanvas,
   hasDarkPixels,
   loadImageData,
+  documentToCanvasOffset,
   type BoundingBox,
   type ClipOptions,
   type SelectionBounds,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
-import { committedAntsOutline, waitForCommittedAnts } from './helpers/selection-ants';
+import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
   openToolFlyoutViaRightClick,
@@ -665,6 +666,69 @@ test.describe('Selection tools', () => {
     await expect(report).toBeVisible();
     const reported = Number.parseInt((await report.innerText()).replace(/\D/g, ''), 10);
     expect(reported, 'the wand reports a non-zero count alongside the outline it drew').toBeGreaterThan(0);
+  });
+
+  test('magic wand selects every disconnected color match when Contiguous is unchecked', async ({ page }) => {
+    const box = await workspaceBox(page);
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#000000', true);
+    await page.locator('#size-slider').fill(String(BRUSH_PX));
+    await page.locator('#alpha-slider').fill('1');
+    await expect(page.locator('#size-slider')).toHaveValue(String(BRUSH_PX));
+    await expect(page.locator('#alpha-slider')).toHaveValue('1');
+
+    const drawBar = async (documentY: number) => {
+      await dragOnCanvas(
+        page,
+        box,
+        documentToCanvasOffset(box, 180, documentY),
+        documentToCanvasOffset(box, 420, documentY)
+      );
+    };
+    await drawBar(180);
+    await drawBar(420);
+
+    await clickToolButton(page, 'magic-wand');
+    const contiguous = page.getByRole('checkbox', { name: 'Contiguous' });
+    await expect(contiguous).toBeChecked();
+    await contiguous.uncheck();
+    await page.locator('#magic-wand-tolerance').fill('0');
+    await page.locator('#magic-wand-smoothing').fill('0');
+    await expect(page.locator('#magic-wand-tolerance')).toHaveValue('0');
+    await expect(page.locator('#magic-wand-smoothing')).toHaveValue('0');
+
+    const click = documentToCanvasOffset(box, 300, 180);
+    await page.mouse.click(box.x + click.x, box.y + click.y);
+    await waitForCommittedAnts(page, 'both disconnected matching regions after the wand click');
+
+    // Read separate document-space windows around the two painted bars. A bounding-box-only
+    // assertion would pass when only one component survived, because the box says nothing about
+    // whether its interior gap was selected.
+    const firstRuns = await readAntRuns(page, { x: 100, y: 100, width: 500, height: 160 }, 'row');
+    const secondRuns = await readAntRuns(page, { x: 100, y: 340, width: 500, height: 160 }, 'row');
+    expect(
+      firstRuns.some((row) => row.length > 0),
+      'the clicked component has a committed border'
+    ).toBe(true);
+    expect(
+      secondRuns.some((row) => row.length > 0),
+      'the disconnected color match also has a committed border'
+    ).toBe(true);
+
+    // A single outline around both bars would put its vertical sides through this empty gap.
+    // The correct disconnected selection has no marching ants between the two components.
+    const gapRuns = await readAntRuns(page, { x: 100, y: 270, width: 500, height: 60 }, 'row');
+    expect(
+      gapRuns.every((row) => row.length === 0),
+      'the committed selection keeps the blank gap between matching regions unselected'
+    ).toBe(true);
+
+    await expect(page.getByRole('status')).toContainText(
+      'Selects matching colors across the image, including disconnected regions.'
+    );
+    const report = page.getByText(/\d[\d,]*\s+matching pixels/);
+    await expect(report).toBeVisible();
+    expect(Number.parseInt((await report.innerText()).replace(/\D/g, ''), 10)).toBeGreaterThan(0);
   });
 
   test('magic wand selects only the region inside a closed color boundary', async ({ page }) => {

@@ -12,8 +12,10 @@ import {
   BRUSH_SPACING_DEFAULT,
   BRUSH_SPACING_MAX,
   BRUSH_SPACING_MIN,
+  appendBrushDabCenters,
   brushDabCenters,
   clampBrushTipSettings,
+  createBrushDabCenterSampler,
   stampBrushDab,
   stampBrushStroke,
   tipAlphaAt,
@@ -288,6 +290,48 @@ describe('brushDabCenters', () => {
     }
   });
 
+  it('can omit the moving endpoint while preserving fixed-spacing dab positions', () => {
+    expect(
+      brushDabCenters(
+        [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+        16,
+        25,
+        false
+      )
+    ).toEqual([{ x: 0, y: 0 }]);
+    expect(
+      brushDabCenters(
+        [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+        16,
+        25,
+        false
+      )
+    ).toEqual([
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+    ]);
+    expect(
+      brushDabCenters(
+        [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+        16,
+        25
+      )
+    ).toEqual([
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+      { x: 5, y: 0 },
+    ]);
+  });
+
   it('counts by arc length, not by the number of samples the pointer emitted', () => {
     // The defect this rules out is density that depends on how fast the user moved: a
     // per-segment step puts a dab on every sample, so the same path stamps differently
@@ -442,6 +486,64 @@ describe('brushDabCenters', () => {
   it('keeps emitting the first and last sample for a degenerate-size stroke, so a click still lands a dab', () => {
     expect(brushDabCenters([{ x: 5, y: 5 }], 0, 25)).toEqual([{ x: 5, y: 5 }]);
     expect(brushDabCenters([{ x: 5, y: 5 }], Number.NaN, Number.NaN)).toEqual([{ x: 5, y: 5 }]);
+  });
+});
+
+describe('appendBrushDabCenters', () => {
+  it('matches one-shot sampling when a path arrives one pointer point at a time', () => {
+    const paths: Point[][] = [
+      [
+        { x: 0, y: 0 },
+        { x: 37, y: 0 },
+        { x: 100, y: 0 },
+      ],
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 17 },
+      ],
+      [
+        { x: 5, y: 5 },
+        { x: 5, y: 5 },
+        { x: 7, y: 11 },
+        { x: 13, y: 18 },
+      ],
+      [
+        { x: 0.25, y: 3.5 },
+        { x: 3.75, y: 2.25 },
+        { x: 9.5, y: 8.125 },
+      ],
+    ];
+
+    for (const points of paths) {
+      const sampler = createBrushDabCenterSampler(16, 25);
+      const incremental = points.flatMap((point, index) =>
+        appendBrushDabCenters(sampler, [point], index === points.length - 1)
+      );
+
+      expect(incremental).toEqual(brushDabCenters(points, 16, 25));
+    }
+  });
+
+  it('emits no historical centres again when later pointer points arrive', () => {
+    const sampler = createBrushDabCenterSampler(16, 25);
+    const first = appendBrushDabCenters(sampler, [{ x: 0, y: 0 }]);
+    const second = appendBrushDabCenters(sampler, [{ x: 5, y: 0 }]);
+    const third = appendBrushDabCenters(sampler, [{ x: 9, y: 0 }], true);
+
+    expect(first).toEqual([{ x: 0, y: 0 }]);
+    expect(second).toEqual([{ x: 4, y: 0 }]);
+    expect(third).toEqual([
+      { x: 8, y: 0 },
+      { x: 9, y: 0 },
+    ]);
+  });
+
+  it('ignores non-finite segment lengths rather than entering an unbounded spacing loop', () => {
+    const sampler = createBrushDabCenterSampler(1, 1);
+
+    expect(appendBrushDabCenters(sampler, [{ x: 0, y: 0 }])).toEqual([{ x: 0, y: 0 }]);
+    expect(appendBrushDabCenters(sampler, [{ x: Number.MAX_VALUE, y: Number.MAX_VALUE }])).toEqual([]);
   });
 });
 

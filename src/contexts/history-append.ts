@@ -53,6 +53,8 @@ import {
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
+import { isCanonicalRasterSelectionMask } from '../util/selection-mask.ts';
+import { activeSelectionIdFromSnapshot, isSelectionSnapshotActiveStateValid } from './selection-baseline.ts';
 import { isLayerBlendMode, type Layer, type LayerId, type LayerSource, type ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ToolName } from './tool-types.ts';
@@ -425,8 +427,24 @@ function isCanonicalSelectionMetadata(value: unknown): boolean {
 
   if (Object.hasOwn(value, 'magicWand')) {
     const magicWand = value.magicWand;
-    const magicNumberKeys = ['tolerance', 'smoothing', 'selectedPixelCount', 'boundaryPointCount'];
+    const hasEdgeCount =
+      !!magicWand &&
+      typeof magicWand === 'object' &&
+      !Array.isArray(magicWand) &&
+      Object.hasOwn(magicWand, 'boundaryEdgeCount');
+    const hasLegacyPointCount =
+      !!magicWand &&
+      typeof magicWand === 'object' &&
+      !Array.isArray(magicWand) &&
+      Object.hasOwn(magicWand, 'boundaryPointCount');
+    const magicNumberKeys = [
+      'tolerance',
+      'smoothing',
+      'selectedPixelCount',
+      hasEdgeCount ? 'boundaryEdgeCount' : 'boundaryPointCount',
+    ];
     if (
+      hasEdgeCount === hasLegacyPointCount ||
       !hasCanonicalDataKeys(magicWand, [...magicNumberKeys, 'seed', 'sampleColor']) ||
       !magicNumberKeys.every((key) => typeof magicWand[key] === 'number' && Number.isFinite(magicWand[key])) ||
       !hasCanonicalFiniteNumberKeys(magicWand.seed, ['x', 'y']) ||
@@ -1114,7 +1132,7 @@ function isCanonicalSelection(value: unknown): value is Record<string, unknown> 
     !hasCanonicalDataKeys(
       value,
       ['id', 'points', 'isActive', 'pos'],
-      ['lifecycle', 'geometry', 'sourceTool', 'metadata']
+      ['lifecycle', 'geometry', 'sourceTool', 'metadata', 'rasterMask']
     )
   ) {
     return false;
@@ -1125,16 +1143,12 @@ function isCanonicalSelection(value: unknown): value is Record<string, unknown> 
     'freehand-lasso',
     'feather-magnetic-lasso',
     'magic-wand',
+    'quick-selection',
     'rectangular-selection',
   ];
   const geometry = selection.geometry;
   const sourceTool = selection.sourceTool;
-  return (
-    typeof selection.id === 'string' &&
-    typeof selection.isActive === 'boolean' &&
-    (selection.lifecycle === undefined || selection.lifecycle === 'committed') &&
-    (geometry === undefined || geometry === 'polygon' || geometry === 'rectangle') &&
-    (sourceTool === undefined || (typeof sourceTool === 'string' && sourceTools.includes(sourceTool))) &&
+  const validPoints =
     Array.isArray(selection.points) &&
     isJsonValue(selection.points) &&
     selection.points.every(
@@ -1142,9 +1156,30 @@ function isCanonicalSelection(value: unknown): value is Record<string, unknown> 
         Array.isArray(contour) &&
         isJsonValue(contour) &&
         contour.every((point) => hasCanonicalFiniteNumberKeys(point, ['x', 'y']) && isJsonValue(point))
-    ) &&
-    hasCanonicalFiniteNumberKeys(selection.pos, ['x', 'y', 'width', 'height']) &&
-    isJsonValue(selection.pos) &&
+    );
+  const validPos =
+    hasCanonicalFiniteNumberKeys(selection.pos, ['x', 'y', 'width', 'height']) && isJsonValue(selection.pos);
+  const pos = selection.pos;
+  const validRasterMask =
+    selection.rasterMask === undefined ||
+    (isCanonicalRasterSelectionMask(selection.rasterMask) &&
+      selection.geometry === 'polygon' &&
+      (selection.sourceTool === 'magic-wand' || selection.sourceTool === 'quick-selection') &&
+      Array.isArray(selection.points) &&
+      selection.points.length === 0 &&
+      hasCanonicalDataKeys(pos, ['x', 'y', 'width', 'height']) &&
+      ['x', 'y', 'width', 'height'].every((key) => typeof pos[key] === 'number' && Number.isFinite(pos[key])) &&
+      pos.width === selection.rasterMask.width &&
+      pos.height === selection.rasterMask.height);
+  return (
+    typeof selection.id === 'string' &&
+    typeof selection.isActive === 'boolean' &&
+    (selection.lifecycle === undefined || selection.lifecycle === 'committed') &&
+    (geometry === undefined || geometry === 'polygon' || geometry === 'rectangle') &&
+    (sourceTool === undefined || (typeof sourceTool === 'string' && sourceTools.includes(sourceTool))) &&
+    validPoints &&
+    validPos &&
+    validRasterMask &&
     (selection.metadata === undefined || isCanonicalSelectionMetadata(selection.metadata))
   );
 }
@@ -1156,7 +1191,8 @@ function isCanonicalSelectionSnapshot(value: unknown): value is Record<string, u
   return (
     (activeSelectionId === undefined || activeSelectionId === null || typeof activeSelectionId === 'string') &&
     Array.isArray(selections) &&
-    sameDenseArray(selections, selections, isCanonicalSelection)
+    sameDenseArray(selections, selections, isCanonicalSelection) &&
+    isSelectionSnapshotActiveStateValid(selections, activeSelectionId)
   );
 }
 
@@ -1172,6 +1208,8 @@ function sameSelection(left: unknown, right: unknown): boolean {
     leftSelection.geometry === rightSelection.geometry &&
     leftSelection.sourceTool === rightSelection.sourceTool &&
     sameJsonValue(leftSelection.points, rightSelection.points) &&
+    ((leftSelection.rasterMask === undefined && rightSelection.rasterMask === undefined) ||
+      sameJsonValue(leftSelection.rasterMask, rightSelection.rasterMask)) &&
     sameJsonValue(leftSelection.pos, rightSelection.pos) &&
     ((leftSelection.metadata === undefined && rightSelection.metadata === undefined) ||
       sameJsonValue(leftSelection.metadata, rightSelection.metadata))
@@ -1183,20 +1221,25 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * is the snapshot the legacy item must produce, without depending on which of
  * the two deep-copied it is.
  *
- * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory`'s `SELECTION_ACTION` arm read a key-absent id as `null`.
- * A strict `!==` would report a mismatch between a legacy arg that omits the key
- * and the normalized planned entry, degrading a correct append to reconversion.
+ * A key-absent legacy ID is inferred from its unique `isActive` selection on
+ * both sides. Comparing it as `null` would report a mismatch between that
+ * legacy argument and the normalized planned entry, degrading a correct append
+ * to reconversion.
  */
 function sameSelectionSnapshot(left: unknown, right: unknown): boolean {
   if (!isCanonicalSelectionSnapshot(left) || !isCanonicalSelectionSnapshot(right)) return false;
   if (left === right) return true;
   const leftSnapshot = left as { selections?: unknown; activeSelectionId?: unknown };
   const rightSnapshot = right as { selections?: unknown; activeSelectionId?: unknown };
-  if ((leftSnapshot.activeSelectionId ?? null) !== (rightSnapshot.activeSelectionId ?? null)) return false;
   if (!Array.isArray(leftSnapshot.selections) || !Array.isArray(rightSnapshot.selections)) return false;
   const leftSelections = leftSnapshot.selections;
   const rightSelections = rightSnapshot.selections;
+  if (
+    activeSelectionIdFromSnapshot(leftSelections, leftSnapshot.activeSelectionId) !==
+    activeSelectionIdFromSnapshot(rightSelections, rightSnapshot.activeSelectionId)
+  ) {
+    return false;
+  }
   return sameDenseArray(leftSelections, rightSelections, sameSelection);
 }
 

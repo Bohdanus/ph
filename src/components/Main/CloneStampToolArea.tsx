@@ -10,7 +10,7 @@ import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } f
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../tools/cloneStamp.ts';
-import { getActiveSelection, getSelectionAbsolutePoints } from '../../util/selection.ts';
+import { getActiveSelection, getSelectionProcessorSnapshot } from '../../util/selection.ts';
 
 type cloneStampToolAreaProps = {
   className?: string;
@@ -221,14 +221,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
    */
   const altHoverCanvasRef = useRef<Point | null>(null);
   const markerFrameRef = useRef<number | null>(null);
-  const selectionSnapshotRef = useRef<
-    | {
-        points: Point[];
-        featherRadius: number;
-        antiAlias: boolean;
-      }
-    | undefined
-  >(undefined);
+  const selectionSnapshotRef = useRef<CloneStampToolArgs['selection']>(undefined);
   const [isAltDown, setIsAltDown] = useState(false);
 
   useEffect(() => {
@@ -327,7 +320,20 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         ? {
             selection: {
               ...selectionSnapshotRef.current,
-              points: documentPointsToLayerLocal(selectionSnapshotRef.current.points, origin),
+              points: Array.isArray(selectionSnapshotRef.current.points[0])
+                ? (selectionSnapshotRef.current.points as Point[][]).map((contour) =>
+                    documentPointsToLayerLocal(contour, origin)
+                  )
+                : documentPointsToLayerLocal(selectionSnapshotRef.current.points as Point[], origin),
+              ...(selectionSnapshotRef.current.rasterMask
+                ? {
+                    rasterMask: {
+                      ...selectionSnapshotRef.current.rasterMask,
+                      x: selectionSnapshotRef.current.rasterMask.x - origin.x,
+                      y: selectionSnapshotRef.current.rasterMask.y - origin.y,
+                    },
+                  }
+                : {}),
             },
           }
         : {}),
@@ -341,7 +347,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
         selectionSnapshotRef.current = activeSelection
           ? {
-              points: getSelectionAbsolutePoints(activeSelection),
+              ...getSelectionProcessorSnapshot(activeSelection, { x: 0, y: 0 }),
               featherRadius: activeSelection.metadata?.featherRadius ?? 0,
               antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
             }

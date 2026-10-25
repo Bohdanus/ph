@@ -14,6 +14,7 @@ import {
 import { defaultSettings } from '../settings.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
 import type { Point } from '../../contexts/general-types.ts';
+import { encodeRasterSelectionMask } from '../../util/selection-mask.ts';
 
 /**
  * The Brush eraser is a question about PIXELS, not about state.
@@ -207,6 +208,44 @@ describe('the Brush eraser tip', () => {
               { x: 28, y: 28 },
               { x: 12, y: 28 },
             ],
+            featherRadius: 0,
+            antiAlias: false,
+          },
+        })
+      );
+    } finally {
+      getContextSpy.mockRestore();
+    }
+
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(0);
+    expect(alphaAt(alpha, 6, CENTRE)).toBe(255);
+  });
+
+  it('clips the erase through a positioned packed-mask selection', () => {
+    const originalGetContext = RecordingOffscreenCanvas.prototype.getContext;
+    const getContextSpy = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockImplementation(function (
+      this: RecordingOffscreenCanvas
+    ) {
+      if (RecordingOffscreenCanvas.instances.length > 1) return null as unknown as CanvasRenderingContext2D;
+      return originalGetContext.call(this);
+    });
+    const rasterMask = encodeRasterSelectionMask(new Uint8Array(16 * 16).fill(1), 16, 16, {
+      x: 0,
+      y: 0,
+      width: 16,
+      height: 16,
+    })!;
+
+    let alpha: ReturnType<typeof erasedAlpha>;
+    try {
+      alpha = erasedAlpha(
+        eraserArgs({
+          mode: 'brush',
+          lineWidth: 21,
+          hardness: BRUSH_HARDNESS_MAX,
+          selection: {
+            points: [],
+            rasterMask: { ...rasterMask, x: 12, y: 12 },
             featherRadius: 0,
             antiAlias: false,
           },

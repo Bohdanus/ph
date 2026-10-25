@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2139,42 +2139,6 @@ already-landed patch-equivalence logic.
 **Files.** `scripts/lib/worktree-inventory/git.mjs` — `patchEquivalence` and merge-tree comparison;
 `scripts/lib/worktree-inventory/classify.mjs`; `scripts/dispose-worktree.mjs`;
 `scripts/__tests__/worktree-inventory.test.mjs`; `scripts/__tests__/dispose-worktree.test.mjs`.
-
-## 185. The Magic Wand discards every matched region except the largest, on every click
-
-**Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
-loops, classifies them into outer contours and holes, and then keeps exactly one outer contour:
-`selectLargestBoundaryLoop()` returns the single loop with the largest absolute area. Every other
-matched region is dropped. The utility does not warn or log this reduction; the options bar now
-discloses it when Contiguous is unchecked.
-
-It is not gated on an option. The bar renders `Contiguous`, the checkbox writes `contiguous`, and this
-reduction runs unconditionally on every click — unchecking Contiguous feeds the same call, so the loss
-bites hardest exactly when the user has asked for the whole image rather than one region.
-
-**Where it is already recorded.** The header comment on `src/util/floodFill.ts` states that the wand
-"keeps only the largest outer loop", for the sibling module's own reasons, and `selectLargestBoundaryLoop()`'s
-own neighbour explains the magnitude comparison that drops the rest. The Magic Wand options bar now
-states the limitation when Contiguous is off, and its `appNotes` records the underlying single-polygon
-constraint. These disclosures mitigate the surprise but do not make the selection include every
-matching region. The `floodFill.ts` header comment cites the reduction by identifier (`selectLargestBoundaryLoop`,
-`simplifyClosedPath`, `holes.length > 0`) — those stale line-range citations have already been resolved;
-no line-number references to `magicWand.ts` remain in the comment.
-
-**Distinct from the recorded hole refusal.** The same function also refuses the whole selection when
-any hole is present. That refusal is recorded, but for a different tool: the sentence lives in the
-**Quick Selection** record in `src/tools/descriptions/selection.ts` — a grown region, not a wand click
-— and `docs/TOOLS-TOO-HARD.md` — Regions with holes quotes the same case. Keeping only the largest
-contour is a different loss on a different condition, and it is the one with no record anywhere.
-
-**Affected.** `src/util/magicWand.ts` — `selectLargestBoundaryLoop()`, and
-`createMagicWandSelectionFromImageData()` as its caller, which already holds every contour before the
-reduction; `classifyBoundaryLoops()` is what separates outer contours from holes for it.
-
-**What would close it.** Keep every outer contour and commit them as subpaths, which needs the
-selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
-declines. The options-bar warning is an interim mitigation; keep this entry open until the selected
-geometry can represent and commit every matching region.
 
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 

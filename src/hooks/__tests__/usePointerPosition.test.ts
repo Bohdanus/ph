@@ -437,6 +437,33 @@ describe('usePointerPosition', () => {
       expect(result.current.isMouseDown.current).toBe(true);
     });
 
+    it('clears the pointer claim when capture fails so a later press can start', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const setPointerCapture = el.setPointerCapture as ReturnType<typeof vi.fn>;
+      setPointerCapture.mockImplementationOnce(() => {
+        throw new DOMException('Pointer capture target is detached', 'NotFoundError');
+      });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      let failedPressAccepted: boolean | undefined;
+      act(() => {
+        failedPressAccepted = result.current.isPointerDownValid(pointerEvent(el, { button: 0, pointerId: 7 }));
+      });
+
+      expect(failedPressAccepted).toBe(false);
+      expect(result.current.pointerIdRef.current).toBeNull();
+      expect(result.current.isMouseDown.current).toBe(false);
+      expect(el.releasePointerCapture).toHaveBeenCalledWith(7);
+
+      let laterPressAccepted: boolean | undefined;
+      act(() => {
+        laterPressAccepted = result.current.isPointerDownValid(pointerEvent(el, { button: 0, pointerId: 8 }));
+      });
+
+      expect(laterPressAccepted).toBe(true);
+      expect(result.current.pointerIdRef.current).toBe(8);
+    });
+
     it('ignores a second concurrent pointer and keeps the first one active', () => {
       const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
