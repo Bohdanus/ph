@@ -46,7 +46,7 @@ jobs:
           [[ "$SOURCE_SHA" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "::error::source_sha must be a full Git object ID"; exit 1; }
           [[ -n "$SOURCE_BRANCH" && "$SOURCE_BRANCH" != "main" ]] || { echo "::error::Promotion requires a non-main branch"; exit 1; }
           git check-ref-format "refs/heads/$SOURCE_BRANCH"
-          [[ "$CHAT_ID" =~ ^[A-Za-z0-9._:-]+$ ]] || { echo "::error::A single native chat ID is required"; exit 1; }
+          [[ "$CHAT_ID" =~ ^[A-Za-z0-9._:/-]+$ ]] || { echo "::error::A single native chat ID is required"; exit 1; }
           [[ "$PROMOTE_JSON" == "true" || "$PROMOTE_JSON" == "false" ]] || { echo "::error::promote must be a JSON boolean"; exit 1; }
 
       - name: Checkout exact source commit
@@ -198,6 +198,8 @@ jobs:
           fi
           git -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m 'test: refresh Linux export baselines' -m "Chat: $CHAT_ID"
+            commit -m 'test: refresh Linux export baselines' \
+            -m "Chat: $CHAT_ID
+          Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
           git push --force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA" \
             origin "HEAD:refs/heads/$SOURCE_BRANCH"

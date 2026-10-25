@@ -67,11 +67,12 @@ describe('Linux baseline promotion workflow', () => {
       baselineWorkflow.indexOf('      - name: Commit and push baseline changes')
     );
 
-    expect(validationStep).toContain('[[ "$CHAT_ID" =~ ^[A-Za-z0-9._:-]+$ ]]');
+    expect(validationStep).toContain('[[ "$CHAT_ID" =~ ^[A-Za-z0-9._:/-]+$ ]]');
     expect(promotionStep).toContain('SOURCE_SHA: ${{ github.event.client_payload.source_sha }}');
     expect(promotionStep).toContain('--force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA"');
-    expect(promotionStep).toContain('-m "Chat: $CHAT_ID"');
-    expect(promotionStep).not.toContain('Co-authored-by: Copilot');
+    expect(promotionStep).toMatch(
+      /-m "Chat: \$CHAT_ID\s+Co-authored-by: Copilot <223556219\+Copilot@users\.noreply\.github\.com>"/
+    );
   });
 
   it('waits beyond both Linux baseline job limits with queue margin', () => {
@@ -90,9 +91,9 @@ describe('mirror E2E command parsing', () => {
 
   it('accepts full runs and baseline promotion with native chat attribution', () => {
     expect(parseArgs(['--full'])).toMatchObject({ mode: 'full' });
-    expect(parseArgs(['--linux-baselines', '--chat-id', 'ses_native-session'])).toMatchObject({
+    expect(parseArgs(['--linux-baselines', '--chat-id', 'copilotcli:/native-session'])).toMatchObject({
       mode: 'baselines',
-      chatId: 'ses_native-session',
+      chatId: 'copilotcli:/native-session',
     });
   });
 
