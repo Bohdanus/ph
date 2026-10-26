@@ -97,8 +97,14 @@ export function activeQuarantineKeys(state, now = Date.now()) {
 
 export function upsertQuarantine(state, { source, model, reason, hours = DEFAULT_QUARANTINE_HOURS, now = Date.now() }) {
   validateQuarantineState(state);
-  if (!QUARANTINE_SOURCES.has(source) || !model || !QUARANTINE_REASONS.has(reason)) {
-    throw new Error('A source, model, and supported quarantine reason are required');
+  if (
+    !QUARANTINE_SOURCES.has(source) ||
+    typeof model !== 'string' ||
+    model.length === 0 ||
+    model !== model.trim() ||
+    !QUARANTINE_REASONS.has(reason)
+  ) {
+    throw new Error('A supported source, non-empty model ID, and supported quarantine reason are required');
   }
   if (!Number.isFinite(hours) || hours <= 0 || hours > MAX_QUARANTINE_HOURS) {
     throw new Error(`Quarantine hours must be greater than 0 and no more than ${MAX_QUARANTINE_HOURS}`);
@@ -152,12 +158,15 @@ async function writeQuarantineStateUnlocked(state, filePath) {
   }
 }
 
-export async function withQuarantineWriteLock(filePath, update) {
+export async function withQuarantineWriteLock(filePath, update, deps = {}) {
   const lockPath = `${filePath}.lock`;
-  await mkdir(dirname(filePath), { recursive: true });
+  const mkdirImpl = deps.mkdir ?? mkdir;
+  const openImpl = deps.open ?? open;
+  const unlinkImpl = deps.unlink ?? unlink;
+  await mkdirImpl(dirname(filePath), { recursive: true });
   let handle;
   try {
-    handle = await open(lockPath, 'wx', 0o600);
+    handle = await openImpl(lockPath, 'wx', 0o600);
   } catch (error) {
     if (error?.code === 'EEXIST') {
       throw new Error(`Quarantine state is locked by another or prior process (${lockPath})`);
@@ -165,21 +174,38 @@ export async function withQuarantineWriteLock(filePath, update) {
     throw error;
   }
 
-  let updateFailed = false;
+  let result;
+  let updateError;
   try {
     await handle.writeFile(`${process.pid}\n`, 'utf8');
-    return await update((state) => writeQuarantineStateUnlocked(state, filePath));
+    result = await update((state) => writeQuarantineStateUnlocked(state, filePath));
   } catch (error) {
-    updateFailed = true;
-    throw error;
-  } finally {
-    await handle.close();
-    try {
-      await unlink(lockPath);
-    } catch (error) {
-      if (!updateFailed || error?.code !== 'ENOENT') throw error;
-    }
+    updateError = error;
   }
+
+  const cleanupErrors = [];
+  try {
+    await handle.close();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
+    await unlinkImpl(lockPath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') cleanupErrors.push(error);
+  }
+
+  if (updateError && cleanupErrors.length > 0) {
+    throw new AggregateError([updateError, ...cleanupErrors], 'Quarantine update and lock cleanup both failed');
+  }
+  if (updateError) throw updateError;
+  if (cleanupErrors.length > 0) {
+    throw new Error(
+      `Quarantine operation completed but lock cleanup failed (${lockPath}); the state may be committed. Inspect the lock before retrying.`,
+      { cause: cleanupErrors[0] }
+    );
+  }
+  return result;
 }
 
 async function writeQuarantineStateIfAbsent(state, filePath) {

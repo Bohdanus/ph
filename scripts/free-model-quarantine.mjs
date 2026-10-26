@@ -98,7 +98,7 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
       io.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
       return 0;
     }
-    return await withQuarantineWriteLock(filePath, async (saveState) => {
+    const outcome = await withQuarantineWriteLock(filePath, async (saveState) => {
       const state = await loadQuarantineState(filePath);
       if (command === 'add') {
         const hours = options.hours === undefined ? undefined : Number(options.hours);
@@ -109,20 +109,22 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
           ...(hours === undefined ? {} : { hours }),
         });
         await saveState(state);
-        io.stdout.write(`Quarantined ${key} until ${state.entries[key].expiresAt}\n`);
-        return 0;
+        return { code: 0, message: `Quarantined ${key} until ${state.entries[key].expiresAt}\n` };
       }
       if (command === 'release') {
         const released = releaseQuarantine(state, options.source, options.model);
         if (released) await saveState(state);
-        io.stdout.write(released ? `Released ${options.source}:${options.model}\n` : 'No matching quarantine entry\n');
-        return released ? 0 : 1;
+        return {
+          code: released ? 0 : 1,
+          message: released ? `Released ${options.source}:${options.model}\n` : 'No matching quarantine entry\n',
+        };
       }
       const removed = removeExpiredQuarantines(state);
       if (removed) await saveState(state);
-      io.stdout.write(`Removed ${removed} expired quarantine entr${removed === 1 ? 'y' : 'ies'}\n`);
-      return 0;
+      return { code: 0, message: `Removed ${removed} expired quarantine entr${removed === 1 ? 'y' : 'ies'}\n` };
     });
+    io.stdout.write(outcome.message);
+    return outcome.code;
   } catch (error) {
     io.stderr.write(`${error.message}\n`);
     return 1;

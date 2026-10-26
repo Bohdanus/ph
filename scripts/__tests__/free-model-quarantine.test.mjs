@@ -91,6 +91,16 @@ describe('free-model quarantine lifecycle', () => {
         },
       })
     ).toThrow(/Invalid/);
+    expect(() =>
+      upsertQuarantine(
+        { schemaVersion: 1, entries: {} },
+        {
+          source: 'kilo',
+          model: 12,
+          reason: 'rate_limit',
+        }
+      )
+    ).toThrow(/supported quarantine reason/);
   });
 
   it('sets a six-hour default expiry and refuses a quarantine beyond three days', () => {
@@ -260,6 +270,33 @@ describe('free-model quarantine lifecycle', () => {
       await expect(firstWriter).resolves.toBeUndefined();
     } finally {
       releaseLock?.();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reports that state may have committed when lock cleanup fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-cleanup-'));
+    const filePath = join(directory, 'state.json');
+    let updateCompleted = false;
+
+    try {
+      await expect(
+        withQuarantineWriteLock(
+          filePath,
+          async () => {
+            updateCompleted = true;
+          },
+          {
+            unlink: async () => {
+              const error = new Error('permission denied');
+              error.code = 'EACCES';
+              throw error;
+            },
+          }
+        )
+      ).rejects.toThrow(/state may be committed/);
+      expect(updateCompleted).toBe(true);
+    } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
