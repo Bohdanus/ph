@@ -265,10 +265,14 @@ in `Layer.tmpCanvas` with differing materialized bounds in
 Before revisiting authority retirement, keep frame-changing commits and
 source-backed imports/replacements on the complete legacy path. The browser
 differential covers a retained affine layer transform at its own cursor and after
-one later frame transform; this does not close the broader frame-parity gate.
-Preview interleaving and refused-draw timeline rollback are tested, but active
-previews still render over the complete legacy base. The remaining frame cases
-and source ownership need independent parity and failure-containment evidence.
+one later frame transform, proves the outputs change from an untransformed
+baseline and frame-only control, and compares legacy with durable pixels. It does
+not close broader frame parity or exact materialized bounds. The frame-only
+control for this raster fixture showed a one-pixel/two-channel delta; it remains
+an open parity case recorded in `e2e/OPEN_PROBLEMS.md`. Preview interleaving and
+refused-draw timeline rollback are tested, but active previews still render over
+the complete legacy base. Expand the frame matrix and establish source ownership
+as independent gates, each with parity and failure-containment evidence.
 
 ## Gates
 

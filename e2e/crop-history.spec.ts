@@ -898,6 +898,19 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
     });
     if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
     const layerTransforms = fixture.layerTransforms ?? [];
+    let untransformedBaselinePixels: number[] | null = null;
+    if (layerTransforms.length > 0) {
+      const baselineSurface = document.createElement('canvas');
+      const baselineLayers = (layers as unknown as Layer[]).slice().sort((left, right) => left.order - right.order);
+      if (!drawLayersToCanvas(baselineSurface, baselineLayers, baseFrame)) {
+        throw new Error(`Untransformed baseline composition was refused for ${fixture.caseName}`);
+      }
+      const baselineContext = baselineSurface.getContext('2d');
+      if (!baselineContext) throw new Error(`Untransformed baseline produced no 2D context for ${fixture.caseName}`);
+      untransformedBaselinePixels = Array.from(
+        baselineContext.getImageData(0, 0, baseFrame.width, baseFrame.height).data
+      );
+    }
     const transitions = fixture.transitions.map((transition, index) => {
       const frameCenter = {
         x: transition.nextFrame.x + transition.nextFrame.width / 2,
@@ -976,6 +989,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         const legacyContext = legacySurface.getContext('2d');
         if (!legacyContext) throw new Error(`Legacy composition produced no 2D context at ${stage}`);
         const legacyPixels = Array.from(legacyContext.getImageData(0, 0, frame.width, frame.height).data);
+        const differsFromUntransformed = (pixels: number[]) =>
+          untransformedBaselinePixels !== null &&
+          (pixels.length !== untransformedBaselinePixels.length ||
+            pixels.some((pixel, index) => pixel !== untransformedBaselinePixels[index]));
 
         const cursor = converted.legacyCursorToDurableCursor[legacyIndex];
         if (typeof cursor !== 'number') throw new Error(`${stage} did not map to a durable cursor`);
@@ -1036,6 +1053,8 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             durableFrame: composite.frame,
             legacyPixels,
             durablePixels,
+            legacyDiffersFromUntransformed: differsFromUntransformed(legacyPixels),
+            durableDiffersFromUntransformed: differsFromUntransformed(durablePixels),
             legacyByteLength: legacyPixels.length,
             durableByteLength: durablePixels.length,
             differingBytes,
@@ -1053,10 +1072,14 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       for (const [index, layerTransform] of layerTransforms.entries()) {
         const result = await compareAtCursor(index + 1, `layer transform ${index + 1}`);
         layerTransformResults.push({
-          ...result,
           index: index + 1,
           id: layerTransform.id,
           layerId: layerTransform.layerId,
+          frame: result.frame,
+          durableFrame: result.durableFrame,
+          differingBytes: result.differingBytes,
+          legacyDiffersFromUntransformed: result.legacyDiffersFromUntransformed,
+          durableDiffersFromUntransformed: result.durableDiffersFromUntransformed,
         });
       }
 
@@ -1075,7 +1098,19 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         ) {
           throw new Error(`Legacy frame transition ${index + 1} did not reach its requested frame`);
         }
-        transitionResults.push({ ...result, index: index + 1, angleDegrees: transition.angleDegrees });
+        transitionResults.push({
+          index: index + 1,
+          angleDegrees: transition.angleDegrees,
+          frame: result.frame,
+          durableFrame: result.durableFrame,
+          legacyByteLength: result.legacyByteLength,
+          durableByteLength: result.durableByteLength,
+          differingBytes: result.differingBytes,
+          differingPixels: result.differingPixels,
+          maxChannelDelta: result.maxChannelDelta,
+          differingSamples: result.differingSamples,
+          materializedBounds: result.materializedBounds,
+        });
         if (index === transitions.length - 1) {
           finalLegacyPixels = result.legacyPixels;
           finalDurablePixels = result.durablePixels;
@@ -2770,7 +2805,7 @@ test.describe('Crop history', () => {
     test('a retained layer transform matches legacy before and after a later frame transform', async ({ page }) => {
       await openDocument(page);
 
-      const result = await compareCropRenderers(page, {
+      const fixture: CropParityFixture = {
         caseName: 'retained affine followed by frame transform',
         documentId: 'retained-affine-frame-parity',
         layerTransforms: [
@@ -2813,15 +2848,29 @@ test.describe('Crop history', () => {
             ],
           },
         ],
+      };
+      const result = await compareCropRenderers(page, fixture);
+      const untransformedControl = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'untransformed control for retained affine followed by frame transform',
+        documentId: 'retained-affine-frame-parity-control',
+        layerTransforms: [],
       });
 
       expect(result.layerTransformResults).toHaveLength(1);
       expect(result.layerTransformResults[0]?.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
       expect(result.layerTransformResults[0]?.durableFrame).toEqual(result.layerTransformResults[0]?.frame);
       expect(result.layerTransformResults[0]?.differingBytes).toBe(0);
+      expect(result.layerTransformResults[0]?.legacyDiffersFromUntransformed).toBe(true);
+      expect(result.layerTransformResults[0]?.durableDiffersFromUntransformed).toBe(true);
       expect(result.transitionResults).toHaveLength(1);
       expect(result.transitionResults[0]?.differingBytes).toBe(0);
       expect(result.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
+      expect(untransformedControl.transitionResults[0]?.frame).toEqual(result.transitionResults[0]?.frame);
+      // This control isolates the retained operation within each renderer; the broader frame-only
+      // parity matrix remains open and is not treated as an oracle by this fixture.
+      expect(result.legacyPixels).not.toEqual(untransformedControl.legacyPixels);
+      expect(result.durablePixels).not.toEqual(untransformedControl.durablePixels);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
     });
