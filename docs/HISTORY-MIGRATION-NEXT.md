@@ -152,3 +152,11 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 - Exact materialized bounds remain an open frame-parity item. The frame-only control's
   one-pixel/two-channel difference remains open in `e2e/OPEN_PROBLEMS.md`; it is not counted as a
   parity pass.
+
+## Landing Status
+
+The reviewed closeout is committed on `task/history-migration-review-closeout-20261026`, but it is
+not yet on `main`. Landing is blocked because the designated `main` worktree at `362d0656` has an
+unrelated untracked `ci-bypass-comparison.md`. Leave that file untouched; resume landing after its
+owner clears it, then repeat the pinned landing checks in `docs/ORCHESTRATION.md` in case `main` has
+advanced.
