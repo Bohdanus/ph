@@ -13,6 +13,7 @@ import {
 } from '../../contexts/view-state.ts';
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 import { useWorkspaceFitScale } from '../../hooks/useWorkspaceFitScale.ts';
+import { readClientViewportRect } from '../../util/client-viewport.ts';
 
 export type ViewToolMode = 'hand' | 'zoom' | 'rotate-view';
 
@@ -104,13 +105,13 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
       fitScaleCompensation: currentState.fitScaleCompensation,
       minimumZoomOverride,
     };
-    const rect = containerRef.current?.getBoundingClientRect();
+    const rect = containerRef.current ? readClientViewportRect(containerRef.current) : null;
     if (!rect) return;
     setViewState(
       zoomAroundViewportPoint(
         rebasedStartState,
         zoom,
-        { x: gesture.startX - rect.left, y: gesture.startY - rect.top },
+        { x: gesture.startX - rect.x, y: gesture.startY - rect.y },
         viewportCenter(rect.width, rect.height)
       )
     );
@@ -120,7 +121,7 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     if (mode === 'zoom' && Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) < 4) {
-      const rect = containerRef.current?.getBoundingClientRect();
+      const rect = containerRef.current ? readClientViewportRect(containerRef.current) : null;
       if (rect) {
         const factor = gesture.alternate ? 0.8 : 1.25;
         const currentState = viewStateRef.current;
@@ -141,7 +142,7 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
           zoomAroundViewportPoint(
             rebasedStartState,
             relativeZoomAtMagnification(magnification, currentState.fitScaleCompensation),
-            { x: gesture.startX - rect.left, y: gesture.startY - rect.top },
+            { x: gesture.startX - rect.x, y: gesture.startY - rect.y },
             viewportCenter(rect.width, rect.height)
           )
         );
@@ -163,6 +164,7 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
       style={{ touchAction: 'none' }}
       tabIndex={0}
       data-testid={`${mode}-tool-area`}
+      data-workspace-fit-scale={String(fitScale)}
     />
   );
 }

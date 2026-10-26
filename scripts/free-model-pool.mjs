@@ -14,8 +14,6 @@ const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_KEY_INFO = 'https://openrouter.ai/api/v1/key';
-const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
-const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
 const MAX_PROMPT_CHARS = 120_000;
@@ -25,8 +23,6 @@ export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const PREFERRED_KILO_MODELS = ['poolside/laguna-s-2.1:free'];
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
-
-const FREE_GROQ_MODEL_IDS = new Set(['openai/gpt-oss-20b', 'openai/gpt-oss-120b']);
 
 // Reject unknown override conditions instead of guessing whether a paid price applies.
 const PRICING_OVERRIDE_CONDITIONS = new Set(['min_prompt_tokens', 'utc_days', 'utc_end', 'utc_start']);
@@ -122,9 +118,6 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
       if (typeof row?.id !== 'string' || row.id.length === 0) return false;
       if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
-      if (source === 'groq') {
-        return FREE_GROQ_MODEL_IDS.has(row.id);
-      }
       if (!zeroPriced(row.pricing)) return false;
       if (source === 'openrouter') return row.id.endsWith(':free');
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
@@ -141,8 +134,6 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
 export async function loadCatalogs({
   fetchImpl = fetch,
   openRouterKey = process.env.OPENROUTER_API_KEY,
-  groqKey = process.env.GROQ_API_KEY,
-  groqFreePlanConfirmed = false,
   includeOpenRouterCatalog = false,
   quarantineFile = DEFAULT_QUARANTINE_FILE,
   initializeLegacyQuarantine = false,
@@ -154,12 +145,10 @@ export async function loadCatalogs({
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
-  if (groqKey && groqFreePlanConfirmed) sources.push({ source: 'groq', url: GROQ_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url }) => {
       const headers = {};
       if (source === 'openrouter' && openRouterKey) headers.Authorization = `Bearer ${openRouterKey}`;
-      if (source === 'groq') headers.Authorization = `Bearer ${groqKey}`;
       const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (!response.ok) {
         await discardResponseBody(response);
@@ -277,8 +266,6 @@ export async function completeWithFreeModel(
   {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
-    groqKey = process.env.GROQ_API_KEY,
-    groqFreePlanConfirmed = false,
     checkOpenRouterQuota = false,
     maxTokens = 1200,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
@@ -296,8 +283,6 @@ export async function completeWithFreeModel(
   const available = await loadCatalogs({
     fetchImpl,
     openRouterKey,
-    groqKey,
-    groqFreePlanConfirmed,
     quarantineFile,
     initializeLegacyQuarantine,
     onCatalogError,
@@ -308,7 +293,6 @@ export async function completeWithFreeModel(
   const requestCounts = () => ({
     kilo: attempts.get('kilo') ?? 0,
     openrouter: attempts.get('openrouter') ?? 0,
-    groq: attempts.get('groq') ?? 0,
   });
   if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
@@ -322,12 +306,10 @@ export async function completeWithFreeModel(
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
     if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
     if (candidate.source === 'openrouter' && !openRouterKey) continue;
-    if (candidate.source === 'groq' && !groqKey) continue;
     attempts.set(candidate.source, sourceAttempts + 1);
-    const url = candidate.source === 'kilo' ? KILO_CHAT : candidate.source === 'groq' ? GROQ_CHAT : OPENROUTER_CHAT;
+    const url = candidate.source === 'kilo' ? KILO_CHAT : OPENROUTER_CHAT;
     const headers = { 'Content-Type': 'application/json' };
     if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
-    if (candidate.source === 'groq') headers.Authorization = `Bearer ${groqKey}`;
     let response;
     try {
       response = await fetchImpl(url, {
@@ -403,11 +385,11 @@ export async function completeWithFreeModel(
 
 function usage() {
   return (
-    'Usage: node scripts/free-model-pool.mjs --list [--limit N] [--groq-free-plan-only]\n' +
+    'Usage: node scripts/free-model-pool.mjs --list [--limit N]\n' +
     '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--probe-openrouter-quota]\n' +
     '       node scripts/free-model-pool.mjs --openrouter-quota\n' +
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
-    '--list fetches public model catalogs; configured=false means credentials/attestation are missing, not that the catalog entry is invalid.\n' +
+    '--list fetches public model catalogs; configured=false means credentials are missing, not that the catalog entry is invalid.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
     '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.'
   );
@@ -418,7 +400,6 @@ export async function main(
   {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
-    groqKey = process.env.GROQ_API_KEY,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
     stdout = process.stdout,
@@ -430,7 +411,6 @@ export async function main(
   const outputFileAt = args.indexOf('--output-file');
   const limitAt = args.indexOf('--limit');
   const tokenAt = args.indexOf('--max-tokens');
-  const groqFreePlanConfirmed = args.includes('--groq-free-plan-only');
   const checkOpenRouterQuota = args.includes('--probe-openrouter-quota');
   if (args.includes('--openrouter-quota')) {
     if (args.length !== 1) {
@@ -454,6 +434,19 @@ export async function main(
     );
     return 0;
   }
+  const knownOptions = new Set([
+    '--list',
+    '--prompt-file',
+    '--output-file',
+    '--limit',
+    '--max-tokens',
+    '--probe-openrouter-quota',
+  ]);
+  const unknownOption = args.find((arg) => arg.startsWith('--') && !knownOptions.has(arg));
+  if (unknownOption) {
+    stderr.write(`Unknown option: ${unknownOption}\n${usage()}\n`);
+    return 2;
+  }
   const hasValue = (index) => index < 0 || (args[index + 1] && !args[index + 1].startsWith('--'));
   if (
     (!list && promptAt < 0) ||
@@ -470,18 +463,13 @@ export async function main(
     const candidates = await loadCatalogs({
       fetchImpl,
       openRouterKey,
-      groqKey,
-      groqFreePlanConfirmed,
       quarantineFile,
       includeOpenRouterCatalog: true,
       initializeLegacyQuarantine,
       onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
-    const configured = (source) =>
-      source === 'kilo' ||
-      (source === 'openrouter' && Boolean(openRouterKey)) ||
-      (source === 'groq' && Boolean(groqKey && groqFreePlanConfirmed));
+    const configured = (source) => source === 'kilo' || (source === 'openrouter' && Boolean(openRouterKey));
     const listed = candidates.slice(0, limit).map((entry) => ({ ...entry, configured: configured(entry.source) }));
     stdout.write(`${JSON.stringify(listed, null, 2)}\n`);
     return 0;
@@ -501,9 +489,7 @@ export async function main(
   const result = await completeWithFreeModel(prompt, {
     fetchImpl,
     openRouterKey,
-    groqKey,
     maxTokens,
-    groqFreePlanConfirmed,
     quarantineFile,
     initializeLegacyQuarantine,
     checkOpenRouterQuota,

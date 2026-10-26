@@ -9,6 +9,7 @@ import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
 import { absoluteViewZoom, minimumSliderZoomForDocumentSize, relativeViewZoomForMagnification } from '../view-state.ts';
+import { containFit } from '../../util/contain-fit.ts';
 import {
   OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
@@ -106,6 +107,27 @@ function renderWithProbe() {
     </StoreProvider>
   );
   return { getProbe, unmount, store: () => getProbe().store, dispatch: () => getProbe().dispatch };
+}
+
+function setClientViewport(
+  element: HTMLDivElement,
+  {
+    left = 0,
+    top = 0,
+    width = 800,
+    height = 600,
+    offsetWidth = 800,
+    offsetHeight = 600,
+  }: { left?: number; top?: number; width?: number; height?: number; offsetWidth?: number; offsetHeight?: number } = {}
+) {
+  Object.defineProperties(element, {
+    clientLeft: { configurable: true, value: left },
+    clientTop: { configurable: true, value: top },
+    clientWidth: { configurable: true, value: width },
+    clientHeight: { configurable: true, value: height },
+    offsetWidth: { configurable: true, value: offsetWidth },
+    offsetHeight: { configurable: true, value: offsetHeight },
+  });
 }
 
 describe('StoreContext scalar and tool actions', () => {
@@ -707,6 +729,7 @@ describe('StoreContext document frame derivation', () => {
           y: 0,
           toJSON: () => ({}),
         }) as DOMRect;
+      setClientViewport(viewport);
       (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
 
       act(() => {
@@ -767,6 +790,45 @@ describe('StoreContext document frame derivation', () => {
     }
   );
 
+  it('preserves displayed scale when a scrollbar changes client width without changing the border box', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    setClientViewport(viewport);
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-client-resize', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    act(() => store().setViewState({ zoom: 1.25 }));
+
+    const dpr = window.devicePixelRatio || 1;
+    const previousFitScale = containFit({ width: 800, height: 600 }, initialSize).scale;
+    const previousMagnification = absoluteViewZoom(store().viewState, previousFitScale, dpr);
+    setClientViewport(viewport, { width: 785, height: 600, offsetWidth: 800, offsetHeight: 600 });
+    act(() => {
+      dispatch()({ type: 'BATCH_UPDATES', payload: { totalSize: { ...initialSize } } });
+    });
+
+    const nextFitScale = containFit({ width: 785, height: 600 }, initialSize).scale;
+    expect(store().viewState.fitScaleCompensation).toBeGreaterThan(1);
+    expect(absoluteViewZoom(store().viewState, nextFitScale, dpr)).toBeCloseTo(previousMagnification, 8);
+  });
+
   it('clamps a preserved manual zoom to the new one-pixel floor after a crop and keeps replay coherent', () => {
     const { store, dispatch } = renderWithProbe();
     const viewport = document.createElement('div');
@@ -782,6 +844,7 @@ describe('StoreContext document frame derivation', () => {
         y: 0,
         toJSON: () => ({}),
       }) as DOMRect;
+    setClientViewport(viewport);
     (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
 
     act(() => {
@@ -858,6 +921,7 @@ describe('StoreContext document frame derivation', () => {
         y: 0,
         toJSON: () => ({}),
       }) as DOMRect;
+    setClientViewport(viewport);
     (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
 
     const openingFrame = { x: 0, y: 0, width: 200_000, height: 1_000 };
@@ -951,6 +1015,7 @@ describe('StoreContext document frame derivation', () => {
         y: 0,
         toJSON: () => ({}),
       }) as DOMRect;
+    setClientViewport(viewport);
     (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
 
     const openingFrame = { x: 0, y: 0, width: 200_000, height: 100 };
@@ -1044,6 +1109,7 @@ describe('StoreContext document frame derivation', () => {
         y: 0,
         toJSON: () => ({}),
       }) as DOMRect;
+    setClientViewport(viewport);
     (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
 
     const openingFrame = { x: 0, y: 0, width: 2_000, height: 1_000 };
@@ -1118,6 +1184,7 @@ describe('StoreContext document frame derivation', () => {
         y: 0,
         toJSON: () => ({}),
       }) as DOMRect;
+    setClientViewport(viewport);
     (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
 
     act(() => {

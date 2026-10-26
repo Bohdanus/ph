@@ -24,10 +24,35 @@ function toDomRect({ left, top, width, height }: Rect): DOMRect {
   } as DOMRect;
 }
 
+function setClientViewport(
+  el: HTMLDivElement,
+  {
+    left = 0,
+    top = 0,
+    width,
+    height,
+    offsetWidth = Math.round(width),
+    offsetHeight = Math.round(height),
+  }: { left?: number; top?: number; width: number; height: number; offsetWidth?: number; offsetHeight?: number }
+) {
+  Object.defineProperties(el, {
+    clientLeft: { configurable: true, value: left },
+    clientTop: { configurable: true, value: top },
+    clientWidth: { configurable: true, value: width },
+    clientHeight: { configurable: true, value: height },
+    offsetWidth: { configurable: true, value: offsetWidth },
+    offsetHeight: { configurable: true, value: offsetHeight },
+  });
+}
+
 function createContainer(rect: Rect) {
   const el = document.createElement('div');
   const getBoundingClientRect = vi.fn(() => toDomRect(rect));
   el.getBoundingClientRect = getBoundingClientRect;
+  setClientViewport(el, {
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  });
   el.setPointerCapture = vi.fn();
   el.releasePointerCapture = vi.fn();
 
@@ -873,6 +898,9 @@ describe('usePointerPosition', () => {
       onResize.mockClear();
       getBoundingClientRect.mockClear();
 
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 0, top: 0, width: 500, height: 100 }));
+      setClientViewport(el, { width: 500, height: 100 });
+
       act(() => {
         observer.emit({ width: 500, height: 100 });
       });
@@ -887,44 +915,45 @@ describe('usePointerPosition', () => {
 
       expect(onResize).toHaveBeenCalledTimes(1);
       expect(getBoundingClientRect).toHaveBeenCalled();
-      // The observed rect drives the recompute: 500x100 around a 100x100 image
-      // scales by 1 and leaves a 200px gap on each horizontal side.
+      // The live 500x100 client viewport scales by 1 and leaves a 200px gap
+      // on each horizontal side.
       expect(onResize).toHaveBeenCalledWith(
         expect.objectContaining({ scale: 1, innerWidth: 100, innerHeight: 100, offsetX: 200, offsetY: 0 })
       );
     });
 
-    it('sizes the recompute from the observed border box, not the content box or a re-read', () => {
+    it('uses the client viewport when a scrollbar shrinks it without resizing the border box', () => {
       vi.useFakeTimers();
       vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
 
-      // The element's own rect keeps reporting 200x200, so a re-read of
-      // getBoundingClientRect() would silently replace the observed measurement.
-      const { el, getBoundingClientRect } = createContainer({ left: 5, top: 6, width: 200, height: 200 });
+      const { el, getBoundingClientRect } = createContainer({ left: 5, top: 6, width: 415, height: 220 });
+      setClientViewport(el, { left: 2, top: 2, width: 400, height: 200, offsetWidth: 415, offsetHeight: 220 });
       const onResize = vi.fn();
 
       renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
       onResize.mockClear();
       getBoundingClientRect.mockClear();
 
+      // A classic 15px vertical scrollbar changes the client width but leaves the
+      // border box at 415x220. ResizeObserver reports its content box by default.
+      setClientViewport(el, { left: 2, top: 2, width: 385, height: 200, offsetWidth: 415, offsetHeight: 220 });
       act(() => {
-        // 4px border: the border box is 400x300, the content box 392x292.
-        ControllableResizeObserver.instances[0].emit({ width: 400, height: 300 }, { width: 392, height: 292 });
+        ControllableResizeObserver.instances[0].emit({ width: 415, height: 220 }, { width: 385, height: 200 });
         vi.advanceTimersByTime(32);
       });
 
       expect(onResize).toHaveBeenCalledTimes(1);
-      // 400x300 around a 100x100 image scales by 3 and centres the 300x300 image
-      // with a 50px gap on each side. The re-read 200x200 would give scale 2, and
-      // the 392x292 content box would give 2.92.
+      expect(getBoundingClientRect).toHaveBeenCalled();
+      // The visible client area is 385x200. It is height-limited at scale 2 and
+      // leaves a 92.5px horizontal gap, regardless of the 415px border box.
       expect(onResize).toHaveBeenCalledWith(
         expect.objectContaining({
-          outerWidth: 400,
-          outerHeight: 300,
-          scale: 3,
-          innerWidth: 300,
-          innerHeight: 300,
-          offsetX: 50,
+          outerWidth: 385,
+          outerHeight: 200,
+          scale: 2,
+          innerWidth: 200,
+          innerHeight: 200,
+          offsetX: 92.5,
           offsetY: 0,
         })
       );
@@ -938,13 +967,12 @@ describe('usePointerPosition', () => {
       const { el, getBoundingClientRect } = createContainer(rect);
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 33, top: 44, width: 200, height: 200 }));
+      setClientViewport(el, { width: 200, height: 200 });
       act(() => {
         ControllableResizeObserver.instances[0].emit({ width: 200, height: 200 });
         vi.advanceTimersByTime(32);
       });
-
-      // Container actually resized to 200x200; scale 2, offsets 0.
-      getBoundingClientRect.mockReturnValue(toDomRect({ left: 33, top: 44, width: 200, height: 200 }));
 
       // scale 2, offsets 0 => x = (clientX - 33) / 2
       expect(result.current.getLocalCoords(pointerEvent(el, { clientX: 33 + 2 * 5, clientY: 44 + 2 * 6 }))).toEqual({
@@ -974,10 +1002,13 @@ describe('usePointerPosition', () => {
       vi.useFakeTimers();
       vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
 
-      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { el, getBoundingClientRect } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const onResize = vi.fn();
       renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
       onResize.mockClear();
+
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 0, top: 0, width: 500, height: 500 }));
+      setClientViewport(el, { width: 500, height: 500 });
 
       act(() => {
         ControllableResizeObserver.instances[0].emit({ width: 300, height: 300 });

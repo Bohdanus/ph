@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 
 import {
+  assertMirrorBranchPushSafe,
   buildDispatchArgs,
   buildMirrorPushArgs,
   expectedRunTitle,
@@ -15,7 +18,11 @@ import {
   githubRepositoryFromRemote,
   isRetryableCommandError,
   parseArgs,
+  parseMirrorBranchSha,
+  readMirrorBranchSha,
   RUN_WAIT_TIMEOUT_MS_BY_MODE,
+  LINUX_BASELINE_FILES,
+  LINUX_BASELINE_PATH,
   verifyBaselinePromotion,
 } from '../mirror-e2e.mjs';
 import { validateE2ESpec } from '../validate-e2e-spec.mjs';
@@ -23,6 +30,43 @@ import { validateE2ESpec } from '../validate-e2e-spec.mjs';
 const baselineWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/capture-linux-baselines.yml'), 'utf8');
 const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 const focusedWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'), 'utf8');
+
+function runGit(cwd, args, input) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', input });
+  if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
+  return result.stdout.trim();
+}
+
+function createMirrorPushFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'mirror-e2e-push-'));
+  const source = join(root, 'source');
+  const mirror = join(root, 'mirror.git');
+  const branch = 'feat/e2e-runner';
+
+  runGit(root, ['init', '--quiet', '--bare', '--initial-branch=main', mirror]);
+  runGit(root, ['init', '--quiet', `--initial-branch=${branch}`, source]);
+  runGit(source, ['config', 'user.name', 'Mirror Push Fixture']);
+  runGit(source, ['config', 'user.email', 'mirror-push-fixture@example.test']);
+  writeFileSync(join(source, 'README.md'), 'mirror push fixture\n');
+  runGit(source, ['add', 'README.md']);
+  runGit(source, ['commit', '--quiet', '-m', 'fixture source']);
+  runGit(source, ['remote', 'add', 'mirror', mirror]);
+
+  return { root, source, mirror, branch, sourceSha: runGit(source, ['rev-parse', 'HEAD']) };
+}
+
+function createBaselinePromotion(fixture, chatId, subject = 'test: refresh Linux export baselines') {
+  const baselineFile = join(fixture.source, LINUX_BASELINE_PATH, LINUX_BASELINE_FILES[0]);
+  mkdirSync(dirname(baselineFile), { recursive: true });
+  writeFileSync(baselineFile, 'captured baseline\n');
+  runGit(fixture.source, ['add', LINUX_BASELINE_PATH]);
+  runGit(fixture.source, ['commit', '--quiet', '-m', subject, '-m', `Chat: ${chatId}`]);
+  const baselineSha = runGit(fixture.source, ['rev-parse', 'HEAD']);
+  runGit(fixture.source, buildMirrorPushArgs(baselineSha, fixture.branch, null));
+  return { baselineSha, remoteSha: readMirrorBranchSha(fixture.branch, fixture.source) };
+}
+
+vi.setConfig({ testTimeout: 30_000 });
 
 describe('Linux baseline promotion workflow', () => {
   it('accepts capture requests only through the trusted default-branch repository dispatch', () => {
@@ -59,24 +103,56 @@ describe('Linux baseline promotion workflow', () => {
   });
 
   it('attributes the generated commit to the native chat and leases the tested branch tip', () => {
-    const validationStep = baselineWorkflow.slice(
+    const captureValidationStep = baselineWorkflow.slice(
       baselineWorkflow.indexOf('      - name: Validate trusted workflow revision and capture target'),
+      baselineWorkflow.indexOf('      - name: Checkout exact source commit')
+    );
+    const promotionValidationStep = baselineWorkflow.slice(
+      baselineWorkflow.indexOf('      - name: Validate branch, source SHA and chat ID'),
       baselineWorkflow.indexOf('      - name: Download captured Linux baselines')
+    );
+    const stagingStep = baselineWorkflow.slice(
+      baselineWorkflow.indexOf('      - name: Validate and stage baseline allowlist'),
+      baselineWorkflow.indexOf('      - name: Commit and push baseline changes')
     );
     const promotionStep = baselineWorkflow.slice(
       baselineWorkflow.indexOf('      - name: Commit and push baseline changes')
     );
+    const nativeChatGuard =
+      '[[ "$CHAT_ID" =~ ^(ses_[A-Za-z0-9]{26}|[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12}|copilotcli:/[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12})$ ]] || { echo "::error::A valid Kilo ID, Codex UUID, or Copilot session URI is required"; exit 1; }';
 
-    expect(validationStep).toContain('[[ "$CHAT_ID" =~ ^[A-Za-z0-9._:/-]+$ ]]');
-    const chatIdPattern = validationStep.match(/\[\[ "\$CHAT_ID" =~ (.+?) \]\]/)?.[1];
-    expect(chatIdPattern).toBeDefined();
-    const chatIdValidator = new RegExp(chatIdPattern);
-    expect(chatIdValidator.test('copilotcli:/7befb061-b313-497b-8694-97929d9054e4')).toBe(true);
-    expect(chatIdValidator.test('bad\nChat: injected')).toBe(false);
+    for (const validationStep of [captureValidationStep, promotionValidationStep]) {
+      expect(validationStep).toContain('CHAT_ID: ${{ github.event.client_payload.chat_id }}');
+      const guards = validationStep
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('[[ "$CHAT_ID" =~'));
+      expect(guards).toEqual([nativeChatGuard]);
+    }
+    const stagedFiles = /expected=\(([^)]*)\)/.exec(stagingStep)?.[1].trim().split(/\s+/).sort();
+    expect(stagedFiles).toEqual([
+      'drawing.avif.png',
+      'drawing.bmp.png',
+      'drawing.gif.png',
+      'drawing.jpeg.png',
+      'drawing.png.png',
+      'drawing.svg.png',
+      'drawing.webp.png',
+    ]);
+    expect(stagingStep).toContain('for name in "${expected[@]}"; do');
+    expect(
+      stagingStep
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('git add '))
+    ).toEqual(['git add -- "$target"']);
     expect(promotionStep).toContain('SOURCE_SHA: ${{ github.event.client_payload.source_sha }}');
+    expect(promotionStep).toContain('CHAT_ID: ${{ github.event.client_payload.chat_id }}');
     expect(promotionStep).toContain('--force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA"');
     expect(promotionStep).toContain('-m "Chat: $CHAT_ID"');
     expect(promotionStep).not.toContain('Co-authored-by: Copilot');
+    expect(stagingStep).toContain('git check-attr text eol filter ident working-tree-encoding -- "$target"');
+    expect(stagingStep).toContain(': ident: unspecified');
   });
 
   it('waits beyond both Linux baseline job limits with queue margin', () => {
@@ -95,9 +171,19 @@ describe('mirror E2E command parsing', () => {
 
   it('accepts full runs and baseline promotion with native chat attribution', () => {
     expect(parseArgs(['--full'])).toMatchObject({ mode: 'full' });
-    expect(parseArgs(['--linux-baselines', '--chat-id', 'ses_native-session'])).toMatchObject({
+    expect(parseArgs(['--linux-baselines', '--chat-id', 'ses_0123456789ABCDEF0123456789'])).toMatchObject({
       mode: 'baselines',
-      chatId: 'ses_native-session',
+      chatId: 'ses_0123456789ABCDEF0123456789',
+    });
+    expect(parseArgs(['--linux-baselines', '--chat-id', '01234567-89ab-4def-8123-456789abcdef'])).toMatchObject({
+      mode: 'baselines',
+      chatId: '01234567-89ab-4def-8123-456789abcdef',
+    });
+    expect(
+      parseArgs(['--linux-baselines', '--chat-id', 'copilotcli:/01234567-89ab-4def-8123-456789abcdef'])
+    ).toMatchObject({
+      mode: 'baselines',
+      chatId: 'copilotcli:/01234567-89ab-4def-8123-456789abcdef',
     });
     expect(
       parseArgs(['--linux-baselines', '--chat-id', 'copilotcli:/7befb061-b313-497b-8694-97929d9054e4'])
@@ -118,6 +204,18 @@ describe('mirror E2E command parsing', () => {
       ['--linux-baselines', '--chat-id', '\tses_1'],
       ['--linux-baselines', '--chat-id', 'ses id'],
       ['--linux-baselines', '--chat-id', 'bad\nChat: injected'],
+      ['--linux-baselines', '--chat-id', 'ses_1@other'],
+      ['--linux-baselines', '--chat-id', 'ses_nativeSession123'],
+      ['--linux-baselines', '--chat-id', 'not-native-session'],
+      ['--linux-baselines', '--chat-id', `ses_${'a'.repeat(26)}\n`],
+      ['--linux-baselines', '--chat-id', 'ses_id-with-dashes'],
+      ['--linux-baselines', '--chat-id', 'copilotcli:/not-a-uuid'],
+      ['--linux-baselines', '--chat-id', '01234567-89ab-cdef-8123-456789abcdef'],
+      ['--linux-baselines', '--chat-id', '01234567-89ab-4def-0123-456789abcdef'],
+      ['--linux-baselines', '--chat-id', '01234567-89ab-4def-8123-456789abcdef\r'],
+      ['--linux-baselines', '--chat-id', 'copilotcli:/01234567-89ab-4def-0123-456789abcdef'],
+      ['--linux-baselines', '--chat-id', 'copilotcli:01234567-89ab-4def-8123-456789abcdef'],
+      ['--linux-baselines', '--chat-id', `copilotcli:/01234567-89ab-4def-8123-456789abcdef\n`],
     ].map((args) => [args])
   )('rejects invalid invocation %j', (args) => {
     expect(() => parseArgs(args)).toThrow();
@@ -256,10 +354,392 @@ describe('mirror remote and dispatch selection', () => {
     );
   });
 
-  it('pushes only the current branch and SHA to mirror without force', () => {
-    const args = buildMirrorPushArgs('c'.repeat(40), 'feat/e2e-runner');
-    expect(args).toEqual(['push', 'mirror', `${'c'.repeat(40)}:refs/heads/feat/e2e-runner`]);
-    expect(args.some((arg) => arg.includes('force'))).toBe(false);
+  it('leases a first push only while the mirror branch is absent', () => {
+    const args = buildMirrorPushArgs('c'.repeat(40), 'feat/e2e-runner', null);
+    expect(args).toEqual([
+      'push',
+      'mirror',
+      '--force-with-lease=refs/heads/feat/e2e-runner:',
+      `${'c'.repeat(40)}:refs/heads/feat/e2e-runner`,
+    ]);
+  });
+
+  it('leases a rebased branch update to the observed mirror tip, not the new source SHA', () => {
+    const remoteSha = 'a'.repeat(40);
+    const sourceSha = 'c'.repeat(40);
+    const args = buildMirrorPushArgs(sourceSha, 'feat/e2e-runner', remoteSha);
+    expect(args).toEqual([
+      'push',
+      'mirror',
+      `--force-with-lease=refs/heads/feat/e2e-runner:${remoteSha}`,
+      `${sourceSha}:refs/heads/feat/e2e-runner`,
+    ]);
+  });
+
+  it('rejects a malformed expected mirror branch tip', () => {
+    expect(() => buildMirrorPushArgs('c'.repeat(40), 'feat/e2e-runner', 'not-a-full-sha')).toThrow(
+      /full Git object ID/
+    );
+  });
+
+  it('parses exactly the mirror branch SHA and recognizes an absent ref', () => {
+    expect(parseMirrorBranchSha(`${'a'.repeat(40)}\trefs/heads/feat/e2e-runner\n`, 'feat/e2e-runner')).toBe(
+      'a'.repeat(40)
+    );
+    expect(parseMirrorBranchSha('', 'feat/e2e-runner')).toBeNull();
+    expect(() => parseMirrorBranchSha(`${'a'.repeat(40)}\trefs/heads/main`, 'feat/e2e-runner')).toThrow(/invalid ref/);
+  });
+
+  it('refuses a mirror branch that changes between ls-remote and fetch', () => {
+    const remoteSha = 'a'.repeat(40);
+    const fetchedSha = 'b'.repeat(40);
+    const outputs = [`${remoteSha}\trefs/heads/feat/e2e-runner\n`, '', fetchedSha];
+    const runCommand = vi.fn(() => outputs.shift() ?? '');
+
+    expect(() => readMirrorBranchSha('feat/e2e-runner', '/tmp', runCommand)).toThrow(
+      /changed while it was being inspected/
+    );
+    expect(runCommand).toHaveBeenCalledTimes(3);
+  });
+
+  it('creates a branch when absent and permits a rebased update under the observed lease', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBeNull();
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+      expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBe(fixture.sourceSha);
+
+      const treeSha = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
+      const rebasedSha = runGit(fixture.source, ['commit-tree', treeSha, '-m', 'rebased fixture source']);
+      const observedRemoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      expect(observedRemoteSha).toBe(fixture.sourceSha);
+      assertMirrorBranchPushSafe({
+        sourceSha: rebasedSha,
+        remoteSha: observedRemoteSha,
+        branch: fixture.branch,
+        cwd: fixture.source,
+      });
+
+      runGit(fixture.source, buildMirrorPushArgs(rebasedSha, fixture.branch, observedRemoteSha));
+      expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBe(rebasedSha);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a lease when the mirror branch moves after its tip was observed', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+      const observedRemoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      const divergedTree = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
+      const divergedSha = runGit(fixture.source, [
+        'commit-tree',
+        divergedTree,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'diverged fixture source',
+      ]);
+      assertMirrorBranchPushSafe({
+        sourceSha: divergedSha,
+        remoteSha: observedRemoteSha,
+        branch: fixture.branch,
+        cwd: fixture.source,
+      });
+
+      const racingClone = join(fixture.root, 'racing-clone');
+      runGit(fixture.root, ['clone', '--quiet', '--branch', fixture.branch, fixture.mirror, racingClone]);
+      runGit(racingClone, ['config', 'user.name', 'Racing Writer']);
+      runGit(racingClone, ['config', 'user.email', 'racing-writer@example.test']);
+      writeFileSync(join(racingClone, 'racing.txt'), 'concurrent mirror update\n');
+      runGit(racingClone, ['add', 'racing.txt']);
+      runGit(racingClone, ['commit', '--quiet', '-m', 'concurrent source update']);
+      runGit(racingClone, ['push', '--quiet', 'origin', `HEAD:refs/heads/${fixture.branch}`]);
+
+      const staleLeasePush = spawnSync('git', buildMirrorPushArgs(divergedSha, fixture.branch, observedRemoteSha), {
+        cwd: fixture.source,
+        encoding: 'utf8',
+      });
+      expect(staleLeasePush.status).not.toBe(0);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to rewind a mirror branch when the source is behind it', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+
+      const racingClone = join(fixture.root, 'racing-clone');
+      runGit(fixture.root, ['clone', '--quiet', '--branch', fixture.branch, fixture.mirror, racingClone]);
+      runGit(racingClone, ['config', 'user.name', 'Racing Writer']);
+      runGit(racingClone, ['config', 'user.email', 'racing-writer@example.test']);
+      writeFileSync(join(racingClone, 'racing.txt'), 'newer mirror commit\n');
+      runGit(racingClone, ['add', 'racing.txt']);
+      runGit(racingClone, ['commit', '--quiet', '-m', 'newer source commit']);
+      runGit(racingClone, ['push', '--quiet', 'origin', `HEAD:refs/heads/${fixture.branch}`]);
+
+      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      expect(() =>
+        assertMirrorBranchPushSafe({
+          sourceSha: fixture.sourceSha,
+          remoteSha,
+          branch: fixture.branch,
+          cwd: fixture.source,
+        })
+      ).toThrow(/mirror branch .* is ahead of the source commit/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves an unmerged baseline promotion when a rebased source diverges', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      const { baselineSha, remoteSha } = createBaselinePromotion(fixture, 'ses_0123456789ABCDEF0123456789');
+
+      const originalTreeSha = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
+      const rebasedSha = runGit(fixture.source, [
+        'commit-tree',
+        originalTreeSha,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'rebased source without promoted baselines',
+      ]);
+
+      expect(() =>
+        assertMirrorBranchPushSafe({
+          sourceSha: rebasedSha,
+          remoteSha,
+          branch: fixture.branch,
+          cwd: fixture.source,
+        })
+      ).toThrow(/baseline promotion absent from this source commit/);
+      expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBe(baselineSha);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a remote-only baseline promotion with an invalid Chat trailer', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      const { remoteSha } = createBaselinePromotion(fixture, 'not-native-session');
+      const originalTreeSha = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
+      const rebasedSha = runGit(fixture.source, [
+        'commit-tree',
+        originalTreeSha,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'rebased source without promoted baselines',
+      ]);
+
+      expect(() =>
+        assertMirrorBranchPushSafe({
+          sourceSha: rebasedSha,
+          remoteSha,
+          branch: fixture.branch,
+          cwd: fixture.source,
+        })
+      ).toThrow(/invalid Chat trailer/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves remote-only baseline changes even when their commit subject is noncanonical', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      const { remoteSha } = createBaselinePromotion(
+        fixture,
+        'ses_0123456789ABCDEF0123456789',
+        'manual snapshot update'
+      );
+      const originalTreeSha = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
+      const rebasedSha = runGit(fixture.source, [
+        'commit-tree',
+        originalTreeSha,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'rebased source without promoted baselines',
+      ]);
+
+      expect(() =>
+        assertMirrorBranchPushSafe({
+          sourceSha: rebasedSha,
+          remoteSha,
+          branch: fixture.branch,
+          cwd: fixture.source,
+        })
+      ).toThrow(/Linux baseline file changes with an unrecognized commit/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an unrelated root commit that changes a Linux baseline path', () => {
+    const fixture = createMirrorPushFixture();
+    const rootRepo = join(fixture.root, 'root-baseline');
+    try {
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+      runGit(fixture.root, ['init', '--quiet', '--initial-branch=main', rootRepo]);
+      runGit(rootRepo, ['config', 'user.name', 'Root Baseline Fixture']);
+      runGit(rootRepo, ['config', 'user.email', 'root-baseline-fixture@example.test']);
+      const baselineFile = join(rootRepo, LINUX_BASELINE_PATH, LINUX_BASELINE_FILES[0]);
+      mkdirSync(dirname(baselineFile), { recursive: true });
+      writeFileSync(baselineFile, 'root baseline\n');
+      runGit(rootRepo, ['add', LINUX_BASELINE_PATH]);
+      runGit(rootRepo, [
+        'commit',
+        '--quiet',
+        '-m',
+        'test: refresh Linux export baselines',
+        '-m',
+        'Chat: ses_rootBaselineFixture',
+      ]);
+      const rootSha = runGit(rootRepo, ['rev-parse', 'HEAD']);
+      runGit(rootRepo, ['remote', 'add', 'mirror', fixture.mirror]);
+      runGit(rootRepo, [
+        'push',
+        '--quiet',
+        `--force-with-lease=refs/heads/${fixture.branch}:${fixture.sourceSha}`,
+        'mirror',
+        `${rootSha}:refs/heads/${fixture.branch}`,
+      ]);
+
+      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      expect(() =>
+        assertMirrorBranchPushSafe({
+          sourceSha: fixture.sourceSha,
+          remoteSha,
+          branch: fixture.branch,
+          cwd: fixture.source,
+        })
+      ).toThrow(/not a single-parent commit/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a merge commit that changes a Linux baseline path', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      const sourceTree = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
+      const sideSha = runGit(fixture.source, [
+        'commit-tree',
+        sourceTree,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'side source commit',
+      ]);
+      const baselineFile = join(fixture.source, LINUX_BASELINE_PATH, LINUX_BASELINE_FILES[0]);
+      mkdirSync(dirname(baselineFile), { recursive: true });
+      writeFileSync(baselineFile, 'merge-resolved baseline\n');
+      runGit(fixture.source, ['add', LINUX_BASELINE_PATH]);
+      const mergeTree = runGit(fixture.source, ['write-tree']);
+      const mergeSha = runGit(fixture.source, [
+        'commit-tree',
+        mergeTree,
+        '-p',
+        fixture.sourceSha,
+        '-p',
+        sideSha,
+        '-m',
+        'test: refresh Linux export baselines',
+        '-m',
+        'Chat: ses_0123456789ABCDEF0123456789',
+      ]);
+      runGit(fixture.source, buildMirrorPushArgs(mergeSha, fixture.branch, null));
+      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      const rebasedSourceSha = runGit(fixture.source, [
+        'commit-tree',
+        sourceTree,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'rebased source without promoted baselines',
+      ]);
+
+      expect(() =>
+        assertMirrorBranchPushSafe({
+          sourceSha: rebasedSourceSha,
+          remoteSha,
+          branch: fixture.branch,
+          cwd: fixture.source,
+        })
+      ).toThrow(/not a single-parent commit/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['leading-space path', { pathPrefix: ' ' }, /allowlist/],
+    ['trailing-space path', { fileSuffix: ' ' }, /allowlist/],
+    ['trailing-space subject', { subjectSuffix: ' ' }, /unrecognized subject/],
+    ['trailing-space Chat trailer', { chatSuffix: ' ' }, /exactly the requested native Chat trailer/],
+  ])('rejects a baseline promotion with %s', (_, mutation, error) => {
+    const fixture = createMirrorPushFixture();
+    try {
+      const promotionRepo = join(fixture.root, 'promotion');
+      runGit(fixture.root, ['clone', '--quiet', fixture.source, promotionRepo]);
+      runGit(promotionRepo, ['config', 'user.name', 'Baseline Promotion Fixture']);
+      runGit(promotionRepo, ['config', 'user.email', 'baseline-promotion-fixture@example.test']);
+
+      const baselinePath = mutation.pathPrefix
+        ? `${mutation.pathPrefix}${LINUX_BASELINE_PATH}/${LINUX_BASELINE_FILES[0]}`
+        : `${LINUX_BASELINE_PATH}/${LINUX_BASELINE_FILES[0]}${mutation.fileSuffix ?? ''}`;
+      const baselineFile = join(promotionRepo, baselinePath);
+      mkdirSync(dirname(baselineFile), { recursive: true });
+      writeFileSync(baselineFile, 'captured baseline\n');
+      runGit(promotionRepo, ['add', '--', baselinePath]);
+
+      const subject = `test: refresh Linux export baselines${mutation.subjectSuffix ?? ''}`;
+      const chatTrailer = `Chat: ses_0123456789ABCDEF0123456789${mutation.chatSuffix ?? ''}`;
+      const tree = runGit(promotionRepo, ['write-tree']);
+      const author = runGit(promotionRepo, ['var', 'GIT_AUTHOR_IDENT']);
+      const committer = runGit(promotionRepo, ['var', 'GIT_COMMITTER_IDENT']);
+      const commitObject = [
+        `tree ${tree}`,
+        `parent ${fixture.sourceSha}`,
+        `author ${author}`,
+        `committer ${committer}`,
+        '',
+        `${subject}\n\n${chatTrailer}\n`,
+      ].join('\n');
+      const promotionSha = runGit(promotionRepo, ['hash-object', '-w', '-t', 'commit', '--stdin'], commitObject);
+      runGit(promotionRepo, ['remote', 'add', 'mirror', fixture.mirror]);
+      runGit(promotionRepo, buildMirrorPushArgs(promotionSha, fixture.branch, null));
+
+      const calls = [];
+      const runCommand = (binary, args, cwd = fixture.source, _timeoutMs, { trimOutput = true } = {}) => {
+        calls.push({ binary, args: [...args] });
+        const result = spawnSync(binary, args, { cwd, encoding: 'utf8' });
+        if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
+        const output = result.stdout ?? '';
+        return trimOutput ? output.trim() : output;
+      };
+
+      expect(() =>
+        fastForwardBaselineCommit({
+          branch: fixture.branch,
+          sourceSha: fixture.sourceSha,
+          chatId: 'ses_0123456789ABCDEF0123456789',
+          cwd: fixture.source,
+          runCommand,
+        })
+      ).toThrow(error);
+      expect(runGit(fixture.source, ['rev-parse', 'HEAD'])).toBe(fixture.sourceSha);
+      expect(calls.some(({ args }) => args[0] === 'merge')).toBe(false);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -289,7 +769,7 @@ describe('Linux baseline promotion verification', () => {
   const sourceSha = 'a'.repeat(40);
   const remoteSha = 'b'.repeat(40);
   const branch = 'feat/baselines';
-  const chatId = 'ses_42';
+  const chatId = 'ses_0123456789ABCDEF0123456789';
   const path = 'e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/drawing.png.png';
 
   function createPromotionGitCommand({
@@ -300,15 +780,17 @@ describe('Linux baseline promotion verification', () => {
     statusAtStart = '',
     statusBeforeMerge = '',
     fetchedSha = remoteSha,
-    parentSha = sourceSha,
+    parents = [sourceSha],
+    commitSubject = 'test: refresh Linux export baselines',
     changedPaths = [path],
-    commitMessage = `test: refresh Linux export baselines\n\nChat: ${chatId}`,
+    commitMessage,
   } = {}) {
     const calls = [];
     let branchReads = 0;
     let headReads = 0;
     let statusReads = 0;
-    const runCommand = (binary, args) => {
+    const fullCommitMessage = commitMessage ?? `${commitSubject}\n\nChat: ${chatId}`;
+    const runCommand = (binary, args, _cwd, _timeoutMs, { trimOutput = true } = {}) => {
       calls.push({ binary, args: [...args] });
       if (binary !== 'git') throw new Error(`Unexpected command: ${binary}`);
       switch (args[0]) {
@@ -317,17 +799,23 @@ describe('Linux baseline promotion verification', () => {
         case 'rev-parse':
           if (args[1] === '--verify') return headReads++ === 0 ? headAtStart : headBeforeMerge;
           if (args[1] === 'FETCH_HEAD') return fetchedSha;
-          if (args[1] === `${fetchedSha}^`) return parentSha;
           break;
+        case 'rev-list':
+          return [fetchedSha, ...parents].join(' ');
         case 'status':
           return statusReads++ === 0 ? statusAtStart : statusBeforeMerge;
         case 'fetch':
         case 'merge':
           return '';
         case 'diff':
-          return changedPaths.join('\n');
-        case 'show':
-          return commitMessage;
+          return trimOutput
+            ? (args.includes('-z') ? `${changedPaths.join('\0')}\0` : changedPaths.join('\n')).trim()
+            : `${changedPaths.join('\0')}\0`;
+        case 'show': {
+          if (args.includes('--format=x%B%x00')) return `x${fullCommitMessage}\0\n`.trim();
+          if (args.includes('--format=%s')) return `${commitSubject}\n`.trim();
+          return `${fullCommitMessage}\n`.trim();
+        }
       }
       throw new Error(`Unexpected git command: ${args.join(' ')}`);
     };
@@ -339,10 +827,11 @@ describe('Linux baseline promotion verification', () => {
       verifyBaselinePromotion({
         sourceSha,
         remoteSha,
-        parentSha: sourceSha,
+        parents: [sourceSha],
+        commitSubject: 'test: refresh Linux export baselines',
         changedPaths: [path],
-        commitMessage: 'test: refresh Linux export baselines\n\nChat: ses_42',
-        chatId: 'ses_42',
+        commitMessage: `test: refresh Linux export baselines\n\nChat: ${chatId}`,
+        chatId,
       })
     ).toMatchObject({ changed: true });
   });
@@ -352,7 +841,8 @@ describe('Linux baseline promotion verification', () => {
       verifyBaselinePromotion({
         sourceSha,
         remoteSha,
-        parentSha: sourceSha,
+        parents: [sourceSha],
+        commitSubject: 'test: refresh Linux export baselines',
         changedPaths: [path],
         commitMessage: `test: refresh Linux export baselines\n\nChat:\nChat: ${chatId}`,
         chatId,
@@ -360,12 +850,69 @@ describe('Linux baseline promotion verification', () => {
     ).toThrow(/exactly the requested native Chat trailer/);
   });
 
+  it('does not accept a Chat line in the commit body as a trailer', () => {
+    expect(() =>
+      verifyBaselinePromotion({
+        sourceSha,
+        remoteSha,
+        parents: [sourceSha],
+        commitSubject: 'test: refresh Linux export baselines',
+        changedPaths: [path],
+        commitMessage: `test: refresh Linux export baselines\n\nChat: ${chatId}\nordinary body prose`,
+        chatId,
+      })
+    ).toThrow(/exactly the requested native Chat trailer/);
+  });
+
+  it('uses only the final trailer block when the body also mentions Chat', () => {
+    expect(
+      verifyBaselinePromotion({
+        sourceSha,
+        remoteSha,
+        parents: [sourceSha],
+        commitSubject: 'test: refresh Linux export baselines',
+        changedPaths: [path],
+        commitMessage: `test: refresh Linux export baselines\n\nBody note: Chat: not-the-session\n\nChat: ${chatId}`,
+        chatId,
+      })
+    ).toMatchObject({ changed: true });
+  });
+
+  it('accepts a valid Chat trailer alongside a coauthor trailer', () => {
+    expect(
+      verifyBaselinePromotion({
+        sourceSha,
+        remoteSha,
+        parents: [sourceSha],
+        commitSubject: 'test: refresh Linux export baselines',
+        changedPaths: [path],
+        commitMessage: `test: refresh Linux export baselines\n\nChat: ${chatId}\nCo-authored-by: Example <example@example.test>`,
+        chatId,
+      })
+    ).toMatchObject({ changed: true });
+  });
+
+  it('rejects a matching but malformed native Chat ID', () => {
+    expect(() =>
+      verifyBaselinePromotion({
+        sourceSha,
+        remoteSha,
+        parents: [sourceSha],
+        commitSubject: 'test: refresh Linux export baselines',
+        changedPaths: [path],
+        commitMessage: 'test: refresh Linux export baselines\n\nChat: ses_42',
+        chatId: 'ses_42',
+      })
+    ).toThrow(/native Chat ID/);
+  });
+
   it('rejects a generated commit that is not a direct child of the tested SHA', () => {
     expect(() =>
       verifyBaselinePromotion({
         sourceSha,
         remoteSha,
-        parentSha: 'c'.repeat(40),
+        parents: ['c'.repeat(40)],
+        commitSubject: 'test: refresh Linux export baselines',
         changedPaths: [path],
         commitMessage: `test: refresh Linux export baselines\n\nChat: ${chatId}`,
         chatId,
@@ -378,9 +925,10 @@ describe('Linux baseline promotion verification', () => {
       verifyBaselinePromotion({
         sourceSha,
         remoteSha: sourceSha,
-        parentSha: sourceSha,
+        parents: [],
+        commitSubject: '',
         changedPaths: [],
-        chatId: 'ses_42',
+        chatId,
       })
     ).toMatchObject({ changed: false });
   });
@@ -390,12 +938,42 @@ describe('Linux baseline promotion verification', () => {
       verifyBaselinePromotion({
         sourceSha,
         remoteSha,
-        parentSha: sourceSha,
+        parents: [sourceSha],
+        commitSubject: 'test: refresh Linux export baselines',
         changedPaths: [path, 'src/App.tsx'],
-        commitMessage: 'test: refresh baselines\n\nChat: ses_42',
-        chatId: 'ses_42',
+        commitMessage: `test: refresh Linux export baselines\n\nChat: ${chatId}`,
+        chatId,
       })
     ).toThrow(/allowlist/);
+  });
+
+  it('rejects generated merge commits and noncanonical promotion subjects', () => {
+    const merged = createPromotionGitCommand({ parents: [sourceSha, 'd'.repeat(40)] });
+    expect(() => fastForwardBaselineCommit({ branch, sourceSha, chatId, runCommand: merged.runCommand })).toThrow(
+      /single-parent/
+    );
+    expect(merged.calls.some(({ args }) => args[0] === 'merge')).toBe(false);
+
+    const renamed = createPromotionGitCommand({ commitSubject: 'manual Linux baseline refresh' });
+    expect(() => fastForwardBaselineCommit({ branch, sourceSha, chatId, runCommand: renamed.runCommand })).toThrow(
+      /unrecognized subject/
+    );
+    expect(renamed.calls.some(({ args }) => args[0] === 'merge')).toBe(false);
+  });
+
+  it.each([
+    ['path', { changedPaths: [`${path} `] }, /allowlist/],
+    ['subject', { commitSubject: 'test: refresh Linux export baselines ' }, /unrecognized subject/],
+    [
+      'Chat trailer',
+      { commitMessage: `test: refresh Linux export baselines\n\nChat: ${chatId} ` },
+      /exactly the requested native Chat trailer/,
+    ],
+  ])('preserves trailing whitespace in Git %s output for strict validation', (_, state, error) => {
+    const { calls, runCommand } = createPromotionGitCommand(state);
+
+    expect(() => fastForwardBaselineCommit({ branch, sourceSha, chatId, runCommand })).toThrow(error);
+    expect(calls.some(({ args }) => args[0] === 'merge')).toBe(false);
   });
 
   it.each([

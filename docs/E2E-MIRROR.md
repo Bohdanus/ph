@@ -34,7 +34,21 @@ read-only; failed-run artifacts go under
 
 Linux baselines are captured and verified on `ubuntu-latest`. An isolated
 `contents:write` job promotes only the seven Linux PNGs to that same mirror branch,
-with the supplied `Chat:` trailer; the CLI fast-forwards the local branch.
+with the supplied `Chat:` trailer; the CLI fast-forwards the local branch after rechecking
+its branch, HEAD, and worktree. Keep that local checkout on the source branch until the
+command finishes: Git fast-forward operates on the current HEAD, and a concurrent branch
+switch in the final check/merge window cannot be excluded atomically.
+
+Visual baselines are OS-specific: the macOS (`darwin`), Linux, and Windows snapshot
+trees are not interchangeable. GitHub currently documents public `macos-latest` as
+M1/arm64 and `ubuntu-latest` as x64 ([runner reference](https://docs.github.com/actions/reference/runners/github-hosted-runners)).
+Do not resolve a Linux mismatch by recording a macOS image into the Linux baseline.
+Snapshot paths do not distinguish Intel and ARM macOS; add a separate architecture
+lane before treating those renders as interchangeable. The DPR 1/2 PNG round-trip
+test compares document-pixel data sampled from the canvas backing store with the
+saved/reopened PNG; it does not cross-compare renderer screenshots. The Zoom Tool E2E checks
+the rendered client-area box; unit tests also simulate a 15px classic scrollbar because macOS
+may display scrollbars as overlays without consuming layout width.
 
 The CLI refreshes mirror `main` and verifies that the requested workflow is active
 and its Git blob exactly matches the committed workflow at your branch before it

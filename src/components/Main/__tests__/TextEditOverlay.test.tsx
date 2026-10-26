@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextEditOverlay } from '../TextEditOverlay.tsx';
 import { insertPlainTextAtCaret, selectAllIn, textOffsetAt } from '../../../util/contenteditable-text.ts';
@@ -130,7 +130,20 @@ vi.mock('../../../util/rect.ts', async () => {
  * for the same reason — a geometry suite that cannot tell a correct mapping from a broken one. The
  * stub is therefore per-test and explicit about its size.
  */
-const containerOf = (width: number, height: number) => {
+type ClientViewport = {
+  clientLeft?: number;
+  clientTop?: number;
+  clientWidth: number;
+  clientHeight: number;
+  offsetWidth?: number;
+  offsetHeight?: number;
+};
+
+const containerOf = (
+  width: number,
+  height: number,
+  client: ClientViewport = { clientWidth: width, clientHeight: height, offsetWidth: width, offsetHeight: height }
+) => {
   const el = document.createElement('div');
   vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
     width,
@@ -143,9 +156,36 @@ const containerOf = (width: number, height: number) => {
     y: 0,
     toJSON: () => ({}),
   } as DOMRect);
+  Object.defineProperties(el, {
+    clientLeft: { configurable: true, value: client.clientLeft ?? 0 },
+    clientTop: { configurable: true, value: client.clientTop ?? 0 },
+    clientWidth: { configurable: true, value: client.clientWidth },
+    clientHeight: { configurable: true, value: client.clientHeight },
+    offsetWidth: { configurable: true, value: client.offsetWidth ?? width },
+    offsetHeight: { configurable: true, value: client.offsetHeight ?? height },
+  });
   h.containerRef.current = el;
   return el;
 };
+
+class ControlledTextResizeObserver implements ResizeObserver {
+  static instances: ControlledTextResizeObserver[] = [];
+
+  private readonly callback: ResizeObserverCallback;
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    ControlledTextResizeObserver.instances.push(this);
+  }
+
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+
+  emit(entry: ResizeObserverEntry) {
+    this.callback([entry], this);
+  }
+}
 
 const makeTextArgs = (overrides: Partial<TextArgs> = {}): TextArgs => ({
   align: 'left',
@@ -278,6 +318,9 @@ describe('TextEditOverlay', () => {
   afterEach(() => {
     // The helper hosts are appended to `document.body` directly, which RTL's `cleanup` does not own.
     for (const el of document.querySelectorAll('[data-helper-host]')) el.remove();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    ControlledTextResizeObserver.instances = [];
   });
 
   describe('edit mode is derived, so nothing renders unless the args already say the user is typing', () => {
@@ -443,6 +486,62 @@ describe('TextEditOverlay', () => {
       // `left` that happens to come out right for the wrong reason: with `scale` 1 the two
       // `left - rect.x1` is exactly the term under test, and a deleted `offsetX` reads 0.
       expect(parseFloat(el.style.left) - RECT.x1, 'the horizontal letterbox did not reach `left`').toBe(50);
+    });
+
+    it('measures the text overlay against the visible client viewport when a scrollbar reduces it', () => {
+      containerOf(200, 200, {
+        clientLeft: 2,
+        clientTop: 2,
+        clientWidth: 160,
+        clientHeight: 180,
+        offsetWidth: 200,
+        offsetHeight: 200,
+      });
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT });
+
+      renderOverlay();
+      const el = overlay();
+
+      // The client fit is 160x180 around the 100x100 document: scale 1.6 and a 10px vertical gap.
+      expect(el.style.left).toBe('16px');
+      expect(el.style.top).toBe('42px');
+      expect(el.style.width).toBe('80px');
+      expect(el.style.height).toBe('80px');
+    });
+
+    it('re-measures client fit after the scrollbar changes without a border-box resize', () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('ResizeObserver', ControlledTextResizeObserver);
+      const container = containerOf(200, 200);
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT });
+
+      renderOverlay();
+      const el = overlay();
+      expect(el.style.width).toBe('100px');
+
+      Object.defineProperties(container, {
+        clientWidth: { configurable: true, value: 160 },
+        clientHeight: { configurable: true, value: 180 },
+      });
+      const observer = ControlledTextResizeObserver.instances[0];
+      expect(observer).toBeDefined();
+      if (!observer) return;
+
+      act(() => {
+        observer.emit({
+          target: container,
+          contentRect: { width: 160, height: 180 } as DOMRectReadOnly,
+          contentBoxSize: [{ inlineSize: 160, blockSize: 180 }],
+          borderBoxSize: [{ inlineSize: 200, blockSize: 200 }],
+          devicePixelContentBoxSize: [],
+        } as unknown as ResizeObserverEntry);
+        vi.advanceTimersByTime(32);
+      });
+
+      expect(overlay().style.left).toBe('16px');
+      expect(overlay().style.top).toBe('42px');
+      expect(overlay().style.width).toBe('80px');
+      expect(overlay().style.height).toBe('80px');
     });
   });
 

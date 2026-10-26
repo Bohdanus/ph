@@ -3,6 +3,7 @@ import type { FormEvent, MouseEvent } from 'react';
 import { domOverlayStyle, resolveTextKind, resolveTextStyle } from '../../tools/text.ts';
 import { calculateNewRect } from '../../util/rect.ts';
 import { containFit, type ContainDimensions } from '../../util/contain-fit.ts';
+import { readClientViewportRect } from '../../util/client-viewport.ts';
 import { documentFrameFromSize, documentToCanvasPos } from '../../contexts/document-frame.ts';
 import type { Ctx2D } from '../../contexts/general-types.ts';
 import { useResizeObserverRAF } from '../../hooks/useResizeObserver.ts';
@@ -207,32 +208,30 @@ export const TextEditOverlay = () => {
    * other way round.
    */
   const [fit, setFit] = useState<ContainDimensions | null>(null);
-  const measure = useCallback(
-    (observed?: { width: number; height: number }) => {
-      const rect = observed ?? containerRef.current?.getBoundingClientRect();
-      if (!rect || !rect.width || !rect.height || !totalSize.width || !totalSize.height) return;
-      const next = containFit({ width: rect.width, height: rect.height }, totalSize);
-      // Compare before publishing, because `containFit` returns a NEW object every call and this
-      // runs from a layout effect whose deps include `totalSize`. Publishing unconditionally would
-      // re-render on every measurement; if `totalSize` ever arrived as a fresh identity per render —
-      // which is exactly what an inline literal in a `useStore` mock does — that re-render would
-      // change the dep, re-run the effect, and spin. Four numbers is the whole state.
-      setFit((previous) =>
-        previous &&
-        previous.scale === next.scale &&
-        previous.offsetX === next.offsetX &&
-        previous.offsetY === next.offsetY
-          ? previous
-          : next
-      );
-    },
-    [containerRef, totalSize]
-  );
+  const measure = useCallback(() => {
+    const rect = containerRef.current ? readClientViewportRect(containerRef.current) : null;
+    if (!rect || !rect.width || !rect.height || !totalSize.width || !totalSize.height) return;
+    const next = containFit({ width: rect.width, height: rect.height }, totalSize);
+    // Compare before publishing, because `containFit` returns a NEW object every call and this
+    // runs from a layout effect whose deps include `totalSize`. Publishing unconditionally would
+    // re-render on every measurement; if `totalSize` ever arrived as a fresh identity per render —
+    // which is exactly what an inline literal in a `useStore` mock does — that re-render would
+    // change the dep, re-run the effect, and spin. Four numbers is the whole state.
+    setFit((previous) =>
+      previous &&
+      previous.scale === next.scale &&
+      previous.offsetX === next.offsetX &&
+      previous.offsetY === next.offsetY
+        ? previous
+        : next
+    );
+  }, [containerRef, totalSize]);
 
   useLayoutEffect(() => {
     measure();
   }, [measure]);
-  useResizeObserverRAF(containerRef, (rect) => measure({ width: rect.width, height: rect.height }));
+  // ResizeObserver is a trigger; its border-box size is not the text overlay's client viewport.
+  useResizeObserverRAF(containerRef, () => measure());
 
   /**
    * Publish a new string, and re-measure the box it needs.

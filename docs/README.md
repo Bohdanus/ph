@@ -78,13 +78,14 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)                                                       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
 
 The agent procedures live outside this directory, under `.skills/`, one file per
-procedure. `AGENTS.md` states the rules, and a skill states the procedure for one of
-the situations it describes.
+procedure. Tool permission profiles live under `.kilo/agent/`. `AGENTS.md` states the
+rules, a skill states a procedure, and an agent profile defines its tool permissions.
 
 | Skill                                                                                      | Its one job                                                                                                                                                  |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`../.skills/broad-test-improvement.md`](../.skills/broad-test-improvement.md)             | Fix broken tests, raise coverage, and strengthen assertions without touching source code                                                                     |
 | [`../.skills/ci-failure-mitigation.md`](../.skills/ci-failure-mitigation.md)               | Fix non-browser CI failures via subagents, ignoring OS-bound e2e rendering issues                                                                            |
+| [`../.skills/e2e-hardening-overnight.md`](../.skills/e2e-hardening-overnight.md)           | Triage flaky Playwright CI runs and harden reproduced cross-platform E2E defects                                                                             |
 | [`../.skills/chat-history-query.md`](../.skills/chat-history-query.md)                     | Locate and query old Kilo and GitHub Copilot Chat sessions from local SQLite, JSONL, and legacy JSON stores                                                  |
 | [`../.skills/chat-loose-end-scan.md`](../.skills/chat-loose-end-scan.md)                   | Find loose ends in recent top-level Kilo chats — chats that died on a network loss, a token wall or a tool error, and reviews whose findings nobody answered |
 | [`../.skills/codex-chat-history.md`](../.skills/codex-chat-history.md)                     | Locate and query OpenAI Codex CLI session history from local SQLite state database and JSONL rollout files. Read-only, local-first                           |
@@ -98,6 +99,12 @@ the situations it describes.
 | [`../.skills/photoshop-tool-creation.md`](../.skills/photoshop-tool-creation.md)           | Build a new Photoshop-faithful tool end to end: research, options bar, implementation, tests, e2e                                                            |
 | [`../.skills/stale-worktree-reclaim.md`](../.skills/stale-worktree-reclaim.md)             | Find abandoned worktrees, prove the owning session dead, triage into delete/land/defer                                                                       |
 | [`../.skills/worktree-merge-harvest.md`](../.skills/worktree-merge-harvest.md)             | Land work from free worktrees onto `main`, with reviews and gates                                                                                            |
+
+## Agent profiles
+
+| Profile                                                                        | Its one job                                                                        |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`../.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) | Deny file writes, patches, shell, and task delegation to free Kilo research agents |
 
 `e2e/fixtures/README.md` is the Playwright fixture conventions note.
 

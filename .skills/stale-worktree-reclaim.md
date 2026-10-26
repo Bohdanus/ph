@@ -119,11 +119,10 @@ the operator is a **last resort**, and it is reached only once the wider chat se
 family walk in step 4, the live overlay in step 4b and the external documentation have all
 genuinely come up empty — and only for what remains a **policy or an authorisation** rather
 than a fact you could have looked up. A question with no search log behind it is a judgement
-call wearing a question's clothes, and the operator cannot tell the two apart. The four-hour
-board-observation value in §2 is an operator-selected **ranking threshold only**, not a rule for
-proving that a chat or worktree is dead. Change that ranking value only when the operator changes
-the intended prioritization; regardless of its value, the family walk and live overlay remain
-mandatory and an unknown signal never counts as dead.
+call wearing a question's clothes, and the operator cannot tell the two apart. The two-hour
+board-observation value in §2 is the default **stale-candidate threshold**, not proof that a chat
+or worktree is dead. At two hours without a valid board observation, begin the full family and live
+overlay checks; do not delete or land from age alone. Unknown signals never count as dead.
 
 ## 1 — Git facts
 
@@ -171,7 +170,7 @@ const rows=j.worktrees
             writers:((w.writeHistory&&w.writeHistory.derivedChatIds)||[]).length,
             ageH:seen.length?+((now-Math.max(...seen))/3600000).toFixed(1):null};
   })
-  .filter(w=>!w.derivedLive && (w.ageH===null || w.ageH>=4))
+   .filter(w=>!w.derivedLive && (w.ageH===null || w.ageH>=2))
   .sort((a,b)=>a.ageH===null?(b.ageH===null?a.name.localeCompare(b.name):1):
               b.ageH===null?-1:b.ageH-a.ageH);
 for(const w of rows)
@@ -182,12 +181,13 @@ for(const w of rows)
 "
 ```
 
-**Four hours without a board observation is the operator's ranking threshold**, not proof of
-death: below it the worktree is merely quiet — stop and re-check later. `boardAgeH=none` means
+**Two hours without a board observation makes a worktree eligible for stale-candidate triage**;
+it does not prove death. Below two hours, leave it quiet and re-check later. `boardAgeH=none` means
 there is no valid board timestamp; it is **unknown, not stale**, and the script sorts it after known
 ages. The session/family checks in steps 3–4 and the live overlay in step 4b are still required
-before classification or action. `derivedLive` excludes worktrees with recent signals, but
-absence of a signal never proves an owner is dead.
+before classification or action. The inventory's 30-minute live-session and two-hour recent-I/O
+signals are separate safety vetoes. `derivedLive` excludes worktrees with
+recent signals, but absence of a signal never proves an owner is dead.
 
 `prunable: true` is the strict disposal test and is already `false` whenever `mustNotPrune` is
 set, so a protected worktree never reaches a deletion.
@@ -311,11 +311,10 @@ it becomes an age.
 **`time_updated` is a bookkeeping field, not a conversation, and the two come apart.** It is
 bumped by compaction, archiving, a title change, a token recount and other writes that are not
 a message. A chat whose last _words_ were yesterday can therefore read as minutes old, which
-inverts the rule below: the walk says LIVE, the sweep leaves the worktree alone, and a dozen
-cases get classified `unproven` for no reason. It happened on a sweep where one root read
-3.4 hours old — inside the threshold, so **not** dead by the operator's own rule — while its
-newest non-synthetic text part was 21 hours old, and it was the writer of 22 of the stale
-candidates.
+can invert the stale check. In one historical sweep, a root read 3.4 hours old — inside the
+then-four-hour threshold — while its newest non-synthetic text part was 21 hours old, and it was
+the writer of 22 stale candidates. Under the current two-hour rule, that row is an initial stale
+candidate; the complete family walk and live overlay still decide whether it is actually dead.
 
 So whenever a row lands **just inside** the threshold and is therefore deciding a case, confirm
 it against what the session actually said before believing it:
@@ -377,7 +376,9 @@ WHERE (strftime('%s','now')-s.time_updated/1000) < 14400
 ORDER BY s.time_updated DESC;"
 ```
 
-Replace `14400` with the chosen staleness threshold in seconds if it differs from four hours.
+Keep this four-hour session lookback broader than the two-hour board-age threshold. It is an
+evidence-gathering window for recent root and child activity, not the time after which a worktree
+becomes a stale candidate. Do not shorten it when changing the board-age threshold.
 
 This is a **recent-session candidate list, not a live verdict**: `time_updated` can be advanced
 by bookkeeping, and a recent child can be active while its root row is old. Query all sessions,

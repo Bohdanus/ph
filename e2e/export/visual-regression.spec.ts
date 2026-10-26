@@ -474,10 +474,8 @@ test.describe('Export visual regression', () => {
         };
       });
 
-      // The container rect is the rect the fit was computed from, so it is the rect the
-      // helper must be given. Pinned here because nothing stated it before: `<main>` carries
-      // no padding or border and the canvas is `h-full w-full` of it, which is WHY the two
-      // agree. A future border on `<main>` would break the export silently.
+      // The fit uses the container's client viewport, which is also the canvas CSS box.
+      // This pins their agreement even when borders or classic scrollbars reduce that viewport.
       expect(
         { x: published.rectX, y: published.rectY, width: published.outerWidth, height: published.outerHeight },
         "the app's container rect is the canvas rect, and the fit was computed from it"

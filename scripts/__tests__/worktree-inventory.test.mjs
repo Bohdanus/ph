@@ -4058,10 +4058,30 @@ describe('the call history', () => {
     expect(verdict.reasons.join(' ')).toContain('a command ran inside this worktree');
   });
 
+  it('uses the two-hour recent-I/O window for stale-candidate classification', () => {
+    const recent = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - (2 * 60 - 1) * 60_000, derivedChatIds: [] },
+    });
+    expect(recent.derivedLive).toBe(true);
+    expect(recent.liveSignals.io).toBe(true);
+
+    const stale = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - (2 * 60 + 1) * 60_000, derivedChatIds: [] },
+    });
+    expect(stale.derivedLive).toBe(false);
+    expect(stale.liveSignals.io).toBe(false);
+  });
+
   it('tracks readers without treating inspection as ownership, and honours the read release', () => {
     // Read history is retained separately for audit and can be released, but a
-    // reviewer opening a stale worktree must not block its disposal for four
-    // hours merely by inspecting it.
+    // reviewer opening a stale worktree must not block its disposal merely by
+    // inspecting it.
     const reading = classify(wt({ ahead: 0, mergedIntoBase: true }), {
       chatSummary: { count: 0, lastActivity: null },
       chatSessions: [],

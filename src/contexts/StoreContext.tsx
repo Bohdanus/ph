@@ -19,6 +19,7 @@ import {
   REPLACE_LAYER_SOURCE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
 } from '../util/constants.ts';
+import { readClientViewportRect } from '../util/client-viewport.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
@@ -1367,112 +1368,110 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     viewport: null as Size | null,
     devicePixelRatio,
   });
-  const reconcileViewScaleForWorkspace = useCallback(
-    (observed?: Size) => {
-      const nextFrame = storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize);
-      const previous = previousPresentedFrameRef.current;
-      const rect = observed ?? containerRef.current?.getBoundingClientRect();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+  const reconcileViewScaleForWorkspace = useCallback(() => {
+    const nextFrame = storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize);
+    const previous = previousPresentedFrameRef.current;
+    const rect = containerRef.current ? readClientViewportRect(containerRef.current) : null;
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
-      const viewport = { width: rect.width, height: rect.height };
-      const sameDocument = previous.documentId === storeState.documentId;
-      const sameFrame = documentFrameEquals(previous.frame, nextFrame);
-      const viewportChanged =
-        previous.viewport !== null &&
-        (previous.viewport.width !== viewport.width || previous.viewport.height !== viewport.height);
-      const devicePixelRatioChanged = previous.devicePixelRatio !== devicePixelRatio;
-      const frameChanged = !sameFrame;
-      const shouldPreserveMagnification =
-        previous.viewport !== null &&
-        sameDocument &&
-        ((sameFrame && !viewStateRef.current.fitToScreen && (viewportChanged || devicePixelRatioChanged)) ||
-          (frameChanged && previous.documentRevision === storeState.documentRevision));
+    const viewport = { width: rect.width, height: rect.height };
+    const sameDocument = previous.documentId === storeState.documentId;
+    const sameFrame = documentFrameEquals(previous.frame, nextFrame);
+    const viewportChanged =
+      previous.viewport !== null &&
+      (previous.viewport.width !== viewport.width || previous.viewport.height !== viewport.height);
+    const devicePixelRatioChanged = previous.devicePixelRatio !== devicePixelRatio;
+    const frameChanged = !sameFrame;
+    const shouldPreserveMagnification =
+      previous.viewport !== null &&
+      sameDocument &&
+      ((sameFrame && !viewStateRef.current.fitToScreen && (viewportChanged || devicePixelRatioChanged)) ||
+        (frameChanged && previous.documentRevision === storeState.documentRevision));
 
-      if (shouldPreserveMagnification) {
-        const previousFitScale = containFit(previous.viewport!, documentFrameSize(previous.frame)).scale;
-        const nextFitScale = containFit(viewport, documentFrameSize(nextFrame)).scale;
-        const nextCompensation = preserveViewScaleCompensationAcrossDisplayScaleChange(
-          viewStateRef.current.zoom,
-          viewStateRef.current.fitScaleCompensation,
-          previousFitScale,
-          nextFitScale,
-          previous.devicePixelRatio,
-          devicePixelRatio
-        );
-        const currentViewState = viewStateRef.current;
-        const nextFitToScreen = frameChanged ? false : currentViewState.fitToScreen;
-        const priorMagnification = absoluteViewZoom(currentViewState, previousFitScale, previous.devicePixelRatio);
-        const priorMinimumZoom = minimumSliderZoomForDocumentSize(previous.frame);
-        const preservesSubpixelScale =
-          currentViewState.fitToScreen ||
-          currentViewState.minimumZoomOverride !== undefined ||
-          priorMagnification < priorMinimumZoom * (1 - 1e-9);
-        const nextMagnification = absoluteViewZoom(
-          { ...currentViewState, fitScaleCompensation: nextCompensation },
-          nextFitScale,
-          devicePixelRatio
-        );
-        const nextMinimumZoom = minimumSliderZoomForDocumentSize(nextFrame);
-        const carriesMinimumZoomOverride = currentViewState.minimumZoomOverride !== undefined;
-        const startsMinimumZoomOverride =
-          !carriesMinimumZoomOverride &&
-          (priorMagnification < priorMinimumZoom * (1 - 1e-9) ||
-            (preservesSubpixelScale && nextMagnification < nextMinimumZoom));
-        const nextMinimumZoomOverride = frameChanged
-          ? carriesMinimumZoomOverride
-            ? currentViewState.minimumZoomOverride
-            : startsMinimumZoomOverride
-              ? priorMagnification
-              : undefined
-          : currentViewState.minimumZoomOverride;
-        const boundedMagnification =
-          frameChanged && !preservesSubpixelScale
-            ? clampAbsoluteViewZoom(nextMagnification, nextMinimumZoom)
-            : nextMagnification;
-        const nextZoom =
-          boundedMagnification === nextMagnification
-            ? currentViewState.zoom
-            : relativeViewZoomForMagnification(boundedMagnification, nextFitScale, nextCompensation, devicePixelRatio);
-        if (
-          nextCompensation !== currentViewState.fitScaleCompensation ||
-          nextZoom !== currentViewState.zoom ||
-          nextFitToScreen !== currentViewState.fitToScreen ||
-          nextMinimumZoomOverride !== currentViewState.minimumZoomOverride
-        ) {
-          const nextViewState = {
-            ...currentViewState,
-            zoom: nextZoom,
-            fitScaleCompensation: nextCompensation,
-            fitToScreen: nextFitToScreen,
-            minimumZoomOverride: nextMinimumZoomOverride,
-          };
-          if (nextMinimumZoomOverride === undefined) delete nextViewState.minimumZoomOverride;
-          viewStateRef.current = nextViewState;
-          forceViewStateUpdate((value) => value + 1);
-        }
+    if (shouldPreserveMagnification) {
+      const previousFitScale = containFit(previous.viewport!, documentFrameSize(previous.frame)).scale;
+      const nextFitScale = containFit(viewport, documentFrameSize(nextFrame)).scale;
+      const nextCompensation = preserveViewScaleCompensationAcrossDisplayScaleChange(
+        viewStateRef.current.zoom,
+        viewStateRef.current.fitScaleCompensation,
+        previousFitScale,
+        nextFitScale,
+        previous.devicePixelRatio,
+        devicePixelRatio
+      );
+      const currentViewState = viewStateRef.current;
+      const nextFitToScreen = frameChanged ? false : currentViewState.fitToScreen;
+      const priorMagnification = absoluteViewZoom(currentViewState, previousFitScale, previous.devicePixelRatio);
+      const priorMinimumZoom = minimumSliderZoomForDocumentSize(previous.frame);
+      const preservesSubpixelScale =
+        currentViewState.fitToScreen ||
+        currentViewState.minimumZoomOverride !== undefined ||
+        priorMagnification < priorMinimumZoom * (1 - 1e-9);
+      const nextMagnification = absoluteViewZoom(
+        { ...currentViewState, fitScaleCompensation: nextCompensation },
+        nextFitScale,
+        devicePixelRatio
+      );
+      const nextMinimumZoom = minimumSliderZoomForDocumentSize(nextFrame);
+      const carriesMinimumZoomOverride = currentViewState.minimumZoomOverride !== undefined;
+      const startsMinimumZoomOverride =
+        !carriesMinimumZoomOverride &&
+        (priorMagnification < priorMinimumZoom * (1 - 1e-9) ||
+          (preservesSubpixelScale && nextMagnification < nextMinimumZoom));
+      const nextMinimumZoomOverride = frameChanged
+        ? carriesMinimumZoomOverride
+          ? currentViewState.minimumZoomOverride
+          : startsMinimumZoomOverride
+            ? priorMagnification
+            : undefined
+        : currentViewState.minimumZoomOverride;
+      const boundedMagnification =
+        frameChanged && !preservesSubpixelScale
+          ? clampAbsoluteViewZoom(nextMagnification, nextMinimumZoom)
+          : nextMagnification;
+      const nextZoom =
+        boundedMagnification === nextMagnification
+          ? currentViewState.zoom
+          : relativeViewZoomForMagnification(boundedMagnification, nextFitScale, nextCompensation, devicePixelRatio);
+      if (
+        nextCompensation !== currentViewState.fitScaleCompensation ||
+        nextZoom !== currentViewState.zoom ||
+        nextFitToScreen !== currentViewState.fitToScreen ||
+        nextMinimumZoomOverride !== currentViewState.minimumZoomOverride
+      ) {
+        const nextViewState = {
+          ...currentViewState,
+          zoom: nextZoom,
+          fitScaleCompensation: nextCompensation,
+          fitToScreen: nextFitToScreen,
+          minimumZoomOverride: nextMinimumZoomOverride,
+        };
+        if (nextMinimumZoomOverride === undefined) delete nextViewState.minimumZoomOverride;
+        viewStateRef.current = nextViewState;
+        forceViewStateUpdate((value) => value + 1);
       }
+    }
 
-      previousPresentedFrameRef.current = {
-        documentId: storeState.documentId,
-        documentRevision: storeState.documentRevision,
-        frame: nextFrame,
-        viewport,
-        devicePixelRatio,
-      };
-    },
-    [
-      containerRef,
+    previousPresentedFrameRef.current = {
+      documentId: storeState.documentId,
+      documentRevision: storeState.documentRevision,
+      frame: nextFrame,
+      viewport,
       devicePixelRatio,
-      storeState.documentFrame,
-      storeState.documentId,
-      storeState.documentRevision,
-      storeState.totalSize,
-    ]
-  );
+    };
+  }, [
+    containerRef,
+    devicePixelRatio,
+    storeState.documentFrame,
+    storeState.documentId,
+    storeState.documentRevision,
+    storeState.totalSize,
+  ]);
   useLayoutEffect(() => {
     reconcileViewScaleForWorkspace();
   }, [reconcileViewScaleForWorkspace]);
-  useResizeObserverRAF(containerRef, reconcileViewScaleForWorkspace);
+  // ResizeObserver is a trigger; view-scale preservation must use the same client viewport as fit.
+  useResizeObserverRAF(containerRef, () => reconcileViewScaleForWorkspace());
   const latestStateRef = useRef(storeState);
   const historyReplayAttemptRef = useRef(0);
   const historyReplayAttemptPendingRef = useRef(false);

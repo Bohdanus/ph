@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 export const MAX_QUARANTINE_HOURS = 72;
 export const DEFAULT_QUARANTINE_HOURS = 6;
-export const QUARANTINE_SOURCES = new Set(['kilo', 'openrouter', 'groq']);
+export const QUARANTINE_SOURCES = new Set(['kilo', 'openrouter']);
 export const QUARANTINE_REASONS = new Set(['rate_limit', 'provider_outage', 'model_unavailable', 'poor_performance']);
 
 const WORKTREE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');

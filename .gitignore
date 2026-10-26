@@ -51,6 +51,9 @@ playwright/.auth
 .kilo/*
 !.kilo/plans/
 .kilo/plans/*
+!.kilo/agent/
+.kilo/agent/*
+!.kilo/agent/read-only-research.md
 # The local and repository skill catalogs must stay synchronized.
 !.kilo/skills/
 .kilo/skills/*

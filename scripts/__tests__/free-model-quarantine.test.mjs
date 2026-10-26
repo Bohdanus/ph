@@ -172,8 +172,8 @@ describe('free-model quarantine lifecycle', () => {
     const filePath = join(directory, 'state.json');
     const state = { schemaVersion: 1, entries: {} };
     const key = upsertQuarantine(state, {
-      source: 'groq',
-      model: 'openai/gpt-oss-20b',
+      source: 'openrouter',
+      model: 'vendor/model:free',
       reason: 'model_unavailable',
       now: Date.parse('2026-10-26T12:00:00.000Z'),
     });
