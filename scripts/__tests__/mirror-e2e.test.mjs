@@ -31,8 +31,8 @@ const baselineWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/
 const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 const focusedWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'), 'utf8');
 
-function runGit(cwd, args) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+function runGit(cwd, args, input) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', input });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
   return result.stdout.trim();
 }
@@ -111,6 +111,10 @@ describe('Linux baseline promotion workflow', () => {
       baselineWorkflow.indexOf('      - name: Validate branch, source SHA and chat ID'),
       baselineWorkflow.indexOf('      - name: Download captured Linux baselines')
     );
+    const stagingStep = baselineWorkflow.slice(
+      baselineWorkflow.indexOf('      - name: Validate and stage baseline allowlist'),
+      baselineWorkflow.indexOf('      - name: Commit and push baseline changes')
+    );
     const promotionStep = baselineWorkflow.slice(
       baselineWorkflow.indexOf('      - name: Commit and push baseline changes')
     );
@@ -118,12 +122,30 @@ describe('Linux baseline promotion workflow', () => {
       '[[ "$CHAT_ID" =~ ^(ses_[A-Za-z0-9]{26}|[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12}|copilotcli:/[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12})$ ]] || { echo "::error::A valid Kilo ID, Codex UUID, or Copilot session URI is required"; exit 1; }';
 
     for (const validationStep of [captureValidationStep, promotionValidationStep]) {
+      expect(validationStep).toContain('CHAT_ID: ${{ github.event.client_payload.chat_id }}');
       const guards = validationStep
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter((line) => line.startsWith('[[ "$CHAT_ID" =~'));
       expect(guards).toEqual([nativeChatGuard]);
     }
+    const stagedFiles = /expected=\(([^)]*)\)/.exec(stagingStep)?.[1].trim().split(/\s+/).sort();
+    expect(stagedFiles).toEqual([
+      'drawing.avif.png',
+      'drawing.bmp.png',
+      'drawing.gif.png',
+      'drawing.jpeg.png',
+      'drawing.png.png',
+      'drawing.svg.png',
+      'drawing.webp.png',
+    ]);
+    expect(stagingStep).toContain('for name in "${expected[@]}"; do');
+    expect(
+      stagingStep
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('git add '))
+    ).toEqual(['git add -- "$target"']);
     expect(promotionStep).toContain('SOURCE_SHA: ${{ github.event.client_payload.source_sha }}');
     expect(promotionStep).toContain('--force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA"');
     expect(promotionStep).toContain('-m "Chat: $CHAT_ID"');
@@ -653,6 +675,65 @@ describe('mirror remote and dispatch selection', () => {
       rmSync(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ['trailing-space path', { fileSuffix: ' ' }, /allowlist/],
+    ['trailing-space subject', { subjectSuffix: ' ' }, /unrecognized subject/],
+    ['trailing-space Chat trailer', { chatSuffix: ' ' }, /exactly the requested native Chat trailer/],
+  ])('rejects a baseline promotion with %s', (_, mutation, error) => {
+    const fixture = createMirrorPushFixture();
+    try {
+      const promotionRepo = join(fixture.root, 'promotion');
+      runGit(fixture.root, ['clone', '--quiet', fixture.source, promotionRepo]);
+      runGit(promotionRepo, ['config', 'user.name', 'Baseline Promotion Fixture']);
+      runGit(promotionRepo, ['config', 'user.email', 'baseline-promotion-fixture@example.test']);
+
+      const baselineName = `${LINUX_BASELINE_FILES[0]}${mutation.fileSuffix ?? ''}`;
+      const baselineFile = join(promotionRepo, LINUX_BASELINE_PATH, baselineName);
+      mkdirSync(dirname(baselineFile), { recursive: true });
+      writeFileSync(baselineFile, 'captured baseline\n');
+      runGit(promotionRepo, ['add', '--', `${LINUX_BASELINE_PATH}/`]);
+
+      const subject = `test: refresh Linux export baselines${mutation.subjectSuffix ?? ''}`;
+      const chatTrailer = `Chat: ses_0123456789ABCDEF0123456789${mutation.chatSuffix ?? ''}`;
+      const tree = runGit(promotionRepo, ['write-tree']);
+      const author = runGit(promotionRepo, ['var', 'GIT_AUTHOR_IDENT']);
+      const committer = runGit(promotionRepo, ['var', 'GIT_COMMITTER_IDENT']);
+      const commitObject = [
+        `tree ${tree}`,
+        `parent ${fixture.sourceSha}`,
+        `author ${author}`,
+        `committer ${committer}`,
+        '',
+        `${subject}\n\n${chatTrailer}\n`,
+      ].join('\n');
+      const promotionSha = runGit(promotionRepo, ['hash-object', '-w', '-t', 'commit', '--stdin'], commitObject);
+      runGit(promotionRepo, ['remote', 'add', 'mirror', fixture.mirror]);
+      runGit(promotionRepo, buildMirrorPushArgs(promotionSha, fixture.branch, null));
+
+      const calls = [];
+      const runCommand = (binary, args, cwd = fixture.source) => {
+        calls.push({ binary, args: [...args] });
+        const result = spawnSync(binary, args, { cwd, encoding: 'utf8' });
+        if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
+        return (result.stdout ?? '').trim();
+      };
+
+      expect(() =>
+        fastForwardBaselineCommit({
+          branch: fixture.branch,
+          sourceSha: fixture.sourceSha,
+          chatId: 'ses_0123456789ABCDEF0123456789',
+          cwd: fixture.source,
+          runCommand,
+        })
+      ).toThrow(error);
+      expect(runGit(fixture.source, ['rev-parse', 'HEAD'])).toBe(fixture.sourceSha);
+      expect(calls.some(({ args }) => args[0] === 'merge')).toBe(false);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('focused spec validation', () => {
@@ -695,12 +776,13 @@ describe('Linux baseline promotion verification', () => {
     parents = [sourceSha],
     commitSubject = 'test: refresh Linux export baselines',
     changedPaths = [path],
-    commitMessage = `test: refresh Linux export baselines\n\nChat: ${chatId}`,
+    commitMessage,
   } = {}) {
     const calls = [];
     let branchReads = 0;
     let headReads = 0;
     let statusReads = 0;
+    const fullCommitMessage = commitMessage ?? `${commitSubject}\n\nChat: ${chatId}`;
     const runCommand = (binary, args) => {
       calls.push({ binary, args: [...args] });
       if (binary !== 'git') throw new Error(`Unexpected command: ${binary}`);
@@ -719,9 +801,12 @@ describe('Linux baseline promotion verification', () => {
         case 'merge':
           return '';
         case 'diff':
-          return changedPaths.join('\n');
-        case 'show':
-          return args.includes('--format=%s') ? commitSubject : commitMessage;
+          return (args.includes('-z') ? `${changedPaths.join('\0')}\0` : changedPaths.join('\n')).trim();
+        case 'show': {
+          if (args.includes('--format=x%B%x00')) return `x${fullCommitMessage}\0\n`.trim();
+          if (args.includes('--format=%s')) return `${commitSubject}\n`.trim();
+          return `${fullCommitMessage}\n`.trim();
+        }
       }
       throw new Error(`Unexpected git command: ${args.join(' ')}`);
     };
@@ -865,6 +950,21 @@ describe('Linux baseline promotion verification', () => {
       /unrecognized subject/
     );
     expect(renamed.calls.some(({ args }) => args[0] === 'merge')).toBe(false);
+  });
+
+  it.each([
+    ['path', { changedPaths: [`${path} `] }, /allowlist/],
+    ['subject', { commitSubject: 'test: refresh Linux export baselines ' }, /unrecognized subject/],
+    [
+      'Chat trailer',
+      { commitMessage: `test: refresh Linux export baselines\n\nChat: ${chatId} ` },
+      /exactly the requested native Chat trailer/,
+    ],
+  ])('preserves trailing whitespace in Git %s output for strict validation', (_, state, error) => {
+    const { calls, runCommand } = createPromotionGitCommand(state);
+
+    expect(() => fastForwardBaselineCommit({ branch, sourceSha, chatId, runCommand })).toThrow(error);
+    expect(calls.some(({ args }) => args[0] === 'merge')).toBe(false);
   });
 
   it.each([

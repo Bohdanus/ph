@@ -259,21 +259,23 @@ export function assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch, cwd =
 
   const remoteOnlyBaselineCommits = command(
     'git',
-    ['log', '--format=%H%x09%s', `${sourceSha}..${remoteSha}`, '--', `${LINUX_BASELINE_PATH}/`],
+    ['rev-list', `${sourceSha}..${remoteSha}`, '--', `${LINUX_BASELINE_PATH}/`],
     cwd
   )
     .split(/\r?\n/)
     .filter(Boolean);
 
-  for (const commit of remoteOnlyBaselineCommits) {
-    const [commitSha, subject] = commit.split('\t', 2);
-    if (!commitSha || !subject) throw new Error('mirror returned an invalid baseline commit record');
+  for (const commitSha of remoteOnlyBaselineCommits) {
+    if (!GIT_SHA_PATTERN.test(commitSha)) throw new Error('mirror returned an invalid baseline commit record');
     const commitAndParents = command('git', ['rev-list', '--parents', '-n', '1', commitSha], cwd).split(/\s+/);
     const [verifiedSha, parentSha] = commitAndParents;
+    if (verifiedSha !== commitSha) throw new Error('mirror returned an invalid baseline commit record');
+    const commitMessage = parseGitField(command('git', ['show', '-s', '--format=x%B%x00', verifiedSha], cwd));
+    const subject = commitMessage.split('\n', 1)[0];
     const diffArgs = parentSha
-      ? ['diff-tree', '--no-commit-id', '--name-only', '-r', parentSha, verifiedSha]
-      : ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', verifiedSha];
-    const changedPaths = command('git', diffArgs, cwd).split(/\r?\n/).filter(Boolean);
+      ? ['diff-tree', '--no-commit-id', '--name-only', '-z', '-r', parentSha, verifiedSha]
+      : ['diff-tree', '--root', '--no-commit-id', '--name-only', '-z', '-r', verifiedSha];
+    const changedPaths = parseNulDelimitedPaths(command('git', diffArgs, cwd));
     if (!changedPaths.some((file) => file.startsWith(`${LINUX_BASELINE_PATH}/`))) continue;
     if (subject !== LINUX_BASELINE_COMMIT_SUBJECT) {
       throw new Error(
@@ -284,7 +286,6 @@ export function assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch, cwd =
       throw new Error('mirror branch contains a Linux baseline promotion that is not a single-parent commit');
     }
 
-    const commitMessage = command('git', ['show', '-s', '--format=%B', verifiedSha], cwd);
     const chatTrailers = parseCommitTrailerBlock(commitMessage)
       ?.filter((trailer) => trailer.key === 'Chat')
       .map((trailer) => trailer.value);
@@ -362,6 +363,22 @@ export function verifyBaselinePromotion({
 
 export function isLinuxBaselinePath(file) {
   return LINUX_BASELINE_FILES.some((name) => file === `${LINUX_BASELINE_PATH}/${name}`);
+}
+
+function parseGitField(output) {
+  const end = output.indexOf('\0', 1);
+  if (!output.startsWith('x') || end === -1 || output.slice(end + 1).trim() !== '') {
+    throw new Error('git returned invalid commit metadata');
+  }
+  return output.slice(1, end);
+}
+
+function parseNulDelimitedPaths(output) {
+  if (output === '') return [];
+  if (!output.endsWith('\0')) throw new Error('git returned an invalid path list');
+  const paths = output.slice(0, -1).split('\0');
+  if (paths.some((file) => file === '')) throw new Error('git returned an invalid path list');
+  return paths;
 }
 
 function command(binary, args, cwd = process.cwd(), timeoutMs = 120_000) {
@@ -526,31 +543,31 @@ function downloadArtifacts(runId, attempt, requestId) {
   }
 }
 
-export function fastForwardBaselineCommit({ branch, sourceSha, chatId, runCommand = command }) {
-  if (runCommand('git', ['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch) {
+export function fastForwardBaselineCommit({ branch, sourceSha, chatId, cwd = process.cwd(), runCommand = command }) {
+  if (runCommand('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd) !== branch) {
     throw new Error('local branch changed while the baseline workflow ran; leave the mirror commit for manual review');
   }
-  if (runCommand('git', ['rev-parse', '--verify', 'HEAD^{commit}']) !== sourceSha) {
+  if (runCommand('git', ['rev-parse', '--verify', 'HEAD^{commit}'], cwd) !== sourceSha) {
     throw new Error('local branch moved while the baseline workflow ran; leave the mirror commit for manual review');
   }
-  if (runCommand('git', ['status', '--porcelain=v1', '--untracked-files=all'])) {
+  if (runCommand('git', ['status', '--porcelain=v1', '--untracked-files=all'], cwd)) {
     throw new Error('local worktree became dirty while the baseline workflow ran; do not fast-forward it');
   }
 
-  runCommand('git', ['fetch', '--no-tags', 'mirror', `refs/heads/${branch}`]);
-  const remoteSha = runCommand('git', ['rev-parse', 'FETCH_HEAD']);
+  runCommand('git', ['fetch', '--no-tags', 'mirror', `refs/heads/${branch}`], cwd);
+  const remoteSha = runCommand('git', ['rev-parse', 'FETCH_HEAD'], cwd);
   if (remoteSha === sourceSha) {
     console.log('Linux export baselines already match; no branch commit was created.');
     return;
   }
 
-  const commitAndParents = runCommand('git', ['rev-list', '--parents', '-n', '1', remoteSha]).split(/\s+/);
+  const commitAndParents = runCommand('git', ['rev-list', '--parents', '-n', '1', remoteSha], cwd).split(/\s+/);
   if (commitAndParents[0] !== remoteSha) throw new Error('mirror returned an invalid baseline commit ID');
-  const commitSubject = runCommand('git', ['show', '-s', '--format=%s', remoteSha]);
-  const changedPaths = runCommand('git', ['diff', '--name-only', `${sourceSha}..${remoteSha}`])
-    .split('\n')
-    .filter(Boolean);
-  const commitMessage = runCommand('git', ['show', '-s', '--format=%B', remoteSha]);
+  const commitMessage = parseGitField(runCommand('git', ['show', '-s', '--format=x%B%x00', remoteSha], cwd));
+  const commitSubject = commitMessage.split('\n', 1)[0];
+  const changedPaths = parseNulDelimitedPaths(
+    runCommand('git', ['diff', '--name-only', '-z', `${sourceSha}..${remoteSha}`], cwd)
+  );
   const result = verifyBaselinePromotion({
     sourceSha,
     remoteSha,
@@ -561,20 +578,20 @@ export function fastForwardBaselineCommit({ branch, sourceSha, chatId, runComman
     chatId,
   });
   if (result.changed) {
-    if (runCommand('git', ['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch) {
+    if (runCommand('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd) !== branch) {
       throw new Error(
         'local branch changed before the baseline fast-forward; leave the mirror commit for manual review'
       );
     }
-    if (runCommand('git', ['rev-parse', '--verify', 'HEAD^{commit}']) !== sourceSha) {
+    if (runCommand('git', ['rev-parse', '--verify', 'HEAD^{commit}'], cwd) !== sourceSha) {
       throw new Error('local branch moved before the baseline fast-forward; leave the mirror commit for manual review');
     }
-    if (runCommand('git', ['status', '--porcelain=v1', '--untracked-files=all'])) {
+    if (runCommand('git', ['status', '--porcelain=v1', '--untracked-files=all'], cwd)) {
       throw new Error(
         'local worktree became dirty before the baseline fast-forward; leave the mirror commit for manual review'
       );
     }
-    runCommand('git', ['merge', '--ff-only', remoteSha]);
+    runCommand('git', ['merge', '--ff-only', remoteSha], cwd);
     console.log(`Fast-forwarded ${branch} with ${changedPaths.length} Linux baseline file(s).`);
   }
 }
