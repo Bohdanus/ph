@@ -361,7 +361,8 @@ describe('free model runner CLI', () => {
       });
       expect(code).toBe(0);
       expect(await readFile(outputPath, 'utf8')).toBe(
-        '[kilo/poolside/laguna-s-2.1:free]\nFinish reason: stop\nUsage: null\n\nconcise result\n'
+        '[kilo/poolside/laguna-s-2.1:free]\nFinish reason: stop\nUsage: null\n' +
+          'Requests attempted (this run): {"kilo":1,"openrouter":0,"groq":0}\n\nconcise result\n'
       );
       expect(stdout.write).not.toHaveBeenCalled();
       expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Result written to'));
