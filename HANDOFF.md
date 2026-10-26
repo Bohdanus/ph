@@ -1022,90 +1022,6 @@ alone; `transform.notes.md` records those as separate divergences/product questi
 `src/components/Main/MoveToolArea.tsx`; `src/hooks/useRect.ts`; `src/contexts/useLayer.ts`;
 `src/components/Common/AppKeyboardShortcuts.tsx`; `docs/LAYERS-PANEL.md`.
 
-## 121. The worktree sweep is structurally blind to every branch that has no worktree, and one of those branches is the upstream reference implementation
-
-**Problem.** `scripts/worktree-inventory.mjs` derives its entire model from
-`git worktree list`; the only place any branch name is read is
-`scripts/lib/worktree-inventory/git.mjs` — `listWorktrees()`, which parses a `branch refs/heads/…`
-line out of that listing. A branch with no worktree is therefore not `land`, not `at-risk`, not
-`dispose` and not
-`goneWorktrees` — it does not appear in `WORKTREES.json` at all, so no reclaim or harvest run can
-ever reach it. The blind set is **every ref in `refs/heads` that `git worktree list` does not
-name**, and it is not a fixed number — it grows every time a session adds a branch before its
-worktree. At the time of writing, 62 local branches against 51 with a worktree, so eleven
-branch-only refs, and **not one of them is an ancestor of `main`**:
-
-```bash
-git for-each-ref refs/heads --format='%(refname:short)' | sort > /tmp/all-branches
-git worktree list --porcelain | grep '^branch refs/heads/' \
-  | sed 's|branch refs/heads/||' | sort > /tmp/with-worktree
-comm -23 /tmp/all-branches /tmp/with-worktree \
-  | while read -r b; do git merge-base --is-ancestor "$b" main || echo "$b"; done
-```
-
-The one that matters is worse than merely unlisted.
-
-**`layers` is not this project's work.** `origin` is
-`https://github.com/drguz69/lightshopy.com.git`, and `main` is a rewrite of it that has diverged
-815 commits. `layers` is an upstream branch of the reference implementation, and it still carries
-**25 patches that are not on `main`**:
-
-```
-git merge-base main layers     # 894ee443b  "layers + history", 2026-03-20
-git cherry main layers         # 25 lines starting with '+'
-git merge-base --is-ancestor layers main   # NO
-```
-
-Its log is the author's original implementation of the areas this repository has since rewritten
-twice — `drag and drop done right`, `try to add back history [WIP]`, `fix Shape tool area
-calculation for square`, `correct circle selection`, `history eye`. `git cherry` therefore reports
-it as unlanded work, and a sweep that trusted that field the way `.skills/worktree-merge-harvest.md`
-step 1 tells a reader to — re-verify, then land — would merge the upstream implementation into the
-rewrite. Its value is as a **reference to read**, not as a branch to land, and nothing in the
-repository says so.
-
-**Reproduce.**
-
-```bash
-git worktree list --porcelain | grep 'branch refs/heads/layers'   # no output: no worktree
-git cherry main layers | grep -c '^+'                            # 25
-git remote get-url origin                                       # .../drguz69/lightshopy.com.git
-```
-
-**Fix.** Two separate problems, and the second is the cheaper one.
-
-1. Record that `layers` is the upstream reference and is not a merge candidate, so the next sweep
-   reads it before `git cherry` misleads it. **There is no longer a branch-state section in this
-   file to put it in** — the one this entry used to name opened with a 136-line block of branch
-   bookkeeping whose own pointers had rotted, and deleting it is correct. `docs/ORCHESTRATION.md`
-   is where a statement about the repository's remotes belongs, but it does **not** carry the
-   upstream-rewrite rule this entry restates. An earlier version of this entry claimed it did, and
-   quoted one — "a branch rewrote the whole history of the app … is a remote-tracking ref, not a
-   local branch" — that exists in no tracked document:
-   `grep -nE "remote-tracking|rewrote the whole history|refs/remotes" docs/ORCHESTRATION.md` returns
-   nothing, and `git log -S'rewrote the whole history' --all` names only `4833e740`, the commit
-   that introduced the citation. So the rule needs writing into `docs/ORCHESTRATION.md` as part of
-   this fix; the closest real content there is the landing rule in `docs/ORCHESTRATION.md` — "Landing"
-   ("a branch merges into `main` only after `main` has already been merged or rebased into the
-   branch"), which is about merge discipline and not about identifying an upstream reference.
-2. Teach the inventory to enumerate branch-only refs. `git for-each-ref refs/heads` alongside
-   `git worktree list` is the whole change; a branch with no worktree should surface as an explicit
-   category rather than as silence. That category splits three ways, and the split is a property of
-   each ref rather than a count to store: a ref already an ancestor of `main`
-   (`git merge-base --is-ancestor <b> main` → yes) is clutter no sweep will ever collect; a ref with
-   unlanded patches (`git cherry main <b> | grep -c '^+'` → non-zero) is live work; and a ref that
-   is **not** an ancestor yet reports **zero** unlanded patches is the one a reader must be warned
-   about, because `git cherry` will call it landed. At the time of writing that third case is
-   `ps-integration` alone — 2 commits ahead, merge commits only — sitting beside `layers`, the
-   upstream reference implementation above, and beside eight ordinary branches with unlanded
-   patches. An earlier version of this entry named a third member, `fix-merge`, as "already on
-   `main`"; no ref of that name exists anywhere in this repository, and a branch already on `main`
-   would not be in this set at all.
-
-**Files.** `scripts/lib/worktree-inventory/git.mjs` — `listWorktrees()`,
-`scripts/worktree-inventory.mjs`,
-`docs/ORCHESTRATION.md` (where the upstream-rewrite rule has to be written)
-
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 
 **Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress. The
@@ -2076,50 +1992,23 @@ rather than by ruling, and `docs/OVERRIDES.md` has no entry. Second, `presentati
 compiler-enforced rule. Third, grading `opacity` against the live record decides part of §92, whose
 own text says the decision comes before the edit.
 
-## 181. A branch sweep under-reports unmerged work, and two hardening branches are unmerged because of it
+## 181. The orphan report does not establish branch disposition
 
-**Problem.** Ancestry alone is not a completeness test. `test/infra-suite-hardening` is not an ancestor
-of `main`, yet `git diff --stat main...test/infra-suite-hardening` is empty — it landed by cherry-pick
-roughly a hundred commits ago, and `git rev-list --count main..` still reports 2 ahead. A sweep that
-asks only "is this branch an ancestor of main" reports live work as pending.
+**Problem.** `npm run branches:orphan` reports local branches without worktrees using reachability,
+ahead/behind, and merge-conflict information. A non-ancestor branch can still be patch-equivalent
+because its changes were cherry-picked, and a zero cherry-patch count can still hide a distinct
+merge result.
 
-The dated per-file audit found five branches whose unit-test work was absent from `main`; it said
-three had landed and counted two remaining. That count is not current evidence. On 2026-10-23,
-`fix/migration-review-sweep` still appears under multiple `remotes/wt-*` refs. The selected
-`remotes/wt-test-hardening/fix/migration-review-sweep` has branch-only commit `5d388e02` and is
-1771 commits behind `main`; §179's later adjudication says never merge it wholesale and records
-which findings were unique. `docs/luna-psd-currency` has no current local or remote ref, so its
-existence or landing status cannot be inferred from this checkout. Do not report these as two live
-unmerged branches without re-running the inventory and blob comparison.
+`WORKTREES.json` now includes branch-only refs with ancestry and `git cherry` observations:
+`ancestor`, `unmatched-patches`, `zero-cherry-patches`, or `unknown`. These labels make the missing
+refs visible, but do not establish ownership, provenance, final-tree equivalence, merge intent, or
+a recover/retire decision. `git cherry` compares non-merge commit patches and omits merge commits;
+zero unmatched patches are not proof that the branch tree matches `main`.
 
-**Also unaccounted for at the original audit.** Eight `agent-manager.json` worktree entries were
-reported to point at directories that no longer existed and branches that existed in no ref, reflog,
-or dangling commit:
-`fix-usehistory-tests`, `wip/fix-replay-coordinator-tests`, `wip/fix-history-adapter-safety-tests`,
-`wip/fix-useapp-psd-tests`, `wip/fix-userect-tests`, `wip/fix-layerstab-tests`, `audit-scripts-tests`,
-`audit-docs-claims`. Those sessions committed nothing and nothing is recoverable. And two commits sit
-on no branch at all: `0a2f7f2b` (board refusals get tests) and `f3811b65`, a `git stash` commit of
-`docs/no-line-numbers` whose content is already covered and which additionally carries placeholder
-table alignment that would trip the guard it introduces.
-
-**The separate orphan report has a narrower status gap.** `orphan-branches.mjs` does enumerate local
-branch-only refs, but its `--no-merged`/ahead/conflict columns do not report patch equivalence. Its
-output is advisory and `docs/ORCHESTRATION.md` tells the operator to run `git cherry main <branch>`
-before calling a branch unmerged. A future additive `patchEquivalence` field could reduce false
-positives, but it must keep `UNKNOWN` fail-closed and must not auto-land or retire any branch.
-
-**What is needed.** Re-run a current inventory that compares blobs per test file, not just ancestry,
-before reporting a branch as landed. Treat the eight missing-worktree entries and the unreferenced
-commits above as dated audit findings until their current refs/reflogs/inventory state is checked.
-§179 remains the specific adjudication for `fix/migration-review-sweep`; do not merge that branch
-wholesale or recover `f3811b65` based on this section.
-
-**Separate branch-report limitation.** `npm run branches:orphan` enumerates local branches with no
-registered worktree, but its unmerged/ahead fields use reachability (`git branch --no-merged` and
-`rev-list`) rather than patch equivalence. It does not automate the manual `git cherry main <branch>`
-check required by `docs/ORCHESTRATION.md`; a cherry-picked branch can therefore be reported as
-unmerged work. A future `patchEquivalence` column could make that distinction visible, but it must
-remain advisory, preserve `UNKNOWN` for ambiguous histories, and never land or retire a branch.
+**What remains.** For non-ancestor refs, inspect the commit parents, `git diff main <branch>`,
+changed files, and relevant transcripts before deciding what to do. Treat unknown comparisons and
+branches without a current owner as unproven. Neither the inventory nor `branches:orphan` may merge
+or retire a branch automatically.
 
 ## 182. At-risk work has no explicit operator disposition for "reviewed, keep nothing"
 

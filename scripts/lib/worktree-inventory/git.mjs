@@ -59,81 +59,120 @@ function isShallow(cwd) {
 }
 
 /**
- * The ref this checkout should be compared against, or `null` if there is none.
- *
- * THE LITERAL `main` IS NOT AVAILABLE EVERYWHERE, and assuming it is was a real
- * outage. `git rev-list main...HEAD` and `git merge-base --is-ancestor HEAD main`
- * both need a ref NAMED `main` to exist. They do not resolve `origin/main`, and
- * they do not resolve a remote-tracking ref spelled differently. A checkout made
- * by `actions/checkout` with the default `fetch-depth: 1` on a `pull_request`
- * event contains `refs/remotes/pull/N/merge` and `refs/remotes/origin/main` and
- * NO `refs/heads/main` at all, so on that shape every ahead/behind answer this
- * module produced was `{ ahead: null, behind: null }` and every "already landed"
- * answer was `false` — the two values that make a guard read as a machine with
- * nothing at risk on it.
- *
- * So the base is ASKED FOR rather than assumed, in the order that prefers the
- * most local answer and falls back to the one a shallow clone still has. The
- * candidates are probed with `rev-parse --verify --quiet <name>^{commit}`, which
- * asks "does this name resolve to exactly one COMMIT" and is false for a missing
- * ref, for a name that is ambiguous only in the sense of not existing, for a
- * tree, and for a blob.
- *
- * IT IS NOT false for an ambiguous NAME, and this sentence is here because an
- * earlier draft of this comment said it was and was wrong. A name that resolves
- * to more than one thing resolves, and git says which on stderr where nothing
- * reads it. The two paragraphs below measure that and the shallow case; this one
- * is only the probe.
- *
- * `null` is a real answer and not an error to be papered over: it means this
- * checkout has no base that can be trusted, which is a fact about the checkout
- * rather than about any worktree in it. Every caller must pass it through rather
- * than substitute a default, because substituting one is what produced the
- * outage.
- *
- * TWO WAYS A REF CAN RESOLVE AND STILL BE THE WRONG ANSWER, both found by
- * building the shapes rather than reasoning about them, and both of which return
- * a number rather than admitting ignorance.
- *
- * A SHALLOW REPOSITORY. `rev-parse --verify` asks "does this name name one
- * commit", and in a `--depth 1` clone `origin/main` names exactly one commit —
- * the tip, with its ancestry cut off. So the probe passes and every answer built
- * on it is confidently wrong. Measured on a depth-1 fetch of a real ancestor of
- * `origin/main`: `merge-base --is-ancestor HEAD origin/main` exits 1, and
- * `rev-list --left-right --count origin/main...HEAD` prints `1 1`, for a branch
- * that IS on the base. Before the shallow check this function returned
- * `origin/main` there, which converts "I know nothing" into "I am certain and
- * wrong" — strictly worse than the null it replaced, because a wrong number is
- * read and a null is checked. `--is-shallow-repository` is the question, and the
- * answer is that ancestry is not available in such a checkout at any depth, so
- * there is no ref worth certifying.
- *
- * A TAG NAMED `main`. `rev-parse --verify` does NOT reject an ambiguous name. With
- * a branch `main` and a lightweight tag `main` both present it exits 0, resolves
- * the TAG, and prints `warning: refname 'main' is ambiguous` to stderr where
- * nothing reads it. An earlier draft of this comment claimed the probe "is false
- * for both a missing ref and an ambiguous one"; measured, it is false only for the
- * missing one. What actually saves the answer is the first candidate being FULLY
- * QUALIFIED, and `^{commit}` is here to reject a tree and a blob, which it does.
- * `is-ancestor` against that tag exits 1 where it exits 0 against the branch. The
- * first candidate is therefore FULLY QUALIFIED. It was `main`, which is the bug
- * this function's own existence is about.
- *
- * ON THE ORDER OF THE REST, which is a deliberate choice and not an oversight: a
- * stale local base is preferred over a fresh remote one. Comparing against a
- * `main` that is behind makes a landed branch read as NOT landed, and every
- * downstream verdict on that branch then protects it — which is the direction
- * this tool must fail in. Preferring the fresher ref would make more worktrees
- * read as disposable. Every consumer prints the ref it resolved, so a stale base
- * is visible rather than silent.
+ * Resolve one requested base to a commit-bearing ref without Git's ambiguous-name fallback.
+ * Short names are expanded against exact ref namespaces; if multiple exact refs exist, callers
+ * must supply a fully qualified ref. Revision expressions and object IDs remain supported and are
+ * validated with `^{commit}`.
  */
-export function resolveBaseRef(cwd, candidates = ['refs/heads/main', 'origin/main', 'refs/remotes/origin/main']) {
+function dereferenceSymbolicRef(cwd, ref) {
+  let resolvedRef = ref;
+  const seen = new Set();
+  while (resolvedRef.startsWith('refs/')) {
+    if (seen.has(resolvedRef)) return null;
+    seen.add(resolvedRef);
+    const target = git(cwd, ['symbolic-ref', '--quiet', '--no-recurse', resolvedRef]);
+    if (target === null) return resolvedRef;
+    if (!target.startsWith('refs/')) return null;
+    resolvedRef = target;
+  }
+  return resolvedRef;
+}
+
+function resolveBaseCandidate(cwd, candidate) {
+  const suffixAt = candidate.search(/[~^:]|@\{/);
+  const shortName = suffixAt < 0 ? candidate : candidate.slice(0, suffixAt);
+  const suffix = suffixAt < 0 ? '' : candidate.slice(suffixAt);
+  const pseudoRefs = new Set([
+    'HEAD',
+    'FETCH_HEAD',
+    'ORIG_HEAD',
+    'MERGE_HEAD',
+    'CHERRY_PICK_HEAD',
+    'REVERT_HEAD',
+    'BISECT_HEAD',
+    'AUTO_MERGE',
+  ]);
+  const isObjectId = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(shortName);
+
+  if (candidate.startsWith('refs/')) {
+    const concreteRef = dereferenceSymbolicRef(cwd, shortName);
+    if (concreteRef === null) return null;
+    const resolved = `${concreteRef}${suffix}`;
+    const out = git(cwd, ['rev-parse', '--verify', '--quiet', `${resolved}^{commit}`]);
+    return out !== null && out !== '' ? resolved : null;
+  }
+
+  if (pseudoRefs.has(shortName) || isObjectId) {
+    const out = git(cwd, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]);
+    return out !== null && out !== '' ? candidate : null;
+  }
+
+  const exactRefs = [
+    ...new Set([
+      `refs/${shortName}`,
+      `refs/heads/${shortName}`,
+      `refs/tags/${shortName}`,
+      `refs/remotes/${shortName}`,
+      `refs/remotes/${shortName}/HEAD`,
+    ]),
+  ].filter((ref) => git(cwd, ['show-ref', '--verify', '--quiet', ref]) !== null);
+  if (exactRefs.length > 1) {
+    throw new Error(
+      `ambiguous base ref ${JSON.stringify(candidate)} matches ${exactRefs.join(', ')}; ` +
+        'pass one fully qualified ref'
+    );
+  }
+
+  const concreteRef = exactRefs.length === 1 ? dereferenceSymbolicRef(cwd, exactRefs[0]) : null;
+  if (exactRefs.length === 1 && concreteRef === null) return null;
+  const resolved = exactRefs.length === 1 ? `${concreteRef}${suffix}` : candidate;
+  const out = git(cwd, ['rev-parse', '--verify', '--quiet', `${resolved}^{commit}`]);
+  return out !== null && out !== '' ? resolved : null;
+}
+
+/**
+ * The base this checkout should compare against, or `null` when ancestry cannot be trusted.
+ * Local `main` wins, followed by the remote-tracking base available in shallow CI clones.
+ * Shallow repositories fail closed because an existing tip does not provide usable history.
+ */
+export function resolveBaseRef(cwd, candidates = ['refs/heads/main', 'refs/remotes/origin/main']) {
   if (isShallow(cwd)) return null;
   for (const candidate of candidates) {
-    const out = git(cwd, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]);
-    if (out !== null && out !== '') return candidate;
+    const resolved = resolveBaseCandidate(cwd, candidate);
+    if (resolved !== null) return resolved;
   }
   return null;
+}
+
+/** Convert a resolved ref into the branch-like name used by merge-subject advisories. */
+export function baseRefName(cwd, ref) {
+  let resolvedRef = ref;
+  const seen = new Set();
+  while (resolvedRef.startsWith('refs/')) {
+    if (seen.has(resolvedRef)) return null;
+    seen.add(resolvedRef);
+    const target = git(cwd, ['symbolic-ref', '--quiet', '--no-recurse', resolvedRef]);
+    if (target === null) {
+      if (resolvedRef.startsWith('refs/remotes/') && resolvedRef.endsWith('/HEAD')) return null;
+      break;
+    }
+    if (resolvedRef.startsWith('refs/remotes/') && resolvedRef.endsWith('/HEAD') && !target.startsWith('refs/')) {
+      return null;
+    }
+    resolvedRef = target;
+  }
+
+  let name = resolvedRef;
+  if (name.startsWith('refs/heads/')) name = name.slice('refs/heads/'.length);
+  else if (name.startsWith('refs/remotes/')) {
+    const remotePath = name.slice('refs/remotes/'.length);
+    const remoteSeparator = remotePath.indexOf('/');
+    name = remoteSeparator < 0 ? remotePath : remotePath.slice(remoteSeparator + 1);
+  } else if (name.startsWith('refs/tags/')) name = name.slice('refs/tags/'.length);
+  else if (name.startsWith('refs/')) name = name.slice('refs/'.length);
+
+  const suffixAt = name.search(/[~^:]|@\{/);
+  return suffixAt < 0 ? name : name.slice(0, suffixAt);
 }
 
 /**
@@ -247,7 +286,8 @@ export function listWorktrees(cwd) {
     } else if (line.startsWith('HEAD ') && current) {
       current.head = line.slice('HEAD '.length);
     } else if (line.startsWith('branch ') && current) {
-      current.branch = line.slice('branch '.length).replace('refs/heads/', '');
+      const branchRef = line.slice('branch '.length);
+      current.branch = branchRef.startsWith('refs/heads/') ? branchRef.slice('refs/heads/'.length) : branchRef;
     } else if (line.startsWith('detached') && current) {
       current.detached = true;
     } else if (line.startsWith('bare') && current) {
@@ -267,10 +307,42 @@ export function listWorktrees(cwd) {
   }));
 }
 
+/** Compare stable worktree-roster facts across two Git reads. */
+export function sameWorktreeRoster(left, right) {
+  const snapshot = (worktrees) =>
+    worktrees
+      .map((worktree) => ({
+        path: worktree.path,
+        head: worktree.head ?? null,
+        branch: worktree.branch ?? null,
+        detached: Boolean(worktree.detached),
+        bare: Boolean(worktree.bare),
+        locked: worktree.locked ?? null,
+        prunableReason: worktree.prunableReason ?? null,
+      }))
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return JSON.stringify(snapshot(left)) === JSON.stringify(snapshot(right));
+}
+
 export const PATCH_EQUIVALENCE = Object.freeze({
   NOT_APPLICABLE: 'not-applicable',
   ABSORBED: 'absorbed',
   UNMERGED: 'unmerged',
+  UNKNOWN: 'unknown',
+});
+
+/**
+ * Categories for branch-only refs — local branches that no worktree holds.
+ *
+ * `git worktree list` only names branches that have a checkout, so every other
+ * `refs/heads/*` branch is structurally invisible to the worktree roster. These
+ * categories summarize Git observations; they do not establish ownership,
+ * provenance, merge intent, or a disposition.
+ */
+export const BRANCH_ONLY_REF_CATEGORY = Object.freeze({
+  ANCESTOR: 'ancestor',
+  UNMATCHED_PATCHES: 'unmatched-patches',
+  ZERO_CHERRY_PATCHES: 'zero-cherry-patches',
   UNKNOWN: 'unknown',
 });
 
@@ -708,9 +780,9 @@ export function mergeConflict(cwd, base) {
  * is a question about the whole repository and a reader counting the entries
  * against `git worktree list` must not come up one short.
  */
-export async function collectWorktrees(cwd, { base = 'main', baseName = base } = {}) {
+export async function collectWorktrees(cwd, { base = 'main', baseName = base, worktreeRoster = null } = {}) {
   const root = resolve(cwd);
-  const worktrees = listWorktrees(root);
+  const worktrees = worktreeRoster ?? listWorktrees(root);
   const nameCollisions = historicalNameCollisions(root, base, baseName);
   const paths = worktrees.map((w) => w.path);
 
@@ -824,8 +896,10 @@ export async function collectWorktrees(cwd, { base = 'main', baseName = base } =
  * only ever appears in the `into` position got an empty list. Both names are
  * recorded. `baseName` is skipped entirely: every fast-forward into the base
  * says "Merge branch 'main'", so listing it would be the base branch claiming
- * a hundred merges of itself. `base` may be the immutable commit SHA captured
- * for the inventory snapshot; `baseName` keeps the advisory name filter stable.
+ * a hundred merges of itself. If a symbolic base cannot be resolved to a branch
+ * name, no name-collision advisories are emitted. `base` may be the immutable
+ * commit SHA captured for the inventory snapshot; `baseName` keeps the advisory
+ * name filter stable.
  *
  * A base ref that does not resolve — `--base trunk` on a clone whose default is
  * `main` — yields an empty map. `git()` returns its fallback and never throws,
@@ -835,8 +909,12 @@ export async function collectWorktrees(cwd, { base = 'main', baseName = base } =
  * `TypeError` that killed the whole generator.
  */
 export function historicalNameCollisions(cwd, base = 'main', baseName = base) {
-  const out = git(cwd, ['log', base, '--format=%H%x09%cI%x09%s']);
   const found = new Map();
+  // The selected base is a remote symbolic ref whose target could not be
+  // resolved to a branch name. In that case no merge-subject name is reliable
+  // enough to publish as collision evidence.
+  if (baseName === null) return found;
+  const out = git(cwd, ['log', base, '--format=%H%x09%cI%x09%s']);
   if (!out) return found;
   for (const line of out.split('\n')) {
     const [sha, date, subject] = line.split('\t');
@@ -882,8 +960,206 @@ export function branchNamesInSubject(subject) {
  * repaired because a stale admin entry is evidence that something removed a
  * directory out from under git, and that is a fact worth seeing.
  */
-export function findMissingWorktrees(cwd) {
-  return listWorktrees(cwd).filter((w) => !existsSync(w.path));
+export function findMissingWorktrees(cwd, worktreeRoster = null) {
+  return (worktreeRoster ?? listWorktrees(cwd)).filter((w) => !existsSync(w.path));
+}
+
+/**
+ * True when `ref` is an ancestor of `base` — i.e. every commit on `ref` is
+ * reachable from `base`, so the branch is already merged.
+ *
+ * Mirrors `isMergedInto` but for an arbitrary ref name rather than `HEAD`. Exit 1
+ * is git's ordinary "not an ancestor" answer; any other failure degrades to
+ * `null` so a broken comparison is not read as "not merged" — and certainly not
+ * as "merged".
+ */
+function isRefAncestorOf(cwd, ref, base) {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', ref, base], { cwd, stdio: 'ignore' });
+    return true;
+  } catch (error) {
+    return error?.status === 1 ? false : null;
+  }
+}
+
+/** Async ancestry probe that preserves Git's distinct exit status for false. */
+function isRefAncestorOfAsync(cwd, ref, base) {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['merge-base', '--is-ancestor', ref, base],
+      { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] },
+      (error) => {
+        if (!error) resolve(true);
+        else if (error.code === 1 && !error.signal) resolve(false);
+        else resolve(null);
+      }
+    );
+  });
+}
+
+/** Count non-merge commits that `git cherry` marks as unmatched. */
+async function cherryPlusCount(cwd, base, tipSha) {
+  const out = await gitAsync(cwd, ['cherry', base, tipSha]);
+  if (out === null) return null;
+  return out.split('\n').filter((line) => line.startsWith('+')).length;
+}
+
+/** Ahead and behind counts for an immutable tip SHA, as `{ ahead, behind }`. */
+async function aheadBehindRef(cwd, base, tipSha) {
+  const out = await gitAsync(cwd, ['rev-list', '--left-right', '--count', `${base}...${tipSha}`]);
+  if (out === null) return { ahead: null, behind: null };
+  const [behindText, aheadText, ...extra] = out.split(/\s+/);
+  const behind = Number(behindText);
+  const ahead = Number(aheadText);
+  if (extra.length > 0 || !Number.isInteger(ahead) || !Number.isInteger(behind) || ahead < 0 || behind < 0) {
+    return { ahead: null, behind: null };
+  }
+  return { ahead, behind };
+}
+
+/**
+ * Classify one branch-only ref — a local branch with no worktree — against a pinned base.
+ *
+ * The ref record contains the immutable object SHA captured by `for-each-ref`,
+ * so all graph queries describe the same tip even if a branch name moves during
+ * inventory generation. Categories are observations, not merge or cleanup advice.
+ */
+export async function classifyBranchOnlyRef(cwd, ref, base) {
+  const { name, sha } = ref;
+  const tip = { sha, subject: ref.subject, date: ref.date, author: ref.author };
+  const [isAncestor, counts] = await Promise.all([
+    isRefAncestorOfAsync(cwd, sha, base),
+    aheadBehindRef(cwd, base, sha),
+  ]);
+  const { ahead, behind } = counts;
+
+  if (isAncestor === null) {
+    return {
+      name,
+      category: BRANCH_ONLY_REF_CATEGORY.UNKNOWN,
+      isAncestor: null,
+      cherryPlusCount: null,
+      ahead,
+      behind,
+      tip,
+      reason: 'could not establish ancestry to the base',
+    };
+  }
+
+  if (isAncestor) {
+    return {
+      name,
+      category: BRANCH_ONLY_REF_CATEGORY.ANCESTOR,
+      isAncestor: true,
+      cherryPlusCount: null,
+      ahead,
+      behind,
+      tip,
+      reason: 'the tip is an ancestor of the base; provenance and disposition remain unreviewed',
+    };
+  }
+
+  if (ahead !== null && (ahead === 0) !== isAncestor) {
+    return {
+      name,
+      category: BRANCH_ONLY_REF_CATEGORY.UNKNOWN,
+      isAncestor,
+      cherryPlusCount: null,
+      ahead,
+      behind,
+      tip,
+      reason: 'ancestry and ahead-count results disagree',
+    };
+  }
+
+  const plusCount = await cherryPlusCount(cwd, base, sha);
+  if (plusCount === null) {
+    return {
+      name,
+      category: BRANCH_ONLY_REF_CATEGORY.UNKNOWN,
+      isAncestor: false,
+      cherryPlusCount: null,
+      ahead,
+      behind,
+      tip,
+      reason: 'git cherry could not compare the pinned tip to the base',
+    };
+  }
+
+  if (plusCount > 0) {
+    return {
+      name,
+      category: BRANCH_ONLY_REF_CATEGORY.UNMATCHED_PATCHES,
+      isAncestor: false,
+      cherryPlusCount: plusCount,
+      ahead,
+      behind,
+      tip,
+      reason:
+        `git cherry found ${plusCount} unmatched non-merge commit patch${plusCount === 1 ? '' : 'es'}; ` +
+        'review provenance, tree changes, and merge intent before any action',
+    };
+  }
+
+  return {
+    name,
+    category: BRANCH_ONLY_REF_CATEGORY.ZERO_CHERRY_PATCHES,
+    isAncestor: false,
+    cherryPlusCount: 0,
+    ahead,
+    behind,
+    tip,
+    reason:
+      'the tip is not an ancestor and git cherry found no unmatched non-merge patches; ' +
+      'this does not establish tree equivalence or merge intent',
+  };
+}
+
+/**
+ * Every local branch that has no worktree, classified for sweep triage.
+ *
+ * Branch names, object IDs, and tip metadata are captured together with
+ * `for-each-ref`; graph queries then use the pinned object IDs. A failed
+ * enumeration is fatal because treating it as an empty set would create a
+ * dangerously incomplete inventory.
+ */
+export async function listBranchOnlyRefs(
+  cwd,
+  { base = 'refs/heads/main', gitRunner = git, worktreeRoster = null } = {}
+) {
+  const format = '%(refname:strip=2)%00%(objectname)%00%(subject)%00%(committerdate:iso-strict)%00%(authorname)%00';
+  const allRefs = gitRunner(cwd, ['for-each-ref', `--format=${format}`, 'refs/heads']);
+  if (allRefs === null) throw new Error('git for-each-ref failed while enumerating local branches');
+
+  const fields = allRefs.replace(/\0\n/g, '\0').split('\0');
+  if (fields.at(-1) === '') fields.pop();
+  if (fields.length % 5 !== 0) throw new Error('git for-each-ref returned malformed local branch metadata');
+  const branchRefs = [];
+  for (let index = 0; index < fields.length; index += 5) {
+    const [name, sha, subject, date, author] = fields.slice(index, index + 5);
+    if (!name || !/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(sha)) {
+      throw new Error('git for-each-ref returned an invalid local branch name or object ID');
+    }
+    branchRefs.push({ name, sha, subject, date, author });
+  }
+
+  const worktreeBranches = new Set(
+    (worktreeRoster ?? listWorktrees(cwd)).filter((w) => !w.detached).map((w) => w.branch)
+  );
+  const branchOnly = branchRefs.filter((ref) => !worktreeBranches.has(ref.name));
+  const priority = {
+    [BRANCH_ONLY_REF_CATEGORY.UNKNOWN]: 0,
+    [BRANCH_ONLY_REF_CATEGORY.ZERO_CHERRY_PATCHES]: 1,
+    [BRANCH_ONLY_REF_CATEGORY.UNMATCHED_PATCHES]: 2,
+    [BRANCH_ONLY_REF_CATEGORY.ANCESTOR]: 3,
+  };
+
+  const classified = await mapConcurrent(branchOnly, (ref) => classifyBranchOnlyRef(cwd, ref, base));
+  return classified.sort(
+    (a, b) =>
+      (priority[a.category] ?? 99) - (priority[b.category] ?? 99) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+  );
 }
 
 /**
@@ -941,4 +1217,7 @@ export const __testables = {
   batchAheadBehindTipCommits,
   gitAsync,
   mapConcurrent,
+  isRefAncestorOf,
+  cherryPlusCount,
+  classifyBranchOnlyRef,
 };
