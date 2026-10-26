@@ -17,6 +17,7 @@ import {
   createStrokeCoverage,
   replaceColorPreservingLuminance,
   samplePixelAt,
+  COLOR_REPLACEMENT_MAX_STAGING_PIXELS,
   COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE,
   COLOR_REPLACEMENT_TOLERANCE_MAX,
   type ColorReplacementToolArgs,
@@ -305,12 +306,51 @@ describe('createColorReplacementPlan — Limits', () => {
     expect(pixelAtLocal(result!.imageData, 15, 5)).toEqual([200, 200, 30]);
   });
 
+  it('matches the full RGB cube at maximum tolerance, including black to white', () => {
+    const imageData = fieldOf(4, [255, 255, 255], [[0, 0, 0, 0, 0]]);
+    const plan = createColorReplacementPlan(imageData, {
+      ...BASE_ARGS,
+      ...base,
+      lineWidth: 1,
+      tolerance: COLOR_REPLACEMENT_TOLERANCE_MAX,
+      smoothness: 0,
+      limits: 'contiguous',
+      sampleColor: { r: 0, g: 0, b: 0, a: 255 },
+      points: [{ x: 0.5, y: 0.5 }],
+    });
+
+    expect(plan?.changedPixelCount).toBe(16);
+  });
+
+  it('replaces each disconnected matching island touched by the stroke', () => {
+    const imageData = fieldOf(
+      20,
+      [0, 0, 0],
+      [
+        [4, 4, 200, 200, 30],
+        [15, 15, 200, 200, 30],
+      ]
+    );
+    const result = runPlan(imageData, {
+      ...base,
+      lineWidth: 1,
+      tolerance: 0,
+      limits: 'contiguous',
+      points: [
+        { x: 4.5, y: 4.5 },
+        { x: 15.5, y: 15.5 },
+      ],
+    });
+
+    expect(result?.plan.changedPixelCount).toBe(2);
+    expect(pixelAtLocal(result!.imageData, 4, 4)[0]).toBeGreaterThan(200);
+    expect(pixelAtLocal(result!.imageData, 15, 15)[0]).toBeGreaterThan(200);
+  });
+
   it('uses one tolerance metric for both limits, so neither mode can reject a pixel the other admits', () => {
-    // The conversion constant is what makes Discontinuous's inline predicate and Contiguous's
-    // delegated `createFloodFillMask` flood the same set. A drift here would make Limits a choice
-    // about which pixels EXIST rather than about how far the replacement reaches. It is a SCALE
-    // from this tool's 0-100 onto the flood fill's 0-255, and both are read against the same
-    // `sqrt(3 * 255^2)` maximum, so 100 on one side is 255 on the other.
+    // The conversion constant keeps both Limits modes on the same 0-255 RGB distance scale. A
+    // drift would make Limits a choice about which pixels EXIST rather than how far replacement
+    // reaches; both sides use the same `sqrt(3 * 255^2)` maximum.
     expect(COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE).toBeCloseTo(2.55, 6);
 
     // A field of a colour nothing like the sample: a low tolerance rejects everything in both
@@ -465,6 +505,47 @@ describe('createStrokeCoverage', () => {
 });
 
 describe('Opacity', () => {
+  it('returns before reading pixels when opacity is zero', () => {
+    const imageData = Object.create(null) as ImageData;
+    Object.defineProperty(imageData, 'data', {
+      get: () => {
+        throw new Error('zero-opacity plans must not read pixel data');
+      },
+    });
+    Object.defineProperty(imageData, 'width', { value: 8 });
+    Object.defineProperty(imageData, 'height', { value: 8 });
+
+    expect(createColorReplacementPlan(imageData, { ...BASE_ARGS, alpha: 0 })).toBeNull();
+  });
+
+  it('refuses an over-budget image before reading its pixel data', () => {
+    const imageData = Object.create(null) as ImageData;
+    Object.defineProperty(imageData, 'data', {
+      get: () => {
+        throw new Error('over-budget plans must not read pixel data');
+      },
+    });
+    Object.defineProperty(imageData, 'width', { value: 3000 });
+    Object.defineProperty(imageData, 'height', { value: 3000 });
+
+    expect(() => createColorReplacementPlan(imageData, BASE_ARGS)).toThrow(
+      new RegExp(`limited to ${COLOR_REPLACEMENT_MAX_STAGING_PIXELS.toLocaleString()} pixels`)
+    );
+  });
+
+  it('does not produce a plan when opacity or the requested replacement leaves pixels unchanged', () => {
+    const imageData = fieldOf(8, [128, 128, 128]);
+    const common = {
+      ...BASE_ARGS,
+      lineWidth: 6,
+      smoothness: 0,
+      sampleColor: { r: 128, g: 128, b: 128, a: 255 },
+    };
+
+    expect(createColorReplacementPlan(imageData, { ...common, alpha: 0 })).toBeNull();
+    expect(createColorReplacementPlan(imageData, { ...common, alpha: 1, color: '#808080' })).toBeNull();
+  });
+
   it('leaves the source fully intact at 0 and fully substituted at 1', () => {
     const build = (alpha: number) => {
       const imageData = fieldOf(8, [128, 128, 128]);
@@ -543,7 +624,43 @@ describe('the registered processor', () => {
     const processor = findToolProcessor('color-replacement')!;
 
     expect(processor.commit).toBe('raster');
+    expect(processor.maxStagingPixelCount).toBe(COLOR_REPLACEMENT_MAX_STAGING_PIXELS);
     expect(processor.replay).toMatchObject({ kind: 'raster-processor', requiresRaster: true, deterministic: true });
+  });
+
+  it('returns the original raster at zero opacity without allocating a canvas', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas as unknown as typeof OffscreenCanvas);
+    const bitmap = bitmapFrom(twoToneImage());
+
+    const result = colorReplacement({ size: { width: 12, height: 12 }, bitmap })({
+      ...BASE_ARGS,
+      alpha: 0,
+    } as never);
+
+    expect(result).toEqual([bitmap]);
+    expect(allocations).toEqual([]);
+  });
+
+  it('refuses an over-budget raster before allocating its output or readback canvas', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas as unknown as typeof OffscreenCanvas);
+    const bitmap = bitmapFrom(twoToneImage());
+
+    expect(() => colorReplacement({ size: { width: 4096, height: 4096 }, bitmap })({ ...BASE_ARGS } as never)).toThrow(
+      /8,388,608 pixels/
+    );
+    expect(allocations).toEqual([]);
   });
 
   it('round-trips every arg through plain data, so history-adapter drops nothing', () => {

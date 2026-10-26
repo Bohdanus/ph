@@ -137,11 +137,125 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
       });
     });
 
-    const params = processor.mock.calls[0]![0] as { bitmap: OffscreenCanvas; size: Layer['pos'] };
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
     expect(params.bitmap).not.toBe(source.bitmap);
     expect(params.bitmap.width).toBe(80);
     expect(params.bitmap.height).toBe(20);
-    expect(params.size).toEqual({ x: 0, y: 0, width: 80, height: 20 });
+    expect(params.size).toEqual({ width: 80, height: 20 });
+    processor.mockRestore();
+  });
+
+  it('passes integer staged pixels to a processor while publishing fractional preview bounds', () => {
+    const raster = new OffscreenCanvas(41, 20);
+    const source = makeLayer('edited', 0, {
+      pos: { x: 10, y: 5, width: 40, height: 20 },
+      operations: [
+        {
+          id: 'fractional-scale',
+          kind: 'affine-transform',
+          transform: { a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+    });
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
+    expect(params.bitmap.width).toBe(41);
+    expect(params.bitmap.height).toBe(20);
+    expect(params.size).toEqual({ width: 41, height: 20 });
+    expect(result.current.store.previewLayers.current.edited!.layer.pos).toEqual({
+      x: 10,
+      y: 5,
+      width: 40.5,
+      height: 20,
+    });
+    processor.mockRestore();
+  });
+
+  it('stages a resized raster to the visible layer bounds before a live pixel edit', () => {
+    const raster = new OffscreenCanvas(80, 40);
+    const source = makeLayer('edited', 0, {
+      bitmap: { width: 40, height: 20 } as ImageBitmap,
+      pos: { x: 10, y: 5, width: 80, height: 40 },
+    });
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
+    expect(params.bitmap).not.toBe(source.bitmap);
+    expect(params.bitmap.width).toBe(80);
+    expect(params.bitmap.height).toBe(40);
+    expect(params.size).toEqual({ width: 80, height: 40 });
+    expect(result.current.store.previewLayers.current.edited!.layer.pos).toEqual(source.pos);
+    processor.mockRestore();
+  });
+
+  it('publishes a cached baked presentation at its bounds when a pixel edit replaces its raster', () => {
+    const cachedRaster = new OffscreenCanvas(80, 40);
+    const processedRaster = new OffscreenCanvas(80, 40);
+    const enabledTransform = {
+      id: 'transform',
+      kind: 'affine-transform' as const,
+      enabled: true,
+      transform: { a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 },
+    };
+    const disabledFilter = {
+      id: 'disabled-filter',
+      kind: 'filter' as const,
+      enabled: false,
+      args: { toolName: 'blur' as const, radius: 2 },
+    };
+    const source = makeLayer('edited', 0, {
+      tmpCanvas: cachedRaster,
+      pos: { x: 10, y: 5, width: 40, height: 20 },
+      presentationBounds: { x: 15, y: 8, width: 80, height: 40 },
+      operations: [enabledTransform, disabledFilter],
+    });
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [processedRaster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
+    const preview = result.current.store.previewLayers.current.edited!.layer;
+    expect(params.bitmap).toBe(cachedRaster);
+    expect(params.size).toEqual({ width: 80, height: 40 });
+    expect(preview.pos).toEqual({ x: 15, y: 8, width: 80, height: 40 });
+    expect(preview.operations).toEqual([disabledFilter]);
+    expect(preview.presentationBounds).toBeNull();
     processor.mockRestore();
   });
 

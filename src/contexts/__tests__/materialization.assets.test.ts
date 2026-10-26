@@ -800,8 +800,9 @@ describe('materialization operation loop guards', () => {
     registry.shutdown();
   });
 
-  it('passes the materialized base bitmap into a Brush replay before drawing the stroke', async () => {
+  it('passes the generated base canvas into a Brush replay before drawing the stroke', async () => {
     const registry = new AssetRegistry();
+    const brushProcessor = vi.spyOn(toolProcessors.brush, 'imageProcessor');
     const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [
       {
         kind: 'apply-raster-processor',
@@ -814,12 +815,11 @@ describe('materialization operation loop guards', () => {
 
     await materializeLayer(layer, makeRequest(registry));
 
-    const copiedBase = recordedContexts.some((context) =>
-      vi
-        .mocked(context.drawImage)
-        .mock.calls.some(([source]) => recordedBitmaps.includes(source as (typeof recordedBitmaps)[number]))
-    );
-    expect(copiedBase).toBe(true);
+    expect(brushProcessor).toHaveBeenCalledTimes(1);
+    const processorParams = brushProcessor.mock.calls[0]?.[0];
+    if (!processorParams || !('bitmap' in processorParams)) throw new Error('Brush replay expected a raster input');
+    expect(processorParams.bitmap).toBeInstanceOf(RecordingOffscreenCanvas);
+    registry.shutdown();
   });
 
   it('skips operation kinds that are neither retained nor raster processors', async () => {
@@ -937,7 +937,10 @@ describe('materialization ownership of borrowed rasters', () => {
 
     // A live lease pins the entry, so the second layer cannot evict it yet.
     const other = makeLayer('layer-2', blankSource(4, 4), { x: 0, y: 0, width: 4, height: 4 });
-    const otherResult = await materializeLayer(other, makeRequest(registry));
+    const otherResult = await materializeLayer(
+      other,
+      makeRequest(registry, { frame: { x: 0, y: 0, width: 4, height: 4 } })
+    );
     expect(publishedClose).not.toHaveBeenCalled();
 
     // Eviction closes what the cache owns — the copy — and not the baseline the
@@ -1036,26 +1039,25 @@ describe('materialization document frame presentation', () => {
     registry.shutdown();
   });
 
-  it('closes the intermediate presentation bitmap once it has been framed', async () => {
+  it('keeps the generated presentation on its canvas when framing it', async () => {
     const registry = new AssetRegistry();
     const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };
     const layer = makeLayer('layer-1', blankSource(30, 20), { x: 0, y: 0, width: 30, height: 20 });
 
     const result = await materializeLayer(layer, makeRequest(registry, { frame }));
 
-    // One bitmap for the presentation surface, one for the frame surface. The
-    // presentation is closed immediately; the framed bitmap is cache owned.
-    expect(recordedBitmaps).toHaveLength(2);
-    expect(recordedBitmaps[0].close).toHaveBeenCalledTimes(1);
-    expect(recordedBitmaps[1].close).not.toHaveBeenCalled();
-    expect(result.bitmap).toBe(recordedBitmaps[1]);
+    // The generated presentation stays on its owned canvas. Only the final frame
+    // surface becomes a closeable bitmap owned by the materialization cache.
+    expect(recordedBitmaps).toHaveLength(1);
+    expect(recordedBitmaps[0].close).not.toHaveBeenCalled();
+    expect(result.bitmap).toBe(recordedBitmaps[0]);
 
     result.lease.release();
     registry.shutdown();
-    expect(recordedBitmaps[1].close).toHaveBeenCalledTimes(1);
+    expect(recordedBitmaps[0].close).toHaveBeenCalledTimes(1);
   });
 
-  it('closes an owned presentation when frame-surface creation fails', async () => {
+  it('does not create a duplicate bitmap when frame-surface creation fails', async () => {
     const registry = new AssetRegistry();
     const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };
     const layer = makeLayer('layer-1', blankSource(30, 20), { x: 0, y: 0, width: 30, height: 20 });
@@ -1071,13 +1073,11 @@ describe('materialization document frame presentation', () => {
 
     await expect(materializeLayer(layer, makeRequest(registry, { frame }))).rejects.toThrow('frame surface failed');
 
-    const presentation = recordedBitmaps.at(-1);
-    expect(presentation).toBeDefined();
-    expect(presentation?.close).toHaveBeenCalledOnce();
+    expect(recordedBitmaps).toHaveLength(0);
     registry.shutdown();
   });
 
-  it('closes an owned presentation when frame context acquisition fails', async () => {
+  it('does not create a duplicate bitmap when frame context acquisition fails', async () => {
     const registry = new AssetRegistry();
     const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };
     const layer = makeLayer('layer-1', blankSource(30, 20), { x: 0, y: 0, width: 30, height: 20 });
@@ -1094,11 +1094,11 @@ describe('materialization document frame presentation', () => {
       'A 2D canvas context is required for materialization'
     );
 
-    expect(recordedBitmaps.at(-1)?.close).toHaveBeenCalledOnce();
+    expect(recordedBitmaps).toHaveLength(0);
     registry.shutdown();
   });
 
-  it('closes an owned presentation when frame drawing fails', async () => {
+  it('does not create a duplicate bitmap when frame drawing fails', async () => {
     const registry = new AssetRegistry();
     const frame: DocumentFrame = { x: 0, y: 0, width: 50, height: 50 };
     const layer = makeLayer('layer-1', blankSource(30, 20), { x: 0, y: 0, width: 30, height: 20 });
@@ -1122,7 +1122,7 @@ describe('materialization document frame presentation', () => {
 
     await expect(materializeLayer(layer, makeRequest(registry, { frame }))).rejects.toThrow('frame draw failed');
 
-    expect(recordedBitmaps.at(-1)?.close).toHaveBeenCalledOnce();
+    expect(recordedBitmaps).toHaveLength(0);
     registry.shutdown();
   });
 
@@ -1139,6 +1139,19 @@ describe('materialization document frame presentation', () => {
     const result = await materializeLayer(layer, makeRequest(registry));
 
     expect(result.bounds).toEqual({ x: 12, y: 14, width: 60, height: 40 });
+    result.lease.release();
+    registry.shutdown();
+  });
+
+  it('publishes a small generated source without a duplicate bitmap when no frame is requested', async () => {
+    const registry = new AssetRegistry();
+    const layer = makeLayer('layer-1', blankSource(30, 20), { x: 7, y: 9, width: 30, height: 20 });
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+
+    expect(result.bounds).toEqual({ x: 7, y: 9, width: 30, height: 20 });
+    expect(result.bitmap).toBeInstanceOf(RecordingOffscreenCanvas);
+    expect(recordedBitmaps).toHaveLength(0);
     result.lease.release();
     registry.shutdown();
   });
@@ -1236,7 +1249,10 @@ describe('document asset scope disposal', () => {
       'layer-c': makeLayer('layer-c', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 }),
     });
 
-    const first = await materializeDocument(replay, makeRequest(registry));
+    const first = await materializeDocument(
+      replay,
+      makeRequest(registry, { frame: { x: 0, y: 0, width: 20, height: 20 } })
+    );
     const batched = Object.values(first.layers);
     expect(batched).toHaveLength(3);
     // The PRE-STATE, not the mock's own existence: `closeSpy` just hands back the
@@ -1264,12 +1280,12 @@ describe('document asset scope disposal', () => {
   it('retains leases across an ordinary edit while a later document scope disposal wins', async () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-a', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 });
-    const request = makeRequest(registry);
+    const request = makeRequest(registry, { frame: { x: 0, y: 0, width: 20, height: 20 } });
     const first = await materializeLayer(layer, request);
     const firstBitmap = { close: closeSpy(first.bitmap) };
 
     // Ordinary edit: a second materialization of the same layer reuses the cache.
-    const second = await materializeLayer(layer, makeRequest(registry));
+    const second = await materializeLayer(layer, request);
     expect(second.bitmap).toBe(first.bitmap);
     firstBitmap.close.mockClear();
 
@@ -1289,7 +1305,7 @@ describe('document asset scope disposal', () => {
   it('rejects a new materialization for a cached key whose document scope was disposed', async () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-a', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 });
-    const request = makeRequest(registry);
+    const request = makeRequest(registry, { frame: { x: 0, y: 0, width: 20, height: 20 } });
     const first = await materializeLayer(layer, request);
     const firstBitmap = { close: closeSpy(first.bitmap) };
 

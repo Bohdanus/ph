@@ -4,6 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { createFloodFillMask } from '../../util/floodFill.ts';
+import { MAX_RASTER_SELECTION_PIXELS } from '../../util/selection-mask.ts';
 import type { FillToolArgs, FillToolName } from '../../tools/fill.ts';
 import type { BitmapSource, Point, Size } from '../../contexts/general-types.ts';
 import type { Layer } from '../../contexts/layer-types.ts';
@@ -48,7 +49,7 @@ export const FILL_TOOL_PRESENTATION_UNAVAILABLE = 'fill-tool-presentation-unavai
  */
 const stageLayerPresentation = (layer: Layer, bitmap: NonNullable<Layer['bitmap']>): ProcessorStaging | null => {
   try {
-    return stageProcessorInput(layer, bitmap);
+    return stageProcessorInput(layer, bitmap, { maxPixelCount: MAX_RASTER_SELECTION_PIXELS });
   } catch (error) {
     console.error(
       FILL_TOOL_PRESENTATION_UNAVAILABLE,
@@ -67,15 +68,19 @@ const stageLayerPresentation = (layer: Layer, bitmap: NonNullable<Layer['bitmap'
 const readLayerPixels = (bitmap: BitmapSource, size: Size): ImageData | null => {
   if (size.width <= 0 || size.height <= 0) return null;
 
-  const scratch = new OffscreenCanvas(size.width, size.height);
-  const ctx = scratch.getContext('2d');
-  if (!ctx || typeof ctx.getImageData !== 'function') return null;
+  try {
+    const scratch = new OffscreenCanvas(size.width, size.height);
+    const ctx = scratch.getContext('2d');
+    if (!ctx || typeof ctx.getImageData !== 'function') return null;
 
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(bitmap, 0, 0, size.width, size.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, size.width, size.height);
 
-  return ctx.getImageData(0, 0, size.width, size.height);
+    return ctx.getImageData(0, 0, size.width, size.height);
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -155,7 +160,7 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     const staged = stageLayerPresentation(layer, bitmap);
     if (!staged) return;
 
-    const size = { width: staged.bounds.width, height: staged.bounds.height };
+    const size = staged.rasterSize;
     const imageData = readLayerPixels(staged.bitmap, size);
     if (!imageData) {
       console.error(FILL_TOOL_READBACK_UNAVAILABLE, `${args.toolName} cannot read the active layer's pixels`);
