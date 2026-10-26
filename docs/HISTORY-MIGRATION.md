@@ -205,11 +205,30 @@ variant or an equivalent atomic history action.
    variants, additional text styling/rotation combinations, other frame sequences and the full
    retained-affine operation surface still need parity proof. Previews and unsupported documents
    still use the complete legacy compatibility path.
-   Unsupported-source
-   fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
-   then retire legacy logical replay only after
-   durable replay can provide the same complete state for append, branch, preview,
-   and compatibility fallback.
+   Unsupported-source fallback is pinned by the StoreContext publication seam. Preview safety is
+   also pinned at the renderer boundary: while a preview is live, `drawAllLayers` receives the
+   complete legacy layer base; accepted append publication reveals the durable base only after the
+   preview clears, and a stale/refused append keeps the complete legacy base. The refused-final-draw
+   rollback is covered through the real StoreProvider by `resetHistoryTo.durable.test.tsx`, while
+   `e2e/undo-redo.spec.ts` checks live Brush preview pixels on a current durable document and pixel
+   preservation at commit. These close the preview-interleaving and timeline-compensation proofs;
+   previews remain a legacy presentation surface and these tests do not authorize a logical
+   authority cutover.
+
+   The next bounded proof is parity-only: compare a committed retained affine layer transform at
+   its cursor, then compare again after a later frame transform. `e2e/crop-history.spec.ts` now pins
+   that sequence for one raster fixture and checks both cursors. Do not add frame-changing commits
+   to durable publication from this case alone. Remaining angles, retained-affine combinations,
+   source/tool variants, text styling/rotation, frame sequences and exact fractional materialized
+   bounds still need evidence. The documentation does not order that broader frame work against
+   ownership proof for source-backed imports/replacements; keep those gates independent and the
+   unsupported-source fallback explicit.
+
+   Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
+   which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),
+   [rotate or flip entire images](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/rotate-or-flip-entire-images.html)).
+   The browser differential checks this app's two history operations against each other; it is not
+   an independent pixel oracle for Photoshop.
 
 ## Operator rulings
 

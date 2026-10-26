@@ -8,6 +8,7 @@ import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './
 import { clickToolButton } from './helpers/toolbar-helpers';
 import type { DrawToolArgs } from '../src/tools/draw.ts';
 import type { ShapeToolArgs } from '../src/tools/shape.ts';
+import type { TransformToolArgs } from '../src/tools/transform.ts';
 import type { Layer } from '../src/contexts/layer-types.ts';
 
 /**
@@ -766,10 +767,17 @@ type CropParityTransition = Readonly<{
   nextFrame: CropParityFrame;
 }>;
 
+type CropParityLayerTransform = Readonly<{
+  id: string;
+  layerId: string;
+  args: TransformToolArgs;
+}>;
+
 type CropParityFixture = Readonly<{
   caseName: string;
   documentId: string;
   transitions: readonly CropParityTransition[];
+  layerTransforms?: readonly CropParityLayerTransform[];
   layers: readonly CropParityLayerFixture[];
 }>;
 
@@ -784,7 +792,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       { drawLayersToCanvas },
       { replayHistory },
       { replayDurableAtCursor },
-      { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION },
+      { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION },
       { findToolProcessor },
     ] = await Promise.all([
       load('/src/contexts/asset-registry.ts'),
@@ -889,6 +897,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       };
     });
     if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
+    const layerTransforms = fixture.layerTransforms ?? [];
     const transitions = fixture.transitions.map((transition, index) => {
       const frameCenter = {
         x: transition.nextFrame.x + transition.nextFrame.width / 2,
@@ -918,6 +927,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             frame: baseFrame,
           },
         },
+        ...layerTransforms.map(({ id, layerId, args }) => ({
+          id,
+          actionName: TOOL_ACTION,
+          layerId,
+          args,
+        })),
         ...transitions.map(({ id, previousFrame, nextFrame, transform }) => ({
           id,
           actionName: SET_DOCUMENT_FRAME_ACTION,
@@ -934,49 +949,36 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       if (converted.diagnostics.length > 0) {
         throw new Error(`Durable crop conversion failed: ${JSON.stringify(converted.diagnostics)}`);
       }
-      const transitionResults = [];
-      let finalLegacyPixels: number[] = [];
-      let finalDurablePixels: number[] = [];
-      let finalMaterializedBounds: Record<string, unknown> = {};
-      for (const [index, transition] of transitions.entries()) {
+      const compareAtCursor = async (legacyIndex: number, stage: string) => {
         const legacyReplay = replayHistory(
           history,
-          index + 1,
+          legacyIndex,
           { width: 64, height: 64 },
           {
             createLayer: () => {
-              throw new Error('Unexpected layer creation in a frame-only crop differential');
+              throw new Error('Unexpected layer creation in a crop differential');
             },
             applyRasterTool: (layer: unknown) => layer,
           },
           baseFrame
         );
         if (legacyReplay.diagnostics.length > 0) {
-          throw new Error(`Legacy crop replay failed: ${JSON.stringify(legacyReplay.diagnostics)}`);
+          throw new Error(`Legacy replay failed at ${stage}: ${JSON.stringify(legacyReplay.diagnostics)}`);
         }
         const frame = legacyReplay.documentFrame;
-        if (
-          frame.x !== transition.nextFrame.x ||
-          frame.y !== transition.nextFrame.y ||
-          frame.width !== transition.nextFrame.width ||
-          frame.height !== transition.nextFrame.height
-        ) {
-          throw new Error(`Legacy frame transition ${index + 1} did not reach its requested frame`);
-        }
         const legacySurface = document.createElement('canvas');
         const legacyLayers = (Object.values(legacyReplay.layers) as Layer[]).sort(
           (left, right) => left.order - right.order
         );
         if (!drawLayersToCanvas(legacySurface, legacyLayers, frame)) {
-          throw new Error(`Legacy composition was refused for ${fixture.caseName} at transition ${index + 1}`);
+          throw new Error(`Legacy composition was refused for ${fixture.caseName} at ${stage}`);
         }
         const legacyContext = legacySurface.getContext('2d');
-        if (!legacyContext) throw new Error('Legacy crop composition produced no 2D context');
+        if (!legacyContext) throw new Error(`Legacy composition produced no 2D context at ${stage}`);
         const legacyPixels = Array.from(legacyContext.getImageData(0, 0, frame.width, frame.height).data);
 
-        const cursor = converted.legacyCursorToDurableCursor[index + 1];
-        if (typeof cursor !== 'number')
-          throw new Error(`Frame transition ${index + 1} did not map to a durable cursor`);
+        const cursor = converted.legacyCursorToDurableCursor[legacyIndex];
+        if (typeof cursor !== 'number') throw new Error(`${stage} did not map to a durable cursor`);
         const replay = replayDurableAtCursor(converted.document, cursor);
         const composite = await composeDurableDocument(replay, {
           documentId: fixture.documentId,
@@ -989,7 +991,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           durableSurface.width = frame.width;
           durableSurface.height = frame.height;
           const durableContext = durableSurface.getContext('2d');
-          if (!durableContext) throw new Error('Durable crop composition produced no 2D context');
+          if (!durableContext) throw new Error(`Durable composition produced no 2D context at ${stage}`);
           durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
           const durablePixels = Array.from(durableContext.getImageData(0, 0, frame.width, frame.height).data);
           let differingBytes = 0;
@@ -1025,15 +1027,15 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           const materializedBounds = Object.fromEntries(
             fixture.layers.map(({ id }) => {
               const layer = composite.layers[id];
-              if (!layer) throw new Error(`Durable crop did not materialize ${id} at transition ${index + 1}`);
+              if (!layer) throw new Error(`Durable composition did not materialize ${id} at ${stage}`);
               return [id, layer.bounds];
             })
           );
-          transitionResults.push({
-            index: index + 1,
-            angleDegrees: transition.angleDegrees,
+          return {
             frame,
             durableFrame: composite.frame,
+            legacyPixels,
+            durablePixels,
             legacyByteLength: legacyPixels.length,
             durableByteLength: durablePixels.length,
             differingBytes,
@@ -1041,14 +1043,43 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             maxChannelDelta,
             differingSamples,
             materializedBounds,
-          });
-          if (index === transitions.length - 1) {
-            finalLegacyPixels = legacyPixels;
-            finalDurablePixels = durablePixels;
-            finalMaterializedBounds = materializedBounds;
-          }
+          };
         } finally {
           composite.release();
+        }
+      };
+
+      const layerTransformResults = [];
+      for (const [index, layerTransform] of layerTransforms.entries()) {
+        const result = await compareAtCursor(index + 1, `layer transform ${index + 1}`);
+        layerTransformResults.push({
+          ...result,
+          index: index + 1,
+          id: layerTransform.id,
+          layerId: layerTransform.layerId,
+        });
+      }
+
+      const transitionResults = [];
+      let finalLegacyPixels: number[] = [];
+      let finalDurablePixels: number[] = [];
+      let finalMaterializedBounds: Record<string, unknown> = {};
+      for (const [index, transition] of transitions.entries()) {
+        const legacyIndex = layerTransforms.length + index + 1;
+        const result = await compareAtCursor(legacyIndex, `frame transition ${index + 1}`);
+        if (
+          result.frame.x !== transition.nextFrame.x ||
+          result.frame.y !== transition.nextFrame.y ||
+          result.frame.width !== transition.nextFrame.width ||
+          result.frame.height !== transition.nextFrame.height
+        ) {
+          throw new Error(`Legacy frame transition ${index + 1} did not reach its requested frame`);
+        }
+        transitionResults.push({ ...result, index: index + 1, angleDegrees: transition.angleDegrees });
+        if (index === transitions.length - 1) {
+          finalLegacyPixels = result.legacyPixels;
+          finalDurablePixels = result.durablePixels;
+          finalMaterializedBounds = result.materializedBounds;
         }
       }
 
@@ -1111,6 +1142,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         differingSamples: finalTransition.differingSamples,
         colorPresence,
         materializedBounds: finalMaterializedBounds,
+        layerTransformResults,
         transitionResults,
       };
     } finally {
@@ -2733,6 +2765,65 @@ test.describe('Crop history', () => {
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'center-patch']);
       expect(result.transitionResults).toHaveLength(1);
+    });
+
+    test('a retained layer transform matches legacy before and after a later frame transform', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: 'retained affine followed by frame transform',
+        documentId: 'retained-affine-frame-parity',
+        layerTransforms: [
+          {
+            id: 'retained-affine',
+            layerId: 'foreground',
+            args: {
+              toolName: 'transform',
+              rotate: 23,
+              mirrorH: false,
+              mirrorV: false,
+              skewX: 6,
+              skewY: -4,
+              trapezoid: 0,
+              resizeX: 112,
+              resizeY: 84,
+            },
+          },
+        ],
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 9, width: 48, height: 44 } }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 32, height: 64, color: '#ff0000' },
+              { x: 32, y: 0, width: 32, height: 64, color: '#0000ff' },
+            ],
+          },
+          {
+            kind: 'raster',
+            id: 'foreground',
+            order: 1,
+            pos: { x: 14, y: 18, width: 28, height: 24 },
+            fills: [
+              { x: 0, y: 0, width: 14, height: 24, color: '#ffff00' },
+              { x: 14, y: 0, width: 14, height: 24, color: '#00ff00' },
+            ],
+          },
+        ],
+      });
+
+      expect(result.layerTransformResults).toHaveLength(1);
+      expect(result.layerTransformResults[0]?.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+      expect(result.layerTransformResults[0]?.durableFrame).toEqual(result.layerTransformResults[0]?.frame);
+      expect(result.layerTransformResults[0]?.differingBytes).toBe(0);
+      expect(result.transitionResults).toHaveLength(1);
+      expect(result.transitionResults[0]?.differingBytes).toBe(0);
+      expect(result.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
     });
 
     test('a 37-degree crop preserves a committed text source across renderers', async ({ page }) => {

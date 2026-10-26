@@ -92,11 +92,13 @@ and a -17-degree frame transform. The text cases cover left, center and right al
 fixtures use non-zero frame origins. Exact quarter-turn matrices avoid a phantom edge from
 `cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the 90-degree
 case pins exact materialized bounds. The remaining parity cases assert source pixels and
-materialized-layer presence but not exact fractional bounds. They do not close the general frame
+materialized-layer presence but not exact fractional bounds. A new browser differential compares
+one retained affine layer transform both before and after a later 37-degree frame transform. This
+closes those two listed cursors for that raster fixture only; it does not close the general frame
 gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: additional angles, vector
-tool variants, blank opacities, paint tools, text styling/rotation combinations and frame sequences
-remain unproven, and retained affine operations remain unapproved. The UI test intentionally
-continues to observe legacy presentation on commit and renderer-incompatible fallback on redo.
+tool variants, blank opacities, paint tools, text styling/rotation combinations, other frame
+sequences and exact fractional bounds remain unproven. The UI test intentionally continues to
+observe legacy presentation on commit and renderer-incompatible fallback on redo.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
@@ -107,8 +109,14 @@ the durable path without reconciling these paths changes pixel-tool results.
 make the remaining presentation authority explicit across editor surfaces. Keep legacy logical state
 as the authority until each projection is staged, lease-safe and failure-contained; append/reorder
 background publication is guarded, unsupported-source fallback and the raster/blank browser seam are
-pinned by tests, and nested `args.enabled` parity is explicit; previews still need proof before
-retiring the compatibility replay.
+pinned by tests, and nested `args.enabled` parity is explicit. `useLayer.render.test.tsx` proves live
+previews keep the complete legacy base through accepted and refused append publication, and
+`resetHistoryTo.durable.test.tsx` proves a refused final durable draw restores the real timeline.
+`e2e/undo-redo.spec.ts` also checks live Brush preview pixels while durable status is current and
+pixel preservation when that stroke commits. These are preview-interleaving and rollback proofs;
+they do not move previews to durable authority or permit removal of legacy logical replay. The next
+parity-only proof is retained affine layer transform followed by a frame transform; source-backed
+import/replacement ownership and the rest of the frame matrix remain separate gates.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,
