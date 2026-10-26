@@ -61,7 +61,9 @@ allows it and no suitable free reviewer can do the bounded task.
   `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N` to keep
   large responses out of context. Never launch GPT (Luna/Terra/Sol) subagents from a free session.
   Always pass `model` and `provider` together so a named paid model does not fall back to the
-  zero-token gateway.
+  zero-token gateway. Before and after a large OpenRouter-backed fan-out, run
+  `node scripts/free-model-pool.mjs --openrouter-quota`; its server-side daily counter is
+  authoritative for this account and is separate from the Kilo per-IP hourly ceiling.
 - **Quota-aware subagent protocol** (MODELS.md "Free Model Rotation" and "Token-Saving Research
   Protocol"): the current `swarm` CLI does not expose `tokens --json`, so do not treat that
   command or `swarm status` as budget telemetry. Refresh eligibility with
@@ -119,7 +121,8 @@ Every overnight-hardening session follows the same shape:
    Re-arm it at each wake only while the run remains authorized.
 5. Fan out the first wave of free-model subagents (read-only research: HANDOFF entries, doc/test
    drift, Adobe sources, recent chat loose ends). Pass the absolute worktree path in every brief.
-   Before each launch, inspect `npm run swarm -- tokens --json` per the quota-aware protocol.
+   Before each launch, refresh the free model catalog per the quota-aware protocol; for a large
+   OpenRouter-backed wave, check the server-side daily counter as above.
 
 ## Tracking "new since last wake"
 
@@ -173,8 +176,8 @@ Use as the prompt for a one-shot `schedule_wakeup` with a one-hour delay while
 >    findings back into the plan.
 > 3. Update the checkpoint cursor with all currently-known subagent session IDs.
 > 4. Identify findings that translate to verified, safe fixes — implement them in the worktree.
-> 5. Launch NEW subagents for uncovered areas needing investigation (before each: inspect
->    `npm run swarm -- tokens --json`; fail closed on stale/incomplete readings).
+> 5. Launch NEW subagents only for uncovered areas needing investigation (refresh the free catalog
+>    before each; for large OpenRouter-backed fan-outs, inspect the server-side daily counter).
 > 6. Re-run `npm run tsc` and targeted `vitest` after every code change.
 > 7. Do NOT stop. Do NOT declare "done." Continue investigating, verifying, and fixing until
 >    explicitly told to stop.
