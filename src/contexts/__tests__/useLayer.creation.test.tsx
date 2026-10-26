@@ -194,9 +194,10 @@ describe('useLayers createBlankLayer', () => {
     const bitmap = { width: 24, height: 12, close: vi.fn() } as unknown as ImageBitmap;
     const { result } = setup({ layers: { stale: makeLayer('stale', 0) }, activeLayerId: 'stale' });
     const previousDocumentId = result.current.store.documentId;
+    let created: boolean | undefined;
 
     await act(async () => {
-      await result.current.layers.createLayerFromBitmap(
+      created = await result.current.layers.createLayerFromBitmap(
         { bitmap, name: 'Opened.png', isBedrock: true, size: { width: 24, height: 12 } },
         true
       );
@@ -204,6 +205,7 @@ describe('useLayers createBlankLayer', () => {
 
     const store = result.current.store;
     const layer = store.layers[store.activeLayerId!]!;
+    expect(created).toBe(true);
     expect(store.documentId).not.toBe(previousDocumentId);
     expect(store.history[0]).not.toHaveProperty('documentSource');
     expect(store.durableDocument?.baseline.layers).toEqual([]);

@@ -564,7 +564,7 @@ export const useLayers = () => {
 
   const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
-    if (currentLayers === null) return;
+    if (currentLayers === null) return false;
 
     const source: ImageLayerSource = {
       kind: 'image',
@@ -594,6 +594,7 @@ export const useLayers = () => {
     // the live history entry's `layerSource.bitmap`. They are the same object, and
     // `trackPublished` keys on a `Set`.
     adoptLayerBitmaps([source.bitmap]);
+    return true;
   };
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
     // commented out because causes infinite recursion
