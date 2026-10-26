@@ -9,7 +9,6 @@ import {
   removeExpiredQuarantines,
   upsertQuarantine,
   withQuarantineWriteLock,
-  writeQuarantineState,
 } from './lib/free-model-quarantine.mjs';
 
 class UsageError extends Error {}
@@ -99,7 +98,7 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
       io.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
       return 0;
     }
-    return await withQuarantineWriteLock(filePath, async () => {
+    return await withQuarantineWriteLock(filePath, async (saveState) => {
       const state = await loadQuarantineState(filePath);
       if (command === 'add') {
         const hours = options.hours === undefined ? undefined : Number(options.hours);
@@ -109,18 +108,18 @@ export async function main(args = process.argv.slice(2), io = process, deps = {}
           reason: options.reason,
           ...(hours === undefined ? {} : { hours }),
         });
-        await writeQuarantineState(state, filePath);
+        await saveState(state);
         io.stdout.write(`Quarantined ${key} until ${state.entries[key].expiresAt}\n`);
         return 0;
       }
       if (command === 'release') {
         const released = releaseQuarantine(state, options.source, options.model);
-        if (released) await writeQuarantineState(state, filePath);
+        if (released) await saveState(state);
         io.stdout.write(released ? `Released ${options.source}:${options.model}\n` : 'No matching quarantine entry\n');
         return released ? 0 : 1;
       }
       const removed = removeExpiredQuarantines(state);
-      if (removed) await writeQuarantineState(state, filePath);
+      if (removed) await saveState(state);
       io.stdout.write(`Removed ${removed} expired quarantine entr${removed === 1 ? 'y' : 'ies'}\n`);
       return 0;
     });

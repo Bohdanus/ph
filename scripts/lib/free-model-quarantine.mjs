@@ -136,6 +136,10 @@ export function removeExpiredQuarantines(state, now = Date.now()) {
 }
 
 export async function writeQuarantineState(state, filePath = DEFAULT_FILE) {
+  return withQuarantineWriteLock(filePath, (saveState) => saveState(state));
+}
+
+async function writeQuarantineStateUnlocked(state, filePath) {
   validateQuarantineState(state);
   await mkdir(dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -164,7 +168,7 @@ export async function withQuarantineWriteLock(filePath, update) {
   let updateFailed = false;
   try {
     await handle.writeFile(`${process.pid}\n`, 'utf8');
-    return await update();
+    return await update((state) => writeQuarantineStateUnlocked(state, filePath));
   } catch (error) {
     updateFailed = true;
     throw error;
