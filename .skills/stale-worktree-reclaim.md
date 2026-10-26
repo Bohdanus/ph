@@ -119,10 +119,11 @@ the operator is a **last resort**, and it is reached only once the wider chat se
 family walk in step 4, the live overlay in step 4b and the external documentation have all
 genuinely come up empty — and only for what remains a **policy or an authorisation** rather
 than a fact you could have looked up. A question with no search log behind it is a judgement
-call wearing a question's clothes, and the operator cannot tell the two apart. **No wall-clock
-number appears in this document**, because every one of them goes stale: the staleness
-threshold is the operator's to set, and everything below is written so that changing it is a
-one-line edit rather than a re-derivation.
+call wearing a question's clothes, and the operator cannot tell the two apart. The four-hour
+board-observation value in §2 is an operator-selected **ranking threshold only**, not a rule for
+proving that a chat or worktree is dead. Change that ranking value only when the operator changes
+the intended prioritization; regardless of its value, the family walk and live overlay remain
+mandatory and an unknown signal never counts as dead.
 
 ## 1 — Git facts
 
