@@ -144,13 +144,11 @@ export const LIVE_WINDOW_MS = 30 * 60 * 1000;
  * it answers a different question: not "is a chat typing" but "did anything
  * demonstrably happen here".
  *
- * The width is the operator's own staleness threshold, and it is a parameter
- * rather than a constant of consequence: a worktree whose last recorded command
- * ran inside this window is not a deletion candidate at any window, because the
- * cost of being wrong is a live agent's work and the cost of being right is one
- * worktree kept a few hours longer.
+ * The two-hour width is the operator's stale-candidate threshold. A worktree
+ * with a command recorded inside this window is not a deletion candidate; the
+ * full session/family and overlay checks still decide whether it is dead.
  */
-export const RECENT_IO_WINDOW_MS = 4 * 60 * 60 * 1000;
+export const RECENT_IO_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Did a shell command demonstrably run inside this worktree recently?
@@ -158,7 +156,7 @@ export const RECENT_IO_WINDOW_MS = 4 * 60 * 60 * 1000;
  * Read history is intentionally excluded: reading a worktree is tracked in its
  * own releasable structure, not treated as proof that somebody still owns it.
  * Otherwise an audit that inspected a stale worktree would block its disposal
- * for the whole four-hour shell window.
+ * for the whole two-hour shell window.
  *
  * `derivedChatIds` and not `activeNow` for the same reason `writeLive` reads the
  * former: `activeNow` is the value AFTER the suppression flag has been applied,

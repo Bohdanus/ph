@@ -100,7 +100,6 @@ describe('free model catalog filtering', () => {
     const candidates = await loadCatalogs({
       fetchImpl,
       openRouterKey: '',
-      groqKey: '',
       onCatalogError: (_source, error) => errors.push(error.message),
     });
 
@@ -355,14 +354,13 @@ describe('free model runner CLI', () => {
       const code = await main(['--prompt-file', promptPath, '--output-file', outputPath], {
         fetchImpl,
         openRouterKey: '',
-        groqKey: '',
         stdout,
         stderr,
       });
       expect(code).toBe(0);
       expect(await readFile(outputPath, 'utf8')).toBe(
         '[kilo/poolside/laguna-s-2.1:free]\nFinish reason: stop\nUsage: null\n' +
-          'Requests attempted (this run): {"kilo":1,"openrouter":0,"groq":0}\n\nconcise result\n'
+          'Requests attempted (this run): {"kilo":1,"openrouter":0}\n\nconcise result\n'
       );
       expect(stdout.write).not.toHaveBeenCalled();
       expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Result written to'));
@@ -377,10 +375,18 @@ describe('free model runner CLI', () => {
     const code = await main(['--prompt-file', 'prompt.txt', '--output-file'], {
       fetchImpl,
       openRouterKey: '',
-      groqKey: '',
       stderr,
     });
     expect(code).toBe(2);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported options before making requests', async () => {
+    const fetchImpl = vi.fn();
+    const stderr = { write: vi.fn() };
+    const code = await main(['--unsupported-option', '--list'], { fetchImpl, stderr });
+    expect(code).toBe(2);
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Unknown option: --unsupported-option'));
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -407,7 +413,7 @@ describe('free model runner CLI', () => {
     const stderr = { write: vi.fn() };
     try {
       await writeFile(promptPath, Buffer.alloc(480 * 1024 + 1, 0x61));
-      const code = await main(['--prompt-file', promptPath], { fetchImpl, openRouterKey: '', groqKey: '', stderr });
+      const code = await main(['--prompt-file', promptPath], { fetchImpl, openRouterKey: '', stderr });
       expect(code).toBe(2);
       expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('at most 491520 bytes'));
       expect(fetchImpl).not.toHaveBeenCalled();

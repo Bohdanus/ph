@@ -74,31 +74,25 @@ const USAGE = `Usage: node scripts/free-research.mjs --prompt-file PATH --url-li
   --fetch-timeout MS        Per-URL timeout (default ${FETCH_TIMEOUT_MS}, max ${MAX_ALLOWED_TIMEOUT_MS})
   --max-concurrency N       Parallel fetches (default ${MAX_CONCURRENCY}, max ${MAX_ALLOWED_CONCURRENCY})
   --max-content CHARS       Per-URL text cap (default ${MAX_CONTENT_CHARS}, max ${MAX_CONTENT_CHARS})
-  --groq-free-plan-only     Also allow Groq after confirming its account is on the $0 Free plan
   --probe-openrouter-quota  Check the OpenRouter free-model daily counter before routing and skip OpenRouter when exhausted
 
   The runner fetches at most ${MAX_URLS} URLs, caps response and prompt size, then writes only
-  the condensed result. Source pages are untrusted data, not instructions. Local hostnames,
+  the condensed result using only verified Kilo/OpenRouter free routes. Source pages are untrusted
+  data, not instructions. Local hostnames,
   non-public DNS answers, IP-literal URLs, credentials, nonstandard ports, and non-HTTPS URLs
   are rejected. Each request pins its connection to the validated DNS answer; redirects are
-  resolved and checked again. The Groq flag is an operator attestation; the runner cannot
-  inspect an account's billing plan.
+  resolved and checked again.
 
 `;
 
 function parseArgs(args) {
   const values = new Map();
   let help = false;
-  let groqFreePlanConfirmed = false;
   let probeOpenRouterQuota = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--help' || arg === '-h') {
       help = true;
-      continue;
-    }
-    if (arg === '--groq-free-plan-only') {
-      groqFreePlanConfirmed = true;
       continue;
     }
     if (arg === '--probe-openrouter-quota') {
@@ -112,7 +106,7 @@ function parseArgs(args) {
     values.set(arg, value);
     index += 1;
   }
-  return { values, help, groqFreePlanConfirmed, probeOpenRouterQuota };
+  return { values, help, probeOpenRouterQuota };
 }
 
 function integerOption(values, flag, fallback, min, max) {
@@ -640,7 +634,7 @@ export async function main(
     return 0;
   }
 
-  const { values, groqFreePlanConfirmed, probeOpenRouterQuota } = parsed;
+  const { values, probeOpenRouterQuota } = parsed;
   const promptFile = values.get('--prompt-file');
   const urlListFile = values.get('--url-list');
   const outputFile = values.get('--output-file');
@@ -719,7 +713,6 @@ export async function main(
   stderr.write('Condensing via eligible free model...\n');
   const result = await completeImpl(researchPrompt, {
     maxTokens,
-    groqFreePlanConfirmed,
     checkOpenRouterQuota: probeOpenRouterQuota,
     onCatalogError: (source, error) => stderr.write(`${source} free-model catalog unavailable: ${error.message}\n`),
     onOpenRouterQuota: ({ used, limit, remaining }) =>

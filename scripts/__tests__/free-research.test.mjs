@@ -430,7 +430,7 @@ describe('free research CLI', () => {
         content: 'Summary with evidence',
         finishReason: 'stop',
         usage: { prompt_tokens: 20, completion_tokens: 8, cost: 0 },
-        requestCounts: { kilo: 0, openrouter: 1, groq: 0 },
+        requestCounts: { kilo: 0, openrouter: 1 },
       });
     });
     const stderr = { write: vi.fn() };
@@ -458,7 +458,6 @@ describe('free research CLI', () => {
         expect.objectContaining({
           maxTokens: 80,
           checkOpenRouterQuota: true,
-          groqFreePlanConfirmed: false,
           onOpenRouterQuota: expect.any(Function),
         })
       );
@@ -466,9 +465,7 @@ describe('free research CLI', () => {
       expect(await readFile(outputPath, 'utf8')).toContain(
         'Usage: {"prompt_tokens":20,"completion_tokens":8,"cost":0}'
       );
-      expect(await readFile(outputPath, 'utf8')).toContain(
-        'Requests attempted (this run): {"kilo":0,"openrouter":1,"groq":0}'
-      );
+      expect(await readFile(outputPath, 'utf8')).toContain('Requests attempted (this run): {"kilo":0,"openrouter":1}');
       expect(stderr.write).toHaveBeenCalledWith(
         expect.stringMatching(/^OpenRouter free requests: 307\/1000 used, 693 remaining at .+ \(server snapshot\)\.\n$/)
       );
