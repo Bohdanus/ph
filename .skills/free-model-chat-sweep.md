@@ -123,8 +123,10 @@ WHERE updated_at >= strftime('%s','now') - 3600
 ORDER BY updated_at DESC;
 ```
 
-Resolve each relative `rollout_path` against `CODEX_HOME`; inspect only those files.
-Read `.zst` files with `zstd -dc`; do not decompress in place. In each rollout, inspect
+Use an absolute `rollout_path` as stored; current state databases use absolute paths. If a
+version stores relative paths, resolve them against `CODEX_HOME` only after confirming
+that version's convention. Inspect only selected files. Read `.zst` files with `zstd -dc`;
+do not decompress in place. In each rollout, inspect
 `turn_context` and `response_item` error/tool-result records as well as `session_meta`,
 and associate an error with the nearest preceding turn context. Do not assume
 `threads.model` describes a spawned subagent or every turn. If an index version lacks

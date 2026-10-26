@@ -90,9 +90,11 @@ stale lock; after a crash, verify no writer is active before removing a stale lo
 A 3-day review cadence is for checking reports and current catalog health, not extending every
 quarantine. Use `npm run free:quarantine -- list|add|release|prune` and follow the read-only
 `.skills/free-model-chat-sweep.md` procedure. Do not quarantine a model for a global daily quota,
-context overflow, external API failure, or tool/orchestration error. Do not install an hourly/daily
-scheduler until the documented cron-hang and cross-session singleton problems are resolved; the
-current runner does not install jobs.
+context overflow, external API failure, or tool/orchestration error. After this procedure is
+landed in a stable worktree, use Kilo's recurring `cron_create` scheduler rather than an OS cron,
+launchd, or systemd job. Kilo recurring tasks expire after seven days and need an active owner to
+renew them; keep one schedule owner and use the quarantine lock for mutations. The completion
+runner itself does not install schedules.
 
 The runner is a completion client, not a tool-using agent. For Kilo repository subagents, use the live model/provider pair from the refreshed catalog with the native `task` tool, pass model and provider together, and inspect the child's resolved model. **Fan out free subagents heavily for independent read-only exploration and review; keep each bounded and never exceed 15 concurrent agents.** The coordinator owns edits and Git. If a free task is rate limited, use another exact free model/provider or stop; never silently use paid fallback. Codex model routing and launch mechanics differ; see [`docs/CODEX-ORCHESTRATION.md`](docs/CODEX-ORCHESTRATION.md). For mock coverage, run `npm run test -- scripts/__tests__/free-model-pool.test.mjs scripts/__tests__/free-model-pool-groq.test.mjs scripts/__tests__/free-model-pool-external.test.mjs scripts/__tests__/free-research.test.mjs`; run `node scripts/free-model-pool.mjs --openrouter-quota` to check server-side daily usage before and after large fan-outs.
 
