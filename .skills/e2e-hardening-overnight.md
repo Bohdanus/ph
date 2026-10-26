@@ -19,9 +19,9 @@ smallest relevant test or product behavior.
 - Work in a task worktree. Keep the candidate branch and final diff limited to the
   verified defect and its regression coverage.
 - Read the current `AGENTS.md`, `MODELS.md`, `docs/TESTING.md`, `docs/E2E-MIRROR.md`,
-  `docs/E2E-HARDENING-PLAN.md`, `e2e/README.md`, `e2e/OPEN_PROBLEMS.md`, and
-  `TEST-FLAKES.md` before selecting work. These files and the workflows are mutable;
-  re-check their instructions and status on every invocation.
+  `docs/E2E-HARDENING-PLAN.md`, `HANDOFF.md`, `e2e/README.md`,
+  `e2e/OPEN_PROBLEMS.md`, and `TEST-FLAKES.md` before selecting work. These files and
+  the workflows are mutable; re-check their instructions and status on every invocation.
 - Do not add `test.skip`, `test.fail`, grep filters, weaker assertions, arbitrary
   tolerances, extra retries, or longer timeouts to make a run green. Do not update a
   baseline just to match a failure. Baseline or skip-set changes require the current
@@ -72,8 +72,8 @@ Before assigning a cause, compare the failure with the same test on the same SHA
 platform, browser channel/version, shard, and retry attempt when available. Read the
 current `playwright.config.ts`, CI workflow, artifact report, and relevant source/test
 code. Check `e2e/OPEN_PROBLEMS.md`, `TEST-FLAKES.md`, and
-`docs/E2E-HARDENING-PLAN.md`, then verify that each cited condition still exists in
-the current tree.
+`HANDOFF.md` and `docs/E2E-HARDENING-PLAN.md`, then verify that each cited condition
+still exists in the current tree.
 
 Record one outcome per failing test:
 
@@ -132,12 +132,20 @@ budget and the related whole-run/job artifact deadlines have been reviewed toget
 ## 4. Delegate Bounded Research
 
 Use free subagents for independent root-cause research or review, not to mutate the
-worktree. Before each launch, read `MODELS.md`, inspect the newest
-`npm run swarm -- tokens --json` result, and refresh `node scripts/free-model-pool.mjs --list`.
-If token data is stale or a provider/model is rate-limited, rotate only to another
-currently verified zero-priced entry. Do not silently fall back to a paid model; if
-the free catalog is exhausted, continue manually or report the review limitation.
-Pass both the exact free `model` and `provider` to Kilo `task` calls.
+worktree. Before each launch, read `MODELS.md` and follow the current token-capacity
+check required by `AGENTS.md`. If that check is unavailable, stale, or incomplete,
+treat capacity as unknown and use only free models. Refresh
+`node scripts/free-model-pool.mjs --list` before launching and pass the exact free
+`model` and `provider` to Kilo `task` calls. For large OpenRouter-backed fan-outs,
+check `node scripts/free-model-pool.mjs --openrouter-quota` before and after. That
+counter reports daily account usage, not requests-per-minute limits or upstream
+capacity; a `configured` catalog entry does not guarantee a request will succeed.
+
+On HTTP 402/429, do not immediately retry the exhausted provider. Rotate to another
+currently listed zero-priced model/provider or stop if free capacity is exhausted.
+Never silently fall back to paid compute. Do not send credentials, private chat
+transcripts, or other sensitive content to a provider; use only the minimum
+user-authorized repository context and follow current provider data terms.
 
 Keep each wave to at most three independent reviewers and never exceed the global cap
 of 15 concurrently running subagents, Agent Manager sessions, and background processes.
@@ -154,11 +162,13 @@ source scope, and this response shape:
   "test": "e2e/example.spec.ts :: exact test title",
   "classification": "regression | flaky | runner | infrastructure | baseline | unproven",
   "evidence": ["path or report artifact and observed fact"],
-  "rootCause": "evidence-backed explanation or null",
+  "rootCause": null,
   "proposal": "smallest safe next step",
   "confidence": "high | medium | low"
 }
 ```
+
+Replace `rootCause: null` with an evidence-backed explanation when one is established.
 
 Treat agent conclusions as hypotheses. Reproduce factual disagreements in the current
 tree and reject advice that is unsupported, broadens scope, weakens a gate, or changes
@@ -224,7 +234,7 @@ existing free worktree, not as a substitute for the normal task landing procedur
 ## Source Of Truth
 
 - Repository state and current task queue: `docs/E2E-HARDENING-PLAN.md`,
-  `e2e/OPEN_PROBLEMS.md`, and `TEST-FLAKES.md`.
+  `HANDOFF.md`, `e2e/OPEN_PROBLEMS.md`, and `TEST-FLAKES.md`.
 - Runner matrix, artifacts, retry/failure behavior, and time budgets:
   `.github/workflows/ci.yml` and `playwright.config.ts`.
 - Fixtures, headless restrictions, local commands, and assertions: `e2e/README.md`,
