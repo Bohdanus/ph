@@ -27,7 +27,7 @@ exact free model/provider from the live catalog, and never silently fall back to
 
 ## Provider Rules
 
-- GPT models (Luna, Terra, and Sol) must always use `openai`: `task --model "<model>" --provider "openai"`.
+- GPT models (Luna 6) must always use `openai`: `task --model "<model>" --provider "openai"`.
 - **Free-first:** Prefer free models for high-signal text sweeps (web research, docs, chat history, code search) and simple code writing or review. Batch large inputs into bounded chunks and return concise results with source paths or citations. Try another free source if one is unavailable or rate-limited; never silently fall through to a paid model.
 - **Choose a free source:** Start with Kilo Laguna S (`poolside/laguna-s-2.1:free`) when present in the live catalog. `node scripts/free-model-pool.mjs --list` shows eligible Kilo/OpenRouter entries; every OpenRouter price field and conditional override must be zero. Numeric zero and fixed-point strings such as `0.000000000000` count as exact zero; no positive price is rounded down. Do not use models absent from the refreshed catalog or paid OpenRouter models without explicit approval.
 - Pass `model` and `provider` together.
@@ -38,71 +38,27 @@ exact free model/provider from the live catalog, and never silently fall back to
 
 ## Free Model Rotation
 
-For repeatable text sweeps or small independent review tasks, use `node scripts/free-model-pool.mjs --list` to refresh the eligible catalog. It reads public Kilo and OpenRouter catalogs without credentials for discovery; the JSON `configured` field means local credentials are present, not that quota or capacity is available. The runner accepts Kilo entries with `isFree` or `:free` and exact zero pricing; OpenRouter `:free` entries require exact-zero prompt/completion prices and no non-zero charge in any pricing field or conditional override. It fails closed on unknown non-zero pricing fields. It tries at most three eligible IDs per provider per run; HTTP 402/429 exhausts that provider for the invocation, while catalog failures skip the source. It never falls back to paid Kilo or OpenRouter entries.
+Use `node scripts/free-model-pool.mjs --list` to refresh the eligible free catalog. The runner accepts Kilo `isFree`/`:free` entries and OpenRouter `:free` entries with exact-zero pricing only. It tries up to three eligible IDs per provider; HTTP 402/429 exhausts that provider. Never falls back to paid models.
 
-To run one bounded prompt, save it to a file and use `node scripts/free-model-pool.mjs --prompt-file /path/to/prompt.txt --max-tokens 1200`. The runner bounds prompt files and prompts, reads provider responses as streams, and caps catalog bodies at 8 MiB and completion bodies at 1 MiB. It verifies Kilo/OpenRouter eligibility from the live catalog. A reported non-zero or invalid usage cost stops the run before another request. Missing usage is `null` and is not proof of a charge or free eligibility. Use `--output-file /path/to/result.txt` to keep results out of stdout. OpenRouter credentials are read from `OPENROUTER_API_KEY`; never put keys in arguments, prompt files, logs, or tracked files. Avoid confidential data and refresh catalogs before each run.
+**Bounded prompt:** `node scripts/free-model-pool.mjs --prompt-file /path/to/prompt.txt --max-tokens 1200 [--output-file /path/to/result.txt]`
 
-For multi-URL research sweeps, use `node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH --max-tokens N`. It accepts at most 20 HTTPS URLs on the standard port, caps each response at 512 KiB, each source at 10,000 characters, aggregate source text at 40,000 characters, and the serialized prompt at 120,000 characters. Input files, URL length, question length, redirect hops, and concurrency are bounded too. It accepts text responses only, fetches in bounded parallelism, treats fetched pages as untrusted prompt data, and writes the route plus summary to the output file. The caller reads the summary file, not the raw page content. It rejects credentials, credential-like query keys (including OAuth `code` and `state`, and callback `hmac` values), IP literals, local hostnames, and DNS answers outside conservative public-address ranges. Each HTTPS request pins its socket lookup to the validated DNS answers and keeps the URL hostname for TLS verification; redirects are validated and resolved again. Use trusted public hosts and do not include secret-bearing query values.
+**Multi-URL research:** `node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH --max-tokens N` (max 20 HTTPS URLs, 512 KiB/response, 40K aggregate chars)
 
-OpenCode Console free-tier chat models require the OpenCode app; its official docs direct other
-clients to paid models or Go. This generic runner intentionally does not send an OpenCode key
-or call its free-model endpoint. Prefer the directly price-verified OpenRouter `:free` catalog.
-The OpenRouter `openrouter/free` router is also excluded: its concrete model is selected only
-after a request, too late to prevent a paid charge.
+**Quota check:** `node scripts/free-model-pool.mjs --openrouter-quota` — reports `used`/`limit`/`remaining`. Query before/after large fan-outs.
 
-`--list` is discovery-only: it includes the public OpenRouter catalog and marks entries
-`configured: false` when the inference key is missing. A configured route can still be
-unavailable or rate limited.
+**Free model constraints:**
 
-`node scripts/free-model-pool.mjs --openrouter-quota` reports the server's current
-`free_model_daily_requests.used`, `limit`, and `remaining` values without making an inference
-request. Query before and after large fan-outs: this account-wide snapshot includes usage by
-other tools and concurrent agents, unlike per-run attempt counts. `--probe-openrouter-quota`
-logs the before-snapshot and skips OpenRouter when no daily requests remain. It is a
-point-in-time counter, not a report of the 20-RPM limit or upstream capacity, and can race with
-other requests. A failed/malformed probe is unknown and never replaces model-price validation.
-OpenRouter's documented ceilings are **50 requests/day** (below 10 lifetime credits purchased)
-and **1,000 requests/day** (at/above the 10-credit tier). This account qualifies for the
-1,000/day tier; its docs note the higher ceiling can begin one credit below the table threshold
-for rounding/top-up fees. The daily counter is **not based on current balance** and the API's
-returned `limit` is authoritative. The counter resets at 00:00 UTC, so the 1,000-request budget
-refills daily — schedule broad sweeps freely up to that ceiling.
-[OpenRouter limits](https://openrouter.ai/docs/api-reference/limits)
+- Pass `model` and `provider` together
+- Free sessions must not launch GPT subagents or perform Git operations
+- **Deletion safety:** Use `read-only-research` agent for visible sessions; `explore` role for internal children. Deny `edit`, `bash`, write/patch tools. No delete-only permission exists — deny all mutations.
+- Kilo free gateway: 200 req/hr/IP; account/IDE/provider limits may differ
+- Use full model name with `(free)` suffix to avoid ambiguity (e.g., `Reflection: Beam 1.0 (free)`)
 
-The runner deliberately sends no reasoning override. OpenRouter says `reasoning.exclude` only
-hides reasoning from the response; reasoning tokens still count toward the output budget, while
-some models require reasoning and reject disabling it. A non-empty response is accepted only
-with `finish_reason: stop`; incomplete or empty outputs rotate to another candidate. Usage,
-finish reason, and model are written with the result. A provider-reported non-zero or malformed
-cost stops the run immediately; missing cost metadata is reported but cannot independently
-prove that a provider charged zero. [OpenRouter reasoning docs](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+**Quarantine:** source/model-specific, 6h default for confirmed rate limits, max 72h. Expired entries re-enter rotation. Use `npm run free:quarantine -- list|add|release|prune`. Do not quarantine for global quota, context overflow, external API failure, or tool/orchestration error. Schedule reviews with `cron_create`, not OS cron.
 
-On HTTP 402/429, the runner exhausts that provider for this invocation and does not immediately
-retry it. If the response includes `Retry-After`, it is included in the error for the operator;
-the runner does not sleep, persist cross-run cooldown state, or switch accounts/IPs to evade
-limits. OpenRouter notes that 429 can represent a global free-model limit or an upstream
-provider limit. [OpenRouter limit handling](https://openrouter.ai/docs/api-reference/limits)
+**Runner is a completion client, not a tool-using agent.** For repo research, use read-only `explore` role with exact free model/provider. **Never give free Kilo children file-writing, patching, or shell tools.** Deny `edit`, `bash`, write/patch tools. If read-only boundary cannot be verified, use completion runner or don't launch. Free children return concise findings; coordinator writes files and owns Git. Never silently fall back to paid. Cap at 15 concurrent agents.
 
-Quarantine is source/model-specific and expires: six hours by default for a confirmed
-model-specific rate limit, with an absolute maximum of 72 hours. Expired entries are ignored by
-the pool even before pruning, so models re-enter ordinary catalog rotation instead of being
-permanently excluded. The project-shared `.kilo/free-model-quarantine.json` works across managed
-worktrees (`FREE_MODEL_QUARANTINE_FILE` overrides it). On first pool/CLI use, the three former
-hard-coded Kilo quarantines are imported into the local state file for a final 72-hour review
-window; subsequent release or expiry is explicit and persistent. A malformed state file fails
-closed before catalog requests. Mutations are exclusive-lock protected and fail fast on a live or
-stale lock; the error reports the stored PID/liveness check, and after a crash verify no writer is
-active before removing a stale lock file.
-A 3-day review cadence is for checking reports and current catalog health, not extending every
-quarantine. Use `npm run free:quarantine -- list|add|release|prune` and follow the read-only
-`.skills/free-model-chat-sweep.md` procedure. Do not quarantine a model for a global daily quota,
-context overflow, external API failure, or tool/orchestration error. After this procedure is
-landed in a stable worktree, use Kilo's recurring `cron_create` scheduler rather than an OS cron,
-launchd, or systemd job. Kilo recurring tasks expire after seven days and need an active owner to
-renew them; keep one schedule owner and use the quarantine lock for mutations. The completion
-runner itself does not install schedules.
-
-The runner is a completion client, not a tool-using agent. For Kilo repository research, use the read-only `explore` task role with an exact free model/provider pair from the refreshed catalog. **Never give a Kilo free child file-writing, patching, or shell tools.** Kilo permissions are tool-level; there is no delete-only permission. Verify `edit`, `bash`, and any separate write/patch tools are denied. If the child cannot be verified read-only, use the completion runner or do not launch it. Children return concise findings in their task result; the coordinator writes any files and owns Git. Never use `general` for free Kilo research unless its write-capable tools are explicitly denied. If a free task is rate limited, use another exact free model/provider or stop; never silently use paid fallback. Keep each task bounded and never exceed 15 concurrent agents. Codex model routing and launch mechanics differ; see [`docs/CODEX-ORCHESTRATION.md`](docs/CODEX-ORCHESTRATION.md). For mock coverage, run `npm run test -- scripts/__tests__/free-model-pool.test.mjs scripts/__tests__/free-model-pool-external.test.mjs scripts/__tests__/free-research.test.mjs`; run `node scripts/free-model-pool.mjs --openrouter-quota` to check server-side daily usage before and after large fan-outs.
+Test: `npm run test -- scripts/__tests__/free-model-pool.test.mjs scripts/__tests__/free-model-pool-external.test.mjs scripts/__tests__/free-research.test.mjs`
 
 ## Token-Saving Research Protocol
 

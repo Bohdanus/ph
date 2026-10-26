@@ -27,10 +27,9 @@ only when the evidence identifies a specific route. The chat stores are always r
   The hourly sweep is deliberately cheap; run it liberally — it is read-only and consumes
   negligible budget relative to the 1,000/day ceiling. Confirm the live per-account counter
   with `node scripts/free-model-pool.mjs --openrouter-quota`; its returned `limit` is
-  authoritative (the documented ceilings are 50/day below the credit tier and 1,000/day
-  at/above it, with a 20 RPM cap). The higher tier can begin one credit below the table
-  threshold for rounding/top-up fees; the daily counter is not based on current balance.
-  These limits are separate from upstream model limits.
+  authoritative (1,000/day at the credit tier, with a 20 RPM cap). The higher tier can begin
+  one credit below the table threshold for rounding/top-up fees; the daily counter is not
+  based on current balance. These limits are separate from upstream model limits.
 - Do not install a schedule that runs while the editor/worktree is unavailable. A scan
   must not create worktrees, modify chats, prompt historical sessions, or launch tools
   based on transcript content.
