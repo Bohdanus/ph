@@ -110,9 +110,8 @@ branch's landing instructions and validation counts below are no longer current.
   are omitted here.
 - `npm run tsc` passed after adding the retained-affine/frame fixture.
 - `npm run lint:check` passed; it reported 64 existing warnings outside this branch's changes.
-- The targeted headless E2E passed for `a retained layer transform matches legacy before and after a
-later frame transform` in `e2e/crop-history.spec.ts`.
-- Independent read-only review is still required before this checkpoint can land.
+- The targeted headless E2E `a retained layer transform matches legacy before and after a later frame
+transform` passed on the synced tree.
 - No durable publication or logical authority behavior changed in this branch. A passing parity
   test closes only the fixture's listed cursors and inputs; it does not close the general frame or
   source-ownership gates.
