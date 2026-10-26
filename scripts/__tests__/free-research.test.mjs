@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -414,6 +414,69 @@ describe('buildResearchPrompt', () => {
 });
 
 describe('free research CLI', () => {
+  it('passes quota tracking and records per-run request counts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-research-'));
+    const promptPath = join(directory, 'prompt.txt');
+    const urlListPath = join(directory, 'urls.txt');
+    const outputPath = join(directory, 'out.txt');
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(new Response('<p>Public source evidence</p>', { headers: { 'content-type': 'text/html' } }));
+    const completeImpl = vi.fn().mockImplementation((_prompt, options) => {
+      options.onOpenRouterQuota({ used: 307, limit: 1000, remaining: 693 });
+      return Promise.resolve({
+        source: 'openrouter',
+        model: 'deepseek/deepseek-r1:free',
+        content: 'Summary with evidence',
+        finishReason: 'stop',
+        usage: { prompt_tokens: 20, completion_tokens: 8, cost: 0 },
+        requestCounts: { kilo: 0, openrouter: 1, groq: 0 },
+      });
+    });
+    const stderr = { write: vi.fn() };
+    try {
+      await writeFile(promptPath, 'Summarize source evidence');
+      await writeFile(urlListPath, 'https://example.com');
+      const result = await main(
+        [
+          '--prompt-file',
+          promptPath,
+          '--url-list',
+          urlListPath,
+          '--output-file',
+          outputPath,
+          '--max-tokens',
+          '80',
+          '--probe-openrouter-quota',
+        ],
+        { fetchImpl, completeImpl, stderr }
+      );
+
+      expect(result).toBe(0);
+      expect(completeImpl).toHaveBeenCalledWith(
+        expect.stringContaining('Public source evidence'),
+        expect.objectContaining({
+          maxTokens: 80,
+          checkOpenRouterQuota: true,
+          groqFreePlanConfirmed: false,
+          onOpenRouterQuota: expect.any(Function),
+        })
+      );
+      expect(await readFile(outputPath, 'utf8')).toContain('Summary with evidence');
+      expect(await readFile(outputPath, 'utf8')).toContain(
+        'Usage: {"prompt_tokens":20,"completion_tokens":8,"cost":0}'
+      );
+      expect(await readFile(outputPath, 'utf8')).toContain(
+        'Requests attempted (this run): {"kilo":0,"openrouter":1,"groq":0}'
+      );
+      expect(stderr.write).toHaveBeenCalledWith(
+        expect.stringMatching(/^OpenRouter free requests: 307\/1000 used, 693 remaining at .+ \(server snapshot\)\.\n$/)
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects oversized prompt and URL files before fetching or summarizing', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-research-'));
     const promptPath = join(directory, 'prompt.txt');
