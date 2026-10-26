@@ -746,7 +746,7 @@ answer — which of the six things it is:
 | ----------- | ----------------------------------------------------------------------------------------------- | ----------------- |
 | `land`      | clean tree, commits ahead of `main`, merges clean                                               | merge it          |
 | `at-risk`   | work on no ref, the merge needs a human, or git says disposable and a curated finding disagrees | save it           |
-| `dispose`   | clean, unprotected, and on `main` or proven to merge to the exact `main` tree                   | delete it         |
+| `dispose`   | clean and unprotected; ancestor, patch-absorbed, or verified to merge to the exact `main` tree  | use `dispose`     |
 | `in-use`    | an agent or a session is active there                                                           | leave it          |
 | `keep`      | the main checkout                                                                               | never a candidate |
 | `undecided` | cannot be told from what is known                                                               | do not remove     |
@@ -769,6 +769,16 @@ protection applies, classify it `dispose`, not `land`. The disposer requires the
 uses guarded `git branch -D` only for that verified non-ancestor case. It rechecks `main` before
 removal and before deleting the branch; if `main` moves, it keeps the worktree or recovery branch.
 Do not infer this verdict from an empty path diff, `git cherry`, or a conflict-free merge alone.
+
+Complete patch absorption is a **separate disposal proof**, not a proof that the branch tip tree
+equals `main`. When there are no unclassifiable merge commits ahead and every comparable
+non-merge commit is patch-id equivalent to the base, the inventory may classify the clean,
+unprotected branch as `dispose` even when it is not an ancestor and a merge would not be the right
+operation. The disposer anchors the exact branch tip under `refs/keep/disposed/` before its guarded
+`git branch -D`, so the removed branch remains recoverable. Treat the generated
+`patchEquivalence: absorbed`, `action: dispose`, and `dispose --dry-run` as the evidence for this
+route; an empty `git cherry` by itself does not authorize deletion or landing. If `main` moved or
+the inventory is stale, regenerate and reclassify first.
 
 **`at-risk` also covers merged, clean worktrees protected by a curated finding.**
 If `at-risk` and `mergedIntoMain` are both true, read the protecting entry's
@@ -863,7 +873,7 @@ inside the directory:
 | arm         | what it actually is                                                   | window                     | names a chat?      |
 | ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
 | `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
-| `ioLive`    | recent `shellHistory` **and `readHistory`** — a reader counts         | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `ioLive`    | recent `shellHistory` — `readHistory` is intentionally excluded       | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
 | `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
 | `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
 
