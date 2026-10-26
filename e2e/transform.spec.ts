@@ -1,11 +1,10 @@
 import { expect, test } from './fixtures/extended-test';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 import {
-  drawLine,
+  drawLineFromDocument,
+  DEFAULT_DOCUMENT_SIZE,
   documentToCanvasOffset,
   getDarkPixelBounds,
-  LINE_END_X,
-  LINE_START_X,
   takeLineScreenshot,
   waitForCanvasRedraw,
   type BoundingBox,
@@ -32,11 +31,11 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  * multiplier is not even a function of the emulated devicePixelRatio.
  */
 
-/** Two horizontal bars of equal length, one high up the layer and one low down it. */
-const BAR_START_X = LINE_START_X;
-const BAR_END_X = LINE_END_X;
+/** [DOCUMENT] endpoints of each horizontal bar. */
+const BAR_START_X = 150;
+const BAR_END_X = 350;
 /**
- * Box-relative fractions of the canvas height for the two bars.
+ * Fractions of the document height for the two bars.
  *
  * They have to be far apart, because a taper is invisible on a band that spans a small
  * part of the layer: the row scale varies linearly with depth, so two bars 5% apart
@@ -77,13 +76,24 @@ const centreY = (bounds: DarkBounds): number => (bounds.top + bounds.bottom) / 2
  * a drawn rectangle rather than the transform.
  */
 function bands(box: BoundingBox): Bands {
-  const band = (yRatio: number): Required<ClipOptions> => ({
-    x: box.x + 100,
-    y: box.y + Math.round(box.height * yRatio) - 45,
-    width: 300,
-    height: 90,
-  });
+  const band = (yRatio: number): Required<ClipOptions> => {
+    const documentY = Math.round(DEFAULT_DOCUMENT_SIZE.height * yRatio);
+    const start = documentToCanvasOffset(box, BAR_START_X, documentY, DEFAULT_DOCUMENT_SIZE);
+    const end = documentToCanvasOffset(box, BAR_END_X, documentY, DEFAULT_DOCUMENT_SIZE);
+    const margin = 40;
+    return {
+      x: box.x + start.x - margin,
+      y: box.y + start.y - margin,
+      width: end.x - start.x + margin * 2,
+      height: 90,
+    };
+  };
   return { top: band(TOP_BAR_Y_RATIO), bottom: band(BOTTOM_BAR_Y_RATIO) };
+}
+
+/** Draws a [DOCUMENT]-space bar through the canvas's measured contain fit. */
+async function drawDocumentBar(page: Parameters<typeof drawLineFromDocument>[0], box: BoundingBox, y: number) {
+  await drawLineFromDocument(page, box, BAR_START_X, y, BAR_END_X, y, {}, DEFAULT_DOCUMENT_SIZE);
 }
 
 /**
@@ -128,7 +138,7 @@ test.describe('Transform tool', () => {
 
     await clickToolButton(page, 'draw');
     await page.locator('#size-slider').fill(String(BRUSH_SIZE));
-    await drawLine(page, box, BAR_START_X, Math.round(box.height * 0.5), BAR_END_X, Math.round(box.height * 0.5));
+    await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * 0.5));
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
@@ -212,7 +222,7 @@ test.describe('Transform tool', () => {
 
     await clickToolButton(page, 'draw');
     await page.locator('#size-slider').fill(String(BRUSH_SIZE));
-    await drawLine(page, box, BAR_START_X, Math.round(box.height * 0.5), BAR_END_X, Math.round(box.height * 0.5));
+    await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * 0.5));
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(
@@ -277,14 +287,7 @@ test.describe('Transform tool', () => {
     await clickToolButton(page, 'draw');
     await page.locator('#size-slider').fill(String(BRUSH_SIZE));
     for (const yRatio of [TOP_BAR_Y_RATIO, BOTTOM_BAR_Y_RATIO]) {
-      await drawLine(
-        page,
-        box,
-        BAR_START_X,
-        Math.round(box.height * yRatio),
-        BAR_END_X,
-        Math.round(box.height * yRatio)
-      );
+      await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * yRatio));
     }
     // The default redraw clip is a band around the middle of the canvas, which holds
     // neither bar here, so the wait has to name the bands the assertions read.
@@ -363,7 +366,7 @@ test.describe('Transform tool', () => {
 
     await clickToolButton(page, 'draw');
     await page.locator('#size-slider').fill(String(BRUSH_SIZE));
-    await drawLine(page, box, BAR_START_X, Math.round(box.height * 0.5), BAR_END_X, Math.round(box.height * 0.5));
+    await drawDocumentBar(page, box, Math.round(DEFAULT_DOCUMENT_SIZE.height * 0.5));
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const before = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'drag-before', testInfo, wholeCanvas));
@@ -448,7 +451,7 @@ test.describe('Transform tool', () => {
       { x: 520, y: 270 },
       { x: 540, y: 290 },
       { x: 610, y: 295 },
-    ].map(({ x, y }) => documentToCanvasOffset(canvas, x, y));
+    ].map(({ x, y }) => documentToCanvasOffset(canvas, x, y, DEFAULT_DOCUMENT_SIZE));
     await page.mouse.move(canvas.x + squiggle[0].x, canvas.y + squiggle[0].y);
     await page.mouse.down();
     for (const point of squiggle.slice(1)) {

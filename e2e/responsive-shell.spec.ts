@@ -488,20 +488,9 @@ test.describe('Tablet band', () => {
     expect(collapsed - expanded).toBeCloseTo(panelWidth, 0);
   });
 
-  // The floor is the window plus a margin, NOT the panel's measured width. Both panels
-  // used to be pinned to a measurement — 1089 and 1036 — and both had to come down by
-  // exactly 4px together when the shared option-row chrome narrowed, which is how you can
-  // tell a shared chrome shift from a control that went missing: a lost control takes a
-  // whole widget with it, and these two moved identically. Measured on this tree the
-  // panels lay out at 1085 (Shape) and 1032 (Horizontal Type) against a 900px window, so
-  // the floor below leaves 15% and 14% of headroom and still fails a panel that stops
-  // overflowing the window or loses more than a few percent of its width. The point of
-  // the entry is that the controls past the window edge are REACHABLE, and the reachability
-  // is proved below by scrolling to the end, not by this number.
   // Transform is NOT one of them — its
   // content is mostly flexible sliders, so it compresses to the row instead of overflowing.
   // Reaching for it would have asserted nothing.
-  const MIN_PANEL_WIDTH = TABLET.width + 100;
   // `{ name, label }` because the header menu is addressed by the tool's NAME (`selectToolFromMenu`
   // takes a `tools-menu-<name>-button` test id) while the panels and the test titles are named by
   // the LABEL. Passing the label as the argument used to read as "pick this out of the menu" while
@@ -523,22 +512,81 @@ test.describe('Tablet band', () => {
       }));
 
       expect(metrics.overflowX, 'the tablet band must scroll the option row').toBe('auto');
-      expect(
-        metrics.scrollWidth,
-        'the option row must be wider than the window, with room to spare'
-      ).toBeGreaterThanOrEqual(MIN_PANEL_WIDTH);
       expect(metrics.scrollWidth, 'the row must overflow its own box').toBeGreaterThan(metrics.clientWidth);
+
+      // An offset alone could come from empty overflow. Identify the visible interactive
+      // control furthest to the right, so the assertions prove that a real option starts
+      // outside the scrollport and can be brought fully inside it.
+      const rightmostControl = () =>
+        toolbar.evaluate((el) => {
+          const controls = [...el.querySelectorAll<HTMLElement>('button, input, select, textarea')].filter(
+            (control) => {
+              const bounds = control.getBoundingClientRect();
+              const style = getComputedStyle(control);
+              return (
+                control.getClientRects().length > 0 &&
+                bounds.width > 0 &&
+                bounds.height > 0 &&
+                style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                style.pointerEvents !== 'none' &&
+                !control.matches(':disabled')
+              );
+            }
+          );
+          const control = controls.reduce<HTMLElement | null>((furthest, candidate) => {
+            if (!furthest) return candidate;
+            return candidate.getBoundingClientRect().right > furthest.getBoundingClientRect().right
+              ? candidate
+              : furthest;
+          }, null);
+          if (!control) return null;
+
+          const viewport = el.getBoundingClientRect();
+          const scrollportLeft = viewport.left + el.clientLeft;
+          const controlBounds = control.getBoundingClientRect();
+          const hitTarget = document.elementFromPoint(
+            controlBounds.left + controlBounds.width / 2,
+            controlBounds.top + controlBounds.height / 2
+          );
+          return {
+            left: controlBounds.left,
+            right: controlBounds.right,
+            scrollLeft: el.scrollLeft,
+            scrollportLeft,
+            scrollportRight: scrollportLeft + el.clientWidth,
+            receivesPointerHit: hitTarget !== null && (hitTarget === control || control.contains(hitTarget)),
+          };
+        });
+      const beforeScroll = await rightmostControl();
+      expect(beforeScroll, 'the option row must contain a rendered interactive control').not.toBeNull();
+      expect(beforeScroll!.scrollLeft, 'the option row must start at its left edge').toBe(0);
+      expect(
+        beforeScroll!.right,
+        'the furthest-right option must extend beyond the scrollport before scrolling'
+      ).toBeGreaterThan(beforeScroll!.scrollportRight);
 
       // The row can be driven to its end, which is the actual fix: before the tablet band
       // gained a scrollbar the controls past the window edge were not reachable at all.
-      // Asserting the scroll position rather than a particular control's visibility, because
-      // which control is last differs per tool and is not what this test is about.
-      const scrolled = await toolbar.evaluate((el) => {
-        el.scrollTo({ left: el.scrollWidth });
-        return { scrollLeft: el.scrollLeft, max: el.scrollWidth - el.clientWidth };
-      });
-      expect(scrolled.max, 'there must be hidden content to scroll to').toBeGreaterThan(0);
-      expect(scrolled.scrollLeft, 'the row must scroll to its end').toBeGreaterThan(0);
+      const maxScroll = await toolbar.evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(maxScroll, 'there must be enough hidden content to exceed CSSOM rounding tolerance').toBeGreaterThan(2);
+      await toolbar.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
+      await expect.poll(() => toolbar.evaluate((el) => el.scrollLeft)).toBeGreaterThanOrEqual(maxScroll - 1);
+
+      const afterScroll = await rightmostControl();
+      expect(afterScroll, 'the rightmost option must remain rendered after scrolling').not.toBeNull();
+      expect(
+        beforeScroll!.right - afterScroll!.right,
+        'the rightmost option must move with the scroll'
+      ).toBeGreaterThan(1);
+      expect(
+        afterScroll!.left,
+        'the option must be fully inside the scrollport after scrolling'
+      ).toBeGreaterThanOrEqual(afterScroll!.scrollportLeft - 1);
+      expect(afterScroll!.right, 'the option must be fully inside the scrollport after scrolling').toBeLessThanOrEqual(
+        afterScroll!.scrollportRight + 1
+      );
+      expect(afterScroll!.receivesPointerHit, 'the visible option must be the hit target at its centre').toBe(true);
     });
   }
 });
