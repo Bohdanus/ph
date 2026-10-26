@@ -60,17 +60,16 @@ sqlite3 -readonly "$kilo_db" ".schema session" ".schema message" ".schema part"
 
 The usual schema stores model metadata as JSON in `session.model`, messages in `message`,
 and tool failures as `part.data` with `type='tool'` and `state.status='error'`. Bound
-the query by `part.time_created` rather than `session.time_updated`: a new message in an
-old session must not make every old tool error appear to be a new failure.
+the query by `part.time_created` rather than `session.time_updated` or the message
+timestamps: recent errors can belong to sessions/messages whose timestamps are stale.
+The current `part` table has no global `time_created` index, so this exact, complete query
+may scan parts. Do not add a session-time prefilter to make it faster; that drops recent
+events. If the scan cost is unacceptable, plan a separate supported index/cursor rather
+than weakening the time boundary.
 
 Example for the preceding hour (SQLite timestamps are milliseconds):
 
 ```sql
-WITH recent_sessions AS (
-  SELECT id, title, model, time_updated
-  FROM session
-  WHERE time_updated >= (strftime('%s','now') - 3600) * 1000
-)
 SELECT s.id AS session_id,
        s.title,
        json_extract(s.model, '$.id') AS model_id,
@@ -80,12 +79,10 @@ SELECT s.id AS session_id,
        p.id AS part_id,
        datetime(p.time_created / 1000, 'unixepoch') AS occurred_at,
        json_extract(p.data, '$.state.error') AS error
-FROM recent_sessions AS s
-CROSS JOIN part AS p INDEXED BY part_session_idx
-CROSS JOIN message AS m
-WHERE p.session_id = s.id
-  AND m.id = p.message_id
-  AND p.time_created >= (strftime('%s','now') - 3600) * 1000
+FROM part AS p
+JOIN message AS m ON m.id = p.message_id
+JOIN session AS s ON s.id = p.session_id
+WHERE p.time_created >= (strftime('%s','now') - 3600) * 1000
   AND json_valid(p.data)
   AND json_extract(p.data, '$.type') = 'tool'
   AND json_extract(p.data, '$.state.status') = 'error'
