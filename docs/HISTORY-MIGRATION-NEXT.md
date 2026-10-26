@@ -1,8 +1,9 @@
 # History Migration Next Steps
 
-This is the restart guide for the durable-history migration after the status-contract hardening
-landed on `fix/history-migration-20261014`. It is deliberately problem-focused rather than a
-chronological changelog.
+This is the restart guide for the durable-history migration. `docs/HISTORY-MIGRATION.md` remains the
+architecture map; this file records the live gates and the next bounded proof slice. The status
+contract and subsequent renderer work have already landed on `main`, so the original migration
+branch's landing instructions and validation counts below are no longer current.
 
 ## Current Contract
 
@@ -39,13 +40,17 @@ chronological changelog.
 
 ## Loose Ends
 
-1. **Authority cutover.** Prove preview independently; unsupported-source fallback is pinned at the
-   StoreContext publication seam. Committed eligible append/reorder presentation now has a guarded
-   background publication, while source-backed
-   imports/replacements, frame changes, and preview remain legacy. Remove legacy logical replay only
-   after every surface is proven.
-2. **Presentation parity.** Keep the byte-level durable/legacy parity gates; the raster/blank
-   forced durable-publication browser seam is now pinned before expanding durable authority.
+1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
+   staged presentation projection, and eligible committed append/reorder presentation composes in
+   the background. Source-backed imports/replacements and frame-changing commits remain on the
+   complete legacy path. Live previews also keep the complete legacy layer base until they clear;
+   the preview tests pin that interleaving behavior but do not make preview a durable authority
+   surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
+2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
+   now covers a retained affine layer transform before a later frame transform at both history
+   cursors. This adds one case only; other angles, retained-affine combinations, source/tool
+   variants, text styling/rotation, frame sequences, and fractional materialized bounds remain open.
+   Do not publish frame-changing commits durably until the full frame gate is explicit.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
@@ -55,15 +60,22 @@ chronological changelog.
 
 1. Keep `safePrefix` diagnostic-only and release its independent owner at every consumer boundary;
    never let `partial` satisfy an exact projection gate.
-2. `resetHistoryTo()` compensates the replay transition when the final legacy or durable draw is
-   refused, so an unavailable presentation cannot leave the logical cursor at an unseen target.
-3. Promote one additional presentation surface at a time behind identity, coverage, freshness,
-   lease, and legacy-fallback gates. Append/reorder background publication is the current second
-   presentation surface; the next promotion must not make preview rendering pending or bypass
-   unsupported-source refusal.
-4. Only after those gates pass, decide whether durable replay can become logical undo/redo
-   authority. Retire boundary tests for deleted coordination modules only in the same architectural
-   change that replaces their contract.
+2. Preserve the now-tested refusal behavior: `resetHistoryTo.durable.test.tsx` proves a refused final
+   durable draw restores the StoreProvider timeline. Keep preview rendering on the complete legacy
+   layer base while append composition is pending or accepted, then reveal the durable base only
+   after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
+   `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
+3. Continue with parity-only frame work. `e2e/crop-history.spec.ts` now compares legacy and durable
+   composition after a retained affine layer transform and again after a later non-quarter frame
+   transform. Keep `SET_DOCUMENT_FRAME_ACTION` out of durable publication while this test matrix is
+   incomplete; compare every newly added cursor and keep publication, cursor, and leases untouched.
+4. The docs do not order the remaining frame-parity work against source-backed import/replacement
+   ownership. Resolve those gates independently from current source before proposing either
+   promotion. Do not treat a passing differential as authority to bypass unsupported-source refusal.
+5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
+   proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
+   tests for deleted coordination modules only in the same architectural change that replaces their
+   contract.
 
 ## Investigation Lessons
 
@@ -81,19 +93,26 @@ chronological changelog.
   add operation-specific proofs before relaxing the gate.
 - Do not implement a full durable authority cutover as a cleanup of legacy code. It is an
   architectural migration requiring independent parity and ownership evidence.
+- Open-source editor history designs are comparative patterns, not Photoshop requirements or an
+  ordering decision for this migration. [GIMP's image undo code](https://github.com/GNOME/gimp/blob/master/app/core/gimpimage-undo.c)
+  transfers entries between separate undo and redo stacks and groups weak operations.
+  [Krita's undo-store interface](https://raw.githubusercontent.com/KDE/krita/master/libs/command/kis_undo_store.h)
+  separates command storage from adapter behavior, including
+  [strokes whose command has already executed](https://raw.githubusercontent.com/KDE/krita/master/libs/image/kis_post_execution_undo_adapter.h).
+  [darktable's pixelpipe guide](https://github.com/darktable-org/darktable/blob/master/dev-doc/pixelpipe_architecture.md)
+  describes rebuilding module state by replaying history through its cursor. These examples support
+  keeping timeline state, command execution, and preview presentation explicit, but do not define
+  this app's gates.
 
 ## Validation Evidence
 
-- History and boundary matrix: 32 test files, 945 tests passing.
-- Focused status/navigation checks: 11 tests passing after the final coverage addition.
-- `npm run tsc` passing.
-- `npm run build` passing.
-- Independent read-only reviews found no blocking issues.
-- Full `npm run test` reached 8,993 passing tests with one unrelated pre-existing
-  `scripts/__tests__/worktree-inventory.test.mjs` transcript-count failure.
-- Full headless E2E reached 489 passing, 11 failing, and 2 skipped. The three crop-history
-  undo failures reproduce on committed `main`; the other eight failures are unrelated UI/tool
-  failures. Do not attribute these baseline failures to this migration branch.
-
-The implementation commits are ready to land after `main` is merged into this branch and the
-post-merge gates are rerun. Shared `main` must only receive the reviewed branch after that step.
+- The original `fix/history-migration-20261014` validation counts are not current-main evidence and
+  are omitted here.
+- `npm run tsc` passed after adding the retained-affine/frame fixture.
+- `npm run lint:check` passed; it reported 64 existing warnings outside this branch's changes.
+- The targeted headless E2E passed for `a retained layer transform matches legacy before and after a
+later frame transform` in `e2e/crop-history.spec.ts`.
+- Independent read-only review is still required before this checkpoint can land.
+- No durable publication or logical authority behavior changed in this branch. A passing parity
+  test closes only the fixture's listed cursors and inputs; it does not close the general frame or
+  source-ownership gates.
