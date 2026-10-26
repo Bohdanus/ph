@@ -222,8 +222,9 @@ variant or an equivalent atomic history action.
    combinations, source/tool variants, text styling/rotation, frame sequences and exact fractional
    materialized bounds. The same fixture's frame-only control showed a one-pixel/two-channel delta;
    it is recorded in `e2e/OPEN_PROBLEMS.md` and is not a parity pass. Establish ownership and parity
-   for source-backed imports/replacements as a separate gate; the docs do not order that work
-   against the broader frame matrix. Keep the unsupported-source fallback explicit.
+   for source-backed imports/replacements as a separate, unordered gate; it may proceed before,
+   after, or in parallel with the broader frame matrix. Keep the unsupported-source fallback
+   explicit.
 
    Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
    which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),

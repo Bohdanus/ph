@@ -3,7 +3,8 @@
 This is the restart guide for the durable-history migration. `docs/HISTORY-MIGRATION.md` remains the
 architecture map; this file records the live gates and the next bounded proof slice. The status
 contract and subsequent renderer work have already landed on `main`, so the original migration
-branch's landing instructions and validation counts below are no longer current.
+branch's landing instructions and validation counts are historical. The validation evidence below
+is for this review closeout.
 
 ## Current Contract
 
@@ -58,6 +59,9 @@ branch's landing instructions and validation counts below are no longer current.
 
 ## Recommended Sequence
 
+Steps 3 and 4 are independent open gates. Their numbering organizes the work; it does not set a
+priority or dependency. They may be pursued in either order or in parallel.
+
 1. Keep `safePrefix` diagnostic-only and release its independent owner at every consumer boundary;
    never let `partial` satisfy an exact projection gate.
 2. Preserve the now-tested refusal behavior: `resetHistoryTo.durable.test.tsx` proves a refused final
@@ -75,10 +79,9 @@ branch's landing instructions and validation counts below are no longer current.
    cursor, or lease ownership. The same raster fixture's frame-only control exposed a one-pixel,
    two-channel delta (maximum channel difference 1); it is an open parity case, not a passing
    cross-renderer control.
-4. Establish source-backed import/replacement ownership and parity as an independent gate. The docs
-   do not order this work against the broader frame matrix. Keep the unsupported-source refusal
-   explicit, and do not treat either gate's passing differential as authority to promote that
-   surface.
+4. Establish source-backed import/replacement ownership and parity as the other independent gate.
+   Keep the unsupported-source refusal explicit, and do not treat either gate's passing differential
+   as authority to promote that surface.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
@@ -95,6 +98,10 @@ branch's landing instructions and validation counts below are no longer current.
 - Duplicate-id handling must distinguish resolver-only skips from omitted edits. Keeping the fold
   advanced preserves legacy suffix derivation, but an enabled omitted operation cannot remain
   `current` merely because the raw converter can continue.
+- Conditional follow-up from `HANDOFF.md` §94, not an immediate gate: durable replay applies a frame
+  operation's `next` and does not read stored `previous`. If a replay consumer starts reading
+  `previous`, track the last durable-reachable frame separately and update the named diagnostics
+  tests; do not remove the deliberate fold advance in `legacyHistoryToDurable()`.
 - Operations without a canonical snapshot no-op proof are conservatively treated as state-changing
   when duplicated. That may withhold a durable shadow, but it cannot publish a false-current render;
   add operation-specific proofs before relaxing the gate.
@@ -118,7 +125,30 @@ branch's landing instructions and validation counts below are no longer current.
 - `npm run tsc` passed after the review follow-up.
 - `npm run lint:check` passed; it reported 64 warnings outside the changed files.
 - The targeted headless E2E `a retained layer transform matches legacy before and after a later frame
-transform` passed in run `2026-10-26T18-39-13-246Z-17423`.
+transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-control assertion.
 - No durable publication or logical authority behavior changed in this branch. A passing parity
   test closes only the fixture's listed cursors and inputs; it does not close the general frame or
   source-ownership gates.
+
+## Review Findings and Dispositions
+
+- Cross-system Kilo, Codex, and Copilot history scans found no additional migration step or ordering
+  decision. The relevant Kilo history confirms preview and refused-draw evidence is test coverage;
+  it does not change logical authority. Keep the frame matrix and source-ownership gate independent.
+- Review coverage: Luna 6 read-only review and follow-up, plus three focused review passes using
+  `poolside/laguna-s-2.1:free` through Kilo's completion-only fallback. This Codex host has no
+  verified free tool-using subagent route, so those three passes were not tool-using subagents.
+- A review found the parity checks could pass if both renderers dropped the affine transform. The
+  fixture now compares each renderer against the untransformed baseline at the transform cursor and
+  checks that each final render differs from its frame-only control.
+- Luna's re-review found that the control's durable frame was not asserted before comparing pixels.
+  The fixture now requires the control's durable frame to match the transformed case's legacy frame.
+- Review noted that numbering the frame and source-ownership gates implied an order despite the docs
+  saying they were independent. Steps 3 and 4 below are now explicitly unordered and may proceed in
+  either order or in parallel.
+- Luna's final follow-up found no remaining actionable issues in the fixture or updated sequence.
+- Reports that composite release was missing or that replay cursors were offset did not reproduce
+  when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
+- Exact materialized bounds remain an open frame-parity item. The frame-only control's
+  one-pixel/two-channel difference remains open in `e2e/OPEN_PROBLEMS.md`; it is not counted as a
+  parity pass.

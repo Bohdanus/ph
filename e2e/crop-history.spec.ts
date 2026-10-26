@@ -2867,6 +2867,7 @@ test.describe('Crop history', () => {
       expect(result.transitionResults[0]?.differingBytes).toBe(0);
       expect(result.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
       expect(untransformedControl.transitionResults[0]?.frame).toEqual(result.transitionResults[0]?.frame);
+      expect(untransformedControl.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
       // This control isolates the retained operation within each renderer; the broader frame-only
       // parity matrix remains open and is not treated as an oracle by this fixture.
       expect(result.legacyPixels).not.toEqual(untransformedControl.legacyPixels);

@@ -120,8 +120,9 @@ legacy replay, verifies both renderers change from the untransformed baseline, a
 final output with a frame-only control. It covers one raster fixture only. Next expand the frame
 matrix across the open angles, retained-affine combinations, source/tool variants, text
 styling/rotation, frame sequences, and exact fractional bounds. Establish source-backed
-import/replacement ownership as a separate gate; the docs do not order those workstreams. Keep both
-surfaces legacy-gated until their parity and failure-containment evidence is explicit. The
+import/replacement ownership as a separate gate. The frame matrix and ownership gate are unordered
+and may proceed independently. Keep both surfaces legacy-gated until their parity and
+failure-containment evidence is explicit. The
 frame-only control for this fixture shows a one-pixel/two-channel delta and is recorded in
 `e2e/OPEN_PROBLEMS.md`; resolve it before frame publication. See `docs/HISTORY-MIGRATION-NEXT.md`
 for the migration sequence.

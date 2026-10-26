@@ -272,7 +272,7 @@ control for this raster fixture showed a one-pixel/two-channel delta; it remains
 an open parity case recorded in `e2e/OPEN_PROBLEMS.md`. Preview interleaving and
 refused-draw timeline rollback are tested, but active previews still render over
 the complete legacy base. Expand the frame matrix and establish source ownership
-as independent gates, each with parity and failure-containment evidence.
+as unordered, independent gates, each with parity and failure-containment evidence.
 
 ## Gates
 
