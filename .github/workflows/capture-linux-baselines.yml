@@ -46,7 +46,7 @@ jobs:
           [[ "$SOURCE_SHA" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "::error::source_sha must be a full Git object ID"; exit 1; }
           [[ -n "$SOURCE_BRANCH" && "$SOURCE_BRANCH" != "main" ]] || { echo "::error::Promotion requires a non-main branch"; exit 1; }
           git check-ref-format "refs/heads/$SOURCE_BRANCH"
-          [[ "$CHAT_ID" =~ ^[A-Za-z0-9._:/-]+$ ]] || { echo "::error::A single native chat ID is required"; exit 1; }
+          [[ "$CHAT_ID" =~ ^(ses_[A-Za-z0-9]{26}|[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12}|copilotcli:/[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12})$ ]] || { echo "::error::A valid Kilo ID, Codex UUID, or Copilot session URI is required"; exit 1; }
           [[ "$PROMOTE_JSON" == "true" || "$PROMOTE_JSON" == "false" ]] || { echo "::error::promote must be a JSON boolean"; exit 1; }
 
       - name: Checkout exact source commit
@@ -150,7 +150,7 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo "::error::Checkout does not match source SHA"; exit 1; }
           remote_sha="$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | cut -f1)"
           [[ "$remote_sha" == "$SOURCE_SHA" ]] || { echo "::error::Mirror branch moved; no baseline was promoted"; exit 1; }
-          [[ -n "$CHAT_ID" && "$CHAT_ID" != *[[:space:]]* ]] || { echo "::error::A single native chat ID without whitespace is required"; exit 1; }
+          [[ "$CHAT_ID" =~ ^(ses_[A-Za-z0-9]{26}|[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12}|copilotcli:/[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12})$ ]] || { echo "::error::A valid Kilo ID, Codex UUID, or Copilot session URI is required"; exit 1; }
 
       - name: Download captured Linux baselines
         uses: actions/download-artifact@v4
@@ -178,8 +178,8 @@ jobs:
             [[ -f "$file" && ! -L "$file" ]] || { echo "::error::Missing or unsafe baseline $name"; exit 1; }
             [[ ! -L "$target" && ( ! -e "$target" || -f "$target" ) ]] || { echo "::error::Unsafe target baseline $name"; exit 1; }
             [[ "$(file --brief --mime-type "$file")" == "image/png" ]] || { echo "::error::$name is not a PNG"; exit 1; }
-            attributes="$(git check-attr text eol filter working-tree-encoding -- "$target")"
-            [[ "$attributes" == *": text: unset"* && "$attributes" == *": eol: unspecified"* && "$attributes" == *": filter: unspecified"* && "$attributes" == *": working-tree-encoding: unspecified"* ]] || { echo "::error::Unsafe Git byte-conversion attributes for $name"; exit 1; }
+            attributes="$(git check-attr text eol filter ident working-tree-encoding -- "$target")"
+            [[ "$attributes" == *": text: unset"* && "$attributes" == *": eol: unspecified"* && "$attributes" == *": filter: unspecified"* && "$attributes" == *": ident: unspecified"* && "$attributes" == *": working-tree-encoding: unspecified"* ]] || { echo "::error::Unsafe Git byte-conversion attributes for $name"; exit 1; }
             cp -- "$file" "$target"
             git add -- "$target"
           done

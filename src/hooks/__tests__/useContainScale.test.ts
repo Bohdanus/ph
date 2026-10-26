@@ -1,15 +1,89 @@
-import { renderHook } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useContainScale } from '../useContainScale.ts';
 
 const IMAGE = { width: 100, height: 100 };
+type ClientViewport = {
+  left?: number;
+  top?: number;
+  width: number;
+  height: number;
+  offsetWidth?: number;
+  offsetHeight?: number;
+};
 
-function container(width: number, height: number) {
+function setClientViewport(
+  el: HTMLDivElement,
+  {
+    left = 0,
+    top = 0,
+    width,
+    height,
+    offsetWidth = Math.round(width),
+    offsetHeight = Math.round(height),
+  }: { left?: number; top?: number; width: number; height: number; offsetWidth?: number; offsetHeight?: number }
+) {
+  Object.defineProperties(el, {
+    clientLeft: { configurable: true, value: left },
+    clientTop: { configurable: true, value: top },
+    clientWidth: { configurable: true, value: width },
+    clientHeight: { configurable: true, value: height },
+    offsetWidth: { configurable: true, value: offsetWidth },
+    offsetHeight: { configurable: true, value: offsetHeight },
+  });
+}
+
+function container(
+  width: number,
+  height: number,
+  client: ClientViewport = {
+    width: Math.round(width),
+    height: Math.round(height),
+    offsetWidth: Math.round(width),
+    offsetHeight: Math.round(height),
+  }
+) {
   const el = document.createElement('div');
   el.getBoundingClientRect = () =>
     ({ width, height, left: 0, top: 0, right: width, bottom: height, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  setClientViewport(el, client);
   return el;
 }
+
+function resizeEntry(borderWidth: number, borderHeight: number, clientWidth: number, clientHeight: number) {
+  return {
+    contentRect: DOMRect.fromRect({ x: 0, y: 0, width: clientWidth, height: clientHeight }),
+    contentBoxSize: [{ inlineSize: clientWidth, blockSize: clientHeight }],
+    borderBoxSize: [{ inlineSize: borderWidth, blockSize: borderHeight }],
+    devicePixelContentBoxSize: [],
+    target: document.createElement('div'),
+  } as unknown as ResizeObserverEntry;
+}
+
+class ControllableResizeObserver implements ResizeObserver {
+  static instances: ControllableResizeObserver[] = [];
+  private readonly callback: ResizeObserverCallback;
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    ControllableResizeObserver.instances.push(this);
+  }
+
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+
+  emit(entry: ResizeObserverEntry) {
+    this.callback([entry], this);
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  ControllableResizeObserver.instances = [];
+});
 
 describe('useContainScale', () => {
   it('reports CSS px per document px from the container it is given', () => {
@@ -18,6 +92,25 @@ describe('useContainScale', () => {
     const { result } = renderHook(() => useContainScale(ref, IMAGE));
 
     expect(result.current.current).toBe(2);
+  });
+
+  it('uses the same scrollport fit as pointer coordinates when a scrollbar reduces client width', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
+
+    const el = container(415, 220, { left: 2, top: 2, width: 400, height: 200, offsetWidth: 415, offsetHeight: 220 });
+    const ref = { current: el };
+    const { result } = renderHook(() => useContainScale(ref, { width: 200, height: 100 }));
+
+    expect(result.current.current).toBe(2);
+    setClientViewport(el, { left: 2, top: 2, width: 385, height: 200, offsetWidth: 415, offsetHeight: 220 });
+
+    act(() => {
+      ControllableResizeObserver.instances[0].emit(resizeEntry(415, 220, 385, 200));
+      vi.advanceTimersByTime(32);
+    });
+
+    expect(result.current.current).toBe(1.925);
   });
 
   /**
@@ -122,13 +215,10 @@ describe('useContainScale', () => {
   });
 
   /**
-   * Tripwires: each asserts the guard we WANT but the current `!width || !height`
-   * check does NOT yet deliver. Infinity and negative values are both truthy, so
-   * they slip through and reach `containFit` — producing a non-finite or negative
-   * scale. Wrapped in `it.fails`: when a guard is added and the hook holds at 1,
-   * the assertion passes and flips to an unexpected-pass signal.
+   * Infinity remains a tripwire: it is truthy, so it reaches `containFit` and produces a
+   * non-finite scale. Negative measurements are clamped by `readClientViewportRect` above.
    */
-  describe('tripwires (it.fails: desired guards not yet implemented)', () => {
+  describe('tripwires (it.fails: desired guard not yet implemented)', () => {
     it.fails('holds at 1 for a non-finite (Infinity) container dimension', () => {
       const ref = { current: container(Infinity, Infinity) };
       const { result } = renderHook(() => useContainScale(ref, IMAGE));
@@ -136,7 +226,7 @@ describe('useContainScale', () => {
       expect(result.current.current).toBe(1);
     });
 
-    it.fails('holds at 1 for a negative container dimension', () => {
+    it('holds at 1 for a negative container dimension', () => {
       const ref = { current: container(-400, 200) };
       const { result } = renderHook(() => useContainScale(ref, IMAGE));
 

@@ -202,9 +202,9 @@ interface Fit {
 /**
  * The app's own contain fit, read from the attributes `usePointerPosition` publishes.
  *
- * `export/visual-regression.spec.ts` already pins the two things this depends on: the container
- * rect equals the canvas rect, and the published `documentWidth`/`documentHeight` are the size
- * the app fitted. Reading the published values rather than calling `containFit` means this file
+ * `export/visual-regression.spec.ts` already pins the two things this depends on: the container's
+ * client viewport equals the canvas CSS box, and the published `documentWidth`/`documentHeight`
+ * are the size the app fitted. Reading the published values rather than calling `containFit` means this file
  * cannot drift from `getLocalCoords` if the fit rule ever changes, which is a change that would
  * otherwise turn every number below into a silently wrong gesture.
  *
@@ -218,16 +218,23 @@ async function readFit(page: Page): Promise<Fit> {
   await expect
     .poll(() =>
       container.evaluate((node) => {
+        if (!(node instanceof HTMLElement)) return false;
         const canvas = node.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
         if (!canvas) return false;
         const rect = node.getBoundingClientRect();
+        const clientRect = {
+          left: rect.left + node.clientLeft,
+          top: rect.top + node.clientTop,
+          width: Math.max(0, node.clientWidth + rect.width - (node.offsetWidth || Math.round(rect.width))),
+          height: Math.max(0, node.clientHeight + rect.height - (node.offsetHeight || Math.round(rect.height))),
+        };
         return (
           node.getAttribute('data-fit-document-width') === String(canvas.width) &&
           node.getAttribute('data-fit-document-height') === String(canvas.height) &&
-          node.getAttribute('data-fit-rect-x') === String(rect.left) &&
-          node.getAttribute('data-fit-rect-y') === String(rect.top) &&
-          node.getAttribute('data-fit-outer-width') === String(rect.width) &&
-          node.getAttribute('data-fit-outer-height') === String(rect.height)
+          node.getAttribute('data-fit-rect-x') === String(clientRect.left) &&
+          node.getAttribute('data-fit-rect-y') === String(clientRect.top) &&
+          node.getAttribute('data-fit-outer-width') === String(clientRect.width) &&
+          node.getAttribute('data-fit-outer-height') === String(clientRect.height)
         );
       })
     )

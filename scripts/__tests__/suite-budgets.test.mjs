@@ -86,6 +86,7 @@ const BUDGETED = [
   'dispose-worktree.test.mjs',
   'e2e-run.test.mjs',
   'main-worktree-guard.test.mjs',
+  'mirror-e2e.test.mjs',
   'merge-release.test.mjs',
   'merge-takeover-guard.test.mjs',
   'merge-takeover-guard-install.test.mjs',
