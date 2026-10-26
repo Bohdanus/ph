@@ -680,7 +680,7 @@ describe('mirror remote and dispatch selection', () => {
   });
 
   it.each([
-    ['leading-space path', { filePrefix: ' ' }, /allowlist/],
+    ['leading-space path', { pathPrefix: ' ' }, /allowlist/],
     ['trailing-space path', { fileSuffix: ' ' }, /allowlist/],
     ['trailing-space subject', { subjectSuffix: ' ' }, /unrecognized subject/],
     ['trailing-space Chat trailer', { chatSuffix: ' ' }, /exactly the requested native Chat trailer/],
@@ -692,11 +692,13 @@ describe('mirror remote and dispatch selection', () => {
       runGit(promotionRepo, ['config', 'user.name', 'Baseline Promotion Fixture']);
       runGit(promotionRepo, ['config', 'user.email', 'baseline-promotion-fixture@example.test']);
 
-      const baselineName = `${mutation.filePrefix ?? ''}${LINUX_BASELINE_FILES[0]}${mutation.fileSuffix ?? ''}`;
-      const baselineFile = join(promotionRepo, LINUX_BASELINE_PATH, baselineName);
+      const baselinePath = mutation.pathPrefix
+        ? `${mutation.pathPrefix}${LINUX_BASELINE_PATH}/${LINUX_BASELINE_FILES[0]}`
+        : `${LINUX_BASELINE_PATH}/${LINUX_BASELINE_FILES[0]}${mutation.fileSuffix ?? ''}`;
+      const baselineFile = join(promotionRepo, baselinePath);
       mkdirSync(dirname(baselineFile), { recursive: true });
       writeFileSync(baselineFile, 'captured baseline\n');
-      runGit(promotionRepo, ['add', '--', `${LINUX_BASELINE_PATH}/`]);
+      runGit(promotionRepo, ['add', '--', baselinePath]);
 
       const subject = `test: refresh Linux export baselines${mutation.subjectSuffix ?? ''}`;
       const chatTrailer = `Chat: ses_0123456789ABCDEF0123456789${mutation.chatSuffix ?? ''}`;
