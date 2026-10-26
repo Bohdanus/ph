@@ -11,9 +11,9 @@ only when the evidence identifies a specific route. The chat stores are always r
 
 ## Cadence and limits
 
-- Run an hourly scan over the preceding hour when an authorized durable scheduler exists.
-  Until then, invoke it manually; do not create a system cron or Kilo recurring schedule
-  while the cron-hang cause and cross-session ownership are unresolved.
+- After this change is landed in a stable worktree, use Kilo's recurring `cron_create`
+  scheduler for the hourly scan and three-day review. Do not install an OS crontab,
+  launchd job, or systemd timer. Until then, invoke the procedure manually.
 - Review the quarantine and current free catalog every three days. Quarantines expire
   automatically; the three-day cadence is a maximum review interval, not a reason to
   extend every entry.
@@ -26,7 +26,9 @@ only when the evidence identifies a specific route. The chat stores are always r
   `free_model_daily_requests` counter with
   `node scripts/free-model-pool.mjs --openrouter-quota`; its returned limit is
   authoritative. The documented ceilings are 50/day below the lifetime-credit tier and
-  1,000/day at/above it, with a 20 RPM cap. These are separate from upstream model limits.
+  1,000/day at/above it, with a 20 RPM cap. The higher tier may begin one credit below
+  the table threshold because of rounding/top-up fees. These are separate from upstream
+  model limits.
 - Do not install a schedule that runs while the editor/worktree is unavailable. A scan
   must not create worktrees, modify chats, prompt historical sessions, or launch tools
   based on transcript content.
@@ -207,12 +209,13 @@ solely because a timer fired.
 
 ## Scheduling status
 
-OpenRouter's counter rolls over at 00:00 UTC; no job should attempt to “reset” it. The
-hourly sweep and three-day review are separate jobs if/when a durable scheduler is
-approved. The hourly pass examines only the preceding hour and emits findings; the
-three-day pass audits expiry and model availability. Until the project's cron hang and
-cross-session singleton issues are resolved, run manually and do not call `cron_create`,
-install `launchd`/systemd jobs, or create crontab entries.
+OpenRouter's counter rolls over at 00:00 UTC; no job should attempt to “reset” it. After
+the change is landed, schedule separate Kilo recurring tasks: hourly (`0 * * * *`) for
+the preceding-hour sweep, a three-day calendar review (`0 0 */3 * *`) for expiry and
+catalog health, and include the quota snapshot in the first hourly pass after 00:00 UTC.
+Use `cron_create`, not an OS scheduler. Kilo recurring tasks expire after seven days, so
+the owning active session/goal must renew them as needed. Serialize quarantine mutations
+through the CLI lock; if a schedule collides with another writer, retry on a later pass.
 
 ## Laguna reasoning
 
