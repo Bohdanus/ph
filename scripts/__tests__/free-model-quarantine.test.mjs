@@ -11,11 +11,12 @@ import {
   removeExpiredQuarantines,
   upsertQuarantine,
   validateQuarantineState,
+  withQuarantineWriteLock,
   writeQuarantineState,
 } from '../lib/free-model-quarantine.mjs';
 import { main as runQuarantineCli } from '../free-model-quarantine.mjs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 
 describe('free-model quarantine lifecycle', () => {
@@ -25,7 +26,10 @@ describe('free-model quarantine lifecycle', () => {
   });
 
   it('shares the default state file across managed worktrees', () => {
-    const projectRoot = resolve(process.cwd(), '../../..');
+    const cwd = resolve(process.cwd());
+    const worktreesMarker = `${sep}.kilo${sep}worktrees${sep}`;
+    const worktreesIndex = cwd.lastIndexOf(worktreesMarker);
+    const projectRoot = worktreesIndex < 0 ? cwd : cwd.slice(0, worktreesIndex);
     expect(DEFAULT_QUARANTINE_FILE).toBe(
       process.env.FREE_MODEL_QUARANTINE_FILE
         ? resolve(process.env.FREE_MODEL_QUARANTINE_FILE)
@@ -227,6 +231,34 @@ describe('free-model quarantine lifecycle', () => {
       expect(await runQuarantineCli(['prune'], output, { quarantineFile: filePath })).toBe(0);
       expect((await readQuarantineState(filePath)).entries).toEqual({});
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a concurrent writer instead of allowing a lost quarantine update', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-lock-'));
+    const filePath = join(directory, 'state.json');
+    let signalAcquired;
+    let releaseLock;
+    const acquired = new Promise((resolveAcquired) => {
+      signalAcquired = resolveAcquired;
+    });
+
+    try {
+      const firstWriter = withQuarantineWriteLock(
+        filePath,
+        () =>
+          new Promise((resolveRelease) => {
+            releaseLock = resolveRelease;
+            signalAcquired();
+          })
+      );
+      await acquired;
+      await expect(withQuarantineWriteLock(filePath, async () => {})).rejects.toThrow(/is locked/);
+      releaseLock();
+      await expect(firstWriter).resolves.toBeUndefined();
+    } finally {
+      releaseLock?.();
       await rm(directory, { recursive: true, force: true });
     }
   });

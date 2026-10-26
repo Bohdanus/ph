@@ -190,7 +190,10 @@ export async function probeOpenRouterQuota({ fetchImpl = fetch, openRouterKey, t
   } catch {
     return null;
   }
-  if (!response.ok) return null;
+  if (!response.ok) {
+    await discardResponseBody(response);
+    return null;
+  }
   let payload;
   try {
     payload = await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, 'OpenRouter key info');

@@ -1,4 +1,4 @@
-import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -145,6 +145,36 @@ export async function writeQuarantineState(state, filePath = DEFAULT_FILE) {
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => {});
     throw error;
+  }
+}
+
+export async function withQuarantineWriteLock(filePath, update) {
+  const lockPath = `${filePath}.lock`;
+  await mkdir(dirname(filePath), { recursive: true });
+  let handle;
+  try {
+    handle = await open(lockPath, 'wx', 0o600);
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      throw new Error(`Quarantine state is locked by another or prior process (${lockPath})`);
+    }
+    throw error;
+  }
+
+  let updateFailed = false;
+  try {
+    await handle.writeFile(`${process.pid}\n`, 'utf8');
+    return await update();
+  } catch (error) {
+    updateFailed = true;
+    throw error;
+  } finally {
+    await handle.close();
+    try {
+      await unlink(lockPath);
+    } catch (error) {
+      if (!updateFailed || error?.code !== 'ENOENT') throw error;
+    }
   }
 }
 

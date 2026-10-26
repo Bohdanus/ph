@@ -236,6 +236,14 @@ describe('OpenRouter quota status command', () => {
     expect(stdout.write).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it('cancels the response body when quota status returns a non-OK response', async () => {
+    const cancel = vi.fn();
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 429, body: { cancel } }));
+
+    await expect(probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' })).resolves.toBeNull();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('OpenRouter pre-routing quota check', () => {
