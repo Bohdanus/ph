@@ -191,8 +191,9 @@ briefly while making them eligible for review instead of keeping them banned for
 The default file is the project-shared `.kilo/free-model-quarantine.json`, including when
 the command runs from a managed worktree; `FREE_MODEL_QUARANTINE_FILE` overrides it.
 Mutating commands take an adjacent exclusive lock and fail fast if another writer owns it.
-After a crash, verify no quarantine command is still running before manually removing a
-stale `.lock` file; never auto-break another process's lock. The command rejects entries
+The lock error includes the stored PID and its liveness check. After a crash, verify no
+quarantine command is still running before manually removing a stale `.lock` file; never
+auto-break another process's lock. The command rejects entries
 longer than 72 hours. Do not store transcripts or raw error
 payloads in quarantine metadata; the reason and expiry are enough. The pool ignores
 expired entries even if they have not yet been pruned. A malformed state file fails

@@ -177,7 +177,10 @@ export async function withQuarantineWriteLock(filePath, update, deps = {}) {
     handle = await openImpl(lockPath, 'wx', 0o600);
   } catch (error) {
     if (error?.code === 'EEXIST') {
-      throw new Error(`Quarantine state is locked by another or prior process (${lockPath})`);
+      const owner = await readLockOwner(lockPath);
+      throw new Error(
+        `Quarantine state lock is held by ${owner} at ${lockPath}. Verify no update is running before manually removing a stale lock.`
+      );
     }
     throw error;
   }
@@ -216,6 +219,24 @@ export async function withQuarantineWriteLock(filePath, update, deps = {}) {
     );
   }
   return result;
+}
+
+async function readLockOwner(lockPath) {
+  let contents;
+  try {
+    contents = await readFile(lockPath, 'utf8');
+  } catch {
+    return 'an unknown process';
+  }
+  const pid = Number(contents.trim());
+  if (!Number.isSafeInteger(pid) || pid < 1) return 'an unknown process';
+  try {
+    process.kill(pid, 0);
+    return `process ${pid}, which appears active`;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return `process ${pid}, which is not running (stale candidate)`;
+    return `process ${pid}, whose status cannot be verified`;
+  }
 }
 
 async function writeQuarantineStateIfAbsent(state, filePath) {

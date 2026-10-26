@@ -86,7 +86,8 @@ worktrees (`FREE_MODEL_QUARANTINE_FILE` overrides it). On first pool/CLI use, th
 hard-coded Kilo quarantines are imported into the local state file for a final 72-hour review
 window; subsequent release or expiry is explicit and persistent. A malformed state file fails
 closed before catalog requests. Mutations are exclusive-lock protected and fail fast on a live or
-stale lock; after a crash, verify no writer is active before removing a stale lock file.
+stale lock; the error reports the stored PID/liveness check, and after a crash verify no writer is
+active before removing a stale lock file.
 A 3-day review cadence is for checking reports and current catalog health, not extending every
 quarantine. Use `npm run free:quarantine -- list|add|release|prune` and follow the read-only
 `.skills/free-model-chat-sweep.md` procedure. Do not quarantine a model for a global daily quota,

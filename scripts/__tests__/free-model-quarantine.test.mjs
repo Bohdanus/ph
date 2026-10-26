@@ -278,8 +278,11 @@ describe('free-model quarantine lifecycle', () => {
           })
       );
       await acquired;
-      await expect(withQuarantineWriteLock(filePath, async () => {})).rejects.toThrow(/is locked/);
-      await expect(writeQuarantineState({ schemaVersion: 1, entries: {} }, filePath)).rejects.toThrow(/is locked/);
+      const activeOwnerMessage = new RegExp(`process ${process.pid}.*appears active`);
+      await expect(withQuarantineWriteLock(filePath, async () => {})).rejects.toThrow(activeOwnerMessage);
+      await expect(writeQuarantineState({ schemaVersion: 1, entries: {} }, filePath)).rejects.toThrow(
+        activeOwnerMessage
+      );
       releaseLock();
       await expect(firstWriter).resolves.toBeUndefined();
     } finally {
