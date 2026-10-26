@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { QuickSelectionToolArea } from '../QuickSelectionToolArea.tsx';
 import { rasterizeSelectionState } from '../../../tools/quickSelection.ts';
+import * as quickSelectionUtil from '../../../tools/quickSelection.ts';
 import { decodeRasterSelectionMask, isRasterSelectionPixelSelected } from '../../../util/selection-mask.ts';
 
 /**
@@ -19,6 +20,7 @@ import { decodeRasterSelectionMask, isRasterSelectionPixelSelected } from '../..
 const IMAGE_SIZE = { width: 50, height: 50 };
 
 const dispatchMock = vi.hoisted(() => vi.fn());
+const dispatchOverride = vi.hoisted(() => ({ current: null as ((action: unknown) => void) | null }));
 const createQuickSelectionPolygonMock = vi.hoisted(() => vi.fn());
 const createSelectionRasterOutlineMock = vi.hoisted(() => vi.fn());
 const sourceCanvas = vi.hoisted(() => document.createElement('canvas'));
@@ -33,6 +35,7 @@ const storeState = vi.hoisted(
     documentRevision: number;
     historyIndex: number;
     branchRevision: number;
+    renderSelector: { source: 'legacy' | 'pending' | 'durable' };
   } => ({
     selections: [],
     activeSelectionId: null,
@@ -42,6 +45,7 @@ const storeState = vi.hoisted(
     documentRevision: 0,
     historyIndex: 0,
     branchRevision: 0,
+    renderSelector: { source: 'legacy' },
   })
 );
 const toolState = vi.hoisted(
@@ -96,8 +100,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       documentRevision: storeState.documentRevision,
       historyIndex: storeState.historyIndex,
       branchRevision: storeState.branchRevision,
+      renderSelector: storeState.renderSelector,
     },
-    dispatchMock,
+    dispatchOverride.current ?? dispatchMock,
   ],
 }));
 
@@ -187,14 +192,18 @@ function renderQuickSelectionView() {
     toolArea: view.container.firstElementChild as HTMLDivElement,
     overlayCtx: overlayCtxRef.current,
     rerender: () => view.rerender(makeElement()),
+    unmount: view.unmount,
   };
 }
 
 describe('QuickSelectionToolArea', () => {
   let getContextSpy: Mock | null = null;
+  let growAlongStrokeSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 
   beforeEach(() => {
-    dispatchMock.mockClear();
+    dispatchMock.mockReset();
+    dispatchOverride.current = null;
     createQuickSelectionPolygonMock.mockClear();
     createSelectionRasterOutlineMock.mockReset();
     pointerState.activePointerId = null;
@@ -208,6 +217,7 @@ describe('QuickSelectionToolArea', () => {
     storeState.documentRevision = 0;
     storeState.historyIndex = 0;
     storeState.branchRevision = 0;
+    storeState.renderSelector = { source: 'legacy' };
     toolState.toolArgs = { size: 16, tolerance: 0, mode: 'add', alpha: 1, toolName: 'quick-selection' };
     sourceCanvas.width = IMAGE_SIZE.width;
     sourceCanvas.height = IMAGE_SIZE.height;
@@ -219,6 +229,10 @@ describe('QuickSelectionToolArea', () => {
   afterEach(() => {
     getContextSpy?.mockRestore();
     getContextSpy = null;
+    growAlongStrokeSpy?.mockRestore();
+    growAlongStrokeSpy = null;
+    consoleErrorSpy?.mockRestore();
+    consoleErrorSpy = null;
   });
 
   // Frame origin (100, 40); a closed four-vertex selection whose document-space absolute
@@ -262,6 +276,129 @@ describe('QuickSelectionToolArea', () => {
 
     // `getActiveSelection` returns null, so there is no stored mask to rasterize.
     expect(rasterizeSelectionState).not.toHaveBeenCalled();
+  });
+
+  it('does not capture the pointer or read stale pixels while replay is pending', () => {
+    storeState.renderSelector = { source: 'pending' };
+    const toolArea = renderQuickSelectionArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    expect(pointerState.activePointerId).toBeNull();
+    expect(getContextSpy).not.toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('releases the pointer and cancels the draft when a later growth throws', () => {
+    const realGrowAlongStroke = quickSelectionUtil.growAlongStroke;
+    growAlongStrokeSpy = vi
+      .spyOn(quickSelectionUtil, 'growAlongStroke')
+      .mockImplementationOnce(realGrowAlongStroke)
+      .mockImplementation(() => {
+        throw new RangeError('simulated allocation failure');
+      });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const toolArea = renderQuickSelectionArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.filter((action) => action.type === 'START_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.filter((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.some((action) => action.type === 'COMMIT_DOCUMENT_EDIT')).toBe(false);
+    expect(pointerState.releaseCalls).toBe(1);
+    expect(pointerState.activePointerId).toBeNull();
+  });
+
+  it('cancels the draft and releases the pointer when unmounted mid-stroke', () => {
+    const view = renderQuickSelectionView();
+    fireEvent.pointerDown(view.toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    view.unmount();
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.filter((action) => action.type === 'START_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.filter((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.some((action) => action.type === 'COMMIT_DOCUMENT_EDIT')).toBe(false);
+    expect(pointerState.releaseCalls).toBe(1);
+    expect(pointerState.activePointerId).toBeNull();
+  });
+
+  it('keeps an in-flight stroke when the store supplies a new dispatch function', () => {
+    const view = renderQuickSelectionView();
+    const nextDispatch = vi.fn();
+
+    fireEvent.pointerDown(view.toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    dispatchOverride.current = nextDispatch;
+    view.rerender();
+
+    expect(
+      dispatchMock.mock.calls.some(([action]) => (action as { type: string }).type === 'CANCEL_SELECTION_DRAFT')
+    ).toBe(false);
+    expect(pointerState.activePointerId).toBe(1);
+
+    fireEvent.pointerMove(view.toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8 });
+    fireEvent.pointerUp(view.toolArea, { button: 0, pointerId: 1, clientX: 8, clientY: 8 });
+
+    expect(
+      nextDispatch.mock.calls.some(([action]) => (action as { type: string }).type === 'COMMIT_DOCUMENT_EDIT')
+    ).toBe(true);
+    expect(pointerState.activePointerId).toBeNull();
+  });
+
+  it('uses the latest dispatch to cancel a stroke when unmounted after a store update', () => {
+    const view = renderQuickSelectionView();
+    const nextDispatch = vi.fn();
+
+    fireEvent.pointerDown(view.toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    dispatchOverride.current = nextDispatch;
+    view.rerender();
+    view.unmount();
+
+    expect(
+      dispatchMock.mock.calls.some(([action]) => (action as { type: string }).type === 'CANCEL_SELECTION_DRAFT')
+    ).toBe(false);
+    expect(
+      nextDispatch.mock.calls.some(([action]) => (action as { type: string }).type === 'CANCEL_SELECTION_DRAFT')
+    ).toBe(true);
+    expect(pointerState.activePointerId).toBeNull();
+  });
+
+  it('cancels the draft when release-time outline construction throws', () => {
+    createQuickSelectionPolygonMock.mockImplementationOnce(() => {
+      throw new RangeError('simulated outline allocation failure');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const toolArea = renderQuickSelectionArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.filter((action) => action.type === 'START_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.filter((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.some((action) => action.type === 'COMMIT_DOCUMENT_EDIT')).toBe(false);
+    expect(pointerState.releaseCalls).toBe(1);
+    expect(pointerState.activePointerId).toBeNull();
+  });
+
+  it('cancels the draft and releases the pointer when the selection writer throws', () => {
+    dispatchMock.mockImplementation((action: { type: string }) => {
+      if (action.type === 'COMMIT_DOCUMENT_EDIT') throw new Error('simulated selection writer failure');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const toolArea = renderQuickSelectionArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.filter((action) => action.type === 'START_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT')).toHaveLength(2);
+    expect(actions.filter((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toHaveLength(1);
+    expect(pointerState.releaseCalls).toBe(1);
+    expect(pointerState.activePointerId).toBeNull();
   });
 
   it('releases a captured pointer when readback fails so a later Quick Selection stroke can start', () => {

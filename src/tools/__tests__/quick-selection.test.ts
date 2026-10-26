@@ -22,7 +22,11 @@ import {
 import { floodFill } from '../../util/flood-fill.ts';
 import { createSelectionAlphaMask, isPointInContours } from '../../util/selection.ts';
 import type { Point, Selection } from '../../contexts/general-types.ts';
-import { encodeRasterSelectionMask, MAX_VECTOR_SELECTION_BOUNDARY_EDGES } from '../../util/selection-mask.ts';
+import {
+  encodeRasterSelectionMask,
+  MAX_RASTER_SELECTION_PIXELS,
+  MAX_VECTOR_SELECTION_BOUNDARY_EDGES,
+} from '../../util/selection-mask.ts';
 
 type MockCtx = ReturnType<typeof createMockCanvasContext>;
 
@@ -317,18 +321,21 @@ describe('sampleStrokeSeeds', () => {
       { x: 12, y: 11 },
     ];
     const sampler = createQuickSelectionStrokeSeedSampler(16);
-    const incremental = points.flatMap((point, index) =>
-      appendQuickSelectionStrokeSeeds(sampler, point, index === points.length - 1)
-    );
+    const incremental: Point[] = [];
+    for (let index = 0; index < points.length; index += 1) {
+      for (const seed of appendQuickSelectionStrokeSeeds(sampler, points[index]!, index === points.length - 1)) {
+        incremental.push(seed);
+      }
+    }
 
     expect(incremental).toEqual(sampleStrokeSeeds(points, 16));
   });
 
   it('returns only newly reached seed pixels on each pointer event', () => {
     const sampler = createQuickSelectionStrokeSeedSampler(20);
-    const first = appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 });
-    const second = appendQuickSelectionStrokeSeeds(sampler, { x: 5, y: 0 });
-    const third = appendQuickSelectionStrokeSeeds(sampler, { x: 12, y: 0 }, true);
+    const first = [...appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 })];
+    const second = [...appendQuickSelectionStrokeSeeds(sampler, { x: 5, y: 0 })];
+    const third = [...appendQuickSelectionStrokeSeeds(sampler, { x: 12, y: 0 }, true)];
     const uniquePixels = new Set(
       [...first, ...second, ...third].map(({ x, y }) => `${Math.floor(x)},${Math.floor(y)}`)
     );
@@ -341,19 +348,74 @@ describe('sampleStrokeSeeds', () => {
 
   it('bounds per-stroke seed deduplication and safely re-emits uncached pixels', () => {
     const sampler = createQuickSelectionStrokeSeedSampler(1, 100);
-    appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true);
-    appendQuickSelectionStrokeSeeds(sampler, { x: 5_000, y: 0 }, true);
+    const initial = [...appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true)];
+    const longStroke = [...appendQuickSelectionStrokeSeeds(sampler, { x: 5_000, y: 0 }, true)];
 
+    expect(initial).toHaveLength(1);
+    expect(longStroke.length).toBeGreaterThan(4_096);
     expect(sampler.emittedPixels.size).toBe(4_096);
 
-    const retraced = appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true);
+    const retraced = [...appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true)];
 
     expect(sampler.emittedPixels.size).toBe(4_096);
     expect(retraced.some(({ x, y }) => Math.floor(x) === 4_096 && Math.floor(y) === 0)).toBe(true);
   });
+
+  it('does not advance the stroke sampler when a stale image rejects its lazy seed stream', () => {
+    const sampler = createQuickSelectionStrokeSeedSampler(1, 100);
+    const staleSeeds = appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true);
+    const accumulator = createQuickSelectionAccumulator({ width: 1, height: 1 });
+
+    expect(growAlongStroke(accumulator, solidImage(2, 2, RED), staleSeeds, { tolerance: 0, mode: 'add' })).toBe(0);
+    expect([...appendQuickSelectionStrokeSeeds(sampler, { x: 1, y: 0 }, true)]).toEqual([{ x: 1, y: 0 }]);
+  });
+
+  it('streams every seed for an oversized pointer event and includes the event endpoint', () => {
+    const sampler = createQuickSelectionStrokeSeedSampler(1, 25);
+    const initial = [...appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true)];
+    expect(initial).toHaveLength(1);
+
+    const seeds = appendQuickSelectionStrokeSeeds(sampler, { x: 100_000, y: 0 }, true);
+    let seedCount = 0;
+    let lastSeed: Point | null = null;
+    for (const seed of seeds) {
+      seedCount += 1;
+      lastSeed = seed;
+    }
+
+    expect(Array.isArray(seeds)).toBe(false);
+    expect(seedCount).toBeGreaterThan(300_000);
+    expect(seedCount).toBeLessThan(400_000);
+    expect(lastSeed).toEqual({ x: 100_000, y: 0 });
+    expect(sampler.emittedPixels.size).toBe(4_096);
+    expect(sampler.centers.lastPoint).toEqual({ x: 100_000, y: 0 });
+    expect(sampler.centers.carried).toBe(0);
+  });
 });
 
 describe('growAlongStroke union', () => {
+  it('grows isolated pixels across a long streamed stroke after the seed cache fills', () => {
+    const width = 5_001;
+    const imageData = makeMockImageData(width, 1);
+    for (let x = 0; x < width; x += 1) {
+      imageData.data[x * 4] = x % 256;
+      imageData.data[x * 4 + 3] = 255;
+    }
+    const sampler = createQuickSelectionStrokeSeedSampler(1, 25);
+    const accumulator = createQuickSelectionAccumulator({ width, height: 1 });
+    const strokeSeeds = (function* () {
+      yield* appendQuickSelectionStrokeSeeds(sampler, { x: 0, y: 0 }, true);
+      yield* appendQuickSelectionStrokeSeeds(sampler, { x: width - 1, y: 0 }, true);
+    })();
+
+    growAlongStroke(accumulator, imageData, strokeSeeds, { tolerance: 0, mode: 'add' });
+
+    expect(accumulator.selectedPixelCount).toBe(width);
+    expect(accumulator.mask[0]).toBe(1);
+    expect(accumulator.mask[width - 1]).toBe(1);
+    expect(sampler.emittedPixels.size).toBe(4_096);
+  });
+
   it('keeps the coarse preview within its pixel budget when odd dimensions round up', () => {
     const accumulator = createQuickSelectionAccumulator({ width: 1001, height: 999 });
 
@@ -427,6 +489,99 @@ describe('growAlongStroke union', () => {
     expect(second).toBe(0);
     expect(accumulator.floodFillWorkspace?.generation).toBe(1);
     expect(countSelected(accumulator.mask)).toBe(4);
+  });
+
+  it('skips same-colour component fills for distinct seeds in one nonzero-tolerance batch', () => {
+    const imageData = solidImage(24, 4, RED);
+    const accumulator = createQuickSelectionAccumulator({ width: imageData.width, height: imageData.height });
+
+    growAlongStroke(
+      accumulator,
+      imageData,
+      [
+        { x: 1, y: 1 },
+        { x: 12, y: 2 },
+        { x: 22, y: 3 },
+      ],
+      { tolerance: 20, mode: 'add' }
+    );
+
+    expect(accumulator.floodFillWorkspace?.generation).toBe(1);
+    expect(accumulator.selectedPixelCount).toBe(24 * 4);
+  });
+
+  it('does not reuse a cached fill for a disconnected component of the same colour', () => {
+    const imageData = createTwoSameColourBlocks();
+    const accumulator = createQuickSelectionAccumulator({ width: imageData.width, height: imageData.height });
+
+    growAlongStroke(
+      accumulator,
+      imageData,
+      [
+        { x: 1, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      {
+        tolerance: 10,
+        mode: 'add',
+      }
+    );
+
+    expect(accumulator.floodFillWorkspace?.generation).toBe(2);
+    expect(countSelected(accumulator.mask)).toBe(8);
+  });
+
+  it('reuses a matching colour-region cache across pointer-event batches', () => {
+    const imageData = solidImage(8, 1, RED);
+    setPixel(imageData, 7, 0, BLUE);
+    const accumulator = createQuickSelectionAccumulator({ width: imageData.width, height: imageData.height });
+
+    growAlongStroke(accumulator, imageData, [{ x: 1, y: 0 }], { tolerance: 10, mode: 'add' });
+    const generation = accumulator.floodFillWorkspace?.generation;
+    growAlongStroke(accumulator, imageData, [{ x: 5, y: 0 }], { tolerance: 10, mode: 'add' });
+
+    expect(generation).toBe(1);
+    expect(accumulator.floodFillWorkspace?.generation).toBe(generation);
+    expect(countSelected(accumulator.mask)).toBe(7);
+  });
+
+  it('drops stale cached generations before the visited-map generation wraps', () => {
+    const imageData = solidImage(8, 1, RED);
+    setPixel(imageData, 7, 0, BLUE);
+    const accumulator = createQuickSelectionAccumulator({ width: imageData.width, height: imageData.height });
+    growAlongStroke(accumulator, imageData, [{ x: 1, y: 0 }], { tolerance: 10, mode: 'add' });
+    const workspace = accumulator.floodFillWorkspace!;
+    workspace.generation = 255;
+
+    growAlongStroke(accumulator, imageData, [{ x: 5, y: 0 }], { tolerance: 10, mode: 'add' });
+
+    expect(workspace.generation).toBe(1);
+    expect(countSelected(accumulator.mask)).toBe(7);
+  });
+
+  it('invalidates exact-seed caches when the stroke mode or tolerance changes', () => {
+    const imageData = createTwoSameColourBlocks();
+    const accumulator = createQuickSelectionAccumulator({ width: imageData.width, height: imageData.height });
+
+    growAlongStroke(accumulator, imageData, [{ x: 1, y: 0 }], { tolerance: 10, mode: 'add' });
+    growAlongStroke(accumulator, imageData, [{ x: 1, y: 0 }], { tolerance: 10, mode: 'subtract' });
+
+    expect(countSelected(accumulator.mask)).toBe(0);
+
+    const gradient = solidImage(3, 1, [0, 0, 100, 255]);
+    setPixel(gradient, 1, 0, [0, 0, 110, 255]);
+    setPixel(gradient, 2, 0, [0, 0, 120, 255]);
+    const gradientAccumulator = createQuickSelectionAccumulator({ width: 3, height: 1 });
+    growAlongStroke(gradientAccumulator, gradient, [{ x: 0, y: 0 }], { tolerance: 0, mode: 'add' });
+    growAlongStroke(gradientAccumulator, gradient, [{ x: 0, y: 0 }], { tolerance: 5, mode: 'add' });
+
+    expect(countSelected(gradientAccumulator.mask)).toBe(3);
+  });
+
+  it('rejects an oversized accumulator before allocating its full-frame mask', () => {
+    expect(() => createQuickSelectionAccumulator({ width: MAX_RASTER_SELECTION_PIXELS + 1, height: 1 })).toThrow(
+      RangeError
+    );
   });
 
   it('grows a full equal-color region when a new Add stroke starts inside its base selection', () => {
@@ -783,6 +938,10 @@ describe('traceMaskBoundary', () => {
 });
 
 describe('rasterizeSelectionMask', () => {
+  it('rejects over-budget dimensions before allocating a full-frame mask', () => {
+    expect(() => rasterizeSelectionMask([], { width: MAX_RASTER_SELECTION_PIXELS + 1, height: 1 })).toThrow(RangeError);
+  });
+
   it('is empty for a path that encloses nothing', () => {
     expect(countSelected(rasterizeSelectionMask([], { width: 4, height: 4 }))).toBe(0);
     expect(
@@ -834,6 +993,24 @@ describe('rasterizeSelectionMask', () => {
         { width: 2, height: 2 }
       ),
     ]).toEqual([64, 64, 64, 64]);
+  });
+
+  it('rejects over-budget raster selection dimensions before decoding or allocating', () => {
+    const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
+    const selection: Selection = {
+      id: 'small-packed-selection',
+      isActive: true,
+      geometry: 'polygon',
+      lifecycle: 'committed',
+      sourceTool: 'quick-selection',
+      pos: { x: 0, y: 0, width: 1, height: 1 },
+      points: [],
+      rasterMask,
+    };
+
+    expect(() =>
+      rasterizeSelectionState(selection, { width: MAX_RASTER_SELECTION_PIXELS + 1, height: 1 }, { x: 0, y: 0 })
+    ).toThrow(RangeError);
   });
 });
 
@@ -945,6 +1122,13 @@ describe('non-finite input handling', () => {
     expect(traceMaskBoundary(new Uint8Array(0), NaN, NaN)).toBeNull();
     expect(traceMaskBoundary(new Uint8Array(0), Infinity, Infinity)).toBeNull();
     expect(traceMaskBoundary(new Uint8Array(0), -5, -5)).toBeNull();
+  });
+
+  it('rejects over-budget tracing dimensions before scanning the mask', () => {
+    expect(() => traceMaskBoundary(new Uint8Array(0), MAX_RASTER_SELECTION_PIXELS + 1, 1)).toThrow(RangeError);
+    expect(() => createQuickSelectionPolygon(new Uint8Array(0), MAX_RASTER_SELECTION_PIXELS + 1, 1)).toThrow(
+      RangeError
+    );
   });
 
   it('rasterizeSelectionMask with non-finite size yields an empty mask', () => {

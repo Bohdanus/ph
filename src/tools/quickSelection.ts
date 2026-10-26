@@ -7,7 +7,7 @@ import type {
   Size,
 } from '../contexts/general-types.ts';
 import {
-  appendBrushDabCenters,
+  appendBrushDabCentersStream,
   brushDabCenters,
   createBrushDabCenterSampler,
   type BrushDabCenterSampler,
@@ -25,7 +25,9 @@ import { getSelectionAbsoluteContours, isPointInContours, selectionPointPathsToC
 import {
   decodeRasterSelectionMask,
   encodeRasterSelectionMask,
+  isRasterSelectionSizeWithinBudget,
   isRasterSelectionPixelSelected,
+  MAX_RASTER_SELECTION_PIXELS,
   MAX_VECTOR_SELECTION_BOUNDARY_EDGES,
 } from '../util/selection-mask.ts';
 import type { ProcessorToolParams } from './toolProcessors.ts';
@@ -108,9 +110,13 @@ export function sampleStrokeSeeds(
   const sampler = createQuickSelectionStrokeSeedSampler(size, spacingPercent);
   const seeds: Point[] = [];
   for (let index = 0; index < points.length; index += 1) {
-    seeds.push(
-      ...appendQuickSelectionStrokeSeeds(sampler, points[index], includeEndpoint && index === points.length - 1)
-    );
+    for (const seed of appendQuickSelectionStrokeSeeds(
+      sampler,
+      points[index],
+      includeEndpoint && index === points.length - 1
+    )) {
+      seeds.push(seed);
+    }
   }
   return seeds;
 }
@@ -150,24 +156,26 @@ export function createQuickSelectionStrokeSeedSampler(
   };
 }
 
-/** Extend one stroke path point and return only seed pixels not emitted by earlier events. */
+/** Extend one stroke point and stream seed pixels not emitted by earlier points. */
 export function appendQuickSelectionStrokeSeeds(
   sampler: QuickSelectionStrokeSeedSampler,
   point: Point,
   includeEndpoint = false
-): Point[] {
-  const centers = appendBrushDabCenters(sampler.centers, [point], includeEndpoint);
-  const seeds: Point[] = [];
-  for (const center of centers) {
-    for (const offset of sampler.offsets) {
-      const seed = { x: center.x + offset.x, y: center.y + offset.y };
-      const pixel = `${Math.floor(seed.x)},${Math.floor(seed.y)}`;
-      if (sampler.emittedPixels.has(pixel)) continue;
-      if (sampler.emittedPixels.size < MAX_CACHED_QUICK_SELECTION_SEEDS) sampler.emittedPixels.add(pixel);
-      seeds.push(seed);
+): IterableIterator<Point> {
+  return (function* () {
+    // Defer advancing the eager center sampler until a consumer asks for seeds. A stale
+    // pointer event can then be rejected before it mutates the sampler for the next event.
+    const centers = appendBrushDabCentersStream(sampler.centers, point, includeEndpoint);
+    for (const center of centers) {
+      for (const offset of sampler.offsets) {
+        const seed = { x: center.x + offset.x, y: center.y + offset.y };
+        const pixel = `${Math.floor(seed.x)},${Math.floor(seed.y)}`;
+        if (sampler.emittedPixels.has(pixel)) continue;
+        if (sampler.emittedPixels.size < MAX_CACHED_QUICK_SELECTION_SEEDS) sampler.emittedPixels.add(pixel);
+        yield seed;
+      }
     }
-  }
-  return seeds;
+  })();
 }
 
 const toPixelExtent = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
@@ -200,6 +208,10 @@ export type QuickSelectionAccumulator = {
   exactFilledPixels: Uint8Array | null;
   /** Exact source pixels already grown at nonzero tolerance; bounded so this cache cannot grow unchecked. */
   processedSeedIndices: Set<number>;
+  /** Generation labels keep matching regions cached across pointer events; at most 255 entries. */
+  filledGenerationSignatures: Map<number, string>;
+  /** Stable per-stroke inputs for the fill caches; the UI captures an immutable ImageData snapshot on pointer-down. */
+  fillCacheContext: { imageData: ImageData; toleranceDistance: number; mode: QuickSelectionToolArgs['mode'] } | null;
   selectedPixelCount: number;
 };
 
@@ -213,6 +225,9 @@ export function createQuickSelectionAccumulator(
 ): QuickSelectionAccumulator {
   const width = toPixelExtent(size.width);
   const height = toPixelExtent(size.height);
+  if (!isRasterSelectionSizeWithinBudget(width, height)) {
+    throw new RangeError(`Quick Selection is limited to ${MAX_RASTER_SELECTION_PIXELS.toLocaleString()} pixels`);
+  }
   const mask = new Uint8Array(width * height);
   const area = width * height;
   const previewLimit =
@@ -266,6 +281,8 @@ export function createQuickSelectionAccumulator(
     floodFillWorkspace: null,
     exactFilledPixels: null,
     processedSeedIndices: new Set(),
+    filledGenerationSignatures: new Map(),
+    fillCacheContext: null,
     selectedPixelCount,
   };
 }
@@ -300,13 +317,15 @@ function updateQuickSelectionPreviewPixel(
  * The caller may provide only newly sampled seeds on each pointer event. A zero-tolerance
  * fill records its entire connected component, so later seeds in that component can be
  * skipped safely without confusing pixels from the pre-existing base selection. At higher
- * tolerances, only exact repeated seed pixels are cached; that cache is capped, affecting
- * speed but never results. The queue and generation-marked visited map are reused.
+ * tolerances, fills within one seed batch share a cache keyed by exact sample colour and
+ * tolerance; only seeds whose pixels carry that fill's generation marker are skipped. The
+ * input image and settings are fixed for one pointer stroke, and changing any cache context
+ * clears prior seed marks before the next batch. The queue and visited map are reused.
  */
 export function growAlongStroke(
   accumulator: QuickSelectionAccumulator,
   imageData: ImageData,
-  seeds: Point[],
+  seeds: Iterable<Point>,
   { tolerance, mode }: { tolerance: number; mode: QuickSelectionToolArgs['mode'] }
 ): number {
   const { mask, width, height } = accumulator;
@@ -318,9 +337,22 @@ export function growAlongStroke(
 
   let changedRegions = 0;
   const toleranceDistance = getToleranceDistance(tolerance);
+  const fillCacheContext = accumulator.fillCacheContext;
+  if (
+    !fillCacheContext ||
+    fillCacheContext.imageData !== imageData ||
+    fillCacheContext.toleranceDistance !== toleranceDistance ||
+    fillCacheContext.mode !== mode
+  ) {
+    accumulator.exactFilledPixels = null;
+    accumulator.processedSeedIndices.clear();
+    accumulator.filledGenerationSignatures.clear();
+    accumulator.fillCacheContext = { imageData, toleranceDistance, mode };
+  }
+  const filledGenerationSignatures = accumulator.filledGenerationSignatures;
   for (const seed of seeds) {
-    if (mode === 'add' && accumulator.selectedPixelCount === mask.length) break;
-    if (mode === 'subtract' && accumulator.selectedPixelCount === 0) break;
+    if (mode === 'add' && accumulator.selectedPixelCount === mask.length) continue;
+    if (mode === 'subtract' && accumulator.selectedPixelCount === 0) continue;
     const seedX = Math.floor(seed.x);
     const seedY = Math.floor(seed.y);
     if (
@@ -347,6 +379,13 @@ export function growAlongStroke(
     const workspace =
       accumulator.floodFillWorkspace ??
       (accumulator.floodFillWorkspace = createContiguousFloodFillWorkspace(width * height));
+    const fillSignature = `${sampleColor.r},${sampleColor.g},${sampleColor.b},${sampleColor.a},${toleranceDistance}`;
+    // The next fill clears and reuses generation 1 when the byte counter wraps. Drop old
+    // signatures before checking a seed, or a stale generation-1 label can suppress that fill.
+    if (workspace.generation === 255) filledGenerationSignatures.clear();
+    const priorGeneration = workspace.visited[seedIndex]!;
+    if (toleranceDistance > 0 && filledGenerationSignatures.get(priorGeneration) === fillSignature) continue;
+
     let changed = false;
     const selectedPixelCount = visitContiguousMaskPixels(
       imageData,
@@ -369,6 +408,7 @@ export function growAlongStroke(
         mask[pixel] = nextValue;
       }
     );
+    if (selectedPixelCount > 0) filledGenerationSignatures.set(workspace.generation, fillSignature);
     if (selectedPixelCount > 0 && changed) changedRegions += 1;
     if (
       toleranceDistance > 0 &&
@@ -414,6 +454,9 @@ function pointsBounds(points: Point[]) {
 export function rasterizeSelectionMask(points: SelectionPointPaths, size: Size): Uint8Array {
   const width = toPixelExtent(size.width);
   const height = toPixelExtent(size.height);
+  if (!isRasterSelectionSizeWithinBudget(width, height)) {
+    throw new RangeError(`Quick Selection is limited to ${MAX_RASTER_SELECTION_PIXELS.toLocaleString()} pixels`);
+  }
   const mask = new Uint8Array(width * height);
   const contours = selectionPointPathsToContours(points);
   if (!contours.some((contour) => contour.length >= 3) || width === 0 || height === 0) return mask;
@@ -430,6 +473,9 @@ export function rasterizeSelectionMask(points: SelectionPointPaths, size: Size):
 export function rasterizeSelectionState(selection: Selection, size: Size, documentOrigin: Point): Uint8Array {
   const width = toPixelExtent(size.width);
   const height = toPixelExtent(size.height);
+  if (!isRasterSelectionSizeWithinBudget(width, height)) {
+    throw new RangeError(`Quick Selection is limited to ${MAX_RASTER_SELECTION_PIXELS.toLocaleString()} pixels`);
+  }
   if (!selection.rasterMask) {
     const contours = getSelectionAbsoluteContours(selection).map((contour) =>
       contour.map((point) => ({ x: point.x - documentOrigin.x, y: point.y - documentOrigin.y }))
@@ -623,7 +669,11 @@ export type TracedMaskBoundary = {
  * so the loop comes back self-touching at that one vertex and the region is still right.
  */
 export function traceMaskBoundary(mask: Uint8Array, width: number, height: number): TracedMaskBoundary | null {
-  if (width <= 0 || height <= 0 || mask.length < width * height) return null;
+  if (!Number.isSafeInteger(width) || width <= 0 || !Number.isSafeInteger(height) || height <= 0) return null;
+  if (!isRasterSelectionSizeWithinBudget(width, height)) {
+    throw new RangeError(`Quick Selection is limited to ${MAX_RASTER_SELECTION_PIXELS.toLocaleString()} pixels`);
+  }
+  if (mask.length < width * height) return null;
 
   let minX = width;
   let minY = height;
@@ -731,6 +781,15 @@ export function createQuickSelectionPolygon(
   width: number,
   height: number
 ): QuickSelectionPolygon | null {
+  if (
+    Number.isSafeInteger(width) &&
+    width > 0 &&
+    Number.isSafeInteger(height) &&
+    height > 0 &&
+    !isRasterSelectionSizeWithinBudget(width, height)
+  ) {
+    throw new RangeError(`Quick Selection is limited to ${MAX_RASTER_SELECTION_PIXELS.toLocaleString()} pixels`);
+  }
   const traced = traceMaskBoundary(mask, width, height);
   if (!traced) return null;
 
