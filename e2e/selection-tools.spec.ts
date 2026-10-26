@@ -10,6 +10,7 @@ import {
   type ImageDataResult,
   loadImageData,
   scanPixelsForBounds,
+  screenshotBoundsToCss,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
@@ -339,6 +340,11 @@ async function selectQuickSelectionFromSidebar(page: Page): Promise<void> {
   await openToolFlyout(page, 'magic-wand');
   await selectFromFlyout(page, { toolName: 'quick-selection', label: 'Quick Selection Tool' });
   await expect(quickSelectionBar(page)).toBeVisible();
+}
+
+async function selectMagicWandFromSidebar(page: Page): Promise<void> {
+  await clickToolButton(page, 'magic-wand');
+  await expect(page.locator('#magic-wand-tolerance')).toBeVisible();
 }
 
 /**
@@ -889,14 +895,17 @@ test.describe('Quick selection', () => {
 
     // The stroke is placed on the MEASURED band, not on the rectangle the paint hoped for,
     // so a canvas reflow between the two tools cannot quietly move the brush off the region.
-    const band = await bandBoundsIn(
-      await loadImageData(await captureCanvasScreenshot(page, clip, testInfo, 'qs-band'))
-    );
+    const bandImage = await loadImageData(await captureCanvasScreenshot(page, clip, testInfo, 'qs-band'));
+    const band = await bandBoundsIn(bandImage);
     expect.soft(band.found, 'the painted band should be present in the capture').toBe(true);
-    const bandLeft = clip.x + band.left;
-    const bandRight = clip.x + band.right;
-    const bandTop = clip.y + band.top;
-    const bandBottom = clip.y + band.bottom;
+    const bandCss = screenshotBoundsToCss(
+      { ...band, imageWidth: bandImage.width, imageHeight: bandImage.height },
+      clip
+    );
+    const bandLeft = bandCss.left;
+    const bandRight = bandCss.right;
+    const bandTop = bandCss.top;
+    const bandBottom = bandCss.bottom;
     const bandCentreY = (bandTop + bandBottom) / 2;
 
     await dragOnCanvas(
@@ -937,12 +946,15 @@ test.describe('Quick selection', () => {
     await selectQuickSelectionFromSidebar(page);
     const bandBox = await measureCanvas(page);
     const clip = await visibleCanvasClip(page, bandBox);
-    const band = await bandBoundsIn(
-      await loadImageData(await captureCanvasScreenshot(page, clip, testInfo, 'qs-commit-band'))
+    const bandImage = await loadImageData(await captureCanvasScreenshot(page, clip, testInfo, 'qs-commit-band'));
+    const band = await bandBoundsIn(bandImage);
+    const bandCss = screenshotBoundsToCss(
+      { ...band, imageWidth: bandImage.width, imageHeight: bandImage.height },
+      clip
     );
-    const centreY = clip.y + (band.top + band.bottom) / 2;
-    const left = clip.x + band.left;
-    const right = clip.x + band.right;
+    const centreY = (bandCss.top + bandCss.bottom) / 2;
+    const left = bandCss.left;
+    const right = bandCss.right;
 
     // A long stroke: a per-pointer-move commit would leave one history entry per sample, and
     // a single undo would then leave a selection behind.
@@ -1006,8 +1018,8 @@ test.describe('Quick selection', () => {
         { x, y }
       );
 
-    const start = await toPagePoint(pattern.x + 4, pattern.y + 1);
-    const end = await toPagePoint(pattern.x + 4, pattern.y + 5);
+    const start = await toPagePoint(pattern.x + 4.5, pattern.y + 1.5);
+    const end = await toPagePoint(pattern.x + 4.5, pattern.y + 5.5);
     await expect(page.getByTestId('undo-button')).toBeDisabled();
     await dragOnCanvas(page, start, end, { steps: 4 });
     await waitForCommittedAnts(page, 'the committed raster-backed Quick Selection');
@@ -1057,5 +1069,113 @@ test.describe('Quick selection', () => {
     await openToolFlyoutViaKeyboard(page, 'magic-wand');
     await navigateAndSelectInFlyout(page, 'quick-selection', 'Quick Selection Tool');
     await expect(quickSelectionBar(page)).toBeVisible();
+  });
+});
+
+test.describe('Magic Wand', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+  });
+
+  test('a non-contiguous raster-backed selection commits, undoes and redoes through the UI', async ({ page }) => {
+    await selectMagicWandFromSidebar(page);
+    const contiguous = page.getByRole('checkbox', { name: 'Contiguous' });
+    await expect(contiguous).toBeChecked();
+
+    const tolerance = page.locator('#magic-wand-tolerance');
+    await tolerance.focus();
+    await tolerance.press('Home');
+    await expect(tolerance).toHaveValue('0');
+
+    const pattern = { x: 280, y: 180, size: 200, color: KNOWN_RED };
+    const canvas = getWorkspaceCanvas(page);
+    const paintPattern = async () => {
+      await canvas.evaluate((element, region) => {
+        if (!(element instanceof HTMLCanvasElement)) throw new Error('the workspace canvas is not a canvas');
+        const context = element.getContext('2d');
+        if (!context) throw new Error('the workspace canvas has no 2d context');
+
+        // This grid has 10,000 isolated red pixels and 40,000 boundary edges, above the
+        // 32,768-edge vector budget. Non-contiguous mode must select all of them.
+        context.save();
+        context.setTransform(element.width / 800, 0, 0, element.height / 600, 0, 0);
+        context.fillStyle = '#ffffff';
+        context.fillRect(region.x, region.y, region.size, region.size);
+        context.fillStyle = region.color;
+        for (let y = 0; y < region.size; y += 2) {
+          for (let x = 0; x < region.size; x += 2) {
+            context.fillRect(region.x + x, region.y + y, 1, 1);
+          }
+        }
+        context.restore();
+      }, pattern);
+    };
+    await paintPattern();
+
+    const toPagePoint = async (x: number, y: number) =>
+      canvas.evaluate(
+        (element, point) => {
+          if (!(element instanceof HTMLCanvasElement)) throw new Error('the workspace canvas is not a canvas');
+          const rect = element.getBoundingClientRect();
+          const scale = Math.min(rect.width / 800, rect.height / 600);
+          const offsetX = (rect.width - 800 * scale) / 2;
+          const offsetY = (rect.height - 600 * scale) / 2;
+          return { x: rect.left + offsetX + point.x * scale, y: rect.top + offsetY + point.y * scale };
+        },
+        { x, y }
+      );
+
+    // Click the center of an isolated red pixel so rounding cannot land on adjacent white.
+    const seed = await toPagePoint(pattern.x + 4.5, pattern.y + 4.5);
+    const interiorGridRows = [25, 27, 29, 31].map((offset) => ({
+      x: pattern.x,
+      y: pattern.y + offset,
+      width: pattern.size,
+      height: 1,
+    }));
+    const expectManyInteriorBoundaries = async () => {
+      await expect
+        .poll(async () => {
+          const runCounts = await Promise.all(
+            interiorGridRows.map(async (row) => (await readAntRuns(page, row, 'row'))[0]?.length ?? 0)
+          );
+          return runCounts.filter((count) => count > 20).length;
+        })
+        .toBeGreaterThan(1);
+    };
+
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+    await page.mouse.click(seed.x, seed.y);
+    await waitForCommittedAnts(page, 'the contiguous Magic Wand selection');
+    await expect(page.getByText('1 matching pixels')).toBeVisible();
+    await expect
+      .poll(async () => {
+        const runCounts = await Promise.all(
+          interiorGridRows.map(async (row) => (await readAntRuns(page, row, 'row'))[0]?.length ?? 0)
+        );
+        return runCounts.filter((count) => count > 20).length;
+      })
+      .toBe(0);
+
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => hasNoCommittedAnts(page)).toBe(true);
+    await expect(page.getByTestId('redo-button')).toBeEnabled();
+    await contiguous.uncheck();
+    await expect(contiguous).not.toBeChecked();
+    await paintPattern();
+    await page.mouse.click(seed.x, seed.y);
+    await waitForCommittedAnts(page, 'the committed raster-backed non-contiguous Magic Wand selection');
+    await expect(page.getByText('10,000 matching pixels')).toBeVisible();
+    await expectManyInteriorBoundaries();
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
+
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => hasNoCommittedAnts(page)).toBe(true);
+    await expect(page.getByTestId('redo-button')).toBeEnabled();
+
+    await page.getByTestId('redo-button').click();
+    await waitForCommittedAnts(page, 'the redone raster-backed Magic Wand selection');
+    await expectManyInteriorBoundaries();
   });
 });

@@ -13,6 +13,7 @@ import {
   BRUSH_SPACING_MAX,
   BRUSH_SPACING_MIN,
   appendBrushDabCenters,
+  appendBrushDabCentersStream,
   brushDabCenters,
   clampBrushTipSettings,
   createBrushDabCenterSampler,
@@ -544,6 +545,66 @@ describe('appendBrushDabCenters', () => {
 
     expect(appendBrushDabCenters(sampler, [{ x: 0, y: 0 }])).toEqual([{ x: 0, y: 0 }]);
     expect(appendBrushDabCenters(sampler, [{ x: Number.MAX_VALUE, y: Number.MAX_VALUE }])).toEqual([]);
+  });
+});
+
+describe('appendBrushDabCentersStream', () => {
+  it('matches array sampling for ordinary incremental paths', () => {
+    const points = [
+      { x: 0, y: 0 },
+      { x: 37, y: 0 },
+      { x: 42, y: 9 },
+    ];
+    const sampler = createBrushDabCenterSampler(16, 25);
+    const streamed: Point[] = [];
+    for (let index = 0; index < points.length; index += 1) {
+      for (const center of appendBrushDabCentersStream(sampler, points[index]!, index === points.length - 1)) {
+        streamed.push(center);
+      }
+    }
+
+    expect(streamed).toEqual(brushDabCenters(points, 16, 25));
+  });
+
+  it('refuses another point when a caller abandons a partially consumed stream', () => {
+    const sampler = createBrushDabCenterSampler(1, 25);
+    expect([...appendBrushDabCentersStream(sampler, { x: 0, y: 0 }, true)]).toEqual([{ x: 0, y: 0 }]);
+
+    const partial = appendBrushDabCentersStream(sampler, { x: 10, y: 0 });
+    expect(partial.next().done).toBe(false);
+    expect(() => appendBrushDabCentersStream(sampler, { x: 11, y: 0 })).toThrow(
+      'The previous brush dab stream must be fully consumed before sampling another point'
+    );
+    expect(() => appendBrushDabCenters(sampler, [{ x: 11, y: 0 }])).toThrow(
+      'The previous brush dab stream must be fully consumed before sampling another point'
+    );
+  });
+
+  it('streams a very long segment without retaining centers and preserves state for the next event', () => {
+    const sampler = createBrushDabCenterSampler(1, 25);
+    const initial = [...appendBrushDabCentersStream(sampler, { x: 0, y: 0 }, true)];
+    expect(initial).toEqual([{ x: 0, y: 0 }]);
+
+    const oversized = appendBrushDabCentersStream(sampler, { x: 100_000, y: 0 }, true);
+    let count = 0;
+    let first: Point | null = null;
+    let last: Point | null = null;
+    for (const center of oversized) {
+      first ??= center;
+      last = center;
+      count += 1;
+    }
+
+    expect(Array.isArray(oversized)).toBe(false);
+    expect(count).toBe(400_000);
+    expect(first?.x).toBeCloseTo(0.25);
+    expect(last).toEqual({ x: 100_000, y: 0 });
+    expect(sampler.lastPoint).toEqual({ x: 100_000, y: 0 });
+    expect(sampler.lastCenter).toEqual({ x: 100_000, y: 0 });
+    expect(sampler.carried).toBe(0);
+    expect([...appendBrushDabCentersStream(sampler, { x: 100_000.25, y: 0 }, false)]).toEqual([
+      { x: 100_000.25, y: 0 },
+    ]);
   });
 });
 

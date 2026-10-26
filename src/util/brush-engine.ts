@@ -152,6 +152,18 @@ export type BrushDabCenterSampler = {
   lastCenter: Point | null;
 };
 
+/**
+ * Streaming advances the sampler before its lazy iterator is consumed. Keep an unfinished
+ * stream fail-closed so a later event cannot silently skip the centers the caller abandoned.
+ */
+const pendingBrushDabStreams = new WeakSet<BrushDabCenterSampler>();
+
+function assertPreviousBrushDabStreamWasConsumed(sampler: BrushDabCenterSampler): void {
+  if (pendingBrushDabStreams.has(sampler)) {
+    throw new RangeError('The previous brush dab stream must be fully consumed before sampling another point');
+  }
+}
+
 /** Create a sampler whose spacing is fixed for the lifetime of a stroke. */
 export const createBrushDabCenterSampler = (size: number, spacingPercent: number): BrushDabCenterSampler => {
   const diameter = Number.isFinite(size) && size > 0 ? size : BRUSH_SIZE_DEFAULT;
@@ -174,6 +186,7 @@ export const appendBrushDabCenters = (
   points: Point[],
   includeEndpoint = false
 ): Point[] => {
+  assertPreviousBrushDabStreamWasConsumed(sampler);
   const centers: Point[] = [];
 
   for (const point of points) {
@@ -219,6 +232,122 @@ export const appendBrushDabCenters = (
   }
 
   return centers;
+};
+
+/**
+ * Advance one incremental point and stream its centers without retaining a batch.
+ * Sampler state advances eagerly, so callers must exhaust the iterator before they
+ * append another point. If a consumer abandons the stream, later sampling fails
+ * closed instead of silently dropping the centers that were not processed.
+ */
+export const appendBrushDabCentersStream = (
+  sampler: BrushDabCenterSampler,
+  point: Point,
+  includeEndpoint = false
+): IterableIterator<Point> => {
+  assertPreviousBrushDabStreamWasConsumed(sampler);
+  const endpoint = { x: point.x, y: point.y };
+  if (!sampler.lastPoint) {
+    sampler.lastPoint = endpoint;
+    sampler.lastCenter = { ...endpoint };
+    pendingBrushDabStreams.add(sampler);
+    return (function* () {
+      let completed = false;
+      try {
+        yield endpoint;
+        completed = true;
+      } finally {
+        if (completed) pendingBrushDabStreams.delete(sampler);
+      }
+    })();
+  }
+
+  const from = sampler.lastPoint;
+  const deltaX = endpoint.x - from.x;
+  const deltaY = endpoint.y - from.y;
+  const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+  const previousCenter = sampler.lastCenter;
+  const initialCarried = sampler.carried;
+  let spacingCount = 0;
+  let lastSpacingDistance: number;
+  let lastSpacingCenter: Point | null = null;
+  let nextCarried = initialCarried;
+
+  if (Number.isFinite(length) && length > 0) {
+    if (!(sampler.step > 0) || !Number.isFinite(sampler.step) || !Number.isFinite(initialCarried)) {
+      throw new RangeError('Brush dab sampler requires finite positive spacing');
+    }
+
+    let travelled = 0;
+    let carried = initialCarried;
+    while (carried + (length - travelled) >= sampler.step) {
+      travelled += sampler.step - carried;
+      carried = 0;
+      spacingCount += 1;
+    }
+    lastSpacingDistance = travelled;
+    nextCarried = carried + length - travelled;
+    if (spacingCount > 0) {
+      lastSpacingCenter = {
+        x: from.x + (deltaX * lastSpacingDistance) / length,
+        y: from.y + (deltaY * lastSpacingDistance) / length,
+      };
+    }
+  }
+
+  const latestCenter = lastSpacingCenter ?? previousCenter;
+  const replaceLastWithEndpoint =
+    includeEndpoint &&
+    spacingCount > 0 &&
+    latestCenter !== null &&
+    Math.abs(endpoint.x - latestCenter.x) <= SAME_POINT &&
+    Math.abs(endpoint.y - latestCenter.y) <= SAME_POINT;
+  const appendEndpoint =
+    includeEndpoint &&
+    !replaceLastWithEndpoint &&
+    (!latestCenter ||
+      Math.abs(endpoint.x - latestCenter.x) > SAME_POINT ||
+      Math.abs(endpoint.y - latestCenter.y) > SAME_POINT);
+
+  sampler.carried = nextCarried;
+  sampler.lastPoint = endpoint;
+  if (includeEndpoint && (appendEndpoint || replaceLastWithEndpoint)) {
+    sampler.lastCenter = endpoint;
+  } else if (lastSpacingCenter) {
+    sampler.lastCenter = lastSpacingCenter;
+  }
+
+  pendingBrushDabStreams.add(sampler);
+  return (function* () {
+    let completed = false;
+    try {
+      if (spacingCount === 0) {
+        if (appendEndpoint) yield endpoint;
+        completed = true;
+        return;
+      }
+
+      let travelled = 0;
+      let carried = initialCarried;
+      let pendingCenter: Point | null = null;
+      while (carried + (length - travelled) >= sampler.step) {
+        travelled += sampler.step - carried;
+        carried = 0;
+        if (pendingCenter) yield pendingCenter;
+        pendingCenter = {
+          x: from.x + (deltaX * travelled) / length,
+          y: from.y + (deltaY * travelled) / length,
+        };
+      }
+
+      if (replaceLastWithEndpoint) pendingCenter = endpoint;
+      if (pendingCenter) yield pendingCenter;
+      if (appendEndpoint) yield endpoint;
+      completed = true;
+    } finally {
+      if (completed) pendingBrushDabStreams.delete(sampler);
+    }
+  })();
 };
 
 /**
