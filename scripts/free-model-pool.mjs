@@ -119,7 +119,7 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
     .filter((row) => {
-      if (!row?.id) return false;
+      if (typeof row?.id !== 'string' || row.id.length === 0) return false;
       if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
       if (source === 'groq') {

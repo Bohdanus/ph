@@ -78,6 +78,16 @@ describe('free model catalog filtering', () => {
     ]);
   });
 
+  it('skips catalog rows whose model IDs are not strings', () => {
+    const candidates = catalogCandidates('kilo', [
+      { id: 42, isFree: true, pricing: { prompt: '0', completion: '0' } },
+      { id: { toString: () => 'invalid:free' }, isFree: true, pricing: { prompt: '0', completion: '0' } },
+      kiloRow('valid:free'),
+    ]);
+
+    expect(candidates.map((candidate) => candidate.model)).toEqual(['valid:free']);
+  });
+
   it('loads active quarantines and ignores expired entries during catalog selection', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-'));
     const quarantineFile = join(directory, 'quarantine.json');
