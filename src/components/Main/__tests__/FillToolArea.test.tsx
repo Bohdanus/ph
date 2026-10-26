@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
-import { FILL_TOOL_NO_LAYER_PIXELS, FILL_TOOL_READBACK_UNAVAILABLE, FillToolArea } from '../FillToolArea.tsx';
+import {
+  FILL_TOOL_NO_LAYER_PIXELS,
+  FILL_TOOL_PRESENTATION_UNAVAILABLE,
+  FILL_TOOL_READBACK_UNAVAILABLE,
+  FillToolArea,
+} from '../FillToolArea.tsx';
 import { findToolProcessor } from '../../../tools/toolProcessors.ts';
 import type { FillToolArgs } from '../../../tools/fill.ts';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
@@ -165,7 +170,9 @@ const makeLayer = (id: string, pos: Layer['pos'], hasBitmap = true): Layer => ({
   name: id,
   isBedrock: false,
   tmpCanvas: null,
-  bitmap: hasBitmap ? ({ id: `${id}-bitmap` } as unknown as BitmapSource) : null,
+  bitmap: hasBitmap
+    ? ({ id: `${id}-bitmap`, width: Math.ceil(pos.width), height: Math.ceil(pos.height) } as unknown as BitmapSource)
+    : null,
   visible: true,
   opacity: 1,
   locked: false,
@@ -227,6 +234,7 @@ describe('FillToolArea', () => {
     getContextSpy?.mockRestore();
     getContextSpy = null;
     consoleErrorSpy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it('commits one fill on a single click and never on a drag', () => {
@@ -247,6 +255,53 @@ describe('FillToolArea', () => {
       color: '#ff0000',
       pos: { x: 1, y: 1 },
     });
+  });
+
+  it('refuses an over-budget presentation before allocating fill readback pixels', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+
+      getContext() {
+        return {
+          drawImage: vi.fn(),
+          getImageData: vi.fn(() => null),
+        };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+    storeState.layers = { base: makeLayer('base', { x: 0, y: 0, width: 5000, height: 4000 }) };
+
+    click(renderArea(), 1, 1);
+
+    expect(allocations).toEqual([]);
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      FILL_TOOL_PRESENTATION_UNAVAILABLE,
+      expect.any(String),
+      expect.objectContaining({ message: expect.stringMatching(/pixel staging budget/) })
+    );
+  });
+
+  it('turns a thrown canvas readback into a loud no-commit refusal', () => {
+    class ThrowingReadbackCanvas {
+      getContext() {
+        return {
+          drawImage: vi.fn(),
+          getImageData: () => {
+            throw new DOMException('Pixel access was denied', 'SecurityError');
+          },
+        };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', ThrowingReadbackCanvas);
+
+    click(renderArea(), 1, 1);
+
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(FILL_TOOL_READBACK_UNAVAILABLE, expect.any(String));
   });
 
   it('commits the store foreground colour, not the tool args own seeded default', () => {

@@ -17,7 +17,7 @@ import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
 import type { DurableDocument } from './history-model.ts';
 import { durableEntryTitle } from './history-provenance.ts';
-import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
+import { operationsRetainedAfterBake, stageProcessorInputForTool } from './presentation-evaluator.ts';
 import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
@@ -242,8 +242,8 @@ export const useHistory = () => {
             // the screen showed. An evaluator throw here fails the navigation closed through the
             // `catch` below, exactly as one from the publication does — `drawReplay` runs the same
             // evaluation over the same layer — so it adds no failure class, only an earlier failure.
-            const staged = stageProcessorInput(layer, bitmap);
-            const [canvas, patch] = processor.imageProcessor({ bitmap: staged.bitmap, size: staged.bounds })(args);
+            const staged = stageProcessorInputForTool(layer, bitmap, processor);
+            const [canvas, patch] = processor.imageProcessor({ bitmap: staged.bitmap, size: staged.rasterSize })(args);
             // Published at the bounds that raster occupies, with the operations baked into it
             // dropped from the list the renderer evaluates again. Keeping both was the double
             // application: `getLayerBitmap()` prefers this canvas and `drawLayerSource()` then

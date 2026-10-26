@@ -5,9 +5,10 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point } from '../../contexts/general-types.ts';
-import { processorPresentationBounds, stageProcessorInput } from '../../contexts/presentation-evaluator.ts';
+import { processorPresentationBounds, stageProcessorInputForTool } from '../../contexts/presentation-evaluator.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { readLayerImageData } from '../../tools/colorReplacement.ts';
+import { findToolProcessor } from '../../tools/toolProcessors.ts';
 import { correctRedEyePixels, type RedEyeToolArgs } from '../../tools/redEye.ts';
 
 type RedEyeToolAreaProps = { className?: string };
@@ -43,15 +44,18 @@ export const RedEyeToolArea = ({ className }: RedEyeToolAreaProps) => {
       return;
     }
 
+    const processor = findToolProcessor(args.toolName);
+    if (!processor) return;
+
     let staged;
     try {
-      staged = stageProcessorInput(activeLayer, bitmap);
+      staged = stageProcessorInputForTool(activeLayer, bitmap, processor);
     } catch (error) {
       console.error(RED_EYE_READBACK_UNAVAILABLE, `the active layer ${activeLayer.id} cannot be staged`, error);
       return;
     }
 
-    const size = { width: staged.bounds.width, height: staged.bounds.height };
+    const size = staged.rasterSize;
     const image = readLayerImageData(staged.bitmap, size);
     if (!image) {
       console.error(RED_EYE_READBACK_UNAVAILABLE, `the active layer ${activeLayer.id} cannot be read`);

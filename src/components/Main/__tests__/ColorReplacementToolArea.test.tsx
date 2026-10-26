@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 
 import {
   COLOR_REPLACEMENT_NO_LAYER_PIXELS,
+  COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE,
   COLOR_REPLACEMENT_READBACK_UNAVAILABLE,
   ColorReplacementToolArea,
 } from '../ColorReplacementToolArea.tsx';
@@ -77,7 +78,12 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs: toolState.toolArgs,
-    patchToolArgs: (toolName: string, patch: unknown) => toolState.patches.push({ toolName, patch }),
+    patchToolArgs: (toolName: string, patch: unknown) => {
+      toolState.patches.push({ toolName, patch });
+      if (toolName === 'color-replacement' && patch && typeof patch === 'object') {
+        toolState.toolArgs = { ...toolState.toolArgs, ...(patch as Record<string, unknown>) };
+      }
+    },
   }),
 }));
 
@@ -166,12 +172,16 @@ afterEach(() => {
 });
 
 describe('ColorReplacementToolArea', () => {
-  it('a click with no sample yet SAMPLES the pixel, and does not lay down a stroke', () => {
+  it('a sample gesture stays an eyedropper when patching the sample rerenders the area', () => {
     setLayer(layerWith([200, 200, 10]));
     argsWith({ sampleColor: null });
-    const { container } = render(<ColorReplacementToolArea className="area" />);
+    const { container, rerender } = render(<ColorReplacementToolArea className="area" />);
+    const area = container.firstElementChild as HTMLElement;
 
-    drag(container, { x: 4, y: 4 });
+    fireEvent.pointerDown(area, { button: 0, clientX: 4, clientY: 4 });
+    rerender(<ColorReplacementToolArea className="area" />);
+    fireEvent.pointerMove(area, { clientX: 6, clientY: 4 });
+    fireEvent.pointerUp(area, { clientX: 6, clientY: 4 });
 
     // The eyedropper step, and nothing else: the click is not also the first point of a drag, or
     // the tool would replace with whatever colour it sampled and then immediately over it.
@@ -179,6 +189,76 @@ describe('ColorReplacementToolArea', () => {
       { toolName: 'color-replacement', patch: { sampleColor: { r: 200, g: 200, b: 10, a: 255 } } },
     ]);
     expect(committed).toHaveLength(0);
+  });
+
+  it('refuses an over-budget raster before Color Replacement stages or reads it', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+
+      getContext() {
+        return {
+          drawImage: vi.fn(),
+          getImageData: vi.fn(() => null),
+        };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+    const layer = layerWith([200, 200, 10]);
+    layer.pos = { x: 0, y: 0, width: 3000, height: 3000 };
+    if (!layer.bitmap) throw new Error('Expected a test bitmap');
+    Object.assign(layer.bitmap, { width: 3000, height: 3000 });
+    setLayer(layer);
+    argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 } });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(allocations).toEqual([]);
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE,
+      expect.any(String),
+      expect.objectContaining({ message: expect.stringMatching(/pixel staging budget/) })
+    );
+  });
+
+  it('turns a thrown pixel readback into a loud no-sample refusal', () => {
+    class ThrowingReadbackCanvas {
+      width: number;
+      height: number;
+
+      constructor(width: number, height: number) {
+        this.width = width;
+        this.height = height;
+      }
+
+      getContext() {
+        return {
+          drawImage: () => {
+            throw new DOMException('Pixel access was denied', 'SecurityError');
+          },
+          getImageData: vi.fn(),
+        };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', ThrowingReadbackCanvas);
+    setLayer(layerWith([200, 200, 10]));
+    argsWith({ sampleColor: null });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(toolState.patches).toEqual([]);
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      COLOR_REPLACEMENT_READBACK_UNAVAILABLE,
+      expect.stringContaining('cannot read')
+    );
   });
 
   it('refuses to sample a fully transparent pixel, leaving the tool still asking', () => {
@@ -259,6 +339,24 @@ describe('ColorReplacementToolArea', () => {
 
     drag(container, { x: 4, y: 4 });
 
+    expect(committed).toHaveLength(0);
+  });
+
+  it('writes no history entry when Opacity makes the replacement a no-op', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+    setLayer(layerWith([200, 200, 10]));
+    argsWith({ sampleColor: { r: 200, g: 200, b: 10, a: 255 }, alpha: 0 });
+    const { container } = render(<ColorReplacementToolArea className="area" />);
+
+    drag(container, { x: 4, y: 4 });
+
+    expect(allocations).toEqual([]);
     expect(committed).toHaveLength(0);
   });
 

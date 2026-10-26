@@ -689,7 +689,7 @@ describe('useHistory undo replay', () => {
     // through the evaluator, showed the evaluated one.
     expect(processor).toHaveBeenCalledWith({
       bitmap: expect.objectContaining({ width: 80, height: 40 }),
-      size: { x: 15, y: 8, width: 80, height: 40 },
+      size: { width: 80, height: 40 },
     });
     // The buffer handed over is the evaluated presentation rather than the layer's own
     // raster, so the affine has to have reached the draw call and not just the arithmetic.
@@ -709,6 +709,72 @@ describe('useHistory undo replay', () => {
     // reason, so the two replay paths now publish the same layer.
     expect(state.layers.top.pos).toEqual({ x: 15, y: 8, width: 80, height: 40 });
     expect(state.layers.top.operations).toEqual([]);
+  });
+
+  it('passes integer staged pixels to history processors and keeps fractional replay bounds', () => {
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(41, 20);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 40, height: 20 },
+        operations: [
+          {
+            id: 'fractional-scale',
+            kind: 'affine-transform',
+            enabled: true,
+            transform: { a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          },
+        ],
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    expect(processor).toHaveBeenCalledWith({
+      bitmap: expect.objectContaining({ width: 41, height: 20 }),
+      size: { width: 41, height: 20 },
+    });
+    expect(state.layers.top.pos).toEqual({ x: 10, y: 5, width: 40.5, height: 20 });
+  });
+
+  it('replays a pixel edit against a resized layer presentation', () => {
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(80, 40);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 80, height: 40 },
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    expect(processor).toHaveBeenCalledWith({
+      bitmap: expect.objectContaining({ width: 80, height: 40 }),
+      size: { width: 80, height: 40 },
+    });
+    expect(state.layers.top.pos).toEqual({ x: 10, y: 5, width: 80, height: 40 });
   });
 
   it('keeps a disabled operation on a layer whose enabled ones it baked into the raster', () => {
@@ -996,7 +1062,10 @@ describe('useHistory undo replay', () => {
     expect(state.layers.top.pos).not.toBe(layers.top.pos);
 
     useHistory().redo();
-    expect(processor).toHaveBeenCalledWith({ bitmap, size: original.top.pos });
+    expect(processor).toHaveBeenCalledWith({
+      bitmap,
+      size: { width: original.top.pos.width, height: original.top.pos.height },
+    });
     expect(state.layers.top).toMatchObject({
       ...original.top,
       tmpCanvas: canvas,

@@ -7,7 +7,7 @@ import { spotHealing } from './spotHealing.ts';
 import { healingBrush } from './healingBrush.ts';
 import { patch } from './patch.ts';
 import { colors } from './colors.ts';
-import { colorReplacement } from './colorReplacement.ts';
+import { colorReplacement, COLOR_REPLACEMENT_MAX_STAGING_PIXELS } from './colorReplacement.ts';
 import { crop } from './crop.ts';
 import { burn, dodge } from './dodgeBurn.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
@@ -28,6 +28,7 @@ import { smudge } from './smudge.ts';
 import { sponge } from './sponge.ts';
 import { text } from './text.ts';
 import { transform } from './transform.ts';
+import { MAX_RASTER_SELECTION_PIXELS } from '../util/selection-mask.ts';
 
 export type ProcessorToolParams = {
   size: Size;
@@ -63,6 +64,8 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
+  /** Maximum staged raster size for processors whose pixel algorithms have an explicit cap. */
+  maxStagingPixelCount?: number;
   /**
    * Whether the processor reads the existing layer bitmap before producing its
    * raster result. Omitted means true; draw-backed paint processors are the
@@ -323,6 +326,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: cloneStamp,
   },
   'red-eye': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
@@ -370,6 +374,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     },
   },
   'color-replacement': {
+    maxStagingPixelCount: COLOR_REPLACEMENT_MAX_STAGING_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     // No `@ts-expect-error` here, unlike the entries above it: `colorReplacement` narrows its
@@ -383,11 +388,13 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: (params) => (args) => eraser(params)(args),
   },
   'magic-eraser': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => magicEraser(params)(args),
   },
   'paint-bucket': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => paintBucket(params)(args),

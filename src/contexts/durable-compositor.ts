@@ -122,6 +122,9 @@ export async function composeDurableDocument(
     requireVisibleLayerCoverage(replay, materialized.layers);
     const canvas = createCanvas(frame.width, frame.height);
     const context = context2d(canvas);
+    // Match the runtime and retained-presentation draws: fractional layer bounds
+    // must not introduce a second filtered resampling pass during composition.
+    context.imageSmoothingEnabled = false;
     for (const layerId of orderedLayers(replay)) {
       const replayLayer = replay.layers[layerId];
       const layer = materialized.layers[layerId];

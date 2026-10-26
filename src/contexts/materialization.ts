@@ -8,8 +8,10 @@ import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
 import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
 import {
+  assertProcessorStagingBudget,
   drawEvaluatedPresentation,
   evaluatePresentation,
+  getProcessorRasterSize,
   scaleTextArgs,
   scaleVectorArgs,
   type PresentationOperation,
@@ -139,6 +141,38 @@ function presentationOperations(operations: readonly DurableOperation[]): Presen
   return normalized;
 }
 
+function isNoOpColorReplacement(operation: DurableOperation): boolean {
+  if (operation.kind !== 'apply-raster-processor' || operation.processorId !== 'color-replacement') return false;
+  const opacity = operation.args.alpha;
+  return typeof opacity === 'number' && Number.isFinite(opacity) && opacity <= 0;
+}
+
+/** Refuse an over-budget first processor before resolving or creating its source raster. */
+function preflightFirstRasterProcessor(layer: DurableReplayLayer): void {
+  for (let processorIndex = 0; processorIndex < layer.operations.length; processorIndex++) {
+    const operation = layer.operations[processorIndex];
+    if (!operation || operation.kind !== 'apply-raster-processor') continue;
+
+    const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
+    if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
+    if (processor.replay.version !== operation.version) {
+      throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
+    }
+    if (isNoOpColorReplacement(operation)) continue;
+    if (processor.maxStagingPixelCount === undefined) return;
+
+    const evaluation = evaluatePresentation({
+      position: layer.snapshot.pos,
+      sourceSize: layerSize(layer),
+      operations: presentationOperations(layer.operations.slice(0, processorIndex)),
+      mode: 'layer-bounds',
+    });
+    const rasterSize = getProcessorRasterSize(evaluation.localBounds);
+    assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+    return;
+  }
+}
+
 /**
  * Resolves the raster a layer starts from, and says whether the caller may
  * publish it as this layer's own result. `borrowed` is true only for the
@@ -163,7 +197,12 @@ async function sourceBitmap(
     ctx.fillStyle = source.color;
     ctx.globalAlpha = source.opacity;
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
-    return { bitmap: canvas, release: () => undefined, size: renderSize, borrowed: false };
+    return {
+      bitmap: canvas,
+      release: () => undefined,
+      size: renderSize,
+      borrowed: false,
+    };
   } else {
     const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
@@ -246,6 +285,9 @@ export async function materializeLayer(
     documentId: request.documentId,
     expectedDocumentGeneration: request.baselineAssetGeneration,
     producer: async () => {
+      // The first processor's presented extent can be computed from the immutable record alone.
+      // Check it before sourceBitmap creates a blank/creator raster or resolves a borrowed asset.
+      preflightFirstRasterProcessor(layer);
       const source = await sourceBitmap(layer, request);
       let bitmap = source.bitmap;
       // Layer.pos is the current logical presentation size. The source size
@@ -253,7 +295,7 @@ export async function materializeLayer(
       // current geometry, matching the runtime layer renderer.
       let size = layerSize(layer);
       let origin = { x: layer.snapshot.pos.x, y: layer.snapshot.pos.y };
-      let ownsBitmap = false;
+      let ownsBitmap = !source.borrowed;
 
       const replaceOwnedBitmap = (next: BitmapSource) => {
         const previous = bitmap;
@@ -268,7 +310,8 @@ export async function materializeLayer(
       const renderRetainedSegment = async (
         operations: readonly DurableOperation[],
         force = false,
-        pixelGridFrame?: MaterializationRequest['pixelGridFrame']
+        pixelGridFrame?: MaterializationRequest['pixelGridFrame'],
+        maxPixelCount?: number
       ) => {
         if (!force && operations.length === 0) return;
         const evaluation = evaluatePresentation({
@@ -278,6 +321,9 @@ export async function materializeLayer(
           mode: 'layer-bounds',
         });
         const pixelGridBounds = pixelGridFrame ? alignBoundsToFrame(evaluation.bounds, pixelGridFrame) : undefined;
+        const outputWidth = Math.max(1, Math.ceil(pixelGridBounds?.width ?? evaluation.localBounds.width));
+        const outputHeight = Math.max(1, Math.ceil(pixelGridBounds?.height ?? evaluation.localBounds.height));
+        assertProcessorStagingBudget(outputWidth, outputHeight, maxPixelCount);
         const output = pixelGridBounds
           ? createCanvas(pixelGridBounds.width, pixelGridBounds.height)
           : createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
@@ -315,33 +361,60 @@ export async function materializeLayer(
 
           // A raster processor consumes the exact presentation produced by all
           // preceding retained operations. It cannot be moved before them.
-          // Always draw into a private surface before a pixel processor. Some
-          // processors mutate their input canvas, while registry assets and
-          // source-local rasters are borrowed for this operation.
-          await renderRetainedSegment(retainedOperations, true);
-          retainedOperations = [];
           const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
           if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
           if (processor.replay.version !== operation.version) {
             throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
           }
-          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
+          // A zero-opacity Color Replacement is an identity operation. Validate
+          // its durable processor/version first, then skip full-frame staging.
+          if (isNoOpColorReplacement(operation)) continue;
+          const logicalRasterSize = getProcessorRasterSize(size);
+          const bitmapMatchesLogicalRaster =
+            bitmap.width === logicalRasterSize.width && bitmap.height === logicalRasterSize.height;
+          // A borrowed source can be reused without resampling only when its pixel
+          // grid already matches the logical layer bounds. Copy it first so a
+          // processor that mutates its input cannot change the registry asset.
+          if (retainedOperations.length === 0 && !ownsBitmap && source.borrowed && bitmapMatchesLogicalRaster) {
+            const rasterSize = { width: bitmap.width, height: bitmap.height };
+            assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+            replaceOwnedBitmap(await copyOwnedBitmap(bitmap, rasterSize));
+          } else if (retainedOperations.length > 0 || !bitmapMatchesLogicalRaster || !ownsBitmap) {
+            // Bake retained operations and align resized sources or prior processor
+            // outputs to the current logical pixel grid before this processor.
+            await renderRetainedSegment(retainedOperations, true, undefined, processor.maxStagingPixelCount);
+          } else {
+            // A matching owned raster can be reused without allocation, but every
+            // processor still gets its own staging-budget check below.
+          }
+          retainedOperations = [];
+          const rasterSize = { width: bitmap.width, height: bitmap.height };
+          // Check every processor against the raster it actually receives. An
+          // empty retained segment can reuse an owned bitmap without allocating,
+          // so the pre-allocation check above alone cannot cover that path.
+          assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+          const [processed, patch] = processor.imageProcessor({ bitmap, size: rasterSize })(operation.args as ToolArgs);
           if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
           replaceOwnedBitmap(processed);
           origin = {
             x: patch?.x ?? origin.x,
             y: patch?.y ?? origin.y,
           };
-          size = { width: processed.width, height: processed.height };
+          // Keep logical document bounds fractional while the processor works on
+          // the integer-sized bitmap. A processor can explicitly return new
+          // document bounds through its patch.
+          size = {
+            width: patch?.width ?? size.width,
+            height: patch?.height ?? size.height,
+          };
         }
         const area = size.width * size.height;
         const requiresSurface =
           retainedOperations.length > 0 ||
-          request.frame !== undefined ||
           !Number.isFinite(area) ||
           size.width <= 0 ||
           size.height <= 0 ||
-          area <= MAX_AFFINE_PIXELS;
+          (!ownsBitmap && area <= MAX_AFFINE_PIXELS);
         const hasRetainedAffine = retainedOperations.some((operation) => operation.kind === 'apply-affine-transform');
         await renderRetainedSegment(
           retainedOperations,
@@ -360,7 +433,9 @@ export async function materializeLayer(
         // blank or creator source) and anything an operation already replaced
         // are published as they are.
         const publishesBorrowedSource = !ownsBitmap && source.borrowed;
-        const presentation = publishesBorrowedSource ? await copyOwnedBitmap(bitmap, size) : bitmap;
+        const presentation = publishesBorrowedSource
+          ? await copyOwnedBitmap(bitmap, { width: bitmap.width, height: bitmap.height })
+          : bitmap;
         const presentationIsOwned = ownsBitmap || publishesBorrowedSource;
         ownsBitmap = false;
         if (!request.frame) {

@@ -1,4 +1,3 @@
-import { createFloodFillMask } from '../util/floodFill.ts';
 import type { RgbaColor } from '../util/magicWand.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 import type { BitmapSource, Point, Size } from '../contexts/general-types.ts';
@@ -31,8 +30,8 @@ export type ColorReplacementSampling = 'current-layer' | 'all-layers';
  * Adobe's tolerance scale for this tool is 0-100 — NOT the 0-255 the bucket, the magic eraser
  * and the background eraser use (`FILL_TOLERANCE_MAX`) and NOT the wand's 0-100 measured against
  * a 4-channel distance in the flood-fill tolerance helpers. The two 0-100 scales are different
- * metrics, which is why the scale lives here and `createFloodFillMask` is handed a converted
- * value rather than this number.
+ * metrics, which is why the scale lives here and the contiguous scan converts this value before
+ * calculating the same RGB distance as the shared fill implementation.
  */
 export const COLOR_REPLACEMENT_TOLERANCE_MAX = 100;
 
@@ -44,6 +43,12 @@ export const COLOR_REPLACEMENT_SMOOTHNESS_MAX = 50;
 
 /** Adobe's seeded Smoothness. */
 export const COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT = 10;
+
+/**
+ * Bounds Color Replacement's full-frame pixel buffers and flood-fill workspace.
+ * It keeps the common 4K UHD canvas within budget while limiting larger documents.
+ */
+export const COLOR_REPLACEMENT_MAX_STAGING_PIXELS = 8_388_608;
 
 /**
  * The widest Euclidean RGB distance two colours can have. Tolerance 100 therefore matches every
@@ -116,19 +121,9 @@ const luminance = (r: number, g: number, b: number): number =>
   LUMINANCE_RED * r + LUMINANCE_GREEN * g + LUMINANCE_BLUE * b;
 
 /**
- * The factor that puts this tool's 0-100 Tolerance onto `createFloodFillMask`'s 0-255 argument.
- *
- * `getToleranceDistance` reads its argument as `(t / 255) * MAX_COLOR_DISTANCE`
- * (`getToleranceDistance()` in `src/util/floodFill.ts`, with `MAX_TOLERANCE = 255`), while
- * `toleranceDistanceSquared` above reads this tool's as `(t / 100) * MAX_COLOR_DISTANCE` over an
- * identical `MAX_COLOR_DISTANCE`. Multiplying by `255 / 100` therefore makes the delegated flood
- * and the inline `matchMask` predicate above reject exactly the same pixels, which is what makes
- * Limits a choice about how far the replacement REACHES rather than about which pixels exist.
- *
- * It is a scale, not a tolerance, and it is named for what it converts. The name it replaces read
- * `..._DISCONTINUOUS_FILL_TOLERANCE` while its only call site is the Contiguous branch, one screen
- * below the Disconnected one it claimed to describe — which is the worst possible place for a
- * constant whose whole job is to stop the two branches drifting apart.
+ * The factor that converts this tool's 0-100 Tolerance to the 0-255 scale used by
+ * `src/util/floodFill.ts`. Both implementations compare the same RGB distance; using this scale
+ * before squaring it keeps their threshold arithmetic aligned.
  */
 export const COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE = 255 / COLOR_REPLACEMENT_TOLERANCE_MAX;
 
@@ -139,8 +134,10 @@ const toleranceDistanceSquared = (tolerance: number): number => {
     0,
     COLOR_REPLACEMENT_TOLERANCE_MAX
   );
+  if (clamped === COLOR_REPLACEMENT_TOLERANCE_MAX) return 3 * 255 * 255;
 
-  return ((clamped / COLOR_REPLACEMENT_TOLERANCE_MAX) * MAX_COLOR_DISTANCE) ** 2;
+  const fillTolerance = clamp(clamped * COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE, 0, 255);
+  return ((fillTolerance / 255) * MAX_COLOR_DISTANCE) ** 2;
 };
 
 /** Smoothness in pixels. A finite guard, because a non-numeric slider read must not reach `new Int32Array`. */
@@ -152,6 +149,27 @@ const smoothnessRadius = (smoothness: number): number => {
   );
 
   return Math.round((clamped / COLOR_REPLACEMENT_SMOOTHNESS_MAX) * SMOOTHNESS_MAX_RADIUS);
+};
+
+const normalizedOpacity = (opacity: number): number => clamp(Number.isFinite(opacity) ? opacity : 1, 0, 1);
+
+const isWithinColorReplacementBudget = (width: number, height: number): boolean => {
+  if (!Number.isSafeInteger(width) || width < 0 || !Number.isSafeInteger(height) || height < 0) return false;
+  const area = width * height;
+  return Number.isSafeInteger(area) && area <= COLOR_REPLACEMENT_MAX_STAGING_PIXELS;
+};
+
+const matchesSampleColor = (
+  data: Uint8ClampedArray,
+  index: number,
+  sampleColor: RgbaColor,
+  distanceSquared: number
+): boolean => {
+  const dataIndex = index * 4;
+  const dr = data[dataIndex] - sampleColor.r;
+  const dg = data[dataIndex + 1] - sampleColor.g;
+  const db = data[dataIndex + 2] - sampleColor.b;
+  return dr * dr + dg * dg + db * db <= distanceSquared;
 };
 
 /**
@@ -196,6 +214,32 @@ export const replaceColorPreservingLuminance = (
   ];
 };
 
+const blendReplacementPixel = (
+  red: number,
+  green: number,
+  blue: number,
+  replacementRed: number,
+  replacementGreen: number,
+  replacementBlue: number,
+  strength: number,
+  alpha: number
+): [number, number, number] => {
+  const [replacedRed, replacedGreen, replacedBlue] = replaceColorPreservingLuminance(
+    red,
+    green,
+    blue,
+    replacementRed,
+    replacementGreen,
+    replacementBlue
+  );
+  const blend = strength * alpha;
+  return [
+    Math.round(replacedRed * blend + red * (1 - blend)),
+    Math.round(replacedGreen * blend + green * (1 - blend)),
+    Math.round(replacedBlue * blend + blue * (1 - blend)),
+  ];
+};
+
 /** A separable box blur over a per-pixel strength field, with the edges clamped. */
 const blurStrength = (strength: Float32Array, width: number, height: number, radius: number): Float32Array => {
   if (radius <= 0) return strength;
@@ -213,18 +257,18 @@ const blurStrength = (strength: Float32Array, width: number, height: number, rad
     }
   }
 
-  const vertical = new Float32Array(strength.length);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       let sum = 0;
       for (let offset = -radius; offset <= radius; offset++) {
         sum += horizontal[clamp(y + offset, 0, height - 1) * width + x];
       }
-      vertical[y * width + x] = sum / window;
+      // Reuse the caller's strength buffer instead of holding a second output-sized blur array.
+      strength[y * width + x] = sum / window;
     }
   }
 
-  return vertical;
+  return strength;
 };
 
 /** The squared distance from a pixel to one segment of the drag's polyline. */
@@ -296,7 +340,7 @@ export type ColorReplacementPlan = {
    * that the Smoothness pass feathered to nothing are both 0.
    */
   strength: Float32Array;
-  /** How many pixels carry any strength at all. 0 means the drag changed nothing. */
+  /** How many pixels' output RGB bytes differ after applying strength and opacity. */
   changedPixelCount: number;
 };
 
@@ -305,17 +349,27 @@ export type ColorReplacementPlan = {
  * area can ask "would this change anything?" before it writes a `TOOL_ACTION` and the processor
  * can refuse the same question without a second opinion.
  *
- * Returns null — not an all-zero plan — when the gesture is not a replacement at all: no sample
- * yet, or no point under the brush. `ColorReplacementToolArea` turns that into no history entry
- * whatsoever, which is the rule `FillToolArea` already follows for a flood fill that matched
- * nothing.
+ * Returns null — not an all-zero plan — when the gesture has no sample or no point under the brush,
+ * or when applying the selected opacity would leave every output pixel unchanged.
+ * `ColorReplacementToolArea` turns that into no history entry, which is the rule `FillToolArea`
+ * already follows for a flood fill that matched nothing.
  */
 export const createColorReplacementPlan = (
   imageData: ImageData,
   args: ColorReplacementToolArgs
 ): ColorReplacementPlan | null => {
-  const { data, width, height } = imageData;
+  const alpha = normalizedOpacity(args.alpha);
+  if (alpha === 0) return null;
+
+  const width = imageData.width;
+  const height = imageData.height;
   if (width <= 0 || height <= 0) return null;
+  if (!isWithinColorReplacementBudget(width, height)) {
+    throw new RangeError(
+      `Color Replacement is limited to ${COLOR_REPLACEMENT_MAX_STAGING_PIXELS.toLocaleString()} pixels`
+    );
+  }
+  const data = imageData.data;
 
   const sampleColor = args.sampleColor;
   const points = args.points ?? [];
@@ -323,34 +377,7 @@ export const createColorReplacementPlan = (
 
   const contiguous = args.limits !== 'discontinuous';
   const coverage = createStrokeCoverage(width, height, points, args.lineWidth);
-
-  // The colour predicate, shared by both Limits modes. RGB only, and a squared distance: a pixel
-  // identical in r, g and b is inside the region whatever its alpha, exactly as
-  // `createFloodFillMask` decides, and a multi-megapixel stroke pays no `Math.sqrt`.
   const distanceSquared = toleranceDistanceSquared(args.tolerance);
-  const matchMask = new Uint8Array(width * height);
-  const seedIndexes: number[] = [];
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const index = y * width + x;
-      const dataIndex = index * 4;
-      const dr = data[dataIndex] - sampleColor.r;
-      const dg = data[dataIndex + 1] - sampleColor.g;
-      const db = data[dataIndex + 2] - sampleColor.b;
-
-      if (dr * dr + dg * dg + db * db > distanceSquared) continue;
-
-      matchMask[index] = 1;
-      // A seed is a matching pixel the brush actually reached. Contiguous floods OUT from these,
-      // which is what makes a one-pixel drag recolour a whole garment.
-      if (coverage[index] > 0) seedIndexes.push(index);
-    }
-  }
-
-  if (seedIndexes.length === 0) return null;
-
-  const strength = new Float32Array(width * height);
   /**
    * Which pixels are ELIGIBLE to be substituted at all: a colour match, and for Discontinuous also
    * under the brush. The Smoothness pass blurs a whole field, so without this gate it would carry
@@ -359,56 +386,96 @@ export const createColorReplacementPlan = (
    * feather of the edge the user can see rather than an expansion of the region.
    */
   const eligible = new Uint8Array(width * height);
+  let hasSeed = false;
 
   if (!contiguous) {
     // Discontinuous: exactly the matching pixels under the brush, at the brush's own falloff.
-    for (const index of seedIndexes) {
-      strength[index] = coverage[index];
+    for (let index = 0; index < coverage.length; index++) {
+      if (coverage[index] <= 0) continue;
+      if (!matchesSampleColor(data, index, sampleColor, distanceSquared)) {
+        coverage[index] = 0;
+        continue;
+      }
       eligible[index] = 1;
+      hasSeed = true;
     }
   } else {
-    // Contiguous: the union of every connected matching region the stroke touches. The flood is
-    // the tested one, `createFloodFillMask`, handed the same 0-255 tolerance that yields the
-    // `matchMask` above — and it is called per distinct region the stroke reaches, because it
-    // takes a single seed, so a drag across one flat area costs one call rather than one per pixel.
-    let regionCount = 0;
+    // Contiguous: one reusable queue visits each pixel at most once, even when a brush crosses
+    // thousands of disconnected matching islands. 0 = unvisited, 1 = matching, 2 = nonmatching,
+    // 3 = queued. This uses the same RGB metric and four-connected topology as the shared fill.
+    let queue: Int32Array | null = null;
+    for (let seedIndex = 0; seedIndex < coverage.length; seedIndex++) {
+      if (coverage[seedIndex] <= 0 || eligible[seedIndex] !== 0) continue;
+      if (!matchesSampleColor(data, seedIndex, sampleColor, distanceSquared)) {
+        eligible[seedIndex] = 2;
+        continue;
+      }
 
-    for (const seedIndex of seedIndexes) {
-      if (eligible[seedIndex]) continue;
+      queue ??= new Int32Array(width * height);
+      hasSeed = true;
+      let queueStart = 0;
+      let queueEnd = 1;
+      queue[0] = seedIndex;
+      eligible[seedIndex] = 3;
 
-      const x = seedIndex % width;
-      const y = Math.floor(seedIndex / width);
-      const region = createFloodFillMask(
-        imageData,
-        { x, y },
-        {
-          tolerance: args.tolerance * COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE,
-          contiguous: true,
+      while (queueStart < queueEnd) {
+        const index = queue[queueStart++];
+        if (!matchesSampleColor(data, index, sampleColor, distanceSquared)) {
+          eligible[index] = 2;
+          continue;
         }
-      );
-      if (!region) continue;
 
-      regionCount += 1;
-      for (let index = 0; index < eligible.length; index++) {
-        if (region.mask[index]) {
-          eligible[index] = 1;
-          strength[index] = 1;
+        eligible[index] = 1;
+        coverage[index] = 1;
+        const x = index % width;
+        const y = Math.floor(index / width);
+
+        if (x > 0 && eligible[index - 1] === 0) {
+          eligible[index - 1] = 3;
+          queue[queueEnd++] = index - 1;
+        }
+        if (x < width - 1 && eligible[index + 1] === 0) {
+          eligible[index + 1] = 3;
+          queue[queueEnd++] = index + 1;
+        }
+        if (y > 0 && eligible[index - width] === 0) {
+          eligible[index - width] = 3;
+          queue[queueEnd++] = index - width;
+        }
+        if (y < height - 1 && eligible[index + width] === 0) {
+          eligible[index + width] = 3;
+          queue[queueEnd++] = index + width;
         }
       }
     }
-
-    if (regionCount === 0) return null;
   }
+  if (!hasSeed) return null;
 
   // Smoothness over whatever each mode produced, so it feathers the edge the user can actually
   // see: the brush's rim under Discontinuous, the region's boundary under Contiguous.
-  const blurred = blurStrength(strength, width, height, smoothnessRadius(args.smoothness));
+  const blurred = blurStrength(coverage, width, height, smoothnessRadius(args.smoothness));
 
+  const [replacementRed, replacementGreen, replacementBlue] = parseHexColor(args.color);
   let changedPixelCount = 0;
   for (let index = 0; index < blurred.length; index++) {
     // `Math.min` is what stops a sum of overlapping ones exceeding 1 at a seam.
-    blurred[index] = eligible[index] ? Math.min(1, blurred[index]) : 0;
-    if (blurred[index] > 0) changedPixelCount += 1;
+    blurred[index] = eligible[index] === 1 ? Math.min(1, blurred[index]) : 0;
+    const effectiveStrength = blurred[index];
+    if (effectiveStrength <= 0) continue;
+
+    const dataIndex = index * 4;
+    const [red, green, blue] = blendReplacementPixel(
+      data[dataIndex],
+      data[dataIndex + 1],
+      data[dataIndex + 2],
+      replacementRed,
+      replacementGreen,
+      replacementBlue,
+      effectiveStrength,
+      alpha
+    );
+    if (red !== data[dataIndex] || green !== data[dataIndex + 1] || blue !== data[dataIndex + 2])
+      changedPixelCount += 1;
   }
 
   if (changedPixelCount === 0) return null;
@@ -424,15 +491,19 @@ export const createColorReplacementPlan = (
 export const readLayerImageData = (bitmap: BitmapSource, size: Size): ImageData | null => {
   if (size.width <= 0 || size.height <= 0) return null;
 
-  const sourceCanvas = new OffscreenCanvas(size.width, size.height);
-  const context = sourceCanvas.getContext('2d') as CanvasRenderingContext2D | null;
-  if (!context || typeof context.getImageData !== 'function') return null;
+  try {
+    const sourceCanvas = new OffscreenCanvas(size.width, size.height);
+    const context = sourceCanvas.getContext('2d') as CanvasRenderingContext2D | null;
+    if (!context || typeof context.getImageData !== 'function') return null;
 
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  context.drawImage(bitmap, 0, 0, size.width, size.height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(bitmap, 0, 0, size.width, size.height);
 
-  return context.getImageData(0, 0, size.width, size.height);
+    return context.getImageData(0, 0, size.width, size.height);
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -476,19 +547,19 @@ export const applyColorReplacementPlan = (
     const green = data[dataIndex + 1];
     const blue = data[dataIndex + 2];
 
-    const [replacedRed, replacedGreen, replacedBlue] = replaceColorPreservingLuminance(
+    const [nextRed, nextGreen, nextBlue] = blendReplacementPixel(
       red,
       green,
       blue,
       replacementRed,
       replacementGreen,
-      replacementBlue
+      replacementBlue,
+      strength,
+      alpha
     );
-    const blend = strength * alpha;
-
-    data[dataIndex] = Math.round(replacedRed * blend + red * (1 - blend));
-    data[dataIndex + 1] = Math.round(replacedGreen * blend + green * (1 - blend));
-    data[dataIndex + 2] = Math.round(replacedBlue * blend + blue * (1 - blend));
+    data[dataIndex] = nextRed;
+    data[dataIndex + 1] = nextGreen;
+    data[dataIndex + 2] = nextBlue;
     // The pixel is a substitution, not an erasure: its own alpha is the source's alpha, and a
     // partially transparent layer stays partially transparent.
   }
@@ -509,14 +580,23 @@ export const colorReplacement =
   (params: ProcessorToolParams | CreatorToolParams) =>
   (args: ToolArgs): ToolResult => {
     const { size } = params;
-    const canvas = new OffscreenCanvas(size.width, size.height);
-    const ctx = canvas.getContext('2d')!;
+    const replacementArgs = args as unknown as ColorReplacementToolArgs;
 
     // No source bitmap means the `createLayerFromTool` path: a brand-new layer with nothing to
     // replace, so the answer is an empty canvas of the right size.
-    if (!('bitmap' in params) || !params.bitmap) return [canvas];
+    if (!('bitmap' in params) || !params.bitmap) return [new OffscreenCanvas(size.width, size.height)];
+    if (normalizedOpacity(replacementArgs.alpha) === 0) return [params.bitmap];
 
-    const replacementArgs = args as unknown as ColorReplacementToolArgs;
+    const rasterWidth = Math.max(1, Math.ceil(size.width));
+    const rasterHeight = Math.max(1, Math.ceil(size.height));
+    if (!isWithinColorReplacementBudget(rasterWidth, rasterHeight)) {
+      throw new RangeError(
+        `Color Replacement is limited to ${COLOR_REPLACEMENT_MAX_STAGING_PIXELS.toLocaleString()} pixels`
+      );
+    }
+
+    const canvas = new OffscreenCanvas(size.width, size.height);
+    const ctx = canvas.getContext('2d')!;
     const imageData = readLayerImageData(params.bitmap, size);
 
     if (!imageData) {

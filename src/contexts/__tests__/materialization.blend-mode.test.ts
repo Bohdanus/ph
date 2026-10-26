@@ -34,26 +34,27 @@ class BlendingCanvas {
   readonly height: number;
   readonly draws: DrawState[] = [];
   readonly compositeWrites: GlobalCompositeOperation[] = [];
+  readonly smoothingAtDraw: boolean[] = [];
 
-  private readonly state = { composite: 'source-over' as GlobalCompositeOperation, alpha: 1 };
-  private readonly stack: Array<{ composite: GlobalCompositeOperation; alpha: number }> = [];
+  private readonly state = { composite: 'source-over' as GlobalCompositeOperation, alpha: 1, smoothing: true };
+  private readonly stack: Array<{ composite: GlobalCompositeOperation; alpha: number; smoothing: boolean }> = [];
   private readonly context: CanvasRenderingContext2D;
 
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
-    const { state, stack, draws, compositeWrites } = this;
+    const { state, stack, draws, compositeWrites, smoothingAtDraw } = this;
     const context = {
       filter: 'none',
-      imageSmoothingEnabled: true,
       save: () => {
-        stack.push({ composite: state.composite, alpha: state.alpha });
+        stack.push({ composite: state.composite, alpha: state.alpha, smoothing: state.smoothing });
       },
       restore: () => {
         const previous = stack.pop();
         if (!previous) return;
         state.composite = previous.composite;
         state.alpha = previous.alpha;
+        state.smoothing = previous.smoothing;
       },
       clearRect: () => undefined,
       fillRect: () => undefined,
@@ -63,6 +64,7 @@ class BlendingCanvas {
       // THIS draw rather than the sequence of writes that preceded it.
       drawImage: () => {
         draws.push({ composite: state.composite, alpha: state.alpha });
+        smoothingAtDraw.push(state.smoothing);
       },
     } as unknown as Record<string, unknown>;
     Object.defineProperties(context, {
@@ -77,6 +79,12 @@ class BlendingCanvas {
         set: (value: GlobalCompositeOperation) => {
           state.composite = value;
           compositeWrites.push(value);
+        },
+      },
+      imageSmoothingEnabled: {
+        get: () => state.smoothing,
+        set: (value: boolean) => {
+          state.smoothing = value;
         },
       },
     });
@@ -206,6 +214,22 @@ describe('a materialized layer carries its own compositing parameters', () => {
 });
 
 describe('the compositing boundary', () => {
+  it('composites fractional layer bounds without introducing smoothing', async () => {
+    const canvases = installBlendingCanvas();
+    const registry = new AssetRegistry();
+    try {
+      const result = await composeDurableDocument(
+        replay({ layer: layer('layer', 0, { pos: { x: 0, y: 0, width: 40.5, height: 20 } }) }),
+        request(registry)
+      );
+
+      expect(canvases.at(-1)?.smoothingAtDraw).toEqual([false]);
+      result.release();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
   it('holds the snapshot blend mode in force for the draw, beside the snapshot opacity', async () => {
     // This is legacy `drawLayer()`'s contract, and the durable boundary has to match it: alpha and
     // the composite operation are set TOGETHER, inside one save/restore pair, on the shared
