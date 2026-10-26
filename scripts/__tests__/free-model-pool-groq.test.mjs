@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { catalogCandidates, completeWithFreeModel, loadCatalogs, zeroPriced } from '../free-model-pool.mjs';
+import {
+  catalogCandidates,
+  completeWithFreeModel as completeWithFreeModelImplementation,
+  loadCatalogs,
+  zeroPriced,
+} from '../free-model-pool.mjs';
 
+const completeWithFreeModel = (prompt, options = {}) =>
+  completeWithFreeModelImplementation(prompt, { ...options, initializeLegacyQuarantine: false });
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 const groqRow = (id) => ({ id, owned_by: 'system', context_window: 8192 });

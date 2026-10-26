@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   catalogCandidates,
-  completeWithFreeModel,
+  completeWithFreeModel as completeWithFreeModelImplementation,
   loadCatalogs,
   main,
   probeOpenRouterQuota,
   zeroPriced,
 } from '../free-model-pool.mjs';
 
+const completeWithFreeModel = (prompt, options = {}) =>
+  completeWithFreeModelImplementation(prompt, { ...options, initializeLegacyQuarantine: false });
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -186,6 +188,7 @@ describe('keyless free-model catalog CLI', () => {
       fetchImpl,
       openRouterKey: '',
       groqKey: '',
+      initializeLegacyQuarantine: false,
       stdout,
       stderr,
     });

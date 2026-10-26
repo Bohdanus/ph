@@ -18,9 +18,10 @@ only when the evidence identifies a specific route. The chat stores are always r
   automatically; the three-day cadence is a maximum review interval, not a reason to
   extend every entry.
 - Use a six-hour cooldown for a clearly model-specific transient rate limit. The CLI
-  allows up to 72 hours for a specifically justified provider outage or model
-  unavailability. Do not quarantine a model for a global daily quota, context overflow,
-  a bad prompt, an external search/API failure, or an orchestration/tool invocation error.
+  allows up to 72 hours for a specifically justified model/source-route outage or model
+  unavailability or a confirmed historical poor-performance entry. Do not quarantine a
+  model for a global daily quota, context overflow, a bad prompt, an external search/API
+  failure, or an orchestration/tool invocation error.
 - OpenRouter free-model daily usage resets at 00:00 UTC. Read the account's live
   `free_model_daily_requests` counter with
   `node scripts/free-model-pool.mjs --openrouter-quota`; its returned limit is
@@ -79,10 +80,12 @@ SELECT s.id AS session_id,
        p.id AS part_id,
        datetime(p.time_created / 1000, 'unixepoch') AS occurred_at,
        json_extract(p.data, '$.state.error') AS error
-FROM part AS p
-JOIN message AS m ON m.id = p.message_id
-JOIN recent_sessions AS s ON s.id = p.session_id
-WHERE p.time_created >= (strftime('%s','now') - 3600) * 1000
+FROM recent_sessions AS s
+CROSS JOIN part AS p INDEXED BY part_session_idx
+CROSS JOIN message AS m
+WHERE p.session_id = s.id
+  AND m.id = p.message_id
+  AND p.time_created >= (strftime('%s','now') - 3600) * 1000
   AND json_valid(p.data)
   AND json_extract(p.data, '$.type') = 'tool'
   AND json_extract(p.data, '$.state.status') = 'error'
@@ -98,13 +101,36 @@ Kilo or OpenRouter. Do not quarantine both sources by guess.
 
 ### Codex
 
-Use the latest state database only after checking `.tables`, `.schema threads`, and
-`backfill_state`. If the index is incomplete, use rollout files as the source of truth.
-Use `threads.updated_at` and `rollout_path` to select recent candidate sessions, then
-inspect only their corresponding rollout files. Read `.zst` files with `zstd -dc`; do
-not decompress in place. Model/provider may vary by turn, so inspect `turn_context` as
-well as `session_meta` and associate errors with the nearest applicable turn context.
-Do not assume `threads.model` describes a spawned subagent or every turn.
+Find and inspect the newest state DB; the numeric suffix and columns are versioned:
+
+```bash
+codex_home=${CODEX_HOME:-$HOME/.codex}
+codex_db=$(ls -1t "$codex_home"/state_*.sqlite 2>/dev/null | head -1)
+test -n "$codex_db"
+sqlite3 -readonly "$codex_db" ".tables"
+sqlite3 -readonly "$codex_db" ".schema threads"
+sqlite3 -readonly "$codex_db" "SELECT status FROM backfill_state WHERE id = 1;"
+```
+
+If backfill is incomplete, use rollout files as the source of truth. Otherwise select
+recent sessions with the timestamp column present in that version's `threads` schema
+(current `updated_at` is epoch seconds), including child/subagent rows and archived
+sessions:
+
+```sql
+SELECT id, title, model, model_provider, rollout_path, updated_at, archived
+FROM threads
+WHERE updated_at >= strftime('%s','now') - 3600
+ORDER BY updated_at DESC;
+```
+
+Resolve each relative `rollout_path` against `CODEX_HOME`; inspect only those files.
+Read `.zst` files with `zstd -dc`; do not decompress in place. In each rollout, inspect
+`turn_context` and `response_item` error/tool-result records as well as `session_meta`,
+and associate an error with the nearest preceding turn context. Do not assume
+`threads.model` describes a spawned subagent or every turn. If an index version lacks
+`updated_at`, use the equivalent timestamp column shown by its schema rather than
+silently dropping the scan.
 
 Codex assistant prose that mentions “rate limit”, “failed”, or “context” is not itself
 proof of a failure. Require an error event, failed tool/result record, provider response,
@@ -121,7 +147,7 @@ failures.
 | ------------------------------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------- |
 | Explicit model-specific upstream 429 / “temporarily rate-limited”                    | Transient capacity for that source/model route | Six-hour cooldown; do not label the model permanently bad        |
 | OpenRouter account daily allowance exhausted                                         | Account-wide quota, not a model defect         | No model quarantine; check again after 00:00 UTC                 |
-| Provider/source-wide outage confirmed across models                                  | Source availability incident                   | At most 72 hours; use another eligible source meanwhile          |
+| Source-wide outage affecting several models                                          | Provider incident, not an individual defect    | Report it; no source-wide quarantine exists here                 |
 | Model-specific invalid/unavailable response reproduced on the exact route            | Candidate catalog or upstream mismatch         | At most 72 hours, then retry/review                              |
 | Empty/truncated output, compaction/context overflow, poor answer                     | Often prompt/task-size or agent behavior       | Record and adjust task/context; do not quarantine from one event |
 | Exa/search/API 402 or 429, HTTP 403 on a source page                                 | External service limit/access issue            | No model quarantine                                              |
@@ -153,10 +179,17 @@ node scripts/free-model-quarantine.mjs add \
 ```
 
 Supported sources are `kilo`, `openrouter`, and the explicitly enabled `groq` route.
-Supported reasons are `rate_limit`, `provider_outage`, and `model_unavailable`. The
-command rejects entries longer than 72 hours. Do not store transcripts or raw error
+Supported reasons are `rate_limit`, `provider_outage`, `model_unavailable`, and
+`poor_performance`. On first use, the state file imports the three previously hard-coded
+Kilo quarantine entries with a 72-hour expiry; this preserves their current exclusion
+briefly while making them eligible for review instead of keeping them banned forever.
+The default file is the project-shared `.kilo/free-model-quarantine.json`, including when
+the command runs from a managed worktree; `FREE_MODEL_QUARANTINE_FILE` overrides it.
+The command rejects entries longer than 72 hours. Do not store transcripts or raw error
 payloads in quarantine metadata; the reason and expiry are enough. The pool ignores
-expired entries even if they have not yet been pruned:
+expired entries even if they have not yet been pruned. A malformed state file fails
+closed before any catalog or completion request; retain a backup and correct/delete the
+bad file rather than silently bypassing an active quarantine:
 
 ```bash
 node scripts/free-model-quarantine.mjs list

@@ -1,15 +1,26 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 export const MAX_QUARANTINE_HOURS = 72;
 export const DEFAULT_QUARANTINE_HOURS = 6;
 export const QUARANTINE_SOURCES = new Set(['kilo', 'openrouter', 'groq']);
-export const QUARANTINE_REASONS = new Set(['rate_limit', 'provider_outage', 'model_unavailable']);
+export const QUARANTINE_REASONS = new Set(['rate_limit', 'provider_outage', 'model_unavailable', 'poor_performance']);
 
-const DEFAULT_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '../../.kilo/free-model-quarantine.json');
+const WORKTREE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const WORKTREES_MARKER = `${sep}.kilo${sep}worktrees${sep}`;
+const WORKTREES_INDEX = WORKTREE_ROOT.lastIndexOf(WORKTREES_MARKER);
+const PROJECT_ROOT = WORKTREES_INDEX < 0 ? WORKTREE_ROOT : WORKTREE_ROOT.slice(0, WORKTREES_INDEX);
+const DEFAULT_FILE = resolve(
+  process.env.FREE_MODEL_QUARANTINE_FILE || `${PROJECT_ROOT}/.kilo/free-model-quarantine.json`
+);
 const EMPTY_STATE = () => ({ schemaVersion: 1, entries: {} });
+const LEGACY_QUARANTINES = [
+  { source: 'kilo', model: 'kilo-auto/free' },
+  { source: 'kilo', model: 'nvidia/nemotron-3.5-super-vl:free' },
+  { source: 'kilo', model: 'recursive/flint-v1.0:free' },
+];
 
 export function quarantineKey(source, model) {
   return `${source}:${model}`;
@@ -57,6 +68,22 @@ export async function readQuarantineState(filePath = DEFAULT_FILE, readFileImpl 
     throw new Error('Free-model quarantine file is not valid JSON');
   }
   return validateQuarantineState(state);
+}
+
+export async function loadQuarantineState(filePath = DEFAULT_FILE, now = Date.now()) {
+  try {
+    await stat(filePath);
+    return await readQuarantineState(filePath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+
+  const state = EMPTY_STATE();
+  for (const { source, model } of LEGACY_QUARANTINES) {
+    upsertQuarantine(state, { source, model, reason: 'poor_performance', hours: MAX_QUARANTINE_HOURS, now });
+  }
+  await writeQuarantineStateIfAbsent(state, filePath);
+  return readQuarantineState(filePath);
 }
 
 export function activeQuarantineKeys(state, now = Date.now()) {
@@ -118,6 +145,22 @@ export async function writeQuarantineState(state, filePath = DEFAULT_FILE) {
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => {});
     throw error;
+  }
+}
+
+async function writeQuarantineStateIfAbsent(state, filePath) {
+  validateQuarantineState(state);
+  await mkdir(dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    try {
+      await link(tempPath, filePath);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => {});
   }
 }
 

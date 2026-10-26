@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 
 import { open, writeFile } from 'node:fs/promises';
-import { activeQuarantineKeys, DEFAULT_QUARANTINE_FILE, readQuarantineState } from './lib/free-model-quarantine.mjs';
+import {
+  activeQuarantineKeys,
+  DEFAULT_QUARANTINE_FILE,
+  loadQuarantineState,
+  quarantineKey,
+  readQuarantineState,
+} from './lib/free-model-quarantine.mjs';
 
 const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
 const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
@@ -114,7 +120,7 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const candidates = rows
     .filter((row) => {
       if (!row?.id) return false;
-      if (quarantinedKeys.has(`${source}:${row.id}`)) return false;
+      if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
       if (source === 'groq') {
         return FREE_GROQ_MODEL_IDS.has(row.id);
@@ -139,9 +145,12 @@ export async function loadCatalogs({
   groqFreePlanConfirmed = false,
   includeOpenRouterCatalog = false,
   quarantineFile = DEFAULT_QUARANTINE_FILE,
+  initializeLegacyQuarantine = false,
   onCatalogError = () => {},
 } = {}) {
-  const quarantineState = await readQuarantineState(quarantineFile);
+  const quarantineState = initializeLegacyQuarantine
+    ? await loadQuarantineState(quarantineFile)
+    : await readQuarantineState(quarantineFile);
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
@@ -270,6 +279,7 @@ export async function completeWithFreeModel(
     checkOpenRouterQuota = false,
     maxTokens = 1200,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
+    initializeLegacyQuarantine = true,
     onCatalogError = () => {},
     onOpenRouterQuota = () => {},
   } = {}
@@ -286,6 +296,7 @@ export async function completeWithFreeModel(
     groqKey,
     groqFreePlanConfirmed,
     quarantineFile,
+    initializeLegacyQuarantine,
     onCatalogError,
   });
   const exhausted = new Set();
@@ -405,6 +416,8 @@ export async function main(
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
     groqKey = process.env.GROQ_API_KEY,
+    quarantineFile = DEFAULT_QUARANTINE_FILE,
+    initializeLegacyQuarantine = true,
     stdout = process.stdout,
     stderr = process.stderr,
   } = {}
@@ -456,7 +469,9 @@ export async function main(
       openRouterKey,
       groqKey,
       groqFreePlanConfirmed,
+      quarantineFile,
       includeOpenRouterCatalog: true,
+      initializeLegacyQuarantine,
       onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
@@ -486,6 +501,8 @@ export async function main(
     groqKey,
     maxTokens,
     groqFreePlanConfirmed,
+    quarantineFile,
+    initializeLegacyQuarantine,
     checkOpenRouterQuota,
     onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     onOpenRouterQuota: ({ used, limit, remaining }) =>

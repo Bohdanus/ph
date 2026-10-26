@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   catalogCandidates,
-  completeWithFreeModel,
+  completeWithFreeModel as completeWithFreeModelImplementation,
   loadCatalogs,
   main,
   MAX_CATALOG_RESPONSE_BYTES,
@@ -13,6 +13,8 @@ import {
   zeroPriced,
 } from '../free-model-pool.mjs';
 
+const completeWithFreeModel = (prompt, options = {}) =>
+  completeWithFreeModelImplementation(prompt, { ...options, initializeLegacyQuarantine: false });
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -112,6 +114,20 @@ describe('free model catalog filtering', () => {
     try {
       const candidates = await loadCatalogs({ fetchImpl, openRouterKey: '', quarantineFile });
       expect(candidates.map((candidate) => candidate.model)).toEqual(['recovered:free']);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed before requesting catalogs when quarantine state is corrupt', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-corrupt-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const fetchImpl = vi.fn();
+    await writeFile(quarantineFile, '{broken', 'utf8');
+
+    try {
+      await expect(loadCatalogs({ fetchImpl, openRouterKey: '', quarantineFile })).rejects.toThrow(/not valid JSON/);
+      expect(fetchImpl).not.toHaveBeenCalled();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -404,6 +420,7 @@ describe('free model runner CLI', () => {
         fetchImpl,
         openRouterKey: '',
         groqKey: '',
+        initializeLegacyQuarantine: false,
         stdout,
         stderr,
       });
