@@ -15,9 +15,11 @@ import {
   processorPresentationBounds,
   retainedPresentationOperations,
   stageProcessorInput,
+  stageProcessorInputForTool,
 } from '../presentation-evaluator.ts';
 import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { FilterArgumentUnrenderableError } from '../../util/canvas-filter.ts';
+import { findToolProcessor } from '../../tools/toolProcessors.ts';
 
 const position = { x: 0, y: 0, width: 9000, height: 9000 };
 const documentTarget = { kind: 'document' as const };
@@ -201,15 +203,49 @@ describe('the processor input boundary', () => {
     ]);
   });
 
-  it('hands the rasterLayer its own raster untouched when it presents nothing', () => {
-    const rasterLayer = layerWith({ x: 10, y: 5, width: 40, height: 20 }, []);
-    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+  it('hands the rasterLayer its own raster and integer pixel dimensions when it presents nothing', () => {
+    const rasterLayer = layerWith({ x: 10, y: 5, width: 40.5, height: 20 }, []);
+    const bitmap = { width: 41, height: 20 } as ImageBitmap;
 
     const staged = stageProcessorInput(rasterLayer, bitmap);
 
     expect(staged.bitmap).toBe(bitmap);
-    expect(staged.bounds).toEqual({ x: 10, y: 5, width: 40, height: 20 });
+    expect(staged.bounds).toEqual({ x: 10, y: 5, width: 40.5, height: 20 });
+    expect(staged.rasterSize).toEqual({ width: 41, height: 20 });
     expect(staged.operations).toEqual([]);
+  });
+
+  it('stages a resized source onto the logical pixel grid before a processor reads it', () => {
+    const rasterLayer = layerWith({ x: 10, y: 5, width: 80.5, height: 40 }, []);
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+    const staged = stageProcessorInput(rasterLayer, bitmap);
+
+    expect(staged.bitmap).not.toBe(bitmap);
+    expect(staged.rasterSize).toEqual({ width: 81, height: 40 });
+    expect(staged.bounds).toEqual({ x: 10, y: 5, width: 80.5, height: 40 });
+    expect((staged.bitmap as OffscreenCanvas).width).toBe(81);
+    expect((staged.bitmap as OffscreenCanvas).height).toBe(40);
+  });
+
+  it('uses a cached baked presentation and does not reapply its retained operations', () => {
+    const rasterLayer = {
+      ...layerWith({ x: 10, y: 5, width: 40, height: 20 }, [
+        affine({ a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 }),
+        { id: 'blur', kind: 'filter' as const, enabled: true, args: { toolName: 'blur', radius: 2 } },
+      ]),
+      tmpCanvas: { width: 80, height: 40 } as OffscreenCanvas,
+      presentationBounds: { x: 15, y: 8, width: 80, height: 40 },
+    };
+
+    const staged = stageProcessorInput(rasterLayer, rasterLayer.tmpCanvas);
+
+    expect(staged.bitmap).toBe(rasterLayer.tmpCanvas);
+    expect(staged.bounds).toEqual(rasterLayer.presentationBounds);
+    expect(staged.rasterSize).toEqual({ width: 80, height: 40 });
+    expect(staged.operations).toHaveLength(2);
+    expect(staged.presentationIsBaked).toBe(true);
+    expect(processorPresentationBounds(rasterLayer)).toEqual(rasterLayer.presentationBounds);
   });
 
   it('stages a private surface at the evaluated bounds for a transformed rasterLayer', () => {
@@ -221,10 +257,101 @@ describe('the processor input boundary', () => {
     const staged = stageProcessorInput(rasterLayer, bitmap);
 
     expect(staged.bounds).toEqual({ x: 15, y: 8, width: 80, height: 40 });
+    expect(staged.rasterSize).toEqual({ width: 80, height: 40 });
     expect((staged.bitmap as OffscreenCanvas).width).toBe(80);
     expect((staged.bitmap as OffscreenCanvas).height).toBe(40);
     expect(staged.bitmap).not.toBe(bitmap);
     expect(staged.operations).toHaveLength(1);
+  });
+
+  it('keeps fractional document bounds separate from the integer staged raster size', () => {
+    const rasterLayer = layerWith({ x: 10, y: 5, width: 40, height: 20 }, [
+      affine({ a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+    ]);
+
+    const staged = stageProcessorInput(rasterLayer, { width: 40, height: 20 } as ImageBitmap);
+
+    expect(staged.bounds.width).toBe(40.5);
+    expect(staged.rasterSize).toEqual({ width: 41, height: 20 });
+    expect((staged.bitmap as OffscreenCanvas).width).toBe(staged.rasterSize.width);
+    expect((staged.bitmap as OffscreenCanvas).height).toBe(staged.rasterSize.height);
+  });
+
+  it('refuses a caller pixel budget before allocating a transformed raster surface', () => {
+    const rasterLayer = layerWith({ x: 10, y: 5, width: 40, height: 20 }, [
+      affine({ a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 }),
+    ]);
+    const allocateSurface = vi.fn();
+    vi.stubGlobal('OffscreenCanvas', allocateSurface);
+    try {
+      expect(() =>
+        stageProcessorInput(rasterLayer, { width: 40, height: 20 } as ImageBitmap, { maxPixelCount: 3_199 })
+      ).toThrow(/pixel staging budget/);
+      expect(allocateSurface).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('applies each tool processor budget before allocating a transformed raster surface', () => {
+    const rasterLayer = layerWith({ x: 10, y: 5, width: 40, height: 20 }, [
+      affine({ a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 }),
+    ]);
+    const allocateSurface = vi.fn();
+    const processor = { maxStagingPixelCount: 3_199 };
+    vi.stubGlobal('OffscreenCanvas', allocateSurface);
+    try {
+      expect(() =>
+        stageProcessorInputForTool(rasterLayer, { width: 40, height: 20 } as ImageBitmap, processor)
+      ).toThrow(/pixel staging budget/);
+      expect(allocateSurface).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refuses an over-budget Red Eye transform before allocating its staged surface', () => {
+    const rasterLayer = layerWith({ x: 0, y: 0, width: 3000, height: 3000 }, [
+      affine({ a: 1.5, b: 0, c: 0, d: 1.5, e: 0, f: 0 }),
+    ]);
+    const allocateSurface = vi.fn();
+    const processor = findToolProcessor('red-eye');
+    if (!processor) throw new Error('Red Eye processor is not registered');
+    vi.stubGlobal('OffscreenCanvas', allocateSurface);
+    try {
+      expect(() =>
+        stageProcessorInputForTool(rasterLayer, { width: 3000, height: 3000 } as ImageBitmap, processor)
+      ).toThrow(/pixel staging budget/);
+      expect(allocateSurface).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('enforces the Red Eye budget for raw rasters with no retained operations', () => {
+    const rasterLayer = layerWith({ x: 0, y: 0, width: 5000, height: 4000 }, []);
+    const processor = findToolProcessor('red-eye');
+    if (!processor) throw new Error('Red Eye processor is not registered');
+
+    expect(() =>
+      stageProcessorInputForTool(rasterLayer, { width: 5000, height: 4000 } as ImageBitmap, processor)
+    ).toThrow(/pixel staging budget/);
+  });
+
+  it('enforces the Red Eye budget on resized logical bounds before allocating a staged raster', () => {
+    const rasterLayer = layerWith({ x: 0, y: 0, width: 5000, height: 4000 }, []);
+    const processor = findToolProcessor('red-eye');
+    if (!processor) throw new Error('Red Eye processor is not registered');
+    const allocateSurface = vi.fn();
+    vi.stubGlobal('OffscreenCanvas', allocateSurface);
+    try {
+      expect(() =>
+        stageProcessorInputForTool(rasterLayer, { width: 100, height: 80 } as ImageBitmap, processor)
+      ).toThrow(/pixel staging budget/);
+      expect(allocateSurface).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it.each([

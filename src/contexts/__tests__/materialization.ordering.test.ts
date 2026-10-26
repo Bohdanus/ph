@@ -119,6 +119,11 @@ function makeRequest(registry: AssetRegistry, signal?: AbortSignal): Materializa
   };
 }
 
+function requireProcessorBitmap(params: Parameters<typeof toolProcessors.blur.imageProcessor>[0]): BitmapSource {
+  if (!('bitmap' in params)) throw new Error('Expected a raster processor input');
+  return params.bitmap;
+}
+
 /** The calls `renderRetainedSegment` makes on its context, in the order it made them. */
 type RenderCall = { op: 'save' | 'restore' | 'filter' | 'translate' | 'transform' | 'drawImage'; args: unknown[] };
 
@@ -257,6 +262,259 @@ describe('materializeLayer safety (P0.3)', () => {
     await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/Unknown raster processor/);
   });
 
+  it('enforces durable raster processor staging budgets before allocating a presentation surface', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const originalImageProcessor = toolProcessors['red-eye'].imageProcessor;
+    const imageProcessor = vi.spyOn(toolProcessors['red-eye'], 'imageProcessor');
+    const { bitmap } = createOwnedBitmap(100, 80);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
+    const rasterLayer = makeRasterLayer('layer-1', assetId, 100, 80, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'red-eye',
+        version: 1,
+        args: Object.freeze({ toolName: 'red-eye', pupilSize: 50, darkenAmount: 50 }),
+      }),
+    ]);
+    const layer = Object.freeze({
+      ...rasterLayer,
+      snapshot: makeSnapshot('layer-1', rasterSource(assetId, 100, 80), { x: 0, y: 0, width: 5000, height: 4000 }),
+    });
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/pixel staging budget/);
+      expect(allocations).toEqual([]);
+      expect(imageProcessor).not.toHaveBeenCalled();
+    } finally {
+      toolProcessors['red-eye'].imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('refuses an over-budget generated source before allocating its initial raster', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const originalImageProcessor = toolProcessors['red-eye'].imageProcessor;
+    const imageProcessor = vi.spyOn(toolProcessors['red-eye'], 'imageProcessor');
+    const layer = makeBlankLayer('layer-1', 5000, 4000, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'red-eye',
+        version: 1,
+        args: Object.freeze({ toolName: 'red-eye', pupilSize: 50, darkenAmount: 50 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/pixel staging budget/);
+      expect(allocations).toEqual([]);
+      expect(imageProcessor).not.toHaveBeenCalled();
+    } finally {
+      toolProcessors['red-eye'].imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('does not allocate a duplicate bitmap for a generated source with a document frame', async () => {
+    const registry = new AssetRegistry();
+    const createdBitmap = createOwnedBitmap(20, 20);
+    const createImageBitmap = vi.fn(async () => createdBitmap.bitmap);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      vi.stubGlobal('createImageBitmap', createImageBitmap);
+      const materialized = await materializeLayer(makeBlankLayer('layer-1', 20, 20), {
+        ...makeRequest(registry),
+        frame: { x: 0, y: 0, width: 20, height: 20 },
+      });
+
+      expect(createImageBitmap).toHaveBeenCalledTimes(1);
+      expect(materialized.bitmap).toBe(createdBitmap.bitmap);
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('skips a historical zero-opacity Color Replacement without rejecting an oversized raster', async () => {
+    const registry = new AssetRegistry();
+    const imageProcessor = vi.spyOn(toolProcessors['color-replacement'], 'imageProcessor');
+    const layer = makeBlankLayer('layer-1', 4096, 4096, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'color-replacement',
+        version: 1,
+        args: Object.freeze({
+          toolName: 'color-replacement',
+          alpha: 0,
+          lineWidth: 18,
+          color: '#ff0000',
+          tolerance: 30,
+          limits: 'contiguous',
+          sampling: 'current-layer',
+          smoothness: 10,
+          sampleColor: { r: 0, g: 0, b: 0, a: 255 },
+          points: [{ x: 20, y: 20 }],
+        }),
+      }),
+    ]);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(imageProcessor).not.toHaveBeenCalled();
+      expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 4096, height: 4096 });
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('still rejects an unsupported zero-opacity Color Replacement version before allocating its source', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const layer = makeBlankLayer('layer-1', 20, 20, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'color-replacement',
+        version: 99,
+        args: Object.freeze({ toolName: 'color-replacement', alpha: 0 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(
+        'Unsupported raster processor color-replacement v99'
+      );
+      expect(allocations).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('reuses a matching generated fractional raster without an extra staging resample', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const processorInputs: Array<{ bitmap: BitmapSource; size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    const layer = makeBlankLayer('layer-1', 40.5, 20.25, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(allocations).toEqual([{ width: 41, height: 21 }]);
+      expect(processorInputs).toHaveLength(1);
+      expect(processorInputs[0]?.size).toEqual({ width: 41, height: 21 });
+      expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 40.5, height: 20.25 });
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('enforces each processor budget when consecutive processors reuse an owned raster', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const originalBlurProcessor = toolProcessors.blur.imageProcessor;
+    const originalRedEyeProcessor = toolProcessors['red-eye'].imageProcessor;
+    const blurProcessor = vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      return () => [bitmap];
+    });
+    const redEyeProcessor = vi.spyOn(toolProcessors['red-eye'], 'imageProcessor');
+    const { bitmap } = createOwnedBitmap(5000, 4000);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
+    const layer = makeRasterLayer('layer-1', assetId, 5000, 4000, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'red-eye',
+        version: 1,
+        args: Object.freeze({ toolName: 'red-eye', pupilSize: 50, darkenAmount: 50 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/pixel staging budget/);
+      expect(allocations).toEqual([{ width: 5000, height: 4000 }]);
+      expect(blurProcessor).toHaveBeenCalledTimes(1);
+      expect(redEyeProcessor).not.toHaveBeenCalled();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalBlurProcessor;
+      toolProcessors['red-eye'].imageProcessor = originalRedEyeProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
   it('rejects cleanly for a raster source with invalid (zero) dimensions', async () => {
     const registry = new AssetRegistry();
     const { bitmap } = createOwnedBitmap(10, 10);
@@ -379,6 +637,240 @@ describe('materializeLayer safety (P0.3)', () => {
     }
 
     registry.shutdown();
+  });
+
+  it('passes staged pixel dimensions to processors while retaining fractional document bounds', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ width: number; height: number }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      processorInputs.push({ ...params.size });
+      const bitmap = requireProcessorBitmap(params);
+      return () => [bitmap];
+    });
+
+    const layer = makeBlankLayer('layer-1', 40, 20, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'layer-1',
+        transform: Object.freeze({ a: 1.0125, b: 0, c: 0, d: 1.0125, e: 0, f: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toEqual([{ width: 41, height: 21 }]);
+      expect(materialized.bitmap.width).toBe(41);
+      expect(materialized.bitmap.height).toBe(21);
+      expect(materialized.bounds.width).toBeCloseTo(40.5);
+      expect(materialized.bounds.height).toBeCloseTo(20.25);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      registry.shutdown();
+    }
+  });
+
+  it('preserves staged pixels across consecutive processors after a fractional affine', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{
+      processorId: string;
+      bitmap: BitmapSource;
+      size: { width: number; height: number };
+    }> = [];
+    const originalBlurProcessor = toolProcessors.blur.imageProcessor;
+    const originalSharpenProcessor = toolProcessors.sharpen.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ processorId: 'blur', bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    vi.spyOn(toolProcessors.sharpen, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ processorId: 'sharpen', bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+
+    const layer = makeBlankLayer('layer-1', 40, 20, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'layer-1',
+        transform: Object.freeze({ a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'sharpen',
+        version: 1,
+        args: Object.freeze({ toolName: 'sharpen', amount: 0 }),
+      }),
+    ]);
+
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toHaveLength(2);
+      expect(processorInputs.map(({ processorId }) => processorId)).toEqual(['blur', 'sharpen']);
+      expect(processorInputs[0]?.size).toEqual({ width: 41, height: 20 });
+      expect(processorInputs[1]?.size).toEqual({ width: 41, height: 20 });
+      expect(processorInputs[1]?.bitmap).toBe(processorInputs[0]?.bitmap);
+      expect(materialized.bitmap).toBe(processorInputs[1]?.bitmap);
+      expect(materialized.bounds.width).toBeCloseTo(40.5);
+      expect(materialized.bounds.height).toBe(20);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalBlurProcessor;
+      toolProcessors.sharpen.imageProcessor = originalSharpenProcessor;
+      registry.shutdown();
+    }
+  });
+
+  it('copies a borrowed raw raster at intrinsic pixel dimensions before its first processor', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ bitmap: BitmapSource; size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    const { bitmap: sourceBitmap } = createOwnedBitmap(41, 20);
+    const assetId = registry.registerBaseline('test-doc', sourceBitmap, { ownership: 'borrow' });
+    const rasterLayer = makeRasterLayer('layer-1', assetId, 41, 20, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    const layer = Object.freeze({
+      ...rasterLayer,
+      snapshot: makeSnapshot('layer-1', rasterSource(assetId, 41, 20), { x: 0, y: 0, width: 40.5, height: 20 }),
+    });
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toHaveLength(1);
+      expect(processorInputs[0]?.size).toEqual({ width: 41, height: 20 });
+      expect(processorInputs[0]?.bitmap).not.toBe(sourceBitmap);
+      expect(recordedRenderCalls[0]?.find(({ op }) => op === 'drawImage')?.args).toEqual([sourceBitmap, 0, 0, 41, 20]);
+      expect(materialized.bounds.width).toBe(40.5);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('resizes a borrowed raster to logical bounds before durable pixel processing', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ bitmap: BitmapSource; size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    const { bitmap: sourceBitmap } = createOwnedBitmap(40, 20);
+    const assetId = registry.registerBaseline('test-doc', sourceBitmap, { ownership: 'borrow' });
+    const rasterLayer = makeRasterLayer('layer-1', assetId, 40, 20, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    const layer = Object.freeze({
+      ...rasterLayer,
+      snapshot: makeSnapshot('layer-1', rasterSource(assetId, 40, 20), { x: 10, y: 5, width: 80, height: 40 }),
+    });
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toHaveLength(1);
+      expect(processorInputs[0]?.bitmap).not.toBe(sourceBitmap);
+      expect(processorInputs[0]?.size).toEqual({ width: 80, height: 40 });
+      const drawImageArgs = recordedRenderCalls[0]?.find(({ op }) => op === 'drawImage')?.args;
+      expect(drawImageArgs?.[0]).toBe(sourceBitmap);
+      expect(drawImageArgs?.slice(-2)).toEqual([80, 40]);
+      expect(materialized.bounds).toEqual({ x: 10, y: 5, width: 80, height: 40 });
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('draws a processed fractional raster directly into a requested frame', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: BitmapSource[] = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push(bitmap);
+      return () => [bitmap];
+    });
+    const { bitmap } = createOwnedBitmap(40, 20);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'borrow' });
+    const layer = makeRasterLayer('layer-1', assetId, 40, 20, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'layer-1',
+        transform: Object.freeze({ a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    const frame: DocumentFrame = { x: 0, y: 0, width: 100, height: 80 };
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, { ...makeRequest(registry), frame });
+
+      expect(materialized.bitmap.width).toBe(frame.width);
+      expect(materialized.bitmap.height).toBe(frame.height);
+      expect(recordedRenderCalls).toHaveLength(2);
+      const frameDraw = recordedRenderCalls[1]?.find(({ op }) => op === 'drawImage');
+      expect(frameDraw?.args[0]).toBe(processorInputs[0]);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
   });
 
   it('materializes a blank layer with no operations successfully', async () => {

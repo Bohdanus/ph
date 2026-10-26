@@ -4,6 +4,7 @@ import {
   type ClipOptions,
   canvasRedrawClip,
   drawLine,
+  getColorAtPoint,
   getWorkspaceCanvas,
   LINE_END_X,
   LINE_END_Y,
@@ -13,76 +14,16 @@ import {
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
+import { cssPointToImage } from './helpers/screenshot-scale';
 import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 /**
- * Pixel coverage for the three paint tools — Brush, Pencil and Color Replacement — which
- * until now had none: `sidebar-flyout.spec.ts` and `sidebar-keyboard.spec.ts` proved the
- * flyout can *select* them and stopped there, and Color Replacement was not named in any
- * spec at all.
+ * Pixel E2E coverage for Brush, Pencil and Color Replacement.
  *
- * All three live in one flyout group. `toolbar-mapping.ts:73-75` lists them as
- * `[Brush Tool / brush, Pencil Tool / pencil, Color Replacement Tool / color-replacement]`,
- * so the group's primary is `brush`, and `openToolFlyout(page, 'brush')` is the address this
- * file gives whether or not that group has a tile of its own. At 1280x720 it does: measured, the
- * Brush group is the SEVENTH of the rail's fifteen groups, so it is the last tile on screen, and
- * the helper takes its own-tile branch and presses that tile. The first group the fit folds at
- * that height is Clone Stamp, the eighth, and the collapse branch — a right-click on the
- * three-dots tile, handing back a menu that carries Brush — is what a window short enough to fold
- * Brush itself gets, and it is the menu `selectFromFlyout` then picks the tool out of either way.
- * The per-item test ids come from the
- * labels `Brush Tool -> brush-tool`, `Pencil Tool -> pencil-tool`,
- * `Color Replacement Tool -> color-replacement-tool`
- * (`SidebarLeft.tsx:970` mints `tool-flyout-item-${name}-${slug}`).
- *
- * `Main.tsx:55` routes all three to `interactionMode === 'draw'`, so the same
- * `DrawToolArea` collects the gesture for each of them, and `toolProcessors.ts:165-193`
- * gives each a real raster processor. Strokes therefore commit, which is what the
- * assertions below measure.
- *
- * ## What these tests deliberately do NOT assert, and why
- *
- * A green run here does **not** mean the foreground colour reaches the stroke. It does
- * not, for any of the three tools, and the defect is recorded in `e2e/OPEN_PROBLEMS.md`:
- *
- * - `SET_COLOR` writes only `state.color` (`src/contexts/StoreContext.tsx:501`). Nothing
- *   copies it into the active tool's args. That copy is a `useEffect` living in each
- *   tool's own options panel — `src/components/ToolbarsRight/Draw/Draw.tsx:29-33` is the
- *   one that makes the Draw tool obey the swatch. Brush, Pencil and Color Replacement are
- *   wired to `PlaceholderTool` (`src/tools/toolsMap.ts:75,80,85`), which renders chips and
- *   no effect, so their `args.color` keeps the hard-coded `'#000000'` from
- *   `src/tools/settings.ts:116,124,132` and `DrawToolArea` strokes with that
- *   (`src/components/Main/DrawToolArea.tsx:23,51,81`).
- * - Measured with the foreground set to `#ff0000` and the swatch verified as `#ff0000`:
- *   the widest channel spread anywhere in the stroke is **0**, i.e. the pixels are exactly
- *   neutral. Brush and Pencil peak at `rgb(0, 0, 0)` — black at their `alpha: 1`
- *   composited over the white document. The Draw tool on the same gesture and the same
- *   swatch measures `rgb(255, 26, 26)`, a channel spread of 229, which is the control that
- *   says the measurement would see red if the red were there.
- *
- * So the ink assertions below are deliberately colour-agnostic: they ask *where* the tool
- * painted, never *what colour*. That keeps them true before and after the colour defect is
- * fixed, instead of pinning today's black pixels.
- *
- * Color Replacement is absent from this file for a second, independent reason, and it is a
- * judgement rather than a technical impossibility. The tool does commit a measurable
- * stroke: at 70 levels of darkening (`rgb(185, 185, 185)`) and 5333 pixels past 32 levels,
- * it is plainly visible, `measureStroke` below sees it, and `getStrokeAnalysis`
- * classifies it as `spray` rather than returning `null`. An assertion that survives the
- * colour fix is therefore available today — every threshold in this file is derived from
- * `255 - min(r, g, b)`, which is colour-invariant, and a drag-tracking box would still
- * hold if the tool were made opaque.
- *
- * What is NOT settled is what the tool is for, and the recorded fix is a decision rather
- * than a code change: `e2e/OPEN_PROBLEMS.md` says to "decide what the tool is for". Color
- * Replacement in Photoshop is a click tool — pick a source colour, then click a target —
- * and under that model a drag does not paint a spanning stroke at all, so a geometry
- * assertion written now would be asserting the wrong interaction. The two concrete fixes
- * the entry offers (drop the `/ 4`, or treat `lineWidth` as a diameter) also disagree with
- * each other about the stroke's size, so a measured size would enshrine one of them. A test
- * that could only say "something is present" would add no defect-detection power either.
- * So the coverage lands when the tool's intended output is decided, and until then the gap
- * is stated in `e2e/OPEN_PROBLEMS.md` rather than filled with a test that guesses.
+ * Brush and Pencil are checked for drag geometry. Color Replacement follows Photoshop's
+ * sample-then-replace gesture: click a source pixel, then drag across pixels to replace it.
+ * The test seeds a red brush stroke, samples it and verifies that only the dragged segment
+ * changes to the foreground color while an untouched segment remains red.
  */
 
 /** The gesture every test in this file draws: a 200px horizontal line at y=150, box-relative. */
@@ -233,6 +174,17 @@ async function drawAndMeasure(
   return { stroke: measured, scale };
 }
 
+async function readClipPixel(
+  screenshot: Buffer,
+  clip: Required<ClipOptions>,
+  box: BoundingBox,
+  point: { x: number; y: number }
+) {
+  const image = await loadImageData(screenshot);
+  const imagePoint = cssPointToImage(image, clip, { x: box.x + point.x, y: box.y + point.y });
+  return getColorAtPoint(image, Math.round(imagePoint.x), Math.round(imagePoint.y), 0);
+}
+
 const PAINT_TOOLS = [
   { name: 'brush', label: 'Brush Tool' },
   { name: 'pencil', label: 'Pencil Tool' },
@@ -279,6 +231,62 @@ for (const tool of PAINT_TOOLS) {
     expect(Math.abs((stroke.edge.top + stroke.edge.bottom) / 2 - CLIP_STROKE_Y)).toBeLessThanOrEqual(5);
   });
 }
+
+test('color replacement samples a source with a click and replaces the dragged segment', async ({ page }) => {
+  const sourceBox = await selectPaintTool(page, { name: 'brush', label: 'Brush Tool' });
+  await setForegroundColor(page, '#ff0000', true);
+  const brushSize = page.getByRole('slider', { name: /^Size/ });
+  await brushSize.fill('30');
+  await expect(brushSize).toHaveValue('30');
+  await drawLine(page, sourceBox, LINE_START_X, STROKE_Y, LINE_END_X, LINE_END_Y, { steps: 16 });
+
+  const sourceClip = canvasRedrawClip(sourceBox);
+  await waitForCanvasPixels(
+    page,
+    sourceClip,
+    async (screenshot) => {
+      const color = await readClipPixel(screenshot, sourceClip, sourceBox, { x: 250, y: STROKE_Y });
+      return color !== null && color.red > 220 && color.green < 40 && color.blue < 40;
+    },
+    { description: 'the red source stroke' }
+  );
+
+  await openToolFlyout(page, 'brush');
+  await selectFromFlyout(page, { toolName: 'color-replacement', label: 'Color Replacement Tool' });
+  await expectToolSelected(page, 'color-replacement');
+  const replacementBox = await getWorkspaceCanvas(page).boundingBox();
+  if (!replacementBox) throw new Error('color replacement test: no canvas bounding box after selecting the tool');
+
+  await setForegroundColor(page, '#00ff00', true);
+  const samplePoint = { x: 250, y: STROKE_Y };
+  await page.mouse.click(replacementBox.x + samplePoint.x, replacementBox.y + samplePoint.y);
+  await expect(page.getByText('Sampled rgb(255, 0, 0)')).toBeVisible();
+  await page.locator('#color-replacement-limits').selectOption('discontinuous');
+  const replacementSize = page.getByRole('slider', { name: /^Size/ });
+  await replacementSize.fill('30');
+  await expect(replacementSize).toHaveValue('30');
+
+  const replacementClip = canvasRedrawClip(replacementBox);
+  await drawLine(page, replacementBox, 220, STROKE_Y, 280, STROKE_Y, { steps: 12 });
+  await waitForCanvasPixels(
+    page,
+    replacementClip,
+    async (screenshot) => {
+      const replaced = await readClipPixel(screenshot, replacementClip, replacementBox, samplePoint);
+      const untouched = await readClipPixel(screenshot, replacementClip, replacementBox, { x: 170, y: STROKE_Y });
+      return (
+        replaced !== null &&
+        replaced.green > replaced.red + 40 &&
+        replaced.blue < 40 &&
+        untouched !== null &&
+        untouched.red > 220 &&
+        untouched.green < 40 &&
+        untouched.blue < 40
+      );
+    },
+    { description: 'only the dragged red segment to be replaced with the foreground color' }
+  );
+});
 
 test('selecting a paint tool releases the previously primary tool button', async ({ page }) => {
   // This test needs both tools on visible, separate tiles; use a tall viewport so toolbar

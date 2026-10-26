@@ -68,7 +68,7 @@ import {
   drawEvaluatedPresentation,
   evaluatePresentation,
   operationsRetainedAfterBake,
-  stageProcessorInput,
+  stageProcessorInputForTool,
 } from './presentation-evaluator.ts';
 import {
   canvasRectToDocumentFrame,
@@ -1329,11 +1329,11 @@ export const useLayers = () => {
     // trapezoid, a non-invertible homography, degenerate affine bounds). Without the
     // guard the throw escapes `tempUpdateLayer` into a React event handler.
     let result: ToolResult;
-    let input: ReturnType<typeof stageProcessorInput> | null = null;
+    let input: ReturnType<typeof stageProcessorInputForTool> | null = null;
     try {
-      input = bitmap ? stageProcessorInput(processorLayer, bitmap) : null;
+      input = bitmap ? stageProcessorInputForTool(processorLayer, bitmap, processor) : null;
       const processorParams: ProcessorToolParams | CreatorToolParams = input
-        ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
+        ? ({ bitmap: input.bitmap, size: input.rasterSize } as ProcessorToolParams)
         : ({ size: layer.pos } as CreatorToolParams);
       // Pass previousCanvas for incremental eraser brush-mode
       if (canIncrementalEraser && preview?.layer.tmpCanvas) {
@@ -1362,7 +1362,7 @@ export const useLayers = () => {
     // already routes this branch through `applyRasterTool`; the live preview must publish the
     // same baked bounds and drop the retained operations or undo/redo will diverge.
     const rasterBoundary = processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
-    const bakedPresentation = rasterBoundary && input !== null && input.operations.length > 0;
+    const bakedPresentation = rasterBoundary && input !== null && input.presentationIsBaked;
     const publishedPosition = bakedPresentation && input ? input.bounds : layer.pos;
     const previewLayer = {
       ...layer,
