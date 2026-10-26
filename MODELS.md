@@ -15,12 +15,15 @@
 Do not treat old model lists as current. For alternatives, query the live catalog and
 select an exact model/provider pair with verified zero pricing.
 
-**HEAVILY USE FREE SUBAGENTS.** Fan out bounded, read-only research, review, and code-search
-tasks across currently available free models (including OpenRouter Nemotron and Kilo Laguna)
-instead of leaving free quota unused. Check `node scripts/free-model-pool.mjs --openrouter-quota`
-before and after large OpenRouter-backed fan-outs; the server counter is authoritative for
-daily usage. Keep the global limit of 15 simultaneous subagents, use the exact free model and
-provider from the live catalog, and never silently fall back to a paid model.
+**HEAVILY USE FREE SUBAGENTS.** The account's OpenRouter free-model quota is **1,000
+requests per day** (the ≥ $10 all-time-lifetime-credit tier). Prefer free models aggressively
+for every bounded, read-only text sweep — web research, docs mining, chat-history analysis,
+and code search/review — unless doing so would risk a paid route or exceed the 1,000/day
+ceiling. Confirm the live per-account counter at any time with
+`node scripts/free-model-pool.mjs --openrouter-quota`; its returned `limit` is authoritative
+and resets to 00:00 UTC. Fan out bounded subagents across Laguna S 2.1 (`thinking`, via Kilo)
+and OpenRouter `:free` entries, keep the global cap of 15 simultaneous subagents, use the
+exact free model/provider from the live catalog, and never silently fall back to paid.
 
 ## Provider Rules
 
@@ -58,10 +61,12 @@ other tools and concurrent agents, unlike per-run attempt counts. `--probe-openr
 logs the before-snapshot and skips OpenRouter when no daily requests remain. It is a
 point-in-time counter, not a report of the 20-RPM limit or upstream capacity, and can race with
 other requests. A failed/malformed probe is unknown and never replaces model-price validation.
-OpenRouter documents 50 requests/day below 10 lifetime credits purchased and 1,000 at the
-10-credit tier; the limit is **not based on current balance**. Its docs note the higher ceiling
-can begin one credit below the table threshold for rounding/top-up fees. The API's returned
-`limit` is authoritative. The daily free-model counter resets at 00:00 UTC.
+OpenRouter's documented ceilings are **50 requests/day** (below 10 lifetime credits purchased)
+and **1,000 requests/day** (at/above the 10-credit tier). This account qualifies for the
+1,000/day tier; its docs note the higher ceiling can begin one credit below the table threshold
+for rounding/top-up fees. The daily counter is **not based on current balance** and the API's
+returned `limit` is authoritative. The counter resets at 00:00 UTC, so the 1,000-request budget
+refills daily — schedule broad sweeps freely up to that ceiling.
 [OpenRouter limits](https://openrouter.ai/docs/api-reference/limits)
 
 The runner deliberately sends no reasoning override. OpenRouter says `reasoning.exclude` only
