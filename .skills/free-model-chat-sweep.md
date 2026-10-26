@@ -207,12 +207,12 @@ node scripts/free-model-quarantine.mjs release --source openrouter --model 'vend
 ```
 
 After expiry, the route is eligible for normal catalog selection again. This avoids
-spending a request on an artificial probe; a successful real request is the re-test. If
-the model remains unused, the three-day review may run one short, non-sensitive, bounded
-probe through its exact source after confirming it is still free in the live catalog.
-Release early only when a successful exact-route request or fresh provider evidence
-supports recovery. Re-add a cooldown only for a new observed failure; never extend it
-solely because a timer fired.
+spending a request on an artificial probe; the first successful real request is the
+re-test. The current runner does not select a quarantined model for a targeted synthetic
+probe, so if a route remains unused, mark it untested in the three-day review rather than
+claiming recovery. Release early only when a successful exact-route request or fresh
+provider evidence supports recovery. Re-add a cooldown only for a new observed failure;
+never extend it solely because a timer fired.
 
 ## Scheduling status
 
