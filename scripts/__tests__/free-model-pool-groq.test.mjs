@@ -54,7 +54,7 @@ describe('groq catalog filtering', () => {
 });
 
 describe('loadCatalogs with groq', () => {
-  it('includes groq source when GROQ_API_KEY is set', async () => {
+  it('includes Groq only when its key and explicit free-plan confirmation are supplied', async () => {
     const fetchImpl = readableFetch((url) => {
       if (url.includes('groq')) {
         return Promise.resolve({ ok: true, json: async () => ({ data: [groqRow('openai/gpt-oss-20b')] }) });
@@ -70,6 +70,23 @@ describe('loadCatalogs with groq', () => {
       onCatalogError: () => {},
     });
     expect(candidates.some((c) => c.source === 'groq' && c.model === 'openai/gpt-oss-20b')).toBe(true);
+  });
+
+  it('keeps Groq behind Kilo and OpenRouter in source priority', async () => {
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('poolside/laguna-s-2.1:free')],
+      openrouter: [openRouterRow('deepseek/deepseek-r1')],
+      groq: [groqRow('openai/gpt-oss-20b')],
+      chat: vi.fn(),
+    });
+    const candidates = await loadCatalogs({
+      fetchImpl,
+      openRouterKey: 'router-key',
+      groqKey: 'groq-key',
+      groqFreePlanConfirmed: true,
+      onCatalogError: () => {},
+    });
+    expect([...new Set(candidates.map(({ source }) => source))]).toEqual(['kilo', 'openrouter', 'groq']);
   });
 
   it('does not probe Groq when a key is present but its free plan is not explicitly confirmed', async () => {

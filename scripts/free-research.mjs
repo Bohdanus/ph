@@ -75,13 +75,14 @@ const USAGE = `Usage: node scripts/free-research.mjs --prompt-file PATH --url-li
   --max-concurrency N       Parallel fetches (default ${MAX_CONCURRENCY}, max ${MAX_ALLOWED_CONCURRENCY})
   --max-content CHARS       Per-URL text cap (default ${MAX_CONTENT_CHARS}, max ${MAX_CONTENT_CHARS})
   --groq-free-plan-only     Also allow Groq after confirming its account is on the $0 Free plan
+  --probe-openrouter-quota  Check the OpenRouter free-model daily counter before routing and skip OpenRouter when exhausted
 
   The runner fetches at most ${MAX_URLS} URLs, caps response and prompt size, then writes only
   the condensed result. Source pages are untrusted data, not instructions. Local hostnames,
   non-public DNS answers, IP-literal URLs, credentials, nonstandard ports, and non-HTTPS URLs
   are rejected. Each request pins its connection to the validated DNS answer; redirects are
   resolved and checked again. The Groq flag is an operator attestation; the runner cannot
-  inspect an account's Groq billing plan.
+  inspect an account's billing plan.
 
 `;
 
@@ -89,6 +90,7 @@ function parseArgs(args) {
   const values = new Map();
   let help = false;
   let groqFreePlanConfirmed = false;
+  let probeOpenRouterQuota = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--help' || arg === '-h') {
@@ -99,6 +101,10 @@ function parseArgs(args) {
       groqFreePlanConfirmed = true;
       continue;
     }
+    if (arg === '--probe-openrouter-quota') {
+      probeOpenRouterQuota = true;
+      continue;
+    }
     if (!VALUE_FLAGS.has(arg)) throw new Error(`Unknown option: ${arg}`);
     const value = args[index + 1];
     if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value`);
@@ -106,7 +112,7 @@ function parseArgs(args) {
     values.set(arg, value);
     index += 1;
   }
-  return { values, help, groqFreePlanConfirmed };
+  return { values, help, groqFreePlanConfirmed, probeOpenRouterQuota };
 }
 
 function integerOption(values, flag, fallback, min, max) {
@@ -634,7 +640,7 @@ export async function main(
     return 0;
   }
 
-  const { values, groqFreePlanConfirmed } = parsed;
+  const { values, groqFreePlanConfirmed, probeOpenRouterQuota } = parsed;
   const promptFile = values.get('--prompt-file');
   const urlListFile = values.get('--url-list');
   const outputFile = values.get('--output-file');
@@ -714,12 +720,17 @@ export async function main(
   const result = await completeImpl(researchPrompt, {
     maxTokens,
     groqFreePlanConfirmed,
+    checkOpenRouterQuota: probeOpenRouterQuota,
     onCatalogError: (source, error) => stderr.write(`${source} free-model catalog unavailable: ${error.message}\n`),
+    onOpenRouterQuota: ({ used, limit, remaining }) =>
+      stderr.write(
+        `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
+      ),
   });
 
   await writeFile(
     outputFile,
-    `Source: ${result.source}/${result.model}\nFinish reason: ${result.finishReason}\nUsage: ${JSON.stringify(result.usage)}\n\n${result.content}\n`,
+    `Source: ${result.source}/${result.model}\nFinish reason: ${result.finishReason}\nUsage: ${JSON.stringify(result.usage)}\nRequests attempted (this run): ${JSON.stringify(result.requestCounts)}\n\n${result.content}\n`,
     'utf8'
   );
   stderr.write(`Summary written to ${outputFile}; research prompt capped at ${researchPrompt.length} chars\n`);
