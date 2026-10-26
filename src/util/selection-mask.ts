@@ -5,6 +5,13 @@ export const MAX_VECTOR_SELECTION_BOUNDARY_EDGES = 32_768;
 /** Bounds the temporary readback, flood-fill workspace, and persisted selection-mask area. */
 export const MAX_RASTER_SELECTION_PIXELS = 16_777_216;
 
+/** Validate document-space pixel dimensions before allocating full-frame selection buffers. */
+export function isRasterSelectionSizeWithinBudget(width: number, height: number): boolean {
+  if (!Number.isSafeInteger(width) || width < 0 || !Number.isSafeInteger(height) || height < 0) return false;
+  const area = width * height;
+  return Number.isSafeInteger(area) && area <= MAX_RASTER_SELECTION_PIXELS;
+}
+
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const BASE64_CHUNK_BYTES = 3 * 8_192;
@@ -42,8 +49,7 @@ export function isCanonicalRasterSelectionMask(value: unknown): value is RasterS
     typeof height !== 'number' ||
     !Number.isSafeInteger(height) ||
     height <= 0 ||
-    width * height > MAX_RASTER_SELECTION_PIXELS ||
-    !Number.isSafeInteger(width * height) ||
+    !isRasterSelectionSizeWithinBudget(width, height) ||
     typeof data !== 'string'
   ) {
     return false;
@@ -148,8 +154,8 @@ export function encodeRasterSelectionMask(
   return { width: boundsWidth, height: boundsHeight, data: encodeBase64(packed) };
 }
 
-/** Decode a validated mask into its packed bytes. */
-export function decodeRasterSelectionMask(mask: RasterSelectionMask): Uint8Array | null {
+/** Return the private cached byte array; only read-only queries may receive it. */
+function cachedRasterSelectionBytes(mask: RasterSelectionMask): Uint8Array | null {
   if (isPlainDataObject(mask, ['width', 'height', 'data'])) {
     const { width, height, data } = mask;
     if (
@@ -189,11 +195,24 @@ export function decodeRasterSelectionMask(mask: RasterSelectionMask): Uint8Array
   }
 }
 
+/** Decode a validated mask into an owned copy of its packed bytes. */
+export function decodeRasterSelectionMask(mask: RasterSelectionMask): Uint8Array | null {
+  return cachedRasterSelectionBytes(mask)?.slice() ?? null;
+}
+
 /** Read one pixel from the packed row-major mask. Out-of-bounds pixels are unselected. */
 export function isRasterSelectionPixelSelected(mask: RasterSelectionMask, packed: Uint8Array, x: number, y: number) {
-  if (x < 0 || y < 0 || x >= mask.width || y >= mask.height) return false;
+  if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) || x < 0 || y < 0 || x >= mask.width || y >= mask.height) {
+    return false;
+  }
   const bitIndex = y * mask.width + x;
   return (packed[bitIndex >>> 3] & (1 << (bitIndex & 7))) !== 0;
+}
+
+/** Read one pixel through the private decode cache without exposing or copying its bytes. */
+export function isRasterSelectionPixelSelectedAt(mask: RasterSelectionMask, x: number, y: number): boolean {
+  const packed = cachedRasterSelectionBytes(mask);
+  return packed ? isRasterSelectionPixelSelected(mask, packed, x, y) : false;
 }
 
 /** Test one pixel of the two-sided boundary without materializing a document-sized byte mask. */
@@ -243,6 +262,10 @@ export function countSelectionBoundaryEdges(
   bounds: Pos,
   stopAfter = MAX_VECTOR_SELECTION_BOUNDARY_EDGES
 ): number {
+  if (!isRasterSelectionSizeWithinBudget(width, height)) {
+    throw new RangeError(`Selection is limited to ${MAX_RASTER_SELECTION_PIXELS.toLocaleString()} pixels`);
+  }
+
   const minX = Math.max(0, Math.floor(bounds.x));
   const minY = Math.max(0, Math.floor(bounds.y));
   const maxX = Math.min(width, Math.ceil(bounds.x + bounds.width));

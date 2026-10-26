@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createSelectionHistoryItem } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
-import { isValidSelectionSnapshot } from '../selection-baseline.ts';
+import { isValidLegacySelectionSnapshot } from '../selection-baseline.ts';
 import {
   convertLegacyHistorySafely,
   deriveSetSelectionEntry,
@@ -800,7 +800,7 @@ describe('deriveSetSelectionEntry', () => {
 
     expect(after?.activeSelectionId).toBe('next');
     expect(after?.selections.map((selection) => selection.id)).toEqual(['next']);
-    expect(isValidSelectionSnapshot(after)).toBe(true);
+    expect(isValidLegacySelectionSnapshot(after)).toBe(true);
   });
 
   it('carries the disabled state of the legacy item', () => {

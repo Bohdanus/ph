@@ -6,7 +6,9 @@ import {
   decodeRasterSelectionMask,
   encodeRasterSelectionMask,
   isCanonicalRasterSelectionMask,
+  isRasterSelectionPixelSelectedAt,
   isRasterSelectionPixelSelected,
+  MAX_RASTER_SELECTION_PIXELS,
 } from '../selection-mask.ts';
 
 describe('packed raster selection masks', () => {
@@ -20,10 +22,29 @@ describe('packed raster selection masks', () => {
     expect(encoded).not.toBeNull();
     expect(isCanonicalRasterSelectionMask(encoded)).toBe(true);
     expect(decoded).toEqual(Uint8Array.from([81, 12]));
-    expect(decodeRasterSelectionMask({ ...encoded! })).toBe(decoded);
-    expect(isRasterSelectionPixelSelected(encoded!, decoded!, 2, 1)).toBe(true);
-    expect(isRasterSelectionPixelSelected(encoded!, decoded!, 1, 0)).toBe(false);
+    const cachedDecode = decodeRasterSelectionMask({ ...encoded! });
+    expect(cachedDecode).not.toBe(decoded);
+    expect(cachedDecode).toEqual(decoded);
+    decoded![0] = 0;
+    expect(decodeRasterSelectionMask(encoded!)).toEqual(Uint8Array.from([81, 12]));
+    expect(isRasterSelectionPixelSelected(encoded!, cachedDecode!, 2, 1)).toBe(true);
+    expect(isRasterSelectionPixelSelected(encoded!, cachedDecode!, 1, 0)).toBe(false);
     expect(isRasterSelectionPixelSelected(encoded!, decoded!, -1, 0)).toBe(false);
+    expect(isRasterSelectionPixelSelectedAt(encoded!, 2, 1)).toBe(true);
+    expect(isRasterSelectionPixelSelectedAt(encoded!, 1, 0)).toBe(false);
+    expect(isRasterSelectionPixelSelectedAt(encoded!, -1, 0)).toBe(false);
+  });
+
+  it('rejects non-finite and fractional pixel coordinates', () => {
+    const mask = { width: 1, height: 1, data: 'AQ==' };
+    for (const [x, y] of [
+      [Number.NaN, 0],
+      [0, Number.NaN],
+      [Number.POSITIVE_INFINITY, 0],
+      [0, 0.5],
+    ]) {
+      expect(isRasterSelectionPixelSelectedAt(mask, x, y)).toBe(false);
+    }
   });
 
   it('counts exposed pixel edges and builds a two-sided outline without contours', () => {
@@ -36,6 +57,17 @@ describe('packed raster selection masks', () => {
     expect(createRasterSelectionBoundaryMask(encoded, packed)).toEqual(
       Uint8Array.from([0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0])
     );
+  });
+
+  it('rejects over-budget dimensions before scanning boundary edges', () => {
+    expect(() =>
+      countSelectionBoundaryEdges(new Uint8Array(0), MAX_RASTER_SELECTION_PIXELS + 1, 1, {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      })
+    ).toThrow(RangeError);
   });
 
   it('rejects malformed, over-budget, and non-canonical masks before decoding', () => {

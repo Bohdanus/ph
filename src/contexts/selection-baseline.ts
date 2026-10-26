@@ -117,7 +117,7 @@ function isCanonicalMetadata(value: unknown): value is SelectionMetadata {
   return true;
 }
 
-function isCanonicalSelection(value: unknown): value is Selection {
+function isCanonicalSelection(value: unknown, requireDrawableContour = true): value is Selection {
   if (
     !hasOwnDataKeys(
       value,
@@ -145,9 +145,18 @@ function isCanonicalSelection(value: unknown): value is Selection {
       ['x', 'y', 'width', 'height'].every((key) => typeof pos[key] === 'number' && Number.isFinite(pos[key])) &&
       pos.width === value.rasterMask.width &&
       pos.height === value.rasterMask.height);
+  const validGeometry =
+    value.rasterMask === undefined
+      ? !requireDrawableContour ||
+        (validPoints &&
+          Array.isArray(value.points) &&
+          value.points.length > 0 &&
+          value.points.every((contour) => Array.isArray(contour) && contour.length >= 3))
+      : validRasterMask;
 
   return (
     typeof value.id === 'string' &&
+    value.id.length > 0 &&
     typeof value.isActive === 'boolean' &&
     (value.lifecycle === undefined || value.lifecycle === 'committed') &&
     (value.geometry === undefined || value.geometry === 'polygon' || value.geometry === 'rectangle') &&
@@ -155,7 +164,7 @@ function isCanonicalSelection(value: unknown): value is Selection {
       (typeof value.sourceTool === 'string' && SELECTION_SOURCE_TOOLS.some((tool) => tool === value.sourceTool))) &&
     validPoints &&
     validPos &&
-    validRasterMask &&
+    validGeometry &&
     (value.metadata === undefined || isCanonicalMetadata(value.metadata))
   );
 }
@@ -163,6 +172,24 @@ function isCanonicalSelection(value: unknown): value is Selection {
 export function isValidSelectionSnapshot(value: unknown): value is SelectionSnapshot {
   if (!hasOwnDataKeys(value, ['selections'], ['activeSelectionId'])) return false;
   if (!hasDenseArray(value.selections, isCanonicalSelection)) return false;
+  return (
+    (value.activeSelectionId === undefined ||
+      value.activeSelectionId === null ||
+      typeof value.activeSelectionId === 'string') &&
+    isSelectionSnapshotActiveStateValid(value.selections, value.activeSelectionId)
+  );
+}
+
+/**
+ * Validate the legacy replay shape without imposing the durable writer's
+ * drawable-contour requirement. Existing history can contain a one-point or
+ * empty selection seeded by a tool gesture; legacy replay preserves that
+ * state, so the migration adapter must preserve it too. New durable appends
+ * continue to use `isValidSelectionSnapshot` and reject non-drawable vectors.
+ */
+export function isValidLegacySelectionSnapshot(value: unknown): value is SelectionSnapshot {
+  if (!hasOwnDataKeys(value, ['selections'], ['activeSelectionId'])) return false;
+  if (!hasDenseArray(value.selections, (selection) => isCanonicalSelection(selection, false))) return false;
   return (
     (value.activeSelectionId === undefined ||
       value.activeSelectionId === null ||
@@ -188,7 +215,7 @@ export function isSelectionSnapshotActiveStateValid(
   // multiple active flags have no unambiguous ID and cannot be represented canonically.
   if (activeSelectionId === undefined) return activeSelections.length <= 1;
   if (activeSelectionId === null) return activeSelections.length === 0;
-  if (typeof activeSelectionId !== 'string') return false;
+  if (typeof activeSelectionId !== 'string' || activeSelectionId.length === 0) return false;
 
   return (
     activeSelections.length === 1 &&
@@ -209,7 +236,7 @@ export function activeSelectionIdFromSnapshot(
   return activeSelections.length === 1 ? activeSelections[0]!.id : null;
 }
 
-function cloneSelection(selection: Selection): Selection {
+export function cloneSelection(selection: Selection): Selection {
   return {
     ...selection,
     points: selection.points.map((contour) => contour.map((point) => ({ ...point }))),
@@ -247,32 +274,111 @@ export function selectionSnapshot(
 /**
  * The single derivation of the selection state a legacy timeline starts from.
  *
- * The lookup is deliberately unbounded. The first non-disabled `SELECTION_ACTION`
- * entry's `previousSelectionState` may be the only record of the selection that
- * existed before that action. A replay target before that entry still needs this
- * snapshot; bounding the lookup at the target would discard it and make undoing a
- * tool-switch deselect a silent visual no-op. The durable baseline uses the same
- * whole-timeline lookup so both branches agree at every cursor.
+ * The lookup is deliberately unbounded. A selection can exist before its first
+ * history entry, so the first enabled `SELECTION_ACTION` entry's
+ * `previousSelectionState` is the default baseline witness; bounding this at a
+ * replay target would make undoing a tool-switch deselect a silent visual no-op.
+ * Disabled transitions immediately before that action are rewound only while
+ * their snapshots form an exact state chain, preventing a disabled creation from
+ * leaking into an earlier cursor while preserving unrecorded gesture changes.
+ * The durable baseline uses the same lookup so both replay paths agree.
  */
 export function deriveSelectionBaseline(history: readonly HistoryItem[]): SelectionSnapshot {
-  const first = history.find((item) => {
+  const isSelectionAction = (item: HistoryItem): boolean => {
     const actionName = Object.getOwnPropertyDescriptor(item, 'actionName');
+    return (
+      actionName?.enumerable === true && Object.hasOwn(actionName, 'value') && actionName.value === SELECTION_ACTION
+    );
+  };
+  const isEnabled = (item: HistoryItem): boolean => {
     const disabled = Object.getOwnPropertyDescriptor(item, 'disabled');
     return (
-      actionName?.enumerable &&
-      Object.hasOwn(actionName, 'value') &&
-      actionName.value === SELECTION_ACTION &&
-      (!disabled || (disabled.enumerable && Object.hasOwn(disabled, 'value') && !disabled.value))
+      disabled === undefined || (disabled.enumerable === true && Object.hasOwn(disabled, 'value') && !disabled.value)
     );
-  });
+  };
+  const firstEnabledIndex = history.findIndex((item) => isSelectionAction(item) && isEnabled(item));
+  // If every selection action is disabled, use the first action only when it
+  // has a complete before/after pair. Older incomplete records are not enough
+  // evidence to seed state and remain ignored by replay.
+  const baselineIndex = firstEnabledIndex < 0 ? history.findIndex(isSelectionAction) : firstEnabledIndex;
+  const first = baselineIndex < 0 ? undefined : history[baselineIndex];
   const argsDescriptor = first ? Object.getOwnPropertyDescriptor(first, 'args') : undefined;
   const args = argsDescriptor?.enumerable && Object.hasOwn(argsDescriptor, 'value') ? argsDescriptor.value : undefined;
   const previousDescriptor = args ? Object.getOwnPropertyDescriptor(args, 'previousSelectionState') : undefined;
   const previous =
     previousDescriptor?.enumerable && Object.hasOwn(previousDescriptor, 'value') ? previousDescriptor.value : undefined;
-  if (previous === undefined || previous === null) return selectionSnapshot();
-  if (!isValidSelectionSnapshot(previous)) {
-    throw new Error('Legacy selection baseline is not a canonical selection snapshot.');
+  const nextDescriptor = args ? Object.getOwnPropertyDescriptor(args, 'nextSelectionState') : undefined;
+  const next = nextDescriptor?.enumerable && Object.hasOwn(nextDescriptor, 'value') ? nextDescriptor.value : undefined;
+  if (firstEnabledIndex < 0 && (!isValidLegacySelectionSnapshot(previous) || !isValidLegacySelectionSnapshot(next))) {
+    return selectionSnapshot();
   }
-  return selectionSnapshot(previous.selections, previous.activeSelectionId);
+  if (previous === undefined || previous === null) return selectionSnapshot();
+  if (!isValidLegacySelectionSnapshot(previous)) {
+    throw new Error('Legacy selection baseline is not a readable selection snapshot.');
+  }
+  let baseline = selectionSnapshot(previous.selections, previous.activeSelectionId);
+
+  // An enabled action's previous snapshot can include a selection created by a
+  // disabled earlier action. Rewind only across disabled transitions whose
+  // recorded `next` exactly feeds the state currently being used as baseline;
+  // a mismatch marks an intervening gesture or another unrecorded selection
+  // change, for which the enabled action's previous snapshot remains authoritative.
+  for (let index = firstEnabledIndex - 1; index >= 0; index -= 1) {
+    const item = history[index];
+    if (!item || !isSelectionAction(item)) continue;
+    const disabled = Object.getOwnPropertyDescriptor(item, 'disabled');
+    if (!disabled?.enumerable || !Object.hasOwn(disabled, 'value') || disabled.value !== true) break;
+
+    const itemArgsDescriptor = Object.getOwnPropertyDescriptor(item, 'args');
+    const itemArgs =
+      itemArgsDescriptor?.enumerable && Object.hasOwn(itemArgsDescriptor, 'value')
+        ? itemArgsDescriptor.value
+        : undefined;
+    const itemPreviousDescriptor = itemArgs
+      ? Object.getOwnPropertyDescriptor(itemArgs, 'previousSelectionState')
+      : undefined;
+    const itemNextDescriptor = itemArgs ? Object.getOwnPropertyDescriptor(itemArgs, 'nextSelectionState') : undefined;
+    const itemPrevious =
+      itemPreviousDescriptor?.enumerable && Object.hasOwn(itemPreviousDescriptor, 'value')
+        ? itemPreviousDescriptor.value
+        : undefined;
+    const itemNext =
+      itemNextDescriptor?.enumerable && Object.hasOwn(itemNextDescriptor, 'value')
+        ? itemNextDescriptor.value
+        : undefined;
+    if (!isValidLegacySelectionSnapshot(itemPrevious) || !isValidLegacySelectionSnapshot(itemNext)) break;
+
+    const next = selectionSnapshot(itemNext.selections, itemNext.activeSelectionId);
+    if (!sameSelectionSnapshot(next, baseline)) break;
+    baseline = selectionSnapshot(itemPrevious.selections, itemPrevious.activeSelectionId);
+  }
+
+  return baseline;
+}
+
+function sameSelectionSnapshot(left: SelectionSnapshot, right: SelectionSnapshot): boolean {
+  return left.activeSelectionId === right.activeSelectionId && sameSelectionValue(left.selections, right.selections);
+}
+
+function sameSelectionValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameSelectionValue(value, right[index]))
+    );
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] &&
+        sameSelectionValue((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key])
+    )
+  );
 }

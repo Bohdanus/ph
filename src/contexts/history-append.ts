@@ -54,7 +54,11 @@ import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { isCanonicalRasterSelectionMask } from '../util/selection-mask.ts';
-import { activeSelectionIdFromSnapshot, isSelectionSnapshotActiveStateValid } from './selection-baseline.ts';
+import {
+  activeSelectionIdFromSnapshot,
+  isSelectionSnapshotActiveStateValid,
+  isValidSelectionSnapshot,
+} from './selection-baseline.ts';
 import { isLayerBlendMode, type Layer, type LayerId, type LayerSource, type ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ToolName } from './tool-types.ts';
@@ -624,6 +628,18 @@ function translate(
       return unavailable(
         entry,
         'A selection change without a valid next selection state has no durable translation; the durable model never fabricates a cleared selection.',
+        'unsupported-history-feature'
+      );
+    }
+    if (
+      durableEntry.operation.kind !== 'set-selection' ||
+      !isCanonicalSelectionSnapshot(durableEntry.operation.before) ||
+      !isCanonicalSelectionSnapshot(durableEntry.operation.after) ||
+      !isValidSelectionSnapshot(durableEntry.operation.after)
+    ) {
+      return unavailable(
+        entry,
+        'A durable selection change requires a canonical historical before snapshot and a drawable after snapshot.',
         'unsupported-history-feature'
       );
     }

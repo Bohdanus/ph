@@ -20,6 +20,7 @@ import {
   decodeRasterSelectionMask,
   isCanonicalRasterSelectionMask,
   isRasterSelectionPixelSelected,
+  isRasterSelectionPixelSelectedAt,
 } from './selection-mask.ts';
 
 export const SELECTION_ANCHOR_RADIUS = 5;
@@ -127,7 +128,11 @@ export function createCommittedRasterSelection({
   return {
     id,
     points: [],
-    rasterMask,
+    rasterMask: Object.freeze({
+      width: rasterMask.width,
+      height: rasterMask.height,
+      data: rasterMask.data,
+    }),
     isActive: true,
     pos: { ...pos },
     lifecycle: 'committed',
@@ -358,15 +363,10 @@ export function isPointInContours(point: Point, contours: Point[][]): boolean {
 
 export function isPointInSelection(point: Point, selection: Selection): boolean {
   if (selection.rasterMask) {
-    const packed = decodeRasterSelectionMask(selection.rasterMask);
-    return Boolean(
-      packed &&
-      isRasterSelectionPixelSelected(
-        selection.rasterMask,
-        packed,
-        Math.floor(point.x - selection.pos.x),
-        Math.floor(point.y - selection.pos.y)
-      )
+    return isRasterSelectionPixelSelectedAt(
+      selection.rasterMask,
+      Math.floor(point.x - selection.pos.x),
+      Math.floor(point.y - selection.pos.y)
     );
   }
 

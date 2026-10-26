@@ -62,7 +62,13 @@ function selectionState(id: string): SelectionSnapshot {
     selections: [
       {
         id,
-        points: [[{ x: 1, y: 2 }]],
+        points: [
+          [
+            { x: 1, y: 2 },
+            { x: 4, y: 2 },
+            { x: 4, y: 6 },
+          ],
+        ],
         isActive: true,
         pos: { x: 1, y: 2, width: 3, height: 4 },
       } satisfies Selection,
@@ -454,6 +460,57 @@ describe('planHistoryAppend: selection translation', () => {
       provenance: { actionName: SELECTION_ACTION },
       operation: { kind: 'set-selection', before: previousSelectionState, after: nextSelectionState },
     });
+  });
+
+  it('preserves a canonical non-drawable legacy before snapshot when clearing selection', () => {
+    const legacyBefore: SelectionSnapshot = {
+      selections: [
+        {
+          id: 'legacy-selection',
+          points: [],
+          isActive: true,
+          pos: { x: 1, y: 2, width: 10, height: 12 },
+        } as Selection,
+      ],
+      activeSelectionId: 'legacy-selection',
+    };
+    const result = plan(
+      createSelectionHistoryItem(legacyBefore, { selections: [], activeSelectionId: null }),
+      legacyBefore
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry?.operation).toMatchObject({
+      kind: 'set-selection',
+      before: legacyBefore,
+      after: { selections: [], activeSelectionId: null },
+    });
+  });
+
+  it.each([
+    ['no contours', [] as Selection['points']],
+    [
+      'only a short contour',
+      [
+        [
+          { x: 1, y: 2 },
+          { x: 4, y: 2 },
+        ],
+      ] as Selection['points'],
+    ],
+  ])('does not persist a vector selection with %s', (_label, points) => {
+    const current = nextSelectionState.selections[0]!;
+    const invalidNextState: SelectionSnapshot = {
+      ...nextSelectionState,
+      selections: [{ ...current, points }],
+    };
+
+    const result = plan(createSelectionHistoryItem(previousSelectionState, invalidNextState), previousSelectionState);
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics).toMatchObject([
+      { code: 'unsupported-history-feature', severity: 'warning', actionName: SELECTION_ACTION },
+    ]);
   });
 
   it('falls back to the tracked current selections when the writer observed no previous state', () => {

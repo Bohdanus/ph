@@ -24,8 +24,9 @@ import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
 import {
   activeSelectionIdFromSnapshot,
+  cloneSelection,
   deriveSelectionBaseline,
-  isValidSelectionSnapshot,
+  isValidLegacySelectionSnapshot,
   type SelectionHistoryArgs,
 } from './selection-baseline.ts';
 import { documentAffineToLayerLocal, isIdentityAffineTransform, validateAffineTransform } from './affine-transform.ts';
@@ -199,7 +200,7 @@ export function replayHistory(
 
     if (actionName === SELECTION_ACTION) {
       const next = (args as SelectionHistoryArgs | undefined)?.nextSelectionState;
-      if (next != null && !isValidSelectionSnapshot(next)) {
+      if (next != null && !isValidLegacySelectionSnapshot(next)) {
         diagnostics.push({
           historyId: item.id,
           actionName,
@@ -208,7 +209,7 @@ export function replayHistory(
         });
         continue;
       }
-      selections = next?.selections.map((selection) => ({ ...selection })) ?? [];
+      selections = next?.selections.map(cloneSelection) ?? [];
       activeSelectionId = activeSelectionIdFromSnapshot(selections, next?.activeSelectionId);
       continue;
     }

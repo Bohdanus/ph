@@ -442,10 +442,13 @@ feathering is applied by the same alpha-mask builder.
 
 `src/contexts/selection-baseline.ts` owns one rule: the baseline a selection
 history entry restores to. `deriveSelectionBaseline()` scans the **unbounded**
-timeline, and must. A selection is created by a gesture that writes no history
-entry, so bounding the search at the replay target makes undoing a tool-switch
-deselect a silent no-op. Its own JSDoc says so; the reasoning is
-in project memory under `selection_baseline_helper`.
+timeline, and must. A later selection action's previous snapshot can be the only
+record of the state that existed before that action, so bounding the search at
+the replay target can make undoing a tool-switch deselect a silent no-op. The
+baseline starts from the first enabled selection action's previous snapshot,
+then rewinds only across earlier disabled selection rows whose next snapshot
+exactly matches the current baseline. If all selection rows are disabled, only
+a complete first before/after pair can seed it.
 
 ## File I/O
 
