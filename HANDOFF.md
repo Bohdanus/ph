@@ -2275,7 +2275,7 @@ cannot complete its own removal**. Every sweep that hit this correctly refused t
 which left landed branches accumulating behind a gate nobody could open.
 
 **What the refusal does and does not tell you.** Only the **write** arm names a chat id, and it
-expires at `LIVE_WINDOW_MS`, thirty minutes. The **I/O** arm is `RECENT_IO_WINDOW_MS`, four hours,
+expires at `LIVE_WINDOW_MS`, thirty minutes. The **I/O** arm is `RECENT_IO_WINDOW_MS`, two hours,
 and comes from recent shell commands in the worktree; the separate `readHistory` is not part of
 `derivedLive`. The refusal still prints "a chat" for this arm because it does not identify the
 shell actor. The **session** and **board** arms print no id either — `chatLive` is `session.directory`

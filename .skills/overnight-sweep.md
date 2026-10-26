@@ -11,7 +11,7 @@ subagent-orchestrated pass that hardens the project against the open defects rec
 It adapts the operator's recurring request for rigorous overnight hardening and resumes hourly
 while authorized so the run can recover from token limits and session loss.
 
-The two things that make the run survive a whole night are the **hourly one-shot wake-up** and the
+The two things that make the run survive a whole night are the **persistent hourly cron** and the
 **explicit rule that the run does not end until it is told to stop**. Every other detail is a
 consequence of that longevity: subagents are used pervasively to spend free-model tokens instead
 of yours, `main` is reconciled through a dedicated landing worktree rather than the hardening
@@ -28,9 +28,16 @@ execute the Git-dependent phases below.
 
 - **Coordinator**: operates from a task worktree, may launch eligible free read-only subagents,
   verifies their findings, and retains sole ownership of Git operations and tracked changes.
-- **Free research subagents**: receive bounded questions, the absolute worktree path, and an
-  exclusive summary destination. They do not edit, run Git commands, spawn GPT agents, or decide
-  whether a branch is safe to land or dispose. The coordinator verifies source claims directly.
+- **Free Kilo research subagents**: use the read-only `explore` role, receive bounded questions,
+  the absolute worktree path, and an output shape (not a write destination). Deny `edit`, `bash`,
+  and any separate write/patch tools; Kilo permissions are tool-level, with no delete-only rule.
+  They return findings in their task response and never edit, delete, run Git commands, spawn GPT
+  agents, or decide whether a branch is safe to land or dispose. The coordinator writes notes and
+  verifies source claims directly.
+- For visible free Kilo research sessions, select the project `read-only-research` agent in
+  `.kilo/agent/read-only-research.md`; it denies native edit, shell, delegation and common
+  mutation-named MCP tools. Deny any connected file-mutating MCP tools not covered by those
+  patterns; permissions are tool-level.
 
 If the current root session is free, restrict it to read-only research and hand the run to an
 authorized coordinator before any Git operation. If no coordinator is available, return a concise
@@ -46,14 +53,13 @@ allows it and no suitable free reviewer can do the bounded task.
   such as `fix/overnight-hardening-YYYYMMDD` (docs/ORCHESTRATION.md, "Worktrees"). `main` is not
   used for edits or conflict resolution; only the designated main worktree is used for the pinned
   final landing. Read `docs/ORCHESTRATION.md` § "Landing" before the first merge.
-- **Resume scheduling is gated by the unresolved `avoid_cron_setup` constraint.** Cron setup hung
-  twice, and the cause is not documented as resolved (project memory). Do not call `cron_create`
-  while that constraint remains. In Kilo, use a one-shot `schedule_wakeup` with a one-hour delay
-  and the resumer prompt below, then re-arm it on each wake while the run remains authorized. If
-  one-shot wakeups are unavailable in the current host, record the run as waiting for an
-  operator-controlled resumption; do not test cron setup as a workaround. Re-enable hourly
-  `cron_create` only after the cause is understood and the project constraint is explicitly
-  updated.
+- **Resume scheduling**: create a persistent hourly cron with `cron_create`, using
+  `cron: "0 * * * *"` and the resumer prompt below. The recurring cron stays armed if one
+  invocation ends from network loss or token exhaustion; the next scheduled tick resumes the
+  work when the session is available. Missed ticks are not replayed as a backlog. Do not substitute
+  `schedule_wakeup`: it fires once and will not re-arm itself if the chat
+  dies. If cron creation returns an actual error, report it and use the normal operator recovery
+  path rather than silently switching to a one-shot wake.
 - Model routing (read `MODELS.md` first): the free route is `Poolside: Laguna S 2.1 (free)`,
   provider `kilo`, variant `thinking`. Verify against the live catalog with
   `node scripts/free-model-pool.mjs --list` and the 200 req/hour ceiling (MODELS.md). For bounded
@@ -117,12 +123,13 @@ Every overnight-hardening session follows the same shape:
    its last observed task state, and the last wake timestamp. On resume, query the task host for
    terminal/completed results; do not infer completion solely from database `time_updated`, which
    can change for bookkeeping reasons.
-4. Schedule the one-shot hourly wake (template below) while `avoid_cron_setup` remains unresolved.
-   Re-arm it at each wake only while the run remains authorized.
-5. Fan out the first wave of free-model subagents (read-only research: HANDOFF entries, doc/test
-   drift, Adobe sources, recent chat loose ends). Pass the absolute worktree path in every brief.
-   Before each launch, refresh the free model catalog per the quota-aware protocol; for a large
-   OpenRouter-backed wave, check the server-side daily counter as above.
+4. Schedule the recurring hourly cron with `cron: "0 * * * *"` and the resumer prompt below.
+   Verify the cron task was created before starting the research fan-out.
+5. Fan out the first wave of free-model research using read-only Kilo `explore` children or the
+   tool-free completion runner. Pass the absolute worktree path, evidence scope, and concise output
+   shape in every brief. The coordinator writes any summary files. Refresh the free model catalog
+   per the quota-aware protocol; for a large OpenRouter-backed wave, check the server-side daily
+   counter as above.
 
 ## Tracking "new since last wake"
 
@@ -150,15 +157,14 @@ initial template to the actual request, preserving its scope and constraints.
 > prioritised issues first. This must be long running
 > overnight autonomous session. Most likely points of failure: (1) llm decides task is done while
 > it should keep going; (2) free-model capacity might become temporarily unavailable; (3) other unknown
-> error. Mitigate execution stops with a high-quality rigorous resumer prompt. Because
-> `avoid_cron_setup` is unresolved, use one-shot
-> `schedule_wakeup` for one hour and re-arm on each wake; do not call `cron_create` until the
-> project constraint is explicitly cleared.
+> error. Mitigate execution stops with a persistent hourly cron created by `cron_create` using
+> `cron: "0 * * * *"` and the resumer prompt. The recurring cron stays armed across network or
+> token failures; the next scheduled tick resumes when the session is available. Missed ticks are
+> not replayed as a backlog. Do not replace it with a one-shot wake that requires re-arming.
 
-### Hourly resumer
+### Hourly Cron Resumer
 
-Use as the prompt for a one-shot `schedule_wakeup` with a one-hour delay while
-`avoid_cron_setup` remains unresolved:
+Use as the `prompt` for `cron_create` with `cron: "0 * * * *"`:
 
 > You are a professional orchestrator running an overnight hardening session on the `ph`
 > Photoshop clone project. Your job is to keep working autonomously until told to stop.
@@ -176,19 +182,20 @@ Use as the prompt for a one-shot `schedule_wakeup` with a one-hour delay while
 >    findings back into the plan.
 > 3. Update the checkpoint cursor with all currently-known subagent session IDs.
 > 4. Identify findings that translate to verified, safe fixes — implement them in the worktree.
-> 5. Launch NEW subagents only for uncovered areas needing investigation (refresh the free catalog
->    before each; for large OpenRouter-backed fan-outs, inspect the server-side daily counter).
+> 5. Launch NEW free research children only for uncovered areas needing investigation. Use Kilo's
+>    read-only `explore` role with write/shell tools denied, or use the completion runner. Refresh
+>    the free catalog before each; for large OpenRouter-backed fan-outs, inspect the server counter.
 > 6. Re-run `npm run tsc` and targeted `vitest` after every code change.
 > 7. Do NOT stop. Do NOT declare "done." Continue investigating, verifying, and fixing until
 >    explicitly told to stop.
 >
 > Constraints: you are the Git-capable coordinator operating in the verified task worktree. Free
-> subagents are read-only and may not run Git commands. You own repository inspection, edits,
+> Kilo free subagents use a read-only role with file-write, patch, shell, and Git tools denied.
+> They return concise results; you write any notes. You own repository inspection, edits,
 > validation, commit, landing and cleanup. `HANDOFF.md` is the source of truth. Before each
 > subagent launch, refresh the free model catalog; use only a verified free model/provider pair
 > unless host policy and budget explicitly permit paid use. Stop if free routes are exhausted. Do
-> not call `cron_create` while `avoid_cron_setup` remains
-> unresolved; re-arm a one-shot `schedule_wakeup` each hour while authorized.
+> Use the already-armed hourly cron for recovery. Do not replace it with a one-shot wake.
 
 If no subagent has completed since the last wake, do not duplicate work just to keep the fan-out
 busy. Verify current candidates, continue safe coordinator-owned work, or wait for the next
@@ -296,10 +303,10 @@ second checkout of the `main` ref.
 - **Token wall on a paid model**: keep research on eligible free routes. Consider a paid Luna
   reviewer only when the current quota policy permits it, no suitable free reviewer is available,
   and the coordinator records why the paid review is necessary (MODELS.md).
-- **Network loss / stopped chat**: while `avoid_cron_setup` remains unresolved, a one-shot
-  `schedule_wakeup` reopens the session; re-read the plan and findings and rederive repository
-  state from the task worktree before resuming. Do not use `cron_create` until the project
-  constraint is explicitly cleared. See `docs/ORCHESTRATION.md` § "Unexpected agent recovery".
+- **Network loss / stopped chat**: the recurring hourly cron stays armed if an invocation ends
+  unexpectedly; the next scheduled tick resumes when the session is available. Missed ticks are
+  not replayed. Re-read the plan and findings and rederive repository state from the task worktree
+  before resuming. See `docs/ORCHESTRATION.md` § "Unexpected agent recovery".
 - **Subagent produced unusable output**: empty, wrong, or irrelevant results are a quality failure,
   not a transient error. Re-launch with the same brief to a different free model; if the retry
   also fails, escalate to Handoff with the evidence of both attempts. Do not fabricate a source.

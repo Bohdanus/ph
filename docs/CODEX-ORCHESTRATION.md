@@ -51,11 +51,9 @@ and [`KILO.md`](KILO.md).
   paid subagent.
 - For public URL lists when the host has no free web-research delegate, run
   `node scripts/free-research.mjs` from a task worktree. It bounds the fetch and
-  prompt sizes and writes a condensed result to a file. Groq is excluded unless the
-  caller passes `--groq-free-plan-only` after independently confirming the account's
-  $0 Free plan; do not pass that flag when the plan is paid or uncertain. The script
-  cannot detect Groq billing plans. See `MODELS.md` for the complete model-routing
-  and account-plan policy.
+  prompt sizes and writes a condensed result to a file. The runner uses only verified
+  zero-priced Kilo/OpenRouter routes and never falls back to paid inference. See
+  `MODELS.md` for the current model-routing policy.
 - Chat searches are not handled by the URL runner. Use a free read-only delegate
   that can access the relevant chat-history store, ask it to return only matched
   session IDs and a concise evidence file, then read that file in the root. Never
