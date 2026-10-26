@@ -1012,6 +1012,9 @@ describe('e2e-run: quiet mode (--quiet / E2E_QUIET=1)', () => {
 
   beforeEach(() => {
     boardDir = tempBoard();
+    // Quiet-mode assertions use a fake Playwright process; they do not need to
+    // race the ephemeral-port allocator while another E2E task starts.
+    boardDir.env.PLAYWRIGHT_PORT = '5391';
   });
 
   afterEach(() => {
