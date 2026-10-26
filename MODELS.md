@@ -27,7 +27,7 @@ exact free model/provider from the live catalog, and never silently fall back to
 
 ## Provider Rules
 
-- GPT models (Luna, Terra, and Sol) must always use `openai`: `task --model "<model>" --provider "openai"`.
+- GPT models (Luna 6) must always use `openai`: `task --model "<model>" --provider "openai"`.
 - **Free-first:** Prefer free models for high-signal text sweeps (web research, docs, chat history, code search) and simple code writing or review. Batch large inputs into bounded chunks and return concise results with source paths or citations. Try another free source if one is unavailable or rate-limited; never silently fall through to a paid model.
 - **Choose a free source:** Start with Kilo Laguna S (`poolside/laguna-s-2.1:free`) when present in the live catalog. `node scripts/free-model-pool.mjs --list` shows eligible Kilo/OpenRouter entries; every OpenRouter price field and conditional override must be zero. Numeric zero and fixed-point strings such as `0.000000000000` count as exact zero; no positive price is rounded down. Do not use models absent from the refreshed catalog or paid OpenRouter models without explicit approval.
 - Pass `model` and `provider` together.
