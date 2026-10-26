@@ -64,7 +64,7 @@ Provider rows are docs research unless an observed result is explicitly stated.
 
 ## Usage notes
 
-- The runner reads `OPENROUTER_API_KEY` from the environment. Groq is disabled by default and last-resort only: it requires a separate key and independent verification of the account's Free plan. Never put keys in files, arguments, or logs, and never rotate accounts to bypass limits.
+- The runner reads `OPENROUTER_API_KEY` from the environment. Groq is disabled by default and last-resort only: it requires `GROQ_API_KEY`, `--groq-free-plan-only`, and independent verification of the account's Free plan. Never put keys in files, arguments, or logs, and never rotate accounts to bypass limits.
 - Batch large text sweeps into bounded independent chunks; ask for concise results with source links or paths.
 - OpenRouter's free-model daily tier is based on lifetime credits purchased, not current balance. Its limits page lists 50 requests/day below 10 credits and 1,000/day at the 10-credit tier; the implementation currently grants the higher tier one credit below the table threshold to absorb rounding/top-up fees. Additional API keys do not raise the account limit. `GET /api/v1/key` exposes only a point-in-time daily counter, not the 20-RPM limit or upstream capacity.
 - OpenCode's official docs say free-tier chat models require the OpenCode app; generic clients must use paid models or Go. This runner intentionally does not send an OpenCode key or attempt its free models. [Models](https://dev.opencode.ai/v2/docs/console/models/)
