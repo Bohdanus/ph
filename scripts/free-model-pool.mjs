@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
 import { open, writeFile } from 'node:fs/promises';
+import {
+  activeQuarantineKeys,
+  DEFAULT_QUARANTINE_FILE,
+  loadQuarantineState,
+  quarantineKey,
+  readQuarantineState,
+} from './lib/free-model-quarantine.mjs';
 
 const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
 const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
@@ -14,11 +21,6 @@ const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const PREFERRED_KILO_MODELS = ['poolside/laguna-s-2.1:free'];
-const QUARANTINED_MODELS = new Set([
-  'kilo:kilo-auto/free',
-  'kilo:nvidia/nemotron-3.5-super-vl:free',
-  'kilo:recursive/flint-v1.0:free',
-]);
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
 
@@ -109,12 +111,12 @@ function isExactZero(value) {
   return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
-export function catalogCandidates(source, data) {
+export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
     .filter((row) => {
-      if (!row?.id) return false;
-      if (QUARANTINED_MODELS.has(`${source}:${row.id}`)) return false;
+      if (typeof row?.id !== 'string' || row.id.length === 0) return false;
+      if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
       if (!zeroPriced(row.pricing)) return false;
       if (source === 'openrouter') return row.id.endsWith(':free');
@@ -133,8 +135,14 @@ export async function loadCatalogs({
   fetchImpl = fetch,
   openRouterKey = process.env.OPENROUTER_API_KEY,
   includeOpenRouterCatalog = false,
+  quarantineFile = DEFAULT_QUARANTINE_FILE,
+  initializeLegacyQuarantine = false,
   onCatalogError = () => {},
 } = {}) {
+  const quarantineState = initializeLegacyQuarantine
+    ? await loadQuarantineState(quarantineFile)
+    : await readQuarantineState(quarantineFile);
+  const quarantinedKeys = activeQuarantineKeys(quarantineState);
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
   const results = await Promise.allSettled(
@@ -148,7 +156,8 @@ export async function loadCatalogs({
       }
       return catalogCandidates(
         source,
-        await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`)
+        await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`),
+        quarantinedKeys
       );
     })
   );
@@ -170,7 +179,10 @@ export async function probeOpenRouterQuota({ fetchImpl = fetch, openRouterKey, t
   } catch {
     return null;
   }
-  if (!response.ok) return null;
+  if (!response.ok) {
+    await discardResponseBody(response);
+    return null;
+  }
   let payload;
   try {
     payload = await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, 'OpenRouter key info');
@@ -256,6 +268,8 @@ export async function completeWithFreeModel(
     openRouterKey = process.env.OPENROUTER_API_KEY,
     checkOpenRouterQuota = false,
     maxTokens = 1200,
+    quarantineFile = DEFAULT_QUARANTINE_FILE,
+    initializeLegacyQuarantine = true,
     onCatalogError = () => {},
     onOpenRouterQuota = () => {},
   } = {}
@@ -269,6 +283,8 @@ export async function completeWithFreeModel(
   const available = await loadCatalogs({
     fetchImpl,
     openRouterKey,
+    quarantineFile,
+    initializeLegacyQuarantine,
     onCatalogError,
   });
   const exhausted = new Set();
@@ -384,6 +400,8 @@ export async function main(
   {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
+    quarantineFile = DEFAULT_QUARANTINE_FILE,
+    initializeLegacyQuarantine = true,
     stdout = process.stdout,
     stderr = process.stderr,
   } = {}
@@ -445,7 +463,9 @@ export async function main(
     const candidates = await loadCatalogs({
       fetchImpl,
       openRouterKey,
+      quarantineFile,
       includeOpenRouterCatalog: true,
+      initializeLegacyQuarantine,
       onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
@@ -470,6 +490,8 @@ export async function main(
     fetchImpl,
     openRouterKey,
     maxTokens,
+    quarantineFile,
+    initializeLegacyQuarantine,
     checkOpenRouterQuota,
     onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     onOpenRouterQuota: ({ used, limit, remaining }) =>

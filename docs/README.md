@@ -78,8 +78,8 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)                                                       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
 
 The agent procedures live outside this directory, under `.skills/`, one file per
-procedure. `AGENTS.md` states the rules, and a skill states the procedure for one of
-the situations it describes.
+procedure. Tool permission profiles live under `.kilo/agent/`. `AGENTS.md` states the
+rules, a skill states a procedure, and an agent profile defines its tool permissions.
 
 | Skill                                                                                      | Its one job                                                                                                                                                  |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -91,6 +91,7 @@ the situations it describes.
 | [`../.skills/codex-chat-history.md`](../.skills/codex-chat-history.md)                     | Locate and query OpenAI Codex CLI session history from local SQLite state database and JSONL rollout files. Read-only, local-first                           |
 | [`../.skills/copilot-chat-history.md`](../.skills/copilot-chat-history.md)                 | Locate and query GitHub Copilot Chat sessions from Chronicle SQLite and JSONL stores. Read-only, local-first                                                 |
 | [`../.skills/free-model-agent-rotation.md`](../.skills/free-model-agent-rotation.md)       | Rotate among eligible free-model providers for repository subagents, with API, quota, and data-handling checks                                               |
+| [`../.skills/free-model-chat-sweep.md`](../.skills/free-model-chat-sweep.md)               | Review Kilo and Codex history for free-model failure patterns, then apply evidence-backed expiring quarantine actions                                        |
 | [`../.skills/hard-merge.md`](../.skills/hard-merge.md)                                     | Merge two branches with overlapping features, recovering requirements from chat history and arbitrating conflicts against Photoshop                          |
 | [`../.skills/kilo-chat-history.md`](../.skills/kilo-chat-history.md)                       | Locate and query Kilo chat sessions from local SQLite database and legacy JSON stores. Read-only, local-first                                                |
 | [`../.kilo/skills/kilo-chat-history/SKILL.md`](../.kilo/skills/kilo-chat-history/SKILL.md) | Kilo-local mirror of the chat-history workflow used by Kilo agents; keep identical to the repo skill                                                         |
@@ -98,6 +99,12 @@ the situations it describes.
 | [`../.skills/photoshop-tool-creation.md`](../.skills/photoshop-tool-creation.md)           | Build a new Photoshop-faithful tool end to end: research, options bar, implementation, tests, e2e                                                            |
 | [`../.skills/stale-worktree-reclaim.md`](../.skills/stale-worktree-reclaim.md)             | Find abandoned worktrees, prove the owning session dead, triage into delete/land/defer                                                                       |
 | [`../.skills/worktree-merge-harvest.md`](../.skills/worktree-merge-harvest.md)             | Land work from free worktrees onto `main`, with reviews and gates                                                                                            |
+
+## Agent profiles
+
+| Profile                                                                        | Its one job                                                                        |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`../.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) | Deny file writes, patches, shell, and task delegation to free Kilo research agents |
 
 `e2e/fixtures/README.md` is the Playwright fixture conventions note.
 

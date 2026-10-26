@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   catalogCandidates,
-  completeWithFreeModel,
+  completeWithFreeModel as completeWithFreeModelImplementation,
   loadCatalogs,
   main,
   probeOpenRouterQuota,
   zeroPriced,
 } from '../free-model-pool.mjs';
 
+const completeWithFreeModel = (prompt, options = {}) =>
+  completeWithFreeModelImplementation(prompt, { ...options, initializeLegacyQuarantine: false });
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -185,6 +187,7 @@ describe('keyless free-model catalog CLI', () => {
     const code = await main(['--list'], {
       fetchImpl,
       openRouterKey: '',
+      initializeLegacyQuarantine: false,
       stdout,
       stderr,
     });
@@ -231,6 +234,14 @@ describe('OpenRouter quota status command', () => {
     expect(code).toBe(2);
     expect(stdout.write).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('cancels the response body when quota status returns a non-OK response', async () => {
+    const cancel = vi.fn();
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 429, body: { cancel } }));
+
+    await expect(probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' })).resolves.toBeNull();
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
 

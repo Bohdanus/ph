@@ -61,7 +61,8 @@ other requests. A failed/malformed probe is unknown and never replaces model-pri
 OpenRouter documents 50 requests/day below 10 lifetime credits purchased and 1,000 at the
 10-credit tier; the limit is **not based on current balance**. Its docs note the higher ceiling
 can begin one credit below the table threshold for rounding/top-up fees. The API's returned
-`limit` is authoritative. [OpenRouter limits](https://openrouter.ai/docs/api-reference/limits)
+`limit` is authoritative. The daily free-model counter resets at 00:00 UTC.
+[OpenRouter limits](https://openrouter.ai/docs/api-reference/limits)
 
 The runner deliberately sends no reasoning override. OpenRouter says `reasoning.exclude` only
 hides reasoning from the response; reasoning tokens still count toward the output budget, while
@@ -76,6 +77,25 @@ retry it. If the response includes `Retry-After`, it is included in the error fo
 the runner does not sleep, persist cross-run cooldown state, or switch accounts/IPs to evade
 limits. OpenRouter notes that 429 can represent a global free-model limit or an upstream
 provider limit. [OpenRouter limit handling](https://openrouter.ai/docs/api-reference/limits)
+
+Quarantine is source/model-specific and expires: six hours by default for a confirmed
+model-specific rate limit, with an absolute maximum of 72 hours. Expired entries are ignored by
+the pool even before pruning, so models re-enter ordinary catalog rotation instead of being
+permanently excluded. The project-shared `.kilo/free-model-quarantine.json` works across managed
+worktrees (`FREE_MODEL_QUARANTINE_FILE` overrides it). On first pool/CLI use, the three former
+hard-coded Kilo quarantines are imported into the local state file for a final 72-hour review
+window; subsequent release or expiry is explicit and persistent. A malformed state file fails
+closed before catalog requests. Mutations are exclusive-lock protected and fail fast on a live or
+stale lock; the error reports the stored PID/liveness check, and after a crash verify no writer is
+active before removing a stale lock file.
+A 3-day review cadence is for checking reports and current catalog health, not extending every
+quarantine. Use `npm run free:quarantine -- list|add|release|prune` and follow the read-only
+`.skills/free-model-chat-sweep.md` procedure. Do not quarantine a model for a global daily quota,
+context overflow, external API failure, or tool/orchestration error. After this procedure is
+landed in a stable worktree, use Kilo's recurring `cron_create` scheduler rather than an OS cron,
+launchd, or systemd job. Kilo recurring tasks expire after seven days and need an active owner to
+renew them; keep one schedule owner and use the quarantine lock for mutations. The completion
+runner itself does not install schedules.
 
 The runner is a completion client, not a tool-using agent. For Kilo repository research, use the read-only `explore` task role with an exact free model/provider pair from the refreshed catalog. **Never give a Kilo free child file-writing, patching, or shell tools.** Kilo permissions are tool-level; there is no delete-only permission. Verify `edit`, `bash`, and any separate write/patch tools are denied. If the child cannot be verified read-only, use the completion runner or do not launch it. Children return concise findings in their task result; the coordinator writes any files and owns Git. Never use `general` for free Kilo research unless its write-capable tools are explicitly denied. If a free task is rate limited, use another exact free model/provider or stop; never silently use paid fallback. Keep each task bounded and never exceed 15 concurrent agents. Codex model routing and launch mechanics differ; see [`docs/CODEX-ORCHESTRATION.md`](docs/CODEX-ORCHESTRATION.md). For mock coverage, run `npm run test -- scripts/__tests__/free-model-pool.test.mjs scripts/__tests__/free-model-pool-external.test.mjs scripts/__tests__/free-research.test.mjs`; run `node scripts/free-model-pool.mjs --openrouter-quota` to check server-side daily usage before and after large fan-outs.
 

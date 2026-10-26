@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   catalogCandidates,
-  completeWithFreeModel,
+  completeWithFreeModel as completeWithFreeModelImplementation,
   loadCatalogs,
   main,
   MAX_CATALOG_RESPONSE_BYTES,
@@ -13,6 +13,8 @@ import {
   zeroPriced,
 } from '../free-model-pool.mjs';
 
+const completeWithFreeModel = (prompt, options = {}) =>
+  completeWithFreeModelImplementation(prompt, { ...options, initializeLegacyQuarantine: false });
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -59,14 +61,86 @@ describe('free model catalog filtering', () => {
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['a:free', 'b']);
   });
 
-  it('quarantines Kilo models that repeatedly failed while preserving known-good models', () => {
+  it('filters only currently quarantined source/model pairs', () => {
     const data = [
       kiloRow('poolside/laguna-s-2.1:free'),
       kiloRow('kilo-auto/free'),
       kiloRow('nvidia/nemotron-3.5-super-vl:free'),
       kiloRow('recursive/flint-v1.0:free'),
     ];
-    expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['poolside/laguna-s-2.1:free']);
+    const quarantined = new Set([
+      'kilo:kilo-auto/free',
+      'kilo:nvidia/nemotron-3.5-super-vl:free',
+      'kilo:recursive/flint-v1.0:free',
+    ]);
+    expect(catalogCandidates('kilo', data, quarantined).map((row) => row.model)).toEqual([
+      'poolside/laguna-s-2.1:free',
+    ]);
+  });
+
+  it('skips catalog rows whose model IDs are not strings', () => {
+    const candidates = catalogCandidates('kilo', [
+      { id: 42, isFree: true, pricing: { prompt: '0', completion: '0' } },
+      { id: { toString: () => 'invalid:free' }, isFree: true, pricing: { prompt: '0', completion: '0' } },
+      kiloRow('valid:free'),
+    ]);
+
+    expect(candidates.map((candidate) => candidate.model)).toEqual(['valid:free']);
+  });
+
+  it('loads active quarantines and ignores expired entries during catalog selection', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const activeExpiry = new Date(Date.now() + 60_000).toISOString();
+    const expiredTime = new Date(Date.now() - 60_000).toISOString();
+    await writeFile(
+      quarantineFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: {
+          'kilo:blocked:free': {
+            source: 'kilo',
+            model: 'blocked:free',
+            reason: 'rate_limit',
+            quarantinedAt: new Date(Date.now() - 60_000).toISOString(),
+            expiresAt: activeExpiry,
+          },
+          'kilo:recovered:free': {
+            source: 'kilo',
+            model: 'recovered:free',
+            reason: 'provider_outage',
+            quarantinedAt: new Date(Date.now() - 120_000).toISOString(),
+            expiresAt: expiredTime,
+          },
+        },
+      }),
+      'utf8'
+    );
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('blocked:free'), kiloRow('recovered:free')],
+      chat: vi.fn(),
+    });
+
+    try {
+      const candidates = await loadCatalogs({ fetchImpl, openRouterKey: '', quarantineFile });
+      expect(candidates.map((candidate) => candidate.model)).toEqual(['recovered:free']);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed before requesting catalogs when quarantine state is corrupt', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-corrupt-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const fetchImpl = vi.fn();
+    await writeFile(quarantineFile, '{broken', 'utf8');
+
+    try {
+      await expect(loadCatalogs({ fetchImpl, openRouterKey: '', quarantineFile })).rejects.toThrow(/not valid JSON/);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('tries the observed reliable Kilo model before other eligible candidates', () => {
@@ -354,6 +428,7 @@ describe('free model runner CLI', () => {
       const code = await main(['--prompt-file', promptPath, '--output-file', outputPath], {
         fetchImpl,
         openRouterKey: '',
+        initializeLegacyQuarantine: false,
         stdout,
         stderr,
       });
