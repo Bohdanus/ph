@@ -1,57 +1,59 @@
 ---
 name: overnight-sweep
-description: Autonomous, cron-driven overnight hardening of the `ph` Photoshop clone against the open defects in `HANDOFF.md` and friends. Uses a dedicated task worktree, hourly cron wake-ups, and a fan-out of free-model subagents to research and fix; commits and merges are delegated to a paid coordinator session because the free orchestrator may not perform Git operations. Does not stop until told to stop.
+description: Autonomous overnight hardening of the `ph` Photoshop clone against open defects in `HANDOFF.md` and related records. A Git-capable coordinator owns a dedicated task worktree and repository operations, with bounded read-only free-model research and hourly resumptions. Does not stop until told to stop.
 ---
 
 # Overnight Project Hardening
 
-This skill captures the recurring **overnight-hardening** pattern: a long-running, cron-driven,
+This skill captures the recurring **overnight-hardening** pattern: a long-running, scheduled,
 subagent-orchestrated pass that hardens the project against the open defects recorded in
 `HANDOFF.md`, `e2e/OPEN_PROBLEMS.md` and related docs, then lands the verified fixes to `main`.
-It is the pattern the operator invokes with "do rigorous overnight hardening of the project" and
-that resumes itself on an hourly cron so the run survives token limits and session loss.
+It adapts the operator's recurring request for rigorous overnight hardening and resumes hourly
+while authorized so the run can recover from token limits and session loss.
 
-The two things that make the run survive a whole night are the **hourly cron wake-up** and the
+The two things that make the run survive a whole night are the **hourly one-shot wake-up** and the
 **explicit rule that the run does not end until it is told to stop**. Every other detail is a
 consequence of that longevity: subagents are used pervasively to spend free-model tokens instead
 of yours, `main` is reconciled through a dedicated landing worktree rather than the hardening
 tree, and each fix is landed and its `HANDOFF.md` entry retired before the next is started.
 
-## Orchestrator Tier — the free/paid boundary
+## Coordinator and Free-Model Boundary
 
-The overnight-hardening orchestrator is **always a free session** — the catalog entry
-`Poolside: Laguna S 2.1 (free)`, provider `kilo`, variant `thinking` (see `MODELS.md`). Free
-sessions may research, solve fixes in a worktree, and run tests — but **may not commit, merge, or
-perform Git operations** (AGENTS.md, MODELS.md). The run therefore separates orchestrator actions
-from coordinator actions:
+The root run must be a session permitted by the current host policy to perform Git operations.
+In Kilo, a free session **must not perform any Git operations**, including read-only Git commands,
+worktree creation, commits, merges, resets, or disposal (AGENTS.md, MODELS.md). The coordinator
+owns branch/worktree setup, repository inspection, tracked edits, validation, review coordination,
+commit, landing and cleanup. Do not start the full run in a Kilo free session and then expect it to
+execute the Git-dependent phases below.
 
-- **Orchestrator (free)**: executes Phases 1 and 2 (Find, Solve, Validate, Review), writes commit
-  patch files with `Chat:` trailers, and signals the coordinator for each verified fix.
-- **Coordinator (paid Luna or operator)**: receives each patch, commits it in a landing worktree,
-  runs `docs/ORCHESTRATION.md` § "Landing" to land `main`, and disposes the worktree.
+- **Coordinator**: operates from a task worktree, may launch eligible free read-only subagents,
+  verifies their findings, and retains sole ownership of Git operations and tracked changes.
+- **Free research subagents**: receive bounded questions, the absolute worktree path, and an
+  exclusive summary destination. They do not edit, run Git commands, spawn GPT agents, or decide
+  whether a branch is safe to land or dispose. The coordinator verifies source claims directly.
 
-This resolves the contradiction between the cron prompt's "never commit unless asked" and Phase 2's
-commit step: the cron prompt correctly forbids the free orchestrator from committing, and the
-commit/merge is delegated to a paid coordinator. A paid Luna subagent is reserved only for
-hard-product or architecture bifurcations, and only when the orchestrator session itself is paid —
-the overnight run is free, so it does not launch paid Luna subagents directly.
+If the current root session is free, restrict it to read-only research and hand the run to an
+authorized coordinator before any Git operation. If no coordinator is available, return a concise
+blocked handoff and stop; do not create a second session/worktree just to evade the host's
+permission boundary. Use the exact current free model/provider pair from the live
+catalog for children; a paid Luna reviewer is considered only when the coordinator's budget policy
+allows it and no suitable free reviewer can do the bounded task.
 
 ## Operating Rules
 
-- All tracked edits live in a single dedicated task worktree, e.g.
-  `.kilo/worktrees/overnight/hardening-YYYYMMDD`. `main` is never written to directly; a pinned
-  landing worktree receives everything that crosses to `main`. Read `docs/ORCHESTRATION.md` §
-  "Landing" before the first merge.
-- The run survives by **cron, not by staying awake**. Schedule an hourly cron using the
-  `cron_create` tool — exactly one of `cron`, `when`, or `delay`, plus the `prompt` argument
-  (a bare schedule expression is not a valid call) — that resumes the session with the resumer
-  prompt template below. The prompt must end with "Do NOT stop. Continue until explicitly told to
-  stop." — the single most important failure a hardening run faces is the model declaring itself
-  done mid-overnight.
-  - **Constraint — `avoid_cron_setup`**: cron setup has hung twice in this project
-    (corrections.md). If `cron_create` fails or hangs, fall back to `schedule_wakeup` with a
-    2-hour delay that re-arms itself, and record the failure in the plan. Do not retry
-    `cron_create` within the same wake.
+- All tracked edits live in one dedicated task worktree, e.g.
+  `.kilo/worktrees/overnight-hardening-YYYYMMDD`, on a branch with an allowed lowercase prefix
+  such as `fix/overnight-hardening-YYYYMMDD` (docs/ORCHESTRATION.md, "Worktrees"). `main` is not
+  used for edits or conflict resolution; only the designated main worktree is used for the pinned
+  final landing. Read `docs/ORCHESTRATION.md` § "Landing" before the first merge.
+- **Resume scheduling is gated by the unresolved `avoid_cron_setup` constraint.** Cron setup hung
+  twice, and the cause is not documented as resolved (project memory). Do not call `cron_create`
+  while that constraint remains. In Kilo, use a one-shot `schedule_wakeup` with a one-hour delay
+  and the resumer prompt below, then re-arm it on each wake while the run remains authorized. If
+  one-shot wakeups are unavailable in the current host, record the run as waiting for an
+  operator-controlled resumption; do not test cron setup as a workaround. Re-enable hourly
+  `cron_create` only after the cause is understood and the project constraint is explicitly
+  updated.
 - Model routing (read `MODELS.md` first): the free route is `Poolside: Laguna S 2.1 (free)`,
   provider `kilo`, variant `thinking`. Verify against the live catalog with
   `node scripts/free-model-pool.mjs --list` and the 200 req/hour ceiling (MODELS.md). For bounded
@@ -59,18 +61,22 @@ the overnight run is free, so it does not launch paid Luna subagents directly.
   `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N` to keep
   large responses out of context. Never launch GPT (Luna/Terra/Sol) subagents from a free session.
   Always pass `model` and `provider` together so a named paid model does not fall back to the
-  zero-token gateway.
-- **Quota-aware subagent protocol** (MODELS.md "Quota-Aware Subagents"): before every subagent
-  launch, inspect the newest `npm run swarm -- tokens --json` reading. If it is missing, stale
-  (>90 min), incomplete, unbudgeted, or otherwise uncertain, fail closed and prefer a free model.
-  "Low allowance" means 20% or less of the five-hour budget remains; "reset is near" means the
-  next expiry is ≤60 minutes away. When allowance is low and reset is not near (>60 min away or
-  unknown), use free subagents by default and do not launch Luna/Terra/Sol without an explicit
-  operator override.
-- Cap concurrent subagents at 15 (`concurrent_agent_cap`). Free models are slow and
-  rate-limited; when a subagent fails with a temporary model-usage limit, preserve its `task_id`
-  and retry with a different eligible free provider/model on the next hourly checkpoint per
-  `MODELS.md` — do not switch to a paid model as a retry fallback.
+  zero-token gateway. Before and after a large OpenRouter-backed fan-out, run
+  `node scripts/free-model-pool.mjs --openrouter-quota`; its server-side daily counter is
+  authoritative for this account and is separate from the Kilo per-IP hourly ceiling.
+- **Quota-aware subagent protocol** (MODELS.md "Free Model Rotation" and "Token-Saving Research
+  Protocol"): the current `swarm` CLI does not expose `tokens --json`, so do not treat that
+  command or `swarm status` as budget telemetry. Refresh eligibility with
+  `node scripts/free-model-pool.mjs --list`, use only exact zero-priced model/provider pairs, and
+  never fall back silently to paid inference. If the host exposes separate budget data, follow its
+  current policy; otherwise treat paid capacity as unknown and stop free launches when providers
+  report throttling or exhaustion. Do not invent quota percentages or reset windows.
+- Cap concurrent subagents at 15 (`concurrent_agent_cap`). Before each launch, check current
+  running work; do not duplicate an in-flight task just to fill a quiet hour. On a rate limit,
+  record the failed attempt and use a different eligible free model/provider only if the refreshed
+  catalog and policy permit it. A resumed task retains its model; do not describe it as switching
+  models. If free routes are exhausted, pause that research and continue with coordinator-owned
+  verification or other ready work.
 - Photoshop behavior, UX and non-trivial algorithms require Adobe or other primary-source
   research. Record source URLs, versions and unresolved claims in a research note or handoff.
 - Every non-trivial implementation requires a fresh read-only code review per
@@ -83,9 +89,11 @@ the overnight run is free, so it does not launch paid Luna subagents directly.
   smallest necessary regression test only. No new E2E unless behavior is otherwise unvalidated.
   Never weaken gates or re-record baselines. See `docs/TESTING.md#gates` for commands and known
   failures.
-- Run `npm run repo:state`, `node scripts/worktree-inventory.mjs`, and `npm run branches:orphan`
-  before landing (AGENTS.md). After landing, run `npm run tsc`, `npm run build`, and
-  `npm run lint:check` on `main` to confirm the merge did not regress the build.
+- Run `npm run repo:state` before landing. For cleanup, also run
+  `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`; preview
+  `npm run swarm -- doctor --dry-run` before any disposal (AGENTS.md). After landing, run
+  `npm run tsc`, `npm run build`, and `npm run lint:check` in the designated main worktree to
+  confirm the merge did not regress the build.
 - **Never `git stash`** (AGENTS.md § "Coordination And Cleanup",
   `docs/ORCHESTRATION.md` § "Landing"): it is a shared unordered stack; `git stash` on a
   clean tree exits 0 with no entry, so the next `pop` takes somebody else's changes.
@@ -99,56 +107,63 @@ the overnight run is free, so it does not launch paid Luna subagents directly.
 
 Every overnight-hardening session follows the same shape:
 
-1. `git worktree list --porcelain` → pick the `refs/heads/main` worktree → create
-   `.kilo/worktrees/overnight/hardening-YYYYMMDD` from clean `main`.
+1. `git worktree list --porcelain` → identify the designated `refs/heads/main` worktree → create
+   `.kilo/worktrees/overnight-hardening-YYYYMMDD` on
+   `fix/overnight-hardening-YYYYMMDD` from current clean `main`. Verify the new checkout before
+   any npm command or fan-out.
 2. Write `.kilo/plans/overnight-hardening-YYYYMMDD-plan.md` with the research agenda and the
    HANDOFF.md entry clusters to verify.
-3. Initialize a checkpoint cursor at
-   `.kilo/plans/overnight-hardening-YYYYMMDD-checkpoint.md` recording the `time_updated` of every
-   subagent session launched in this wake (the orchestrator uses this to determine which subagent
-   results are new since the last wake).
-4. Schedule the hourly cron (template below). The cron is what keeps the session alive; without it,
-   a token wall or a stopped chat ends the run.
+3. Initialize `.kilo/plans/overnight-hardening-YYYYMMDD-checkpoint.md` with each task/session ID,
+   its last observed task state, and the last wake timestamp. On resume, query the task host for
+   terminal/completed results; do not infer completion solely from database `time_updated`, which
+   can change for bookkeeping reasons.
+4. Schedule the one-shot hourly wake (template below) while `avoid_cron_setup` remains unresolved.
+   Re-arm it at each wake only while the run remains authorized.
 5. Fan out the first wave of free-model subagents (read-only research: HANDOFF entries, doc/test
    drift, Adobe sources, recent chat loose ends). Pass the absolute worktree path in every brief.
-   Before each launch, inspect `npm run swarm -- tokens --json` per the quota-aware protocol.
+   Before each launch, refresh the free model catalog per the quota-aware protocol; for a large
+   OpenRouter-backed wave, check the server-side daily counter as above.
 
 ## Tracking "new since last wake"
 
-Each hourly wake updates the checkpoint cursor file. The orchestrator reads it to learn which
-subagent session IDs (and their `time_updated` or completion status) were already known. Any
-subagent that completed after the checkpoint timestamp is "new since last wake" and gets
-synthesized into `.kilo/plans/overnight-hardening-findings.md`, which is merged back into the plan
-at the start of each wake. Findings are accumulated cumulatively; resolved candidates are marked
-`done` in the plan and never revisited without new evidence.
+Each wake loads the checkpoint and checks the retained conversation for Task tool results or
+completion notifications for the recorded child task IDs. Only results newly reported as completed
+since the last wake are synthesized into
+`.kilo/plans/overnight-hardening-findings.md`, then merged into the plan. Save the checkpoint only
+after capturing each result and its evidence. Findings accumulate; resolved candidates are marked
+`done` and not revisited without new evidence. Session-database timestamps are supporting clues,
+not a task-completion cursor.
 
 ## The recurring prompts
 
-These are the two prompts the run reuses. Keep them verbatim; they are part of what makes the
-pattern robust.
+These are prompt templates, not claims to reproduce a historical user message verbatim. Adapt the
+initial template to the actual request, preserving its scope and constraints.
 
-### Initial prompt (the operator's request)
+### Initial prompt template
 
 > do rigorous overnight hardening of the project. Reconstruct and understand issues in great
-> detail using docs, code, chat transcripts. Fan out many free subagents to do deep research:
+> detail using docs, code, chat transcripts. Fan out bounded free read-only subagents to do deep research:
 > scan large amounts of docs, code, transcripts, do websearch, etc. Use the catalog entry
 > `Poolside: Laguna S 2.1 (free)` (provider `kilo`, variant `thinking`) heavily for broad
-> investigations. Take most complex and prioritised issues first. This must be long running
+> investigations when they appear in the refreshed free catalog; otherwise rotate to another
+> verified zero-priced model/provider or pause when none is available. Take most complex and
+> prioritised issues first. This must be long running
 > overnight autonomous session. Most likely points of failure: (1) llm decides task is done while
-> it should keep going; (2) tokens for the free model might end temporarily; (3) other unknown
-> error. Mitigate execution stops by setting up cron that wakes the chat every hour with a high
-> quality rigorous demanding prompt, using `cron_create` with `0 * * * *` and a `prompt` argument.
-> If `cron_create` hangs or fails (constraint: `avoid_cron_setup`), fall back to
-> `schedule_wakeup` with a 2-hour delay that re-arms itself.
+> it should keep going; (2) free-model capacity might become temporarily unavailable; (3) other unknown
+> error. Mitigate execution stops with a high-quality rigorous resumer prompt. Because
+> `avoid_cron_setup` is unresolved, use one-shot
+> `schedule_wakeup` for one hour and re-arm on each wake; do not call `cron_create` until the
+> project constraint is explicitly cleared.
 
-### Hourly cron wake-up (the resumer)
+### Hourly resumer
 
-Scheduled via `cron_create` with `cron: "0 * * * *"` and `prompt`:
+Use as the prompt for a one-shot `schedule_wakeup` with a one-hour delay while
+`avoid_cron_setup` remains unresolved:
 
 > You are a professional orchestrator running an overnight hardening session on the `ph`
 > Photoshop clone project. Your job is to keep working autonomously until told to stop.
 >
-> Current state: you are operating from the `overnight/hardening-YYYYMMDD` worktree. The plan is
+> Current state: you are operating from the `overnight-hardening-YYYYMMDD` worktree. The plan is
 > at `.kilo/plans/overnight-hardening-YYYYMMDD-plan.md`. The checkpoint cursor is at
 > `.kilo/plans/overnight-hardening-YYYYMMDD-checkpoint.md`. Subagents have been launched to
 > research HANDOFF.md entries, code/doc drift, test coverage, and Adobe documentation.
@@ -161,20 +176,23 @@ Scheduled via `cron_create` with `cron: "0 * * * *"` and `prompt`:
 >    findings back into the plan.
 > 3. Update the checkpoint cursor with all currently-known subagent session IDs.
 > 4. Identify findings that translate to verified, safe fixes — implement them in the worktree.
-> 5. Launch NEW subagents for uncovered areas needing investigation (before each: inspect
->    `npm run swarm -- tokens --json`; fail closed on stale/incomplete readings).
+> 5. Launch NEW subagents only for uncovered areas needing investigation (refresh the free catalog
+>    before each; for large OpenRouter-backed fan-outs, inspect the server-side daily counter).
 > 6. Re-run `npm run tsc` and targeted `vitest` after every code change.
 > 7. Do NOT stop. Do NOT declare "done." Continue investigating, verifying, and fixing until
 >    explicitly told to stop.
 >
-> Constraints: you are a FREE orchestrator session — you may NOT commit or merge. All edits go in
-> the worktree. For each verified fix, write a commit patch file and landing notes, then signal the
-> coordinator session for the commit/merge. HANDOFF.md is the source of truth; re-derive repo/main
-> state before acting (`git rev-parse main`, `git log --oneline -1 main`).
+> Constraints: you are the Git-capable coordinator operating in the verified task worktree. Free
+> subagents are read-only and may not run Git commands. You own repository inspection, edits,
+> validation, commit, landing and cleanup. `HANDOFF.md` is the source of truth. Before each
+> subagent launch, refresh the free model catalog; use only a verified free model/provider pair
+> unless host policy and budget explicitly permit paid use. Stop if free routes are exhausted. Do
+> not call `cron_create` while `avoid_cron_setup` remains
+> unresolved; re-arm a one-shot `schedule_wakeup` each hour while authorized.
 
-If no subagent has completed since the last wake, launch a fresh batch rather than idling — the
-run is allowed to spend a quiet hour spinning up more research so the next wake has work to
-consume.
+If no subagent has completed since the last wake, do not duplicate work just to keep the fan-out
+busy. Verify current candidates, continue safe coordinator-owned work, or wait for the next
+authorized wake. Respect the concurrency cap and free-route availability.
 
 ## Phase 1: Find and Rank Candidates
 
@@ -182,7 +200,8 @@ Read selectively: `HANDOFF.md` (the source of truth), `e2e/OPEN_PROBLEMS.md`, `T
 `docs/FEATURES.md`, `docs/ARCHITECTURE.md`. Search code only to validate candidates, never to
 audit the whole tree. Mark resolved, landed, stale, duplicate and owned entries as inapplicable —
 including entries whose fix already landed on `main` since the plan was written (re-check
-`git merge-base main <worktree>` after each wake; `main` does not stop for the run).
+the current main SHA and `git cherry main <task-branch>` after each wake; `main` does not stop for
+the run and inventory/branch facts are point-in-time evidence).
 
 Rank order:
 
@@ -195,13 +214,14 @@ Rank order:
 **Good-enough-to-fix threshold (the Phase 1→2 gate):** a candidate is safe to attempt only when
 all of these hold: (a) the cause is confirmed against the current `main` baseline,
 (b) the fix touches a bounded set of files with no cross-module boundary change (cross-module
-requires two reviewers per Operating Rules), (c) no `mustNotPrune` or file-lock claim protects the
-affected paths (check with `npm run swarm -- check <paths>`), and (d) the fix has a clear, fast
+requires two reviewers per Operating Rules), (c) the coordinator's task worktree has no
+unexplained `mustNotPrune` veto on landing and `npm run swarm -- check <paths>` reports no file
+claim, and (d) the fix has a clear, fast
 validation path (`npm run tsc` + targeted `vitest`, or the specific `npm run lint:check` scope).
 Candidates that fail this gate go to Handoff, not to Solve. `HANDOFF.md` entries whose fix is
 already on `main` by `git cherry main <branch>` patch-id absorption are retired, not re-done.
 
-## Phase 2: Loop — Find → Solve → Scope → Review → Commit → Merge → Dispose → Repeat
+## Phase 2: Coordinator Loop — Find → Solve → Scope → Validate → Review → Commit → Land → Repeat
 
 For each selected issue:
 
@@ -220,41 +240,39 @@ For each selected issue:
    out-of-scope changes. Complex task → a fresh read-only review subagent per `docs/CODE-REVIEW.md`
    § "Review a subagent change" (verbatim brief, `file:line` findings); cross-module/architecture
    boundary changes → two reviewers split by concern. Fix and re-review blocking findings.
-6. **Commit patch**: the orchestrator is a free session that cannot commit, so write the commit
-   patch to `.kilo/plans/overnight-hardening-<sha>-patch.mjs` with the `Chat: <native-session-id>`
-   trailer (resolve the chat ID via `npm run --silent session:id -- "distinctive phrase"` per
-   `docs/CHAT-ID.md`). Pass the patch and the reviewed SHA to the coordinator for the actual
-   commit in a landing worktree.
+6. **Commit**: update any verified-fixed `HANDOFF.md` entry per that document's retirement rules.
+   Resolve the current host's chat ID using `docs/CHAT-ID.md`, stage only the reviewed paths, and
+   commit in the task worktree with exactly one valid `Chat:` trailer. Do not create a `.mjs` file
+   as a stand-in for a commit or rely on ignored `.kilo/plans/` content as a handoff artifact. A
+   free research child does not commit.
 7. **Handoff** (insufficient evidence, or candidate failed the good-enough-to-fix threshold): no
-   speculative fix. Write a concise, evidence-backed handoff naming affected files and the exact
-   decision/experiment needed. Write the handoff patch file and signal the coordinator.
-8. **Merge**: the coordinator lands to `main` per `docs/ORCHESTRATION.md` § "Landing", with a
-   `Branch:` trailer. Before merge: `npm run repo:state`, `node scripts/worktree-inventory.mjs`,
-   `npm run branches:orphan`, re-read `main`'s status and diff, stage only this task's paths. When
-   `main` has advanced beyond a clean re-base, land **in a separate, `main`-based landing
-   worktree** using the hard-merge procedure (§ "Hard-merge procedure") — never merge `main` into
-   the hardening tree and never resolve a conflict in the main checkout.
-9. **Dispose**: after landing, `npm run dispose -- <name> --dry-run`, then
-   `npm run dispose -- <name>` (only after proving ownership, confirming descendant subagents are
-   dead, and checking the live overlay), then regenerate inventory with
-   `node scripts/worktree-inventory.mjs`.
-10. **Post-landing**: in the landing worktree, run `npm run tsc`, `npm run build`, and
-    `npm run lint:check` to confirm `main` was not regressed by the merge.
+   speculative fix. The coordinator writes a concise, evidence-backed handoff to the canonical
+   problem document or a durable tracked plan, naming affected files and the exact next experiment.
+8. **Land**: sync current `main` into the candidate branch in the candidate worktree, resolve any
+   conflicts there using the recovered requirement, rerun gates and review the final composition.
+   Then follow `docs/ORCHESTRATION.md` § "Landing" from the designated main worktree only: require
+   a clean checkout, prepare `git merge --no-commit --no-ff <full-reviewed-sha>`, pin both parents,
+   the prepared result tree, branch and chat, and invoke `node scripts/commit-reviewed-landing.mjs`.
+   Do not land from an arbitrary fresh task worktree or resolve conflicts in main.
+9. **Post-landing**: in the designated main worktree, run `npm run tsc`, `npm run build`, and
+   `npm run lint:check` to confirm the merge did not regress the build.
+10. **Cleanup**: only after `repo:state`, status inspection, relevant handoff review, fresh
+    inventory, `branches:orphan`, descendant/session liveness and live-overlay review, and
+    `npm run swarm -- doctor --dry-run`, run `npm run dispose -- <name> --dry-run`. Inspect its
+    result, then use `npm run dispose -- <name>` only if ownership is proven and no live writer or
+    veto remains. If the current session is still a live writer, defer disposal; do not suppress
+    or bypass the guard. Regenerate inventory after any worktree removal.
 
-### Hard-merge procedure (when `main` advanced beyond a clean re-base)
+### Hard-merge procedure (when `main` advanced or conflicts exist)
 
-1. Create a fresh `main`-based task worktree: `git worktree add`.
-2. Stage only the candidate's paths into that worktree's index.
-3. Resolve each conflict by the recovered requirement (the problem entry / chat history), never
-   by accepting either side wholesale.
-4. `git merge --no-commit --no-ff <full-reviewed-sha>` with env vars
-   `KILO_EXPECTED_MAIN_SHA`, `KILO_EXPECTED_INCOMING_SHA`, `KILO_EXPECTED_TREE_SHA`,
-   `KILO_EXPECTED_BRANCH`, `KILO_EXPECTED_CHAT_ID` passed to
-   `node scripts/commit-reviewed-landing.mjs` (docs/ORCHESTRATION.md § "Landing").
-5. Fast-forwards and octopus merges are refused (worktree-merge-harvest Skill, Step 0); land one
-   candidate at a time.
-6. Never resolve or repair a conflict in `main`; never use `git stash`, `reset --hard`,
-   `checkout --ours/--theirs`, `hash-object`, or `update-index` in the main checkout.
+1. Follow `.skills/worktree-merge-harvest.md` and `docs/ORCHESTRATION.md` § "Landing". Merge or
+   rebase current `main` into the candidate **in the candidate's own worktree**, resolve conflicts
+   there against the recovered requirement, then rerun the required gates and independent review.
+2. The final landing is a mechanical pinned merge in the **designated main worktree** only. Use
+   `commit-reviewed-landing.mjs` there with the exact main SHA, incoming SHA, prepared result tree,
+   source branch and chat ID as documented. It refuses invocation from an arbitrary task worktree.
+3. Land one candidate at a time. Never resolve or repair a conflict in main; never use `git stash`,
+   `reset --hard`, `checkout --ours/--theirs`, `hash-object`, or `update-index` in the main checkout.
 
 Repeat until no high-value actionable candidates remain, the run window is exhausted, or a gate
 blocks safe progress. A blocked/uncertain item does **not** abandon unrelated ready work, and a
@@ -264,32 +282,32 @@ revisit a rejected candidate without new evidence.
 ## Landing — `main` moves under the run
 
 The hardening tree is cut once and ages; `main` does not. Treat `ahead`, `behind`, conflicts and
-ownership as per-instant facts and re-derive them in the same breath as the liveness re-check:
-`git rev-parse main` and `git log --oneline -1 main` before the first merge each wake. When the
-gap is larger than a clean re-base, stop merging the old tree and **replant the pending delta onto
-a fresh `main`-based task worktree**, resolving each overlap by the recovered requirement rather
-than by accepting either side wholesale.
+ownership as per-instant facts. Before landing, sync current `main` into the candidate worktree and
+rederive the diff, gates and review there. Resolve conflicts only in that candidate worktree. The
+final pinned merge is then prepared and committed from the designated main worktree, never from a
+second checkout of the `main` ref.
 
 ## When the run stalls, keep it going
 
-- **Free-model throttling / quota exhaustion**: preserve the failing subagent's `task_id` and
-  retry with a different eligible free provider/model on the next hourly checkpoint
-  (MODELS.md). Do not switch to a paid model as a fallback. If no free model is available, idle
-  research this wake and record the exhaustion in the plan.
-- **Token wall on a paid model**: the run continues on free models; a paid Luna reviewer is
-  re-invoked only when the orchestrator session is paid and the decision is irreplaceable
-  (MODELS.md). The overnight run is free, so this sub-case does not arise for the orchestrator
-  itself.
-- **Network loss / stopped chat**: the hourly cron (`cron_create`, or `schedule_wakeup` fallback
-  per `avoid_cron_setup`) reopens the session, re-reads the plan and findings and resumes from the
-  last committed delta. See `docs/ORCHESTRATION.md` § "Unexpected agent recovery".
+- **Free-model throttling / quota exhaustion**: record the failed task and provider. Per MODELS.md,
+  try a different currently eligible free provider/model in a new bounded task only if the refreshed
+  catalog supports it. Do not assume a resumed task changes its model and do not use paid fallback.
+  If no free route is available, record the limit and continue coordinator-owned work or wait.
+- **Token wall on a paid model**: keep research on eligible free routes. Consider a paid Luna
+  reviewer only when the current quota policy permits it, no suitable free reviewer is available,
+  and the coordinator records why the paid review is necessary (MODELS.md).
+- **Network loss / stopped chat**: while `avoid_cron_setup` remains unresolved, a one-shot
+  `schedule_wakeup` reopens the session; re-read the plan and findings and rederive repository
+  state from the task worktree before resuming. Do not use `cron_create` until the project
+  constraint is explicitly cleared. See `docs/ORCHESTRATION.md` § "Unexpected agent recovery".
 - **Subagent produced unusable output**: empty, wrong, or irrelevant results are a quality failure,
   not a transient error. Re-launch with the same brief to a different free model; if the retry
   also fails, escalate to Handoff with the evidence of both attempts. Do not fabricate a source.
-- **Main drift during a fix**: between Solve and Merge, `main` may advance. Re-derive
-  `git rev-parse main` immediately before Merge; if the gap is larger than a clean re-base, use
-  the hard-merge procedure in a fresh `main`-based landing worktree (never resolve in main).
-- **False "done"**: the cron prompt and the closing rule both forbid declaring the run finished;
+- **Main drift during a fix**: between Solve and Land, `main` may advance. Sync current `main`
+  into the candidate branch in its own worktree, resolve there, and rerun gates/review. Final
+  landing still happens only in the designated main worktree; never create a second checkout of
+  the `main` ref or resolve a conflict there.
+- **False "done"**: the resumer prompt and the closing rule both forbid declaring the run finished;
   completion is landing the last reviewed fix or recording a durable `blocked`/`unproven`/
   `obsolete` handoff with evidence and a next action.
 
