@@ -54,8 +54,15 @@ const ALLOWED_UNLISTED = new Map([
   ],
   [
     '.kilo/plans/test-hardening-plan.md',
-    'internal hardening plan tracked in .kilo/plans/; not a public document and not ' +
-      'linked from docs/README.md. The .kilo/plans/ directory row covers the directory as a whole.',
+    'archived history-migration test plan; it records task-specific work already merged ' +
+      'to main. The maintained repository-wide workflow is .skills/parallel-test-hardening.md, ' +
+      'and this plan is not linked from docs/README.md.',
+  ],
+  [
+    '.kilo/agent/read-only-research.md',
+    'Kilo runtime profile used by AGENTS.md and MODELS.md for bounded read-only research; ' +
+      'its configuration is explained in docs/KILO.md, and runtime profiles are not ' +
+      'maintained as repository documentation in docs/README.md.',
   ],
   [
     'docs/FREE-COMPUTE.md',
