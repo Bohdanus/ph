@@ -147,9 +147,12 @@ describe('Linux baseline promotion workflow', () => {
         .filter((line) => line.startsWith('git add '))
     ).toEqual(['git add -- "$target"']);
     expect(promotionStep).toContain('SOURCE_SHA: ${{ github.event.client_payload.source_sha }}');
+    expect(promotionStep).toContain('CHAT_ID: ${{ github.event.client_payload.chat_id }}');
     expect(promotionStep).toContain('--force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA"');
     expect(promotionStep).toContain('-m "Chat: $CHAT_ID"');
     expect(promotionStep).not.toContain('Co-authored-by: Copilot');
+    expect(stagingStep).toContain('git check-attr text eol filter ident working-tree-encoding -- "$target"');
+    expect(stagingStep).toContain(': ident: unspecified');
   });
 
   it('waits beyond both Linux baseline job limits with queue margin', () => {
@@ -677,6 +680,7 @@ describe('mirror remote and dispatch selection', () => {
   });
 
   it.each([
+    ['leading-space path', { filePrefix: ' ' }, /allowlist/],
     ['trailing-space path', { fileSuffix: ' ' }, /allowlist/],
     ['trailing-space subject', { subjectSuffix: ' ' }, /unrecognized subject/],
     ['trailing-space Chat trailer', { chatSuffix: ' ' }, /exactly the requested native Chat trailer/],
@@ -688,7 +692,7 @@ describe('mirror remote and dispatch selection', () => {
       runGit(promotionRepo, ['config', 'user.name', 'Baseline Promotion Fixture']);
       runGit(promotionRepo, ['config', 'user.email', 'baseline-promotion-fixture@example.test']);
 
-      const baselineName = `${LINUX_BASELINE_FILES[0]}${mutation.fileSuffix ?? ''}`;
+      const baselineName = `${mutation.filePrefix ?? ''}${LINUX_BASELINE_FILES[0]}${mutation.fileSuffix ?? ''}`;
       const baselineFile = join(promotionRepo, LINUX_BASELINE_PATH, baselineName);
       mkdirSync(dirname(baselineFile), { recursive: true });
       writeFileSync(baselineFile, 'captured baseline\n');
@@ -712,11 +716,12 @@ describe('mirror remote and dispatch selection', () => {
       runGit(promotionRepo, buildMirrorPushArgs(promotionSha, fixture.branch, null));
 
       const calls = [];
-      const runCommand = (binary, args, cwd = fixture.source) => {
+      const runCommand = (binary, args, cwd = fixture.source, _timeoutMs, { trimOutput = true } = {}) => {
         calls.push({ binary, args: [...args] });
         const result = spawnSync(binary, args, { cwd, encoding: 'utf8' });
         if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
-        return (result.stdout ?? '').trim();
+        const output = result.stdout ?? '';
+        return trimOutput ? output.trim() : output;
       };
 
       expect(() =>
@@ -783,7 +788,7 @@ describe('Linux baseline promotion verification', () => {
     let headReads = 0;
     let statusReads = 0;
     const fullCommitMessage = commitMessage ?? `${commitSubject}\n\nChat: ${chatId}`;
-    const runCommand = (binary, args) => {
+    const runCommand = (binary, args, _cwd, _timeoutMs, { trimOutput = true } = {}) => {
       calls.push({ binary, args: [...args] });
       if (binary !== 'git') throw new Error(`Unexpected command: ${binary}`);
       switch (args[0]) {
@@ -801,7 +806,9 @@ describe('Linux baseline promotion verification', () => {
         case 'merge':
           return '';
         case 'diff':
-          return (args.includes('-z') ? `${changedPaths.join('\0')}\0` : changedPaths.join('\n')).trim();
+          return trimOutput
+            ? (args.includes('-z') ? `${changedPaths.join('\0')}\0` : changedPaths.join('\n')).trim()
+            : `${changedPaths.join('\0')}\0`;
         case 'show': {
           if (args.includes('--format=x%B%x00')) return `x${fullCommitMessage}\0\n`.trim();
           if (args.includes('--format=%s')) return `${commitSubject}\n`.trim();

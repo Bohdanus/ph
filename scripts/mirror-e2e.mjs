@@ -275,7 +275,7 @@ export function assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch, cwd =
     const diffArgs = parentSha
       ? ['diff-tree', '--no-commit-id', '--name-only', '-z', '-r', parentSha, verifiedSha]
       : ['diff-tree', '--root', '--no-commit-id', '--name-only', '-z', '-r', verifiedSha];
-    const changedPaths = parseNulDelimitedPaths(command('git', diffArgs, cwd));
+    const changedPaths = parseNulDelimitedPaths(command('git', diffArgs, cwd, undefined, { trimOutput: false }));
     if (!changedPaths.some((file) => file.startsWith(`${LINUX_BASELINE_PATH}/`))) continue;
     if (subject !== LINUX_BASELINE_COMMIT_SUBJECT) {
       throw new Error(
@@ -381,7 +381,7 @@ function parseNulDelimitedPaths(output) {
   return paths;
 }
 
-function command(binary, args, cwd = process.cwd(), timeoutMs = 120_000) {
+function command(binary, args, cwd = process.cwd(), timeoutMs = 120_000, { trimOutput = true } = {}) {
   const result = spawnSync(binary, args, {
     cwd,
     encoding: 'utf8',
@@ -399,7 +399,8 @@ function command(binary, args, cwd = process.cwd(), timeoutMs = 120_000) {
     error.retryable = isRetryableCommandError(undefined, detail);
     throw error;
   }
-  return (result.stdout ?? '').trim();
+  const output = result.stdout ?? '';
+  return trimOutput ? output.trim() : output;
 }
 
 function assertCleanTaskBranch() {
@@ -566,7 +567,9 @@ export function fastForwardBaselineCommit({ branch, sourceSha, chatId, cwd = pro
   const commitMessage = parseGitField(runCommand('git', ['show', '-s', '--format=x%B%x00', remoteSha], cwd));
   const commitSubject = commitMessage.split('\n', 1)[0];
   const changedPaths = parseNulDelimitedPaths(
-    runCommand('git', ['diff', '--name-only', '-z', `${sourceSha}..${remoteSha}`], cwd)
+    runCommand('git', ['diff', '--name-only', '-z', `${sourceSha}..${remoteSha}`], cwd, undefined, {
+      trimOutput: false,
+    })
   );
   const result = verifyBaselinePromotion({
     sourceSha,

@@ -178,8 +178,8 @@ jobs:
             [[ -f "$file" && ! -L "$file" ]] || { echo "::error::Missing or unsafe baseline $name"; exit 1; }
             [[ ! -L "$target" && ( ! -e "$target" || -f "$target" ) ]] || { echo "::error::Unsafe target baseline $name"; exit 1; }
             [[ "$(file --brief --mime-type "$file")" == "image/png" ]] || { echo "::error::$name is not a PNG"; exit 1; }
-            attributes="$(git check-attr text eol filter working-tree-encoding -- "$target")"
-            [[ "$attributes" == *": text: unset"* && "$attributes" == *": eol: unspecified"* && "$attributes" == *": filter: unspecified"* && "$attributes" == *": working-tree-encoding: unspecified"* ]] || { echo "::error::Unsafe Git byte-conversion attributes for $name"; exit 1; }
+            attributes="$(git check-attr text eol filter ident working-tree-encoding -- "$target")"
+            [[ "$attributes" == *": text: unset"* && "$attributes" == *": eol: unspecified"* && "$attributes" == *": filter: unspecified"* && "$attributes" == *": ident: unspecified"* && "$attributes" == *": working-tree-encoding: unspecified"* ]] || { echo "::error::Unsafe Git byte-conversion attributes for $name"; exit 1; }
             cp -- "$file" "$target"
             git add -- "$target"
           done
