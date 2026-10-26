@@ -5,6 +5,7 @@ import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
 import {
   deriveSelectionBaseline,
+  isValidLegacySelectionSnapshot,
   isValidSelectionSnapshot,
   selectionSnapshot,
   type SelectionHistoryArgs,
@@ -50,7 +51,7 @@ function makeLayer(id: string): Layer {
 }
 
 /**
- * A selection that was created by a gesture, which writes no history entry.
+ * A selection known only through a later history entry's previous snapshot.
  *
  * Every field the clone in `selection-baseline.ts` touches is populated and
  * differs from the empty snapshot, so an assertion that only checked the shape
@@ -263,6 +264,70 @@ describe('selectionSnapshot', () => {
     ).toBe(false);
   });
 
+  it('rejects vector snapshots without a drawable contour while retaining packed raster selections', () => {
+    const valid = snapshotFixture('valid-vector');
+    const empty = { ...valid, id: 'empty-vector', points: [] };
+    const shortContour = {
+      ...valid,
+      id: 'short-vector',
+      points: [
+        [
+          { x: 1, y: 2 },
+          { x: 3, y: 4 },
+        ],
+      ],
+    };
+    const raster: Selection = {
+      ...valid,
+      id: 'raster-selection',
+      points: [],
+      geometry: 'polygon',
+      sourceTool: 'magic-wand',
+      pos: { x: 0, y: 0, width: 2, height: 2 },
+      rasterMask: { width: 2, height: 2, data: 'AQ==' },
+    };
+
+    expect(isValidSelectionSnapshot({ selections: [valid], activeSelectionId: valid.id })).toBe(true);
+    expect(isValidSelectionSnapshot({ selections: [empty], activeSelectionId: empty.id })).toBe(false);
+    expect(isValidSelectionSnapshot({ selections: [shortContour], activeSelectionId: shortContour.id })).toBe(false);
+    expect(isValidSelectionSnapshot({ selections: [raster], activeSelectionId: raster.id })).toBe(true);
+  });
+
+  it.each([null, {}])('rejects malformed vector contours without throwing (%s)', (contour) => {
+    const malformed = { ...snapshotFixture('malformed-contour'), points: [contour] } as unknown as Selection;
+    const snapshot = { selections: [malformed], activeSelectionId: malformed.id };
+
+    expect(() => isValidSelectionSnapshot(snapshot)).not.toThrow();
+    expect(isValidSelectionSnapshot(snapshot)).toBe(false);
+    expect(isValidLegacySelectionSnapshot(snapshot)).toBe(false);
+  });
+
+  it('rejects accessor-backed points without invoking their getter', () => {
+    const points = new Array(1);
+    Object.defineProperty(points, '0', {
+      enumerable: true,
+      get() {
+        throw new Error('point getter invoked');
+      },
+    });
+    const malformed = { ...snapshotFixture('accessor-points'), points } as unknown as Selection;
+    const snapshot = { selections: [malformed], activeSelectionId: malformed.id };
+
+    expect(() => isValidSelectionSnapshot(snapshot)).not.toThrow();
+    expect(isValidSelectionSnapshot(snapshot)).toBe(false);
+    expect(() => isValidLegacySelectionSnapshot(snapshot)).not.toThrow();
+    expect(isValidLegacySelectionSnapshot(snapshot)).toBe(false);
+  });
+
+  it('keeps legacy replay snapshots with seeded one-point selections readable', () => {
+    const seeded = { ...snapshotFixture('seeded-legacy'), points: [[{ x: 1, y: 2 }]] };
+    const snapshot = { selections: [seeded], activeSelectionId: seeded.id };
+
+    expect(isValidSelectionSnapshot(snapshot)).toBe(false);
+    expect(isValidLegacySelectionSnapshot(snapshot)).toBe(true);
+    expect(deriveSelectionBaseline([openDocumentItem(), selectionItem('legacy-seed', seeded)])).toEqual(snapshot);
+  });
+
   it('rejects dangling, inactive, and contradicting active selection IDs', () => {
     const active = snapshotFixture('active');
     const inactive = { ...active, isActive: false };
@@ -272,6 +337,14 @@ describe('selectionSnapshot', () => {
     expect(isValidSelectionSnapshot({ selections: [active], activeSelectionId: null })).toBe(false);
     expect(isValidSelectionSnapshot({ selections: [active], activeSelectionId: active.id })).toBe(true);
     expect(isValidSelectionSnapshot({ selections: [inactive], activeSelectionId: null })).toBe(true);
+  });
+
+  it('rejects empty selection IDs in legacy and durable snapshots', () => {
+    const emptyId = { ...snapshotFixture('valid'), id: '' };
+    const snapshot = { selections: [emptyId], activeSelectionId: '' };
+
+    expect(isValidLegacySelectionSnapshot(snapshot)).toBe(false);
+    expect(isValidSelectionSnapshot(snapshot)).toBe(false);
   });
 
   it('rejects an ambiguous key-absent legacy snapshot with multiple active selections', () => {
@@ -430,6 +503,23 @@ describe('deriveSelectionBaseline', () => {
 
     expect(deriveSelectionBaseline(history)).toEqual({ selections: [seeded], activeSelectionId: seeded.id });
     expect(convert(history).baseline.selections).toEqual({ selections: [seeded], activeSelectionId: seeded.id });
+  });
+
+  it('does not seed all-disabled history from an incomplete selection pair', () => {
+    const previous = outOfHistorySelection('disabled-incomplete');
+    const history: HistoryItem[] = [
+      openDocumentItem(),
+      {
+        id: 'disabled-incomplete-pair',
+        actionName: SELECTION_ACTION,
+        layerId: 'selection',
+        disabled: true,
+        args: { previousSelectionState: { selections: [previous], activeSelectionId: previous.id } },
+      },
+    ];
+
+    expect(deriveSelectionBaseline(history)).toEqual(selectionSnapshot());
+    expect(convert(history).baseline.selections).toEqual(selectionSnapshot());
   });
 
   it('returns the empty snapshot for a timeline with no enabled selection action', () => {

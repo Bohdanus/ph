@@ -1976,6 +1976,23 @@ describe('raster-backed selections', () => {
     ).toBeNull();
   });
 
+  it('owns an immutable copy of a committed raster mask', () => {
+    const rasterMask = { width: 2, height: 1, data: 'AQ==' };
+    const committed = createCommittedRasterSelection({
+      id: 'owned-raster-selection',
+      pos: { x: 0, y: 0, width: 2, height: 1 },
+      rasterMask,
+      sourceTool: 'magic-wand',
+    });
+
+    expect(committed).not.toBeNull();
+    expect(committed!.rasterMask).not.toBe(rasterMask);
+    expect(Object.isFrozen(committed!.rasterMask)).toBe(true);
+    rasterMask.data = 'Ag==';
+    expect(isPointInSelection({ x: 0.5, y: 0.5 }, committed!)).toBe(true);
+    expect(isPointInSelection({ x: 1.5, y: 0.5 }, committed!)).toBe(false);
+  });
+
   it('preserves exact subpixel coverage when raster masks are translated', () => {
     const mask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
 

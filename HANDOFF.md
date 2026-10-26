@@ -118,13 +118,15 @@ retiring the compatibility replay.
 
 ## 31. The selection baseline lookup must stay unbounded over the whole timeline
 
-**Problem.** `deriveSelectionBaseline` (`selection-baseline.ts`) is deliberately unbounded: it
-takes the **first** non-disabled `SELECTION_ACTION` on the timeline and seeds from that entry's
-`previousSelectionState`, with no cursor argument at all. Both consumers take the
-timeline wholesale — `replayHistory` in `history-replay.ts` and `legacyHistoryToDurable` in
-`history-adapter.ts` — so the durable baseline
-and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
-extracted this rule to own.
+**Problem.** `deriveSelectionBaseline` (`selection-baseline.ts`) is deliberately unbounded. It
+starts from the `previousSelectionState` of the first enabled `SELECTION_ACTION` on the timeline,
+then rewinds through earlier disabled selection rows only while each row's validated next snapshot
+exactly matches the baseline accumulated so far. If every selection row is disabled, the first row
+is a baseline witness only when both snapshots are valid. This treats disabled rows as absent while
+preserving selections that existed outside the recorded history. Both consumers take the timeline
+wholesale — `replayHistory` in `history-replay.ts` and `legacyHistoryToDurable` in
+`history-adapter.ts` — so the durable baseline and legacy replay start from the same snapshot, which
+is the parity property `0659ce9` extracted this rule to own.
 
 Bounding the lookup by replay target looks like a correctness fix, but it would reintroduce a
 data-loss bug. A `SELECTION_ACTION` entry's `previousSelectionState` carries the selection that
@@ -133,7 +135,10 @@ only record of the pre-action selection; bounding the lookup would make the base
 and turn undoing a tool-switch deselect into a silent visual no-op. The original framing — "a
 selection can be created by a gesture that writes no history entry" — was accurate before
 `00a170dc` routed selections through committed history entries; the current requirement is the
-equivalent later-entry `previousSelectionState` witness. Multiple tests now pin this behavior:
+equivalent later-entry `previousSelectionState` witness. A disabled creation can also be reflected
+in the `previousSelectionState` of a later enabled move. Rewind that earlier disabled row only when
+its `nextSelectionState` exactly matches the later snapshot; a mismatch marks an intervening
+selection change and keeps the later snapshot authoritative. Multiple tests pin these rules:
 
 - The `it('restores a cleared selection when undoing the tool-switch history entry')` case in
   `useHistory.test.tsx` — "restores a cleared selection when undoing the
@@ -149,7 +154,8 @@ equivalent later-entry `previousSelectionState` witness. Multiple tests now pin 
 
 - `selection-baseline.test.ts` explicitly passes the whole timeline to the helper while replaying
   at an earlier cursor, and `selection-replay.parity.test.ts` compares legacy and durable selection
-  state at every cursor. Keep both consumers aligned.
+  state at every cursor. It also covers disabled create/move/clear chains and detached replay
+  results. Keep both consumers aligned.
 
 **Related frame baseline.** `replayHistory()` also scans the whole history for the first
 `SET_DOCUMENT_FRAME_ACTION` and seeds `documentFrame` from its `previousFrame`. Bounding that lookup
@@ -157,9 +163,10 @@ at the target would lose the pre-crop frame when replaying before the first crop
 "replays before the first crop from its recorded previous frame, not the current cropped frame"
 pins this. This is the analogous frame-baseline rule, distinct from the selection helper.
 
-**Fix.** Keep `deriveSelectionBaseline()` unbounded over the whole timeline. Any future selection
-authority migration must preserve that rule and keep the two tests above as tripwires; bounding one
-consumer but not the other would reopen the parity divergence this helper exists to close.
+**Fix.** Keep `deriveSelectionBaseline()` unbounded over the whole timeline and preserve its exact
+disabled-row rewind rule. Any future selection authority migration must keep the baseline and replay
+tests as tripwires; bounding one consumer or accepting a mismatched disabled snapshot would reopen
+the parity divergence this helper exists to close.
 
 **Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
 `src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,

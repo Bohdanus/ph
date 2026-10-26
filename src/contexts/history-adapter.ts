@@ -37,7 +37,7 @@ import {
 } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
 import type { NewBedrockSize, ToolArgs, VectorToolName } from './tool-types.ts';
-import { deriveSelectionBaseline, isValidSelectionSnapshot, selectionSnapshot } from './selection-baseline.ts';
+import { deriveSelectionBaseline, isValidLegacySelectionSnapshot, selectionSnapshot } from './selection-baseline.ts';
 import {
   getTransformFromHistoryArgs,
   isIdentityAffineTransform,
@@ -712,11 +712,11 @@ export function deriveSetSelectionEntry(
   const args = item.args as
     { previousSelectionState?: SelectionSnapshot; nextSelectionState?: SelectionSnapshot } | undefined;
   const next = args?.nextSelectionState;
-  if (!isValidSelectionSnapshot(next)) return null;
+  if (!isValidLegacySelectionSnapshot(next)) return null;
   const previous = args?.previousSelectionState;
   const operation = Object.freeze({
     kind: 'set-selection',
-    before: isValidSelectionSnapshot(previous)
+    before: isValidLegacySelectionSnapshot(previous)
       ? selectionSnapshot(previous.selections, previous.activeSelectionId)
       : selectionSnapshot(currentSelections.selections, currentSelections.activeSelectionId),
     after: selectionSnapshot(next.selections, next.activeSelectionId),
@@ -1388,7 +1388,7 @@ export function legacyHistoryToDurable(
         }
       } else if (item.actionName === SELECTION_ACTION) {
         const next = (item.args as { nextSelectionState?: unknown } | undefined)?.nextSelectionState;
-        if (next !== undefined && next !== null && !isValidSelectionSnapshot(next)) {
+        if (next !== undefined && next !== null && !isValidLegacySelectionSnapshot(next)) {
           // Present but unreadable — `{}`, `{ selections: null }`, `[]`, a
           // non-array, and so on. `replayHistory` throws on every one of these
           // when it reads `next.selections.map(...)`, and the pre-derivation code

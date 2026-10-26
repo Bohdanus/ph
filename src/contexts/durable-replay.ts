@@ -188,7 +188,8 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
 
   const layerRecord = Object.freeze(Object.fromEntries(layers.entries()));
   const activeSelectionId =
-    selections.activeSelectionId &&
+    selections.activeSelectionId !== null &&
+    selections.activeSelectionId.length > 0 &&
     selections.selections.some((selection) => selection.id === selections.activeSelectionId)
       ? selections.activeSelectionId
       : null;

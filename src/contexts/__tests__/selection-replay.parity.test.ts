@@ -6,7 +6,7 @@ import { deriveSelectionBaseline, selectionSnapshot } from '../selection-baselin
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
-import type { Selection } from '../general-types.ts';
+import type { Point, Selection } from '../general-types.ts';
 import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION } from '../../util/constants.ts';
 import { encodeRasterSelectionMask } from '../../util/selection-mask.ts';
 
@@ -234,6 +234,107 @@ describe('selection replay chain and baseline parity', () => {
     expect(baselineSelection).toEqual(converted.document.baseline.selections);
   });
 
+  it('does not seed an earlier cursor from a disabled creation that a later move snapshots', () => {
+    const history = [
+      baseline(),
+      selectionItem('create', selectionSnapshot(), selectionSnapshot([selectionA], selectionA.id), true),
+      selectionItem(
+        'move',
+        selectionSnapshot([selectionA], selectionA.id),
+        selectionSnapshot([selectionAMoved], selectionAMoved.id)
+      ),
+    ];
+    const converted = legacyHistoryToDurable(history, { documentId: 'disabled-selection-create' });
+    expect(converted.diagnostics).toEqual([]);
+
+    const legacyAtDisabledCreate = replayHistory(history, 1, size, replayDependencies(), frame);
+    const durableAtDisabledCreate = replayDurableDocument(
+      converted.document,
+      converted.legacyCursorToDurableCursor[1]!
+    );
+    expect(normalizeLegacy(legacyAtDisabledCreate)).toEqual({ selections: [], activeSelectionId: null });
+    expect(normalizeDurable(durableAtDisabledCreate)).toEqual({ selections: [], activeSelectionId: null });
+
+    const legacyAfterMove = replayHistory(history, 2, size, replayDependencies(), frame);
+    const durableAfterMove = replayDurableDocument(converted.document, converted.legacyCursorToDurableCursor[2]!);
+    expect(normalizeLegacy(legacyAfterMove)).toEqual({
+      selections: [selectionAMoved],
+      activeSelectionId: selectionAMoved.id,
+    });
+    expect(normalizeDurable(durableAfterMove)).toEqual({
+      selections: [selectionAMoved],
+      activeSelectionId: selectionAMoved.id,
+    });
+  });
+
+  it('rewinds a continuous chain of disabled selection transitions', () => {
+    const history = [
+      baseline(),
+      selectionItem('create', selectionSnapshot(), selectionSnapshot([selectionA], selectionA.id), true),
+      selectionItem(
+        'move',
+        selectionSnapshot([selectionA], selectionA.id),
+        selectionSnapshot([selectionAMoved], selectionAMoved.id),
+        true
+      ),
+      selectionItem('clear', selectionSnapshot([selectionAMoved], selectionAMoved.id), selectionSnapshot()),
+    ];
+    const converted = legacyHistoryToDurable(history, { documentId: 'disabled-selection-chain' });
+    expect(converted.diagnostics).toEqual([]);
+
+    const legacy = replayHistory(history, 2, size, replayDependencies(), frame);
+    const durable = replayDurableDocument(converted.document, converted.legacyCursorToDurableCursor[2]!);
+    expect(normalizeLegacy(legacy)).toEqual({ selections: [], activeSelectionId: null });
+    expect(normalizeDurable(durable)).toEqual({ selections: [], activeSelectionId: null });
+  });
+
+  it('preserves a selection recorded before a sole disabled clear', () => {
+    const history = [
+      baseline(),
+      selectionItem('disabled-clear', selectionSnapshot([selectionA], selectionA.id), selectionSnapshot(), true),
+    ];
+    const converted = legacyHistoryToDurable(history, { documentId: 'disabled-only-selection-clear' });
+    expect(converted.diagnostics).toEqual([]);
+    expect(deriveSelectionBaseline(history)).toEqual({
+      selections: [selectionA],
+      activeSelectionId: selectionA.id,
+    });
+    expect(converted.document.baseline.selections).toEqual({
+      selections: [selectionA],
+      activeSelectionId: selectionA.id,
+    });
+
+    for (const cursor of [0, 1]) {
+      const legacy = replayHistory(history, cursor, size, replayDependencies(), frame);
+      const durable = replayDurableDocument(converted.document, converted.legacyCursorToDurableCursor[cursor]!);
+
+      expect(normalizeLegacy(legacy)).toEqual({ selections: [selectionA], activeSelectionId: selectionA.id });
+      expect(normalizeDurable(durable)).toEqual({ selections: [selectionA], activeSelectionId: selectionA.id });
+    }
+  });
+
+  it('does not rewind across a disabled selection row when its snapshot does not match', () => {
+    const laterSelection = selection('selection-c', 70, 80);
+    const history = [
+      baseline(),
+      selectionItem('disabled-create', selectionSnapshot(), selectionSnapshot([selectionA], selectionA.id), true),
+      selectionItem(
+        'enabled-change',
+        selectionSnapshot([selectionB], selectionB.id),
+        selectionSnapshot([laterSelection], laterSelection.id)
+      ),
+    ];
+    const converted = legacyHistoryToDurable(history, { documentId: 'disabled-selection-mismatch' });
+
+    expect(converted.diagnostics).toEqual([]);
+    expect(deriveSelectionBaseline(history)).toEqual(selectionSnapshot([selectionB], selectionB.id));
+
+    const legacy = replayHistory(history, 1, size, replayDependencies(), frame);
+    const durable = replayDurableDocument(converted.document, converted.legacyCursorToDurableCursor[1]!);
+    expect(normalizeLegacy(legacy)).toEqual({ selections: [selectionB], activeSelectionId: selectionB.id });
+    expect(normalizeDurable(durable)).toEqual({ selections: [selectionB], activeSelectionId: selectionB.id });
+  });
+
   it('detects a mutation of an expected after snapshot', () => {
     const history = shapes[2]!.history;
     const converted = legacyHistoryToDurable(history, { documentId: 'selection-negative-control' });
@@ -244,5 +345,44 @@ describe('selection replay chain and baseline parity', () => {
     mutated.selections[0]!.pos.x += 1;
 
     expect(mutated).not.toEqual(normalizeLegacy(legacy));
+  });
+
+  it('keeps legacy replay results detached from vector and raster history payloads', () => {
+    const vector = {
+      ...selection('vector', 10, 20),
+      metadata: {
+        movedAtVersion: 4,
+        magneticLasso: {
+          width: 12,
+          contrast: 22,
+          frequency: 7,
+          snapStrength: 9,
+          smoothing: 5,
+          antiAlias: true,
+          pathPointCount: 4,
+        },
+      },
+    } satisfies Selection;
+    const raster = { ...rasterSelection, id: 'raster-detached', isActive: false };
+    const next = selectionSnapshot([vector, raster], vector.id);
+    const history = [baseline(), selectionItem('create', selectionSnapshot(), next)];
+    const first = replayHistory(history, 1, size, replayDependencies(), frame);
+
+    const vectorPoints = first.selections[0]!.points as Point[][];
+    vectorPoints[0]![0]!.x = 99;
+    first.selections[0]!.pos.x = 99;
+    first.selections[0]!.metadata!.magneticLasso!.smoothing = 99;
+    first.selections[1]!.rasterMask!.data = 'Ag==';
+
+    const recordedNext = (history[1]!.args as { nextSelectionState: ReturnType<typeof selectionSnapshot> })
+      .nextSelectionState;
+    const recordedPoints = recordedNext.selections[0]!.points as Point[][];
+    expect(recordedPoints[0]![0]!.x).toBe(10);
+    expect(recordedNext.selections[0]!.pos.x).toBe(10);
+    expect(recordedNext.selections[0]!.metadata!.magneticLasso!.smoothing).toBe(5);
+    expect(recordedNext.selections[1]!.rasterMask!.data).toBe(rasterMask.data);
+
+    const second = replayHistory(history, 1, size, replayDependencies(), frame);
+    expect(second.selections).toEqual(recordedNext.selections);
   });
 });
