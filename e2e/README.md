@@ -374,15 +374,16 @@ npm run test:e2e:update-baselines
 - Tests export drawings in various formats, render each to a canvas, and compare
   pixel-by-pixel against the baseline using `compareScreenshots`
   (`sharp` + `pixelmatch`, entirely in Node — no browser round-trip).
-- Comparison must satisfy **both** a per-pixel threshold and a cap on differing
-  pixels. `visual-regression.spec.ts` passes `threshold: 0.01` and
-  `maxDiffPixels: 100` explicitly. The budgets live in one place —
-  `DEFAULT_THRESHOLD = 0.2`, `DEFAULT_MAX_DIFF_PIXELS = 100`,
-  `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01` in `e2e/helpers/image-comparison.ts` — and
-  `compareScreenshots` reads them through `options.x ?? DEFAULT_X`, so an
-  explicitly-passed `undefined` falls back to the default instead of overwriting it.
-  Read the call site rather than assuming a budget: the number that ran is whatever
-  the call site passed, or the default when it passed nothing.
+- Comparison must satisfy **both** a per-pixel threshold and limits on the number
+  and ratio of differing pixels. `visual-regression.spec.ts` passes
+  `threshold: 0.01` and `maxDiffPixels: 100` explicitly. The defaults live in one
+  place — `DEFAULT_THRESHOLD = 0.2`, `DEFAULT_MAX_DIFF_PIXELS = 100`, and
+  `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01` in `e2e/helpers/image-comparison.ts`. The
+  `CompareOptions` names are `threshold`, `maxDiffPixels`, and `maxDiffPixelRatio`;
+  `compareScreenshots` reads each with `??`, so an omitted or explicitly undefined
+  option uses its default. Read the call site rather than assuming a budget: the
+  number that ran is whatever the call site passed, or the default when it passed
+  nothing.
 - The ICO test is a different comparison: it allows at most
   `CHANGED_CHANNEL_THRESHOLD_ICO` (20,000) colour channels to drift by more than
   `CHANNEL_DELTA_TOLERANCE` (40) from the source canvas.
@@ -612,9 +613,9 @@ PLAYWRIGHT_CHANNEL=msedge npm run test:e2e
 
 ## CI
 
-`.github/workflows/ci.yml` declares five jobs — `validate-dispatch`, `ci`,
-`e2e-unit`, `audit`, and `e2e`. The `e2e` job expands into six runs: two shards
-on each of Linux, Windows, and macOS. That makes ten job executions in total.
+`.github/workflows/ci.yml` defines seven jobs: `validate-dispatch`, `ci-checks`,
+`e2e-unit`, `audit`, `e2e`, `e2e-skip-baseline`, and the aggregate `ci` gate. The
+`e2e` matrix expands into six runs: two shards on each of Linux, Windows, and macOS.
 
 `e2e-unit` is the **blocking** gate for this directory: it runs
 `npm run test:e2e:unit`, then `npm run test:e2e:unit:coverage`, and uploads
@@ -625,18 +626,20 @@ stand in for the gate; and because `vitest.e2e.config.ts` declares no coverage
 thresholds, that step cannot go red on a percentage — only a failing test turns it
 red.
 
-It is a **separate job** rather than a step inside `ci` on purpose. Sharing a job
-would mean this coverage is only ever reached after the app pipeline's own steps
-succeed, so a break anywhere in `ci` would silently remove the only gate on the e2e
-code while the workflow still looked like it was covered. A separate job cannot be
-skipped that way. It carries no type-check step of its own: the `ci` job's
+It is a **separate job** rather than a step inside `ci-checks` on purpose. Sharing a
+job would mean this coverage is only ever reached after the app pipeline's own steps
+succeed, so a break anywhere in `ci-checks` would silently remove the only gate on the
+e2e code while the workflow still looked like it was covered. A separate job cannot
+be skipped that way. It carries no type-check step of its own: the `ci-checks` job's
 `npm run tsc` is `tsc -b`, which builds `tsconfig.e2e.json` along with the app and
 node projects, so a second scoped run here could only repeat it.
 
-`ci` is the app pipeline: lint, type-check, an assertion that every tracked `.ts`/`.tsx`
-is inside some project's `include`, unit tests, and the production build. `tsc -b` is
-what also builds `tsconfig.e2e.json`. The separate `audit` job runs `npm audit
---audit-level=high`; it is non-blocking.
+`ci-checks` is the app pipeline: lint, type-check, an assertion that every tracked
+`.ts`/`.tsx` is inside some project's `include`, unit tests, and the production build.
+`tsc -b` is what also builds `tsconfig.e2e.json`. The final `ci` job is an aggregate
+gate over dispatch validation, `ci-checks`, `e2e-unit`, `e2e`, and
+`e2e-skip-baseline`. The separate `audit` job runs `npm audit --audit-level=high`;
+it is non-blocking.
 
 `e2e` is a **blocking** matrix gate that runs the headless Playwright suite on
 Linux, Windows, and macOS. It was `continue-on-error` on the stated grounds that a
