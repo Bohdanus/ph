@@ -659,7 +659,7 @@ both concern configurations the job does not run in:
   build rather than a dev server, since the job runs against `npm run dev`.
 
 Each matrix leg reports the true state including the 2 declared skips. It runs the full
-suite with no `--grep-invert`, so the report is unfiltered — but note that
-`playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
-green run _after_ retries. A flake that only shows on the first attempt is
-invisible on any leg by design.
+suite with no `--grep-invert`, so the report is unfiltered. `playwright.config.ts` sets
+`retries: 2` when `CI` is set and `failOnFlakyTests: true`, so a test that fails on an
+attempt and passes on a later retry is reported as flaky and fails the job. Inspect the
+attempt-level report and artifacts to diagnose it; a retry pass is not a clean run.
