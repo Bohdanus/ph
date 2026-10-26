@@ -67,7 +67,12 @@ describe('Linux baseline promotion workflow', () => {
       baselineWorkflow.indexOf('      - name: Commit and push baseline changes')
     );
 
-    expect(validationStep).toContain('[[ "$CHAT_ID" =~ ^[A-Za-z0-9._:-]+$ ]]');
+    expect(validationStep).toContain('[[ "$CHAT_ID" =~ ^[A-Za-z0-9._:/-]+$ ]]');
+    const chatIdPattern = validationStep.match(/\[\[ "\$CHAT_ID" =~ (.+?) \]\]/)?.[1];
+    expect(chatIdPattern).toBeDefined();
+    const chatIdValidator = new RegExp(chatIdPattern);
+    expect(chatIdValidator.test('copilotcli:/7befb061-b313-497b-8694-97929d9054e4')).toBe(true);
+    expect(chatIdValidator.test('bad\nChat: injected')).toBe(false);
     expect(promotionStep).toContain('SOURCE_SHA: ${{ github.event.client_payload.source_sha }}');
     expect(promotionStep).toContain('--force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA"');
     expect(promotionStep).toContain('-m "Chat: $CHAT_ID"');
@@ -93,6 +98,12 @@ describe('mirror E2E command parsing', () => {
     expect(parseArgs(['--linux-baselines', '--chat-id', 'ses_native-session'])).toMatchObject({
       mode: 'baselines',
       chatId: 'ses_native-session',
+    });
+    expect(
+      parseArgs(['--linux-baselines', '--chat-id', 'copilotcli:/7befb061-b313-497b-8694-97929d9054e4'])
+    ).toMatchObject({
+      mode: 'baselines',
+      chatId: 'copilotcli:/7befb061-b313-497b-8694-97929d9054e4',
     });
   });
 
