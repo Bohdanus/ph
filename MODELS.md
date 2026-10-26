@@ -61,7 +61,8 @@ other requests. A failed/malformed probe is unknown and never replaces model-pri
 OpenRouter documents 50 requests/day below 10 lifetime credits purchased and 1,000 at the
 10-credit tier; the limit is **not based on current balance**. Its docs note the higher ceiling
 can begin one credit below the table threshold for rounding/top-up fees. The API's returned
-`limit` is authoritative. [OpenRouter limits](https://openrouter.ai/docs/api-reference/limits)
+`limit` is authoritative. The daily free-model counter resets at 00:00 UTC.
+[OpenRouter limits](https://openrouter.ai/docs/api-reference/limits)
 
 The runner deliberately sends no reasoning override. OpenRouter says `reasoning.exclude` only
 hides reasoning from the response; reasoning tokens still count toward the output budget, while
@@ -76,6 +77,16 @@ retry it. If the response includes `Retry-After`, it is included in the error fo
 the runner does not sleep, persist cross-run cooldown state, or switch accounts/IPs to evade
 limits. OpenRouter notes that 429 can represent a global free-model limit or an upstream
 provider limit. [OpenRouter limit handling](https://openrouter.ai/docs/api-reference/limits)
+
+Quarantine is source/model-specific and expires: six hours by default for a confirmed
+model-specific rate limit, with an absolute maximum of 72 hours. Expired entries are ignored by
+the pool even before pruning, so models re-enter ordinary catalog rotation instead of being
+permanently excluded. A 3-day review cadence is for checking reports and current catalog health,
+not extending every quarantine. Use `npm run free:quarantine -- list|add|release|prune` and follow
+the read-only `.skills/free-model-chat-sweep.md` procedure. Do not quarantine a model for a global
+daily quota, context overflow, external API failure, or tool/orchestration error. Do not install an
+hourly/daily scheduler until the documented cron-hang and cross-session singleton problems are
+resolved; the current runner does not install jobs.
 
 The runner is a completion client, not a tool-using agent. For Kilo repository subagents, use the live model/provider pair from the refreshed catalog with the native `task` tool, pass model and provider together, and inspect the child's resolved model. **Fan out free subagents heavily for independent read-only exploration and review; keep each bounded and never exceed 15 concurrent agents.** The coordinator owns edits and Git. If a free task is rate limited, use another exact free model/provider or stop; never silently use paid fallback. Codex model routing and launch mechanics differ; see [`docs/CODEX-ORCHESTRATION.md`](docs/CODEX-ORCHESTRATION.md). For mock coverage, run `npm run test -- scripts/__tests__/free-model-pool.test.mjs scripts/__tests__/free-model-pool-groq.test.mjs scripts/__tests__/free-model-pool-external.test.mjs scripts/__tests__/free-research.test.mjs`; run `node scripts/free-model-pool.mjs --openrouter-quota` to check server-side daily usage before and after large fan-outs.
 

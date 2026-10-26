@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { open, writeFile } from 'node:fs/promises';
+import { activeQuarantineKeys, DEFAULT_QUARANTINE_FILE, readQuarantineState } from './lib/free-model-quarantine.mjs';
 
 const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
 const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
@@ -16,11 +17,6 @@ const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const PREFERRED_KILO_MODELS = ['poolside/laguna-s-2.1:free'];
-const QUARANTINED_MODELS = new Set([
-  'kilo:kilo-auto/free',
-  'kilo:nvidia/nemotron-3.5-super-vl:free',
-  'kilo:recursive/flint-v1.0:free',
-]);
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
 
@@ -113,12 +109,12 @@ function isExactZero(value) {
   return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
-export function catalogCandidates(source, data) {
+export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const rows = Array.isArray(data) ? data : (data?.data ?? []);
   const candidates = rows
     .filter((row) => {
       if (!row?.id) return false;
-      if (QUARANTINED_MODELS.has(`${source}:${row.id}`)) return false;
+      if (quarantinedKeys.has(`${source}:${row.id}`)) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
       if (source === 'groq') {
         return FREE_GROQ_MODEL_IDS.has(row.id);
@@ -142,8 +138,11 @@ export async function loadCatalogs({
   groqKey = process.env.GROQ_API_KEY,
   groqFreePlanConfirmed = false,
   includeOpenRouterCatalog = false,
+  quarantineFile = DEFAULT_QUARANTINE_FILE,
   onCatalogError = () => {},
 } = {}) {
+  const quarantineState = await readQuarantineState(quarantineFile);
+  const quarantinedKeys = activeQuarantineKeys(quarantineState);
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
   if (groqKey && groqFreePlanConfirmed) sources.push({ source: 'groq', url: GROQ_MODELS });
@@ -159,7 +158,8 @@ export async function loadCatalogs({
       }
       return catalogCandidates(
         source,
-        await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`)
+        await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`),
+        quarantinedKeys
       );
     })
   );
@@ -269,6 +269,7 @@ export async function completeWithFreeModel(
     groqFreePlanConfirmed = false,
     checkOpenRouterQuota = false,
     maxTokens = 1200,
+    quarantineFile = DEFAULT_QUARANTINE_FILE,
     onCatalogError = () => {},
     onOpenRouterQuota = () => {},
   } = {}
@@ -284,6 +285,7 @@ export async function completeWithFreeModel(
     openRouterKey,
     groqKey,
     groqFreePlanConfirmed,
+    quarantineFile,
     onCatalogError,
   });
   const exhausted = new Set();

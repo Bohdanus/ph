@@ -59,14 +59,62 @@ describe('free model catalog filtering', () => {
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['a:free', 'b']);
   });
 
-  it('quarantines Kilo models that repeatedly failed while preserving known-good models', () => {
+  it('filters only currently quarantined source/model pairs', () => {
     const data = [
       kiloRow('poolside/laguna-s-2.1:free'),
       kiloRow('kilo-auto/free'),
       kiloRow('nvidia/nemotron-3.5-super-vl:free'),
       kiloRow('recursive/flint-v1.0:free'),
     ];
-    expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['poolside/laguna-s-2.1:free']);
+    const quarantined = new Set([
+      'kilo:kilo-auto/free',
+      'kilo:nvidia/nemotron-3.5-super-vl:free',
+      'kilo:recursive/flint-v1.0:free',
+    ]);
+    expect(catalogCandidates('kilo', data, quarantined).map((row) => row.model)).toEqual([
+      'poolside/laguna-s-2.1:free',
+    ]);
+  });
+
+  it('loads active quarantines and ignores expired entries during catalog selection', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const activeExpiry = new Date(Date.now() + 60_000).toISOString();
+    const expiredTime = new Date(Date.now() - 60_000).toISOString();
+    await writeFile(
+      quarantineFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: {
+          'kilo:blocked:free': {
+            source: 'kilo',
+            model: 'blocked:free',
+            reason: 'rate_limit',
+            quarantinedAt: new Date(Date.now() - 60_000).toISOString(),
+            expiresAt: activeExpiry,
+          },
+          'kilo:recovered:free': {
+            source: 'kilo',
+            model: 'recovered:free',
+            reason: 'provider_outage',
+            quarantinedAt: new Date(Date.now() - 120_000).toISOString(),
+            expiresAt: expiredTime,
+          },
+        },
+      }),
+      'utf8'
+    );
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('blocked:free'), kiloRow('recovered:free')],
+      chat: vi.fn(),
+    });
+
+    try {
+      const candidates = await loadCatalogs({ fetchImpl, openRouterKey: '', quarantineFile });
+      expect(candidates.map((candidate) => candidate.model)).toEqual(['recovered:free']);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('tries the observed reliable Kilo model before other eligible candidates', () => {
