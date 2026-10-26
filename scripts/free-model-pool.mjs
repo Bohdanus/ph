@@ -6,6 +6,7 @@ const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
 const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_KEY_INFO = 'https://openrouter.ai/api/v1/key';
 const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
 const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -20,8 +21,14 @@ const QUARANTINED_MODELS = new Set([
   'kilo:nvidia/nemotron-3.5-super-vl:free',
   'kilo:recursive/flint-v1.0:free',
 ]);
+// These router IDs choose a concrete model only after the request may already be billed.
+const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
 
 const FREE_GROQ_MODEL_IDS = new Set(['openai/gpt-oss-20b', 'openai/gpt-oss-120b']);
+
+// Reject unknown override conditions instead of guessing whether a paid price applies.
+const PRICING_OVERRIDE_CONDITIONS = new Set(['min_prompt_tokens', 'utc_days', 'utc_end', 'utc_start']);
+const NON_PRICE_PRICING_FIELDS = new Set(['discount']);
 
 async function discardResponseBody(response) {
   try {
@@ -78,7 +85,32 @@ async function readBoundedJson(response, maxBytes, label) {
 }
 
 export function zeroPriced(pricing) {
-  return pricing?.prompt === '0' && pricing?.completion === '0';
+  if (!isExactZero(pricing?.prompt) || !isExactZero(pricing?.completion)) return false;
+  if (
+    Object.entries(pricing).some(
+      ([field, value]) => field !== 'overrides' && !NON_PRICE_PRICING_FIELDS.has(field) && !isExactZero(value)
+    )
+  ) {
+    return false;
+  }
+  if (pricing.overrides === undefined) return true;
+  if (!Array.isArray(pricing.overrides)) return false;
+  return pricing.overrides.every(
+    (override) =>
+      override &&
+      typeof override === 'object' &&
+      !Array.isArray(override) &&
+      Object.entries(override).every(
+        ([field, value]) =>
+          PRICING_OVERRIDE_CONDITIONS.has(field) || NON_PRICE_PRICING_FIELDS.has(field) || isExactZero(value)
+      )
+  );
+}
+
+function isExactZero(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value === 0;
+  // Decimal strings are accepted only when every digit is zero, without float rounding.
+  return typeof value === 'string' && /^0+(?:\.0+)?$/.test(value);
 }
 
 export function catalogCandidates(source, data) {
@@ -87,6 +119,7 @@ export function catalogCandidates(source, data) {
     .filter((row) => {
       if (!row?.id) return false;
       if (QUARANTINED_MODELS.has(`${source}:${row.id}`)) return false;
+      if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
       if (source === 'groq') {
         return FREE_GROQ_MODEL_IDS.has(row.id);
       }
@@ -108,15 +141,16 @@ export async function loadCatalogs({
   openRouterKey = process.env.OPENROUTER_API_KEY,
   groqKey = process.env.GROQ_API_KEY,
   groqFreePlanConfirmed = false,
+  includeOpenRouterCatalog = false,
   onCatalogError = () => {},
 } = {}) {
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
-  if (openRouterKey) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
+  if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
   if (groqKey && groqFreePlanConfirmed) sources.push({ source: 'groq', url: GROQ_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url }) => {
       const headers = {};
-      if (source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
+      if (source === 'openrouter' && openRouterKey) headers.Authorization = `Bearer ${openRouterKey}`;
       if (source === 'groq') headers.Authorization = `Bearer ${groqKey}`;
       const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (!response.ok) {
@@ -136,9 +170,50 @@ export async function loadCatalogs({
   });
 }
 
+export async function probeOpenRouterQuota({ fetchImpl = fetch, openRouterKey, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+  if (!openRouterKey) return null;
+  let response;
+  try {
+    response = await fetchImpl(OPENROUTER_KEY_INFO, {
+      headers: { Authorization: `Bearer ${openRouterKey}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  let payload;
+  try {
+    payload = await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, 'OpenRouter key info');
+  } catch {
+    return null;
+  }
+  const info = payload?.data?.free_model_daily_requests;
+  if (
+    !info ||
+    !Number.isSafeInteger(info.remaining) ||
+    info.remaining < 0 ||
+    !Number.isSafeInteger(info.limit) ||
+    info.limit < 1 ||
+    !Number.isSafeInteger(info.used) ||
+    info.used < 0
+  ) {
+    return null;
+  }
+  return { remaining: info.remaining, limit: info.limit, used: info.used };
+}
+
+function retryAfterHint(response) {
+  return response?.headers
+    ?.get?.('retry-after')
+    ?.replace(/[\r\n]/g, ' ')
+    .slice(0, 100);
+}
+
 function failureReason(response, payload) {
   const message = payload?.error?.message ?? payload?.message ?? '';
-  return `${response.status}${message ? `: ${message}` : ''}`;
+  const retryAfter = retryAfterHint(response);
+  return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
 }
 
 function hasReportedNonZeroCost(usage) {
@@ -192,8 +267,10 @@ export async function completeWithFreeModel(
     openRouterKey = process.env.OPENROUTER_API_KEY,
     groqKey = process.env.GROQ_API_KEY,
     groqFreePlanConfirmed = false,
+    checkOpenRouterQuota = false,
     maxTokens = 1200,
     onCatalogError = () => {},
+    onOpenRouterQuota = () => {},
   } = {}
 ) {
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
@@ -202,10 +279,28 @@ export async function completeWithFreeModel(
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
     throw new Error('maxTokens must be an integer from 1 to 4000');
   }
-  const available = await loadCatalogs({ fetchImpl, openRouterKey, groqKey, groqFreePlanConfirmed, onCatalogError });
+  const available = await loadCatalogs({
+    fetchImpl,
+    openRouterKey,
+    groqKey,
+    groqFreePlanConfirmed,
+    onCatalogError,
+  });
   const exhausted = new Set();
   const attempts = new Map();
   const errors = [];
+  const requestCounts = () => ({
+    kilo: attempts.get('kilo') ?? 0,
+    openrouter: attempts.get('openrouter') ?? 0,
+    groq: attempts.get('groq') ?? 0,
+  });
+  if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (quota) {
+      onOpenRouterQuota(quota);
+      if (quota.remaining <= 0) exhausted.add('openrouter');
+    }
+  }
   for (const candidate of available) {
     if (exhausted.has(candidate.source)) continue;
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
@@ -230,20 +325,26 @@ export async function completeWithFreeModel(
         }),
       });
     } catch (error) {
-      errors.push(`${candidate.source}/${candidate.model}: ${error.message}`);
+      const retryAfter = retryAfterHint(response);
+      errors.push(
+        `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+      );
       continue;
     }
     let payload;
     try {
       payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
     } catch (error) {
-      errors.push(`${candidate.source}/${candidate.model}: ${error.message}`);
+      const retryAfter = retryAfterHint(response);
+      errors.push(
+        `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+      );
       if (response.status === 402 || response.status === 429) exhausted.add(candidate.source);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
       throw new Error(
-        `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests`
+        `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
       );
     }
     const choice = payload?.choices?.[0];
@@ -264,6 +365,7 @@ export async function completeWithFreeModel(
         content,
         finishReason,
         usage: payload.usage ?? null,
+        requestCounts: requestCounts(),
       };
     }
     if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
@@ -279,16 +381,19 @@ export async function completeWithFreeModel(
     if (response.status === 402 || response.status === 429) exhausted.add(candidate.source);
   }
   throw new Error(
-    `No free model completed the request. ${errors.join(' | ') || 'No eligible free models were available.'}`
+    `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
   );
 }
 
 function usage() {
   return (
     'Usage: node scripts/free-model-pool.mjs --list [--limit N] [--groq-free-plan-only]\n' +
-    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--groq-free-plan-only]\n' +
+    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--probe-openrouter-quota]\n' +
+    '       node scripts/free-model-pool.mjs --openrouter-quota\n' +
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
-    'Groq is disabled unless --groq-free-plan-only is passed. That flag confirms the Groq account is on its $0 Free plan; the runner cannot detect account plan. GPT-OSS IDs are paid on the Developer plan. --output-file avoids sending results to stdout.'
+    '--list fetches public model catalogs; configured=false means credentials/attestation are missing, not that the catalog entry is invalid.\n' +
+    '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
+    '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.'
   );
 }
 
@@ -308,6 +413,29 @@ export async function main(
   const limitAt = args.indexOf('--limit');
   const tokenAt = args.indexOf('--max-tokens');
   const groqFreePlanConfirmed = args.includes('--groq-free-plan-only');
+  const checkOpenRouterQuota = args.includes('--probe-openrouter-quota');
+  if (args.includes('--openrouter-quota')) {
+    if (args.length !== 1) {
+      stderr.write(`${usage()}\n`);
+      return 2;
+    }
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (!quota) {
+      stderr.write(
+        'Unable to read OpenRouter daily quota; check the API key and network. No inference request was sent.\n'
+      );
+      return 2;
+    }
+    stdout.write(
+      `${JSON.stringify({
+        provider: 'openrouter',
+        counter: 'free_model_daily_requests',
+        checkedAt: new Date().toISOString(),
+        ...quota,
+      })}\n`
+    );
+    return 0;
+  }
   const hasValue = (index) => index < 0 || (args[index + 1] && !args[index + 1].startsWith('--'));
   if (
     (!list && promptAt < 0) ||
@@ -326,10 +454,16 @@ export async function main(
       openRouterKey,
       groqKey,
       groqFreePlanConfirmed,
+      includeOpenRouterCatalog: true,
       onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
-    stdout.write(`${JSON.stringify(candidates.slice(0, limit), null, 2)}\n`);
+    const configured = (source) =>
+      source === 'kilo' ||
+      (source === 'openrouter' && Boolean(openRouterKey)) ||
+      (source === 'groq' && Boolean(groqKey && groqFreePlanConfirmed));
+    const listed = candidates.slice(0, limit).map((entry) => ({ ...entry, configured: configured(entry.source) }));
+    stdout.write(`${JSON.stringify(listed, null, 2)}\n`);
     return 0;
   }
   let prompt;
@@ -350,12 +484,18 @@ export async function main(
     groqKey,
     maxTokens,
     groqFreePlanConfirmed,
+    checkOpenRouterQuota,
     onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
+    onOpenRouterQuota: ({ used, limit, remaining }) =>
+      stderr.write(
+        `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
+      ),
   });
   const output = [
     `[${result.source}/${result.model}]`,
     `Finish reason: ${result.finishReason}`,
     `Usage: ${JSON.stringify(result.usage)}`,
+    `Requests attempted (this run): ${JSON.stringify(result.requestCounts)}`,
     '',
     result.content,
     '',
