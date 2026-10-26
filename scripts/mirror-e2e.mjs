@@ -19,6 +19,12 @@ export const LINUX_BASELINE_FILES = [
 
 const REPO_ROOT = realpathSync(process.cwd());
 const MAIN_REF = 'main';
+const GIT_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
+const KILO_SESSION_ID_PATTERN = /^ses_[A-Za-z0-9]{26}$/;
+const UUID_PATTERN = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
+const CODEX_THREAD_ID_PATTERN = new RegExp(`^${UUID_PATTERN}$`);
+const COPILOT_SESSION_URI_PATTERN = new RegExp(`^copilotcli:/${UUID_PATTERN}$`);
+const LINUX_BASELINE_COMMIT_SUBJECT = 'test: refresh Linux export baselines';
 const DISCOVERY_TIMEOUT_MS = 120_000;
 export const RUN_WAIT_TIMEOUT_MS_BY_MODE = Object.freeze({
   full: 60 * 60_000,
@@ -27,6 +33,19 @@ export const RUN_WAIT_TIMEOUT_MS_BY_MODE = Object.freeze({
   baselines: 90 * 60_000,
 });
 const POLL_COMMAND_TIMEOUT_MS = 30_000;
+
+function matchesEntireString(pattern, value) {
+  return pattern.exec(value)?.[0] === value;
+}
+
+function isNativeChatId(chatId) {
+  if (typeof chatId !== 'string') return false;
+  return (
+    matchesEntireString(KILO_SESSION_ID_PATTERN, chatId) ||
+    matchesEntireString(CODEX_THREAD_ID_PATTERN, chatId) ||
+    matchesEntireString(COPILOT_SESSION_URI_PATTERN, chatId)
+  );
+}
 
 const WORKFLOW = Object.freeze({
   full: {
@@ -98,8 +117,8 @@ export function parseArgs(argv) {
     if (options.platformProvided) throw new Error('--platform is only valid with --spec');
     if (options.spec) throw new Error('--spec cannot be combined with another mode');
     if (options.mode === 'baselines') {
-      if (!options.chatId || /\s/.test(options.chatId)) {
-        throw new Error('--linux-baselines requires one native --chat-id without whitespace');
+      if (!options.chatId || !isNativeChatId(options.chatId)) {
+        throw new Error('--linux-baselines requires a native --chat-id; Copilot URIs must contain a UUID');
       }
     } else if (options.chatId) {
       throw new Error('--chat-id is only valid with --linux-baselines');
@@ -201,18 +220,141 @@ export function buildDispatchArgs(options, { requestId, sourceSha, branch, workf
   ];
 }
 
-export function buildMirrorPushArgs(sourceSha, branch) {
-  return ['push', 'mirror', `${sourceSha}:refs/heads/${branch}`];
+export function parseMirrorBranchSha(output, branch) {
+  const lines = String(output ?? '')
+    .split(/\r?\n/)
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  if (lines.length !== 1) throw new Error(`mirror returned multiple refs for refs/heads/${branch}`);
+
+  const match = /^([a-f0-9]{40}|[a-f0-9]{64})\t(.+)$/i.exec(lines[0]);
+  if (!match || match[2] !== `refs/heads/${branch}`) {
+    throw new Error(`mirror returned an invalid ref for refs/heads/${branch}`);
+  }
+  return match[1];
 }
 
-export function verifyBaselinePromotion({ sourceSha, remoteSha, parentSha, changedPaths, commitMessage, chatId }) {
+export function readMirrorBranchSha(branch, cwd = process.cwd(), runCommand = command) {
+  const ref = `refs/heads/${branch}`;
+  const sha = parseMirrorBranchSha(runCommand('git', ['ls-remote', '--heads', 'mirror', ref], cwd), branch);
+  if (sha === null) return null;
+
+  runCommand('git', ['fetch', '--no-tags', 'mirror', ref], cwd);
+  const fetchedSha = runCommand('git', ['rev-parse', '--verify', 'FETCH_HEAD'], cwd);
+  if (fetchedSha !== sha) {
+    throw new Error(`mirror branch ${branch} changed while it was being inspected; retry the E2E run`);
+  }
+  return sha;
+}
+
+export function assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch, cwd = process.cwd() }) {
+  if (!remoteSha || remoteSha === sourceSha) return;
+
+  const sourceOnlyCount = Number(command('git', ['rev-list', '--count', `${remoteSha}..${sourceSha}`], cwd));
+  const remoteOnlyCount = Number(command('git', ['rev-list', '--count', `${sourceSha}..${remoteSha}`], cwd));
+  if (remoteOnlyCount === 0) return;
+  if (sourceOnlyCount === 0) {
+    throw new Error(`mirror branch ${branch} is ahead of the source commit; sync it before running mirror E2E`);
+  }
+
+  const remoteOnlyBaselineCommits = command(
+    'git',
+    ['log', '--format=%H%x09%s', `${sourceSha}..${remoteSha}`, '--', `${LINUX_BASELINE_PATH}/`],
+    cwd
+  )
+    .split(/\r?\n/)
+    .filter(Boolean);
+
+  for (const commit of remoteOnlyBaselineCommits) {
+    const [commitSha, subject] = commit.split('\t', 2);
+    if (!commitSha || !subject) throw new Error('mirror returned an invalid baseline commit record');
+    const commitAndParents = command('git', ['rev-list', '--parents', '-n', '1', commitSha], cwd).split(/\s+/);
+    const [verifiedSha, parentSha] = commitAndParents;
+    const diffArgs = parentSha
+      ? ['diff-tree', '--no-commit-id', '--name-only', '-r', parentSha, verifiedSha]
+      : ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', verifiedSha];
+    const changedPaths = command('git', diffArgs, cwd).split(/\r?\n/).filter(Boolean);
+    if (!changedPaths.some((file) => file.startsWith(`${LINUX_BASELINE_PATH}/`))) continue;
+    if (subject !== LINUX_BASELINE_COMMIT_SUBJECT) {
+      throw new Error(
+        `mirror branch ${branch} contains Linux baseline file changes with an unrecognized commit; incorporate them before replacing the branch`
+      );
+    }
+    if (commitAndParents.length !== 2) {
+      throw new Error('mirror branch contains a Linux baseline promotion that is not a single-parent commit');
+    }
+
+    const commitMessage = command('git', ['show', '-s', '--format=%B', verifiedSha], cwd);
+    const chatTrailers = parseCommitTrailerBlock(commitMessage)
+      ?.filter((trailer) => trailer.key === 'Chat')
+      .map((trailer) => trailer.value);
+    const chatId = chatTrailers?.length === 1 ? chatTrailers[0] : '';
+
+    if (!isNativeChatId(chatId)) {
+      throw new Error('mirror branch contains a Linux baseline promotion with an invalid Chat trailer');
+    }
+    verifyBaselinePromotion({
+      sourceSha: parentSha,
+      remoteSha: verifiedSha,
+      parents: commitAndParents.slice(1),
+      commitSubject: subject,
+      changedPaths,
+      commitMessage,
+      chatId,
+    });
+    throw new Error(
+      `mirror branch ${branch} contains a Linux baseline promotion absent from this source commit; incorporate the promotion before rerunning`
+    );
+  }
+}
+
+export function buildMirrorPushArgs(sourceSha, branch, expectedRemoteSha) {
+  if (expectedRemoteSha !== null && !GIT_SHA_PATTERN.test(expectedRemoteSha)) {
+    throw new Error('expected mirror branch tip must be a full Git object ID or null');
+  }
+  const expected = expectedRemoteSha ?? '';
+  return ['push', 'mirror', `--force-with-lease=refs/heads/${branch}:${expected}`, `${sourceSha}:refs/heads/${branch}`];
+}
+
+function parseCommitTrailerBlock(commitMessage) {
+  const lines = commitMessage.replace(/\r\n?/g, '\n').split('\n');
+  while (lines.at(-1) === '') lines.pop();
+  let start = lines.length;
+  while (start > 0 && lines[start - 1].trim() !== '') start -= 1;
+  if (start === 0) return null;
+
+  const trailers = [];
+  for (const line of lines.slice(start)) {
+    const match = /^([A-Za-z0-9][A-Za-z0-9-]*):[ \t]+(.+)$/.exec(line);
+    if (!match) return null;
+    trailers.push({ key: match[1], value: match[2] });
+  }
+  return trailers;
+}
+
+export function verifyBaselinePromotion({
+  sourceSha,
+  remoteSha,
+  parents,
+  commitSubject,
+  changedPaths,
+  commitMessage,
+  chatId,
+}) {
   if (remoteSha === sourceSha) return { changed: false, changedPaths: [] };
-  if (parentSha !== sourceSha) throw new Error('mirror baseline commit is not a direct child of the tested commit');
+  if (!isNativeChatId(chatId)) throw new Error('mirror baseline commit must use a native Chat ID');
+  if (!Array.isArray(parents) || parents.length !== 1) {
+    throw new Error('mirror baseline commit must be a single-parent commit');
+  }
+  if (parents[0] !== sourceSha) throw new Error('mirror baseline commit is not a direct child of the tested commit');
+  if (commitSubject !== LINUX_BASELINE_COMMIT_SUBJECT) {
+    throw new Error('mirror baseline commit has an unrecognized subject');
+  }
   if (!changedPaths.length || changedPaths.some((file) => !isLinuxBaselinePath(file))) {
     throw new Error('mirror baseline commit contains files outside the Linux export baseline allowlist');
   }
-  const chatTrailers = commitMessage.split(/\r?\n/).filter((line) => /^Chat:/.test(line));
-  if (chatTrailers.length !== 1 || chatTrailers[0] !== `Chat: ${chatId}`) {
+  const chatTrailers = parseCommitTrailerBlock(commitMessage)?.filter((trailer) => trailer.key === 'Chat') ?? [];
+  if (chatTrailers.length !== 1 || chatTrailers[0].value !== chatId) {
     throw new Error('mirror baseline commit must contain exactly the requested native Chat trailer');
   }
   return { changed: true, changedPaths };
@@ -258,7 +400,7 @@ function assertCleanTaskBranch() {
   if (status) throw new Error('commit or remove all tracked and untracked changes before mirror dispatch');
 
   const sourceSha = command('git', ['rev-parse', '--verify', 'HEAD^{commit}']);
-  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(sourceSha)) throw new Error('could not resolve the source commit SHA');
+  if (!GIT_SHA_PATTERN.test(sourceSha)) throw new Error('could not resolve the source commit SHA');
 
   const fetchUrls = command('git', ['remote', 'get-url', '--all', 'mirror']).split(/\r?\n/);
   const pushUrls = command('git', ['remote', 'get-url', '--push', '--all', 'mirror']).split(/\r?\n/);
@@ -402,12 +544,22 @@ export function fastForwardBaselineCommit({ branch, sourceSha, chatId, runComman
     return;
   }
 
-  const parentSha = runCommand('git', ['rev-parse', `${remoteSha}^`]);
+  const commitAndParents = runCommand('git', ['rev-list', '--parents', '-n', '1', remoteSha]).split(/\s+/);
+  if (commitAndParents[0] !== remoteSha) throw new Error('mirror returned an invalid baseline commit ID');
+  const commitSubject = runCommand('git', ['show', '-s', '--format=%s', remoteSha]);
   const changedPaths = runCommand('git', ['diff', '--name-only', `${sourceSha}..${remoteSha}`])
     .split('\n')
     .filter(Boolean);
   const commitMessage = runCommand('git', ['show', '-s', '--format=%B', remoteSha]);
-  const result = verifyBaselinePromotion({ sourceSha, remoteSha, parentSha, changedPaths, commitMessage, chatId });
+  const result = verifyBaselinePromotion({
+    sourceSha,
+    remoteSha,
+    parents: commitAndParents.slice(1),
+    commitSubject,
+    changedPaths,
+    commitMessage,
+    chatId,
+  });
   if (result.changed) {
     if (runCommand('git', ['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch) {
       throw new Error(
@@ -434,7 +586,9 @@ export async function runMirrorE2E(argv = process.argv.slice(2)) {
   const requestId = randomUUID().replaceAll('-', '');
   const title = expectedRunTitle(options.mode, requestId, sourceSha);
 
-  command('git', buildMirrorPushArgs(sourceSha, branch));
+  const remoteSha = readMirrorBranchSha(branch);
+  assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch });
+  command('git', buildMirrorPushArgs(sourceSha, branch, remoteSha));
   const dispatchArgs = buildDispatchArgs(options, { requestId, sourceSha, branch, workflowSha: expectedWorkflowSha });
   command('gh', dispatchArgs);
   console.log(`Waiting for ${title}`);

@@ -1,6 +1,7 @@
 import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
 import { containFit, type ContainDimensions } from '../util/contain-fit.ts';
+import { readClientViewportRect } from '../util/client-viewport.ts';
 import type { Point, Pos, Size } from '../contexts/general-types.ts';
 import { inverseViewPoint, viewStateRef, viewportCenter } from '../contexts/view-state.ts';
 
@@ -259,66 +260,58 @@ export function usePointerPosition<T extends HTMLElement>(
   const readContainerRect = useCallback((): Pos | null => {
     syncContainerScroll();
     syncPointerCancelListener();
-    const rect = ref.current?.getBoundingClientRect();
-    if (!rect) return containerRectRef.current;
+    const node = ref.current;
+    if (!node) return containerRectRef.current;
+    const rect = readClientViewportRect(node);
 
     const previous = containerRectRef.current;
     if (
       previous &&
-      previous.x === rect.left &&
-      previous.y === rect.top &&
+      previous.x === rect.x &&
+      previous.y === rect.y &&
       previous.width === rect.width &&
       previous.height === rect.height
     )
       return previous;
 
-    const nextRect: Pos = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
-    containerRectRef.current = nextRect;
-    return nextRect;
+    containerRectRef.current = rect;
+    return rect;
   }, [ref, syncContainerScroll, syncPointerCancelListener]);
 
-  const calculateDimensions = useCallback(
-    (observed?: Pos): Pos | null => {
-      // A rect handed in by the ResizeObserver is the measurement for this event,
-      // so it is used as is. Re-reading `getBoundingClientRect()` here discarded
-      // the observed size and substituted a second, possibly different one.
-      if (observed) containerRectRef.current = observed;
-      const rect = observed ?? readContainerRect() ?? containerRectRef.current;
-      if (!rect) return null;
+  const calculateDimensions = useCallback((): Pos | null => {
+    const rect = readContainerRect() ?? containerRectRef.current;
+    if (!rect) return null;
 
-      const { width: outerWidth, height: outerHeight } = rect;
+    const { width: outerWidth, height: outerHeight } = rect;
 
-      const nextInputs = {
-        outerWidth,
-        outerHeight,
-        imageWidth: imageSize.width,
-        imageHeight: imageSize.height,
-      };
-      const inputsChanged = !fitInputsRef.current || !sameFitInputs(fitInputsRef.current, nextInputs);
-      let dimensionsChanged = false;
-      if (inputsChanged) {
-        const nextDimensions = containFit({ width: outerWidth, height: outerHeight }, imageSize);
-        dimensionsChanged = !sameContainDimensions(dimensionsRef.current, nextDimensions);
-        // Keep the fit object stable between real layout changes. Consumers use this identity to
-        // avoid repainting overlays for a pointer event that only needs a fresh coordinate read.
-        if (dimensionsChanged) dimensionsRef.current = nextDimensions;
-        fitInputsRef.current = nextInputs;
-      }
+    const nextInputs = {
+      outerWidth,
+      outerHeight,
+      imageWidth: imageSize.width,
+      imageHeight: imageSize.height,
+    };
+    const inputsChanged = !fitInputsRef.current || !sameFitInputs(fitInputsRef.current, nextInputs);
+    let dimensionsChanged = false;
+    if (inputsChanged) {
+      const nextDimensions = containFit({ width: outerWidth, height: outerHeight }, imageSize);
+      dimensionsChanged = !sameContainDimensions(dimensionsRef.current, nextDimensions);
+      // Keep the fit object stable between real layout changes. Consumers use this identity to
+      // avoid repainting overlays for a pointer event that only needs a fresh coordinate read.
+      if (dimensionsChanged) dimensionsRef.current = nextDimensions;
+      fitInputsRef.current = nextInputs;
+    }
 
-      publishFit(dimensionsRef.current, rect, imageSize);
-      if (dimensionsChanged) onResizeRef.current?.(dimensionsRef.current);
-      return rect;
-    },
-    [imageSize, publishFit, readContainerRect]
-  );
+    publishFit(dimensionsRef.current, rect, imageSize);
+    if (dimensionsChanged) onResizeRef.current?.(dimensionsRef.current);
+    return rect;
+  }, [imageSize, publishFit, readContainerRect]);
 
   useEffect(() => {
     calculateDimensions();
   }, [calculateDimensions]);
 
-  useResizeObserverRAF(ref, (rect: Pos) => {
-    calculateDimensions(rect);
-  });
+  // The observer is a resize trigger; its border-box payload is not the client viewport used by fit.
+  useResizeObserverRAF(ref, () => calculateDimensions());
 
   /**
    * Drop the tracked pointer, releasing the capture if it is still held.

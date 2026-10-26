@@ -184,6 +184,14 @@ describe('SelectionMarchingAnts', () => {
     storeState.selections = [polygon()];
     const container = document.createElement('div');
     container.getBoundingClientRect = () => ({ width: 100, height: 60 }) as DOMRect;
+    Object.defineProperties(container, {
+      clientLeft: { configurable: true, value: 0 },
+      clientTop: { configurable: true, value: 0 },
+      clientWidth: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 60 },
+      offsetWidth: { configurable: true, value: 100 },
+      offsetHeight: { configurable: true, value: 60 },
+    });
     storeState.containerRef = { current: container };
 
     const { ctx } = setup();

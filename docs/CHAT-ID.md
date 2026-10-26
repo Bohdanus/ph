@@ -18,6 +18,11 @@ Kilo session row; searching `kilo.db` for a prompt phrase can return an older, u
 Do not substitute a search result or fabricate a `ses_` value when the current host provides a
 different identifier.
 
+The Linux baseline workflow accepts these native forms: Kilo IDs with `ses_` followed by 26
+alphanumeric characters, RFC UUID thread IDs from Codex, and Copilot `copilotcli:/<UUID>` session
+URIs. UUIDs must use a valid version and variant. Use the exact host-provided value; a descriptive
+alias is not a session ID.
+
 ## Kilo sessions
 
 Use the `ses_…` value returned by the Kilo session host. If it is not exposed directly, a read-only

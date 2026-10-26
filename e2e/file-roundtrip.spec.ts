@@ -211,10 +211,31 @@ async function readWorkspaceRaster(page: Page): Promise<ImageDataResult> {
   return loadImageData(Buffer.from(match[1], 'base64'));
 }
 
+/** Reads the document dimensions published by the active tool for the workspace canvas. */
+async function readWorkspaceDocumentSize(page: Page): Promise<{ width: number; height: number }> {
+  const workspace = page.getByTestId('workspace-container');
+  await expect(workspace).toHaveAttribute('data-fit-document-width', /^\d+$/);
+  await expect(workspace).toHaveAttribute('data-fit-document-height', /^\d+$/);
+  const dimensions = await workspace.evaluate((node) => ({
+    width: Number(node.getAttribute('data-fit-document-width')),
+    height: Number(node.getAttribute('data-fit-document-height')),
+  }));
+  if (!Number.isInteger(dimensions.width) || dimensions.width <= 0) {
+    throw new Error(`The app published an invalid document width: ${dimensions.width}`);
+  }
+  if (!Number.isInteger(dimensions.height) || dimensions.height <= 0) {
+    throw new Error(`The app published an invalid document height: ${dimensions.height}`);
+  }
+  return dimensions;
+}
+
 /** Compares RGBA values and reports the first differing document pixel. */
 function expectRasterPixelsEqual(actual: ImageDataResult, expected: ImageDataResult, label: string): void {
   expect(actual.width, `${label}: width`).toBe(expected.width);
   expect(actual.height, `${label}: height`).toBe(expected.height);
+  const expectedDataLength = expected.width * expected.height * 4;
+  expect(expected.data.length, `${label}: expected complete RGBA buffer length`).toBe(expectedDataLength);
+  expect(actual.data.length, `${label}: actual complete RGBA buffer length`).toBe(expectedDataLength);
 
   const channelNames = ['red', 'green', 'blue', 'alpha'] as const;
   for (let index = 0; index < expected.data.length; index += 1) {
@@ -246,6 +267,9 @@ function downsampleCanvasBacking(
   expect(backing.height, 'canvas backing height should match document height at this DPR').toBe(
     documentHeight * devicePixelRatio
   );
+  expect(backing.data.length, 'canvas backing should contain a complete RGBA buffer').toBe(
+    backing.width * backing.height * 4
+  );
 
   const data = new Uint8ClampedArray(documentWidth * documentHeight * 4);
   const offset = Math.floor(devicePixelRatio / 2);
@@ -257,6 +281,16 @@ function downsampleCanvasBacking(
     }
   }
   return { width: documentWidth, height: documentHeight, data };
+}
+
+/** Uses the app's document size, not the exported PNG size, to interpret canvas backing pixels. */
+async function readWorkspaceDocumentRaster(page: Page, expectedDpr: number): Promise<ImageDataResult> {
+  expect(await page.evaluate(() => window.devicePixelRatio), 'the browser should use the requested DPR').toBe(
+    expectedDpr
+  );
+  const { width, height } = await readWorkspaceDocumentSize(page);
+  const backing = await readWorkspaceRaster(page);
+  return downsampleCanvasBacking(backing, width, height, expectedDpr);
 }
 
 async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: number): Promise<void> {
@@ -274,7 +308,7 @@ async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: n
   await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'the red stroke' });
 
-  const beforeBacking = await readWorkspaceRaster(page);
+  const beforeDocument = await readWorkspaceDocumentRaster(page, expectedDpr);
   const beforeCapture = await captureCanvasScreenshot(
     page,
     box,
@@ -302,14 +336,19 @@ async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: n
   expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
 
   const savedDocument = await loadImageData(savedBytes);
+  expect(savedDocument.width, 'the exported PNG should retain the app document width').toBe(beforeDocument.width);
+  expect(savedDocument.height, 'the exported PNG should retain the app document height').toBe(beforeDocument.height);
   expectRasterPixelsEqual(
-    downsampleCanvasBacking(beforeBacking, savedDocument.width, savedDocument.height, expectedDpr),
     savedDocument,
+    beforeDocument,
     'the saved PNG should preserve every document pixel from the canvas before save'
   );
 
   await page.reload();
   await expect(getWorkspaceCanvas(page)).toBeVisible();
+  expect(await page.evaluate(() => window.devicePixelRatio), 'reloading should retain the configured DPR').toBe(
+    expectedDpr
+  );
   const reloadedCapture = await captureCanvasScreenshot(
     page,
     box,
@@ -325,7 +364,7 @@ async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: n
     description: 'the stroke carried back in by the saved file',
   });
 
-  const afterBacking = await readWorkspaceRaster(page);
+  const afterDocument = await readWorkspaceDocumentRaster(page, expectedDpr);
   const afterCapture = await captureCanvasScreenshot(
     page,
     reopenedBox,
@@ -341,11 +380,7 @@ async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: n
   expect(after.red, 'the reopened stroke should be the red that was drawn').toBeGreaterThan(180);
   expect(after.green, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
   expect(after.blue, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
-  expectRasterPixelsEqual(
-    downsampleCanvasBacking(afterBacking, savedDocument.width, savedDocument.height, expectedDpr),
-    savedDocument,
-    'reopening the saved PNG should restore every document pixel'
-  );
+  expectRasterPixelsEqual(afterDocument, savedDocument, 'reopening the saved PNG should restore every document pixel');
 }
 
 /**
