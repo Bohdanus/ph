@@ -185,7 +185,6 @@ describe('keyless free-model catalog CLI', () => {
     const code = await main(['--list'], {
       fetchImpl,
       openRouterKey: '',
-      groqKey: '',
       stdout,
       stderr,
     });
@@ -287,7 +286,7 @@ describe('OpenRouter pre-routing quota check', () => {
       onOpenRouterQuota,
     });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free' });
-    expect(result.requestCounts).toEqual({ kilo: 1, openrouter: 1, groq: 0 });
+    expect(result.requestCounts).toEqual({ kilo: 1, openrouter: 1 });
     expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 10, limit: 50, remaining: 40 });
   });
 
