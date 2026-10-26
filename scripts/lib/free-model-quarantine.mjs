@@ -26,6 +26,10 @@ export function quarantineKey(source, model) {
   return `${source}:${model}`;
 }
 
+function validateEpochMilliseconds(now) {
+  if (!Number.isFinite(now)) throw new Error('Quarantine time must be finite epoch milliseconds');
+}
+
 export function validateQuarantineState(state) {
   if (!state || typeof state !== 'object' || Array.isArray(state) || state.schemaVersion !== 1) {
     throw new Error('Unsupported free-model quarantine file format');
@@ -71,6 +75,7 @@ export async function readQuarantineState(filePath = DEFAULT_FILE, readFileImpl 
 }
 
 export async function loadQuarantineState(filePath = DEFAULT_FILE, now = Date.now()) {
+  validateEpochMilliseconds(now);
   try {
     await stat(filePath);
     return await readQuarantineState(filePath);
@@ -87,6 +92,7 @@ export async function loadQuarantineState(filePath = DEFAULT_FILE, now = Date.no
 }
 
 export function activeQuarantineKeys(state, now = Date.now()) {
+  validateEpochMilliseconds(now);
   validateQuarantineState(state);
   return new Set(
     Object.entries(state.entries)
@@ -96,6 +102,7 @@ export function activeQuarantineKeys(state, now = Date.now()) {
 }
 
 export function upsertQuarantine(state, { source, model, reason, hours = DEFAULT_QUARANTINE_HOURS, now = Date.now() }) {
+  validateEpochMilliseconds(now);
   validateQuarantineState(state);
   if (
     !QUARANTINE_SOURCES.has(source) ||
@@ -130,6 +137,7 @@ export function releaseQuarantine(state, source, model) {
 }
 
 export function removeExpiredQuarantines(state, now = Date.now()) {
+  validateEpochMilliseconds(now);
   validateQuarantineState(state);
   let removed = 0;
   for (const [key, entry] of Object.entries(state.entries)) {
@@ -196,7 +204,9 @@ export async function withQuarantineWriteLock(filePath, update, deps = {}) {
   }
 
   if (updateError && cleanupErrors.length > 0) {
-    throw new AggregateError([updateError, ...cleanupErrors], 'Quarantine update and lock cleanup both failed');
+    const errors = [updateError, ...cleanupErrors];
+    const details = errors.map((error) => error?.message ?? String(error)).join('; ');
+    throw new AggregateError(errors, `Quarantine update and lock cleanup both failed: ${details}`);
   }
   if (updateError) throw updateError;
   if (cleanupErrors.length > 0) {
@@ -215,6 +225,7 @@ async function writeQuarantineStateIfAbsent(state, filePath) {
   try {
     await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
     try {
+      // Atomic create-if-absent prevents a concurrent first-use migration overwriting state.
       await link(tempPath, filePath);
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;

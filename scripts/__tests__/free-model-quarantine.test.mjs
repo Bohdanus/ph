@@ -23,6 +23,9 @@ describe('free-model quarantine lifecycle', () => {
   it('starts empty only when the state file is missing', async () => {
     const state = await readQuarantineState('/path/that/does/not/exist/quarantine.json');
     expect(state).toEqual({ schemaVersion: 1, entries: {} });
+    await expect(loadQuarantineState('/path/that/does/not/exist/quarantine.json', Number.NaN)).rejects.toThrow(
+      /finite epoch milliseconds/
+    );
   });
 
   it('shares the default state file across managed worktrees', () => {
@@ -101,6 +104,17 @@ describe('free-model quarantine lifecycle', () => {
         }
       )
     ).toThrow(/supported quarantine reason/);
+    expect(() =>
+      upsertQuarantine(
+        { schemaVersion: 1, entries: {} },
+        {
+          source: 'kilo',
+          model: 'model:free',
+          reason: 'rate_limit',
+          now: Number.NaN,
+        }
+      )
+    ).toThrow(/finite epoch milliseconds/);
   });
 
   it('sets a six-hour default expiry and refuses a quarantine beyond three days', () => {
@@ -296,6 +310,29 @@ describe('free-model quarantine lifecycle', () => {
         )
       ).rejects.toThrow(/state may be committed/);
       expect(updateCompleted).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves both operation and cleanup errors in a combined failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-quarantine-aggregate-'));
+    const filePath = join(directory, 'state.json');
+
+    try {
+      await expect(
+        withQuarantineWriteLock(
+          filePath,
+          async () => {
+            throw new Error('update failed');
+          },
+          {
+            unlink: async () => {
+              throw new Error('cleanup failed');
+            },
+          }
+        )
+      ).rejects.toThrow(/update failed; cleanup failed/);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
