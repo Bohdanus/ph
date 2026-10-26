@@ -19,7 +19,7 @@ import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -40,6 +40,7 @@ function relativePathFor(root, absolute) {
 /** Build the inventory object from an evaluation clock and a generation clock. */
 export function buildInventory({
   worktrees,
+  branchOnlyRefs = [],
   root,
   base,
   mainHead,
@@ -465,6 +466,23 @@ export function buildInventory({
     legacy,
 
     /**
+     * Local branches that no worktree holds — invisible to `git worktree list`.
+     * Git-derived categories describe ancestry and `git cherry` observations;
+     * they do not establish ownership, provenance, tree equivalence, or intent.
+     * Keep this separate from `worktrees`: there is no checkout to inspect.
+     */
+    branchOnlyRefs: branchOnlyRefs.map((r) => ({
+      name: r.name,
+      category: r.category,
+      isAncestor: r.isAncestor,
+      cherryPlusCount: r.cherryPlusCount,
+      ahead: r.ahead,
+      behind: r.behind,
+      tip: r.tip,
+      reason: r.reason,
+    })),
+
+    /**
      * Worktrees that were deleted, and who had written in them.
      *
      * It MUST be a top-level list for the same reason `readLostWorktree` is: the
@@ -536,6 +554,11 @@ export function buildInventory({
 
     totals: {
       worktrees: records.length,
+      branchOnlyRefs: branchOnlyRefs.length,
+      branchOnlyAncestor: branchOnlyRefs.filter((r) => r.category === 'ancestor').length,
+      branchOnlyUnmatchedPatches: branchOnlyRefs.filter((r) => r.category === 'unmatched-patches').length,
+      branchOnlyZeroCherryPatches: branchOnlyRefs.filter((r) => r.category === 'zero-cherry-patches').length,
+      branchOnlyUnknown: branchOnlyRefs.filter((r) => r.category === 'unknown').length,
       prunable: records.filter((r) => r.prunable).length,
       readyToLand: readyToLand.length,
       disposalCandidates: disposalCandidates.length,

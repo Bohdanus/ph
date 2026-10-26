@@ -711,12 +711,33 @@ worktree state, regenerate the inventory and run `npm run repo:state` for any wo
 operation state matters. For branch-only refs, also run `npm run branches:orphan`. A failed or
 unreadable report is not a clean result and must remain a recovery case.
 
+The default base resolves the fully qualified `refs/heads/main`, then
+`refs/remotes/origin/main`. An explicit short `--base` name that matches more than one ref is
+rejected; pass the fully qualified ref to select one.
+
 ## Branches nobody holds
 
-`WORKTREES.json` omits branches whose worktree is gone, so every harvest also runs
-`npm run branches:orphan`. The report is read-only. Classify every row as **recover**, **retire**,
-or **defer** before ending the sweep. Run `git cherry main <branch>` before calling one unmerged;
-search by feature, changed paths, and commit subject. No owner is `unproven`, not abandoned.
+The generated `WORKTREES.json` includes local branch refs that have no registered worktree in
+`branchOnlyRefs`. It labels each ref as an ancestor, as having unmatched non-merge patches, as
+having zero unmatched patches according to `git cherry`, or as unknown. Those are Git observations,
+not ownership, provenance, merge intent, or a decision to recover, retire, or defer a branch.
+
+`npm run branches:orphan` remains a read-only companion report with ahead/behind and conflict
+information. A failed or unreadable inventory is not an empty branch list. No owner is **unproven**,
+not abandoned; search transcripts, changed paths, commit subjects, and relevant source before making
+a disposition.
+
+`git cherry` compares non-merge commit patches; it does not prove the branch tip has the same tree
+as `main`. In particular, a branch can contain merge commits whose resolution added or removed
+content while `git cherry main <branch>` prints no unmatched patches. For a non-ancestor branch,
+inspect its parents, `git diff main <branch>`, and the relevant files even when the cherry count is
+zero. An unknown comparison remains unknown.
+
+Some local or remote refs preserve an upstream or earlier implementation rather than task work for
+the current application. Missing patches alone do not make such a ref a merge candidate. Verify its
+provenance and relationship to the current history with `git remote -v`, `git merge-base`, and
+file-level review. A rewrite or unrelated history can still be useful as a reference, but its code
+must be evaluated against current product behavior before any changes are adapted or merged.
 
 **Read `action` first.** Every record carries one value, and it is the whole
 answer — which of the six things it is:

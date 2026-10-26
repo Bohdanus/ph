@@ -30,16 +30,21 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
-import { inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
+import { formatSummary, inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import {
   __testables,
   collectWorktrees,
   findMissingWorktrees,
   historicalNameCollisions,
+  listBranchOnlyRefs,
   listWorktrees,
   mergeConflict,
   PATCH_EQUIVALENCE,
+  BRANCH_ONLY_REF_CATEGORY,
+  baseRefName,
+  resolveBaseRef,
+  sameWorktreeRoster,
 } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 import {
@@ -247,6 +252,19 @@ function makeRepo() {
   g('add', '.');
   g('commit', '--quiet', '-m', 'six');
   return dir;
+}
+
+function branchRefRecord(cwd, name) {
+  const format = '%(refname:strip=2)%00%(objectname)%00%(subject)%00%(committerdate:iso-strict)%00%(authorname)%00';
+  const output = execFileSync('git', ['for-each-ref', `--format=${format}`, `refs/heads/${name}`], {
+    cwd,
+    encoding: 'utf8',
+  });
+  const fields = output.replace(/\0\n/g, '\0').split('\0');
+  if (fields.at(-1) === '') fields.pop();
+  if (fields.length !== 5) throw new Error(`expected one branch ref record for ${name}`);
+  const [refName, sha, subject, date, author] = fields;
+  return { name: refName, sha, subject, date, author };
 }
 
 /** A worktree shaped like the ones this repository actually has. */
@@ -1033,6 +1051,15 @@ describe('blocked-question detection', () => {
   });
 });
 
+describe('argument parsing', () => {
+  it('leaves the base unset by default and requires an explicit value when --base is used', () => {
+    expect(parseArgs([]).base).toBeUndefined();
+    expect(parseArgs(['--base', 'refs/heads/feature/ref']).base).toBe('refs/heads/feature/ref');
+    expect(() => parseArgs(['--base'])).toThrow('--base requires a non-empty ref');
+    expect(() => parseArgs(['--base', '--stdout'])).toThrow('--base requires a non-empty ref');
+  });
+});
+
 describe('the pinned clock', () => {
   it('rejects a future or invalid pinned clock before it can affect liveness', () => {
     expect(() => validatePinnedNow(NOW + 1, NOW)).toThrow('--now cannot be in the future');
@@ -1144,10 +1171,15 @@ describe('the inventory output target', () => {
   it('pins merge calculations to the same base commit that the inventory records', () => {
     const source = readFileSync(resolve(import.meta.dirname, '../worktree-inventory.mjs'), 'utf8');
     const resolveMain = source.indexOf("const mainHead = execFileSync('git', ['rev-parse', '--verify'");
-    const collect = source.indexOf('collectWorktrees(root, { base: mainHead, baseName: opts.base })');
+    const collect = source.indexOf('collectWorktrees(root, {');
 
     expect(resolveMain).toBeGreaterThanOrEqual(0);
     expect(collect).toBeGreaterThan(resolveMain);
+    expect(source).toContain('const worktreeRoster = listWorktrees(root);');
+    expect(source).toContain('baseName: baseRefName(root, opts.base)');
+    expect(source).toContain('findMissingWorktrees(root, worktreeRoster)');
+    expect(source).toContain('listBranchOnlyRefs(root, { base: mainHead, worktreeRoster })');
+    expect(source).toContain('sameWorktreeRoster(worktreeRoster, listWorktrees(root))');
   });
 });
 
@@ -1951,6 +1983,12 @@ describe('buildInventory', () => {
 
   it('emits a document with counts that agree with the records it contains', () => {
     const inv = buildInventory({
+      branchOnlyRefs: [
+        { name: 'ancestor', category: 'ancestor', isAncestor: true, cherryPlusCount: null },
+        { name: 'unmatched', category: 'unmatched-patches', isAncestor: false, cherryPlusCount: 2 },
+        { name: 'zero-cherry', category: 'zero-cherry-patches', isAncestor: false, cherryPlusCount: 0 },
+        { name: 'unknown', category: 'unknown', isAncestor: null, cherryPlusCount: null },
+      ],
       worktrees: [
         wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
         wt({ name: 'b', ahead: 2, mergedIntoBase: false, workingTree: { modified: 1, untracked: 0, paths: [] } }),
@@ -1973,6 +2011,13 @@ describe('buildInventory', () => {
     const byRec = inv.totals.byRecommendation;
     expect(Object.values(byRec).reduce((a, b) => a + b, 0)).toBe(3);
     expect(inv.totals.prunable).toBe(inv.worktrees.filter((w) => w.prunable).length);
+    const branchOnlyCategoryTotal =
+      inv.totals.branchOnlyAncestor +
+      inv.totals.branchOnlyUnmatchedPatches +
+      inv.totals.branchOnlyZeroCherryPatches +
+      inv.totals.branchOnlyUnknown;
+    expect(branchOnlyCategoryTotal).toBe(inv.totals.branchOnlyRefs);
+    expect(formatSummary(inv)).toContain('1 ancestor · 1 unknown');
   });
 
   it('publishes the exact-base merge proof needed by the guarded disposer', () => {
@@ -4332,5 +4377,326 @@ describe('readBoard: a board it cannot query', () => {
     // is reported rather than swallowed.
     expect(board.error).toBeTruthy();
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('classifyBranchOnlyRef', () => {
+  it('classifies a branch whose tip is already on the base as an ancestor', async () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['branch', 'early', 'main~1'], { cwd: dir, stdio: 'ignore' });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'early'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+      expect(result.isAncestor).toBe(true);
+      expect(result.cherryPlusCount).toBe(null);
+      expect(result.ahead).toBe(0);
+      expect(result.behind).toBe(1);
+      expect(result.reason).toMatch(/ancestor/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts unmatched non-merge patches without calling them live work', async () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'side'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.UNMATCHED_PATCHES);
+      expect(result.isAncestor).toBe(false);
+      expect(result.cherryPlusCount).toBe(2);
+      expect(result.ahead).toBe(2);
+      expect(result.reason).toMatch(/unmatched non-merge commit patches/i);
+      expect(result.reason).not.toMatch(/live work/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats zero cherry patches as an unresolved observation when a merge adds novel tree content', async () => {
+    // `git cherry` omits merge commits. Add a resolution file while a merge is
+    // paused before commit: the resulting branch is not an ancestor of main,
+    // yet cherry reports no unmatched non-merge patches and the tree differs.
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+
+      g('branch', 'pe', 'main~1');
+      g('checkout', '--quiet', 'pe');
+      g('merge', '--no-ff', '--no-commit', 'main');
+      writeFileSync(join(dir, 'merge-resolution.txt'), 'content introduced by the merge resolution\n');
+      g('add', 'merge-resolution.txt');
+      g('commit', '--quiet', '-m', 'merge main with a resolution');
+
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'pe'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.ZERO_CHERRY_PATCHES);
+      expect(result.isAncestor).toBe(false);
+      expect(result.cherryPlusCount).toBe(0);
+      expect(result.ahead).toBe(1);
+      expect(result.reason).toMatch(/does not establish tree equivalence/i);
+      expect(
+        execFileSync('git', ['show', `${result.tip.sha}:merge-resolution.txt`], { cwd: dir, encoding: 'utf8' })
+      ).toBe('content introduced by the merge resolution\n');
+      expect(() =>
+        execFileSync('git', ['cat-file', '-e', 'main:merge-resolution.txt'], { cwd: dir, stdio: 'ignore' })
+      ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('classifies a branch pinned to the base tip as an ancestor with zero drift', async () => {
+    // A branch created at the same commit as main has ahead=0 and behind=0 —
+    // the trivial ancestor case, distinct from the merge-only patch-equivalent
+    // case above where the tip differs but the patch matches.
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['branch', 'pinned', 'main'], { cwd: dir, stdio: 'ignore' });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'pinned'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+      expect(result.isAncestor).toBe(true);
+      expect(result.ahead).toBe(0);
+      expect(result.behind).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('listBranchOnlyRefs', () => {
+  it('lists branches with no registered worktree', async () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['branch', 'early', 'main~1'], { cwd: dir, stdio: 'ignore' });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await listBranchOnlyRefs(dir, { base: mainHead });
+
+      expect(result.map((r) => r.name).sort()).toEqual(['early', 'side']);
+      expect(result.every((r) => r.category !== undefined)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits a linked worktree branch with a same-named tag', async () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const branch = 'release/feature';
+      const worktreePath = join(dir, 'held-release-feature');
+      execFileSync('git', ['branch', branch, 'main~1'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['tag', branch, 'main'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['worktree', 'add', '--quiet', worktreePath, branch], { cwd: dir, stdio: 'ignore' });
+
+      const result = await listBranchOnlyRefs(dir, { base: mainHead });
+
+      expect(result.map((r) => r.name)).not.toContain('main');
+      expect(result.map((r) => r.name)).not.toContain(branch);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sorts unresolved zero-cherry cases before unmatched patches and ancestors', async () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+
+      // Zero cherry patches: a merge-only branch whose tip differs from main.
+      g('branch', 'pe', 'main~1');
+      g('checkout', '--quiet', 'pe');
+      g('merge', '--no-ff', '--quiet', '-m', 'merge main into pe', 'main');
+
+      // Ancestor: branch pinned to main^1 (reachable from main).
+      g('branch', 'early', 'main~1');
+
+      g('checkout', '--quiet', 'main');
+
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const result = await listBranchOnlyRefs(dir, { base: mainHead });
+
+      const categories = result.map((r) => r.category);
+      const zeroCherryIdx = categories.indexOf(BRANCH_ONLY_REF_CATEGORY.ZERO_CHERRY_PATCHES);
+      const unmatchedIdx = categories.indexOf(BRANCH_ONLY_REF_CATEGORY.UNMATCHED_PATCHES);
+      const ancestorIdx = categories.indexOf(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+
+      expect(zeroCherryIdx).toBeGreaterThanOrEqual(0);
+      expect(unmatchedIdx).toBeGreaterThanOrEqual(0);
+      expect(ancestorIdx).toBeGreaterThanOrEqual(0);
+      expect(zeroCherryIdx).toBeLessThan(unmatchedIdx);
+      expect(unmatchedIdx).toBeLessThan(ancestorIdx);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('classifies refs as unknown when the base cannot be resolved, not as empty', async () => {
+    const dir = makeRepo();
+    try {
+      const result = await listBranchOnlyRefs(dir, { base: 'does-not-exist' });
+      expect(result.every((r) => r.category === BRANCH_ONLY_REF_CATEGORY.UNKNOWN)).toBe(true);
+      expect(result.every((r) => r.isAncestor === null)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('includes an unheld branch even when it is the selected base', async () => {
+    const dir = makeRepo();
+    try {
+      const baseHead = execFileSync('git', ['rev-parse', 'side'], { cwd: dir, encoding: 'utf8' }).trim();
+      const result = await listBranchOnlyRefs(dir, { base: baseHead });
+      const selectedBase = result.find((ref) => ref.name === 'side');
+
+      expect(selectedBase).toBeDefined();
+      expect(selectedBase.category).toBe(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+      expect(selectedBase.ahead).toBe(0);
+      expect(selectedBase.behind).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the captured worktree roster when excluding held branch refs', async () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const sideHead = execFileSync('git', ['rev-parse', 'side'], { cwd: dir, encoding: 'utf8' }).trim();
+      const worktreeRoster = [
+        { path: dir, head: mainHead, branch: 'main' },
+        { path: join(dir, 'linked-side'), head: sideHead, branch: 'side' },
+      ];
+
+      const result = await listBranchOnlyRefs(dir, { base: mainHead, worktreeRoster });
+
+      expect(result.map((ref) => ref.name)).not.toContain('side');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws when local branch enumeration fails instead of reporting zero branches', async () => {
+    const dir = makeRepo();
+    try {
+      await expect(listBranchOnlyRefs(dir, { base: 'main', gitRunner: () => null })).rejects.toThrow(
+        /for-each-ref failed/i
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed branch metadata instead of skipping an incomplete inventory', async () => {
+    const dir = makeRepo();
+    try {
+      for (const output of ['partial-record', 'feature\0not-a-sha\0subject\0date\0author\0']) {
+        await expect(listBranchOnlyRefs(dir, { base: 'main', gitRunner: () => output })).rejects.toThrow(
+          /malformed local branch metadata|invalid local branch name or object ID/i
+        );
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveBaseRef', () => {
+  it('uses a fully qualified default ref and rejects ambiguous short names', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['tag', 'main', 'side'], { cwd: dir, stdio: 'ignore' });
+
+      expect(resolveBaseRef(dir)).toBe('refs/heads/main');
+      expect(resolveBaseRef(dir, ['refs/heads/main'])).toBe('refs/heads/main');
+      expect(() => resolveBaseRef(dir, ['main'])).toThrow(/ambiguous base ref .*refs\/heads\/main.*refs\/tags\/main/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the fully qualified origin main ref when local main is absent', () => {
+    const dir = makeRepo();
+    try {
+      const sideHead = execFileSync('git', ['rev-parse', 'side'], { cwd: dir, encoding: 'utf8' }).trim();
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['branch', '-D', 'main'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['update-ref', 'refs/remotes/origin/main', sideHead], { cwd: dir, stdio: 'ignore' });
+
+      expect(resolveBaseRef(dir)).toBe('refs/remotes/origin/main');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('expands unique short branch and remote-tracking refs before resolving', () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      execFileSync('git', ['update-ref', 'refs/remotes/origin/release', mainHead], { cwd: dir, stdio: 'ignore' });
+
+      expect(resolveBaseRef(dir, ['side'])).toBe('refs/heads/side');
+      expect(resolveBaseRef(dir, ['origin/release'])).toBe('refs/remotes/origin/release');
+      expect(resolveBaseRef(dir, ['side~1'])).toBe('refs/heads/side~1');
+      expect(resolveBaseRef(dir, ['refs/heads/side~1'])).toBe('refs/heads/side~1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reduces qualified refs and symbolic remote HEADs to merge-advisory names', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['commit', '--allow-empty', '--quiet', '-m', "Merge branch 'main' into topic"], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      execFileSync('git', ['update-ref', 'refs/remotes/origin/main', mainHead], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+
+      expect(baseRefName(dir, 'refs/heads/main')).toBe('main');
+      expect(baseRefName(dir, 'refs/remotes/origin/main')).toBe('main');
+      expect(baseRefName(dir, 'refs/remotes/origin/release/feature')).toBe('release/feature');
+      expect(baseRefName(dir, 'refs/heads/feature/ref~2')).toBe('feature/ref');
+      expect(baseRefName(dir, 'refs/remotes/origin/HEAD')).toBe('main');
+      expect(resolveBaseRef(dir, ['refs/remotes/origin/HEAD'])).toBe('refs/remotes/origin/main');
+      expect(resolveBaseRef(dir, ['origin/HEAD'])).toBe('refs/remotes/origin/main');
+      expect(baseRefName(dir, 'refs/remotes/origin/missing/HEAD')).toBe(null);
+      expect(historicalNameCollisions(dir, mainHead, null).size).toBe(0);
+
+      execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', 'HEAD'], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+      expect(resolveBaseRef(dir, ['refs/remotes/origin/HEAD'])).toBe(null);
+      expect(baseRefName(dir, 'refs/remotes/origin/HEAD')).toBe(null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sameWorktreeRoster', () => {
+  it('ignores output ordering but detects worktree identity changes', () => {
+    const main = { path: '/repo', head: 'a', branch: 'main' };
+    const linked = { path: '/repo/.kilo/worktrees/side', head: 'b', branch: 'side', locked: true };
+
+    expect(sameWorktreeRoster([main, linked], [linked, main])).toBe(true);
+    expect(sameWorktreeRoster([main, linked], [main, { ...linked, branch: 'other' }])).toBe(false);
   });
 });
