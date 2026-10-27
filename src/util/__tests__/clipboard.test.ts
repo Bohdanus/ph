@@ -207,30 +207,54 @@ describe('copyRectToClipboard', () => {
 });
 
 describe('readImageFromClipboard', () => {
-  it('decodes the first image item and ignores non-image clipboard types', async () => {
+  it('uses the injected decoder for the first image and ignores non-image clipboard types', async () => {
     const blob = makeBlob();
     const bitmap = { width: 32, height: 24 } as ImageBitmap;
     const getType = vi.fn().mockResolvedValue(blob);
-    const decode = vi.fn().mockResolvedValue(bitmap);
+    const decodeImage = vi.fn().mockResolvedValue(bitmap);
     const result = await readImageFromClipboard({
       clipboard: { read: vi.fn().mockResolvedValue([{ types: ['text/plain', 'image/png'], getType }]) },
-      createImageBitmap: decode,
+      decodeImage,
     });
 
     expect(getType).toHaveBeenCalledExactlyOnceWith('image/png');
-    expect(decode).toHaveBeenCalledExactlyOnceWith(blob);
+    expect(decodeImage).toHaveBeenCalledExactlyOnceWith(blob, 'image/png');
+    expect(result).toEqual({ bitmap, mimeType: 'image/png' });
+  });
+
+  it('tries a later image encoding when the first representation is unsupported', async () => {
+    const firstBlob = makeBlob();
+    const fallbackBlob = makeBlob();
+    const bitmap = { width: 32, height: 24 } as ImageBitmap;
+    const getType = vi
+      .fn()
+      .mockImplementation(async (mimeType: string) => (mimeType === 'image/avif' ? firstBlob : fallbackBlob));
+    const decodeImage = vi.fn().mockImplementation(async (_blob: Blob, mimeType: string) => {
+      if (mimeType === 'image/avif') throw new Error('unsupported clipboard format');
+      return bitmap;
+    });
+
+    const result = await readImageFromClipboard({
+      clipboard: { read: vi.fn().mockResolvedValue([{ types: ['image/avif', 'image/png'], getType }]) },
+      decodeImage,
+    });
+
+    expect(getType).toHaveBeenCalledTimes(2);
+    expect(decodeImage).toHaveBeenNthCalledWith(1, firstBlob, 'image/avif');
+    expect(decodeImage).toHaveBeenNthCalledWith(2, fallbackBlob, 'image/png');
     expect(result).toEqual({ bitmap, mimeType: 'image/png' });
   });
 
   it('returns null when clipboard read is unavailable, denied, or has no image', async () => {
-    await expect(readImageFromClipboard({ clipboard: null })).resolves.toBeNull();
+    const decodeImage = vi.fn();
+    await expect(readImageFromClipboard({ clipboard: null, decodeImage })).resolves.toBeNull();
     await expect(
-      readImageFromClipboard({ clipboard: { read: vi.fn().mockRejectedValue(new Error('denied')) } })
+      readImageFromClipboard({ clipboard: { read: vi.fn().mockRejectedValue(new Error('denied')) }, decodeImage })
     ).resolves.toBeNull();
     await expect(
       readImageFromClipboard({
         clipboard: { read: vi.fn().mockResolvedValue([{ types: ['text/plain'], getType: vi.fn() }]) },
-        createImageBitmap: vi.fn(),
+        decodeImage,
       })
     ).resolves.toBeNull();
   });
@@ -240,7 +264,7 @@ describe('readImageFromClipboard', () => {
     await expect(
       readImageFromClipboard({
         clipboard: { read: vi.fn().mockResolvedValue([{ types: ['image/png'], getType }]) },
-        createImageBitmap: vi.fn().mockRejectedValue(new Error('unsupported image format')),
+        decodeImage: vi.fn().mockRejectedValue(new Error('image exceeds the pixel budget')),
       })
     ).resolves.toBeNull();
   });
@@ -251,17 +275,16 @@ describe('readImageFromClipboard module defaults', () => {
     vi.unstubAllGlobals();
   });
 
-  it('reads navigator.clipboard and global createImageBitmap when no overrides are supplied', async () => {
+  it('reads navigator.clipboard when supplied a bounded decoder', async () => {
     const blob = makeBlob();
     const bitmap = { width: 32, height: 24 } as ImageBitmap;
     const read = vi.fn().mockResolvedValue([{ types: ['image/png'], getType: vi.fn().mockResolvedValue(blob) }]);
-    const decode = vi.fn().mockResolvedValue(bitmap);
+    const decodeImage = vi.fn().mockResolvedValue(bitmap);
     vi.stubGlobal('navigator', { clipboard: { read } });
-    vi.stubGlobal('createImageBitmap', decode);
 
-    await expect(readImageFromClipboard()).resolves.toEqual({ bitmap, mimeType: 'image/png' });
+    await expect(readImageFromClipboard({ decodeImage })).resolves.toEqual({ bitmap, mimeType: 'image/png' });
     expect(read).toHaveBeenCalledExactlyOnceWith();
-    expect(decode).toHaveBeenCalledExactlyOnceWith(blob);
+    expect(decodeImage).toHaveBeenCalledExactlyOnceWith(blob, 'image/png');
   });
 });
 

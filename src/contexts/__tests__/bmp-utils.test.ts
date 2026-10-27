@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decodeBmp, encodeBmp, loadBmpFile } from '../bmp-utils.ts';
+import { decodeBmp, encodeBmp, loadBmpFile, preflightBmpFile } from '../bmp-utils.ts';
+import { MAX_CREATABLE_DOCUMENT_PIXELS } from '../raster-utils.ts';
 
 type StubImage = HTMLImageElement;
 
@@ -620,5 +621,103 @@ describe('loadBmpFile', () => {
     view.setInt32(18, 0, true);
     const blob = new Blob([view.buffer], { type: 'image/bmp' });
     await expect(loadBmpFile(blob)).rejects.toThrow('Invalid BMP dimensions');
+  });
+
+  it('rejects oversized BMP dimensions before buffering the full file', async () => {
+    installImageHarness();
+    const view = makeBmpHeader();
+    const width = 10_001;
+    const height = Math.ceil(MAX_CREATABLE_DOCUMENT_PIXELS / width) + 1;
+    view.setInt32(18, width, true);
+    view.setInt32(22, height, true);
+    const blob = new Blob([view.buffer], { type: 'image/bmp' });
+    const fullFileRead = vi.spyOn(blob, 'arrayBuffer');
+
+    await expect(loadBmpFile(blob)).rejects.toThrow('BMP image is too large to open');
+    expect(fullFileRead).not.toHaveBeenCalled();
+    expect(imageStub).toBeNull();
+  });
+
+  it('reads only the BMP header and pixel bytes when the file has a large trailing payload', async () => {
+    const bmp = buildBmp({
+      width: 2,
+      height: 2,
+      bitsPerPixel: 24,
+      rows: [
+        [
+          [10, 20, 30],
+          [40, 50, 60],
+        ],
+        [
+          [70, 80, 90],
+          [100, 110, 120],
+        ],
+      ],
+    });
+    const blob = new Blob([bmp, new Uint8Array(1024 * 1024)], { type: 'image/bmp' });
+    const fullFileRead = vi.spyOn(blob, 'arrayBuffer');
+    const fileSlice = vi.spyOn(blob, 'slice');
+    installImageHarness();
+
+    const pending = loadBmpFile(blob);
+    await vi.waitFor(() => expect(imageStub).not.toBeNull());
+    imageStub!.onload!.call(imageStub!, new Event('load'));
+    await expect(pending).resolves.toBe(imageStub);
+
+    expect(fullFileRead).not.toHaveBeenCalled();
+    expect(fileSlice).toHaveBeenLastCalledWith(0, bmp.byteLength, 'image/bmp');
+  });
+
+  it('rejects a huge BMP pixel offset before reading the file payload', async () => {
+    const view = makeBmpHeader();
+    view.setUint32(10, 2 * 1024 * 1024, true);
+    const blob = new Blob([view.buffer], { type: 'image/bmp' });
+    const fullFileRead = vi.spyOn(blob, 'arrayBuffer');
+
+    await expect(loadBmpFile(blob)).rejects.toThrow('BMP pixel data offset is too large');
+    expect(fullFileRead).not.toHaveBeenCalled();
+  });
+
+  it('rejects an impossible color palette before reading the file payload', async () => {
+    const view = makeBmpHeader();
+    view.setUint16(28, 8, true);
+    view.setUint32(46, 257, true);
+    const blob = new Blob([view.buffer], { type: 'image/bmp' });
+    const fullFileRead = vi.spyOn(blob, 'arrayBuffer');
+
+    await expect(loadBmpFile(blob)).rejects.toThrow('Invalid BMP palette');
+    const directBuffer = new ArrayBuffer(62);
+    new Uint8Array(directBuffer).set(new Uint8Array(view.buffer));
+    expect(() => decodeBmp(directBuffer)).toThrow('Invalid BMP palette');
+    expect(fullFileRead).not.toHaveBeenCalled();
+  });
+
+  it('allows a bounded worst-case RLE8 payload up to the document pixel limit', async () => {
+    const width = 10_000;
+    const height = 1_000;
+    const pixelOffset = 14 + 40 + 256 * 4;
+    const compressedBytes = width * height * 2 + height * 2 + 2;
+    const fileSize = pixelOffset + compressedBytes;
+    const header = new Uint8Array(54);
+    const view = new DataView(header.buffer);
+    view.setUint16(0, 0x4d42, true);
+    view.setUint32(2, fileSize, true);
+    view.setUint32(10, pixelOffset, true);
+    view.setUint32(14, 40, true);
+    view.setInt32(18, width, true);
+    view.setInt32(22, height, true);
+    view.setUint16(26, 1, true);
+    view.setUint16(28, 8, true);
+    view.setUint32(30, 1, true);
+    view.setUint32(34, compressedBytes, true);
+    view.setUint32(46, 256, true);
+    const headerBlob = new Blob([header], { type: 'image/bmp' });
+    const boundedBlob = new Blob([], { type: 'image/bmp' });
+    const slice = vi.fn((_start: number, end: number) => (end === 54 ? headerBlob : boundedBlob));
+    const file = { size: fileSize, type: 'image/bmp', slice } as unknown as Blob;
+
+    await expect(preflightBmpFile(file, { allowNativeCompression: true })).resolves.toBe(boundedBlob);
+    expect(slice).toHaveBeenNthCalledWith(1, 0, 54);
+    expect(slice).toHaveBeenNthCalledWith(2, 0, fileSize, 'image/bmp');
   });
 });
