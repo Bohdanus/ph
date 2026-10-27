@@ -999,74 +999,94 @@ async function emulateCanvasCaps(
     hideFontVariantCaps?: boolean;
     ignoreSmallCapsShorthand?: boolean;
     metricsChangeWithoutRasterChange?: boolean;
+    unreadableRasterProbe?: boolean;
   } = {}
 ): Promise<void> {
-  await page.addInitScript(({ hideFontVariantCaps, ignoreSmallCapsShorthand, metricsChangeWithoutRasterChange }) => {
-    const patch = (prototype: object) => {
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'getContext');
-      if (!descriptor || typeof descriptor.value !== 'function') return;
+  await page.addInitScript(
+    ({ hideFontVariantCaps, ignoreSmallCapsShorthand, metricsChangeWithoutRasterChange, unreadableRasterProbe }) => {
+      const patch = (prototype: object) => {
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'getContext');
+        if (!descriptor || typeof descriptor.value !== 'function') return;
 
-      const original = descriptor.value as (...args: unknown[]) => unknown;
-      const proxies = new WeakMap<object, object>();
-      Object.defineProperty(prototype, 'getContext', {
-        ...descriptor,
-        value: function (this: object, ...args: unknown[]): unknown {
-          const context = Reflect.apply(original, this, args);
-          if (args[0] !== '2d' || context === null || typeof context !== 'object') return context;
-          const cached = proxies.get(context);
-          if (cached) return cached;
+        const original = descriptor.value as (...args: unknown[]) => unknown;
+        const proxies = new WeakMap<object, object>();
+        const unreadableContexts = new WeakSet<object>();
+        Object.defineProperty(prototype, 'getContext', {
+          ...descriptor,
+          value: function (this: object, ...args: unknown[]): unknown {
+            const context = Reflect.apply(original, this, args);
+            if (args[0] !== '2d' || context === null || typeof context !== 'object') return context;
+            const settings = args[1];
+            if (
+              unreadableRasterProbe &&
+              settings !== null &&
+              typeof settings === 'object' &&
+              'willReadFrequently' in settings &&
+              settings.willReadFrequently
+            ) {
+              unreadableContexts.add(context);
+            }
+            const cached = proxies.get(context);
+            if (cached) return cached;
 
-          const proxy = new Proxy(context, {
-            has(target, property) {
-              if (property === 'fontVariantCaps' && hideFontVariantCaps) return false;
-              return Reflect.has(target, property);
-            },
-            get(target, property) {
-              if (property === 'fontVariantCaps' && hideFontVariantCaps) return undefined;
-              const value = Reflect.get(target, property, target);
-              if (metricsChangeWithoutRasterChange && property === 'measureText' && typeof value === 'function') {
-                return (...measureArguments: unknown[]) => {
-                  const measured = Reflect.apply(value, target, measureArguments) as TextMetrics;
-                  if ((target as { fontVariantCaps?: string }).fontVariantCaps !== 'small-caps') return measured;
-                  return new Proxy(measured, {
-                    get(metrics, metric) {
-                      const result = Reflect.get(metrics, metric, metrics);
-                      return metric === 'width' && typeof result === 'number' ? result * 0.7 : result;
-                    },
-                  });
-                };
-              }
-              if (metricsChangeWithoutRasterChange && property === 'fillText' && typeof value === 'function') {
-                return (...drawArguments: unknown[]) => {
-                  const capsTarget = target as { fontVariantCaps?: string };
-                  const caps = capsTarget.fontVariantCaps;
-                  if (caps === 'small-caps') capsTarget.fontVariantCaps = 'normal';
-                  try {
-                    return Reflect.apply(value, target, drawArguments);
-                  } finally {
-                    if (caps === 'small-caps') capsTarget.fontVariantCaps = caps;
-                  }
-                };
-              }
-              return typeof value === 'function' ? value.bind(target) : value;
-            },
-            set(target, property, value) {
-              if (property === 'fontVariantCaps' && hideFontVariantCaps) return true;
-              if (property === 'font' && ignoreSmallCapsShorthand && typeof value === 'string') {
-                value = value.replace(/\bsmall-caps\s+/g, '');
-              }
-              return Reflect.set(target, property, value, target);
-            },
-          });
-          proxies.set(context, proxy);
-          return proxy;
-        },
-      });
-    };
+            const proxy = new Proxy(context, {
+              has(target, property) {
+                if (property === 'fontVariantCaps' && hideFontVariantCaps) return false;
+                return Reflect.has(target, property);
+              },
+              get(target, property) {
+                if (property === 'fontVariantCaps' && hideFontVariantCaps) return undefined;
+                const value = Reflect.get(target, property, target);
+                if (unreadableRasterProbe && property === 'getImageData' && unreadableContexts.has(target)) {
+                  return () => {
+                    throw new DOMException('Canvas readback unavailable for caps probe', 'SecurityError');
+                  };
+                }
+                if (metricsChangeWithoutRasterChange && property === 'measureText' && typeof value === 'function') {
+                  return (...measureArguments: unknown[]) => {
+                    const measured = Reflect.apply(value, target, measureArguments) as TextMetrics;
+                    if ((target as { fontVariantCaps?: string }).fontVariantCaps !== 'small-caps') return measured;
+                    return new Proxy(measured, {
+                      get(metrics, metric) {
+                        const result = Reflect.get(metrics, metric, metrics);
+                        return metric === 'width' && typeof result === 'number' ? result * 0.7 : result;
+                      },
+                    });
+                  };
+                }
+                if (metricsChangeWithoutRasterChange && property === 'fillText' && typeof value === 'function') {
+                  return (...drawArguments: unknown[]) => {
+                    const capsTarget = target as { fontVariantCaps?: string };
+                    const caps = capsTarget.fontVariantCaps;
+                    if (caps === 'small-caps') capsTarget.fontVariantCaps = 'normal';
+                    try {
+                      return Reflect.apply(value, target, drawArguments);
+                    } finally {
+                      if (caps === 'small-caps') capsTarget.fontVariantCaps = caps;
+                    }
+                  };
+                }
+                return typeof value === 'function' ? value.bind(target) : value;
+              },
+              set(target, property, value) {
+                if (property === 'fontVariantCaps' && hideFontVariantCaps) return true;
+                if (property === 'font' && ignoreSmallCapsShorthand && typeof value === 'string') {
+                  value = value.replace(/\bsmall-caps\s+/g, '');
+                }
+                return Reflect.set(target, property, value, target);
+              },
+            });
+            proxies.set(context, proxy);
+            return proxy;
+          },
+        });
+      };
 
-    patch(HTMLCanvasElement.prototype);
-    if (typeof OffscreenCanvas !== 'undefined') patch(OffscreenCanvas.prototype);
-  }, options);
+      patch(HTMLCanvasElement.prototype);
+      if (typeof OffscreenCanvas !== 'undefined') patch(OffscreenCanvas.prototype);
+    },
+    options
+  );
 
   await page.reload();
   await selectTextTool(page);
@@ -2274,10 +2294,13 @@ test.describe('Text tool', () => {
     );
   });
 
-  test('Small Caps falls back when Canvas changes metrics but fillText ignores the variant', async ({
+  test('Small Caps falls back when raster readback is unavailable despite changed metrics', async ({
     page,
   }, testInfo) => {
-    await emulateCanvasCaps(page, { metricsChangeWithoutRasterChange: true });
+    await emulateCanvasCaps(page, {
+      metricsChangeWithoutRasterChange: true,
+      unreadableRasterProbe: true,
+    });
     expect(
       await page.evaluate(() => {
         const context = document.createElement('canvas').getContext('2d');

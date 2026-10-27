@@ -1357,7 +1357,7 @@ describe('renderText', () => {
       expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
     });
 
-    it('falls back when metrics change but the raster probe finds no pixel difference', () => {
+    it('uses faux small caps when the raster probe finds no pixel difference', () => {
       const ctx = makeTextCtx({ modern: true });
       attachCapsRasterProbe(ctx, false);
       const capsDuringDraw: string[] = [];
