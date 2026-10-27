@@ -73,7 +73,11 @@ export async function preflightBmpFile(
 
   let metadataEnd = dibEnd;
   if (compression === BI_BITFIELDS && dibSize === 40) metadataEnd += 12;
-  if (compression === BI_ALPHABITFIELDS && dibSize === 40) metadataEnd += 16;
+  if (compression === BI_ALPHABITFIELDS) {
+    if (dibSize === 40) metadataEnd += 16;
+    else if (dibSize === 52) metadataEnd += 4;
+    else if (dibSize < 56) throw new Error('Unsupported BMP alpha bitfields header');
+  }
   if (bitsPerPixel <= 8) {
     const paletteCount = colorsUsed || 1 << bitsPerPixel;
     if (paletteCount > 1 << bitsPerPixel) throw new Error('Invalid BMP palette');
@@ -81,6 +85,12 @@ export async function preflightBmpFile(
   }
   if (!Number.isSafeInteger(metadataEnd) || metadataEnd > pixelOffset) {
     throw new Error('Invalid BMP pixel data offset');
+  }
+  if (compression === BI_ALPHABITFIELDS) {
+    const alphaMask = await file.slice(66, 70).arrayBuffer();
+    const alphaMaskView = new DataView(alphaMask);
+    ensureRange(alphaMaskView, 0, 4);
+    if (alphaMaskView.getUint32(0, true) === 0) throw new Error('Invalid BMP alpha bitfield mask');
   }
 
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
