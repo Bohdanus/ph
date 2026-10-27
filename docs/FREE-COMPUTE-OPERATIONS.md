@@ -58,5 +58,7 @@ node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt 
 
 The pool tries at most three eligible models per provider; HTTP 402/429 exhausts that provider for
 the run. It never falls back to paid models. `--list` refreshes public catalogs and does not send
-an inference request. The URL runner accepts at most 20 public HTTPS URLs and writes only its
+an inference request. `--openrouter-quota` reads OpenRouter's daily counter only; it does not
+report Kilo's separate IP-based free-model limit. See [MODELS.md](../MODELS.md) for both providers'
+published limits. The URL runner accepts at most 20 public HTTPS URLs and writes only its
 condensed result. Quarantine operations are `npm run free:quarantine -- list|add|release|prune`.
