@@ -2,7 +2,9 @@
 
 ## Restart checkpoint: preserve this work first
 
-Status: **unproven implementation awaiting the documentation-index follow-up, final gates and landing**.
+Status: **Slice 1 implemented and validated; broader migration remains unproven**.
+Implementation checkpoint: `eeed3af4b613d7a14e2821016038e7ee05508769`. Verify landing
+by Git ancestry and swarm issue `ph-12`; a branch commit alone is not a landed change.
 This is the durable handoff if the coordinating session loses quota. Resume in the
 absolute task worktree below, never in the root `main-sync` checkout. Do not recreate
 the changes or harvest the separate active frame task.
@@ -40,15 +42,13 @@ Verified evidence so far:
 - `npm run tsc`, `npm run build`, and `npm run lint:check` passed. The repository
   lint count is 64 warnings, zero errors. Explicit ESLint on new files caught a promise
   executor returning `toBlob()`; the executor now has a block body and its focused check passed.
-- First full unit run: **11417 passed, 219 expected failures, six failures**.
-  One was the old global no-bitmap-allocation assertion, now fixed as described above.
-  Five were installation checks because `npm ci --ignore-scripts` had not installed
-  the worktree-local compiler guard. `node scripts/install-tsc-guard.mjs` installed
-  that existing guard; the targeted guard suite subsequently passed. No guard was weakened.
-- The second full run passed **11422 tests**, with 219 established expected failures;
-  its only failure was the documentation index not yet naming this newly staged plan.
-  The index now links this plan. Verify `scripts/__tests__/docs-index.test.mjs` before
-  claiming the complete final gate; production and lifecycle tests passed in that full run.
+- Final full unit suite passed: **399 files, 11423 tests passed, 219 established expected
+  failures**, no failures; duration 155 seconds. The documentation-index follow-up also
+  passed all 10 tests after this plan was registered in `docs/README.md`.
+- Validation pitfalls are resolved: a fresh `npm ci --ignore-scripts` checkout needs
+  `node scripts/install-tsc-guard.mjs`, and import identity tests must allow independent
+  render output allocation. No compiler guard, pixel tolerance, expected-failure list,
+  console gate or theme gate was weakened.
 - Two independent read-only completion reviews through verified-free
   `kilo/poolside/laguna-s-2.1:free` completed with `finish_reason=stop`, zero reported
   cost and `NO_BLOCKING_FINDINGS`: ownership/publication and eligibility/browser proof.
@@ -56,42 +56,38 @@ Verified evidence so far:
   suggestion to copy an editable raster is contrary to the existing immutable-input contract.
   These were completion reviews of supplied code, not tool-using agents.
 
-Open checks and next commands, in order:
+Remaining landing checks, in order:
 
-1. Verify the documentation-index follow-up; any further full-suite rerun uses
-   `node scripts/quiet-command.mjs npm run test -- --silent`. Do not run the inventory
-   concurrently with the full suite: its worktree integration tests temporarily change
-   the roster. Full runs took 112-130 seconds. Expected failures are established
-   harness limitations, not permission to add new ones.
-2. Regenerate the fresh repository inventory and orphan report after tests stop. The
-   first inventory refused its snapshot because the roster changed while the full
-   suite was running; that is not evidence of metadata corruption. The command writes
-   `/tmp/ph-history-migration-inventory.txt` and `/tmp/ph-history-migration-orphans.txt`.
-   Check its exit status. Inspect this task and main plus all reported operations/owners;
-   leave unrelated live worktrees and orphan branches untouched.
-3. Recheck formatting, lint, types/build and the E2E files after any substantive fix.
-   Stage only the listed owned files. This plan is inside ignored `.kilo/plans/`, so it
-   needs explicit `git add -f`; the other new tests use ordinary explicit `git add`.
-   The current staged snapshot predates the latest lifecycle/ESLint/checkpoint edits;
-   restage owned paths after inspecting staged and unstaged diffs.
-4. Commit with native trailer `Chat: 01a17f24-9224-7aa0-a412-3afafa09f797`.
-   Let the normal lint-staged/type/build gates run. Never bypass hooks or use stash.
-5. Read live `main`; if it advanced, sync that exact SHA into this task branch with
-   `--no-commit --no-ff`, resolve only here, and validate/review the resulting composition.
-   If main is still the baseline ancestor, there is no new composition to resolve.
-6. Follow `docs/ORCHESTRATION.md` and `.skills/worktree-merge-harvest.md`'s pinned
+1. Regenerate `node scripts/worktree-inventory.mjs` after tests and commits stop, then
+   run `npm run branches:orphan`. Earlier inventories refused their snapshot when the
+   roster changed during tests or commits; this is not metadata corruption. Reports
+   are `/tmp/ph-history-migration-inventory.txt` and `/tmp/ph-history-migration-orphans.txt`.
+   Check exit status, inspect this task/main and reported operations/owners, and leave
+   unrelated live worktrees and orphan branches untouched.
+2. Recheck live `main`; if it advanced, sync that exact SHA into this task branch with
+   `--no-commit --no-ff`, resolve only here, then validate/review the new composition.
+   If main is still the baseline ancestor, no new composition needs resolution.
+3. Follow `docs/ORCHESTRATION.md` and `.skills/worktree-merge-harvest.md`'s pinned
    landing procedure. Verify mappings before every Git mutation. Pin both parents,
-   source branch, reviewed tree and native chat; require clean main and task checkouts.
+   source branch, reviewed tree and native chat; require clean main/task checkouts.
    Prepare `git merge --no-commit --no-ff <reviewed-full-sha>` in the designated main
    worktree, then use `scripts/commit-reviewed-landing.mjs` with all `KILO_EXPECTED_*`
-   pins. Do not resolve a main conflict or alter another session's files.
-7. Record the final commit, passing evidence and remaining unproven migration slices
-   here or in the swarm record, resolve/release this task's claims, and keep the
-   checkpoint available. No worktree deletion or cleanup sweep is authorized by this task.
+   pins. Never resolve a main conflict, bypass hooks, stash, or alter another owner's files.
+4. Record the final landing and passing evidence in the swarm record, then resolve/release
+   this task's claims. Keep this checkpoint. No worktree deletion or cleanup sweep is
+   authorized by this task. Resume the unproven slices below from current main.
+
+For subsequent edits, stage only owned paths. This ignored plan needs `git add -f`.
+Commits require `Chat: 01a17f24-9224-7aa0-a412-3afafa09f797` and normal
+lint-staged/type/build gates. Run focused tests after fixes; a new composition needs
+its own applicable gates. Never run inventory concurrently with full unit worktree
+integration tests or with commits that change the roster's recorded HEADs.
 
 Coordination: swarm issue **`ph-12`**, owned by this task branch, holds the production
 StoreContext path, new tests, lifecycle test and migration docs. Refresh/check live
-claims before continuing. The frame task owns `materialization.ts` and its affine
+claims before continuing. Its earlier automatic "merged into main" release happened
+before the first task commit and was not landing evidence; the claim was reacquired.
+The frame task owns `materialization.ts` and its affine
 E2E file; this slice does not edit them or `e2e/OPEN_PROBLEMS.md`.
 
 Provider state: the long second-review attempt timed out three Kilo candidates and
@@ -271,5 +267,6 @@ legacy path and record an explicit blocked/unproven handoff with the next action
 
 ## Remaining status
 
-Broader migration: **unproven**. Slices 2A through 4 require the evidence above; Slice 1
-must have its final review and landing recorded before it is treated as released.
+Broader migration: **unproven**. Slices 2A through 4 require the evidence above. Slice 1
+has passing validation and two completed independent reviews; its final landing/release
+is recorded through Git ancestry and swarm issue `ph-12`.
