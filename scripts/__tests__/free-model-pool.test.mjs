@@ -272,19 +272,61 @@ describe('free model rotation', () => {
     expect(chat).not.toHaveBeenCalled();
   });
 
-  it('runs OpenCode with every tool denied and accepts only terminal text', async () => {
+  it('runs OpenCode with every tool denied and accepts clean-exit V2 text without a final event', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
     const command = join(directory, 'fake-opencode');
     await writeFile(
       command,
-      `#!/usr/bin/env node\nconst fs = require('node:fs');\nconst args = process.argv.slice(2);\nif (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);\nif (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);\nconsole.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));\nconsole.log(JSON.stringify({ type: 'done', rejected: [] }));\n`,
+      `#!/usr/bin/env node\nconst fs = require('node:fs');\nconst args = process.argv.slice(2);\nif (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);\nif (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);\nconsole.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));\nconsole.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));\n`,
       { encoding: 'utf8', mode: 0o700 }
     );
 
     try {
       await expect(
         runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'private prompt', maxTokens: 64 })
-      ).resolves.toMatchObject({ content: 'complete answer', finishReason: 'stop', model: 'beam-free' });
+      ).resolves.toMatchObject({ content: 'complete answer', finishReason: 'stop', model: 'beam-free', usage: null });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces OpenCode provider errors and status without exposing response bodies', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = join(directory, 'fake-opencode');
+    await writeFile(
+      command,
+      `#!/usr/bin/env node\nconsole.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));\nprocess.exit(1);\n`,
+      { encoding: 'utf8', mode: 0o700 }
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toThrow('OpenCode exited 1: provider.free-limit (HTTP 429)');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects non-free OpenCode IDs before starting the CLI', async () => {
+    await expect(
+      runOpenCodeCompletion({ command: '/missing-opencode', model: 'beam', prompt: 'prompt', maxTokens: 8 })
+    ).resolves.toMatchObject({ error: 'OpenCode model is not an eligible free catalog ID' });
+  });
+
+  it('rejects an explicit non-zero OpenCode cost even for a free catalog ID', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = join(directory, 'fake-opencode');
+    await writeFile(
+      command,
+      `#!/usr/bin/env node\nconsole.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));\nconsole.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\n`,
+      { encoding: 'utf8', mode: 0o700 }
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost' });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
