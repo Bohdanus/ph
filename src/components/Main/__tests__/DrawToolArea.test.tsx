@@ -79,6 +79,10 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
       pointerState.isMouseDown.current = false;
       return true;
     }),
+    releasePointer: vi.fn(() => {
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
+    }),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: pointerState.isMouseDown,
   }),
@@ -528,7 +532,7 @@ describe('DrawToolArea', () => {
 
     fireEvent.pointerUp(toolArea, { button: 0, clientX: 30, clientY: 50 });
 
-    expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 300, 200);
+    expect(vi.mocked(overlayCtx.clearRect)).toHaveBeenCalledWith(0, 0, 300, 200);
   });
 
   it('starts a fresh preview after a stroke was committed', () => {
@@ -565,7 +569,7 @@ describe('DrawToolArea', () => {
     const renderArea = () => {
       const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
       const view = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
-      return { view, toolArea: view.container.firstElementChild as HTMLDivElement };
+      return { view, overlayCtx, toolArea: view.container.firstElementChild as HTMLDivElement };
     };
 
     it('claims the document for a brush stroke and releases it on the release', () => {
@@ -616,15 +620,34 @@ describe('DrawToolArea', () => {
       expect(isDocumentGestureOpen()).toBe(true);
     });
 
-    it('releases the claim on a pointer cancel, which is the abort route', () => {
+    it('ignores a foreign pointer cancel while preserving the owner stroke', () => {
       const { toolArea } = renderArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 10, clientY: 20 });
-      expect(isDocumentGestureOpen()).toBe(true);
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 7, clientX: 40, clientY: 50 });
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 99 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'brush-stroke', pointerId: 7 });
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, clientX: 60, clientY: 40 });
+
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim and clears the preview on an owning pointer cancel', () => {
+      const { overlayCtx, toolArea } = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 10, clientY: 20 });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 7, clientX: 40, clientY: 50 });
+      vi.mocked(overlayCtx.clearRect).mockClear();
 
       fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 7 });
 
       expect(isDocumentGestureOpen()).toBe(false);
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 300, 200);
     });
 
     it('releases the claim on unmount, so a gesture that dies mid-stroke cannot leave the keyboard dead', () => {

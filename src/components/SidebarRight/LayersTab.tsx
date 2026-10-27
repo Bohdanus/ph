@@ -1,5 +1,5 @@
 // src/components/SidebarRight/LayersTab.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -148,6 +148,7 @@ type LayerOpacityControlProps = {
 
 function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacityControlProps) {
   const [draftPercent, setDraftPercent] = useState<number | null>(null);
+  const pointerOwnerRef = useRef<number | null>(null);
   const opacityPercent = draftPercent ?? Math.round(layer.opacity * 100);
 
   function finishGesture() {
@@ -158,6 +159,42 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
     if (layer.opacity !== nextOpacity) {
       updateLayer(layer.id, { opacity: nextOpacity }, SET_LAYER_OPACITY_ACTION);
     }
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== null && pointerOwnerRef.current !== event.pointerId) {
+      event.preventDefault();
+      return;
+    }
+    pointerOwnerRef.current = event.pointerId;
+    // Range controls do not have to receive implicit pointer capture in every
+    // browser. Explicit capture keeps the owner's terminal event on this input
+    // even if a drag blurs it or leaves its bounds.
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function finishPointerGesture(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== event.pointerId) return;
+    pointerOwnerRef.current = null;
+    finishGesture();
+  }
+
+  function cancelPointerGesture(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== event.pointerId) return;
+    pointerOwnerRef.current = null;
+    setDraftPercent(null);
+  }
+
+  function finishKeyboardGesture() {
+    if (pointerOwnerRef.current !== null) return;
+    finishGesture();
+  }
+
+  function finishBlur() {
+    // Pointer-owned drags can blur when capture or focus moves mid-gesture. Only
+    // their own up/cancel event may end the draft; blur ends keyboard edits only.
+    if (pointerOwnerRef.current !== null) return;
+    finishGesture();
   }
 
   return (
@@ -182,10 +219,12 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
                 onChange={(event) => {
                   if (!layer.locked && !layer.isBedrock) setDraftPercent(Number(event.currentTarget.value));
                 }}
-                onPointerUp={finishGesture}
-                onPointerCancel={() => setDraftPercent(null)}
-                onKeyUp={finishGesture}
-                onBlur={finishGesture}
+                onPointerDown={handlePointerDown}
+                onPointerUp={finishPointerGesture}
+                onPointerCancel={cancelPointerGesture}
+                onLostPointerCapture={cancelPointerGesture}
+                onKeyUp={finishKeyboardGesture}
+                onBlur={finishBlur}
                 className="min-w-0 flex-1"
               />
               <output aria-live="polite" className="text-gray-800 dark:text-white">

@@ -7,6 +7,7 @@ import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
+const cancelLayerPreviewMock = vi.hoisted(() => vi.fn());
 /**
  * `createLayerFromTool` is present in the mock on purpose even though the component must never
  * reach it. A `useLayers` mock that simply omitted it would make a regression that committed
@@ -63,6 +64,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: tempUpdateLayerMock,
     updateLayerByTool: updateLayerByToolMock,
+    cancelLayerPreview: cancelLayerPreviewMock,
     createLayerFromTool: createLayerFromToolMock,
   }),
 }));
@@ -254,6 +256,7 @@ describe('SmudgeToolArea', () => {
     resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
+    cancelLayerPreviewMock.mockClear();
     createLayerFromToolMock.mockClear();
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
@@ -571,17 +574,19 @@ describe('SmudgeToolArea', () => {
 
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
     fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
-    fireEvent.pointerCancel(host);
+    fireEvent.pointerCancel(host, { pointerId: 1 });
 
     // The abort committed nothing and threw away the partial preview rather than leaving it.
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
     expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
+    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
 
     fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
 
     // Still nothing: a gesture that was abandoned cannot be resurrected by the release that
     // would have ended it. A hook that cleared nothing here would commit the whole drag.
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
+    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
   });
 
   it('ignores a press with a non-primary mouse button', () => {
@@ -639,18 +644,16 @@ describe('SmudgeToolArea', () => {
     fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
     expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
 
-    // The layer is deleted while the button is held. `enabled` is read at gesture boundaries
-    // only, so the release below is refused wholesale rather than committing a stroke into a
-    // layer that no longer exists — half-committing it would be the worse of the two.
+    // The layer is deleted while the button is held. The owner release must abort the gesture,
+    // clear its transient preview, and release the pointer claim instead of committing stale work.
     storeState.layers = {};
     view.rerender(<SmudgeToolArea className="test-smudge-area" overlayCtxRef={{ current: null }} />);
     fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
 
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
     expect(createLayerFromToolMock).not.toHaveBeenCalled();
-    // The refusal happens ABOVE the validators, so the capture is still held — the same ordering
-    // the bedrock case pins from the other side.
-    expect(pointerState.activePointer).toBe(1);
+    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
+    expect(pointerState.activePointer).toBeNull();
   });
 
   it('never paints into the canvas or overlay context it was handed', () => {

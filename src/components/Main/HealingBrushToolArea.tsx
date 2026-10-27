@@ -1,4 +1,4 @@
-import type { PointerEvent, RefObject } from 'react';
+import { useRef, type PointerEvent, type RefObject } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -18,13 +18,14 @@ type HealingBrushToolAreaProps = {
 
 export const HealingBrushToolArea = ({ className }: HealingBrushToolAreaProps) => {
   const [{ containerRef, activeLayerId, layers, totalSize, documentFrame: currentFrame }] = useStore();
-  const { tempUpdateLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, updateLayerByTool, cancelLayerPreview } = useLayers();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const args = toolArgs as HealingBrushToolArgs;
   const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
   const origin = activeLayer ? processorPresentationBounds(activeLayer) : null;
   const frame = currentFrame ?? documentFrameFromSize(totalSize);
   const isEnabled = Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock && args.source);
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
   const { getLocalCoords } = usePointerPosition({ ref: containerRef, imageSize: totalSize });
 
   const buildLayerArgs = (points: Point[]): HealingBrushToolArgs | null => {
@@ -37,8 +38,11 @@ export const HealingBrushToolArea = ({ className }: HealingBrushToolAreaProps) =
   };
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
-    { imageSize: totalSize, containerRef, enabled: isEnabled },
+    { imageSize: totalSize, containerRef, enabled: isEnabled, gestureKey: activeLayerId },
     {
+      onStart: () => {
+        previewLayerIdRef.current = activeLayerId;
+      },
       onMove: (points) => {
         if (!activeLayerId) return;
         const layerArgs = buildLayerArgs(points);
@@ -48,6 +52,12 @@ export const HealingBrushToolArea = ({ className }: HealingBrushToolAreaProps) =
         if (!activeLayerId) return;
         const layerArgs = buildLayerArgs(points);
         if (layerArgs) await updateLayerByTool({ id: activeLayerId, toolArgs: layerArgs });
+        previewLayerIdRef.current = null;
+      },
+      onCancel: () => {
+        const layerId = previewLayerIdRef.current;
+        previewLayerIdRef.current = null;
+        if (layerId) cancelLayerPreview(layerId);
       },
     }
   );

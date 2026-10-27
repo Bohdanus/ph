@@ -606,8 +606,11 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    * the drag never reached the store, so the overlay must show the un-moved
    * selection, which is the snap-back an abandoned drag now gets.
    */
-  function abortSelectionDrag(): SelectionDragState | null {
-    const drag = takeSelectionDrag();
+  function abortSelectionDrag(event?: PointerEvent<HTMLDivElement>): SelectionDragState | null {
+    const currentDrag = selectionDragRef.current;
+    if (event && (!currentDrag || currentDrag.pointerId !== getPointerId(event))) return null;
+
+    const drag = takeSelectionDrag(event);
     if (!drag) return null;
 
     redrawOverlay();
@@ -800,12 +803,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   };
 
   const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
-    // UNCHANGED by the capture, deliberately. A cancel is genuinely terminal
-    // even for a captured pointer — the browser has decided this gesture will
-    // never complete, which is the one case where a leave and a release really
-    // are the same thing — and `takeSelectionDrag` inside the abort gives up the
-    // document claim on the way out.
-    if (abortSelectionDrag()) return;
+    // Cancellation ends only the gesture whose pointerId matches this event. A second pointer may
+    // receive its own cancel while the captured selection drag is still in progress.
+    if (abortSelectionDrag(event)) return;
 
     if (isFreehand) {
       cancelFreehandSelection(event);

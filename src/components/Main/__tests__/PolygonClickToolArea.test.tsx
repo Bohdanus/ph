@@ -962,6 +962,25 @@ describe('PolygonClickToolArea', () => {
       expect(isDocumentGestureOpen()).toBe(false);
     });
 
+    it('ignores a foreign pointer cancel while preserving the captured selection drag', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 3, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { pointerId: 3, clientX: 40, clientY: 40 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerCancel(toolArea, { pointerId: 99, clientX: 40, clientY: 40 });
+
+      expect(isDocumentGestureOpen()).toBe(true);
+      expect(selectionEdits()).toHaveLength(0);
+
+      fireEvent.pointerUp(toolArea, { pointerId: 3, clientX: 40, clientY: 40 });
+
+      expect(selectionEdits()).toHaveLength(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
     it('releases the claim when Escape abandons a drag', () => {
       storeState.selections = [committedTriangle()];
       const toolArea = renderArea({ current: createMockContext() }).ctx;
