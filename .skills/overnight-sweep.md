@@ -119,10 +119,22 @@ Every overnight-hardening session follows the same shape:
    any npm command or fan-out.
 2. Write `.kilo/plans/overnight-hardening-YYYYMMDD-plan.md` with the research agenda and the
    HANDOFF.md entry clusters to verify.
-3. Initialize `.kilo/plans/overnight-hardening-YYYYMMDD-checkpoint.md` with each task/session ID,
-   its last observed task state, and the last wake timestamp. On resume, query the task host for
-   terminal/completed results; do not infer completion solely from database `time_updated`, which
-   can change for bookkeeping reasons.
+3. Initialize `.kilo/plans/overnight-hardening-YYYYMMDD-checkpoint.md` with each child task's
+   exact ID, unique scope, initial prompt, model/provider, launch time, last host result, and next
+   action, plus the last wake timestamp. On resume, consume delivered task results/notifications
+   by exact ID and persist each result once; do not infer completion solely from database
+   `time_updated`, which can change for bookkeeping reasons.
+
+   **Respect the current host API.** Kilo's internal `task` tool supports starting a child and
+   resuming a known task ID; it has no `list` or `status` operation. A new `task` call is work,
+   not a poll. If a recorded child has no delivered result, keep it `pending/unknown` and do not
+   relaunch its scope. Resume only that exact ID when the task host explicitly reports it
+   resumable/failed, or when the operator directs a resume. For visible Agent Manager sessions,
+   use `agent_manager list` and target the returned session ID; do not pass an internal task ID
+   to Agent Manager. If the host exposes no state query, record that uncertainty and leave the
+   child pending for the existing recurring wake; do not create an extra wakeup or launch a
+   duplicate task to guess from timestamps.
+
 4. Schedule the recurring hourly cron with `cron: "0 * * * *"` and the resumer prompt below.
    Verify the cron task was created before starting the research fan-out.
 5. Fan out the first wave of free-model research using read-only Kilo `explore` children or the
