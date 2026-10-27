@@ -95,6 +95,12 @@ export async function preflightBmpFile(
       throw new Error('Invalid BMP bitfield mask');
     }
     if (masks[3] === 0) throw new Error('Invalid BMP alpha bitfield mask');
+    if (
+      masks.some((mask) => !isContiguousBitMask(mask)) ||
+      masks.some((mask, index) => masks.slice(index + 1).some((otherMask) => (mask & otherMask) !== 0))
+    ) {
+      throw new Error('Invalid BMP bitfield mask');
+    }
   }
 
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
@@ -131,6 +137,13 @@ function ensureRange(view: DataView, offset: number, length: number) {
   if (offset < 0 || offset + length > view.byteLength) {
     throw new Error('Invalid BMP file');
   }
+}
+
+function isContiguousBitMask(mask: number): boolean {
+  if (mask === 0) return true;
+  let normalizedMask = mask;
+  while ((normalizedMask & 1) === 0) normalizedMask >>>= 1;
+  return (normalizedMask & (normalizedMask + 1)) === 0;
 }
 
 function channelFromMask(value: number, mask: number): number {
