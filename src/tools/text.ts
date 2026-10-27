@@ -403,29 +403,60 @@ type CanvasCapsMode = 'native' | 'manual-small-caps' | 'manual-all-caps';
 
 const SMALL_CAPS_SCALE = 0.703125;
 const canvasCapsMode = new WeakMap<Ctx2D, CanvasCapsMode>();
+const nativeSmallCapsCache = new WeakMap<Ctx2D, Map<string, boolean>>();
 
-function nativeCapsVariantChangesMetrics(ctx: Ctx2D, style: ResolvedTextStyle): boolean {
-  if (!hasFontVariantCaps(ctx)) return false;
-  ctx.save();
-  try {
-    ctx.font = fontShorthand(style);
-    if (hasLetterSpacing(ctx)) ctx.letterSpacing = '0px';
-    ctx.fontVariantCaps = 'normal';
-    const normal = ctx.measureText('mmmmmmmm');
-    ctx.fontVariantCaps = 'small-caps';
-    const capped = ctx.measureText('mmmmmmmm');
-    const changed = (first: number, second: number) =>
-      Number.isFinite(first) &&
-      Number.isFinite(second) &&
-      Math.abs(first - second) > Math.max(0.5, Math.abs(first) * 0.05);
-    return (
-      changed(normal.width, capped.width) ||
-      changed(normal.actualBoundingBoxAscent, capped.actualBoundingBoxAscent) ||
-      changed(normal.actualBoundingBoxDescent, capped.actualBoundingBoxDescent)
-    );
-  } finally {
-    ctx.restore();
+function nativeSmallCapsPixelsDiffer(ctx: Ctx2D, style: ResolvedTextStyle): boolean | undefined {
+  const source = (ctx as Ctx2D & { canvas?: HTMLCanvasElement | OffscreenCanvas }).canvas;
+  if (!source) return undefined;
+
+  let scratch: HTMLCanvasElement | OffscreenCanvas;
+  if (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas) {
+    scratch = new OffscreenCanvas(160, 160);
+  } else if ('ownerDocument' in source) {
+    scratch = source.ownerDocument.createElement('canvas');
+    scratch.width = 160;
+    scratch.height = 160;
+  } else {
+    return undefined;
   }
+
+  const probe = scratch.getContext('2d', { willReadFrequently: true }) as Ctx2D | null;
+  if (!probe) return undefined;
+  const usesFontVariantCaps = hasFontVariantCaps(probe);
+
+  try {
+    const pixelsFor = (variant: 'normal' | 'small-caps') => {
+      probe.clearRect(0, 0, scratch.width, scratch.height);
+      probe.font = fontShorthand(style, !usesFontVariantCaps && variant === 'small-caps' ? 'small-caps' : 'normal');
+      probe.textBaseline = 'alphabetic';
+      if (usesFontVariantCaps) probe.fontVariantCaps = variant;
+      probe.fillText('x', 0, 120);
+      return probe.getImageData(0, 0, scratch.width, scratch.height).data;
+    };
+    const normal = pixelsFor('normal');
+    const smallCaps = pixelsFor('small-caps');
+    return normal.some((channel, index) => channel !== smallCaps[index]);
+  } catch {
+    return undefined;
+  }
+}
+
+function supportsNativeSmallCaps(ctx: Ctx2D, style: ResolvedTextStyle): boolean {
+  const key = fontShorthand(style);
+  let cache = nativeSmallCapsCache.get(ctx);
+  if (!cache) {
+    cache = new Map();
+    nativeSmallCapsCache.set(ctx, cache);
+  }
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+
+  // A metrics change alone cannot prove that fillText applies the caps variant. If raster readback
+  // is unavailable or inconclusive, use faux caps so the committed pixels cannot silently disagree
+  // with the DOM preview.
+  const supported = nativeSmallCapsPixelsDiffer(ctx, style) === true;
+  cache.set(key, supported);
+  return supported;
 }
 
 function restoreCanvasCapsMode(ctx: Ctx2D, previous: CanvasCapsMode | undefined): void {
@@ -517,8 +548,12 @@ function applyTextStyle(ctx: Ctx2D, style: ResolvedTextStyle): CanvasCapsMode {
     if (hasFontVariantCaps(ctx)) ctx.fontVariantCaps = 'normal';
     capsMode = 'manual-all-caps';
   } else if (style.smallCaps) {
-    const nativeSmallCaps = nativeCapsVariantChangesMetrics(ctx, style);
-    if (hasFontVariantCaps(ctx)) ctx.fontVariantCaps = nativeSmallCaps ? 'small-caps' : 'normal';
+    const nativeSmallCaps = supportsNativeSmallCaps(ctx, style);
+    if (hasFontVariantCaps(ctx)) {
+      ctx.fontVariantCaps = nativeSmallCaps ? 'small-caps' : 'normal';
+    } else if (nativeSmallCaps) {
+      ctx.font = fontShorthand(style, 'small-caps');
+    }
     if (!nativeSmallCaps) capsMode = 'manual-small-caps';
   } else if (hasFontVariantCaps(ctx)) {
     ctx.fontVariantCaps = 'normal';

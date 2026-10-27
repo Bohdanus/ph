@@ -156,6 +156,35 @@ const makeTextCtx = ({
   return ctx;
 };
 
+function attachCapsRasterProbe(ctx: CanvasRenderingContext2D, pixelsDiffer: boolean): void {
+  let variant: 'normal' | 'small-caps' = 'normal';
+  const probe = {
+    font: '20px Arial',
+    textBaseline: 'alphabetic',
+    fontVariantCaps: 'normal' as 'normal' | 'small-caps',
+    clearRect: vi.fn(),
+    fillText: vi.fn(),
+    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([pixelsDiffer && variant === 'small-caps' ? 1 : 0]) })),
+  } as unknown as CanvasRenderingContext2D;
+  Object.defineProperty(probe, 'fontVariantCaps', {
+    configurable: true,
+    get: () => variant,
+    set: (next: 'normal' | 'small-caps') => {
+      variant = next;
+    },
+  });
+
+  const scratch = {
+    width: 160,
+    height: 160,
+    getContext: vi.fn(() => probe),
+  };
+  Object.defineProperty(ctx, 'canvas', {
+    configurable: true,
+    value: { width: 100, height: 100, ownerDocument: { createElement: vi.fn(() => scratch) } },
+  });
+}
+
 /**
  * The context state as it stood during the LAST measurement the renderer made.
  *
@@ -1314,12 +1343,10 @@ describe('renderText', () => {
       expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
     });
 
-    it('uses native small caps when a metric-only context shows the variant works', () => {
+    it('uses native small caps when a raster probe shows the variant changes pixels', () => {
       const ctx = makeTextCtx({ modern: true });
+      attachCapsRasterProbe(ctx, true);
       let capsDuringDraw: string | undefined;
-      vi.mocked(ctx.measureText).mockImplementation((value: string) =>
-        metrics(value.length * (ctx.fontVariantCaps === 'small-caps' ? CH * 0.75 : CH))
-      );
       vi.mocked(ctx.fillText).mockImplementation(() => {
         capsDuringDraw = ctx.fontVariantCaps;
       });
@@ -1328,6 +1355,22 @@ describe('renderText', () => {
 
       expect(capsDuringDraw).toBe('small-caps');
       expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
+    });
+
+    it('falls back when metrics change but the raster probe finds no pixel difference', () => {
+      const ctx = makeTextCtx({ modern: true });
+      attachCapsRasterProbe(ctx, false);
+      const capsDuringDraw: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        capsDuringDraw.push(ctx.fontVariantCaps);
+      });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect(capsDuringDraw).toEqual(['normal', 'normal']);
+      expect(ctx.fillText).toHaveBeenNthCalledWith(1, 'W', TEXT_PADDING, 21);
+      expect(ctx.fillText).toHaveBeenNthCalledWith(2, 'AVE', 0, 0);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
     });
 
     it('synthesizes grapheme-safe small caps when Canvas lacks fontVariantCaps', () => {

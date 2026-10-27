@@ -892,6 +892,30 @@ function expectInkInsideRect(measurement: InkMeasurement, box: BoundingBox, rect
     .toBeLessThanOrEqual(allowed.bottom);
 }
 
+async function expectSmallCapsPreviewAndCommitMatch(page: Page, testInfo: TestInfo, label: string): Promise<void> {
+  const box = await canvasBox(page);
+  const rect = CAPS_RECTS.smallCaps;
+  await setTextToolColor(page, TEXT_COLOR);
+  await dragDraftRect(page, box, rect);
+  await styleToggle(page, 'Small Caps').click();
+  await replaceDraftText(page, 'Wave');
+  await expect(draftOverlay(page)).toHaveCSS('font-variant-caps', 'small-caps');
+  await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+
+  const preview = await measureInk(page, testInfo, box, rect, `${label} preview`);
+  await commitButton(page).click();
+  const committed = await measureInk(page, testInfo, box, rect, `${label} commit`);
+  const agreement = inkMaskAgreement(preview.mask, committed.mask);
+  expect(
+    agreement.score,
+    `preview and commit exact ink masks diverged at global offset (${agreement.offsetX}, ${agreement.offsetY})`
+  ).toBeGreaterThanOrEqual(0.95);
+  expect(Math.abs(preview.width - committed.width), 'preview and commit advances differ').toBeLessThanOrEqual(2);
+  expect(Math.abs(preview.height - committed.height), 'preview and commit glyph heights differ').toBeLessThanOrEqual(2);
+  expectInkInsideRect(preview, box, rect, 'the small-caps preview');
+  expectInkInsideRect(committed, box, rect, 'the small-caps commit');
+}
+
 /**
  * The four caps-test rectangles in a two-column grid.
  *
@@ -968,15 +992,16 @@ function styleToggle(page: Page, name: string) {
   return page.getByRole('button', { name, exact: true });
 }
 
-/**
- * Simulate Canvas engines without the separate `fontVariantCaps` IDL property. Tests may also ask
- * the proxy to reject `small-caps` in the Canvas font shorthand while leaving DOM CSS untouched.
- */
-async function hideCanvasFontVariantCaps(
+/** Simulate Canvas caps capability gaps while leaving DOM CSS untouched. */
+async function emulateCanvasCaps(
   page: Page,
-  options: { ignoreSmallCapsShorthand?: boolean } = {}
+  options: {
+    hideFontVariantCaps?: boolean;
+    ignoreSmallCapsShorthand?: boolean;
+    metricsChangeWithoutRasterChange?: boolean;
+  } = {}
 ): Promise<void> {
-  await page.addInitScript(({ ignoreSmallCapsShorthand }) => {
+  await page.addInitScript(({ hideFontVariantCaps, ignoreSmallCapsShorthand, metricsChangeWithoutRasterChange }) => {
     const patch = (prototype: object) => {
       const descriptor = Object.getOwnPropertyDescriptor(prototype, 'getContext');
       if (!descriptor || typeof descriptor.value !== 'function') return;
@@ -993,16 +1018,40 @@ async function hideCanvasFontVariantCaps(
 
           const proxy = new Proxy(context, {
             has(target, property) {
-              if (property === 'fontVariantCaps') return false;
+              if (property === 'fontVariantCaps' && hideFontVariantCaps) return false;
               return Reflect.has(target, property);
             },
             get(target, property) {
-              if (property === 'fontVariantCaps') return undefined;
+              if (property === 'fontVariantCaps' && hideFontVariantCaps) return undefined;
               const value = Reflect.get(target, property, target);
+              if (metricsChangeWithoutRasterChange && property === 'measureText' && typeof value === 'function') {
+                return (...measureArguments: unknown[]) => {
+                  const measured = Reflect.apply(value, target, measureArguments) as TextMetrics;
+                  if ((target as { fontVariantCaps?: string }).fontVariantCaps !== 'small-caps') return measured;
+                  return new Proxy(measured, {
+                    get(metrics, metric) {
+                      const result = Reflect.get(metrics, metric, metrics);
+                      return metric === 'width' && typeof result === 'number' ? result * 0.7 : result;
+                    },
+                  });
+                };
+              }
+              if (metricsChangeWithoutRasterChange && property === 'fillText' && typeof value === 'function') {
+                return (...drawArguments: unknown[]) => {
+                  const capsTarget = target as { fontVariantCaps?: string };
+                  const caps = capsTarget.fontVariantCaps;
+                  if (caps === 'small-caps') capsTarget.fontVariantCaps = 'normal';
+                  try {
+                    return Reflect.apply(value, target, drawArguments);
+                  } finally {
+                    if (caps === 'small-caps') capsTarget.fontVariantCaps = caps;
+                  }
+                };
+              }
               return typeof value === 'function' ? value.bind(target) : value;
             },
             set(target, property, value) {
-              if (property === 'fontVariantCaps') return true;
+              if (property === 'fontVariantCaps' && hideFontVariantCaps) return true;
               if (property === 'font' && ignoreSmallCapsShorthand && typeof value === 'string') {
                 value = value.replace(/\bsmall-caps\s+/g, '');
               }
@@ -2150,7 +2199,7 @@ test.describe('Text tool', () => {
   test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps and accepts shorthand', async ({
     page,
   }, testInfo) => {
-    await hideCanvasFontVariantCaps(page);
+    await emulateCanvasCaps(page, { hideFontVariantCaps: true });
     expect(
       await page.evaluate(() => {
         const context = document.createElement('canvas').getContext('2d');
@@ -2192,7 +2241,7 @@ test.describe('Text tool', () => {
   test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps and rejects shorthand', async ({
     page,
   }, testInfo) => {
-    await hideCanvasFontVariantCaps(page, { ignoreSmallCapsShorthand: true });
+    await emulateCanvasCaps(page, { hideFontVariantCaps: true, ignoreSmallCapsShorthand: true });
     expect(await canvasSmallCapsShorthandChangesPixels(page)).toBe(false);
     expect(
       await page.evaluate(() => {
@@ -2223,6 +2272,20 @@ test.describe('Text tool', () => {
     expect(Math.abs(preview.height - committed.height), 'preview and commit glyph heights differ').toBeLessThanOrEqual(
       2
     );
+  });
+
+  test('Small Caps falls back when Canvas changes metrics but fillText ignores the variant', async ({
+    page,
+  }, testInfo) => {
+    await emulateCanvasCaps(page, { metricsChangeWithoutRasterChange: true });
+    expect(
+      await page.evaluate(() => {
+        const context = document.createElement('canvas').getContext('2d');
+        return context !== null && 'fontVariantCaps' in context;
+      })
+    ).toBe(true);
+
+    await expectSmallCapsPreviewAndCommitMatch(page, testInfo, 'metric-only Canvas caps');
   });
 
   /**
