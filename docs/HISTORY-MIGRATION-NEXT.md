@@ -150,11 +150,3 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
   when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
 - Exact fractional bounds across the wider frame and source matrix remain unproven. The current
   retained-affine fixture pins frame-aligned bounds for two raster layers only.
-
-## Landing Status
-
-The retained-affine frame raster fix and its regression coverage are reviewed and validated on
-`task/stale-backlog-systemic-20261027`, but are not yet on `main`. `npm run repo:state` reports
-`e2e-option-disabled-cleanup-20261027` in an in-progress merge targeting the current `main` tip.
-Leave that worktree untouched. After its owner resolves the operation, sync `main` into this branch,
-rerun the gates, and follow the pinned landing checks in `docs/ORCHESTRATION.md`.
