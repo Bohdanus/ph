@@ -185,15 +185,6 @@ What is left is a rule for new code: a spec that mixes `boundingBox()` with a CD
 capture must not assume the two agree, and must not introduce a second conversion
 somewhere that already has one.
 
-## P3 — zero-sized image yields `NaN` edges
-
-`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts`) and
-`imagePointToCss` / `cssPointToImage` (`e2e/helpers/screenshot-scale.ts`)
-divide by the image or box dimension, so a zero-sized input produces `NaN` or
-`Infinity` instead of throwing. Deliberate — the modules stay branch-free and
-total, and it is pinned — but a `NaN` coordinate reaching `page.mouse.click` is
-opaque. Callers must reject empty images first.
-
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
 `dominantRed()` and `getColorAtPoint()` in `e2e/helpers/canvas-helpers.ts` **[pinned]**

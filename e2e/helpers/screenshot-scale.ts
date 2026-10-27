@@ -132,6 +132,12 @@ export function viewportRectToPageRect(rect: CssBox, scroll: ScrollOffset): CssB
   };
 }
 
+/**
+ * Maps an image point to CSS page space. `image.width` and `image.height` must be positive;
+ * this is deliberately raw arithmetic, so invalid dimensions preserve their NaN/Infinity
+ * result. Callers using a potentially empty capture must validate it before mapping. The
+ * `screenshotBoundsToCss` wrapper is the guarded entry point for screenshot bounds.
+ */
 export function imagePointToCss(image: ImageSize, box: CssBox, point: Point): Point {
   return {
     x: box.x + (point.x * box.width) / image.width,
