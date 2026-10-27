@@ -246,51 +246,6 @@ document. Otherwise, keep dark-theme captures out of color-only helper calls. Re
 coverage for a future fix must retain true `#000` document ink while excluding dark cells,
 dark gaps, and antialiased checkerboard edges.
 
-## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
-
-`@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
-
-Every options bar in this repository wraps its own control in a `<label>`
-(the `<label htmlFor="eraser-mode">` in
-`src/components/ToolbarsRight/Eraser/Eraser.tsx` and every sibling bar), so the
-markup that makes a control's accessible name is the same markup that defeats the
-assertion on it. Playwright's `disabled` state does not test the element the locator
-resolved: `retarget` first walks a non-form-control up to
-`button, [role=button], [role=checkbox], [role=radio]`, and then — for the
-`follow-label` behaviour it uses for `disabled` — up to `element.closest('label')` and
-returns `enclosingLabel.control`. An `<option>` is neither a form control nor a member
-of that first selector list, and its ancestor _is_ the label, so the check is made
-against the `<select>`, which carries no `disabled` attribute. The result is
-`Received: enabled` for an option that demonstrably has `disabled=""` and
-`option.disabled === true`.
-
-This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
-cannot render, would still be reported as correct. It is also invisible in jsdom —
-`it('offers the three Photoshop modes, all of them selectable')` in
-`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx` asserts
-`expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
-because that matcher reads the DOM property directly and has no retarget step. A
-jsdom pass is therefore not evidence that the browser assertion works.
-
-Workaround used by `test('the eraser mode select offers all three Photoshop modes, and the
-select is live')` in `e2e/erase-fill-eyedropper.spec.ts`: assert the attribute and
-the enabled set, both read straight off the DOM.
-
-```ts
-await expect(brushOption).toHaveAttribute('disabled', '');
-const selectable = await mode
-  .locator('option')
-  .evaluateAll((nodes) =>
-    nodes.filter((n) => !(n as HTMLOptionElement).disabled).map((n) => (n as HTMLOptionElement).value)
-  );
-expect(selectable).toEqual(['pencil', 'block']);
-```
-
-`toHaveAttribute` is unaffected (it reads the resolved element), and the enabled set is
-the same fact stated as what a user can actually choose. No fix is proposed here: the
-retarget is upstream behaviour, and the only way to remove it from the assertions is
-to stop wrapping the control in its label, which is the repo's markup convention.
-
 ## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
 
 `e2e/helpers/cdp-helpers.ts`
