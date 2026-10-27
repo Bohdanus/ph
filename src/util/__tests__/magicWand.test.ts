@@ -7,7 +7,11 @@ import {
 } from '../magicWand.ts';
 import { getToleranceDistance } from '../flood-fill.ts';
 import { createSelectionAlphaMask } from '../selection.ts';
-import { decodeRasterSelectionMask, MAX_VECTOR_SELECTION_BOUNDARY_EDGES } from '../selection-mask.ts';
+import {
+  decodeRasterSelectionMask,
+  MAX_RASTER_SELECTION_PIXELS,
+  MAX_VECTOR_SELECTION_BOUNDARY_EDGES,
+} from '../selection-mask.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
   const imageData = {
@@ -490,6 +494,18 @@ describe('degenerate image data', () => {
     const truncated = { colorSpace: 'srgb', data: new Uint8ClampedArray(0), height: 2, width: 2 } as ImageData;
 
     expect(createMagicWandSelectionFromImageData(truncated, { x: 0, y: 0 })).toBeNull();
+  });
+
+  it('rejects over-budget dimensions before reading pixel data or allocating a mask', () => {
+    const oversized = {
+      width: MAX_RASTER_SELECTION_PIXELS + 1,
+      height: 1,
+      get data() {
+        throw new Error('over-budget pixel data must not be read');
+      },
+    } as unknown as ImageData;
+
+    expect(createMagicWandSelectionFromImageData(oversized, { x: 0, y: 0 })).toBeNull();
   });
 
   it.each([
