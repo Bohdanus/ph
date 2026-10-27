@@ -77,6 +77,17 @@ export interface ScreenshotBounds {
  * measured a mark and a caller that measured the same mark twice as wide.
  */
 export function screenshotBoundsToCss(bounds: ScreenshotBounds, box: BoundingBox): CssBounds {
+  if (
+    !Number.isFinite(bounds.imageWidth) ||
+    bounds.imageWidth <= 0 ||
+    !Number.isFinite(bounds.imageHeight) ||
+    bounds.imageHeight <= 0
+  ) {
+    throw new RangeError(
+      `Screenshot bounds require positive finite image dimensions; received ${bounds.imageWidth}x${bounds.imageHeight}`
+    );
+  }
+
   return imageBoundsToCss(
     { width: bounds.imageWidth, height: bounds.imageHeight },
     { x: box.x, y: box.y, width: box.width, height: box.height },
