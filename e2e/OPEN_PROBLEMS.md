@@ -511,7 +511,8 @@ is answered by "is SOME collapsed tool selected", not by "is the eraser selected
 **Measured at 1280x720, where it bites.** The tiles on the rail are `reposition`,
 `rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper`, `crop` and `color` — the
 first seven of the sixteen groups, the rail filling its slot with whole rows. The tool the app
-opens with (`brush` in `src/tools/settings.ts`) is not among them, so it is in the collapsed set:
+opens with (`draw`, from `DEFAULT_TOOL` in `src/util/constants.ts`) is not among them, so it is in
+the collapsed set:
 the three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
 collapsed tool therefore passes before anything is selected.
 
@@ -520,16 +521,15 @@ point.** A tile's `aria-pressed` and its lit `className` are the same `group.som
 same tile, so the removed attribute carried identical information to the class that replaced it. The
 limitation predates the conversion and the conversion neither added nor hid it.
 
-**Why the suite is nonetheless sound today, and where that stops being true.** Every caller that
-depends on a specific tool pairs the tile assertion with a per-tool one:
-the `${KEY} selects ${tool}` cases in `describe('tool shortcuts')` (`keyboard-shortcuts.spec.ts`)
-assert the tool's own options-bar control (`bar`), precisely
-because the tile "answers 'is SOME tool of the collapsed set selected'" — its comment says so. The
-`erase-fill-eyedropper` tests instead drive pixels: the eraser must clear the slab, the bucket must
-fill a contiguous region, the eyedropper must set a specific colour, and none of those can happen
-with the wrong tool. `color.spec.ts` and `paint-tool-pixels.spec.ts` draw and measure. So the
-TOOL-SPECIFIC claim is made by a second assertion everywhere it matters, and `selectBrushFamilyTool`
-is misnamed — it proves the group is lit, and the test's own pixels prove the rest.
+**How a test proves the specific tool.** The overflow tile remains group-level, so it cannot be
+the only state oracle for a tool-specific claim. `layers-panel.spec.ts`, `view-tools.spec.ts`, and
+the layer-name input guard in `keyboard-shortcuts.spec.ts` read the accessible `ToolbarHorizontal`
+region named from the active tool; this distinguishes Draw from Text and Hand from Zoom even while
+the rail tile is shared. The `${KEY} selects ${tool}` cases in `describe('tool shortcuts')`
+(`keyboard-shortcuts.spec.ts`) assert the tool's own options-bar control (`bar`).
+`erase-fill-eyedropper`, `color.spec.ts`, and `paint-tool-pixels.spec.ts` drive pixels whose result
+requires the named tool. Keep the helper's group-level contract explicit and pair every future
+collapsed-tool assertion with a per-tool state or behavior oracle.
 
 **What would actually close it.** A per-tool channel on the overflow tile — `data-active-tool={toolName}`
 on the three-dots `<button>` that `renderToolGroup()` in `SidebarLeft.tsx` already gives
