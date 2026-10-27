@@ -199,5 +199,4 @@ jobs:
           git -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m 'test: refresh Linux export baselines' -m "Chat: $CHAT_ID"
-          git push --force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA" \
-            origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"
