@@ -426,7 +426,7 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
 
-## P1 — the document-space oracle reached four production files, so most of the suite still moves when the frame does
+## P2 — document-space gesture audits must be specific to the oracle
 
 `e2e/helpers/canvas-helpers.ts` — `LINE_START_X`, `LINE_START_Y`, `LINE_END_X`, `LINE_END_Y`
 
@@ -442,40 +442,41 @@ longer depends on where the app put the letterbox. That is the right idea and it
 and twelve specs import them: `adjustments`, `color`, `document-dialogs`,
 `erase-fill-eyedropper`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
 `layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, many
-gestures still use box-relative offsets that change the document point when the window changes.
-Counted, with the counting command, because a number here without one is worse than none:
+gestures use box-relative offsets; a raw occurrence is not by itself evidence that the test
+asserts the wrong logical document point. Counted, with the counting command, because a number
+here without one is worse than none:
 
 `e2e/example.spec.ts` is the first simple gesture migrated: it maps seeded document points with
 `documentToCanvasOffset` and uses the resulting page clip for both redraw polling and capture.
-`drawLine` remains box-relative; the broader migration remains open.
+`drawLine` remains box-relative; classify its call sites by oracle contract before considering any
+conversion.
 
 ```
-grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 36  canvas-relative LITERALS
-grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 209  any box-relative offset
-grep -roE "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e      #  0  the fraction form, which is correct
+rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 98 source text matches
+rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 305 source text matches
+rg -o -e "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 0 source text matches
 ```
 
-So: 36 gestures add a bare number to the box origin, and 209 add something box-relative. The 209
-is the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
-through a named constant rather than a literal — those are the ones the first pattern misses
-entirely, and a count that only looked for literals sees under a fifth of the sites. The zero on
-the third line is the part that matters, because
-`e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25` and that is the one form
-that survives a layout change by construction.
+These source-text matches include comments, clip/sample math, measured widget offsets and relative
+gestures; they are not counts of executable mouse actions or confirmed defects. The zero fraction
+match shows that exact `box.width * fraction` pattern is absent, not that every other expression is
+wrong. Use the inventory only to find a test whose oracle asserts a stable document point; classify
+each such callsite against the assertion before changing it.
 
-**Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
-are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
-window and the point the mouse visits is a different point in the document. The document-space
-mapping has to be inverted before such a literal is meaningful, and it is not. So the suite still
-asserts against whatever geometry the current layout happens to produce, and a layout change
-silently changes what is being tested rather than failing.
+**What remains unproven.** A `box.x + 150` gesture can land on a different document pixel after a
+fit/layout change. That is a false pass only when the test's oracle expects a stable document pixel
+or region; an assertion intentionally relative to the gesture is valid. The Color Sampler and
+fixed-size marquee audits established and fixed two such false passes. The broad text inventory does
+not establish additional cases. Any next correction needs an exact test title, its logical target,
+and a mutation that demonstrates the current oracle accepts the wrong pixel.
 
 Three panel assertions in `e2e/responsive-shell.spec.ts` used to pin the right panel at 250px.
 The tests `reclaims the layers column by default and offers a toggle for it` and
 `has no tablet toggle and keeps the layers panel open` already prove visibility and state, so their
 numeric width reads have been removed. `gives the canvas the space the collapsed panel freed` now
 compares the canvas-width change to the panel's measured width. These changes remove the panel's
-three fixed-width pins; the broader document-space gesture migration remains open.
+three fixed-width pins. The remaining coordinate expressions need oracle-specific review, not a
+blanket document-space migration.
 
 **Two more were in this list and are gone.** The entry used to name five. The other two were the
 rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
@@ -487,14 +488,14 @@ the pattern the rest of this entry asks for: the tablet band's rail is now asser
 `e2e/responsive-shell.spec.ts`, and the two-column rail
 by a width RELATION the test measures against itself — one column against two, both measured in the
 same test, `keeps the layout toggle and can reach the two-column rail` in the same spec — so
-neither pins a pixel. The panel-width pins have likewise been removed or made relational; the
-unconverted gesture inventory remains the open work.
+neither pins a pixel. The panel-width pins have likewise been removed or made relational; unclassified
+coordinate expressions remain only as search candidates until an oracle-specific issue is proven.
 
 **The pattern to copy is already in the tree.** `measureAtViewport()` in
 `e2e/viewport-drawing.spec.ts` gestures at
-`box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
-box instead of the window. That is the shape every one of them should take, via
-`documentToCanvasOffset`.
+`box.x + box.width * 0.25` and `box.y + box.height * 0.35` — fractions of the box that preserve a
+relative action. Use that form when the test is intentionally relative; use `documentToCanvasOffset`
+when the oracle names a logical document coordinate.
 
 **Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
 exactly the failure this campaign already made once: the seven export baselines were re-derived from
