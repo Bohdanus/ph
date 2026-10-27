@@ -2542,16 +2542,12 @@ export class Board {
   }
 
   /**
-   * The maintenance a board should never need a human to run: keep my own
-   * claims and file locks alive because I exist, then release the ones whose
-   * holder does not.
+   * Renew this caller's own claims and locks, then apply the global expiry sweep.
    *
-   * Order matters and is the whole reason this is safe. Renewing first means a
-   * working agent's lease is never the thing that gets swept, so the sweep can
-   * only ever reclaim a holding whose worktree is gone — which is precisely
-   * when reclaiming it is correct. Sweeping first, as a bare `doctor` on every
-   * open would, hands a 45-minute timer the power to strip a lock off an agent
-   * in the middle of an edit.
+   * Renewal protects only this caller's rows, and only while its worktree
+   * exists. The following sweep releases any expired lease even if its owner's
+   * worktree still exists. This is not proof that a session ended: a long task
+   * that outlives its lease can lose the claim to a peer's next board command.
    */
   autoSweep({ at = this.now(), dryRun = false } = {}) {
     if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at, dryRun, record: false }) };
