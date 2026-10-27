@@ -9,9 +9,59 @@ import {
   documentToCanvasPos,
 } from './document-frame.ts';
 import { assertWithinDocumentPixelBudget } from './raster-utils.ts';
+import { loadDocumentFile } from './image-load-save-utils.ts';
+import { preflightBmpFile } from './bmp-utils.ts';
 import { readImageFromClipboard } from '../util/clipboard.ts';
 
 const SELECTION_LAYER_NAME = 'Selection copy';
+const BMP_CLIPBOARD_MIME_TYPES = new Set(['image/bmp', 'image/x-bmp', 'image/x-ms-bmp']);
+// Clipboard decoding only accepts formats with bounded file-import preflights.
+// AVIF and TIFF stay out until their decoders can enforce this budget before allocating pixels.
+const PREFLIGHTED_CLIPBOARD_MIME_TYPES = new Set([
+  'image/bmp',
+  'image/gif',
+  'image/ico',
+  'image/jpeg',
+  'image/png',
+  'image/svg+xml',
+  'image/webp',
+  'image/vnd.microsoft.icon',
+  'image/x-bmp',
+  'image/x-icon',
+  'image/x-ms-bmp',
+]);
+
+async function decodePreflightedClipboardImage(blob: Blob, mimeType: string): Promise<ImageBitmap> {
+  const normalizedMimeType = mimeType.split(';', 1)[0].trim().toLowerCase();
+  if (!PREFLIGHTED_CLIPBOARD_MIME_TYPES.has(normalizedMimeType)) {
+    throw new Error(`Clipboard image format cannot be safely preflighted (${normalizedMimeType})`);
+  }
+
+  const createBitmap = globalThis.createImageBitmap;
+  if (!createBitmap) throw new Error('ImageBitmap decoding is unavailable');
+
+  if (BMP_CLIPBOARD_MIME_TYPES.has(normalizedMimeType)) {
+    return createBitmap(await preflightBmpFile(blob, { allowNativeCompression: true }));
+  }
+
+  const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+  if (signature.length === 4 && new DataView(signature.buffer).getUint32(0, false) === 0x38425053) {
+    throw new Error('Photoshop documents cannot be pasted as a single raster image');
+  }
+
+  const file = new File([blob], 'clipboard-image', { type: normalizedMimeType });
+  const decoded = await loadDocumentFile(file);
+  if (!('image' in decoded)) throw new Error('Clipboard content is not a single raster image');
+
+  assertWithinDocumentPixelBudget(
+    {
+      width: decoded.image.naturalWidth || decoded.image.width,
+      height: decoded.image.naturalHeight || decoded.image.height,
+    },
+    'Clipboard image'
+  );
+  return createBitmap(decoded.image);
+}
 
 const getNextLayerName = (layers: Array<{ name: string }> | undefined) => {
   const items = layers ?? [];
@@ -106,11 +156,12 @@ export const useSelectionClipboard = () => {
         width,
         height,
       };
-      await createLayerFromBitmap({
+      const created = await createLayerFromBitmap({
         bitmap: cloneBitmapToCanvas(selectionClipboard.bitmap),
         name: getNextLayerName(Object.values(layers)),
         pos: centerPos,
       });
+      if (!created) return false;
     } catch (error) {
       console.error('Unable to paste selection clipboard', error);
       return false;
@@ -120,7 +171,7 @@ export const useSelectionClipboard = () => {
   }
 
   async function pasteSystemClipboardImage(): Promise<boolean> {
-    const image = await readImageFromClipboard();
+    const image = await readImageFromClipboard({ decodeImage: decodePreflightedClipboardImage });
     if (!image) return false;
 
     try {
@@ -132,7 +183,11 @@ export const useSelectionClipboard = () => {
         width: bitmap.width,
         height: bitmap.height,
       };
-      await createLayerFromBitmap({ bitmap, name: getNextLayerName(Object.values(layers)), pos });
+      const created = await createLayerFromBitmap({ bitmap, name: getNextLayerName(Object.values(layers)), pos });
+      if (!created) {
+        bitmap.close();
+        return false;
+      }
     } catch (error) {
       image.bitmap.close();
       console.error('Unable to paste system clipboard image', error);
@@ -149,11 +204,12 @@ export const useSelectionClipboard = () => {
     if (!snapshot) return false;
 
     try {
-      await createLayerFromBitmap({
+      const created = await createLayerFromBitmap({
         bitmap: cloneBitmapToCanvas(snapshot.bitmap),
         name: getNextLayerName(Object.values(layers)),
         pos: canvasToDocumentPos(snapshot.pos, documentFrame),
       });
+      if (!created) return false;
     } catch (error) {
       console.error('Unable to create a layer from the active selection', error);
       return false;
