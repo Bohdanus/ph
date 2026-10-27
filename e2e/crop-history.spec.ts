@@ -2269,7 +2269,7 @@ test.describe('Crop history', () => {
           height: rotationHandleBounds.height + 2,
         }),
         'the resized screenshot contains the visible rotation-grip pixels'
-      ).toBeGreaterThanOrEqual(2);
+      ).toBeGreaterThan(2);
       const topLeftHandle = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
       const topLeftHandleBounds = await topLeftHandle.boundingBox();
       if (!topLeftHandleBounds) throw new Error('the resized crop corner handle has no screen bounds');
