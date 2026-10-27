@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-import { open, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   activeQuarantineKeys,
   DEFAULT_QUARANTINE_FILE,
@@ -14,13 +17,18 @@ const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_KEY_INFO = 'https://openrouter.ai/api/v1/key';
+const OPENCODE_MODELS = 'https://opencode.ai/inference/v1/models';
+const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
+const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
+const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const PREFERRED_KILO_MODELS = ['poolside/laguna-s-2.1:free'];
+const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
 
@@ -118,6 +126,12 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
       if (typeof row?.id !== 'string' || row.id.length === 0) return false;
       if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
+      // OpenCode's public inference catalog has no price fields. Its documented
+      // free-model IDs carry the -free suffix; paid IDs are deliberately excluded.
+      if (source === 'opencode') return row.owned_by === 'opencode' && row.id.endsWith('-free');
+      // Groq's model catalog does not expose pricing. Routing is additionally
+      // gated by an explicit free-plan opt-in before this catalog is requested.
+      if (source === 'groq') return row.id === GROQ_FREE_MODEL;
       if (!zeroPriced(row.pricing)) return false;
       if (source === 'openrouter') return row.id.endsWith(':free');
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
@@ -134,7 +148,9 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
 export async function loadCatalogs({
   fetchImpl = fetch,
   openRouterKey = process.env.OPENROUTER_API_KEY,
+  groqApiKey = process.env.GROQ_API_KEY,
   includeOpenRouterCatalog = false,
+  includeGroq = false,
   quarantineFile = DEFAULT_QUARANTINE_FILE,
   initializeLegacyQuarantine = false,
   onCatalogError = () => {},
@@ -145,10 +161,13 @@ export async function loadCatalogs({
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
+  sources.push({ source: 'opencode', url: OPENCODE_MODELS });
+  if (groqApiKey || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url }) => {
       const headers = {};
       if (source === 'openrouter' && openRouterKey) headers.Authorization = `Bearer ${openRouterKey}`;
+      if (source === 'groq' && groqApiKey) headers.Authorization = `Bearer ${groqApiKey}`;
       const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (!response.ok) {
         await discardResponseBody(response);
@@ -261,11 +280,165 @@ export async function readBoundedPrompt(path) {
   }
 }
 
+const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
+  // V1 keys remain accepted for users on the current CLI and cover all built-ins.
+  tools: {
+    read: false,
+    edit: false,
+    bash: false,
+    task: false,
+    glob: false,
+    grep: false,
+    write: false,
+    patch: false,
+    webfetch: false,
+    websearch: false,
+    question: false,
+    skill: false,
+    lsp: false,
+  },
+  permission: {
+    read: 'deny',
+    edit: 'deny',
+    bash: 'deny',
+    task: 'deny',
+    glob: 'deny',
+    grep: 'deny',
+    write: 'deny',
+    patch: 'deny',
+    webfetch: 'deny',
+    websearch: 'deny',
+    question: 'deny',
+    skill: 'deny',
+    lsp: 'deny',
+  },
+  // V2 policies are hard denies and take precedence over saved approvals.
+  policies: [{ action: 'tool.use', resource: '*', effect: 'deny' }],
+});
+
+export async function runOpenCodeCompletion({ command = 'opencode', model, prompt, maxTokens = 1200 }) {
+  const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
+  const promptPath = join(directory, 'request.txt');
+  try {
+    await writeFile(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
+    const env = {
+      ...process.env,
+      OPENCODE_CONFIG_CONTENT: OPENCODE_TOOL_DENY_CONFIG,
+      OPENCODE_DISABLE_AUTOUPDATE: '1',
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
+      OPENCODE_DISABLE_PRUNE: '1',
+    };
+    const events = await new Promise((resolve, reject) => {
+      const child = spawn(
+        command,
+        [
+          '--standalone',
+          'run',
+          '--format',
+          'json',
+          '--model',
+          `opencode/${model}`,
+          '--file',
+          promptPath,
+          `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
+        ],
+        { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false }
+      );
+      const chunks = [];
+      const stderrChunks = [];
+      let outputBytes = 0;
+      let stderrBytes = 0;
+      let killTimer;
+      const stopChild = () => {
+        child.kill('SIGTERM');
+        killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      };
+      const timer = setTimeout(stopChild, 90_000);
+      child.stdout.on('data', (chunk) => {
+        outputBytes += chunk.byteLength;
+        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) stopChild();
+        else chunks.push(chunk);
+      });
+      child.stderr.on('data', (chunk) => {
+        if (stderrBytes < 16_384) {
+          stderrChunks.push(chunk);
+          stderrBytes += chunk.byteLength;
+        }
+      });
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        clearTimeout(killTimer);
+        reject(error);
+      });
+      child.once('close', (code, signal) => {
+        clearTimeout(timer);
+        clearTimeout(killTimer);
+        if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) {
+          reject(new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`));
+          return;
+        }
+        if (code !== 0) {
+          reject(
+            new Error(`OpenCode exited ${code ?? signal}: ${Buffer.concat(stderrChunks).toString('utf8').trim()}`)
+          );
+          return;
+        }
+        try {
+          const parsed = Buffer.concat(chunks)
+            .toString('utf8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+          resolve(parsed);
+        } catch {
+          reject(new Error('OpenCode returned malformed JSONL output'));
+        }
+      });
+    });
+    if (
+      events.some(
+        (event) =>
+          event.type === 'error' ||
+          event.type === 'tool_use' ||
+          (event.type === 'done' && Array.isArray(event.rejected) && event.rejected.length > 0)
+      )
+    ) {
+      return { error: 'OpenCode reported an error or attempted a tool call' };
+    }
+    const terminal = events.some(
+      (event) => event.type === 'done' || (event.type === 'step_finish' && event.part?.reason === 'stop')
+    );
+    const content = events
+      .filter((event) => event.type === 'text' && typeof event.part?.text === 'string')
+      .map((event) => event.part.text)
+      .join('');
+    const finishedSteps = events.filter((event) => event.type === 'step_finish');
+    const cost = finishedSteps.reduce((total, event) => total + (Number(event.part?.cost) || 0), 0);
+    if (cost !== 0) return { error: `OpenCode reported non-zero cost ${cost}` };
+    if (!terminal || !content.trim()) return { error: 'OpenCode did not return a complete non-empty response' };
+    const tokens = finishedSteps.at(-1)?.part?.tokens;
+    return {
+      model,
+      content,
+      finishReason: 'stop',
+      usage: tokens
+        ? { input_tokens: tokens.input, output_tokens: tokens.output, reasoning_tokens: tokens.reasoning, cost }
+        : null,
+    };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 export async function completeWithFreeModel(
   prompt,
   {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
+    groqApiKey = process.env.GROQ_API_KEY,
+    groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
+    opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
+    runOpenCode = runOpenCodeCompletion,
     checkOpenRouterQuota = false,
     maxTokens = 1200,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
@@ -283,6 +456,7 @@ export async function completeWithFreeModel(
   const available = await loadCatalogs({
     fetchImpl,
     openRouterKey,
+    groqApiKey: groqFreePlan ? groqApiKey : '',
     quarantineFile,
     initializeLegacyQuarantine,
     onCatalogError,
@@ -290,10 +464,16 @@ export async function completeWithFreeModel(
   const exhausted = new Set();
   const attempts = new Map();
   const errors = [];
-  const requestCounts = () => ({
-    kilo: attempts.get('kilo') ?? 0,
-    openrouter: attempts.get('openrouter') ?? 0,
-  });
+  const requestCounts = () => {
+    const counts = {
+      kilo: attempts.get('kilo') ?? 0,
+      openrouter: attempts.get('openrouter') ?? 0,
+    };
+    for (const source of ['opencode', 'groq']) {
+      if (attempts.has(source)) counts[source] = attempts.get(source);
+    }
+    return counts;
+  };
   if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota) {
@@ -306,10 +486,33 @@ export async function completeWithFreeModel(
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
     if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
     if (candidate.source === 'openrouter' && !openRouterKey) continue;
+    if (candidate.source === 'groq' && (!groqApiKey || !groqFreePlan)) continue;
+    if (candidate.source === 'opencode' && !opencodeCommand) continue;
     attempts.set(candidate.source, sourceAttempts + 1);
-    const url = candidate.source === 'kilo' ? KILO_CHAT : OPENROUTER_CHAT;
+    if (candidate.source === 'opencode') {
+      try {
+        const result = await runOpenCode({ command: opencodeCommand, model: candidate.model, prompt, maxTokens });
+        if (result?.content && result.finishReason === 'stop') {
+          return {
+            source: candidate.source,
+            model: result.model ?? candidate.model,
+            content: result.content,
+            finishReason: result.finishReason,
+            usage: result.usage ?? null,
+            requestCounts: requestCounts(),
+          };
+        }
+        errors.push(`opencode/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
+      } catch (error) {
+        errors.push(`opencode/${candidate.model}: ${error.message}`);
+        if (error.code === 'ENOENT') exhausted.add(candidate.source);
+      }
+      continue;
+    }
+    const url = candidate.source === 'kilo' ? KILO_CHAT : candidate.source === 'groq' ? GROQ_CHAT : OPENROUTER_CHAT;
     const headers = { 'Content-Type': 'application/json' };
     if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
+    if (candidate.source === 'groq') headers.Authorization = `Bearer ${groqApiKey}`;
     let response;
     try {
       response = await fetchImpl(url, {
@@ -320,6 +523,7 @@ export async function completeWithFreeModel(
           model: candidate.model,
           messages: [{ role: 'user', content: prompt }],
           max_tokens: maxTokens,
+          ...(candidate.source === 'groq' ? { reasoning_effort: 'low' } : {}),
         }),
       });
     } catch (error) {
@@ -389,7 +593,10 @@ function usage() {
     '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--probe-openrouter-quota]\n' +
     '       node scripts/free-model-pool.mjs --openrouter-quota\n' +
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
-    '--list fetches public model catalogs; configured=false means credentials are missing, not that the catalog entry is invalid.\n' +
+    '--list fetches public model catalogs; configured=null means the OpenCode CLI was not probed.\n' +
+    'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
+    'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
+    'OpenCode free models run through the opencode CLI with tool permissions denied.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
     '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.'
   );
@@ -400,6 +607,10 @@ export async function main(
   {
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
+    groqApiKey = process.env.GROQ_API_KEY,
+    groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
+    opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
+    runOpenCode = runOpenCodeCompletion,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
     stdout = process.stdout,
@@ -463,13 +674,20 @@ export async function main(
     const candidates = await loadCatalogs({
       fetchImpl,
       openRouterKey,
+      groqApiKey,
+      includeGroq: Boolean(groqApiKey),
       quarantineFile,
       includeOpenRouterCatalog: true,
       initializeLegacyQuarantine,
       onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
-    const configured = (source) => source === 'kilo' || (source === 'openrouter' && Boolean(openRouterKey));
+    const configured = (source) => {
+      if (source === 'kilo') return true;
+      if (source === 'openrouter') return Boolean(openRouterKey);
+      if (source === 'opencode') return null;
+      return source === 'groq' && Boolean(groqApiKey) && groqFreePlan;
+    };
     const listed = candidates.slice(0, limit).map((entry) => ({ ...entry, configured: configured(entry.source) }));
     stdout.write(`${JSON.stringify(listed, null, 2)}\n`);
     return 0;
@@ -489,6 +707,10 @@ export async function main(
   const result = await completeWithFreeModel(prompt, {
     fetchImpl,
     openRouterKey,
+    groqApiKey,
+    groqFreePlan,
+    opencodeCommand,
+    runOpenCode,
     maxTokens,
     quarantineFile,
     initializeLegacyQuarantine,

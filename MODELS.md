@@ -25,8 +25,9 @@ from the live catalog, cap fan-out at 15 agents, and never silently fall back to
 
 - GPT models (Luna 6) must always use `openai`: `task --model "<model>" --provider "openai"`.
 - **Free-first:** Prefer free models for high-signal text sweeps (web research, docs, chat history, code search) and simple code writing or review. Batch large inputs into bounded chunks and return concise results with source paths or citations. Try another free source if one is unavailable or rate-limited; never silently fall through to a paid model.
-- **Choose a free source:** Start with Kilo Laguna S (`poolside/laguna-s-2.1:free`) when present in the live catalog. `node scripts/free-model-pool.mjs --list` shows eligible Kilo/OpenRouter entries; every OpenRouter price field and conditional override must be zero. Numeric zero and fixed-point strings such as `0.000000000000` count as exact zero; no positive price is rounded down. Do not use models absent from the refreshed catalog or paid OpenRouter models without explicit approval.
-- **Manual Groq fallback (not in the runner):** For a confirmed Groq Free-plan account, use `GROQ_API_KEY` with the OpenAI-compatible API at `https://api.groq.com/openai/v1`, model `openai/gpt-oss-120b`, and `reasoning_effort: "low"` (tested to avoid empty replies at small output budgets). Published Free-plan limits are 30 RPM, 1,000 RPD, 8K TPM, and 200K TPD ([official limits](https://console.groq.com/docs/rate-limits)); limits are organization-wide and the account dashboard is authoritative. Groq's model catalog does not expose prices, so the runner cannot verify free pricing: use only as an explicit manual fallback, never automatic routing or paid fallback.
+- **Choose a free source:** Start with Kilo Laguna S (`poolside/laguna-s-2.1:free`) when present in the live catalog, then rotate through eligible OpenRouter, OpenCode, and Groq routes. `node scripts/free-model-pool.mjs --list` refreshes the first three model catalogs; Kilo/OpenRouter require exact zero prices, OpenCode is restricted to provider-owned `-free` IDs, and Groq is restricted to `openai/gpt-oss-120b` with an explicit free-plan opt-in. Do not use models absent from the refreshed catalogs or silently fall back to paid inference.
+- **Groq free-plan opt-in:** Groq's model catalog does not expose pricing, and published model prices are nonzero. To let the runner use the Groq Free plan, provide `GROQ_API_KEY` and explicitly set `GROQ_FREE_PLAN=1`. The route uses `openai/gpt-oss-120b` with `reasoning_effort: "low"`. Published Free-plan limits are 30 RPM, 1,000 RPD, 8K TPM, and 200K TPD ([official limits](https://console.groq.com/docs/rate-limits)); limits are organization-wide and the account dashboard is authoritative. Do not set the opt-in for a paid account.
+- **OpenCode free models:** The runner uses the `opencode` CLI because the Console's free chat models reject generic HTTP clients. Install and authenticate OpenCode as needed. The runner selects only catalog IDs ending in `-free`, invokes `opencode run` with a temporary prompt file, denies tool use, and disables default plugins for that call. Its JSON output must include non-empty text, a terminal event, and zero reported cost.
 - Pass `model` and `provider` together.
 - Free sessions must not launch GPT subagents or perform Git operations.
 - **Deletion safety for free Kilo agents:** Kilo exposes tool-level permissions, not a delete-only permission. For visible Kilo sessions, use the project `read-only-research` agent in `.kilo/agent/read-only-research.md`; it denies `edit`, `bash`, `task`, external-directory access, and common file-mutating MCP tool names. For internal free `task` children, use the read-only `explore` role and verify there are no write/patch tools. Explicitly deny any connected MCP file-write/delete tools not covered by its name patterns; if the host cannot guarantee that boundary, use `free-model-pool.mjs` (a completion client without agent tools) or do not launch the free child. Free children return concise findings only; the coordinator writes files and owns all changes.
@@ -34,7 +35,7 @@ from the live catalog, cap fan-out at 15 agents, and never silently fall back to
 
 ## Free Model Rotation
 
-Use `node scripts/free-model-pool.mjs --list` to refresh the eligible free catalog. The runner accepts Kilo `isFree`/`:free` entries and OpenRouter `:free` entries with exact-zero pricing only. It tries up to three eligible IDs per provider; HTTP 402/429 exhausts that provider. Never falls back to paid models.
+Use `node scripts/free-model-pool.mjs --list` to refresh eligible catalogs. The runner accepts Kilo `isFree`/`:free` and OpenRouter `:free` entries with exact-zero pricing, provider-owned OpenCode IDs ending in `-free`, and the Groq GPT-OSS 120B allowlist only after explicit free-plan opt-in. It tries up to three eligible IDs per provider; HTTP 402/429 exhausts that provider. Never falls back to paid models.
 
 **Bounded prompt:** `node scripts/free-model-pool.mjs --prompt-file /path/to/prompt.txt --max-tokens 1200 [--output-file /path/to/result.txt]`
 
@@ -42,12 +43,16 @@ Use `node scripts/free-model-pool.mjs --list` to refresh the eligible free catal
 
 **OpenRouter quota check:** `node scripts/free-model-pool.mjs --openrouter-quota` — reports `used`/`limit`/`remaining`. Query before/after large fan-outs; this does not report Kilo usage.
 
+**Groq Free plan:** Export `GROQ_API_KEY` and `GROQ_FREE_PLAN=1` only for a confirmed Free-plan organization. The catalog cannot prove account pricing.
+
 **Free model constraints:**
 
 - Pass `model` and `provider` together
 - Free sessions must not launch GPT subagents or perform Git operations
 - **Deletion safety:** Use `read-only-research` agent for visible sessions; `explore` role for internal children. Deny `edit`, `bash`, write/patch tools. No delete-only permission exists — deny all mutations.
 - Use full model name with `(free)` suffix to avoid ambiguity (e.g., `Reflection: Beam 1.0 (free)`)
+- OpenCode free-model calls run through the CLI harness with tool permissions denied; no OpenCode subagents or file tools are used.
+- Groq routing requires `GROQ_FREE_PLAN=1`; a Groq API key alone may access paid inference.
 
 **Quarantine:** source/model-specific, 6h default for confirmed rate limits, max 72h. Expired entries re-enter rotation. Use `npm run free:quarantine -- list|add|release|prune`. Do not quarantine for global quota, context overflow, external API failure, or tool/orchestration error. Schedule reviews with `cron_create`, not OS cron.
 
