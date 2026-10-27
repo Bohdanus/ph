@@ -536,8 +536,8 @@ real accessibility property — not because Adobe specifies it.
   measured manual fallback (`text.ts` — `trackingPx`, `applyTextStyle`'s letterSpacing arm,
   `fillLine`, and the manual caps measurement/drawing helpers). §20 and §21.
 - `HAVE` — **All Caps** uppercases text at full size; **Small Caps** leaves existing capitals full
-  size and synthesises lowercase characters. Canvas uses native small caps only when measured
-  metrics show the variant works; otherwise it draws grapheme-safe faux small caps (§20).
+  size and synthesises lowercase characters. Canvas uses native small caps only when a raster proof shows the variant changes pixels; otherwise it draws grapheme-safe faux
+  small caps (§20).
 - `HAVE` — **underline** and **strikethrough**, drawn in the type colour with `ctx.fillRect` at a
   thickness of `fontSize / 16` (`text.ts` — `decorationThickness`, and `renderText`'s decoration
   arm). **Their vertical positions are a RECONSTRUCTION of this app — §21.6. No Adobe page
@@ -1429,13 +1429,14 @@ identical on both.**
 
 `all-small-caps` is measured for browser comparison, not used for Photoshop All Caps. All Caps
 uppercases at the full type size; only Small Caps uses the small-cap variant or faux-cap fallback.
-The Canvas renderer uses `fontVariantCaps` only when changing the property changes measured text
-metrics. When the property is missing or ignored, it draws uppercase runs for lowercase graphemes
-and scales those runs by the renderer's measured fallback factor; existing capitals retain their
-normal size. This path also avoids depending on whether an engine accepts `small-caps` in the Canvas
-`font` shorthand. The live editor uses CSS `font-variant-caps: small-caps`, so preview and committed
-text still request the same typographic variant. The fallback factor reproduces the measured
-browser behavior for the tested font; Adobe does not specify a universal faux-small-caps scale.
+The Canvas renderer uses `fontVariantCaps` only when a raster probe shows the property changes
+pixels. When the property is missing or ignored (raster readback is unavailable or unchanged), it
+draws uppercase runs for lowercase graphemes and scales those runs by the renderer's measured
+fallback factor; existing capitals retain their normal size. This path also avoids depending on
+whether an engine accepts `small-caps` in the Canvas `font` shorthand. The live editor uses
+CSS `font-variant-caps: small-caps`, so preview and committed text still request the same
+typographic variant. The fallback factor reproduces the measured browser behavior for the tested
+font; Adobe does not specify a universal faux-small-caps scale.
 
 Assigning `ctx.font` **resets** `fontVariantCaps` to `'normal'`; `letterSpacing`, `wordSpacing` and
 `fontKerning` **survive** a font assignment. Where the separate caps property exists, that is the
