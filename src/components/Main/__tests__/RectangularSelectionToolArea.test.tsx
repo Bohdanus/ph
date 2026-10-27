@@ -13,6 +13,7 @@ const storeState = vi.hoisted((): { selections: Selection[]; activeSelectionId: 
 }));
 const useRectProps = vi.hoisted((): { current: UseRectProps | null } => ({ current: null }));
 const useRectPointerDownMock = vi.hoisted(() => vi.fn(() => false));
+const useRectPointerCancelMock = vi.hoisted(() => vi.fn());
 /**
  * `isMouseDown` is part of what `useRect` returns, and the component reads it
  * BEFORE delegating, to tell a press that starts a gesture from one `useRect`
@@ -64,6 +65,7 @@ vi.mock('../../../hooks/useRect.ts', () => ({
         onPointerDown: useRectPointerDownMock,
         onPointerMove: vi.fn(),
         onPointerUp: vi.fn(),
+        onPointerCancel: useRectPointerCancelMock,
       },
       rectHandles: {
         redraw: vi.fn(),
@@ -124,6 +126,7 @@ describe('RectangularSelectionToolArea', () => {
     dispatchMock.mockClear();
     useRectPointerDownMock.mockReset();
     useRectPointerDownMock.mockReturnValue(false);
+    useRectPointerCancelMock.mockReset();
     useRectIsMouseDown.current = false;
     storeState.selections = [];
     storeState.activeSelectionId = null;
@@ -359,17 +362,32 @@ describe('RectangularSelectionToolArea', () => {
       expect(selectionEdits()).toHaveLength(0);
     });
 
-    it('releases the claim on pointer cancel, which surfaces no onChangeEnd', () => {
+    it('routes an owning pointer cancel through useRect and releases the claim', () => {
       const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 20, clientY: 10 });
       expect(isDocumentGestureOpen()).toBe(true);
 
-      // `useRect` does not surface its internal `onPointerCancel`, so no
-      // `onChangeEnd` follows a cancel and the claim has to be dropped here.
       fireEvent.pointerCancel(toolArea, { pointerId: 7, clientX: 20, clientY: 10 });
 
+      expect(useRectPointerCancelMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('does not let a foreign pointer cancel the rectangular selection gesture', () => {
+      const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 20, clientY: 10 });
+      fireEvent.pointerCancel(toolArea, { pointerId: 99, clientX: 30, clientY: 20 });
+
+      expect(useRectPointerCancelMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      act(() => {
+        useRectProps.current!.onChangeEnd({ x1: 20, y1: 10, x2: 60, y2: 40 });
+      });
       expect(isDocumentGestureOpen()).toBe(false);
     });
 
@@ -413,6 +431,8 @@ describe('RectangularSelectionToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 40, clientY: 40 });
 
       expect(readDocumentGesture()).toEqual({ kind: 'rectangular-selection', pointerId: 1 });
+      expect(useRectPointerDownMock).toHaveBeenCalledOnce();
+      expect(dispatchMock).toHaveBeenCalledOnce();
     });
   });
 });

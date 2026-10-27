@@ -3,6 +3,7 @@ import { useApp } from '../useApp.ts';
 import { SELECTION_ACTION } from '../../util/constants.ts';
 import type { Selection } from '../../contexts/general-types.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
+import { claimDocumentGesture, resetDocumentGestures } from '../document-gesture.ts';
 
 /**
  * The tool switch's deselect through the single selection writer.
@@ -75,6 +76,7 @@ function commitEdits(): CommitEdit[] {
 describe('goToTool selection history', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDocumentGestures();
     harness.state = createStoreState();
   });
 
@@ -154,5 +156,26 @@ describe('goToTool selection history', () => {
     expect(useApp().goToTool('blur')).toBe(false);
 
     expect(harness.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('switches tools without committing a preview owned by a live document gesture', () => {
+    harness.state = createStoreState({ selections: [], activeSelectionId: null });
+    expect(claimDocumentGesture('paint-stroke', 7)).toBe(true);
+
+    expect(useApp().goToTool('blur')).toBe(true);
+
+    expect(harness.layerMocks.commitDirtyTool).not.toHaveBeenCalled();
+    expect(commitEdits()).toHaveLength(0);
+    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'blur' });
+  });
+
+  it('does not append a selection clear while cancelling a live document gesture', () => {
+    expect(claimDocumentGesture('layer-transform', 7)).toBe(true);
+
+    expect(useApp().goToTool('blur')).toBe(true);
+
+    expect(harness.layerMocks.commitDirtyTool).not.toHaveBeenCalled();
+    expect(commitEdits()).toHaveLength(0);
+    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'blur' });
   });
 });

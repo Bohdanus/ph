@@ -139,7 +139,7 @@ export const longPress = (button: HTMLElement): void => {
     vi.advanceTimersByTime(FLYOUT_LONG_PRESS_MS);
   });
   fireEvent.pointerUp(button, { button: 0 });
-  fireEvent.click(button);
+  fireEvent.click(button, { detail: 1 });
 };
 
 /** Restores every mutable fixture to its declared default. Run before each test. */

@@ -273,6 +273,7 @@ const SidebarLeft = () => {
   const isTablet = useIsTabletViewport();
   const isMobile = useIsMobileViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressPointerIdRef = useRef<number | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
   const ignoreNextClickRef = useRef(false);
@@ -467,13 +468,15 @@ const SidebarLeft = () => {
     }
   };
 
-  const openFlyout = (groupIndex: string) => {
+  const openFlyout = (groupIndex: string, preservePointerGesture = false) => {
     // Any earlier deferred keyboard focus belongs to the open it came from. A pointer or
     // another key can supersede that open before its visibility retries have drained.
     flyoutFocusRequestRef.current += 1;
-    clearLongPressFlyout();
-    suppressLongPressRef.current = false;
-    longPressOpenedRef.current = true;
+    if (!preservePointerGesture) {
+      clearLongPressFlyout();
+      suppressLongPressRef.current = false;
+      longPressOpenedRef.current = true;
+    }
     setOpenGroup(groupIndex);
   };
 
@@ -527,6 +530,30 @@ const SidebarLeft = () => {
     return () => {
       if (longPressFlyoutTimeoutRef.current !== null) clearTimeout(longPressFlyoutTimeoutRef.current);
       flyoutFocusRequestRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    // A grouped tile does not capture its pointer: an owner may release outside
+    // it after leaving. Observe that terminal event so the owner cannot remain
+    // stuck, while keeping ownership if the pointer leaves and returns first.
+    const finishOutsidePointer = (event: PointerEvent) => {
+      if (longPressPointerIdRef.current !== event.pointerId) return;
+      longPressPointerIdRef.current = null;
+      suppressLongPressRef.current = false;
+      longPressOpenedRef.current = false;
+      ignoreNextClickRef.current = false;
+      if (longPressFlyoutTimeoutRef.current !== null) {
+        clearTimeout(longPressFlyoutTimeoutRef.current);
+        longPressFlyoutTimeoutRef.current = null;
+      }
+    };
+
+    window.addEventListener('pointerup', finishOutsidePointer);
+    window.addEventListener('pointercancel', finishOutsidePointer);
+    return () => {
+      window.removeEventListener('pointerup', finishOutsidePointer);
+      window.removeEventListener('pointercancel', finishOutsidePointer);
     };
   }, []);
 
@@ -665,10 +692,26 @@ const SidebarLeft = () => {
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}${
               isTileUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''
             }${isTileHighlighted ? ' tool-highlight-pulse' : ''}`}
-            onClick={() => {
+            onClick={(event) => {
+              // A native click does not carry the pointer id that produced it. While a
+              // pointer owns the pending long-press, another pointer's click must not
+              // clear that owner's timer or toggle the flyout. A detail-zero click is
+              // pressless assistive activation; honor it without altering pointer state.
+              if (hasFlyout && longPressPointerIdRef.current !== null) {
+                if (event.detail === 0) {
+                  // The active pointer will still synthesize a click when it is released.
+                  // Treat the menu change as belonging to that gesture so the later click
+                  // cannot immediately reverse the independent assistive activation.
+                  longPressOpenedRef.current = true;
+                  if (isOpen) closeFlyout();
+                  else openFlyout(groupIndex, true);
+                }
+                return;
+              }
+
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
-                return;
+                if (event.detail !== 0) return;
               }
 
               suppressLongPressRef.current = true;
@@ -720,6 +763,9 @@ const SidebarLeft = () => {
             }}
             onPointerDown={(event) => {
               if (!hasFlyout || event.button !== 0) return;
+              const pointerOwner = longPressPointerIdRef.current;
+              if (pointerOwner !== null && pointerOwner !== event.pointerId) return;
+              longPressPointerIdRef.current = event.pointerId;
               suppressLongPressRef.current = false;
               ignoreNextClickRef.current = false;
               longPressOpenedRef.current = false;
@@ -745,22 +791,17 @@ const SidebarLeft = () => {
               }
               scheduleFlyoutOpen(groupIndex);
             }}
-            onPointerLeave={() => {
+            onPointerLeave={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              // Leaving cancels a pending hold, not the pointer's ownership. If
+              // it returns after opening the menu, its release-generated click
+              // must still be suppressed. A release outside is cleared globally.
               suppressLongPressRef.current = false;
-              longPressOpenedRef.current = false;
-              // `ignoreNextClickRef` too, and this is load-bearing rather than tidiness. The
-              // three-dots press sets it, and its only clearer is that button's own `onClick` —
-              // so a press that leaves the button before releasing (a drag, or a pointer capture
-              // stolen by a scroll) never produces that click, and the flag survives. The
-              // casualty is the NEXT activation: for a mouse the next press on any grouped tile
-              // clears it first, but an assistive technology's click on this tile has no press,
-              // so a stranded flag swallows the one activation AT has for reaching a menu.
-              // Cheap, and it cannot lose anything — the press it cancels is one that never
-              // resolved into a click anyway.
-              ignoreNextClickRef.current = false;
               clearLongPressFlyout();
             }}
-            onPointerUp={() => {
+            onPointerUp={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              longPressPointerIdRef.current = null;
               suppressLongPressRef.current = false;
               if (hasFlyout && longPressOpenedRef.current) {
                 ignoreNextClickRef.current = true;
@@ -768,7 +809,9 @@ const SidebarLeft = () => {
               longPressOpenedRef.current = false;
               clearLongPressFlyout();
             }}
-            onPointerCancel={() => {
+            onPointerCancel={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              longPressPointerIdRef.current = null;
               suppressLongPressRef.current = false;
               longPressOpenedRef.current = false;
               // A cancelled pointer never produces a click, so the flag it would have set is

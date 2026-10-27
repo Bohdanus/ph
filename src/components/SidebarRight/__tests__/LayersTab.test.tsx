@@ -276,17 +276,75 @@ describe('LayersTab', () => {
     render(<LayersTab />);
     fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
     const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(slider, 'setPointerCapture', { configurable: true, value: setPointerCapture });
 
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    expect(setPointerCapture).toHaveBeenCalledWith(1);
     fireEvent.change(slider, { target: { value: '50' } });
     fireEvent.change(slider, { target: { value: '42' } });
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
 
-    fireEvent.pointerUp(slider);
+    fireEvent.pointerUp(slider, { pointerId: 1 });
 
     expect(layerMocks.updateLayer).toHaveBeenCalledTimes(1);
     expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
     expect(liveStore.snapshot.layers['layer-2'].opacity).toBe(0.42);
     expect(screen.getByText('42%', { selector: 'summary' })).toBeInTheDocument();
+  });
+
+  it('keeps an opacity draft owned by its pointer through foreign pointer endings', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.pointerUp(slider, { pointerId: 2 });
+    fireEvent.pointerCancel(slider, { pointerId: 2 });
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('42%', { selector: 'output' })).toBeInTheDocument();
+
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('keeps a pointer-owned opacity draft through blur until that pointer ends', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.blur(slider);
+    fireEvent.change(slider, { target: { value: '55' } });
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('55%', { selector: 'output' })).toBeInTheDocument();
+
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(layerMocks.updateLayer).toHaveBeenCalledTimes(1);
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.55 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('discards a pointer-owned opacity draft if pointer capture is lost', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '55' } });
+    const lostCapture = new Event('lostpointercapture', { bubbles: true });
+    Object.defineProperty(lostCapture, 'pointerId', { value: 1 });
+    fireEvent(slider, lostCapture);
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('100%', { selector: 'output' })).toBeInTheDocument();
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
   it('disables opacity changes for a locked layer', () => {

@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { useRef, type RefObject } from 'react';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -49,7 +49,7 @@ type DodgeToolAreaProps = {
  */
 export const DodgeToolArea = ({ className }: DodgeToolAreaProps) => {
   const [{ containerRef, activeLayerId, layers, totalSize }] = useStore();
-  const { tempUpdateLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, updateLayerByTool, cancelLayerPreview } = useLayers();
   const { getToolArgs } = useCurrentTool();
 
   const args = getToolArgs('dodge') as DodgeBurnToolArgs | null;
@@ -60,10 +60,14 @@ export const DodgeToolArea = ({ className }: DodgeToolAreaProps) => {
   // The origin of the raster the processor is handed, which is `pos` for a layer that
   // presents nothing and its EVALUATED extent for one carrying a transform or a filter.
   const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
-    { imageSize: totalSize, containerRef, enabled },
+    { imageSize: totalSize, containerRef, enabled, gestureKey: activeLayerId },
     {
+      onStart: () => {
+        previewLayerIdRef.current = activeLayerId;
+      },
       onMove: (points) => {
         if (!args || !activeLayerId) return;
         /**
@@ -88,6 +92,12 @@ export const DodgeToolArea = ({ className }: DodgeToolAreaProps) => {
           id: activeLayerId,
           toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
+        previewLayerIdRef.current = null;
+      },
+      onCancel: () => {
+        const layerId = previewLayerIdRef.current;
+        previewLayerIdRef.current = null;
+        if (layerId) cancelLayerPreview(layerId);
       },
     }
   );

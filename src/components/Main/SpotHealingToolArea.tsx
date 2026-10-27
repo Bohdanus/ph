@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { useRef, type RefObject } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -15,16 +15,20 @@ type SpotHealingToolAreaProps = {
 
 export const SpotHealingToolArea = ({ className }: SpotHealingToolAreaProps) => {
   const [{ containerRef, activeLayerId, layers, totalSize }] = useStore();
-  const { tempUpdateLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, updateLayerByTool, cancelLayerPreview } = useLayers();
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as SpotHealingToolArgs;
   const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
   const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
   const isEnabled = Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock);
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
-    { imageSize: totalSize, containerRef, enabled: isEnabled },
+    { imageSize: totalSize, containerRef, enabled: isEnabled, gestureKey: activeLayerId },
     {
+      onStart: () => {
+        previewLayerIdRef.current = activeLayerId;
+      },
       onMove: (points) => {
         tempUpdateLayer({
           id: activeLayerId!,
@@ -36,6 +40,12 @@ export const SpotHealingToolArea = ({ className }: SpotHealingToolAreaProps) => 
           id: activeLayerId!,
           toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
+        previewLayerIdRef.current = null;
+      },
+      onCancel: () => {
+        const layerId = previewLayerIdRef.current;
+        previewLayerIdRef.current = null;
+        if (layerId) cancelLayerPreview(layerId);
       },
     }
   );

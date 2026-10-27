@@ -78,10 +78,11 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     };
   }, []);
 
-  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
-    ref: containerRef,
-    imageSize: totalSize,
-  });
+  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, releasePointer } =
+    usePointerPosition({
+      ref: containerRef,
+      imageSize: totalSize,
+    });
 
   const flushDrawingFrame = () => {
     frameRequested.current = null;
@@ -105,9 +106,8 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!isPointerDownValid(event)) return;
-
     if (!overlayCtxRef.current) return;
+    if (!isPointerDownValid(event)) return;
 
     // The shape commits from `handlePointerUp`, so the press-to-release window is exactly the window
     // a document-mutating shortcut would corrupt: an undo there replaces `selections` from the SAME
@@ -115,9 +115,11 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     // `entries.slice(0, cursor + 1)` truncates the redo tail with no other symptom. Claimed after
     // `isPointerDownValid`, so a refused press claims nothing, and only when the claim succeeded, so
     // a loser never records an id it does not own.
-    if (claimDocumentGesture('shape-draw', event.pointerId)) {
-      claimedPointerIdRef.current = event.pointerId;
+    if (!claimDocumentGesture('shape-draw', event.pointerId)) {
+      releasePointer();
+      return;
     }
+    claimedPointerIdRef.current = event.pointerId;
 
     const point = getLocalCoords(event);
     startRef.current = point;
@@ -272,10 +274,24 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     commitShape(start, end, cornerRadius);
   };
 
-  const handlePointerCancel = () => {
-    // Paired with the abort the hook already performs: a cancel is a gesture that will never commit,
-    // so a claim left open here would gate every later keystroke for a shape that does not exist.
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    // Cancellation belongs to one pointer stream. A second pointer's cancel must not release this
+    // shape's document claim or clear its live preview.
+    if (claimedPointerIdRef.current !== event.pointerId) return;
+
+    releasePointer();
     releaseDocumentClaim();
+    if (frameRequested.current !== null) {
+      cancelAnimationFrame(frameRequested.current);
+      frameRequested.current = null;
+    }
+    startRef.current = null;
+    endRef.current = null;
+    anchorRef.current = null;
+    fromCenterRef.current = false;
+    lastPointRef.current = null;
+    originalShapeRef.current = null;
+    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
   };
 
   useEffect(() => {
