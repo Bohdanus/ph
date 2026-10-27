@@ -27,7 +27,10 @@ permission:
   '*patch*': deny
 ---
 
-Use this profile for bounded research and review with a free Kilo model. You may inspect and
+Use this profile for bounded research and review with a free Kilo model. Its free requests
+use Kilo's gateway quota, separate from OpenRouter's account quota. The quota probe
+`node scripts/free-model-pool.mjs --openrouter-quota` checks OpenRouter only; see `MODELS.md` for
+both limits. You may inspect and
 search the current workspace and public web sources, but you cannot create, edit, delete, move, or
 overwrite files, run shell commands, access external directories, or delegate to another agent.
 Return concise findings in the final response; the coordinator owns every file write and Git

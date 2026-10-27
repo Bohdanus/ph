@@ -13,9 +13,20 @@ operator authorization before using paid inference.
 
 ## Routing
 
-- Refresh candidates with `node scripts/free-model-pool.mjs --list`. Kilo/OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
+- Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
 - Never silently fall back to paid inference. The runner tries up to three eligible models per source; a provider quota or rate-limit failure exhausts that source for the run.
 - In Kilo tasks, pass `model` and `provider` together; GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.
+
+## Provider-specific free quotas
+
+A provider name alone does not establish that a route is free. Verify the exact model/provider pair in the live catalog. Kilo and OpenRouter use separate free-model quotas:
+
+| Provider ID  | Published free-model limit                                                                                                    | What the quota check covers                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `kilo`       | 200 requests per hour per IP, for authenticated and anonymous free-model requests.                                            | `--openrouter-quota` does not read this Kilo gateway limit.                                  |
+| `openrouter` | 20 requests per minute; 50 per day on the base tier or 1,000 per day after the account has purchased at least $10 in credits. | `node scripts/free-model-pool.mjs --openrouter-quota` reads OpenRouter's daily counter only. |
+
+A 429 or exhausted counter applies to the provider that returned it. Stop using that source for the run, and switch only to another model/provider pair verified as free. See [Kilo's gateway rate limits](https://kilo.ai/docs/gateway/usage-and-billing) and [OpenRouter's pricing and rate limits](https://openrouter.ai/pricing) for current published limits.
 
 ## Free-agent boundaries
 
@@ -25,4 +36,4 @@ operator authorization before using paid inference.
 
 ## Research and credentials
 
-Bulk web, code, or chat-history research must use a verified free read-only route and return a short result for root verification. If none is available, stop before paid research. For secure credential discovery, provider setup, quotas, and runner commands, see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md).
+Bulk web, code, or chat-history research must use a verified free read-only route and return a short result for root verification. If none is available, stop before paid research. For secure credential discovery, provider setup, and runner commands, see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md).
