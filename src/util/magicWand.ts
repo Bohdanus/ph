@@ -20,6 +20,7 @@ import { simplifyPath } from './magneticLasso.ts';
 import {
   countSelectionBoundaryEdges,
   encodeRasterSelectionMask,
+  isRasterSelectionSizeWithinBudget,
   MAX_VECTOR_SELECTION_BOUNDARY_EDGES,
 } from './selection-mask.ts';
 import { readCanvasImageDataAtLogicalSize } from './canvas-image-data.ts';
@@ -156,8 +157,10 @@ export function createMagicWandSelectionFromImageData(
   seed: Point,
   options: MagicWandSelectionOptions = {}
 ): MagicWandSelectionResult | null {
-  const { data, width, height } = imageData;
-  if (width <= 0 || height <= 0) return null;
+  const { width, height } = imageData;
+  if (width <= 0 || height <= 0 || !isRasterSelectionSizeWithinBudget(width, height)) return null;
+
+  const { data } = imageData;
 
   const seedX = Math.floor(seed.x);
   const seedY = Math.floor(seed.y);

@@ -1,5 +1,6 @@
 import type { Point } from '../contexts/general-types.ts';
 import type { RgbaColor } from './magicWand.ts';
+import { isRasterSelectionSizeWithinBudget } from './selection-mask.ts';
 
 /**
  * RGB flood fill behind the Paint Bucket, Magic Eraser and Color Replacement. This is deliberately
@@ -173,8 +174,10 @@ export function createFloodFillMask(
   seed: Point,
   options: FloodFillOptions = {}
 ): FloodFillResult | null {
-  const { data, width, height } = imageData;
-  if (width <= 0 || height <= 0) return null;
+  const { width, height } = imageData;
+  if (width <= 0 || height <= 0 || !isRasterSelectionSizeWithinBudget(width, height)) return null;
+
+  const { data } = imageData;
 
   const seedX = Math.floor(seed.x);
   const seedY = Math.floor(seed.y);

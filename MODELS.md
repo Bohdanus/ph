@@ -15,15 +15,11 @@
 Do not treat old model lists as current. For alternatives, query the live catalog and
 select an exact model/provider pair with verified zero pricing.
 
-**HEAVILY USE FREE SUBAGENTS.** The account's OpenRouter free-model quota is **1,000
-requests per day** (the ≥ $10 all-time-lifetime-credit tier). Prefer free models aggressively
-for every bounded, read-only text sweep — web research, docs mining, chat-history analysis,
-and code search/review — unless doing so would risk a paid route or exceed the 1,000/day
-ceiling. Confirm the live per-account counter at any time with
-`node scripts/free-model-pool.mjs --openrouter-quota`; its returned `limit` is authoritative
-and resets to 00:00 UTC. Fan out bounded subagents across Laguna S 2.1 (`thinking`, via Kilo)
-and OpenRouter `:free` entries, keep the global cap of 15 simultaneous subagents, use the
-exact free model/provider from the live catalog, and never silently fall back to paid.
+**Use free models aggressively** for bounded, read-only text work. Quotas are provider-specific:
+Kilo's anonymous gateway allows 200 requests/hour/IP; OpenRouter allows 1,000/day for accounts
+with at least $10 in lifetime credits. The OpenRouter counter resets at 00:00 UTC and does not
+measure Kilo usage. Other account, IDE, or provider limits may apply. Use exact free entries
+from the live catalog, cap fan-out at 15 agents, and never silently fall back to paid.
 
 ## Provider Rules
 
@@ -33,7 +29,6 @@ exact free model/provider from the live catalog, and never silently fall back to
 - Pass `model` and `provider` together.
 - Free sessions must not launch GPT subagents or perform Git operations.
 - **Deletion safety for free Kilo agents:** Kilo exposes tool-level permissions, not a delete-only permission. For visible Kilo sessions, use the project `read-only-research` agent in `.kilo/agent/read-only-research.md`; it denies `edit`, `bash`, `task`, external-directory access, and common file-mutating MCP tool names. For internal free `task` children, use the read-only `explore` role and verify there are no write/patch tools. Explicitly deny any connected MCP file-write/delete tools not covered by its name patterns; if the host cannot guarantee that boundary, use `free-model-pool.mjs` (a completion client without agent tools) or do not launch the free child. Free children return concise findings only; the coordinator writes files and owns all changes.
-- Kilo's anonymous free gateway currently documents 200 requests/hour per IP; account/IDE and provider limits may differ.
 - Model names can be ambiguous between free and paid variants; use the full name with the `(free)` suffix (for example, `Reflection: Beam 1.0 (free)`).
 
 ## Free Model Rotation
@@ -44,14 +39,13 @@ Use `node scripts/free-model-pool.mjs --list` to refresh the eligible free catal
 
 **Multi-URL research:** `node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH --max-tokens N` (max 20 HTTPS URLs, 512 KiB/response, 40K aggregate chars)
 
-**Quota check:** `node scripts/free-model-pool.mjs --openrouter-quota` — reports `used`/`limit`/`remaining`. Query before/after large fan-outs.
+**OpenRouter quota check:** `node scripts/free-model-pool.mjs --openrouter-quota` — reports `used`/`limit`/`remaining`. Query before/after large fan-outs; this does not report Kilo usage.
 
 **Free model constraints:**
 
 - Pass `model` and `provider` together
 - Free sessions must not launch GPT subagents or perform Git operations
 - **Deletion safety:** Use `read-only-research` agent for visible sessions; `explore` role for internal children. Deny `edit`, `bash`, write/patch tools. No delete-only permission exists — deny all mutations.
-- Kilo free gateway: 200 req/hr/IP; account/IDE/provider limits may differ
 - Use full model name with `(free)` suffix to avoid ambiguity (e.g., `Reflection: Beam 1.0 (free)`)
 
 **Quarantine:** source/model-specific, 6h default for confirmed rate limits, max 72h. Expired entries re-enter rotation. Use `npm run free:quarantine -- list|add|release|prune`. Do not quarantine for global quota, context overflow, external API failure, or tool/orchestration error. Schedule reviews with `cron_create`, not OS cron.
