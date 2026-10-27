@@ -88,6 +88,8 @@ vi.mock('../toolIcons.tsx', () => {
     'polygon',
     'line',
     'custom-shape',
+    'hand',
+    'rotate-view',
   ];
   return { toolIcons: Object.fromEntries(names.map((name) => [name, Icon])) };
 });

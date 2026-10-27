@@ -13,6 +13,8 @@ import { EllipseShapeIcon } from './icons/EllipseShapeIcon';
 import { EllipticalSelectionIcon } from './icons/EllipticalSelectionIcon';
 import { EraserIcon } from './icons/EraserIcon';
 import { EyedropperIcon } from './icons/EyedropperIcon';
+import { HandIcon } from './icons/HandIcon';
+import { RotateViewIcon } from './icons/RotateViewIcon';
 import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
 import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
@@ -77,6 +79,8 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'magic-eraser': MagicEraserIcon,
   'paint-bucket': PaintBucketIcon,
   eyedropper: EyedropperIcon,
+  hand: HandIcon,
+  'rotate-view': RotateViewIcon,
   pen: PenToolIcon,
   'freeform-pen': FreeformPenIcon,
   'curvature-pen': PenToolIcon,

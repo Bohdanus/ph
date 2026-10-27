@@ -520,6 +520,7 @@ describe('paint tool raster processors', () => {
  */
 const realBarNames = [
   'eyedropper',
+  'hand',
   'elliptical-selection',
   'quick-selection',
   'eraser',
@@ -907,9 +908,12 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['burn', 'canvas', 40, 24],
     ['sponge', 'canvas', 40, 24],
     ['clone-stamp', 'canvas', 40, 24],
-    // The eyedropper rasterizes nothing, so it is absent from the registry entirely
-    // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
+    // The eyedropper rasterizes nothing and the Hand moves only the view, so both are absent
+    // from the registry entirely (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than
+    // registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
+    ['hand', 'no-processor', 0, 0],
+    ['rotate-view', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -1142,6 +1146,8 @@ describe('toolsMap exhaustiveness', () => {
     ['burn', 'burn'],
     ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
+    ['hand', 'hand'],
+    ['rotate-view', 'rotate-view'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],
     ['curvature-pen', 'curvature-pen'],

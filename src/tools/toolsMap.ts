@@ -12,6 +12,8 @@ import Eraser from '../components/ToolbarsRight/Eraser/Eraser.tsx';
 import Eyedropper from '../components/ToolbarsRight/Eyedropper/Eyedropper.tsx';
 import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
 import Gradient from '../components/ToolbarsRight/Gradient/Gradient.tsx';
+import Hand from '../components/ToolbarsRight/Hand/Hand.tsx';
+import RotateView from '../components/ToolbarsRight/RotateView/RotateView.tsx';
 import FeatherMagneticLasso from '../components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
@@ -146,6 +148,15 @@ export const toolsMap: ToolsMap = {
   // No processor: the eyedropper rasterizes nothing (see `PIXEL_FREE_TOOLS` in toolProcessors.ts),
   // so this entry carries only the icon and the options bar.
   eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper },
+  // No processor for the same reason: the Hand moves the VIEW, not the document, so it
+  // rasterizes nothing and records no history state. See `PIXEL_FREE_TOOLS` in
+  // toolProcessors.ts. It is a working tool rather than a dead button, which is what
+  // `commit: 'unimplemented'` would have said.
+  hand: { icon: 'hand', toolboxComponent: Hand },
+  // No processor, and the same reasoning as the two entries above it: Rotate View "changes the
+  // angle at which you view the canvas, but it does not rotate or transform the actual image", so
+  // it is in `PIXEL_FREE_TOOLS` and writes no pixel, no history state and nothing to export.
+  'rotate-view': { icon: 'rotate-view', toolboxComponent: RotateView },
   pen: { ...toolProcessors.pen, icon: 'pen', toolboxComponent: placeholderTool('Pen Tool', 'pen') },
   'freeform-pen': {
     ...toolProcessors['freeform-pen'],

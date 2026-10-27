@@ -273,14 +273,14 @@ test('selecting a paint tool releases the previously primary tool button', async
   // that resolves to no element rather than on the behaviour it claims, and the closing
   // `tool-button-brush` check would be the only half of the pair with a tile to read at all.
   //
-  // 1400 is deliberately well past the boundary rather than just over it. The whole fifteen-row
-  // grid is 765px of content — fifteen 44px tiles, fourteen 6px row gaps, three 7px section
+  // 1400 is deliberately well past the boundary rather than just over it. The whole sixteen-row
+  // grid is 815px of content — sixteen 44px tiles, fifteen 6px row gaps, three 7px section
   // rules — and the fit budgets the WHOLE slot now, where it used to take four fifths of it,
-  // so the first window height at which nothing collapses is 1037: measured, that is where the
-  // slot itself is 765px, the exact height the grid needs. The step off "everything" is not one
-  // pixel but two whole rows — at 1036 the fit keeps thirteen tiles and folds the tail, because
-  // fourteen tiles is unreachable: fourteen rows plus the three-dots row IS the full fifteen-row
-  // grid. A window a few pixels above 1037 would turn this test into a measurement of the
+  // so the first window height at which nothing collapses is 1087: measured, that is where the
+  // slot itself is 815px, the exact height the grid needs. The step off "everything" is not one
+  // pixel but two whole rows — at 1086 the fit keeps fourteen tiles and folds the tail, because
+  // fifteen tiles is unreachable: fifteen rows plus the three-dots row IS the full sixteen-row
+  // grid. A window a few pixels above 1087 would turn this test into a measurement of the
   // boundary rather than of the claim it is making.
   await page.setViewportSize({ width: 1280, height: 1400 });
   await page.goto('/');

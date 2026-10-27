@@ -227,6 +227,14 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'This app’s own freehand stroke tool, not a Photoshop tool: a drag becomes a new layer of ink, drawn with a pen, a dashed pen or a spray.',
     implementation: 'implemented',
   },
+  hand: {
+    summary: 'Drag to move the image around the window without changing the zoom level.',
+    implementation: 'implemented',
+  },
+  'rotate-view': {
+    summary: 'Turn the view of the canvas without turning the image inside it.',
+    implementation: 'implemented',
+  },
 };
 
 /**

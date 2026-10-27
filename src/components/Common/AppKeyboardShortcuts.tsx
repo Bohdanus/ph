@@ -1,6 +1,8 @@
 import { useHistory } from '../../contexts/useHistory.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
+import { fitToScreen, setActualPixels, stepZoom } from '../../hooks/document-view.ts';
+import { useRegisterTemporaryHand } from '../../hooks/useTemporaryHand.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
@@ -51,6 +53,12 @@ const fillGroup = ['paint-bucket', 'gradient'] as const satisfies readonly ToolN
 /** `O`: the whole toning flyout — the Dodge, the Burn and the Sponge, in Adobe's order. */
 const tonalGroup = ['dodge', 'burn', 'sponge'] as const satisfies readonly ToolName[];
 const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies readonly ToolName[];
+/**
+ * `H`: the Hand and Rotate View, one rail tile — Adobe's arrangement, and the reason `H` alone
+ * is not enough to reach both. `Shift+H` cycles, which is the same weaker and separately-labelled
+ * claim the marquee tools already make.
+ */
+const viewGroup = ['hand', 'rotate-view'] as const satisfies readonly ToolName[];
 
 /**
  * The tools whose options bar carries a tip, and the field each one spells it with.
@@ -167,6 +175,16 @@ export const AppKeyboardShortcuts = () => {
     }
 
     goToTool(marqueeGroup.includes(toolName as (typeof marqueeGroup)[number]) ? toolName : 'rectangular-selection');
+  };
+
+  const selectViewTool = (shiftKey = false) => {
+    if (shiftKey) {
+      const current = viewGroup.includes(toolName as (typeof viewGroup)[number]) ? toolName : 'hand';
+      goToTool(cycleToolGroup(current as ToolName, viewGroup as readonly ToolName[]));
+      return;
+    }
+
+    goToTool(toolName === 'rotate-view' ? 'hand' : 'hand');
   };
 
   const selectObjectSelectionTool = (shiftKey = false) => {
@@ -607,6 +625,15 @@ export const AppKeyboardShortcuts = () => {
    */
   const setSpongeMode = (mode: SpongeMode) => patchToolArgs('sponge', { mode });
 
+  /**
+   * The spring-loaded Hand's keyboard wiring, here rather than in `Main`.
+   *
+   * This component is inside `KeyboardEventsProvider` and `Main` is not guaranteed to be, so
+   * putting it here is what keeps `Main` renderable by the tests that omit the provider. See
+   * `useRegisterTemporaryHand`.
+   */
+  useRegisterTemporaryHand();
+
   useKeyDownShortcut({
     key: 'd',
     mod: false,
@@ -625,6 +652,101 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage && toolName === 'sponge',
     onKeyDown: () => setSpongeMode('saturate'),
+  });
+
+  // Adobe's Hand letter. `mod: false` and no `preventDefault`, so it is inert while a
+  // document-committing gesture is open — selecting a tool mid-gesture aborts it, which is what
+  // Photoshop does, and the default `mutatesDocument: true` is exactly that policy rather than
+  // an oversight.
+  useKeyDownShortcut({
+    key: 'h',
+    mod: false,
+    enabled: hasImage,
+    onKeyDown: (event) => selectViewTool(event.shiftKey),
+  });
+
+  // Adobe's own page prints `R` beside the Rotate View tool, so this letter is Adobe-table
+  // confirmed rather than inherited from a shortcut sheet the way several others here are.
+  useKeyDownShortcut({
+    key: 'r',
+    mod: false,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('rotate-view'),
+  });
+
+  /**
+   * The view commands.
+   *
+   * `mod: true` on all four, which is what makes them disjoint from the bare `0` and `1`
+   * opacity bindings above: `matchesShortcut` treats `mod` as an EQUALITY check, not a
+   * "must be absent" check, so `mod: true` requires the modifier and `mod: false` forbids it.
+   *
+   * `+` and `=` are registered separately, and so are `-` and `_`, because `key` is matched
+   * LITERALLY: on a US layout `Cmd+Shift+=` is how `Cmd++` arrives, and the browser reports
+   * that as `key: '+'`. Without both spellings the zoom step works with one Shift state and
+   * silently does nothing with the other, which is the kind of defect that only reproduces on
+   * one keyboard.
+   *
+   * These are the whole of the magnification the Hand has behind it — there is no Zoom tool —
+   * so they are registered rather than living behind a menu that does not exist.
+   */
+  // `+` and `=` are registered separately, and so are `-` and `_`, because `key` is matched
+  // LITERALLY: on a US layout `Cmd+Shift+=` is how `Cmd++` arrives, and the browser reports
+  // that as `key: '+'`. Without both spellings the zoom step works with one Shift state and
+  // silently does nothing with the other, which is the kind of defect that only reproduces on
+  // one keyboard.
+  //
+  // Four written-out registrations rather than a loop over the two spellings: these are hooks,
+  // and a hook in a loop is a hook whose order depends on its data.
+  //
+  // These are the whole of the magnification the Hand has behind it — there is no Zoom tool —
+  // so they are registered rather than living behind a menu that does not exist.
+  useKeyDownShortcut({
+    key: '0',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => fitToScreen(),
+  });
+
+  useKeyDownShortcut({
+    key: '1',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => setActualPixels(),
+  });
+
+  useKeyDownShortcut({
+    key: '+',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => stepZoom(1),
+  });
+
+  useKeyDownShortcut({
+    key: '=',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => stepZoom(1),
+  });
+
+  useKeyDownShortcut({
+    key: '-',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => stepZoom(-1),
+  });
+
+  useKeyDownShortcut({
+    key: '_',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => stepZoom(-1),
   });
 
   return null;

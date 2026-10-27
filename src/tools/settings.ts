@@ -25,6 +25,8 @@ import {
   type ColorReplacementToolArgs,
 } from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
+import type { HandToolArgs } from './hand.ts';
+import type { RotateViewToolArgs } from './rotate-view.ts';
 import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from './quickSelection.ts';
 import type { GradientToolArgs } from './gradient.ts';
@@ -243,6 +245,8 @@ export const defaultSettings = {
     sampleAllLayers: false,
     toolName: 'eyedropper',
   } satisfies EyedropperToolArgs,
+  hand: { toolName: 'hand' } satisfies HandToolArgs,
+  'rotate-view': { toolName: 'rotate-view' } satisfies RotateViewToolArgs,
   'elliptical-selection': {
     style: 'normal',
     fixedRatio: 1,

@@ -1219,11 +1219,12 @@ across the whole history array, which touches the replay boundary), Vertical Typ
 masks (glyph→selection rasterisation), Path Selection and Direct Selection (a path model absent
 from `src/tools/shape.ts` entirely), and Artboard and Frame (layer kinds the app has no type for).
 
-**One step is a baseline hazard and belongs on its own branch:** Hand, Zoom and Rotate View. The
-app's zoom state is commented out (`StoreContext.tsx` — the commented-out `// zoom data` block;
-`ZoomData` survives only as a
-type), so the seam exists and the state does not. It is small in lines and large in blast radius,
-because it touches the renderer and every e2e screenshot baseline.
+**One step was a baseline hazard and has landed:** Hand, plus the view transform it needed. The
+state exists — `{ dx, dy, zoom }` is live in `src/hooks/document-view.ts`, `usePointerPosition`
+maps through it, and the Hand is the rail's last tile. The baseline hazard was real and was met the
+only way it can be: at Fit on Screen the transform writes **no transform at all**, so the default
+rendering is byte-identical to what it was before and every visual baseline held. Zoom and Rotate
+View remain; they are `HANDOFF.md` §151.
 
 **The first step is the highest-value thing in the plan and it is not a feature:** land the target
 as data, and add a test asserting the **set of rail labels** equals the target set — not the order,
@@ -4185,66 +4186,50 @@ its two JSX wirings,
 
 ---
 
-## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
+## 151. The Zoom and Rotate View tools are still absent, and a divider comment in the rail cites a control that no longer exists
 
-**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
-the root cause anywhere in the tree. `toolbar-mapping.ts` (repo root) has no `hand`, `zoom` or
-`rotate` entry. The store's view state is entirely commented out:
+**Problem.** The view transform this entry used to name as the root cause **exists now**: `hand` is
+implemented, `{ dx, dy, zoom }` is live in `src/hooks/document-view.ts`, and
+`usePointerPosition` maps client points through it. Two of the three tools are still missing, and
+one stale comment survived.
 
-- `StoreContext.tsx` — `StoreData`'s commented-out `zoomDataRef` / `setZoomData` members, with only
-  the type left live.
-- `StoreContext.tsx` — `StoreProvider`'s whole commented zoom block, `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest.
-- `general-types.ts` — `export type ZoomData = { dx, dy, zoom }` is still a live export with
-  **zero** live consumers. A type with no consumer is the residue of the removal.
+- `toolbar-mapping.ts` (repo root) has a `hand` entry and no `zoom` or `rotate` entry. So the Tools
+  panel is missing two of Photoshop's twenty slots, not three.
+- `docs/FEATURES.md` scores View / navigation `partial` and names the Zoom tool and Rotate View as
+  the gap; `docs/TOOLS-INVENTORY.md`'s "Navigation and measuring" table carries catalogue rows for
+  both, as every row in that file must.
 
-**The `'zoom'` default is a trap, and it is the half nobody has written down.**
-`Main.tsx` initialises `let interactionMode = 'zoom'` and the string `'zoom'`
-is assigned by **no branch** in the file — the `if`/`else if` chain that assigns `interactionMode`
-runs from its first `else if` to the `else EventHandler = DummyToolArea` that terminates it. So
-`'zoom'` is not a mode anything enters; it is the value every tool without its own arm falls through
-to, and it lands on a `display: none` div with no handlers. `Main.tsx` still carries the matching
-`// transform: translate(${dx}px, ${dy}px) scale(${zoom})` on the `.zoom-container` div, and
-`Main.scss`'s `.zoom-container` rule sets `transform-origin` with no `transform` to anchor.
+**The rail's divider comment still reasons about a deleted control.**
+`src/components/SidebarLeft/SidebarLeft.tsx` has exactly one `<hr>`, and the comment above it
+justifies that by describing a control that is not in the file: "The second `<hr>` this replaces
+stood between the colour cluster and NOTHING — the commented-out Zoom control that followed it was
+deleted with it". A reader has to work out that the sentence's subject was removed years ago and
+that the comment is justifying a divider by appealing to a divider that no longer exists.
 
-**A second, smaller finding in the same cause.** `src/components/SidebarLeft/SidebarLeft.tsx`
-has exactly one `<hr>`, and the comment above that `<hr>` justifies it by describing a
-commented-out Zoom control: "The second `<hr>` this replaces stood between the colour cluster and
-NOTHING — the commented-out Zoom control that followed it was deleted with it". The control it
-reasons about is not in the file.
+**Fix.** Two separable pieces.
 
-**Why it is not a wiring bug.** There is no view transform to wire. `usePointerPosition` maps
-client coordinates to image pixels through a `scale` supplied by the host rather than owning a
-transform of its own.
+1. Delete or reword the `<hr>` comment. Whatever it becomes, it has to stand on the current markup:
+   one divider between the tool list and the colour cluster, on the grounds that there is one
+   divider, not on the grounds that a second one used to exist.
+2. Build the Zoom tool (`Z`) over the transform that now exists. Adobe's page documents its
+   behaviour and the 100% / Actual Pixels controls, which `src/hooks/document-view.ts` already
+   provides as `setActualPixels()`; what is missing is the tool, its options bar, Scrubby Zoom and
+   the presets. `docs/TOOLS-INVENTORY.md`'s Zoom row carries the source and marks the `Z`
+   third-party. Note the interaction with `toolbar-mapping.ts`: Adobe's Hand and Zoom share one
+   flyout, and the Hand is currently a singleton tile because there was no Zoom to pair it with —
+   adding the Zoom means resolving that, and `docs/TOOLS-INVENTORY.md` records the separator as one
+   of `HANDOFF.md` §74's open placements.
 
-**Fix — start with the scope, not the Hand tool.** Three separate features each want one, and they
-want the same one: pan/zoom, the space-drag temporary-pan every tool inherits, and tool cursors that
-track the view (a brush tip circle is a screen-space circle). A `DocumentViewScope` owning
-`{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image conversion reading from it,
-is the shape the commented-out code was reaching for. Do not begin with a Hand tool; begin with the
-scope and the three tools fall out of it.
+Rotate View (`R`) is separate and smaller: a rotation angle on top of the same transform. It needs
+the rotation field in the transform, which nothing currently carries.
 
-Two smaller fixes that can land independently, and are cheap:
+**Files.** `toolbar-mapping.ts` (repo root), `src/components/SidebarLeft/SidebarLeft.tsx` (the
+single `<hr>` and the comment above it), `src/components/SidebarLeft/icons/` (no `ZoomIcon` or
+`RotateViewIcon` exists), `src/tools/descriptions/navigation.ts` (where both would be recorded).
 
-1. Replace the `'zoom'` default with something honest — `DummyToolArea` itself, or an explicitly
-   named `UNHANDLED` — so the fallthrough is a decision rather than an accident that reads as a
-   feature. As written, a reader must diff the whole chain to learn that `'zoom'` is never assigned.
-2. Delete or reword the `<hr>` comment in `SidebarLeft.tsx`; the control it cites is gone.
-
-**Why this is being refiled.** `4833e740` deleted the entry that carried it on the grounds that it
-was "already carried by a tracked document". It is not. `docs/TOOLS-INVENTORY.md`'s "Navigation and
-measuring" table has catalogue rows for the three names, and its "Zoom deserves one note of
-accuracy" note records "The app has a zoom **interaction mode** on the canvas and **no Zoom tool**"
-— a description, not a filed defect. `docs/TOOLS-TOO-HARD.md`'s "The Adobe tools the rail omits"
-section repeats that one sentence. `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section
-lists the three only as "not Adobe-table-confirmed". The one surviving mention of the root cause is
-`HANDOFF.md` §74, framed as a roadmap step ("belongs on its own branch"), which never names the
-`'zoom'` fallthrough or the stale comment. Verified against `main@cf41f642`.
-
-**Files.** `toolbar-mapping.ts` (repo root), `src/contexts/StoreContext.tsx` (`StoreData` and
-`StoreProvider`), `src/contexts/general-types.ts` (`ZoomData`),
-`src/components/Main/Main.tsx` (`interactionMode`, the `EventHandler` chain, the `.zoom-container`
-div), `src/components/Main/Main.scss` (`.zoom-container`), `src/components/SidebarLeft/SidebarLeft.tsx`
-(the single `<hr>` and the comment above it), `src/hooks/usePointerPosition.ts`
+**Verified against** the tree carrying the Hand: `toolbar-mapping.ts` has `hand` and neither `zoom`
+nor `rotate`; `grep -n "zoom data" src/contexts/StoreContext.tsx` returns nothing; the `ZoomData`
+type is gone from `general-types.ts`.
 
 ---
 
@@ -5753,15 +5738,16 @@ says so for its own tool. Sixteen tool areas do set their own cursor, so this is
 absence of per-tool cursors and should not be described as one; what is missing is the cursor for the
 one tool whose cursor carries information, because it tells the user where the tip is and how wide.
 
-`HANDOFF.md` §151 names a brush-tip circle as part of its fix, since the view transform that would
-size it is commented out. The modifier that switches to a precise cursor is recorded nowhere.
+The view transform that would size a screen-space circle **exists now**
+(`src/hooks/document-view.ts`, read through `getView()` by any consumer that needs it
+synchronously). The modifier that switches to a precise cursor is still recorded nowhere.
 
 **Affected.** `DrawToolArea.tsx`, and the cursor rules in `src/components/Main/Main.scss` for the
 precise variant.
 
 **What would close it.** A screen-space circle sized from the tip during a paint drag, and a
-modifier that swaps the crosshair for the precise crosshair. Both depend on the view transform
-§151 carries, so neither lands usefully before it.
+modifier that swaps the crosshair for the precise crosshair. The blocker is gone; what is left is
+the circle and the modifier.
 
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 

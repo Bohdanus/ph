@@ -84,15 +84,20 @@ export type ToolProcessorDefinition = {
 /**
  * Tools that rasterize nothing, commit no pixels and record no history state.
  *
- * The eyedropper belongs here and not under `commit: 'unimplemented'`: it is a working tool, not a
- * dead button. Adobe's rule is that a history state comes from a change to pixels, and sampling
- * changes only the app's foreground colour, so it has no `commit` kind, no `replay()` descriptor,
- * no `HistoryItem` and no durable operation. `unimplemented` cannot express that — it means "this
+ * The eyedropper, the Hand and Rotate View belong here and not under `commit: 'unimplemented'`:
+ * all three are working tools, not dead buttons. Adobe's rule is that a history state comes from a change to
+ * pixels. The eyedropper changes only the app's foreground colour, and the Hand changes only
+ * the view — neither touches a pixel, so neither has a `commit` kind, a `replay()` descriptor,
+ * a `HistoryItem` or a durable operation. `unimplemented` cannot express that — it means "this
  * tool does not work yet", and it is read as exactly that by `src/components/Main/Main.tsx`'s tool
  * dispatch. Naming the set is also what lets a consumer of `toolProcessors` distinguish "this tool
  * has no processor" from "this tool name does not exist".
+ *
+ * `HandToolArea` additionally never calls `claimDocumentGesture`, for the same reason: it
+ * writes no pixel, so claiming the single document slot would make the tool refuse itself and
+ * would break the "one document owner at a time" invariant `document-gesture.ts` documents.
  */
-export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[];
+export const PIXEL_FREE_TOOLS = ['eyedropper', 'hand', 'rotate-view'] as const satisfies readonly ToolName[];
 
 /** The tools that do have a processor, which is the registry's key set. */
 export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;

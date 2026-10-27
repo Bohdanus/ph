@@ -11,7 +11,6 @@ export type RectXY = {
 
 export type RectXYSorted = RectXY;
 
-export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Delta = { dx: number; dy: number };
 
 export type SelectionSourceTool =

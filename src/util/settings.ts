@@ -83,6 +83,19 @@ export function saveLastSettings(args: ToolArgs) {
     // Typed rather than bare even though nothing here is geometric: Sample Size is a real user
     // choice, and the bare group exists for tools whose only setting is that they exist.
     lastSavedSettings.eyedropper = cloneDeep({ ...args });
+  } else if (toolName === 'hand') {
+    // The same reason as the three marquee tools below, and for the same forward-looking
+    // reason: an unmatched `toolName` never reaches `lastSavedSettings`, so the bar would be
+    // re-seeded from `defaultSettings` on every switch. Harmless today — the Hand has no
+    // settings — and this arm is what stops it becoming silently untrue.
+    lastSavedSettings.hand = cloneDeep({ toolName });
+  } else if (toolName === 'rotate-view') {
+    // Same reason as the Hand above, and the same forward-looking one. Rotate View's Rotation
+    // Angle is deliberately NOT here: it is a command over the view store rather than a setting
+    // on the tool, because Adobe's own wording is that the tool "does not rotate or transform
+    // the actual image" — an angle that survived a tool switch would read as belonging to the
+    // document, which is the opposite of what it is.
+    lastSavedSettings['rotate-view'] = cloneDeep({ toolName });
   } else if (
     toolName === 'rectangular-selection' ||
     toolName === 'single-row-marquee' ||

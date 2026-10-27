@@ -39,13 +39,24 @@ describe('eyedropper args', () => {
 
 describe('eyedropper registry absence', () => {
   it('has no processor, because it rasterizes nothing and records no history', () => {
-    expect(PIXEL_FREE_TOOLS).toEqual(['eyedropper']);
     expect(findToolProcessor('eyedropper')).toBeUndefined();
     expect(Object.hasOwn(toolProcessors, 'eyedropper')).toBe(false);
   });
 
-  it('is the only tool in the pixel-free set, so the set cannot grow unnoticed', () => {
-    // Every other tool rasterizes, so a second entry here would be a claim that has to be earned.
-    expect([...PIXEL_FREE_TOOLS]).toHaveLength(1);
+  it('is a member of the pixel-free set alongside the two others', () => {
+    // This used to pin `toHaveLength(1)`, on the reasoning that "every other tool rasterizes, so
+    // a second entry would be a claim that has to be earned". The Hand and Rotate View each
+    // earned it, and for the same reason the eyedropper's own membership rests on: they move the
+    // VIEW rather than the document. So the pin is replaced rather than deleted — the set's exact
+    // membership is still asserted, and now a FOURTH member still cannot appear without this
+    // failing.
+    expect(PIXEL_FREE_TOOLS).toEqual(['eyedropper', 'hand', 'rotate-view']);
+  });
+
+  it('leaves every pixel-free member without a processor, so the set cannot gain a dead entry', () => {
+    for (const toolName of PIXEL_FREE_TOOLS) {
+      expect(findToolProcessor(toolName)).toBeUndefined();
+      expect(Object.hasOwn(toolProcessors, toolName)).toBe(false);
+    }
   });
 });

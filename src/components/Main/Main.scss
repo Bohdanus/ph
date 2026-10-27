@@ -25,6 +25,32 @@
   cursor: pointer;
 }
 
+/**
+ * The Hand's resting cursor.
+ *
+ * `grab` rather than `grabbing`, which is what `.cursor-grabbing` supplies and what
+ * `dragCursorLock` puts on `document.body` for the duration of a drag. So the two halves of the
+ * gesture are two different classes from two different places, and `!important` matches
+ * `.cursor-grabbing` because both have to beat the `cursor: grab` on the rail's own tiles —
+ * which are ancestors of nothing here, but the workspace `main` is the element carrying the
+ * class and a dragged pan leaves the pointer over chrome that sets its own cursor.
+ */
+.cursor-hand {
+  cursor: grab !important;
+}
+
+/**
+ * Rotate View's resting cursor.
+ *
+ * `crosshair` rather than `grab` or a rotate glyph: the drag turns the VIEW around a fixed point,
+ * so the pointer is aiming rather than dragging something, and `crosshair` is the same class the
+ * Crop and Shape tools already use for a pointer that sets a position. `dragCursorLock` supplies
+ * `cursor-grabbing` for the duration, unchanged.
+ */
+.cursor-rotate-view {
+  cursor: crosshair !important;
+}
+
 .cursor-grab {
   cursor: grab !important;
 }

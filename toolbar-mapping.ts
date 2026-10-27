@@ -139,6 +139,32 @@ export const toolbarMap = [
       { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
       { label: 'Custom Shape Tool', name: 'custom-shape' },
     ],
+    // The last tool tile, where Adobe puts the Hand/Zoom group — above the colour swatches,
+    // and after Slice/Slice Select, which this rail does not carry.
+    //
+    // A FLYOUT of two, which is what this tile was a singleton *waiting* to become. It was one
+    // because a flyout entry needs a second tool to open and Rotate View did not exist yet;
+    // that reasoning expires here and this comment with it. Adobe's own arrangement is one tile
+    // holding the Hand and Rotate View, so this is that.
+    //
+    // NOT the Hand/Zoom pair, because the Zoom tool still does not exist: this app reaches
+    // magnification through Ctrl+0 / Ctrl+1 / Ctrl++ / Ctrl+-, a wheel gesture and the Hand's
+    // own options bar. A Zoom entry here would put a tile on screen for a tool that cannot be
+    // selected, which is the invented entry docs/TOOLS-INVENTORY.md's policy refuses — the same
+    // reason it files Star as a missing ENTRY rather than a hardcoded shape.
+    //
+    // One tile rather than two, which is also what keeps this cheap: a flyout is ONE group, so
+    // the rail stays at sixteen groups and the measured fold edge (H=1087, pinned in
+    // `e2e/toolbar-fit.spec.ts`) does not move. A separate Rotate View tile would have made it
+    // seventeen and moved that edge.
+    //
+    // `shortcut` is on the PRIMARY member only, as everywhere in this map: `H` selects the Hand,
+    // `R` selects Rotate View, and `Shift+H` cycles the group. The cost of a flyout is that a
+    // plain click opens the menu instead of selecting the Hand.
+    [
+      { label: 'Hand Tool', name: 'hand', shortcut: 'H' },
+      { label: 'Rotate View Tool', name: 'rotate-view', shortcut: 'R' },
+    ],
   ],
 ] as const satisfies readonly (readonly ToolbarToolGroup[])[];
 
@@ -187,6 +213,8 @@ export const availableTools: readonly ToolName[] = [
   'dodge',
   'burn',
   'sponge',
+  'hand',
+  'rotate-view',
 ];
 
 /**

@@ -15,6 +15,8 @@ import { QuickSelectionToolArea } from './QuickSelectionToolArea.tsx';
 import { SingleRowColumnMarqueeToolArea } from './SingleRowColumnMarqueeToolArea.tsx';
 import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
+import { HandToolArea } from './HandToolArea.tsx';
+import { RotateViewToolArea } from './RotateViewToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -35,6 +37,27 @@ import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
+import { resetView, stepZoomAt, panBy } from '../../hooks/document-view.ts';
+import { isSpaceHeld, useSpaceHeld } from '../../hooks/useTemporaryHand.ts';
+import { useViewTransform } from '../../hooks/useViewTransform.ts';
+
+/**
+ * The mode a tool falls through to when nothing above claims it, and the one that mounts
+ * `DummyToolArea`.
+ *
+ * NAMED, and previously spelled `'zoom'`. That string read like a feature and was not one: no
+ * branch in the chain below ever assigned it, so it was the value every unrecognised tool
+ * landed on — a hidden no-op area wearing the name of the one tool the rail used to have a tile
+ * for. `HANDOFF.md` §151 named it as one of the two cheap sub-items of the view work.
+ *
+ * Renaming it is the whole of the fix. It deliberately still routes to `DummyToolArea` rather
+ * than to the Hand: the tools that reach it have no gesture surface by design — `custom-shape`
+ * is a placeholder panel, `transform` is a one-shot operation the canvas route drives, the pen
+ * family drives its own paths — and giving them a pan surface would be inventing behaviour
+ * nobody asked for. `Main.toolAreas.test.tsx` pins that allow-list, and its comment is the
+ * reason this stayed a no-op rather than becoming one.
+ */
+const UNHANDLED_TOOL_MODE = 'unhandled-tool';
 
 // The tools that commit a polygon selection, and so the only modes with a border
 // to march. The rectangular selection tool is absent on purpose: `useRect` strokes
@@ -43,7 +66,18 @@ const POLYGON_SELECTION_MODES: string[] = ['lasso', 'feather-magnetic-lasso', 'm
 
 const Main = () => {
   const [
-    { canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize, documentFrame },
+    {
+      canvasRef,
+      containerRef,
+      toolOverlayRef,
+      rectOverlayRef,
+      hasImage,
+      layers,
+      toolName,
+      totalSize,
+      documentFrame,
+      documentId,
+    },
   ] = useStore();
   const { theme } = useTheme();
   const { setBlankImage, setImageFromUpload } = useApp();
@@ -55,9 +89,104 @@ const Main = () => {
 
   const toolCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const selectionAntsOverlayRef = useRef<HTMLCanvasElement | null>(null);
+  /**
+   * The transformed element. Separate from `containerRef`, which the store owns and which the
+   * tool areas measure: the view transform belongs to `Main` because `Main` is what renders
+   * `.zoom-container`, and `useViewTransform` writes to the node imperatively rather than
+   * through a style prop so that a pan does not re-render this subtree sixty times a second.
+   */
+  const zoomContainerRef = useRef<HTMLDivElement | null>(null);
 
-  let interactionMode = 'zoom';
-  if (toolName === 'reposition') {
+  useViewTransform(zoomContainerRef);
+
+  /**
+   * The spring-loaded Hand, subscribed for its RENDER and not for its value.
+   *
+   * Called with no assignment on purpose. `Main` has to re-render when `Space` arms so that the
+   * routing below mounts `HandToolArea` and the canvas cursor changes with it; the boolean this
+   * returns would be the same answer the synchronous read gives, one commit later. Keeping the
+   * two apart is what lets the pointer path read `isSpaceHeld()` and be correct on the same tick
+   * as the keypress.
+   */
+  useSpaceHeld();
+
+  /**
+   * Drop the view when the document identity changes.
+   *
+   * On `documentId` rather than on `totalSize`, which is the distinction that matters: `Canvas
+   * Size` changes `totalSize` without changing the document, and a user who has zoomed in to
+   * retouch should keep that view across a canvas resize. `fitScale` belongs to the OLD
+   * document's dimensions, so carrying a zoom multiplier across an Open or New would open the
+   * next document at an arbitrary magnification of the last one's fit.
+   */
+  useEffect(() => {
+    resetView();
+  }, [documentId]);
+
+  /**
+   * Wheel: zoom at the pointer, pan otherwise.
+   *
+   * ATTACHED DIRECTLY RATHER THAN THROUGH `onWheel`, and that is the whole point of the
+   * `{ passive: false }` third argument. React registers `wheel` as passive on its root, so a
+   * React `onWheel` cannot `preventDefault()` — the call is a no-op and logs a warning, and the
+   * e2e suite's `consolePolice` fixture fails a test on an unaccepted console error. Without the
+   * `preventDefault` the browser zooms the PAGE on a `Ctrl`/`Cmd` wheel, which is the one
+   * behaviour here that is not ours to choose. The same shape as the `pointercancel` listener
+   * `usePointerPosition` installs.
+   *
+   * `overscroll-behavior: none` on `.zoom-container` is already suppressing scroll-chaining; it
+   * does not stop the browser's own zoom shortcut, which is why this handler exists.
+   */
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!hasImage) return;
+
+      event.preventDefault();
+
+      // Anchor the zoom at the pointer so the pixel under the cursor stays under the cursor,
+      // which is what makes a wheel zoom read as moving a window rather than jumping.
+      const rect = node.getBoundingClientRect();
+
+      if (event.ctrlKey || event.metaKey) {
+        stepZoomAt({ x: event.clientX, y: event.clientY }, rect, event.deltaY < 0 ? 1 : -1);
+        return;
+      }
+
+      // A trackpad's two-finger scroll arrives as a wheel event with no modifier, and it is the
+      // gesture most people reach for. `shiftKey` is the browser's own horizontal-scroll
+      // convention and Adobe's too, so a Shift+wheel pans sideways and a plain one pans down.
+      panBy(event.shiftKey ? -event.deltaY : 0, event.shiftKey ? 0 : -event.deltaY);
+    };
+
+    node.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      node.removeEventListener('wheel', handleWheel);
+    };
+  }, [containerRef, hasImage]);
+
+  let interactionMode = UNHANDLED_TOOL_MODE;
+  if (toolName === 'rotate-view') {
+    // Checked BEFORE the Hand, not after, and the ordering is not a preference. Both tools share
+    // one rail tile, and the spring-loaded Spacebar below routes to the Hand when it is held — so
+    // a toolName check placed after the `isSpaceHeld()` arm could be pre-empted by a held Space
+    // bar, which would mean Space silently switches a selected Rotate View back to the Hand. The
+    // `toolName === 'hand'` arm keeps its own precedence for the same reason.
+    interactionMode = 'rotate-view';
+  } else if (toolName === 'hand') {
+    interactionMode = 'hand';
+  } else if (isSpaceHeld()) {
+    // SPRING-LOADED, and deliberately not `goToTool`. Adobe's page: "press and hold the
+    // spacebar key to temporarily switch to the Hand tool" — temporary means the selected tool
+    // is untouched and comes back on release, so the rail's pressed tile must not move.
+    //
+    // Checked AFTER `toolName === 'hand'` so that holding Space while the Hand is already
+    // selected is a no-op rather than a second source of truth competing with the first.
+    interactionMode = 'hand';
+  } else if (toolName === 'reposition') {
     interactionMode = 'reposition';
   } else if (toolName === 'crop') {
     interactionMode = 'crop';
@@ -224,6 +353,8 @@ const Main = () => {
       | typeof SingleRowColumnMarqueeToolArea
       | typeof QuickSelectionToolArea
       | typeof EyedropperToolArea
+      | typeof HandToolArea
+      | typeof RotateViewToolArea
       | typeof EraserToolArea
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
@@ -251,6 +382,8 @@ const Main = () => {
       else if (interactionMode === 'quick-selection') EventHandler = QuickSelectionToolArea;
       else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
+      else if (interactionMode === 'hand') EventHandler = HandToolArea;
+      else if (interactionMode === 'rotate-view') EventHandler = RotateViewToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
@@ -268,14 +401,7 @@ const Main = () => {
         className={`absolute left-0 top-0 flex h-full w-full items-center justify-center ${theme === 'dark' ? 'chessboard-dark' : 'chessboard-light'}`}
         style={{ display: hasImage ? undefined : 'none' }}
       >
-        <div
-          className="zoom-container h-full w-full"
-          style={
-            {
-              // transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
-            }
-          }
-        >
+        <div className="zoom-container h-full w-full" ref={zoomContainerRef}>
           <canvas
             ref={canvasRef}
             data-testid="workspace-canvas"

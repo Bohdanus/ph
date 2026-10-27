@@ -217,11 +217,20 @@ the `.notes.md` files carry the per-tool sources; a description without a source
 a rumour.
 
 The navigation-and-measuring overview is Adobe's least complete: only one line
-was retrievable ("Ruler tool Measures distances, locations, and angles"). Hand,
+was retrievable ("Ruler tool Measures distances, locations, and angles").
 Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection
 and Direct Selection are therefore **not Adobe-table-confirmed** and are listed
 from the shortcut PDF and individual tool pages. That list lives here; nothing
 else in the repository carries it.
+
+**Hand has left that list, and not by being re-researched.** Its Adobe page was
+opened — the _"Pan across the canvas with the Hand tool"_ page — and what it
+establishes is what makes the tool's own precondition: the Hand moves the image
+_"while you're zoomed in to more than 100% and part of the image is out of view"_,
+so it presupposes a zoom and is defined over the zoomed case. That is also why
+`docs/FEATURES.md` scores View / navigation `partial` rather than `have` even
+though the transform exists. The research lives with the code, in
+`src/tools/descriptions/navigation.ts` and the `navigation.notes.md` beside it.
 
 Two 2026 candidates are **not** Adobe-confirmed and must not ship as tools: Clone
 Source (a gap in one diagram's icon numbering, name never printed) and Generate

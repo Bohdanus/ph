@@ -63,6 +63,11 @@ vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
   }) => {
     shortcutHandlers.push({ key, shift: Boolean(shift), handler: () => onKeyDown({ shiftKey: Boolean(shift) }) });
   },
+  // Present because `AppKeyboardShortcuts` calls `useRegisterTemporaryHand`, which registers the
+  // spring-loaded Hand's press on this hook and its RELEASE on `useKeyUpShortcut`. A partial
+  // mock of the module fails at import rather than at the one assertion this file makes, which
+  // is the correct outcome — it is a mock that has fallen behind the real module.
+  useKeyUpShortcut: () => {},
 }));
 
 const pressU = (shift: boolean) => {

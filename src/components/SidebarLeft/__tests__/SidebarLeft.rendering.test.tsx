@@ -79,6 +79,8 @@ vi.mock('../toolIcons.tsx', () => {
       polygon: Icon,
       line: Icon,
       'custom-shape': Icon,
+      'rotate-view': Icon,
+      hand: Icon,
     },
   };
 });
@@ -144,6 +146,7 @@ describe('SidebarLeft rendering', () => {
       'pen',
       'text',
       'shape',
+      'hand',
     ]);
     expect(screen.queryByText('Artboard Tool')).toBeNull();
   });

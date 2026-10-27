@@ -16,6 +16,8 @@ import type { EraserToolArgs } from '../tools/eraser.ts';
 import type { FillToolArgs } from '../tools/fill.ts';
 import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
 import type { EyedropperToolArgs } from '../tools/eyedropper.ts';
+import type { HandToolArgs } from '../tools/hand.ts';
+import type { RotateViewToolArgs } from '../tools/rotate-view.ts';
 import type { EllipticalSelectionToolArgs } from '../tools/ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from '../tools/quickSelection.ts';
 import type { GradientToolArgs } from '../tools/gradient.ts';
@@ -65,6 +67,8 @@ export type ToolArgsByName = {
   'magic-eraser': FillToolArgs;
   'paint-bucket': FillToolArgs;
   eyedropper: EyedropperToolArgs;
+  hand: HandToolArgs;
+  'rotate-view': RotateViewToolArgs;
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };

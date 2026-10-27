@@ -317,8 +317,8 @@ importer of its own; `ReplayCoordinator` has none.
 
 Two registries with different key sets, which is easy to misread as one:
 
-- **`src/tools/toolsMap.ts`** — **44** entries, and **exactly one per `ToolName`**:
-  `ToolName` is `keyof ToolArgsByName`, which has **44** members, and the two key
+- **`src/tools/toolsMap.ts`** — **45** entries, and **exactly one per `ToolName`**:
+  `ToolName` is `keyof ToolArgsByName`, which has **45** members, and the two key
   sets are **identical** — only the declaration order differs. Prove the equality by
   `diff`-ing two sorted key lists:
   `awk '/^export type ToolArgsByName = \{/,/^\};/' src/contexts/tool-types.ts | grep -oE "^  '?[a-zA-Z][a-zA-Z0-9-]*'?:" | tr -d " ':" | sort`
@@ -326,11 +326,11 @@ Two registries with different key sets, which is easy to misread as one:
   `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts`.
   **A `[a-zA-Z]+` pattern undercounts**, because it drops the **19** hyphenated keys
   (`polygonal-lasso`, `feather-magnetic-lasso`, `color-replacement`,
-  `add-anchor-point`, `custom-shape` and fifteen more) — 44 − 19 = 25, which is how a
-  44-entry map came to be documented as 25 members and as "not one per `ToolName`".
+  `add-anchor-point`, `custom-shape` and fifteen more) — 45 − 19 = 26, which is how a
+  45-entry map came to be documented as 26 members and as "not one per `ToolName`".
   Each entry spreads its processor and adds an `icon` and a `toolboxComponent`. The
-  whole-tool map therefore includes the `eyedropper` entry, which has _only_ icon and
-  component, and **seven** `placeholderTool` entries — the six-key `pen` group
+  whole-tool map therefore includes the `eyedropper` and `hand` entries, which have
+  _only_ icon and component, and **seven** `placeholderTool` entries — the six-key `pen` group
   (`pen`, `freeform-pen`, `curvature-pen`, `add-anchor-point`,
   `delete-anchor-point`, `convert-point`) plus `custom-shape`, which uses its own
   `custom-shape` group. Count them with
@@ -339,8 +339,12 @@ Two registries with different key sets, which is easy to misread as one:
 - **`src/tools/toolProcessors.ts`** — **43** entries, `PixelToolName` derived by
   `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which
   is how a tool that needs
-  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper']`, the
-  one member, which is why the two registries differ by exactly one. Each entry is
+  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper',
+'hand']`, so the two registries differ by exactly two: 45 registered tools minus the
+  two that rasterize nothing. **The processor count did not move when the Hand landed.**
+  The eyedropper samples a colour and the Hand moves the view; neither writes a pixel,
+  so neither has a `commit` kind, a `replay()` descriptor, a `HistoryItem` or a durable
+  operation. Each entry is
   curried: `(params) => (args) => pixels`, where `params` carries the layer's
   raster and size and `args` the stroke — the shape `ToolProcessorDefinition.imageProcessor` declares.
   `commit` is one of eight kinds, `ToolCommitKind`, and `replay` is a typed

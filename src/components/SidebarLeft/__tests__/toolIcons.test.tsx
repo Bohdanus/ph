@@ -72,6 +72,8 @@ const toolIconNames = [
   'polygon',
   'line',
   'custom-shape',
+  'hand',
+  'rotate-view',
 ] as const satisfies readonly ToolIconName[];
 
 const shapeFigures = allTools.flatMap((tool) => (tool.figure ? [tool.figure] : []));

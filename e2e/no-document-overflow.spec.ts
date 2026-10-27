@@ -53,9 +53,9 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * why it is not restated here), so a slot of 765 is exactly what all fifteen rows need: at
  * 1280 wide the slot is the window height less 272px of fixed chrome — the offset is the shell's
  * other rows, and it is 26px shorter at 810 wide, which is why the iPad 10.2" portrait slot
- * below is 834px rather than 808px — so **1037px is the shortest window that shows fifteen tiles
- * and no three-dots tile**, and at 1036 the rail is already down to thirteen tiles plus the
- * tile. Fourteen tiles is unreachable and always was — fourteen rows plus the three-dots row IS
+ * below is 834px rather than 808px — so **1087px is the shortest window that shows sixteen tiles
+ * and no three-dots tile**, and at 1086 the rail is already down to fourteen tiles plus the
+ * tile. Fifteen tiles is unreachable and always was — fifteen rows plus the three-dots row IS
  * the 765px grid, so the tile and the fourteenth tile are the same 50px either way.
  *
  * THIS USED TO PUBLISH THE WINDOW HEIGHTS AT WHICH THE RAIL OVERFLOWED, derived from a

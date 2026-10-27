@@ -82,6 +82,8 @@ vi.mock('../toolIcons.tsx', () => {
       polygon: Icon,
       line: Icon,
       'custom-shape': Icon,
+      'rotate-view': Icon,
+      hand: Icon,
     },
   };
 });

@@ -20,6 +20,8 @@ import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQu
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import { useDockDrag } from '../../hooks/useDockDrag.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
+import { fitToScreen } from '../../hooks/document-view.ts';
+import { claimKeyCapture, releaseKeyCapture } from '../../hooks/input-capture.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
@@ -122,6 +124,14 @@ const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
  * `onPointerDown` in `renderToolGroup`.
  */
 export const FLYOUT_LONG_PRESS_MS = 250;
+
+/**
+ * This rail's identity in the key-capture slot.
+ *
+ * A `symbol` rather than a string, because `releaseKeyCapture` only honours its own owner and
+ * needs a value no other claimant can produce by accident.
+ */
+const FLYOUT_KEY_CAPTURE = Symbol('sidebar-left-flyout');
 
 /** The group key in the one-column rail, which is the one the toolbar map's order reads as. */
 const oneColumnGroupKey = (sectionIndex: number, groupIndex: number): string => `${sectionIndex}-${groupIndex}`;
@@ -462,6 +472,26 @@ const SidebarLeft = () => {
     [flyoutAnchor]
   );
 
+  /**
+   * An open flyout owns the keyboard.
+   *
+   * Keyed on `openGroup` rather than sprinkled into `openFlyout` and `closeFlyout`, because
+   * there are FOUR ways a flyout closes and only two of them go through `closeFlyout`: the two
+   * render-phase adjustments — the `lg` crossing and a collapse swallowing the open tile — call
+   * `setOpenGroup(null)` directly. An effect over the state covers all four by construction, and
+   * cannot be defeated by a fifth route added later.
+   *
+   * What it prevents: `Space` is claimed by the spring-loaded Hand, and both this rail's flyout
+   * and `PanelGroup` read `event.key === ' '` in their own local handlers. A keyup listener on
+   * `document` sees the keypress regardless of which surface has focus, so without this a Space
+   * over an open flyout would both activate the highlighted menu item and start a pan.
+   */
+  useEffect(() => {
+    if (openGroup === null) return;
+    claimKeyCapture(FLYOUT_KEY_CAPTURE);
+    return () => releaseKeyCapture(FLYOUT_KEY_CAPTURE);
+  }, [openGroup]);
+
   // Re-docking the rail. "You can dock the Tools panel to either the right or left sides of
   // the application window" (teachucomp; the CC-era Adobe book says the same by its title bar).
   // The drop target is a blue line at the edge being thrown at, drawn before the release, which
@@ -693,6 +723,28 @@ const SidebarLeft = () => {
               if (!hasFlyout) return;
               event.preventDefault();
               openFlyout(groupIndex);
+            }}
+            /**
+             * Fit On Screen — Adobe binds this to "Double-click on Hand tool".
+             *
+             * Named rather than made general: only the Hand tile carries it, because the command
+             * is defined over a view that only the Hand navigates. Adding it to every tile would
+             * make double-clicking the Brush silently throw away the user's zoom, which is not a
+             * command anyone asked for.
+             *
+             * The `railDragMovedRef` guard is the same one `onClick` on the re-dock grip uses and
+             * for the same reason: a `<button>` synthesises a click from any pointerdown+pointerup
+             * on it, including one that travelled to the opposite edge of the screen, so a
+             * completed re-dock ends with a click on some tile. Resetting the flag and returning
+             * keeps a drag from also fitting the view.
+             */
+            onDoubleClick={() => {
+              if (railDragMovedRef.current) {
+                railDragMovedRef.current = false;
+                return;
+              }
+              if (primaryTool.name !== 'hand') return;
+              fitToScreen();
             }}
             onKeyDown={(event) => {
               if (!hasFlyout) return;

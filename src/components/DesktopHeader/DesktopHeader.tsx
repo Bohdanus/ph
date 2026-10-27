@@ -109,6 +109,10 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'polygon', label: 'Polygon Tool' },
   { toolName: 'line', label: 'Line Tool' },
   { toolName: 'custom-shape', label: 'Custom Shape Tool' },
+  // Adobe's own name for the tool, and the last row for the same reason the rail tile is
+  // last: the Hand is the last tool group, above the colour swatches.
+  { toolName: 'hand', label: 'Hand Tool' },
+  { toolName: 'rotate-view', label: 'Rotate View Tool' },
 ];
 
 /**

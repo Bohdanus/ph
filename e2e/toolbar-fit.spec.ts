@@ -59,7 +59,7 @@ const SECTION_SEPARATOR_COST = 13;
  * Window heights spanning "everything fits" to "almost nothing fits".
  *
  * The ends matter as much as the middle. 1400 is the tall end of the sweep, where nothing
- * collapses in one column — as it also does at every other height from 1037 up — and 420/400 are
+ * collapses in one column — as it also does at every other height from 1087 up — and 420/400 are
  * past the point where the budget cannot hold a tool row and the three-dots tile's row — see
  * `the degenerate band` below.
  *
@@ -74,13 +74,25 @@ const SECTION_SEPARATOR_COST = 13;
  * the three-dots tile is the whole rail. A height list that cannot reach the state the file has a
  * branch for is a list with an unreachable branch in it.
  *
- * `1037` and `1036` are the other such pair, on the other side: 765px of tiles — fifteen rows of
- * 44, fourteen gaps of 6, three section rules of 7 — in a slot that is the window height minus
- * 272px of chrome, so nothing collapses from 1037 and the fit is already two tiles short at 1036.
- * Bracketing it with 1100 and 1000 leaves the exact edge unpinned.
+ * `1087` and `1086` are the other such pair, on the other side: 815px of tiles — sixteen rows of
+ * 44, fifteen gaps of 6, three section rules of 7 — in a slot that is the window height minus
+ * 272px of chrome, so nothing collapses from 1087 and the fit is already two tiles short at 1086.
+ * Bracketing it with 1100 leaves the exact edge unpinned.
+ *
+ * `1037` and `1036` are here too, and they used to carry this edge. They are inside the folded
+ * band now that the sixteenth group added a row, and keeping them is the point: a sweep that only
+ * ever measured heights on one side of a boundary it was tracking would not notice the boundary
+ * move.
+ */
+/**
+ * The fold edge is DERIVED from the group count, so it moves when a tile is added: it was 1037 at
+ * fifteen groups and is 1087 at sixteen, one `tile + gap` row (44 + 6 = 50) lower. Both halves of
+ * the edge are here, and the two heights that used to carry it are still measured — they are now
+ * inside the folded band, which is coverage the sweep did not have before.
  */
 const HEIGHTS = [
-  1400, 1370, 1350, 1280, 1150, 1100, 1037, 1036, 1000, 900, 800, 720, 709, 705, 700, 600, 500, 420, 400, 360, 340,
+  1400, 1370, 1350, 1280, 1150, 1100, 1087, 1086, 1037, 1036, 1000, 900, 800, 720, 709, 705, 700, 600, 500, 420, 400,
+  360, 340,
 ] as const;
 
 type Measured = {
@@ -251,13 +263,23 @@ test.describe('Toolbar fit', () => {
     expect(any, 'H=1400 is the height at which nothing collapses').toContain('overflow=n');
     expect(any, 'and it shows every group').toContain(`tools=${ALL_GROUPS.length}/${ALL_GROUPS.length}`);
     // The edge itself, to the pixel, because everything above it depends on where it is.
+    //
+    // 1087/1086 rather than the 1037/1036 this used to pin, and the reason is the tile count
+    // rather than a moved tolerance: the sixteenth group costs one more row of the same 50px, so
+    // the edge is exactly one row lower and every assertion above still holds at its original
+    // strength. Measured, not derived here — `tools=16/16 overflow=n` at 1087 and
+    // `tools=14/16 overflow=Y` at 1086.
     expect(
-      rows.find((line) => line.startsWith('H=1037')),
-      '1037 is where the rail stops folding'
+      rows.find((line) => line.startsWith('H=1087')),
+      '1087 is where the rail stops folding'
     ).toContain('overflow=n');
     expect(
-      rows.find((line) => line.startsWith('H=1036')),
-      'and 1036 is already two tiles short'
+      rows.find((line) => line.startsWith('H=1087')),
+      'and at that height it shows every group'
+    ).toContain(`tools=${ALL_GROUPS.length}/${ALL_GROUPS.length}`);
+    expect(
+      rows.find((line) => line.startsWith('H=1086')),
+      'and 1086 is already two tiles short'
     ).toContain(`tools=${ALL_GROUPS.length - 2}/${ALL_GROUPS.length}`);
 
     // Printed so the next agent can re-derive the figures in this file without re-measuring.

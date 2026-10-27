@@ -56,11 +56,11 @@ platform limit.
 | History           | `have`      | Linear, unbounded, with a History panel                                        |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
 | Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
-| View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
-| Keyboard          | `partial`   | 44 bindings against Photoshop's ~200                                           |
+| View / navigation | `partial`   | Hand, zoom and pan; no Zoom tool, no Rotate View, no rulers, no guides         |
+| Keyboard          | `partial`   | 53 bindings against Photoshop's ~200                                           |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                              |
-| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all        |
+| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — a missing gesture, not a missing view  |
 | Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                        |
 
 ## Documents
@@ -308,44 +308,64 @@ from the menu, not from the app.
 Hand-tool panning, rotate view, rulers, guides, snap, a grid overlay, and
 screen-mode switching.
 
-**This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
-scaleY)` with centring offsets (`contain-fit.ts` — `containFit()`, which
-`usePointerPosition`'s `calculateDimensions()` calls). The
-zoom transform is commented out (`Main.tsx` — the `.zoom-container` `style` prop)
-and so is the store's zoom state (`StoreContext.tsx` — the commented-out
-`zoomDataRef` and `setZoomData`, in `StoreData` and again in `StoreProvider`).
-There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts` —
-`toolbarMap`).
+**This app:** the view is a `{ dx, dy, zoom }` transform over the contain fit
+(`document-view.ts`, `view-transform.ts`), applied to `.zoom-container`
+(`Main.tsx` — `useViewTransform`). `zoom` is a multiplier over the fit, so
+`zoom === 1` IS Fit on Screen and Actual Pixels is `1 / fitScale`; the
+options-bar percentage is printed against actual pixels, not against the fit.
 
-**Status:** `absent`
+The Hand tool is the rail's last tile and in the Tools menu
+(`toolbar-mapping.ts` — `toolbarMap`, `DesktopHeader.tsx` — `TOOL_MENU_ITEMS`),
+selectable with `H`, and it pans by the raw client delta without touching the
+zoom (`HandToolArea.tsx`). Holding `Space` arms it from any tool and restores
+the previous tool on release without changing `toolName`
+(`useTemporaryHand.ts`). Magnification is reached from `Cmd/Ctrl+0` (Fit),
+`Cmd/Ctrl+1` (100%), `Cmd/Ctrl++` and `Cmd/Ctrl+-`, `Ctrl/Cmd+wheel` to zoom at
+the pointer and a plain wheel to pan.
 
-**Gap:** The image cannot be magnified or panned at all. This is the most
-consequential absence in this document, because it makes three other areas worse
-than their own status suggests: a fixed view means no detail work, and it is also
-why mobile has no pinch-zoom — that gap is inherited, not native.
+A pan is **not clamped**, which is Adobe behaviour: a drag takes the image as far
+as the pointer goes, at every zoom including Fit on Screen, and the image may be
+pulled onto the pasteboard and out of the window. Fit On Screen is therefore a
+recovery path as much as a convenience. Adobe scopes the Hand to the magnified case
+because that is when panning is useful, not because it is refused when it is not.
 
-`absent`, not `platform`. Every one of these is a browser's ordinary business.
+**Status:** `partial`
+
+**Gap:** No Zoom tool, so none of Adobe's zoom presets, Scrubby Zoom, zoom
+selection or its own options bar; no Rotate View (`R`); no Navigator panel; no
+rulers, guides, snap or grid overlay. Two-finger pan and pinch-zoom are still
+absent, which is now a gap in the _gesture_ rather than in the view — the
+transform underneath exists and one pointer already uses it.
+
+`absent` → `partial` here, and the three knock-on areas improved with it: a
+magnifiable view means detail work is possible, and mobile's pinch-zoom is now
+one gesture away rather than a whole view transform away.
 
 ## Keyboard
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 44. Thirty-five registrations in
+**This app:** 53. Forty-two registrations in
 `AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
-`useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
+`useKeyDownShortcut` registrations each), the `Space` press and release that
+spring-load the Hand (`useTemporaryHand.ts`), and one `Escape` in `FontSelect`'s
+font popup.
 
 **Status:** `partial`
 
-**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
+**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O, H; `Ctrl+Z`, `Shift+Ctrl+Z`,
 `Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`; `[` and `]` for brush size; `0` and `1`
-for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
+for opacity; `Ctrl+0`, `Ctrl+1`, `Ctrl++` and `Ctrl+-` for the view; and
+`Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
 Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
 and the Burn, so the Sponge must be the active tool.
 
-**Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
+**Gap:** `A`, `Z`, `X` and bare `D` are unbound — Automatic Select, Zoom,
 Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
-the Sponge is active. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
+the Sponge is active. `Ctrl++` and `Ctrl+-` are registered under both the shifted and
+unshifted spelling of the key, because `key` is matched literally and `Cmd+Shift+=`
+arrives as `key: '+'` on a US layout. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
 `Ctrl+Shift+I` — Select All, Deselect, Invert — are unbound, which follows from the
 selection model above rather than from the keyboard layer. `Tab`, `F`,
 `Ctrl++`, `Ctrl+-` and `Ctrl+0` are unbound, and Space does not pan.
@@ -411,8 +431,11 @@ through Pointer Events with single-pointer capture, so drawing works on touch
 
 **Status:** `partial`
 
-**Gap:** No pinch-zoom and no two-finger pan — inherited from the absence of zoom
-and pan entirely, not a mobile-specific omission.
+**Gap:** No pinch-zoom and no two-finger pan. This used to be inherited from the
+total absence of a view transform; it is now a missing GESTURE rather than a
+missing view. One pointer already pans through `HandToolArea`, so the Hand tile
+arrives in the bottom bar from `toolbarMap` for free, and what is missing is the
+second pointer: `isPointerDownValid()` refuses one, and a pinch needs both.
 
 ## Non-destructive editing
 
@@ -467,7 +490,7 @@ ordinary browser capabilities that this app simply does not use yet:
 | Capability          | In a browser                                                                 |
 | ------------------- | ---------------------------------------------------------------------------- |
 | Print               | `window.print()` — a real API                                                |
-| Zoom and pan        | Transforms and pointer capture; the app has neither implemented              |
+| Zoom and pan        | Transforms and pointer capture — both now implemented for one pointer        |
 | Wider gamut         | `getContext('2d', { colorSpace: 'display-p3' })`                             |
 | Off-thread work     | `OffscreenCanvas` in a worker — used for working surfaces, never in a worker |
 | Transferable pixels | `ImageBitmapTransfer` — zero occurrences in `src/`                           |

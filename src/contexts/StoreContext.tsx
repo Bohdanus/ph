@@ -182,10 +182,6 @@ export type StoreData = {
   // colors
   color: string;
   backgroundColor: string;
-
-  // // misc
-  // zoomDataRef: React.MutableRefObject<ZoomData>;
-  // setZoomData: (d: ZoomData) => void;
 };
 
 type StoreUpdates = Partial<
@@ -1489,14 +1485,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   //     dispatch({ type: 'SET_SIZE', payload: { width, height } });
   //   }
   // }
-  // zoom data
-  // const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
-  // const [, forceUpdate] = useState(0);
-  // const setZoomData = (data: ZoomData) => {
-  //   zoomDataRef.current = data;
-  //   forceUpdate((v) => v + 1);
-  // };
-
   return <StoreContext.Provider value={[store, dispatch]}>{children}</StoreContext.Provider>;
 }
 

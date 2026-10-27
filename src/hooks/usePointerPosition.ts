@@ -1,6 +1,8 @@
 import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
+import { getView, setFitMetrics } from './document-view.ts';
 import { containFit, type ContainDimensions } from '../util/contain-fit.ts';
+import { screenToDocument, toViewFit } from '../util/view-transform.ts';
 import type { Point, Pos, Size } from '../contexts/general-types.ts';
 
 export type { ContainDimensions } from '../util/contain-fit.ts';
@@ -136,6 +138,16 @@ export function usePointerPosition<T extends HTMLElement>(
 
       dimensionsRef.current = containFit({ width: outerWidth, height: outerHeight }, imageSize);
 
+      // Publish the fit to the view store from HERE rather than from `Main`'s `onResize`.
+      // This function is the single place that measures the container — it runs on mount, from
+      // the ResizeObserver, and on every `getLocalCoords` — so publishing here is what
+      // guarantees the fit the pointer is divided by is the same measurement the pan is clamped
+      // against. Routing it through `onResize` instead would make the store's fit depend on
+      // which tool area happened to be mounted and whether that caller wired the callback.
+      // `setFitMetrics` compares before it does anything, so calling it per pointermove costs
+      // seven number comparisons.
+      setFitMetrics(toViewFit(dimensionsRef.current, imageSize));
+
       publishFit(dimensionsRef.current, rect, imageSize);
       onResizeRef.current?.(dimensionsRef.current);
     },
@@ -256,15 +268,12 @@ export function usePointerPosition<T extends HTMLElement>(
     const rect = readContainerRect() ?? containerRectRef.current;
     if (!rect) return { x: 0, y: 0 };
 
-    const { offsetX, offsetY, scale } = dimensionsRef.current;
-
-    const xCss = (e.clientX - offsetX - rect.x) / scale;
-    const yCss = (e.clientY - offsetY - rect.y) / scale;
-
-    return {
-      x: xCss,
-      y: yCss,
-    };
+    return screenToDocument(
+      { x: e.clientX, y: e.clientY },
+      rect,
+      toViewFit(dimensionsRef.current, imageSize),
+      getView()
+    );
   };
 
   return {

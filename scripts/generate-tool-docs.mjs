@@ -7,6 +7,7 @@ import { format, resolveConfig } from 'prettier';
 import { toolbarMap } from '../toolbar-mapping.ts';
 import { eyedropperDrawDescriptions } from '../src/tools/descriptions/eyedropper-draw.ts';
 import { focusDescriptions } from '../src/tools/descriptions/focus.ts';
+import { navigationDescriptions } from '../src/tools/descriptions/navigation.ts';
 import { paintDescriptions } from '../src/tools/descriptions/paint.ts';
 import { penDescriptions } from '../src/tools/descriptions/pen.ts';
 import { selectionDescriptions } from '../src/tools/descriptions/selection.ts';
@@ -42,6 +43,7 @@ const FAMILIES = [
   { title: 'Type and crop', record: typeCropDescriptions, notes: 'type-crop.notes.md' },
   { title: 'Move, transform and adjustments', record: transformDescriptions, notes: 'transform.notes.md' },
   { title: 'Eyedropper and draw', record: eyedropperDrawDescriptions, notes: 'eyedropper-draw.notes.md' },
+  { title: 'Navigation', record: navigationDescriptions, notes: 'navigation.notes.md' },
 ];
 
 const toolDescriptions = Object.assign({}, ...FAMILIES.map(({ record }) => record));

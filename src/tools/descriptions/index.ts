@@ -3,6 +3,7 @@ import type { ToolName } from '../../contexts/tool-types.ts';
 import type { ToolDescription } from './types.ts';
 import { eyedropperDrawDescriptions } from './eyedropper-draw.ts';
 import { focusDescriptions } from './focus.ts';
+import { navigationDescriptions } from './navigation.ts';
 import { paintDescriptions } from './paint.ts';
 import { penDescriptions } from './pen.ts';
 import { selectionDescriptions } from './selection.ts';
@@ -43,6 +44,7 @@ export const toolDescriptions: Record<ToolName, ToolDescription> = {
   ...typeCropDescriptions,
   ...transformDescriptions,
   ...eyedropperDrawDescriptions,
+  ...navigationDescriptions,
 };
 
 export const getToolDescription = (name: ToolName): ToolDescription => toolDescriptions[name];
