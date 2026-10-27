@@ -188,25 +188,25 @@ export async function loadCatalogs({
 }
 
 export async function probeOpenRouterQuota({ fetchImpl = fetch, openRouterKey, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
-  if (!openRouterKey) return null;
+  if (!openRouterKey) return { remaining: null, limit: null, used: null, reason: 'no_key' };
   let response;
   try {
     response = await fetchImpl(OPENROUTER_KEY_INFO, {
       headers: { Authorization: `Bearer ${openRouterKey}` },
       signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch {
-    return null;
+  } catch (error) {
+    return { remaining: null, limit: null, used: null, reason: 'network_error', detail: error.message };
   }
   if (!response.ok) {
     await discardResponseBody(response);
-    return null;
+    return { remaining: null, limit: null, used: null, reason: `http_${response.status}` };
   }
   let payload;
   try {
     payload = await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, 'OpenRouter key info');
-  } catch {
-    return null;
+  } catch (error) {
+    return { remaining: null, limit: null, used: null, reason: 'parse_error', detail: error.message };
   }
   const info = payload?.data?.free_model_daily_requests;
   if (
@@ -218,9 +218,9 @@ export async function probeOpenRouterQuota({ fetchImpl = fetch, openRouterKey, t
     !Number.isSafeInteger(info.used) ||
     info.used < 0
   ) {
-    return null;
+    return { remaining: null, limit: null, used: null, reason: 'invalid_payload' };
   }
-  return { remaining: info.remaining, limit: info.limit, used: info.used };
+  return { remaining: info.remaining, limit: info.limit, used: info.used, reason: 'ok' };
 }
 
 function retryAfterHint(response) {
@@ -461,6 +461,7 @@ export async function completeWithFreeModel(
     initializeLegacyQuarantine = true,
     onCatalogError = () => {},
     onOpenRouterQuota = () => {},
+    stderr = { write: () => {} },
   } = {}
 ) {
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
@@ -492,9 +493,14 @@ export async function completeWithFreeModel(
   };
   if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (quota) {
+    if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
       if (quota.remaining <= 0) exhausted.add('openrouter');
+    } else if (quota.reason !== 'no_key') {
+      // Log unknown quota state so callers can distinguish from "available"
+      stderr.write(
+        `OpenRouter quota unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); proceeding with fail-open routing.\n`
+      );
     }
   }
   for (const candidate of available) {
@@ -529,6 +535,11 @@ export async function completeWithFreeModel(
     const headers = { 'Content-Type': 'application/json' };
     if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
     if (candidate.source === 'groq') headers.Authorization = `Bearer ${groqApiKey}`;
+    // GPT-OSS models burn ~254 hidden reasoning tokens; ensure enough budget
+    const effectiveMaxTokens =
+      candidate.source === 'groq' && candidate.model.startsWith('openai/gpt-oss')
+        ? Math.max(maxTokens, 1024)
+        : maxTokens;
     let response;
     try {
       response = await fetchImpl(url, {
@@ -538,7 +549,7 @@ export async function completeWithFreeModel(
         body: JSON.stringify({
           model: candidate.model,
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: maxTokens,
+          max_tokens: effectiveMaxTokens,
           ...(candidate.source === 'groq' ? { reasoning_effort: 'low' } : {}),
         }),
       });
@@ -645,9 +656,9 @@ export async function main(
       return 2;
     }
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (!quota) {
+    if (quota.reason !== 'ok') {
       stderr.write(
-        'Unable to read OpenRouter daily quota; check the API key and network. No inference request was sent.\n'
+        `Unable to read OpenRouter daily quota (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); check the API key and network. No inference request was sent.\n`
       );
       return 2;
     }
@@ -736,6 +747,7 @@ export async function main(
       stderr.write(
         `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
       ),
+    stderr,
   });
   const output = [
     `[${result.source}/${result.model}]`,

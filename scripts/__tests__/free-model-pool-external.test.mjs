@@ -122,41 +122,47 @@ describe('OpenRouter quota probe', () => {
       }),
     }));
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' });
-    expect(quota).toEqual({ remaining: 38, limit: 50, used: 12 });
+    expect(quota).toEqual({ remaining: 38, limit: 50, used: 12, reason: 'ok' });
   });
 
-  it('returns null when no OpenRouter key is supplied', async () => {
+  it('returns reason:no_key when no OpenRouter key is supplied', async () => {
     const fetchImpl = vi.fn();
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: '' });
-    expect(quota).toBe(null);
+    expect(quota).toEqual({ remaining: null, limit: null, used: null, reason: 'no_key' });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('returns null on a non-OK response', async () => {
+  it('returns reason:http_401 on a non-OK response', async () => {
     const fetchImpl = readableFetch(() => ({ ok: false, status: 401 }));
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' });
-    expect(quota).toBe(null);
+    expect(quota).toEqual({ remaining: null, limit: null, used: null, reason: 'http_401' });
   });
 
-  it('returns null when the quota field is absent from the response', async () => {
+  it('returns reason:invalid_payload when the quota field is absent from the response', async () => {
     const fetchImpl = readableFetch(() => ({ ok: true, json: async () => ({ data: {} }) }));
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' });
-    expect(quota).toBe(null);
+    expect(quota).toEqual({ remaining: null, limit: null, used: null, reason: 'invalid_payload' });
   });
 
-  it('returns null on a network error', async () => {
+  it('returns reason:network_error on a network error', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('network error'));
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' });
-    expect(quota).toBe(null);
+    expect(quota).toEqual({
+      remaining: null,
+      limit: null,
+      used: null,
+      reason: 'network_error',
+      detail: 'network error',
+    });
   });
 
-  it('returns null when remaining is not a number', async () => {
+  it('returns reason:invalid_payload when remaining is not a number', async () => {
     const fetchImpl = readableFetch(() => ({
       ok: true,
       json: async () => ({ data: { free_model_daily_requests: { remaining: 'unknown' } } }),
     }));
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' });
-    expect(quota).toBe(null);
+    expect(quota).toEqual({ remaining: null, limit: null, used: null, reason: 'invalid_payload' });
   });
 
   it('rejects malformed quota fields instead of treating them as capacity', async () => {
@@ -170,7 +176,12 @@ describe('OpenRouter quota probe', () => {
         ok: true,
         json: async () => ({ data: { free_model_daily_requests: info } }),
       }));
-      await expect(probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' })).resolves.toBe(null);
+      await expect(probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' })).resolves.toEqual({
+        remaining: null,
+        limit: null,
+        used: null,
+        reason: 'invalid_payload',
+      });
     }
   });
 });
@@ -240,7 +251,8 @@ describe('OpenRouter quota status command', () => {
     const cancel = vi.fn();
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 429, body: { cancel } }));
 
-    await expect(probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' })).resolves.toBeNull();
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' });
+    expect(quota).toEqual({ remaining: null, limit: null, used: null, reason: 'http_429' });
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
@@ -298,7 +310,7 @@ describe('OpenRouter pre-routing quota check', () => {
     });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free' });
     expect(result.requestCounts).toEqual({ kilo: 1, openrouter: 1 });
-    expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 10, limit: 50, remaining: 40 });
+    expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 10, limit: 50, remaining: 40, reason: 'ok' });
   });
 
   it('does not probe when OpenRouter is not in the catalog', async () => {
