@@ -674,6 +674,54 @@ test.describe('Paint tools', () => {
     );
   });
 
+  test('a foreign pointercancel leaves the owner draw stroke able to commit', async ({ page }) => {
+    await clickToolButton(page, 'draw');
+    await setSlider(page, /^Size/, String(BAND_LINE_WIDTH));
+    await setSlider(page, /^Opacity/, '1');
+    await setForegroundColor(page, BAND_GREY, true);
+
+    const geometry = await workspaceGeometry(page);
+    const sample = { x: 300, y: BAND_Y };
+    const before = await readLevel(page, geometry, sample);
+    const surface = page.locator('.cursor-draw');
+    await expect(surface).toHaveCount(1);
+    await surface.evaluate((element) => {
+      element.addEventListener(
+        'pointerdown',
+        (event) => {
+          (window as Window & { __drawOwnerPointerId?: number }).__drawOwnerPointerId = (
+            event as PointerEvent
+          ).pointerId;
+        },
+        { capture: true, once: true }
+      );
+    });
+
+    const start = geometry.toCss({ x: 200, y: BAND_Y });
+    const end = geometry.toCss({ x: 400, y: BAND_Y });
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 10 });
+
+    const pointerId = await page.evaluate(
+      () => (window as Window & { __drawOwnerPointerId?: number }).__drawOwnerPointerId
+    );
+    if (pointerId === undefined) throw new Error('the active draw pointer ID was not captured');
+    await surface.evaluate((element, ownerId) => {
+      element.dispatchEvent(
+        new PointerEvent('pointercancel', {
+          pointerId: ownerId + 1,
+          pointerType: 'mouse',
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    }, pointerId);
+    await page.mouse.up();
+
+    await expectLevelMoved(page, geometry, sample, before, 'foreign pointercancel must preserve the draw commit');
+  });
+
   test.describe('Toolbar reachability', () => {
     for (const tool of PAINT_TOOLS) {
       test(`the ${tool.key} tool is selectable from the sidebar`, async ({ page }) => {

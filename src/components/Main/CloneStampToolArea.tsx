@@ -195,7 +195,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
     { containerRef, activeLayerId, layers, totalSize, documentFrame: currentFrame, selections, activeSelectionId },
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { tempUpdateLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, updateLayerByTool, cancelLayerPreview } = useLayers();
   const { toolArgs, patchToolArgs } = useCurrentTool();
 
   const args = toolArgs as CloneStampToolArgs;
@@ -222,6 +222,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
   const altHoverCanvasRef = useRef<Point | null>(null);
   const markerFrameRef = useRef<number | null>(null);
   const selectionSnapshotRef = useRef<CloneStampToolArgs['selection']>(undefined);
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
   const [isAltDown, setIsAltDown] = useState(false);
 
   useEffect(() => {
@@ -341,9 +342,10 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
   };
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
-    { imageSize: totalSize, containerRef, enabled: isEnabled },
+    { imageSize: totalSize, containerRef, enabled: isEnabled, gestureKey: activeLayerId },
     {
       onStart: () => {
+        previewLayerIdRef.current = activeLayerId;
         const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
         selectionSnapshotRef.current = activeSelection
           ? {
@@ -369,6 +371,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         if (!layerArgs) return;
 
         selectionSnapshotRef.current = undefined;
+        previewLayerIdRef.current = null;
 
         // A fresh copy from the hook, so the history item this reaches does not alias a ref
         // the hook is about to reset.
@@ -376,6 +379,9 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
       },
       onCancel: () => {
         selectionSnapshotRef.current = undefined;
+        const layerId = previewLayerIdRef.current;
+        previewLayerIdRef.current = null;
+        if (layerId) cancelLayerPreview(layerId);
       },
     }
   );

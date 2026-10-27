@@ -136,9 +136,17 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
       // load-bearing reason this cannot be moved up into the move handler.
       commitSelection(selection, existingSelection ? 'move' : 'create');
     },
+    onCancel: () => {
+      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+    },
   });
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    // `useRect` refuses a second pointer, but its return value cannot distinguish
+    // that refusal from an accepted press that is not a committed-selection drag.
+    // Return before changing the selection mode or dispatching a new draft.
+    if (pointerState.isMouseDown.current) return;
+
     // Whether this press will start a gesture at all, read BEFORE the delegation.
     // `useRect` refuses a non-primary button and a second pointer, and a press it
     // refused starts nothing, so the claim is taken under the same rule rather
@@ -168,17 +176,18 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   };
 
   /**
-   * A cancel is genuinely terminal even under `useRect`'s capture: `useRect` does
-   * not surface its internal `onPointerCancel`, so no `onChangeEnd` follows and
-   * the claim has to be dropped here or it would outlive the gesture.
-   *
-   * The preview clear rides the same route for the same reason and is deliberately
-   * redundant with the hook's: the entry hides the ants, a leaked one hides them for
-   * the rest of the session (`selection-drag-preview.ts:58`-`:63`), and it is
-   * unconditional and idempotent, so two callers clearing the same cancel costs
-   * nothing and covers the one route `useRect` cannot run code on.
+   * A cancel is terminal even under `useRect`'s capture. Its pointer-scoped handler resets its
+   * rectangle state and overlay; this wrapper then releases the document claim and shared selection
+   * drag preview owned by the same pointer. A foreign cancel reaches neither cleanup route.
    */
-  const handlePointerCancel = () => {
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    const ownsDocumentGesture = claimedPointerIdRef.current === event.pointerId;
+
+    // useRect owns the pointer-scoped drag state and must see the cancellation it owns. Its handler
+    // rejects foreign pointer IDs before touching the rect, frame request, or overlay.
+    pointerHandlers.onPointerCancel?.(event);
+    if (!ownsDocumentGesture) return;
+
     releaseDocumentClaim();
     clearSelectionDragPreview();
   };

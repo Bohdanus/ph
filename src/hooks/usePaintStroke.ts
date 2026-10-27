@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useEffect, useRef, useState } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../contexts/StoreContext.tsx';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../contexts/document-frame.ts';
 import type { Point, Size } from '../contexts/general-types.ts';
@@ -77,6 +77,7 @@ export type PaintStrokeCallbacks = {
    * when a gesture is in flight. Clears without committing, which is what lets
    * a tool drop a partial preview instead of leaving it on screen.
    */
+  /** Roll back transient layer or overlay previews when an in-flight gesture is abandoned. */
   onCancel?: () => void;
 };
 
@@ -101,11 +102,17 @@ export type UsePaintStrokeOptions = {
    * Set false to make the tool ignore the gesture entirely (e.g. no active
    * layer). Every handler becomes a no-op and `isMouseDown` stays false.
    *
-   * Read at gesture boundaries only, so flipping it mid-gesture abandons that
-   * gesture: a tool whose active layer can disappear under the pointer (a
-   * delete) should call `cancel()` rather than rely on this.
+   * If it becomes false during a gesture, the owner pointer's next release or
+   * native cancellation aborts the gesture and calls `onCancel` instead of
+   * committing. Tool-area unmount also calls `onCancel` for a live gesture.
    */
   enabled?: boolean;
+  /**
+   * Identity of the resource a live preview belongs to. If it changes during
+   * a gesture, the hook releases capture and rolls that preview back before a
+   * later move or release can write against a different resource.
+   */
+  gestureKey?: unknown;
 };
 
 export type PaintStroke = {
@@ -136,7 +143,7 @@ const IDLE_POINTS: Point[] = [];
  * contract the callbacks are built around.
  */
 export const usePaintStroke = (
-  { imageSize, containerRef, onPreview, enabled = true }: UsePaintStrokeOptions,
+  { imageSize, containerRef, onPreview, enabled = true, gestureKey }: UsePaintStrokeOptions,
   { onStart, onMove, onCommit, onCancel }: PaintStrokeCallbacks
 ): PaintStroke => {
   const [{ totalSize, documentFrame: currentFrame }] = useStore();
@@ -145,10 +152,11 @@ export const usePaintStroke = (
   // fallback from silently disagreeing with the coordinate maths.
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
-  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords } = usePointerPosition({
-    ref: containerRef,
-    imageSize,
-  });
+  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, releasePointer } =
+    usePointerPosition({
+      ref: containerRef,
+      imageSize,
+    });
 
   // The accumulating array lives in a ref, not in state. A stroke produces a
   // pointer event per frame and every one of them would otherwise re-render the
@@ -161,25 +169,26 @@ export const usePaintStroke = (
   // listener runs, so gating on it would skip the abort.
   const isGestureActiveRef = useRef(false);
   const claimedPointerIdRef = useRef<number | null>(null);
+  const gestureKeyAtStartRef = useRef(gestureKey);
 
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [points, setPoints] = useState<Point[]>(IDLE_POINTS);
 
-  const releaseDocumentClaim = () => {
+  const releaseDocumentClaim = useCallback(() => {
     releaseDocumentGesture('paint-stroke', claimedPointerIdRef.current);
     claimedPointerIdRef.current = null;
-  };
+  }, []);
 
   const toDocumentPoint = (event: PointerEvent<HTMLElement>): Point =>
     canvasToDocumentPoint(getLocalCoords(event), documentFrame);
 
-  const clearGesture = () => {
+  const clearGesture = useCallback(() => {
     releaseDocumentClaim();
     isGestureActiveRef.current = false;
     gesturePointsRef.current = [];
     setIsMouseDown(false);
     setPoints(IDLE_POINTS);
-  };
+  }, [releaseDocumentClaim]);
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!enabled) return;
@@ -190,8 +199,12 @@ export const usePaintStroke = (
     // secondary button or pointer does not block the document. JavaScript runs
     // this handler synchronously, so a successful validation cannot race another
     // claimant between the check above and this claim.
-    if (!claimDocumentGesture('paint-stroke', event.pointerId)) return;
+    if (!claimDocumentGesture('paint-stroke', event.pointerId)) {
+      releasePointer();
+      return;
+    }
     claimedPointerIdRef.current = event.pointerId;
+    gestureKeyAtStartRef.current = gestureKey;
 
     gesturePointsRef.current = [toDocumentPoint(event)];
     isGestureActiveRef.current = true;
@@ -230,8 +243,12 @@ export const usePaintStroke = (
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (!enabled) return;
-    if (!isPointerUpValid(event)) return;
+    if (!isGestureActiveRef.current || !isPointerUpValid(event)) return;
+    if (!enabled) {
+      clearGesture();
+      onCancel?.();
+      return;
+    }
 
     const gesture = gesturePointsRef.current;
     // A release that lands where the stroke already is adds nothing, and a
@@ -269,25 +286,28 @@ export const usePaintStroke = (
   };
 
   // `pointercancel` is a native listener on the container, so it is attached
-  // once and the values it reads have to be mirrored into a ref: the closure it
-  // captured on the first render would be a render stale, and a tool that
-  // mounts enabled and loses its active layer mid-stroke would still report an
-  // abort for a gesture it has stopped tracking. Same pattern as the
-  // `drawMaskRef` in `useRect`.
-  const abortStateRef = useRef({ enabled, onCancel });
-  useEffect(() => {
-    abortStateRef.current = { enabled, onCancel };
-  });
+  // once and the callback it invokes has to live in a ref. A gesture can span
+  // renders, and a cancellation must call the latest tool callback even if the
+  // tool became disabled while the pointer was down.
+  const abortCallbackRef = useRef(onCancel);
+  useLayoutEffect(() => {
+    abortCallbackRef.current = onCancel;
+  }, [onCancel]);
+
+  useLayoutEffect(() => {
+    if (!isGestureActiveRef.current || Object.is(gestureKeyAtStartRef.current, gestureKey)) return;
+    releasePointer();
+    clearGesture();
+    abortCallbackRef.current?.();
+  }, [clearGesture, gestureKey, releasePointer]);
 
   useEffect(() => {
     const node = containerRef.current;
-    const handlePointerCancel = () => {
-      const { enabled: isAbortEnabled, onCancel: abort } = abortStateRef.current;
-      if (!isAbortEnabled) return;
-      if (!isGestureActiveRef.current) return;
+    const handlePointerCancel = (event: globalThis.PointerEvent) => {
+      if (!isGestureActiveRef.current || claimedPointerIdRef.current !== event.pointerId) return;
 
       clearGesture();
-      abort?.();
+      abortCallbackRef.current?.();
     };
 
     node?.addEventListener('pointercancel', handlePointerCancel);
@@ -295,10 +315,7 @@ export const usePaintStroke = (
     return () => {
       node?.removeEventListener('pointercancel', handlePointerCancel);
     };
-    // `clearGesture` is intentionally not a dependency: it closes only over
-    // refs, module constants and setters, all of which are stable, so the copy
-    // this listener holds is equivalent to the one from the latest render.
-  }, [containerRef]);
+  }, [clearGesture, containerRef]);
 
   useEffect(() => {
     return () => {
@@ -306,11 +323,13 @@ export const usePaintStroke = (
       // gesture is abandoned, but its document claim must not survive the
       // component that owned it. Keep this cleanup separate from the listener
       // effect so an unstable ref object cannot abort a live stroke on rerender.
+      const wasInFlight = isGestureActiveRef.current;
       releaseDocumentClaim();
       isGestureActiveRef.current = false;
       gesturePointsRef.current = [];
+      if (wasInFlight) abortCallbackRef.current?.();
     };
-  }, []);
+  }, [releaseDocumentClaim]);
 
   return {
     onPointerDown: handlePointerDown,
