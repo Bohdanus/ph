@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { type PointerEvent as ReactPointerEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
@@ -47,8 +47,40 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   const [activeTab, setActiveTab] = useState<'layers' | 'history'>('layers');
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
   const [editingName, setEditingName] = useState('');
-  const [draftOpacity, setDraftOpacity] = useState<{ layerId: LayerId; percent: number } | null>(null);
+  const [opacityDraftState, setOpacityDraftState] = useState<{
+    isOpen: boolean;
+    layers: typeof layers;
+    draft: { layerId: LayerId; percent: number; layer: Layer } | null;
+  }>(() => ({ isOpen, layers, draft: null }));
+  if (opacityDraftState.isOpen !== isOpen || opacityDraftState.layers !== layers) {
+    const draft = opacityDraftState.draft;
+    const draftLayerChanged = draft && opacityDraftState.layers[draft.layerId] !== layers[draft.layerId];
+    setOpacityDraftState({
+      isOpen,
+      layers,
+      draft: !isOpen || draftLayerChanged ? null : draft,
+    });
+  }
+  const draftOpacity = opacityDraftState.draft;
+  const setDraftOpacity = (draft: typeof draftOpacity) => {
+    setOpacityDraftState((current) => ({ ...current, draft }));
+  };
+  const opacityPointerOwnerRef = useRef<{ pointerId: number; layerId: LayerId; layer: Layer } | null>(null);
+  const opacityInputPointerIdRef = useRef<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (isOpen) return;
+    opacityPointerOwnerRef.current = null;
+    opacityInputPointerIdRef.current = null;
+  }, [isOpen]);
+
+  useLayoutEffect(() => {
+    const owner = opacityPointerOwnerRef.current;
+    if (!owner || layers[owner.layerId] === owner.layer) return;
+    opacityPointerOwnerRef.current = null;
+    opacityInputPointerIdRef.current = null;
+  }, [layers]);
 
   useModalA11y(isOpen, onClose, panelRef);
 
@@ -68,13 +100,66 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   };
 
   const finishOpacityGesture = (layer: Layer) => {
-    const percent = draftOpacity?.layerId === layer.id ? draftOpacity.percent : null;
+    const percent = draftOpacity?.layerId === layer.id && draftOpacity.layer === layer ? draftOpacity.percent : null;
     setDraftOpacity(null);
     if (layer.locked || layer.isBedrock || percent === null) return;
     const opacity = percent / 100;
     if (layer.opacity !== opacity) {
       updateLayer(layer.id, { opacity }, SET_LAYER_OPACITY_ACTION);
     }
+  };
+
+  const beginOpacityPointerGesture = (event: ReactPointerEvent<HTMLInputElement>, layer: Layer) => {
+    event.stopPropagation();
+    const owner = opacityPointerOwnerRef.current;
+    if (owner && (owner.pointerId !== event.pointerId || owner.layerId !== layer.id || owner.layer !== layer)) {
+      // A change event on a native range input carries no pointerId. Clear the
+      // input source until the owner moves again so a competing pointer cannot
+      // overwrite the owner's draft through that unlabelled event.
+      opacityInputPointerIdRef.current = null;
+      event.preventDefault();
+      return;
+    }
+    opacityPointerOwnerRef.current = { pointerId: event.pointerId, layerId: layer.id, layer };
+    opacityInputPointerIdRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const trackOpacityPointerInput = (event: ReactPointerEvent<HTMLInputElement>, layer: Layer) => {
+    const owner = opacityPointerOwnerRef.current;
+    if (!owner) return;
+    opacityInputPointerIdRef.current =
+      owner.pointerId === event.pointerId && owner.layerId === layer.id && owner.layer === layer
+        ? event.pointerId
+        : null;
+  };
+
+  const finishOpacityPointerGesture = (event: ReactPointerEvent<HTMLInputElement>, layer: Layer) => {
+    const owner = opacityPointerOwnerRef.current;
+    if (!owner || owner.pointerId !== event.pointerId || owner.layerId !== layer.id || owner.layer !== layer) return;
+    opacityPointerOwnerRef.current = null;
+    opacityInputPointerIdRef.current = null;
+    finishOpacityGesture(layer);
+  };
+
+  const cancelOpacityPointerGesture = (event: ReactPointerEvent<HTMLInputElement>, layer: Layer) => {
+    const owner = opacityPointerOwnerRef.current;
+    if (!owner || owner.pointerId !== event.pointerId || owner.layerId !== layer.id || owner.layer !== layer) return;
+    opacityPointerOwnerRef.current = null;
+    opacityInputPointerIdRef.current = null;
+    setDraftOpacity(null);
+  };
+
+  const finishKeyboardOpacityGesture = (layer: Layer) => {
+    if (opacityPointerOwnerRef.current !== null) return;
+    finishOpacityGesture(layer);
+  };
+
+  const finishBlurOpacityGesture = (layer: Layer) => {
+    // Blur cannot identify which pointer caused it, so it cannot finish an active
+    // pointer-owned edit. The owning pointer's up/cancel remains authoritative.
+    if (opacityPointerOwnerRef.current !== null) return;
+    finishOpacityGesture(layer);
   };
 
   const selectLayer = (id: LayerId) => {
@@ -256,7 +341,9 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                 const isMovable = !layer.isBedrock && !layer.locked;
                 const isEditing = editingLayerId === layer.id;
                 const opacityPercent =
-                  draftOpacity?.layerId === layer.id ? draftOpacity.percent : Math.round((layer.opacity ?? 1) * 100);
+                  draftOpacity?.layerId === layer.id && draftOpacity.layer === layer
+                    ? draftOpacity.percent
+                    : Math.round((layer.opacity ?? 1) * 100);
 
                 return (
                   <li key={layer.id}>
@@ -398,17 +485,30 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                           aria-label={`Opacity for ${layer.name}`}
                           aria-valuetext={`${opacityPercent}%`}
                           onClick={(event) => event.stopPropagation()}
-                          onPointerDown={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => beginOpacityPointerGesture(event, layer)}
+                          onPointerMove={(event) => trackOpacityPointerInput(event, layer)}
                           onChange={(event) => {
                             event.stopPropagation();
+                            const pointerOwner = opacityPointerOwnerRef.current;
+                            if (pointerOwner && (pointerOwner.layerId !== layer.id || pointerOwner.layer !== layer))
+                              return;
+                            if (pointerOwner && opacityInputPointerIdRef.current !== pointerOwner.pointerId) return;
                             if (!layer.locked && !layer.isBedrock) {
-                              setDraftOpacity({ layerId: layer.id, percent: Number(event.currentTarget.value) });
+                              setDraftOpacity({
+                                layerId: layer.id,
+                                percent: Number(event.currentTarget.value),
+                                layer,
+                              });
                             }
                           }}
-                          onPointerUp={() => finishOpacityGesture(layer)}
-                          onPointerCancel={() => setDraftOpacity(null)}
-                          onKeyUp={() => finishOpacityGesture(layer)}
-                          onBlur={() => finishOpacityGesture(layer)}
+                          onKeyDown={() => {
+                            if (opacityPointerOwnerRef.current) opacityInputPointerIdRef.current = null;
+                          }}
+                          onPointerUp={(event) => finishOpacityPointerGesture(event, layer)}
+                          onPointerCancel={(event) => cancelOpacityPointerGesture(event, layer)}
+                          onLostPointerCapture={(event) => cancelOpacityPointerGesture(event, layer)}
+                          onKeyUp={() => finishKeyboardOpacityGesture(layer)}
+                          onBlur={() => finishBlurOpacityGesture(layer)}
                           className="min-w-0 flex-1 accent-blue-600"
                         />
                         <output aria-live="polite" className="min-w-9 text-right font-medium">

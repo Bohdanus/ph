@@ -71,20 +71,6 @@ independent of how they were moved into this repository: each was reproducible
 with no changes to the specs or to `src/`. The current failures above are separate
 from that fixed history.
 
-### P2 — the 37-degree frame-only raster control differs by one pixel
-
-In `e2e/crop-history.spec.ts`, the frame-only control for `a retained layer transform matches
-legacy before and after a later frame transform` uses the same two raster layers and 37-degree frame
-change with no retained layer transform. Run `2026-10-26T18-36-15-473Z-15825` measured
-`differingBytes=2`, `differingPixels=1`, and `maxChannelDelta=1`: at pixel `(36, 26)`, the legacy
-green/blue channels were `97/158` and the durable channels were `98/157`.
-
-The control is only used to prove the retained affine operation changes each renderer's final
-pixels; it is not counted as a parity pass. Frame-changing commits remain on the legacy path, so
-this does not change current presentation. It is still an open durable frame-parity case. Reproduce
-the fixture, determine the source of the one-pixel delta, and add exact pixel/bounds coverage before
-considering frame publication. Do not hide it with a tolerance.
-
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of

@@ -91,14 +91,16 @@ against its corresponding legacy composition: a 37-degree frame transform, a fra
 and a -17-degree frame transform. The text cases cover left, center and right alignment; the rotated
 fixtures use non-zero frame origins. Exact quarter-turn matrices avoid a phantom edge from
 `cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the 90-degree
-case pins exact materialized bounds. The remaining parity cases assert source pixels and
-materialized-layer presence but not exact fractional bounds. A new browser differential compares
-one retained affine layer transform both before and after a later 37-degree frame transform. This
-closes those two listed cursors for that raster fixture only; it does not close the general frame
-gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: additional angles, vector
-tool variants, blank opacities, paint tools, text styling/rotation combinations, other frame
-sequences and exact fractional bounds remain unproven. The UI test intentionally continues to
-observe legacy presentation on commit and renderer-incompatible fallback on redo.
+case pins exact materialized bounds. The broader parity cases assert source pixels and
+materialized-layer presence but not exact fractional bounds. One browser differential now compares
+a retained affine layer transform before and after a later 37-degree frame transform, then checks
+both raster layers' frame-aligned bounds and pixels against legacy at those cursors and in a
+frame-only control. Its final composites are byte-identical for that fixture; it does not close the
+general frame gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: additional
+angles, vector tool variants, blank opacities, paint tools, text styling/rotation combinations,
+other frame sequences and exact fractional bounds across the wider source matrix remain unproven.
+The UI test intentionally continues to observe legacy presentation on commit and
+renderer-incompatible fallback on redo.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
@@ -114,18 +116,14 @@ previews keep the complete legacy base through accepted and refused append publi
 `resetHistoryTo.durable.test.tsx` proves a refused final durable draw restores the real timeline.
 `e2e/undo-redo.spec.ts` also checks live Brush preview pixels while durable status is current and
 pixel preservation when that stroke commits. These are preview-interleaving and rollback proofs;
-they do not move previews to durable authority or permit removal of legacy logical replay. The next
-retained-affine/frame differential now compares the transform cursor and a later frame cursor with
-legacy replay, verifies both renderers change from the untransformed baseline, and compares the
-final output with a frame-only control. It covers one raster fixture only. Next expand the frame
-matrix across the open angles, retained-affine combinations, source/tool variants, text
-styling/rotation, frame sequences, and exact fractional bounds. Establish source-backed
-import/replacement ownership as a separate gate. The frame matrix and ownership gate are unordered
-and may proceed independently. Keep both surfaces legacy-gated until their parity and
-failure-containment evidence is explicit. The
-frame-only control for this fixture shows a one-pixel/two-channel delta and is recorded in
-`e2e/OPEN_PROBLEMS.md`; resolve it before frame publication. See `docs/HISTORY-MIGRATION-NEXT.md`
-for the migration sequence.
+they do not move previews to durable authority or permit removal of legacy logical replay. The
+retained-affine/frame differential establishes exact layer and composite parity for one two-raster
+fixture only. Next expand the frame matrix across open angles, retained-affine combinations,
+source/tool variants, text styling/rotation, frame sequences, and exact fractional bounds. Establish
+source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
+are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
+failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
+sequence.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,

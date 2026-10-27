@@ -28,6 +28,8 @@ export type MaterializationRequest = Readonly<{
   signal?: AbortSignal;
 }>;
 
+type MaterializationCanvas = OffscreenCanvas | HTMLCanvasElement;
+
 export type MaterializedLayer = Readonly<{
   layerId: string;
   bitmap: BitmapSource;
@@ -276,7 +278,8 @@ export function createMaterializationKey(layer: DurableReplayLayer, request: Mat
 
 export async function materializeLayer(
   layer: DurableReplayLayer,
-  request: MaterializationRequest
+  request: MaterializationRequest,
+  sharedFrameSurface?: MaterializationCanvas
 ): Promise<MaterializedLayer> {
   if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
   const key = createMaterializationKey(layer, request);
@@ -296,6 +299,8 @@ export async function materializeLayer(
       let size = layerSize(layer);
       let origin = { x: layer.snapshot.pos.x, y: layer.snapshot.pos.y };
       let ownsBitmap = !source.borrowed;
+      let frameSurface = sharedFrameSurface;
+      let ownedFrameSurface: MaterializationCanvas | undefined;
 
       const replaceOwnedBitmap = (next: BitmapSource) => {
         const previous = bitmap;
@@ -305,6 +310,23 @@ export async function materializeLayer(
         // A processor may return its input unchanged. Preserve the input's
         // ownership in that case rather than claiming a borrowed source.
         ownsBitmap = previous === next ? previousWasOwned : true;
+      };
+
+      const getFrameSurface = (frame: DocumentFrame): MaterializationCanvas => {
+        if (!frameSurface) {
+          // Preserve the exported materializeLayer() contract for direct callers.
+          // materializeDocument() supplies a shared surface so document passes
+          // reuse one allocation; a standalone layer owns its local scratch.
+          frameSurface = createCanvas(frame.width, frame.height);
+          ownedFrameSurface = frameSurface;
+        }
+        if (
+          frameSurface.width !== Math.max(1, Math.ceil(frame.width)) ||
+          frameSurface.height !== Math.max(1, Math.ceil(frame.height))
+        ) {
+          throw new Error('The shared materialization frame surface must match the requested document frame');
+        }
+        return frameSurface;
       };
 
       const renderRetainedSegment = async (
@@ -338,6 +360,60 @@ export async function materializeLayer(
           drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'bounds' });
         } finally {
           ctx.restore();
+        }
+        if (pixelGridFrame && pixelGridBounds) {
+          // Rasterize visible pixels in document coordinates so this tight
+          // per-layer bitmap uses the same pixel phase as the legacy renderer.
+          // Preserve any off-frame portion from the bounded pass above.
+          const rasterizationSurface = getFrameSurface(pixelGridFrame);
+          const frameContext = context2d(rasterizationSurface);
+          frameContext.save();
+          try {
+            frameContext.globalAlpha = 1;
+            frameContext.globalCompositeOperation = 'source-over';
+            frameContext.filter = 'none';
+            frameContext.clearRect(0, 0, rasterizationSurface.width, rasterizationSurface.height);
+            drawEvaluatedPresentation(frameContext, bitmap, evaluation, {
+              kind: 'document',
+              frame: pixelGridFrame,
+            });
+          } finally {
+            frameContext.restore();
+          }
+
+          const left = Math.max(pixelGridBounds.x, pixelGridFrame.x);
+          const top = Math.max(pixelGridBounds.y, pixelGridFrame.y);
+          const right = Math.min(pixelGridBounds.x + pixelGridBounds.width, pixelGridFrame.x + pixelGridFrame.width);
+          const bottom = Math.min(pixelGridBounds.y + pixelGridBounds.height, pixelGridFrame.y + pixelGridFrame.height);
+          if (right > left && bottom > top) {
+            const sourceX = left - pixelGridFrame.x;
+            const sourceY = top - pixelGridFrame.y;
+            const destinationX = left - pixelGridBounds.x;
+            const destinationY = top - pixelGridBounds.y;
+            const width = right - left;
+            const height = bottom - top;
+            ctx.save();
+            try {
+              ctx.globalAlpha = 1;
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.filter = 'none';
+              ctx.imageSmoothingEnabled = false;
+              ctx.clearRect(destinationX, destinationY, width, height);
+              ctx.drawImage(
+                rasterizationSurface as CanvasImageSource,
+                sourceX,
+                sourceY,
+                width,
+                height,
+                destinationX,
+                destinationY,
+                width,
+                height
+              );
+            } finally {
+              ctx.restore();
+            }
+          }
         }
         replaceOwnedBitmap(await toOwnedBitmap(output));
         origin = pixelGridBounds
@@ -443,8 +519,8 @@ export async function materializeLayer(
         }
 
         try {
-          const frameSurface = createCanvas(request.frame.width, request.frame.height);
-          const frameContext = context2d(frameSurface);
+          const frameRenderSurface = createCanvas(request.frame.width, request.frame.height);
+          const frameContext = context2d(frameRenderSurface);
           const frameEvaluation = evaluatePresentation({
             position: bounds,
             sourceSize: { width: bounds.width, height: bounds.height },
@@ -457,7 +533,7 @@ export async function materializeLayer(
             frame: request.frame,
           });
           return {
-            bitmap: await toOwnedBitmap(frameSurface),
+            bitmap: await toOwnedBitmap(frameRenderSurface),
             metadata: {
               x: request.frame.x,
               y: request.frame.y,
@@ -471,6 +547,10 @@ export async function materializeLayer(
       } finally {
         source.release();
         if (ownsBitmap) closeOwnedBitmap(bitmap);
+        if (ownedFrameSurface) {
+          ownedFrameSurface.width = 1;
+          ownedFrameSurface.height = 1;
+        }
       }
     },
   });
@@ -491,17 +571,31 @@ export async function materializeLayer(
 
 export async function materializeDocument(
   replay: DurableReplayResult,
-  request: MaterializationRequest
+  request: MaterializationRequest,
+  sharedFrameSurface?: MaterializationCanvas
 ): Promise<MaterializedDocument> {
   const materialized: Record<string, MaterializedLayer> = {};
+  const needsFrameSurface = Boolean(
+    request.pixelGridFrame &&
+    Object.values(replay.layers).some(
+      (layer) =>
+        layer.snapshot.visible && layer.operations.some((operation) => operation.kind === 'apply-affine-transform')
+    )
+  );
+  const ownsFrameSurface = !sharedFrameSurface && needsFrameSurface;
+  let frameSurface = sharedFrameSurface;
   try {
     if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
     assertDocumentGeneration(request);
+    if (ownsFrameSurface && request.pixelGridFrame) {
+      // The layer loop below is serial, so one scratch serves every affine pass.
+      frameSurface = createCanvas(request.pixelGridFrame.width, request.pixelGridFrame.height);
+    }
     for (const layer of Object.values(replay.layers)) {
       if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
       if (!layer.snapshot.visible) continue;
       try {
-        materialized[layer.snapshot.id] = await materializeLayer(layer, request);
+        materialized[layer.snapshot.id] = await materializeLayer(layer, request, frameSurface);
       } catch (error) {
         // A refused layer must not be published unfiltered: doing so would make
         // the visible document look successful while durable replay cannot
@@ -520,6 +614,11 @@ export async function materializeDocument(
   } catch (error) {
     for (const layer of Object.values(materialized)) layer.lease.release();
     throw error;
+  } finally {
+    if (ownsFrameSurface && frameSurface) {
+      frameSurface.width = 1;
+      frameSurface.height = 1;
+    }
   }
   let released = false;
   return {

@@ -58,6 +58,7 @@ class BlendingCanvas {
       },
       clearRect: () => undefined,
       fillRect: () => undefined,
+      setTransform: () => undefined,
       translate: () => undefined,
       transform: () => undefined,
       // Sampled through the accessors below, so what lands in `draws` is the state in force for
@@ -167,6 +168,10 @@ function installBlendingCanvas() {
   return createdCanvases;
 }
 
+function documentSurface(canvases: readonly BlendingCanvas[] = createdCanvases): BlendingCanvas | undefined {
+  return canvases.find((canvas) => canvas.width === frame.width && canvas.height === frame.height);
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   createdCanvases = [];
@@ -223,7 +228,7 @@ describe('the compositing boundary', () => {
         request(registry)
       );
 
-      expect(canvases.at(-1)?.smoothingAtDraw).toEqual([false]);
+      expect(documentSurface(canvases)?.smoothingAtDraw).toEqual([false]);
       result.release();
     } finally {
       registry.shutdown();
@@ -246,7 +251,7 @@ describe('the compositing boundary', () => {
         request(registry)
       );
 
-      const composite = canvases.at(-1);
+      const composite = documentSurface(canvases);
       expect(composite?.draws).toHaveLength(2);
       // The multiply layer's image reached the surface under `multiply`; the Normal layer above and
       // below it under its own mode. One list, so the second entry also proves the first layer's
@@ -278,7 +283,7 @@ describe('the compositing boundary', () => {
           request(registry)
         );
         result.release();
-        return canvases.at(-1)?.draws ?? [];
+        return documentSurface(canvases)?.draws ?? [];
       } finally {
         registry.shutdown();
       }
@@ -297,13 +302,9 @@ describe('the compositing boundary', () => {
   });
 
   it('writes a non-normal mode onto the document surface and onto no other surface it allocates', async () => {
-    // The isolation invariant, and the reason the blend must NOT be baked into a layer's own
-    // raster. Every surface `materializeLayer()` creates is freshly allocated and transparent, and
-    // compositing any blend mode against a transparent backdrop yields the source unchanged — so a
-    // baked-in mode is arithmetically inert rather than visibly wrong, which is exactly why it
-    // would survive review. Worse, the retained segments are drawn one after another into
-    // separate surfaces, so a mode written onto one would blend it against the layer's own
-    // previous segment. Only the document surface may ever carry one.
+    // The per-layer outputs stay tight, but affine materialization temporarily reuses the document
+    // surface as a frame-sized scratch. That pass must remain source-over; the snapshot blend mode
+    // is applied only during the final layer composite, after the scratch has been cleared.
     const canvases = installBlendingCanvas();
     const registry = new AssetRegistry();
     try {
@@ -324,12 +325,12 @@ describe('the compositing boundary', () => {
         request(registry)
       );
 
-      const documentSurface = canvases.at(-1);
-      const nonNormalSurfaces = canvases.filter((canvas) =>
-        canvas.compositeWrites.some((write) => write !== 'source-over')
-      );
-
-      expect(nonNormalSurfaces).toEqual([documentSurface]);
+      const compositingSurface = documentSurface(canvases);
+      expect(canvases.filter((canvas) => canvas.compositeWrites.some((write) => write !== 'source-over'))).toEqual([
+        compositingSurface,
+      ]);
+      expect(compositingSurface?.draws.at(-1)).toEqual({ composite: 'multiply', alpha: 1 });
+      expect(compositingSurface?.draws.slice(0, -1).every(({ composite }) => composite === 'source-over')).toBe(true);
       expect(canvases.length).toBeGreaterThan(1);
       result.release();
     } finally {
@@ -352,7 +353,7 @@ describe('the compositing boundary', () => {
         request(registry)
       );
 
-      const composite = canvases.at(-1);
+      const composite = documentSurface(canvases);
       expect(composite?.draws).toEqual([{ composite: 'source-over', alpha: 1 }]);
       expect(composite?.compositeWrites).not.toContain('multiply');
       result.release();
