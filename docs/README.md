@@ -117,6 +117,10 @@ its tool permissions.
 
 ## Open problems
 
+[`../.kilo/plans/history-migration-continuation-20261027.md`](../.kilo/plans/history-migration-continuation-20261027.md)
+owns the current-main history-migration implementation slices, restart checkpoint, proof gates,
+and remaining unproven work.
+
 Three homes for an open defect, split by what broke. A defect goes in one of them, not in two —
 `handoffs/` is not one of them; it records a finished review.
 

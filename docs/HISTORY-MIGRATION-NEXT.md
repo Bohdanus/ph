@@ -36,15 +36,16 @@ is for this review closeout.
   projection with legacy fallback, not a completed undo/redo authority cutover. Supported committed
   eligible append/reorder transitions also compose a durable presentation in the background, but keep
   the already-visible legacy selector active while composition runs so transient previews are not
-  blocked. Source-backed imports/replacements and frame-changing commits remain legacy until their
-  ownership or frame-parity gates are explicit.
+  blocked. Image/blank layer creates can request that presentation after asset finalization;
+  tool-source creates, source replacements, merge and frame-changing commits retain their gates.
 
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
    staged presentation projection, and eligible committed append/reorder presentation composes in
-   the background. Source-backed imports/replacements and frame-changing commits remain on the
-   complete legacy path. Live previews also keep the complete legacy layer base until they clear;
+   the background, including image/blank layer creates after their asset transaction settles.
+   Other source-backed commits and frame-changing commits remain on the complete legacy path.
+   Live previews also keep the complete legacy layer base until they clear;
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
@@ -79,9 +80,11 @@ priority or dependency. They may be pursued in either order or in parallel.
    cursor, or lease ownership. The same raster fixture's frame-only control exposed a one-pixel,
    two-channel delta (maximum channel difference 1); it is an open parity case, not a passing
    cross-renderer control.
-4. Establish source-backed import/replacement ownership and parity as the other independent gate.
-   Keep the unsupported-source refusal explicit, and do not treat either gate's passing differential
-   as authority to promote that surface.
+4. Continue source-backed ownership and parity by family. Image/blank layer creates now request
+   background presentation after asset finalization, with whole-document compatibility and freshness
+   checks. Tool-source creates, source replacement, merge and document replacement still need their
+   own explicit proofs. Keep unsupported-source refusal and do not promote another family from
+   the create fixtures.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
@@ -153,10 +156,10 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
   one-pixel/two-channel difference remains open in `e2e/OPEN_PROBLEMS.md`; it is not counted as a
   parity pass.
 
-## Landing Status
+## Continuation plan
 
-The reviewed closeout is committed on `task/history-migration-review-closeout-20261026`, but it is
-not yet on `main`. Landing is blocked because the designated `main` worktree at `362d0656` has an
-unrelated untracked `ci-bypass-comparison.md`. Leave that file untouched; resume landing after its
-owner clears it, then repeat the pinned landing checks in `docs/ORCHESTRATION.md` in case `main` has
-advanced.
+The closeout branch is already an ancestor of verified `main` at `eaeb1734`; its old landing
+blocker is obsolete. The current implementation slices, source/frame ownership boundaries,
+acceptance criteria and explicit unproven handoff are in
+[`history-migration-continuation-20261027.md`](../.kilo/plans/history-migration-continuation-20261027.md).
+Recheck live main and repository state before each landing.

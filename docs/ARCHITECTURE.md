@@ -15,9 +15,10 @@ It has thirteen operation kinds, a versioned schema, deep-frozen clones, an asse
 registry with generation counters and a memoizing materialization cache. It is
 rebuilt on every commit and every navigation. Successful supported navigation,
 eligible committed append/reorder presentation, and export consume its materialized
-projection; source-backed imports/replacements, frame-changing commits, logical timeline updates, previews,
-and unsupported documents retain the legacy compatibility path until their ownership or frame-parity
-gates are explicit. Canvas navigation selects a complete durable
+projection. Image/blank layer creates can request background presentation after their asset
+transaction commits and reconciles. Other source-backed commits, frame-changing commits, logical
+timeline updates, previews and unsupported documents retain the legacy compatibility path until
+their independent gates are explicit. Canvas navigation selects a complete durable
 render projection only after its identity and frame match; pending navigation
 preserves the previously painted canvas. Append/reorder composition runs in the
 background while the already-visible legacy selector remains active, so a preview

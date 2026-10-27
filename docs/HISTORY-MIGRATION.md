@@ -186,8 +186,9 @@ variant or an equivalent atomic history action.
    presentation and both raster/PSD export paths. Ownership checks, production
    adapter parity, and atomic failure fallback are closed; supported committed
    eligible append/reorder presentation now composes in the background with legacy
-   as the immediate selector; source-backed imports/replacements and frame-changing
-   commits remain legacy until their ownership or frame-parity gates are explicit. A
+   as the immediate selector. Image/blank layer creates also request background presentation
+   after asset finalization. Tool-source creates, source replacements, merge and frame-changing
+   commits retain their independent ownership or frame-parity gates. A
    rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
    operation, and legacy plus durable logical replay both transform every extant layer.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
@@ -222,7 +223,7 @@ variant or an equivalent atomic history action.
    combinations, source/tool variants, text styling/rotation, frame sequences and exact fractional
    materialized bounds. The same fixture's frame-only control showed a one-pixel/two-channel delta;
    it is recorded in `e2e/OPEN_PROBLEMS.md` and is not a parity pass. Establish ownership and parity
-   for source-backed imports/replacements as a separate, unordered gate; it may proceed before,
+   for the remaining source-backed families as a separate, unordered gate; it may proceed before,
    after, or in parallel with the broader frame matrix. Keep the unsupported-source fallback
    explicit.
 

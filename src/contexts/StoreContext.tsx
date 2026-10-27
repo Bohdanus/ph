@@ -1932,14 +1932,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
       const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
-      // Source-backed appends and all frame-changing commits remain on the legacy
-      // selector until their ownership or frame-parity gates are explicit.
-      const allowBackgroundPresentation = ![
-        NEW_LAYER_ACTION,
-        MERGE_ACTION,
-        REPLACE_LAYER_SOURCE_ACTION,
-        SET_DOCUMENT_FRAME_ACTION,
-      ].includes(action.payload.historyItem.actionName);
+      // Raster/blank creates compose only after their asset transaction settles.
+      // Other source-backed edits and frame changes retain their separate gates.
+      const { actionName, layerSource } = action.payload.historyItem;
+      const allowBackgroundPresentation =
+        actionName === NEW_LAYER_ACTION
+          ? layerSource?.kind === 'image' || layerSource?.kind === 'blank'
+          : ![MERGE_ACTION, REPLACE_LAYER_SOURCE_ACTION, SET_DOCUMENT_FRAME_ACTION].includes(actionName);
       // One append, one durable entry: the boundary's plan is published when the
       // store's durable document still describes the timeline it was planned
       // against, and the whole timeline is reconverted otherwise.

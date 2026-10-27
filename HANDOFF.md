@@ -37,8 +37,9 @@ Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHis
 the mapped durable cursor after that transition and publishes a separate
 `durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; successful
 eligible committed append/reorder transitions run the same composition in the background while
-keeping the legacy selector immediately visible; source-backed imports/replacements and
-frame-changing commits remain legacy until their ownership or frame-parity gates are explicit. The
+keeping the legacy selector immediately visible, including image/blank layer creates after asset
+finalization. Other source-backed commits and frame-changing commits retain their independent
+ownership or frame-parity gates. The
 legacy layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
@@ -74,8 +75,8 @@ affine arithmetic of its own. `renderRetainedSegment()` hands the retained opera
 through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 `presentation-evaluator.ts` — `scaleVectorArgs()`, which `materialization.ts` imports directly and
 `layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation
-and eligible committed append/reorder are now staged callers; source-backed imports/replacements,
-frame changes, previews, and the
+and eligible committed append/reorder, including image/blank creates, are now staged callers;
+other source-backed commits, frame changes, previews, and the
 remaining surfaces still need independent parity gates before they are mounted.
 
 **Rotated crop is now an explicit logical operation, but its presentation gate remains closed.**
@@ -119,8 +120,8 @@ retained-affine/frame differential now compares the transform cursor and a later
 legacy replay, verifies both renderers change from the untransformed baseline, and compares the
 final output with a frame-only control. It covers one raster fixture only. Next expand the frame
 matrix across the open angles, retained-affine combinations, source/tool variants, text
-styling/rotation, frame sequences, and exact fractional bounds. Establish source-backed
-import/replacement ownership as a separate gate. The frame matrix and ownership gate are unordered
+styling/rotation, frame sequences, and exact fractional bounds. Establish ownership and parity
+for the remaining source-backed families as a separate gate. The frame matrix and ownership gate are unordered
 and may proceed independently. Keep both surfaces legacy-gated until their parity and
 failure-containment evidence is explicit. The
 frame-only control for this fixture shows a one-pixel/two-channel delta and is recorded in
