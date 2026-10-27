@@ -1,4 +1,4 @@
-import { type RefObject } from 'react';
+import { useRef, type RefObject } from 'react';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -78,13 +78,15 @@ type GradientEndpoints = { from: Point; to: Point };
  */
 export const GradientToolArea = ({ className }: gradientToolAreaProps) => {
   const [{ containerRef, activeLayerId, layers, totalSize }] = useStore();
-  const { tempUpdateLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, updateLayerByTool, cancelLayerPreview } = useLayers();
   const { getToolArgs } = useCurrentTool();
 
   const args = getToolArgs('gradient');
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
   const isEnabled = !!activeLayer && !activeLayer.isBedrock;
   const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
+  const hasPreviewRef = useRef(false);
 
   /**
    * The processor's own raster is the PRESENTED layer's, addressed from the origin of
@@ -119,26 +121,60 @@ export const GradientToolArea = ({ className }: gradientToolAreaProps) => {
   const isZeroLength = (endpoints: GradientEndpoints): boolean =>
     endpoints.from.x === endpoints.to.x && endpoints.from.y === endpoints.to.y;
 
+  const cancelPreview = () => {
+    const layerId = previewLayerIdRef.current;
+    if (hasPreviewRef.current && layerId) cancelLayerPreview(layerId);
+    hasPreviewRef.current = false;
+  };
+
+  const resetPreview = () => {
+    cancelPreview();
+    previewLayerIdRef.current = null;
+  };
+
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
-    { imageSize: totalSize, containerRef, enabled: isEnabled },
+    { imageSize: totalSize, containerRef, enabled: isEnabled, gestureKey: activeLayerId },
     {
+      onStart: () => {
+        previewLayerIdRef.current = activeLayerId;
+        hasPreviewRef.current = false;
+      },
       onMove: (points) => {
-        if (!activeLayerId) return;
+        if (!activeLayerId) {
+          resetPreview();
+          return;
+        }
 
         const toolArgs = buildArgs(points);
-        if (!toolArgs || isZeroLength(toolArgs)) return;
+        if (!toolArgs || isZeroLength(toolArgs)) {
+          // A prior nonzero preview must not survive when the drag comes back
+          // to its origin. The hook can still receive another move and preview
+          // again if the user continues the drag.
+          cancelPreview();
+          return;
+        }
 
         tempUpdateLayer({ id: activeLayerId, toolArgs });
+        hasPreviewRef.current = true;
       },
       onCommit: (points) => {
-        if (!activeLayerId) return;
+        if (!activeLayerId) {
+          resetPreview();
+          return;
+        }
 
         // `onCommit` gets a copy, so these args are the ones the history entry keeps.
         const toolArgs = buildArgs(points);
-        if (!toolArgs || isZeroLength(toolArgs)) return;
+        if (!toolArgs || isZeroLength(toolArgs)) {
+          resetPreview();
+          return;
+        }
 
         void updateLayerByTool({ id: activeLayerId, toolArgs });
+        previewLayerIdRef.current = null;
+        hasPreviewRef.current = false;
       },
+      onCancel: resetPreview,
     }
   );
 

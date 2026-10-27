@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, useRef, useState } from 'react';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import {
   absoluteViewZoom,
@@ -54,10 +54,39 @@ export function Zoom() {
   const zoom = absoluteViewZoom(state, fitScale, devicePixelRatio);
   const minimumZoom = minimumSliderZoomForCurrentView(documentFrame, zoom, state.minimumZoomOverride);
   const [interactionMinimumZoom, setInteractionMinimumZoom] = useState<number | null>(null);
+  const sliderPointerIdRef = useRef<number | null>(null);
   const activeMinimumZoom = interactionMinimumZoom ?? minimumZoom;
 
   const beginSliderInteraction = () => setInteractionMinimumZoom((current) => current ?? minimumZoom);
   const endSliderInteraction = () => setInteractionMinimumZoom(null);
+  const beginPointerInteraction = (event: ReactPointerEvent<HTMLInputElement>) => {
+    if (sliderPointerIdRef.current !== null && sliderPointerIdRef.current !== event.pointerId) {
+      event.preventDefault();
+      return;
+    }
+    sliderPointerIdRef.current = event.pointerId;
+    // Range inputs have optional implicit capture. Pin the owner explicitly so
+    // dragging off the control cannot strand the frozen zoom floor after blur.
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    beginSliderInteraction();
+  };
+  const endPointerInteraction = (event: ReactPointerEvent<HTMLInputElement>) => {
+    if (sliderPointerIdRef.current !== event.pointerId) return;
+    sliderPointerIdRef.current = null;
+    endSliderInteraction();
+  };
+  const beginKeyboardInteraction = () => {
+    if (sliderPointerIdRef.current === null) beginSliderInteraction();
+  };
+  const endKeyboardInteraction = () => {
+    if (sliderPointerIdRef.current === null) endSliderInteraction();
+  };
+  const endBlurInteraction = () => {
+    // Blur carries no pointer identity. Keep the frozen zoom floor until the
+    // pointer that started the interaction ends it.
+    if (sliderPointerIdRef.current !== null) return;
+    endSliderInteraction();
+  };
 
   return (
     <div className="flex items-center gap-2">
@@ -72,12 +101,13 @@ export function Zoom() {
         max={VIEW_ZOOM_SLIDER_STEPS}
         step={1}
         value={viewZoomToSliderPosition(zoom, activeMinimumZoom)}
-        onPointerDown={beginSliderInteraction}
-        onPointerUp={endSliderInteraction}
-        onPointerCancel={endSliderInteraction}
-        onKeyDown={beginSliderInteraction}
-        onKeyUp={endSliderInteraction}
-        onBlur={endSliderInteraction}
+        onPointerDown={beginPointerInteraction}
+        onPointerUp={endPointerInteraction}
+        onPointerCancel={endPointerInteraction}
+        onLostPointerCapture={endPointerInteraction}
+        onKeyDown={beginKeyboardInteraction}
+        onKeyUp={endKeyboardInteraction}
+        onBlur={endBlurInteraction}
         onChange={(event) => {
           const magnification = sliderPositionToViewZoom(Number(event.currentTarget.value), activeMinimumZoom);
           setViewState({
