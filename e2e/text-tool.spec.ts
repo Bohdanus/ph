@@ -2130,8 +2130,12 @@ test.describe('Text tool', () => {
       Math.abs(allCaps.height - plainUppercase.height),
       'All Caps changed uppercase height beyond the two-pixel row-rasterization allowance'
     ).toBeLessThanOrEqual(2);
-    expect(smallCaps.width, 'Small Caps did not narrow lowercase characters').toBeLessThan(allCaps.width);
-    expect(smallCaps.pixelCount, 'Small Caps did not render a distinct cap-height mix').not.toBe(allCaps.pixelCount);
+    expect(smallCaps.width, 'Small Caps did not meaningfully narrow lowercase characters').toBeLessThan(
+      allCaps.width * 0.95
+    );
+    expect(smallCaps.pixelCount, 'Small Caps did not meaningfully reduce lowercase ink area').toBeLessThan(
+      allCaps.pixelCount * 0.9
+    );
     expect(
       Math.abs(smallCaps.height - plainMixedCase.height),
       'Small Caps scaled the existing uppercase character beyond the two-pixel row-rasterization allowance'
