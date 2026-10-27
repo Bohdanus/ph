@@ -54,6 +54,11 @@ const SLAB_BOUNDS = {
   width: SLAB_END_X - SLAB_START_X + 60,
   height: 100,
 } as const;
+const SLAB_SAMPLE_POINT = { x: SLAB_START_X + 100, y: SLAB_Y } as const;
+const SLAB_SAMPLE_POINT_IN_CLIP = {
+  x: SLAB_SAMPLE_POINT.x - SLAB_BOUNDS.x,
+  y: SLAB_SAMPLE_POINT.y - SLAB_BOUNDS.y,
+} as const;
 
 /** The same region as a PAGE-relative clip, which is what `screenshot` and `waitForCanvasPixels` take. */
 const pageClip = (box: BoundingBox): Required<ClipOptions> => ({
@@ -90,6 +95,51 @@ const canvasBox = async (page: Page): Promise<BoundingBox> => {
   const box = await getWorkspaceCanvas(page).boundingBox();
   expect(box, 'the workspace canvas must be on screen to sample it').not.toBeNull();
   return box!;
+};
+
+const readDocumentPixel = async (page: Page, point: { x: number; y: number }) =>
+  getWorkspaceCanvas(page).evaluate((element, documentPoint) => {
+    const canvas = element as HTMLCanvasElement;
+    const scaleX = canvas.width / 800;
+    const scaleY = canvas.height / 600;
+    if (!Number.isFinite(scaleX) || scaleX <= 0 || Math.abs(scaleX - scaleY) > 1e-6) {
+      throw new Error('workspace compositor scale must match the default 800x600 document');
+    }
+    const x = Math.floor((documentPoint.x + 0.5) * scaleX);
+    const y = Math.floor((documentPoint.y + 0.5) * scaleY);
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('workspace compositor has no 2D context');
+    const pixel = context.getImageData(x, y, 1, 1).data;
+    return {
+      scale: scaleX,
+      width: canvas.width,
+      height: canvas.height,
+      red: pixel[0] ?? 0,
+      green: pixel[1] ?? 0,
+      blue: pixel[2] ?? 0,
+    };
+  }, point);
+
+const pagePointForDocumentPixel = async (page: Page, point: { x: number; y: number }) => {
+  const workspace = page.getByTestId('workspace-container');
+  await expect(workspace).toHaveAttribute('data-fit-scale', /^\d+(?:\.\d+)?$/);
+  await expect(workspace).toHaveAttribute('data-fit-offset-x', /^-?\d+(?:\.\d+)?$/);
+  await expect(workspace).toHaveAttribute('data-fit-offset-y', /^-?\d+(?:\.\d+)?$/);
+  await expect(workspace).toHaveAttribute('data-view-pan-x', '0');
+  await expect(workspace).toHaveAttribute('data-view-pan-y', '0');
+  await expect(workspace).toHaveAttribute('data-view-effective-zoom', '1');
+  await expect(workspace).toHaveAttribute('data-view-rotation', '0');
+
+  return workspace.evaluate((element, documentPoint) => {
+    const rect = element.getBoundingClientRect();
+    const fitScale = Number(element.getAttribute('data-fit-scale'));
+    const offsetX = Number(element.getAttribute('data-fit-offset-x'));
+    const offsetY = Number(element.getAttribute('data-fit-offset-y'));
+    return {
+      x: rect.x + offsetX + (documentPoint.x + 0.5) * fitScale - element.scrollLeft,
+      y: rect.y + offsetY + (documentPoint.y + 0.5) * fitScale - element.scrollTop,
+    };
+  }, point);
 };
 
 const readout = (page: Page, n: number) => page.getByTestId(`color-sampler-${n}`);
@@ -161,11 +211,16 @@ test.describe('the Color Sampler tool', () => {
     await selectColorSampler(page);
 
     const box = await canvasBox(page);
-    const red = await getColorAtPoint(await page.screenshot({ clip: pageClip(box) }), 100, 30, 2);
+    const red = await getColorAtPoint(
+      await page.screenshot({ clip: pageClip(box) }),
+      SLAB_SAMPLE_POINT_IN_CLIP.x,
+      SLAB_SAMPLE_POINT_IN_CLIP.y,
+      2
+    );
     expect(red, 'the sampled target must be the red the Brush laid down').not.toBeNull();
     expect(red!.red).toBeGreaterThan(150);
 
-    await page.mouse.click(box.x + SLAB_START_X + 100, box.y + SLAB_Y);
+    await page.mouse.click(box.x + SLAB_SAMPLE_POINT.x, box.y + SLAB_SAMPLE_POINT.y);
 
     await expect(readout(page, 1)).toBeVisible();
     const [r, g, b] = await reportedRgb(page, 1);
@@ -182,6 +237,87 @@ test.describe('the Color Sampler tool', () => {
     const hex = (await hexReadout(page, 1).textContent())?.trim() ?? '';
     expect(hex).toMatch(/^#[0-9a-f]{6}$/);
     expect(hex).toBe(`#${[r, g, b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`);
+  });
+
+  test('samples a spatially unique compositor pixel at desktop and tablet fits', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const uniquePixelTile = [
+      [
+        [31, 47, 73],
+        [52, 83, 119],
+        [79, 43, 101],
+      ],
+      [
+        [93, 151, 37],
+        [207, 29, 61],
+        [23, 127, 181],
+      ],
+      [
+        [167, 71, 19],
+        [41, 199, 109],
+        [113, 61, 223],
+      ],
+    ] as const;
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto('/');
+      await expect(getWorkspaceCanvas(page)).toBeVisible();
+      await expect(page.getByTitle('Drag to reorder').filter({ hasText: 'Blank 1' })).toBeVisible();
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', '800');
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', '600');
+
+      await selectColorSampler(page);
+      await sampleSizeSelect(page).selectOption('1');
+      await expect(sampleSizeSelect(page)).toHaveValue('1');
+      const clickPoint = await pagePointForDocumentPixel(page, SLAB_SAMPLE_POINT);
+
+      // Color Sampler is pixel-free; seed an exact neighborhood in the compositor it reads.
+      await getWorkspaceCanvas(page).evaluate(
+        (element, { center, tile }) => {
+          const canvas = element as HTMLCanvasElement;
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('workspace compositor has no 2D context');
+
+          const image = context.createImageData(3, 3);
+          for (let y = 0; y < 3; y += 1) {
+            for (let x = 0; x < 3; x += 1) {
+              const color = tile[y]![x]!;
+              image.data.set([...color, 255], (y * 3 + x) * 4);
+            }
+          }
+          context.putImageData(image, center.x - 1, center.y - 1);
+        },
+        { center: SLAB_SAMPLE_POINT, tile: uniquePixelTile }
+      );
+
+      const pixelPoints = uniquePixelTile.flatMap((row, y) =>
+        row.map((rgb, x) => ({
+          point: { x: SLAB_SAMPLE_POINT.x + x - 1, y: SLAB_SAMPLE_POINT.y + y - 1 },
+          rgb,
+        }))
+      );
+      const actualPixels = await Promise.all(pixelPoints.map(({ point }) => readDocumentPixel(page, point)));
+      for (const [index, { rgb }] of pixelPoints.entries()) {
+        expect(
+          [actualPixels[index]!.red, actualPixels[index]!.green, actualPixels[index]!.blue],
+          'the compositor fixture has a unique color in each neighboring pixel'
+        ).toEqual(rgb);
+      }
+
+      await page.mouse.click(clickPoint.x, clickPoint.y);
+      await expect(readout(page, 1)).toBeVisible();
+      const centerPixel = actualPixels[4]!;
+      expect(await reportedRgb(page, 1), 'the bar reports the compositor pixel under the click').toEqual([
+        centerPixel.red,
+        centerPixel.green,
+        centerPixel.blue,
+      ]);
+    }
   });
 
   test('numbers samplers from one and keeps the numbers after a deletion', async ({ page }) => {
@@ -413,61 +549,31 @@ test.describe('Color Sampler HiDPI readback', () => {
     const box = await canvasBox(page);
     await drawLineFromDocument(page, box, SLAB_START_X, SLAB_Y, SLAB_END_X, SLAB_Y, { steps: 12 });
 
-    const documentPoint = { x: SLAB_START_X + 100, y: SLAB_Y };
-    const actualPixelAtDocumentPoint = async () =>
-      getWorkspaceCanvas(page).evaluate((element, point) => {
-        const canvas = element as HTMLCanvasElement;
-        const scale = Number(canvas.getAttribute('data-hidpi-ratio'));
-        const x = Math.floor((point.x + 0.5) * scale);
-        const y = Math.floor((point.y + 0.5) * scale);
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('workspace compositor has no 2D context');
-        return {
-          scale,
-          width: canvas.width,
-          height: canvas.height,
-          rgb: Array.from(context.getImageData(x, y, 1, 1).data.slice(0, 3)),
-        };
-      }, documentPoint);
+    const documentPoint = SLAB_SAMPLE_POINT;
+    const actualPixelAtDocumentPoint = () => readDocumentPixel(page, documentPoint);
     await expect
       .poll(
         async () => {
-          const { rgb } = await actualPixelAtDocumentPoint();
-          return rgb[0] > 150 && rgb[1] < 100 && rgb[2] < 100;
+          const pixel = await actualPixelAtDocumentPoint();
+          return pixel.red > 150 && pixel.green < 100 && pixel.blue < 100;
         },
         { message: 'the document-space target pixel becomes red in the compositor' }
       )
       .toBe(true);
 
     await selectColorSampler(page);
-    const workspace = page.getByTestId('workspace-container');
-    await expect(workspace).toHaveAttribute('data-fit-scale', /^\d+(?:\.\d+)?$/);
-    await expect(workspace).toHaveAttribute('data-view-pan-x', '0');
-    await expect(workspace).toHaveAttribute('data-view-pan-y', '0');
-    await expect(workspace).toHaveAttribute('data-view-effective-zoom', '1');
-    await expect(workspace).toHaveAttribute('data-view-rotation', '0');
-
-    const click = await workspace.evaluate((element, point) => {
-      const rect = element.getBoundingClientRect();
-      const fitScale = Number(element.getAttribute('data-fit-scale'));
-      const offsetX = Number(element.getAttribute('data-fit-offset-x'));
-      const offsetY = Number(element.getAttribute('data-fit-offset-y'));
-      return {
-        x: rect.x + offsetX + (point.x + 0.5) * fitScale - element.scrollLeft,
-        y: rect.y + offsetY + (point.y + 0.5) * fitScale - element.scrollTop,
-      };
-    }, documentPoint);
+    const click = await pagePointForDocumentPixel(page, documentPoint);
 
     const actualPixel = await actualPixelAtDocumentPoint();
     expect(actualPixel.scale).toBe(2);
     expect(actualPixel.width).toBe(1600);
     expect(actualPixel.height).toBe(1200);
-    expect(actualPixel.rgb[0]).toBeGreaterThan(150);
-    expect(actualPixel.rgb[1]).toBeLessThan(100);
-    expect(actualPixel.rgb[2]).toBeLessThan(100);
+    expect(actualPixel.red).toBeGreaterThan(150);
+    expect(actualPixel.green).toBeLessThan(100);
+    expect(actualPixel.blue).toBeLessThan(100);
 
     await page.mouse.click(click.x, click.y);
     await expect(readout(page, 1)).toBeVisible();
-    expect(await reportedRgb(page, 1)).toEqual(actualPixel.rgb);
+    expect(await reportedRgb(page, 1)).toEqual([actualPixel.red, actualPixel.green, actualPixel.blue]);
   });
 });
