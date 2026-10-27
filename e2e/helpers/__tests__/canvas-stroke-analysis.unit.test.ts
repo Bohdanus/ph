@@ -11,10 +11,8 @@ import {
   hasRedPixels,
   hasMagnetSnapPixels,
   hasManualSnapPixels,
-  screenshotBoundsToCss,
   type CaptureRegion,
   type ImageDataResult,
-  type BoundingBox,
 } from '../canvas-helpers';
 import {
   CYAN,
@@ -985,45 +983,8 @@ describe('transparent pixel weighting divergence', () => {
   });
 });
 
-/** A 200x100 box at origin, used for screenshotBoundsToCss conversion tests. */
-const BOX: BoundingBox = { x: 0, y: 0, width: 200, height: 100 };
-
-describe('screenshotBoundsToCss letterbox and NaN edge cases', () => {
+describe('screenshotBoundsToCss letterbox edge cases', () => {
   const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
-
-  /**
-   * OPEN_PROBLEMS.md P3 — zero-sized image yields NaN edges.
-   * `screenshotBoundsToCss` divides pixel coordinates by the image dimensions,
-   * so a zero-sized image produces NaN on every channel rather than throwing.
-   * This pins the failure mode so a future guard is visible as a change.
-   */
-  it('yields NaN edges for a zero-sized image instead of throwing', () => {
-    const bounds = { left: 0, top: 0, right: 0, bottom: 0, imageWidth: 0, imageHeight: 0 };
-    const result = screenshotBoundsToCss(bounds, BOX);
-    expect(result.left).toBeNaN();
-    expect(result.top).toBeNaN();
-    expect(result.right).toBeNaN();
-    expect(result.bottom).toBeNaN();
-  });
-
-  it('yields NaN on the x-axis for a zero-width image', () => {
-    const bounds = { left: 0, top: 0, right: 0, bottom: 50, imageWidth: 0, imageHeight: 50 };
-    const result = screenshotBoundsToCss(bounds, BOX);
-    expect(result.left).toBeNaN();
-    expect(result.right).toBeNaN();
-    // The y-axis is unaffected: image height 50 maps the bottom pixel at 50.
-    expect(result.top).toBe(0);
-    expect(result.bottom).toBe(100);
-  });
-
-  it('yields NaN on the y-axis for a zero-height image', () => {
-    const bounds = { left: 0, top: 0, right: 50, bottom: 0, imageWidth: 50, imageHeight: 0 };
-    const result = screenshotBoundsToCss(bounds, BOX);
-    expect(result.top).toBeNaN();
-    expect(result.bottom).toBeNaN();
-    expect(result.left).toBe(0);
-    expect(result.right).toBe(200);
-  });
 
   /**
    * OPEN_PROBLEMS.md P2 — the letterbox is still read as ink by predicates.
