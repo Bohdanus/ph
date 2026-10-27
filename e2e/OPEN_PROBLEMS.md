@@ -71,6 +71,20 @@ independent of how they were moved into this repository: each was reproducible
 with no changes to the specs or to `src/`. The current failures above are separate
 from that fixed history.
 
+### P2 — the 37-degree frame-only raster control differs by one pixel
+
+In `e2e/crop-history.spec.ts`, the frame-only control for `a retained layer transform matches
+legacy before and after a later frame transform` uses the same two raster layers and 37-degree frame
+change with no retained layer transform. Run `2026-10-26T18-36-15-473Z-15825` measured
+`differingBytes=2`, `differingPixels=1`, and `maxChannelDelta=1`: at pixel `(36, 26)`, the legacy
+green/blue channels were `97/158` and the durable channels were `98/157`.
+
+The control is only used to prove the retained affine operation changes each renderer's final
+pixels; it is not counted as a parity pass. Frame-changing commits remain on the legacy path, so
+this does not change current presentation. It is still an open durable frame-parity case. Reproduce
+the fixture, determine the source of the one-pixel delta, and add exact pixel/bounds coverage before
+considering frame publication. Do not hide it with a tolerance.
+
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
@@ -171,15 +185,6 @@ What is left is a rule for new code: a spec that mixes `boundingBox()` with a CD
 capture must not assume the two agree, and must not introduce a second conversion
 somewhere that already has one.
 
-## P3 — zero-sized image yields `NaN` edges
-
-`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts`) and
-`imagePointToCss` / `cssPointToImage` (`e2e/helpers/screenshot-scale.ts`)
-divide by the image or box dimension, so a zero-sized input produces `NaN` or
-`Infinity` instead of throwing. Deliberate — the modules stay branch-free and
-total, and it is pinned — but a `NaN` coordinate reaching `page.mouse.click` is
-opaque. Callers must reject empty images first.
-
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
 `dominantRed()` and `getColorAtPoint()` in `e2e/helpers/canvas-helpers.ts` **[pinned]**
@@ -217,12 +222,15 @@ remain:
    the dark theme their threshold is satisfied by `#121212` and `#000` alone, so a wait
    on either can be satisfied by a clip containing no stroke.
 
-**This is LATENT today, and one declaration is the only thing making it so.**
-The top-level `use` block's `colorScheme: 'light'` in `playwright.config.ts` is that declaration, and
-its value is Playwright's own default, so every currently-green test relies on a precondition this
-file states and nothing enforces. Remove that line, or write a spec that pins
-`colorScheme: 'dark'` for itself, and the wrong-pass returns with no other file
-noticing.
+**The app-theme precondition is enforced by the shared test fixture, not by
+`colorScheme`.** `e2e/fixtures/extended-test.ts` seeds `localStorage.theme` to `light` in a
+fresh context, and `extended-fixture.unit.test.ts` plus
+`pinned-theme-payload.unit.test.ts` guard that behavior. Playwright's `colorScheme` option
+only sets `prefers-color-scheme`; `ThemeContext` no longer reads that query. A test that
+switches the app to dark and then passes a capture containing workspace backdrop to one of
+these color-only helpers can still wrong-pass. `canvasRedrawClip` keeps the standard stroke
+clip inside the document; review custom clips in any dark-theme test separately. Setting
+`colorScheme: 'dark'` alone does not select the app's dark theme.
 
 Pinned by the `#000`-wash case
 `it('reads a pure #000 capture as ink, so the dark theme's gaps are the residual it leaves')`
@@ -230,11 +238,13 @@ in `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts`, which asserts th
 full black capture classifies as `{type: 'spray'}` on purpose. A fix removes that pin
 in the same change.
 
-Fix: apply the same cell-colour exclusion inside `hasDarkPixels` and
-`getDarkPixelBounds` that `getStrokeAnalysis` already applies, and widen it from two
-exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps are
-covered too. Add a dark-theme case that pins the direction this depends on, so the
-latent wrong-pass has a tripwire of its own rather than resting on a config default.
+Do not widen RGB thresholds to hide the residual: the dark checkerboard's `#000` gaps are
+the same color as the app's default black ink. A generic backdrop-aware fix needs spatial
+context (at least the resolved theme, capture origin and scale, and document bounds or a
+backdrop mask) so it can exclude backdrop by position without excluding black ink in the
+document. Otherwise, keep dark-theme captures out of color-only helper calls. Regression
+coverage for a future fix must retain true `#000` document ink while excluding dark cells,
+dark gaps, and antialiased checkerboard edges.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
@@ -412,7 +422,7 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
 
-## P1 — the document-space oracle reached four production files, so most of the suite still moves when the frame does
+## P2 — document-space gesture audits must be specific to the oracle
 
 `e2e/helpers/canvas-helpers.ts` — `LINE_START_X`, `LINE_START_Y`, `LINE_END_X`, `LINE_END_Y`
 
@@ -428,40 +438,41 @@ longer depends on where the app put the letterbox. That is the right idea and it
 and twelve specs import them: `adjustments`, `color`, `document-dialogs`,
 `erase-fill-eyedropper`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
 `layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, many
-gestures still use box-relative offsets that change the document point when the window changes.
-Counted, with the counting command, because a number here without one is worse than none:
+gestures use box-relative offsets; a raw occurrence is not by itself evidence that the test
+asserts the wrong logical document point. Counted, with the counting command, because a number
+here without one is worse than none:
 
 `e2e/example.spec.ts` is the first simple gesture migrated: it maps seeded document points with
 `documentToCanvasOffset` and uses the resulting page clip for both redraw polling and capture.
-`drawLine` remains box-relative; the broader migration remains open.
+`drawLine` remains box-relative; classify its call sites by oracle contract before considering any
+conversion.
 
 ```
-grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 36  canvas-relative LITERALS
-grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 209  any box-relative offset
-grep -roE "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e      #  0  the fraction form, which is correct
+rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 98 source text matches
+rg -o -e "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 305 source text matches
+rg -o -e "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e --glob '*.ts' --glob '*.tsx' | wc -l # 0 source text matches
 ```
 
-So: 36 gestures add a bare number to the box origin, and 209 add something box-relative. The 209
-is the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
-through a named constant rather than a literal — those are the ones the first pattern misses
-entirely, and a count that only looked for literals sees under a fifth of the sites. The zero on
-the third line is the part that matters, because
-`e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25` and that is the one form
-that survives a layout change by construction.
+These source-text matches include comments, clip/sample math, measured widget offsets and relative
+gestures; they are not counts of executable mouse actions or confirmed defects. The zero fraction
+match shows that exact `box.width * fraction` pattern is absent, not that every other expression is
+wrong. Use the inventory only to find a test whose oracle asserts a stable document point; classify
+each such callsite against the assertion before changing it.
 
-**Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
-are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
-window and the point the mouse visits is a different point in the document. The document-space
-mapping has to be inverted before such a literal is meaningful, and it is not. So the suite still
-asserts against whatever geometry the current layout happens to produce, and a layout change
-silently changes what is being tested rather than failing.
+**What remains unproven.** A `box.x + 150` gesture can land on a different document pixel after a
+fit/layout change. That is a false pass only when the test's oracle expects a stable document pixel
+or region; an assertion intentionally relative to the gesture is valid. The Color Sampler and
+fixed-size marquee audits established and fixed two such false passes. The broad text inventory does
+not establish additional cases. Any next correction needs an exact test title, its logical target,
+and a mutation that demonstrates the current oracle accepts the wrong pixel.
 
 Three panel assertions in `e2e/responsive-shell.spec.ts` used to pin the right panel at 250px.
 The tests `reclaims the layers column by default and offers a toggle for it` and
 `has no tablet toggle and keeps the layers panel open` already prove visibility and state, so their
 numeric width reads have been removed. `gives the canvas the space the collapsed panel freed` now
 compares the canvas-width change to the panel's measured width. These changes remove the panel's
-three fixed-width pins; the broader document-space gesture migration remains open.
+three fixed-width pins. The remaining coordinate expressions need oracle-specific review, not a
+blanket document-space migration.
 
 **Two more were in this list and are gone.** The entry used to name five. The other two were the
 rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
@@ -473,14 +484,14 @@ the pattern the rest of this entry asks for: the tablet band's rail is now asser
 `e2e/responsive-shell.spec.ts`, and the two-column rail
 by a width RELATION the test measures against itself — one column against two, both measured in the
 same test, `keeps the layout toggle and can reach the two-column rail` in the same spec — so
-neither pins a pixel. The panel-width pins have likewise been removed or made relational; the
-unconverted gesture inventory remains the open work.
+neither pins a pixel. The panel-width pins have likewise been removed or made relational; unclassified
+coordinate expressions remain only as search candidates until an oracle-specific issue is proven.
 
 **The pattern to copy is already in the tree.** `measureAtViewport()` in
 `e2e/viewport-drawing.spec.ts` gestures at
-`box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
-box instead of the window. That is the shape every one of them should take, via
-`documentToCanvasOffset`.
+`box.x + box.width * 0.25` and `box.y + box.height * 0.35` — fractions of the box that preserve a
+relative action. Use that form when the test is intentionally relative; use `documentToCanvasOffset`
+when the oracle names a logical document coordinate.
 
 **Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
 exactly the failure this campaign already made once: the seven export baselines were re-derived from
@@ -500,7 +511,8 @@ is answered by "is SOME collapsed tool selected", not by "is the eraser selected
 **Measured at 1280x720, where it bites.** The tiles on the rail are `reposition`,
 `rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper`, `crop` and `color` — the
 first seven of the sixteen groups, the rail filling its slot with whole rows. The tool the app
-opens with (`brush` in `src/tools/settings.ts`) is not among them, so it is in the collapsed set:
+opens with (`draw`, from `DEFAULT_TOOL` in `src/util/constants.ts`) is not among them, so it is in
+the collapsed set:
 the three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
 collapsed tool therefore passes before anything is selected.
 
@@ -509,16 +521,15 @@ point.** A tile's `aria-pressed` and its lit `className` are the same `group.som
 same tile, so the removed attribute carried identical information to the class that replaced it. The
 limitation predates the conversion and the conversion neither added nor hid it.
 
-**Why the suite is nonetheless sound today, and where that stops being true.** Every caller that
-depends on a specific tool pairs the tile assertion with a per-tool one:
-the `${KEY} selects ${tool}` cases in `describe('tool shortcuts')` (`keyboard-shortcuts.spec.ts`)
-assert the tool's own options-bar control (`bar`), precisely
-because the tile "answers 'is SOME tool of the collapsed set selected'" — its comment says so. The
-`erase-fill-eyedropper` tests instead drive pixels: the eraser must clear the slab, the bucket must
-fill a contiguous region, the eyedropper must set a specific colour, and none of those can happen
-with the wrong tool. `color.spec.ts` and `paint-tool-pixels.spec.ts` draw and measure. So the
-TOOL-SPECIFIC claim is made by a second assertion everywhere it matters, and `selectBrushFamilyTool`
-is misnamed — it proves the group is lit, and the test's own pixels prove the rest.
+**How a test proves the specific tool.** The overflow tile remains group-level, so it cannot be
+the only state oracle for a tool-specific claim. `layers-panel.spec.ts`, `view-tools.spec.ts`, and
+the layer-name input guard in `keyboard-shortcuts.spec.ts` read the accessible `ToolbarHorizontal`
+region named from the active tool; this distinguishes Draw from Text and Hand from Zoom even while
+the rail tile is shared. The `${KEY} selects ${tool}` cases in `describe('tool shortcuts')`
+(`keyboard-shortcuts.spec.ts`) assert the tool's own options-bar control (`bar`).
+`erase-fill-eyedropper`, `color.spec.ts`, and `paint-tool-pixels.spec.ts` drive pixels whose result
+requires the named tool. Keep the helper's group-level contract explicit and pair every future
+collapsed-tool assertion with a per-tool state or behavior oracle.
 
 **What would actually close it.** A per-tool channel on the overflow tile — `data-active-tool={toolName}`
 on the three-dots `<button>` that `renderToolGroup()` in `SidebarLeft.tsx` already gives

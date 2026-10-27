@@ -196,8 +196,12 @@ jobs:
             echo "Linux export baselines already match; no commit created."
             exit 0
           fi
+          if [[ "$CHAT_ID" == copilotcli:/* ]]; then
+            COMMIT_TRAILERS=$(printf 'Chat: %s\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>' "$CHAT_ID")
+          else
+            COMMIT_TRAILERS="Chat: $CHAT_ID"
+          fi
           git -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m 'test: refresh Linux export baselines' -m "Chat: $CHAT_ID"
-          git push --force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA" \
-            origin "HEAD:refs/heads/$SOURCE_BRANCH"
+            commit -m 'test: refresh Linux export baselines' -m "$COMMIT_TRAILERS"
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"

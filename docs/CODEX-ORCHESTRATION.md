@@ -58,6 +58,7 @@ and [`KILO.md`](KILO.md).
   that can access the relevant chat-history store, ask it to return only matched
   session IDs and a concise evidence file, then read that file in the root. Never
   send private transcripts to an unverified provider.
+- For local history procedures, use the [Skills index](README.md#skills) and open the platform-specific `.skills/kilo-chat-history.md` or `.skills/codex-chat-history.md`; do not assume Codex has Kilo search tools.
 - If no safe free path exists, request explicit authorization before switching to
   paid research; do not treat the user's request for rigor as paid-routing approval.
 

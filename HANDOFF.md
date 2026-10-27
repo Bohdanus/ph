@@ -115,8 +115,17 @@ previews keep the complete legacy base through accepted and refused append publi
 `e2e/undo-redo.spec.ts` also checks live Brush preview pixels while durable status is current and
 pixel preservation when that stroke commits. These are preview-interleaving and rollback proofs;
 they do not move previews to durable authority or permit removal of legacy logical replay. The next
-parity-only proof is retained affine layer transform followed by a frame transform; source-backed
-import/replacement ownership and the rest of the frame matrix remain separate gates.
+retained-affine/frame differential now compares the transform cursor and a later frame cursor with
+legacy replay, verifies both renderers change from the untransformed baseline, and compares the
+final output with a frame-only control. It covers one raster fixture only. Next expand the frame
+matrix across the open angles, retained-affine combinations, source/tool variants, text
+styling/rotation, frame sequences, and exact fractional bounds. Establish source-backed
+import/replacement ownership as a separate gate. The frame matrix and ownership gate are unordered
+and may proceed independently. Keep both surfaces legacy-gated until their parity and
+failure-containment evidence is explicit. The
+frame-only control for this fixture shows a one-pixel/two-channel delta and is recorded in
+`e2e/OPEN_PROBLEMS.md`; resolve it before frame publication. See `docs/HISTORY-MIGRATION-NEXT.md`
+for the migration sequence.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,

@@ -10,6 +10,7 @@ import {
   MAX_CATALOG_RESPONSE_BYTES,
   MAX_COMPLETION_RESPONSE_BYTES,
   readBoundedPrompt,
+  runOpenCodeCompletion,
   zeroPriced,
 } from '../free-model-pool.mjs';
 
@@ -29,11 +30,15 @@ function readableFetch(fetchImpl) {
   return vi.fn(async (...args) => responseWithReadableBody(await fetchImpl(...args)));
 }
 
-function catalogFetch({ kilo = [], openrouter = [], chat }) {
+function catalogFetch({ kilo = [], openrouter = [], opencode = [], groq = [], chat }) {
   return readableFetch(async (url, options = {}) => {
     let response;
     if (url.endsWith('/models') && url.includes('openrouter')) {
       response = { ok: true, json: async () => ({ data: openrouter }) };
+    } else if (url.includes('opencode.ai')) {
+      response = { ok: true, json: async () => ({ data: opencode }) };
+    } else if (url.includes('api.groq.com') && url.endsWith('/models')) {
+      response = { ok: true, json: async () => ({ data: groq }) };
     } else if (url.endsWith('/models')) {
       response = { ok: true, json: async () => kilo };
     } else {
@@ -59,6 +64,19 @@ describe('free model catalog filtering', () => {
     ];
     expect(catalogCandidates('openrouter', data).map((row) => row.model)).toEqual(['a:free']);
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual(['a:free', 'b']);
+  });
+
+  it('selects only documented OpenCode free IDs and the explicitly supported Groq model', () => {
+    expect(
+      catalogCandidates('opencode', [
+        { id: 'beam-free', owned_by: 'opencode' },
+        { id: 'beam', owned_by: 'opencode' },
+        { id: 'other-free', owned_by: 'other' },
+      ]).map((row) => row.model)
+    ).toEqual(['beam-free']);
+    expect(
+      catalogCandidates('groq', [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }]).map((row) => row.model)
+    ).toEqual(['openai/gpt-oss-120b']);
   });
 
   it('filters only currently quarantined source/model pairs', () => {
@@ -178,11 +196,142 @@ describe('free model catalog filtering', () => {
     });
 
     expect(candidates).toEqual([]);
-    expect(errors).toEqual([expect.stringContaining(`${MAX_CATALOG_RESPONSE_BYTES}-byte limit`)]);
+    expect(errors).toHaveLength(2);
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(`${MAX_CATALOG_RESPONSE_BYTES}-byte limit`),
+        expect.stringContaining('opencode catalog exceeds'),
+      ])
+    );
   });
 });
 
 describe('free model rotation', () => {
+  it('falls through to OpenCode using its tool-disabled completion adapter', async () => {
+    const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('kilo:free')],
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      chat,
+    });
+    const runOpenCode = vi.fn().mockResolvedValue({ content: 'OpenCode result', finishReason: 'stop' });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      opencodeCommand: '/opt/opencode',
+      runOpenCode,
+    });
+
+    expect(result).toMatchObject({ source: 'opencode', model: 'beam-free', content: 'OpenCode result' });
+    expect(runOpenCode).toHaveBeenCalledWith({
+      command: '/opt/opencode',
+      model: 'beam-free',
+      prompt: 'safe prompt',
+      maxTokens: 1200,
+    });
+  });
+
+  it('routes to Groq only with an explicit free-plan opt-in', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'openai/gpt-oss-120b',
+        choices: [{ message: { content: 'Groq result' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKey: 'groq-test',
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+
+    expect(result).toMatchObject({ source: 'groq', model: 'openai/gpt-oss-120b', content: 'Groq result' });
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(chat.mock.calls[0][0]).toBe('https://api.groq.com/openai/v1/chat/completions');
+    expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer groq-test');
+    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ reasoning_effort: 'low', max_tokens: 1200 });
+  });
+
+  it('does not query or route to Groq without the free-plan opt-in', async () => {
+    const chat = vi.fn().mockRejectedValue(new Error('unexpected inference request'));
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: '',
+        groqApiKey: 'groq-test',
+        groqFreePlan: false,
+        opencodeCommand: '',
+      })
+    ).rejects.toThrow(/No free model completed/);
+    expect(fetchImpl).not.toHaveBeenCalledWith('https://api.groq.com/openai/v1/models', expect.anything());
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('runs OpenCode with every tool denied and accepts clean-exit V2 text without a final event', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = join(directory, 'fake-opencode');
+    await writeFile(
+      command,
+      `#!/usr/bin/env node\nconst fs = require('node:fs');\nconst args = process.argv.slice(2);\nif (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);\nif (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);\nconsole.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));\nconsole.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));\n`,
+      { encoding: 'utf8', mode: 0o700 }
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'private prompt', maxTokens: 64 })
+      ).resolves.toMatchObject({ content: 'complete answer', finishReason: 'stop', model: 'beam-free', usage: null });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces OpenCode provider errors and status without exposing response bodies', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = join(directory, 'fake-opencode');
+    await writeFile(
+      command,
+      `#!/usr/bin/env node\nconsole.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));\nprocess.exit(1);\n`,
+      { encoding: 'utf8', mode: 0o700 }
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).rejects.toThrow('OpenCode exited 1: provider.free-limit (HTTP 429)');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects non-free OpenCode IDs before starting the CLI', async () => {
+    await expect(
+      runOpenCodeCompletion({ command: '/missing-opencode', model: 'beam', prompt: 'prompt', maxTokens: 8 })
+    ).resolves.toMatchObject({ error: 'OpenCode model is not an eligible free catalog ID' });
+  });
+
+  it('rejects an explicit non-zero OpenCode cost even for a free catalog ID', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const command = join(directory, 'fake-opencode');
+    await writeFile(
+      command,
+      `#!/usr/bin/env node\nconsole.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));\nconsole.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\n`,
+      { encoding: 'utf8', mode: 0o700 }
+    );
+
+    try {
+      await expect(
+        runOpenCodeCompletion({ command, model: 'beam-free', prompt: 'prompt', maxTokens: 8 })
+      ).resolves.toMatchObject({ error: 'OpenCode reported non-zero or invalid cost' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('moves to the next provider after exhaustion and never retries that source', async () => {
     const chat = vi
       .fn()

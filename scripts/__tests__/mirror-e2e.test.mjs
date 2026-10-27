@@ -62,7 +62,7 @@ function createBaselinePromotion(fixture, chatId, subject = 'test: refresh Linux
   runGit(fixture.source, ['add', LINUX_BASELINE_PATH]);
   runGit(fixture.source, ['commit', '--quiet', '-m', subject, '-m', `Chat: ${chatId}`]);
   const baselineSha = runGit(fixture.source, ['rev-parse', 'HEAD']);
-  runGit(fixture.source, buildMirrorPushArgs(baselineSha, fixture.branch, null));
+  runGit(fixture.source, buildMirrorPushArgs(baselineSha, fixture.branch));
   return { baselineSha, remoteSha: readMirrorBranchSha(fixture.branch, fixture.source) };
 }
 
@@ -102,7 +102,7 @@ describe('Linux baseline promotion workflow', () => {
     );
   });
 
-  it('attributes the generated commit to the native chat and leases the tested branch tip', () => {
+  it('attributes the generated commit to the native chat and pushes the tested branch tip', () => {
     const captureValidationStep = baselineWorkflow.slice(
       baselineWorkflow.indexOf('      - name: Validate trusted workflow revision and capture target'),
       baselineWorkflow.indexOf('      - name: Checkout exact source commit')
@@ -148,9 +148,13 @@ describe('Linux baseline promotion workflow', () => {
     ).toEqual(['git add -- "$target"']);
     expect(promotionStep).toContain('SOURCE_SHA: ${{ github.event.client_payload.source_sha }}');
     expect(promotionStep).toContain('CHAT_ID: ${{ github.event.client_payload.chat_id }}');
-    expect(promotionStep).toContain('--force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_SHA"');
-    expect(promotionStep).toContain('-m "Chat: $CHAT_ID"');
-    expect(promotionStep).not.toContain('Co-authored-by: Copilot');
+    expect(promotionStep).toContain('git push origin "HEAD:refs/heads/$SOURCE_BRANCH"');
+    expect(promotionStep).not.toContain('--force');
+    expect(promotionStep).toContain('if [[ "$CHAT_ID" == copilotcli:/* ]]');
+    expect(promotionStep).toContain('COMMIT_TRAILERS=$(printf');
+    expect(promotionStep).toContain('Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>');
+    expect(promotionStep).toContain('COMMIT_TRAILERS="Chat: $CHAT_ID"');
+    expect(promotionStep).toContain(`commit -m 'test: refresh Linux export baselines' -m "$COMMIT_TRAILERS"`);
     expect(stagingStep).toContain('git check-attr text eol filter ident working-tree-encoding -- "$target"');
     expect(stagingStep).toContain(': ident: unspecified');
   });
@@ -354,32 +358,17 @@ describe('mirror remote and dispatch selection', () => {
     );
   });
 
-  it('leases a first push only while the mirror branch is absent', () => {
-    const args = buildMirrorPushArgs('c'.repeat(40), 'feat/e2e-runner', null);
-    expect(args).toEqual([
-      'push',
-      'mirror',
-      '--force-with-lease=refs/heads/feat/e2e-runner:',
-      `${'c'.repeat(40)}:refs/heads/feat/e2e-runner`,
-    ]);
-  });
-
-  it('leases a rebased branch update to the observed mirror tip, not the new source SHA', () => {
-    const remoteSha = 'a'.repeat(40);
+  it('pushes a new mirror branch with an explicit ref and no force option', () => {
     const sourceSha = 'c'.repeat(40);
-    const args = buildMirrorPushArgs(sourceSha, 'feat/e2e-runner', remoteSha);
-    expect(args).toEqual([
-      'push',
-      'mirror',
-      `--force-with-lease=refs/heads/feat/e2e-runner:${remoteSha}`,
-      `${sourceSha}:refs/heads/feat/e2e-runner`,
-    ]);
+    const args = buildMirrorPushArgs(sourceSha, 'feat/e2e-runner');
+    expect(args).toEqual(['push', 'mirror', `${sourceSha}:refs/heads/feat/e2e-runner`]);
+    expect(args.some((arg) => arg.includes('force'))).toBe(false);
   });
 
-  it('rejects a malformed expected mirror branch tip', () => {
-    expect(() => buildMirrorPushArgs('c'.repeat(40), 'feat/e2e-runner', 'not-a-full-sha')).toThrow(
-      /full Git object ID/
-    );
+  it('builds a normal fast-forward push for an existing mirror branch', () => {
+    const sourceSha = 'c'.repeat(40);
+    const args = buildMirrorPushArgs(sourceSha, 'feat/e2e-runner');
+    expect(args).toEqual(['push', 'mirror', `${sourceSha}:refs/heads/feat/e2e-runner`]);
   });
 
   it('parses exactly the mirror branch SHA and recognizes an absent ref', () => {
@@ -402,47 +391,54 @@ describe('mirror remote and dispatch selection', () => {
     expect(runCommand).toHaveBeenCalledTimes(3);
   });
 
-  it('creates a branch when absent and permits a rebased update under the observed lease', () => {
+  it('creates an absent branch and permits a fast-forward update', () => {
     const fixture = createMirrorPushFixture();
     try {
       expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBeNull();
-      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch));
       expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBe(fixture.sourceSha);
 
       const treeSha = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
-      const rebasedSha = runGit(fixture.source, ['commit-tree', treeSha, '-m', 'rebased fixture source']);
+      const nextSha = runGit(fixture.source, [
+        'commit-tree',
+        treeSha,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'fast-forward fixture source',
+      ]);
       const observedRemoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
       expect(observedRemoteSha).toBe(fixture.sourceSha);
       assertMirrorBranchPushSafe({
-        sourceSha: rebasedSha,
+        sourceSha: nextSha,
         remoteSha: observedRemoteSha,
         branch: fixture.branch,
         cwd: fixture.source,
       });
 
-      runGit(fixture.source, buildMirrorPushArgs(rebasedSha, fixture.branch, observedRemoteSha));
-      expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBe(rebasedSha);
+      runGit(fixture.source, buildMirrorPushArgs(nextSha, fixture.branch));
+      expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBe(nextSha);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
-  it('refuses a lease when the mirror branch moves after its tip was observed', () => {
+  it('rejects a concurrent mirror update with a normal fast-forward push', () => {
     const fixture = createMirrorPushFixture();
     try {
-      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch));
       const observedRemoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
       const divergedTree = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
-      const divergedSha = runGit(fixture.source, [
+      const sourceAheadSha = runGit(fixture.source, [
         'commit-tree',
         divergedTree,
         '-p',
         fixture.sourceSha,
         '-m',
-        'diverged fixture source',
+        'source update before racing push',
       ]);
       assertMirrorBranchPushSafe({
-        sourceSha: divergedSha,
+        sourceSha: sourceAheadSha,
         remoteSha: observedRemoteSha,
         branch: fixture.branch,
         cwd: fixture.source,
@@ -457,11 +453,50 @@ describe('mirror remote and dispatch selection', () => {
       runGit(racingClone, ['commit', '--quiet', '-m', 'concurrent source update']);
       runGit(racingClone, ['push', '--quiet', 'origin', `HEAD:refs/heads/${fixture.branch}`]);
 
-      const staleLeasePush = spawnSync('git', buildMirrorPushArgs(divergedSha, fixture.branch, observedRemoteSha), {
+      const stalePush = spawnSync('git', buildMirrorPushArgs(sourceAheadSha, fixture.branch), {
         cwd: fixture.source,
         encoding: 'utf8',
       });
-      expect(staleLeasePush.status).not.toBe(0);
+      expect(stalePush.status).not.toBe(0);
+      expect(`${stalePush.stderr}\n${stalePush.stdout}`).toMatch(/non-fast-forward|fetch first|rejected/i);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an unrelated remote-only commit instead of overwriting it', () => {
+    const fixture = createMirrorPushFixture();
+    try {
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch));
+      const sourceTree = runGit(fixture.source, ['rev-parse', `${fixture.sourceSha}^{tree}`]);
+      const remoteOnlySha = runGit(fixture.source, [
+        'commit-tree',
+        sourceTree,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'remote-only mirror update',
+      ]);
+      runGit(fixture.source, ['push', 'mirror', `${remoteOnlySha}:refs/heads/${fixture.branch}`]);
+
+      const localOnlySha = runGit(fixture.source, [
+        'commit-tree',
+        sourceTree,
+        '-p',
+        fixture.sourceSha,
+        '-m',
+        'source-only update',
+      ]);
+      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      expect(() =>
+        assertMirrorBranchPushSafe({
+          sourceSha: localOnlySha,
+          remoteSha,
+          branch: fixture.branch,
+          cwd: fixture.source,
+        })
+      ).toThrow(/contains commits absent from this source/);
+      expect(readMirrorBranchSha(fixture.branch, fixture.source)).toBe(remoteOnlySha);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -470,7 +505,7 @@ describe('mirror remote and dispatch selection', () => {
   it('refuses to rewind a mirror branch when the source is behind it', () => {
     const fixture = createMirrorPushFixture();
     try {
-      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch));
 
       const racingClone = join(fixture.root, 'racing-clone');
       runGit(fixture.root, ['clone', '--quiet', '--branch', fixture.branch, fixture.mirror, racingClone]);
@@ -586,7 +621,7 @@ describe('mirror remote and dispatch selection', () => {
     const fixture = createMirrorPushFixture();
     const rootRepo = join(fixture.root, 'root-baseline');
     try {
-      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch, null));
+      runGit(fixture.source, buildMirrorPushArgs(fixture.sourceSha, fixture.branch));
       runGit(fixture.root, ['init', '--quiet', '--initial-branch=main', rootRepo]);
       runGit(rootRepo, ['config', 'user.name', 'Root Baseline Fixture']);
       runGit(rootRepo, ['config', 'user.email', 'root-baseline-fixture@example.test']);
@@ -603,14 +638,8 @@ describe('mirror remote and dispatch selection', () => {
         'Chat: ses_rootBaselineFixture',
       ]);
       const rootSha = runGit(rootRepo, ['rev-parse', 'HEAD']);
-      runGit(rootRepo, ['remote', 'add', 'mirror', fixture.mirror]);
-      runGit(rootRepo, [
-        'push',
-        '--quiet',
-        `--force-with-lease=refs/heads/${fixture.branch}:${fixture.sourceSha}`,
-        'mirror',
-        `${rootSha}:refs/heads/${fixture.branch}`,
-      ]);
+      runGit(fixture.mirror, ['fetch', '--quiet', rootRepo, 'refs/heads/main']);
+      runGit(fixture.mirror, ['update-ref', `refs/heads/${fixture.branch}`, rootSha]);
 
       const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
       expect(() =>
@@ -655,7 +684,7 @@ describe('mirror remote and dispatch selection', () => {
         '-m',
         'Chat: ses_0123456789ABCDEF0123456789',
       ]);
-      runGit(fixture.source, buildMirrorPushArgs(mergeSha, fixture.branch, null));
+      runGit(fixture.source, buildMirrorPushArgs(mergeSha, fixture.branch));
       const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
       const rebasedSourceSha = runGit(fixture.source, [
         'commit-tree',
@@ -715,7 +744,7 @@ describe('mirror remote and dispatch selection', () => {
       ].join('\n');
       const promotionSha = runGit(promotionRepo, ['hash-object', '-w', '-t', 'commit', '--stdin'], commitObject);
       runGit(promotionRepo, ['remote', 'add', 'mirror', fixture.mirror]);
-      runGit(promotionRepo, buildMirrorPushArgs(promotionSha, fixture.branch, null));
+      runGit(promotionRepo, buildMirrorPushArgs(promotionSha, fixture.branch));
 
       const calls = [];
       const runCommand = (binary, args, cwd = fixture.source, _timeoutMs, { trimOutput = true } = {}) => {

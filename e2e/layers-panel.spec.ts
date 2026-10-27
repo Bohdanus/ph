@@ -14,7 +14,7 @@ import {
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { cssPointToImage, type CssBox, type Point } from './helpers/screenshot-scale';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
+import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
@@ -787,9 +787,9 @@ test.describe('Layers panel', () => {
    * return is the contract being pinned here. A double-click that silently landed a text
    * cursor would be invisible to the canvas and leave the document in the wrong tool.
    *
-   * The draw tool is the page's default (`DEFAULT_TOOL = 'draw'` in `src/util/constants.ts`),
-   * and after drawing it stays selected — so "draw is still selected" is the negative
-   * assertion that proves nothing happened.
+   * The overflow tile only says that SOME member of its collapsed group is selected. The
+   * accessible options region is named from the actual tool in the store, so it proves the
+   * specific tool without changing the toolbar's accessibility semantics.
    */
   test('double-clicking a non-text layer does not switch to the Text tool', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
@@ -798,13 +798,17 @@ test.describe('Layers panel', () => {
     await stroke('#ff0000', RED_STROKE);
 
     await expect(page.getByTestId(LAYER_ROW)).toHaveCount(2);
-    await expectToolSelected(page, 'draw');
+    const drawOptions = page.getByRole('region', { name: 'draw tool options', exact: true });
+    const textOptions = page.getByRole('region', { name: 'text tool options', exact: true });
+    await expect(drawOptions).toBeVisible();
+    await expect(textOptions).toHaveCount(0);
 
     const row = page.getByTestId(LAYER_ROW).first();
     await row.dblclick();
 
-    // The draw tool stays active — double-click was a no-op, not a text-tool entry.
-    await expectToolSelected(page, 'draw');
+    // A lit overflow tile would still match after switching to another collapsed tool.
+    await expect(drawOptions).toBeVisible();
+    await expect(textOptions).toHaveCount(0);
     await expect(page.getByTestId(LAYER_ROW)).toHaveCount(2);
   });
 

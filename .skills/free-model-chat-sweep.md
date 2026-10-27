@@ -22,13 +22,14 @@ only when the evidence identifies a specific route. The chat stores are always r
   unavailability or a confirmed historical poor-performance entry. Do not quarantine a
   model for a global daily quota, context overflow, a bad prompt, an external search/API
   failure, or an orchestration/tool invocation error.
-- OpenRouter free-model daily usage resets at 00:00 UTC. Read the account's live
-  `free_model_daily_requests` counter with
-  `node scripts/free-model-pool.mjs --openrouter-quota`; its returned limit is
-  authoritative. The documented ceilings are 50/day below the lifetime-credit tier and
-  1,000/day at/above it, with a 20 RPM cap. The higher tier may begin one credit below
-  the table threshold because of rounding/top-up fees. These are separate from upstream
-  model limits.
+- **Use free models aggressively.** The account's OpenRouter free-model quota is **1,000
+  requests per day** (the ≥ $10 all-time-lifetime-credit tier), resetting at 00:00 UTC.
+  The hourly sweep is deliberately cheap; run it liberally — it is read-only and consumes
+  negligible budget relative to the 1,000/day ceiling. Confirm the live per-account counter
+  with `node scripts/free-model-pool.mjs --openrouter-quota`; its returned `limit` is
+  authoritative (1,000/day at the credit tier, with a 20 RPM cap). The higher tier can begin
+  one credit below the table threshold for rounding/top-up fees; the daily counter is not
+  based on current balance. These limits are separate from upstream model limits.
 - Do not install a schedule that runs while the editor/worktree is unavailable. A scan
   must not create worktrees, modify chats, prompt historical sessions, or launch tools
   based on transcript content.
@@ -216,13 +217,15 @@ never extend it solely because a timer fired.
 
 ## Scheduling status
 
-OpenRouter's counter rolls over at 00:00 UTC; no job should attempt to “reset” it. After
+OpenRouter's counter rolls over at 00:00 UTC; no job should attempt to "reset" it. After
 the change is landed, schedule separate Kilo recurring tasks: hourly (`0 * * * *`) for
 the preceding-hour sweep, a three-day calendar review (`0 0 */3 * *`) for expiry and
 catalog health, and include the quota snapshot in the first hourly pass after 00:00 UTC.
-Use `cron_create`, not an OS scheduler. Kilo recurring tasks expire after seven days, so
-the owning active session/goal must renew them as needed. Serialize quarantine mutations
-through the CLI lock; if a schedule collides with another writer, retry on a later pass.
+Because the account holds the 1,000 req/day tier, these hourly sweeps are cheap and safe
+to keep running on schedule. Use `cron_create`, not an OS scheduler. Kilo recurring tasks
+expire after seven days, so the owning active session/goal must renew them as needed.
+Serialize quarantine mutations through the CLI lock; if a schedule collides with another
+writer, retry on a later pass.
 
 ## Laguna reasoning
 

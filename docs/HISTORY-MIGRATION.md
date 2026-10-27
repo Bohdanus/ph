@@ -215,14 +215,16 @@ variant or an equivalent atomic history action.
    previews remain a legacy presentation surface and these tests do not authorize a logical
    authority cutover.
 
-   The next bounded proof is parity-only: compare a committed retained affine layer transform at
-   its cursor, then compare again after a later frame transform. `e2e/crop-history.spec.ts` now pins
-   that sequence for one raster fixture and checks both cursors. Do not add frame-changing commits
-   to durable publication from this case alone. Remaining angles, retained-affine combinations,
-   source/tool variants, text styling/rotation, frame sequences and exact fractional materialized
-   bounds still need evidence. The documentation does not order that broader frame work against
-   ownership proof for source-backed imports/replacements; keep those gates independent and the
-   unsupported-source fallback explicit.
+   The retained-affine/frame proof is now pinned for one raster fixture. It compares both history
+   cursors, verifies each renderer changes from the untransformed baseline, and checks the final
+   output against a frame-only control. Do not add frame-changing commits to durable publication
+   from this case alone. Next expand the frame matrix across the remaining angles, retained-affine
+   combinations, source/tool variants, text styling/rotation, frame sequences and exact fractional
+   materialized bounds. The same fixture's frame-only control showed a one-pixel/two-channel delta;
+   it is recorded in `e2e/OPEN_PROBLEMS.md` and is not a parity pass. Establish ownership and parity
+   for source-backed imports/replacements as a separate, unordered gate; it may proceed before,
+   after, or in parallel with the broader frame matrix. Keep the unsupported-source fallback
+   explicit.
 
    Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
    which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),

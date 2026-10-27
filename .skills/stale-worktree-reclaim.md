@@ -189,6 +189,24 @@ before classification or action. The inventory's 30-minute live-session and two-
 signals are separate safety vetoes. `derivedLive` excludes worktrees with
 recent signals, but absence of a signal never proves an owner is dead.
 
+**`derivedLive` is not a complete session-family walk.** In the current inventory,
+`chats.mjs` summarizes top-level sessions only; `session-db-snapshot.mjs` and
+`writes.mjs` include recent child rows/calls and follow their parent chain upward,
+but do not enumerate every descendant from a quiet root. The classifier also does
+not use `readHistory` as a live signal. A recent read-only child can therefore be
+present in `readHistory` while `derivedLive` remains false: `chats.mjs` excludes it
+from `chatSummary`, and `classify.mjs` does not consume `readHistory` for liveness.
+An active child can be present in the snapshot through recent parts but absent
+from `chatSummary`, which includes top-level sessions only. If the family is
+missing from the available session and part rows, that absence is unknown, not
+evidence of death. Treat
+`derivedLive: false`, `chats.count: 0`, and `action: dispose` as triage hints only.
+The full recursive family query in §4 and the overlay in §4b are mandatory before
+any action. If a child task has no delivered terminal result, or a family member
+cannot be found/verified, classify the case as **unproven** and do not dispose or
+land it. Kilo's internal `task` API has no list/status operation, so do not infer a
+missing child result from session timestamps or launch a replacement task to poll.
+
 `prunable: true` is the strict disposal test and is already `false` whenever `mustNotPrune` is
 set, so a protected worktree never reaches a deletion.
 
@@ -418,21 +436,35 @@ when you started may be `dispose` now, and one you were about to land may have l
 ago. When two agents are sweeping at once this is not a rare race — it is the normal state, and
 the second-arriving sweep is the one that has to notice.
 
-## 5 — Confirm with the board before writing anything
+## 5 — Inspect board state without triggering the sweeper
 
 ```bash
-npm run swarm -- status
+node scripts/worktree-inventory.mjs
 npm run swarm -- doctor --dry-run
 ```
 
-The board is a SQLite file in the common git dir and is normally readable through the CLI; if
-the raw path is not, say so in the report and lean on the session database plus recall. **Do
-not silently report a clean board** — a board you could not read and a board that is empty mean
-opposite things, and only one of them is good news.
+The inventory reads the common-dir board and session database and writes only the generated
+`WORKTREES.json`; it does not renew or release board rows. `doctor --dry-run` reports expired
+claims and locks without running the sweeper, but the CLI still updates the caller's own
+`agents.last_seen` row. Use the inventory as the primary snapshot and report if either database
+is unavailable — an unreadable board and an empty board mean opposite things.
 
-A quiet agent is not a dead agent. **Preserve before reclaiming**: `git -C "$WT" status` and
-`git -C "$WT" diff` first, then `doctor --dry-run`, then `doctor`. Force-release only a
-session confirmed dead — never a network-lost one.
+**Do not use `npm run swarm -- status` as a read-only check during a sweep.** In the current
+`scripts/agent-board.mjs`, every board-backed command except `doctor` runs `autoSweep()` first
+(`help` and `--version` return before board setup). That renews the
+caller's own rows and then releases expired claims and locks globally; it can erase the very
+expired-row evidence a subsequent `doctor --dry-run` was meant to show. `note`, `check`, and
+`release` also enter this path. Consult the implementation and `docs/ORCHESTRATION.md` before
+running any board command with that side effect.
+
+A quiet agent is not a dead agent, and an expired lease is not proof that the session family is
+dead. **Preserve before reclaiming**: inspect `git -C "$WT" status` and `git -C "$WT" diff`,
+inspect the full parent/child session family and live overlay, then map every finding from
+`doctor --dry-run` to its owner. Do not run plain `npm run swarm -- doctor` unless every expired
+claim/lock it will release has been verified dead or belongs to a worktree proven gone; it is a
+global release pass, not a targeted check. Prefer the targeted release procedure in
+`docs/ORCHESTRATION.md` after preserving the worktree. Never release a live or network-lost
+session merely because its lease expired.
 
 ## 6 — Find the duplicate before you land anything
 
@@ -636,7 +668,10 @@ paying for if someone can recognise it when it comes up.
 
 ### (c) Hard merge — mark it, move on, come back last
 
-The agent doing the sweep **must** mark the branch before moving on:
+The agent doing the sweep **must** mark the branch before moving on, but only after checking the
+global board-sweep side effect described in §5. `swarm note` is a non-`doctor` command and runs
+`autoSweep()`; if any expired claim/lock still has an unverified owner, do not invoke it. Record
+the deferred note in the report and resume after the holder is verified.
 
 ```bash
 npm run swarm -- note "problematic merge: <branch> has N conflicting files; deferred to the hard-merge pass"
@@ -696,7 +731,15 @@ than silently dropping it.
   current refs yourself because branches and their evidence can disappear during cleanup.
 - Count a branch's value by its commit count. A branch can be several commits of real fixes and
   a branch one commit of scratch.
-- Release another agent's claim or file lock before `doctor` says it is expired.
+- Release another agent's claim or file lock before `doctor` says it is expired, or treat expiry
+  alone as proof that the session family is dead; see §5.
+- Run `npm run swarm -- status` or another board-backed non-`doctor` command as an early “read”: the CLI
+  invokes `autoSweep()` first and can release expired claims/locks across the board. Use the
+  generated inventory and `swarm doctor --dry-run` first, and resolve every expired holder before
+  using a command that sweeps.
+- Run plain `npm run swarm -- doctor` as a routine triage command. It releases every expired
+  board claim/lock, not only the worktree currently under review; lease expiry alone is not the
+  full session-family death proof required by this procedure.
 - Route around a `dispose` refusal. Every refusal names the signal that produced
   it, and the one you are most likely to hit is **you** — see case (a). The gate
   is the only thing standing between a sweep and the 2026-10-01 incident, and a
@@ -723,9 +766,12 @@ Three sections, and each needs a name in it:
 3. **Unproven** — every branch whose death could not be established, whatever its value. Never
    fold these into "skipped".
 
-**Post the material findings to the board** (`npm run swarm -- note`) when a truncated sweep
-would otherwise mislead: a live owner, a planted mutant, a duplicate pair, or a branch already
-absorbed. Those change other agents' decisions and outlive this session.
+**Post material findings to the board** (`npm run swarm -- note`) when a truncated sweep would
+otherwise mislead: a live owner, a planted mutant, a duplicate pair, or a branch already
+absorbed. Those change other agents' decisions and outlive this session. Because `note` invokes
+`autoSweep()`, first resolve every expired claim/lock from `doctor --dry-run`; if any remains
+uncertain, do not risk releasing it just to post a note — put the exact note in the report and
+mark it unposted.
 
 **Leave `main` clean — and note that a regenerated `WORKTREES.json` is not a footprint.** The
 file is untracked, so there is nothing to commit and nothing to restore; `git status` cannot

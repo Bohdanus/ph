@@ -188,7 +188,7 @@ jobs:
 
       - name: Cover the e2e helpers
         # LAST, and deliberately still a gate. `test:e2e:unit:coverage` re-runs the
-        # same suite with v8 instrumentation and reports into ./coverage-e2e. Ordered
+        # same suite with Istanbul's explicit include list and reports into ./coverage-e2e. Ordered
         # after the real gate so it cannot be skipped or obscured by it: a failure here
         # is reported against a job whose tests already passed, and a failure in the gate
         # above aborts this step rather than letting coverage output stand in for it. It
@@ -199,8 +199,9 @@ jobs:
         # tsconfig.e2e.json along with the app and node projects, so a second scoped run
         # here could only repeat it.
         #
-        # There are no coverage thresholds in vitest.e2e.config.ts, so this step
-        # cannot go red on a percentage; it fails only if a test fails.
+        # Per-file floors use the reviewed Istanbul baseline: statements 50%, branches
+        # 50%, functions 35%, lines 50%. The pure re-export barrel has no executable code
+        # and remains enforced by the separate module-reachability gate.
         run: npm run test:e2e:unit:coverage
 
       - name: Upload e2e helper coverage
