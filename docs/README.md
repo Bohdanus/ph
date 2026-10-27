@@ -69,6 +69,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`TESTING.md`](TESTING.md)                                                                             | Every gate, what it proves, and what to read when it fails                                           |
 | [`E2E-MIRROR.md`](E2E-MIRROR.md)                                                                       | The `mirror` workflow: broad headless E2E runs and Linux baseline capture                            |
 | [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md)                                                     | Targeted Linux/ARM64 checks on the project's remote EC2 host                                         |
+| [`FREE-COMPUTE-OPERATIONS.md`](FREE-COMPUTE-OPERATIONS.md)                                             | Current free-runner setup, safe credential discovery, and provider-specific checks                   |
 | [`../.kilo/plans/durable-replay-authority.md`](../.kilo/plans/durable-replay-authority.md)             | The problem-focused implementation plan for the durable replay authority cutover                     |
 | [`../.kilo/skills/parallel-test-hardening/SKILL.md`](../.kilo/skills/parallel-test-hardening/SKILL.md) | The wave-based workflow for hardening tests with small parallel agents                               |
 | [`../.kilo/skills/kilo-chat-history/SKILL.md`](../.kilo/skills/kilo-chat-history/SKILL.md)             | Kilo-local mirror of the chat-history workflow used by Kilo agents; keep identical to the repo skill |
@@ -77,9 +78,15 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md)                                                 | What the history migration left undone, in the e2e suite's own words                                 |
 | [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)                                                       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again          |
 
+### Skills
+
+This is the entrypoint for repository procedures. Codex must open the selected `.skills/*.md`
+playbook explicitly; Kilo runtime copies live under `.kilo/skills/*/SKILL.md`. Tool permission
+profiles live under `.kilo/agent/`.
+
 The agent procedures live outside this directory, under `.skills/`, one file per
-procedure. Tool permission profiles live under `.kilo/agent/`. `AGENTS.md` states the
-rules, a skill states a procedure, and an agent profile defines its tool permissions.
+procedure. `AGENTS.md` states the rules, a skill states a procedure, and an agent profile defines
+its tool permissions.
 
 | Skill                                                                                | Its one job                                                                                                                                                  |
 | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |

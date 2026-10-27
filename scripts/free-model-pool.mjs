@@ -317,6 +317,9 @@ const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
 });
 
 export async function runOpenCodeCompletion({ command = 'opencode', model, prompt, maxTokens = 1200 }) {
+  if (typeof model !== 'string' || !model.endsWith('-free')) {
+    return { error: 'OpenCode model is not an eligible free catalog ID' };
+  }
   const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
   const promptPath = join(directory, 'request.txt');
   try {
@@ -345,9 +348,7 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
         { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false }
       );
       const chunks = [];
-      const stderrChunks = [];
       let outputBytes = 0;
-      let stderrBytes = 0;
       let killTimer;
       const stopChild = () => {
         child.kill('SIGTERM');
@@ -359,12 +360,7 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
         if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) stopChild();
         else chunks.push(chunk);
       });
-      child.stderr.on('data', (chunk) => {
-        if (stderrBytes < 16_384) {
-          stderrChunks.push(chunk);
-          stderrBytes += chunk.byteLength;
-        }
-      });
+      child.stderr.on('data', () => {});
       child.once('error', (error) => {
         clearTimeout(timer);
         clearTimeout(killTimer);
@@ -377,22 +373,29 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
           reject(new Error(`OpenCode output exceeded ${MAX_OPENCODE_OUTPUT_BYTES} bytes`));
           return;
         }
-        if (code !== 0) {
-          reject(
-            new Error(`OpenCode exited ${code ?? signal}: ${Buffer.concat(stderrChunks).toString('utf8').trim()}`)
-          );
-          return;
-        }
+        let parsed;
         try {
-          const parsed = Buffer.concat(chunks)
+          parsed = Buffer.concat(chunks)
             .toString('utf8')
             .split(/\r?\n/)
             .filter(Boolean)
             .map((line) => JSON.parse(line));
-          resolve(parsed);
         } catch {
           reject(new Error('OpenCode returned malformed JSONL output'));
+          return;
         }
+        if (code !== 0) {
+          const providerError = parsed.find((event) => event.type === 'error')?.error;
+          const type =
+            typeof providerError?.type === 'string' && /^[a-z0-9._-]+$/i.test(providerError.type)
+              ? providerError.type
+              : '';
+          const status = Number(providerError?.status);
+          const statusText = Number.isInteger(status) && status >= 100 && status <= 599 ? ` (HTTP ${status})` : '';
+          reject(new Error(`OpenCode exited ${code ?? signal}${type ? `: ${type}${statusText}` : ''}`));
+          return;
+        }
+        resolve(parsed);
       });
     });
     if (
@@ -405,16 +408,24 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
     ) {
       return { error: 'OpenCode reported an error or attempted a tool call' };
     }
-    const terminal = events.some(
+    const explicitTerminal = events.some(
       (event) => event.type === 'done' || (event.type === 'step_finish' && event.part?.reason === 'stop')
     );
+    // OpenCode V2 can exit cleanly after final text without emitting its final step_finish event.
+    const cleanFreeTextExit =
+      model.endsWith('-free') && events.some((event) => event.type === 'text' && event.part?.text?.trim());
+    const terminal = explicitTerminal || cleanFreeTextExit;
     const content = events
       .filter((event) => event.type === 'text' && typeof event.part?.text === 'string')
       .map((event) => event.part.text)
       .join('');
     const finishedSteps = events.filter((event) => event.type === 'step_finish');
-    const cost = finishedSteps.reduce((total, event) => total + (Number(event.part?.cost) || 0), 0);
-    if (cost !== 0) return { error: `OpenCode reported non-zero cost ${cost}` };
+    const reportedCosts = events
+      .filter((event) => event.part?.cost !== undefined && event.part?.cost !== null)
+      .map((event) => Number(event.part.cost));
+    if (reportedCosts.some((cost) => !Number.isFinite(cost) || cost !== 0)) {
+      return { error: 'OpenCode reported non-zero or invalid cost' };
+    }
     if (!terminal || !content.trim()) return { error: 'OpenCode did not return a complete non-empty response' };
     const tokens = finishedSteps.at(-1)?.part?.tokens;
     return {
@@ -422,7 +433,12 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
       content,
       finishReason: 'stop',
       usage: tokens
-        ? { input_tokens: tokens.input, output_tokens: tokens.output, reasoning_tokens: tokens.reasoning, cost }
+        ? {
+            input_tokens: tokens.input,
+            output_tokens: tokens.output,
+            reasoning_tokens: tokens.reasoning,
+            ...(reportedCosts.length > 0 ? { cost: reportedCosts.reduce((total, cost) => total + cost, 0) } : {}),
+          }
         : null,
     };
   } finally {
