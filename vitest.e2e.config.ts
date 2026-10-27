@@ -36,33 +36,29 @@ export default defineConfig({
     include: ['e2e/**/__tests__/**/*.unit.test.ts'],
     exclude: [...configDefaults.exclude],
     coverage: {
-      provider: 'v8',
+      provider: 'istanbul',
+      include: ['e2e/**/*.ts'],
+      exclude: ['e2e/**/*.spec.ts', 'e2e/**/*.test.ts', 'e2e/**/__tests__/**'],
       reporter: ['text', 'json', 'html'],
+      thresholds: {
+        perFile: true,
+        statements: 50,
+        branches: 50,
+        functions: 35,
+        lines: 50,
+      },
       // Separate from the app's ./coverage so the two runs cannot clobber each other.
       reportsDirectory: './coverage-e2e',
-      //
-      // NO `include`, NO `all`, AND THAT IS MEASURED RATHER THAN ASSUMED.
-      //
-      // The obvious repair for "an untested module is absent from the report instead of
-      // reported at 0%" is a `coverage.include` over every module under `e2e/`. It does
-      // not work with this provider. Run on this tree, the report lists the SAME nine rows
-      // with `include` set and without it, and `--coverage.all` changes nothing either:
-      // the v8 provider's untested-files query returns an empty list in every
-      // configuration, so the file list is exactly the set of modules the suite happened
-      // to load. `selection-ants.ts` appears in the report only because
-      // `e2e/helpers/__tests__/selection-ants.unit.test.ts` imports it, not because any
-      // glob asked for it.
-      //
-      // So the honest denominator needs a provider that can enumerate files it never
-      // loaded — `@vitest/coverage-istanbul`, which is not a dependency of this
-      // repository. Adding one is an operator decision about a new devDependency and the
-      // `e2e-unit` job's install time, not a line in this file.
-      //
-      // Until then this report is a loaded-files report, and the check that can actually
-      // fail on an untested module is the reachability gate in
-      // `e2e/helpers/__tests__/helper-coverage.unit.test.ts`, which reads the module
-      // graph rather than this artifact. There are deliberately no thresholds either:
-      // see the same file for why a percentage here is not a gate.
+      // This include/exclude matches the source-module universe in
+      // `helper-coverage.unit.test.ts`: e2e TypeScript modules and fixtures, but no specs,
+      // unit tests or test-support files under __tests__.
+      // On a complete run, `include` adds matching files that tests did not load, so per-file
+      // thresholds can catch an unexecuted module at zero. The independent reachability gate
+      // still checks the on-disk TypeScript graph, including type-only imports. Per-file floors
+      // sit below the measured minimum (40% functions, 54.55% statements, 55.56% lines and
+      // 57.14% branches) but catch a module regressing to zero.
+      // `canvas-redraw.ts` is a pure re-export with no executable statements; its presence
+      // is enforced by the independent reachability test, not an invented percentage.
     },
   },
 });

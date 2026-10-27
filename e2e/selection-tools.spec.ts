@@ -15,6 +15,7 @@ import {
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { committedAntsOutline, hasNoCommittedAnts, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
@@ -73,7 +74,7 @@ const MARQUEE_DRAG_WIDTH_FRACTION = 0.22;
 const MARQUEE_DRAG_HEIGHT_RATIO = 0.5;
 /** The lock `Fixed Ratio` is set to for the aspect test. Deliberately neither 1 nor 2:1, so a bar that ignored the field, or a hardcoded square, both fail. */
 const FIXED_RATIO_VALUE = '1.5';
-/** `Fixed Size` field values in DOCUMENT pixels, which is the space `resolveEllipseRect` reads them in. Deliberately about half the drag's size, so a committed ellipse of the drag's size is distinguishable from one of the fixed size, and still large enough for its outline to be detected. */
+/** `Fixed Size` field values in DOCUMENT pixels, which is the space `resolveEllipseRect` reads them in. A large logical test document makes their page-pixel bounds visibly differ from a CSS-pixel interpretation at both viewports. */
 const FIXED_SIZE_WIDTH = '90';
 const FIXED_SIZE_HEIGHT = '45';
 /** Tolerance when matching a committed selection's border bounding box against a rectangle this spec computed in page pixels. The tessellated ellipse's extreme vertices sit exactly on the rectangle, and the only thing that extends past them is the border's own stroke straddling the path: the ants are `LINE_WIDTH`, one CSS px, with a round join, so about half a pixel at the two vertices that point outward. MEASURED off the ants canvas for a 214x107 drag at the suite's 1280x720 window, the four deviations were 0.99, 1.07, 0.25 and 0.22 page px — the round join on the outward pair, and the inward half of the stroke failing to reach the other pair's vertex pixel — so five is under five times the largest. The reader also stopped needing a capture-scale factor: it used to be `this value * image.width / clip.width`, which multiplied a page-pixel tolerance by a ratio of two spaces and bought nothing now that both sides are page pixels. */
@@ -708,40 +709,89 @@ test.describe('Elliptical marquee', () => {
   test('a fixed-size elliptical marquee ignores the drag and commits Width x Height centred on the press', async ({
     page,
   }) => {
-    await selectEllipticalMarqueeFromSidebar(page);
-    const style = marqueeBar(page);
-    await style.selectOption('fixed-size');
-    const width = page.getByRole('spinbutton', { name: 'Width' });
-    const height = page.getByRole('spinbutton', { name: 'Height' });
-    await width.fill(FIXED_SIZE_WIDTH);
-    await height.fill(FIXED_SIZE_HEIGHT);
-    await expect(width).toHaveValue(FIXED_SIZE_WIDTH);
-    await expect(height).toHaveValue(FIXED_SIZE_HEIGHT);
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto('/');
+      await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 800 × 600 px');
+      await page.getByTestId('header-file-menu-button').click();
+      await page.getByTestId('header-file-new-button').click();
+      await acceptDiscardPrompt(page);
+      const dialog = page.getByTestId('new-image-dialog');
+      await expect(dialog).toBeVisible();
+      await page.getByTestId('new-image-width-input').fill('1600');
+      await page.getByTestId('new-image-height-input').fill('1200');
+      await page.getByTestId('new-image-dialog-submit-button').click();
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByTestId('footer-dimensions')).toContainText('Dimensions: 1600 × 1200 px');
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('width', '1600');
+      await expect(getWorkspaceCanvas(page)).toHaveAttribute('height', '1200');
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
 
-    const box = await measureCanvas(page);
-    const rect = marqueeRect(box);
-    const press = marqueeTopLeft(box, rect);
+      await selectEllipticalMarqueeFromSidebar(page);
+      const style = marqueeBar(page);
+      await style.selectOption('fixed-size');
+      const width = page.getByRole('spinbutton', { name: 'Width' });
+      const height = page.getByRole('spinbutton', { name: 'Height' });
+      await width.fill(FIXED_SIZE_WIDTH);
+      await height.fill(FIXED_SIZE_HEIGHT);
+      await expect(width).toHaveValue(FIXED_SIZE_WIDTH);
+      await expect(height).toHaveValue(FIXED_SIZE_HEIGHT);
 
-    await dragOnCanvas(page, press, marqueeBottomRight(box, rect), { steps: 12 });
-    await waitForCommittedAnts(page, 'the committed border after the fixed-size drag');
-    const outline = await committedOutline(page);
-    expect.soft(outline, 'the fixed-size drag should have committed a border').not.toBeNull();
+      const workspace = page.getByTestId('workspace-container');
+      await expect(workspace).toHaveAttribute('data-fit-scale', /^\d+(?:\.\d+)?$/);
+      await expect(workspace).toHaveAttribute('data-view-pan-x', '0');
+      await expect(workspace).toHaveAttribute('data-view-pan-y', '0');
+      await expect(workspace).toHaveAttribute('data-view-effective-zoom', '1');
+      await expect(workspace).toHaveAttribute('data-view-rotation', '0');
+      const fitScale = Number(await workspace.getAttribute('data-fit-scale'));
+      expect(fitScale).toBeGreaterThan(0);
 
-    const absolutePress = inCanvas(box, rect);
-    const pressPoint = { x: absolutePress.left, y: absolutePress.top };
-    const centre = outlineCenter(outline!);
-    const tolerance = OUTLINE_BOUNDS_TOLERANCE_PX;
+      const box = await measureCanvas(page);
+      const rect = marqueeRect(box);
+      const press = marqueeTopLeft(box, rect);
 
-    // The drag must not be what got committed, and the press point must be the CENTRE of
-    // what did — a committed rect with a corner on the press point is the drag.
-    expect
-      .soft(outlineWidth(outline!), 'the committed ellipse should be much smaller than the drag')
-      .toBeLessThan(rect.width * 0.7);
-    expect.soft(Math.abs(centre.x - pressPoint.x) <= tolerance, 'committed centre x').toBe(true);
-    expect.soft(Math.abs(centre.y - pressPoint.y) <= tolerance, 'committed centre y').toBe(true);
-    expect
-      .soft(outlineAspect(outline!), 'the committed ellipse should hold the configured ratio')
-      .toBeCloseTo(Number(FIXED_SIZE_WIDTH) / Number(FIXED_SIZE_HEIGHT), 1);
+      expect(Math.abs(Number(FIXED_SIZE_WIDTH) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
+      expect(Math.abs(Number(FIXED_SIZE_HEIGHT) * (1 - fitScale))).toBeGreaterThan(OUTLINE_BOUNDS_TOLERANCE_PX);
+
+      await dragOnCanvas(page, press, marqueeBottomRight(box, rect), { steps: 12 });
+      await waitForCommittedAnts(page, 'the committed border after the fixed-size drag');
+      const outline = await committedOutline(page);
+      expect.soft(outline, 'the fixed-size drag should have committed a border').not.toBeNull();
+
+      const absolutePress = inCanvas(box, rect);
+      const pressPoint = { x: absolutePress.left, y: absolutePress.top };
+      const centre = outlineCenter(outline!);
+      const tolerance = OUTLINE_BOUNDS_TOLERANCE_PX;
+      const expectedWidth = Number(FIXED_SIZE_WIDTH) * fitScale;
+      const expectedHeight = Number(FIXED_SIZE_HEIGHT) * fitScale;
+
+      // Width and Height are document pixels; the visible ants bounds shrink with the fit.
+      expect
+        .soft(
+          Math.abs(outlineWidth(outline!) - expectedWidth) <= tolerance,
+          `the fixed document Width should render as ${expectedWidth.toFixed(1)} page pixels`
+        )
+        .toBe(true);
+      expect
+        .soft(
+          Math.abs(outlineHeight(outline!) - expectedHeight) <= tolerance,
+          `the fixed document Height should render as ${expectedHeight.toFixed(1)} page pixels`
+        )
+        .toBe(true);
+
+      // The drag must not be what got committed, and the press point must be the CENTRE of
+      // what did — a committed rect with a corner on the press point is the drag.
+      expect
+        .soft(outlineWidth(outline!), 'the committed ellipse should be much smaller than the drag')
+        .toBeLessThan(rect.width * 0.7);
+      expect.soft(Math.abs(centre.x - pressPoint.x) <= tolerance, 'committed centre x').toBe(true);
+      expect.soft(Math.abs(centre.y - pressPoint.y) <= tolerance, 'committed centre y').toBe(true);
+      // The fixed document-pixel bounds above prove both dimensions and their ratio; a
+      // second ratio computed from rounded screenshot bounds adds only pixel quantization.
+    }
   });
 
   test('holding Shift constrains an elliptical marquee drag to a circle', async ({ page }) => {
