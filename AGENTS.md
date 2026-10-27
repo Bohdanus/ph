@@ -11,7 +11,7 @@ routine agent entry points.
 ## Worktrees
 
 - Make tracked edits and run Git/npm commands only in `.kilo/worktrees/`; `main` is read-only except for a pinned landing. During metadata recovery, the only allowed mutation in `main` is the documented `git worktree repair` procedure; it does not permit file edits or merge resolution there.
-- **Set Agent Manager's project-specific Default Base Branch to `main`** in Kilo Settings > Agent Manager; this setting determines the base for newly created managed worktrees. Do not select the repo-root `main-sync` branch, which is a local mirror that can lag behind `main`. For Git-created task branches, use the `refs/heads/main` worktree identified by the next rule.
+- **Base-branch selection is host-specific.** Kilo's Agent Manager setting does not configure Codex or Copilot. In Codex worktree chats and VS Code/Copilot's **New Worktree** sessions, select `main` in that host's base-branch picker; local/folder sessions use the selected checkout as-is and may start from a stale `main-sync` branch.
 - Before any other Git command, run `git worktree list --porcelain`, choose the `refs/heads/main` worktree, and create a task branch. If damaged metadata makes that sequence impossible or untrustworthy, use the recovery exception in [Recovering Git metadata](docs/ORCHESTRATION.md#recovering-git-metadata). Verify the new checkout with `git rev-parse --show-toplevel`.
 - Create the worktree before editing or starting subagents.
 - If Git metadata or the worktree registry appears damaged, follow [Recovering Git metadata](docs/ORCHESTRATION.md#recovering-git-metadata). Do not hand-edit `.git`, `gitdir`, or `commondir`, and do not prune, remove, or move worktrees during recovery.
