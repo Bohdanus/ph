@@ -87,10 +87,14 @@ export async function preflightBmpFile(
     throw new Error('Invalid BMP pixel data offset');
   }
   if (compression === BI_ALPHABITFIELDS) {
-    const alphaMask = await file.slice(66, 70).arrayBuffer();
-    const alphaMaskView = new DataView(alphaMask);
-    ensureRange(alphaMaskView, 0, 4);
-    if (alphaMaskView.getUint32(0, true) === 0) throw new Error('Invalid BMP alpha bitfield mask');
+    const masksBuffer = await file.slice(54, 70).arrayBuffer();
+    const masksView = new DataView(masksBuffer);
+    ensureRange(masksView, 0, 16);
+    const masks = Array.from({ length: 4 }, (_, index) => masksView.getUint32(index * 4, true));
+    if (bitsPerPixel === 16 && masks.some((mask) => mask > 0xffff)) {
+      throw new Error('Invalid BMP bitfield mask');
+    }
+    if (masks[3] === 0) throw new Error('Invalid BMP alpha bitfield mask');
   }
 
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
