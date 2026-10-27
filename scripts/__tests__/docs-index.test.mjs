@@ -54,9 +54,10 @@ const ALLOWED_UNLISTED = new Map([
   ],
   [
     '.kilo/plans/test-hardening-plan.md',
-    'archived history-migration test plan; it records task-specific work already merged ' +
-      'to main. The maintained repository-wide workflow is .skills/parallel-test-hardening.md, ' +
-      'and this plan is not linked from docs/README.md.',
+    'internal history-migration test-hardening plan. The migration baseline it records is on ' +
+      'main; its remaining proposals are task-specific follow-ups, not repository-wide docs. ' +
+      'The maintained general workflow is .skills/parallel-test-hardening.md, and this plan is ' +
+      'intentionally not indexed in docs/README.md.',
   ],
   [
     'docs/FREE-COMPUTE.md',

@@ -71,10 +71,13 @@ Two of these are only as good as their honesty about limits:
   the intended trade for a planning agent, and it is why its plan must name the
   command that would confirm each claim rather than asserting it.
 
-`subagent_type: 'explore'` is a **built-in** agent and is not one of these four. Its
-bash layer denies every process invocation, so it cannot run `npm run test`,
-`npx playwright test --list` or `git log`. Use `general` for research that has to
-execute something.
+`subagent_type: 'explore'` is a **built-in** role, not one of these four local
+profiles. Its Bash interface is limited to an allowlist of read-only commands; that
+limit is not a tool-level deny. Project rules in [`../AGENTS.md`](../AGENTS.md) and
+[`../MODELS.md`](../MODELS.md) are stricter for free task children: deny `bash`,
+editing, and file-mutating MCP tools, and never let free children perform Git
+operations. Use only an explicitly permitted agent for required scripts or tests;
+the coordinator owns all Git operations.
 
 ## Global configuration that must be true
 
