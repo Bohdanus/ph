@@ -307,14 +307,14 @@ export function assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch, cwd =
       `mirror branch ${branch} contains a Linux baseline promotion absent from this source commit; incorporate the promotion before rerunning`
     );
   }
+
+  throw new Error(
+    `mirror branch ${branch} contains commits absent from this source; incorporate them before rerunning`
+  );
 }
 
-export function buildMirrorPushArgs(sourceSha, branch, expectedRemoteSha) {
-  if (expectedRemoteSha !== null && !GIT_SHA_PATTERN.test(expectedRemoteSha)) {
-    throw new Error('expected mirror branch tip must be a full Git object ID or null');
-  }
-  const expected = expectedRemoteSha ?? '';
-  return ['push', 'mirror', `--force-with-lease=refs/heads/${branch}:${expected}`, `${sourceSha}:refs/heads/${branch}`];
+export function buildMirrorPushArgs(sourceSha, branch) {
+  return ['push', 'mirror', `${sourceSha}:refs/heads/${branch}`];
 }
 
 function parseCommitTrailerBlock(commitMessage) {
@@ -608,7 +608,7 @@ export async function runMirrorE2E(argv = process.argv.slice(2)) {
 
   const remoteSha = readMirrorBranchSha(branch);
   assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch });
-  command('git', buildMirrorPushArgs(sourceSha, branch, remoteSha));
+  command('git', buildMirrorPushArgs(sourceSha, branch));
   const dispatchArgs = buildDispatchArgs(options, { requestId, sourceSha, branch, workflowSha: expectedWorkflowSha });
   command('gh', dispatchArgs);
   console.log(`Waiting for ${title}`);

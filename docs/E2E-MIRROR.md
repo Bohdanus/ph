@@ -22,8 +22,10 @@ npm run test:e2e:mirror -- --full
 npm run test:e2e:mirror -- --linux-baselines --chat-id <native-session-id>
 ```
 
-The CLI pushes only the current branch to `mirror`, then runs its exact SHA. Use the
-CLI rather than bare `git push`: the local push default is the source repository.
+The CLI pushes only the current branch to `mirror`, then runs its exact SHA. It uses
+a normal fast-forward push; if the mirror branch has commits missing from the source
+branch, the CLI refuses and Git also rejects any concurrent non-fast-forward update.
+Use the CLI rather than bare `git push`: the local push default is the source repository.
 The `test:e2e:mirror` CLI launches runs with `repository_dispatch`, which uses the
 workflow version on the repository's default branch rather than a selectable feature
 ref. Automatic CI also runs on pushes to `main` and pull requests targeting `main`.
@@ -32,12 +34,20 @@ permissions and are treated as trusted workflow authors. Focused and full CLI jo
 read-only; failed-run artifacts go under
 `test-results/remote-e2e/` for inspection.
 
+Syncing the default branch is separate from this CLI. Only advance mirror `main` after
+its observed tip is an ancestor of the locally landed `main`; if the refs diverge,
+reconcile the mirror-only commits in a task branch and land that reviewed merge through
+the pinned procedure. Use the explicit `mirror` remote and `refs/heads/main` refspec,
+with no force option, so Git rejects any concurrent non-fast-forward update.
+
 Linux baselines are captured and verified on `ubuntu-latest`. An isolated
 `contents:write` job promotes only the seven Linux PNGs to that same mirror branch,
-with the supplied `Chat:` trailer; the CLI fast-forwards the local branch after rechecking
-its branch, HEAD, and worktree. Keep that local checkout on the source branch until the
-command finishes: Git fast-forward operates on the current HEAD, and a concurrent branch
-switch in the final check/merge window cannot be excluded atomically.
+with the supplied `Chat:` trailer. It pushes the promotion as a normal fast-forward
+from the captured source SHA; a concurrent branch update makes Git reject the push.
+The CLI fast-forwards the local branch after rechecking its branch, HEAD, and worktree.
+Keep that local checkout on the source branch until the command finishes: Git
+fast-forward operates on the current HEAD, and a concurrent branch switch in the final
+check/merge window cannot be excluded atomically.
 
 Visual baselines are OS-specific: the macOS (`darwin`), Linux, and Windows snapshot
 trees are not interchangeable. GitHub currently documents public `macos-latest` as
