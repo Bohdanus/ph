@@ -194,8 +194,10 @@ describe('the guard tells a main worktree from a linked one on a real repository
 
   beforeAll(() => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'main-worktree-guard-')));
-    const init = ['-c', 'init.defaultBranch=main', '-c', 'user.email=g@e.test', '-c', 'user.name=G', 'init'];
+    const init = ['-c', 'init.defaultBranch=main', 'init'];
     expect(git(root, init)).not.toBeNull();
+    expect(git(root, ['config', 'user.name', 'Git Guard Test'])).not.toBeNull();
+    expect(git(root, ['config', 'user.email', 'git-guard@example.invalid'])).not.toBeNull();
     writeFileSync(join(root, 'a.txt'), 'a\n');
     expect(git(root, ['add', 'a.txt'])).not.toBeNull();
     expect(git(root, ['commit', '-m', 'first'])).not.toBeNull();
