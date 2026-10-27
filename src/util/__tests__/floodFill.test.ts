@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 import { createFloodFillMask, type FloodFillOptions } from '../floodFill.ts';
 import { createMagicWandSelectionFromImageData } from '../magicWand.ts';
 import { createSelectionAlphaMask } from '../selection.ts';
+import { MAX_RASTER_SELECTION_PIXELS } from '../selection-mask.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
   const imageData = {
@@ -385,6 +386,18 @@ describe('degenerate input', () => {
     ['zero height', 4, 0],
   ])('returns null for %s', (_label, width, height) => {
     expect(createFloodFillMask(createImageData(width, height, [0, 0, 0, 255]), { x: 0, y: 0 })).toBeNull();
+  });
+
+  it('rejects over-budget dimensions before reading pixel data or allocating a mask', () => {
+    const oversized = {
+      width: MAX_RASTER_SELECTION_PIXELS + 1,
+      height: 1,
+      get data() {
+        throw new Error('over-budget pixel data must not be read');
+      },
+    } as unknown as ImageData;
+
+    expect(createFloodFillMask(oversized, { x: 0, y: 0 })).toBeNull();
   });
 });
 
