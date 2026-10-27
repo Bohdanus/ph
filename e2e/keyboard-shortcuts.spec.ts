@@ -424,17 +424,8 @@ test.describe('Keyboard shortcuts', () => {
 
     test('a tool shortcut is ignored while a layer name is being edited', async ({ page }) => {
       await page.keyboard.press('t');
-      // Resolved, for the reason the first guard above states: the Type tool has no tile of
-      // its own at this window, and `V` is what this test proves did not reach the shortcut.
-      // The Move assertion is the other half of the same fact and cannot be the same
-      // element, for the same suffix reason.
-      await expectToolSelected(page, 'text');
-      // The bar, for the same reason the Draw guard above states it: the three-dots tile
-      // was already lit when this test began, so the tile cannot establish that `T` did
-      // anything. What makes the rest of the test meaningful is the PAIR below — the tile
-      // still lit and the Move tile still dark after `V` was typed — and `V` reaching the
-      // shortcut would flip both, so neither assertion is satisfied by the opening state.
-      //
+      const textOptions = page.getByRole('region', { name: 'text tool options', exact: true });
+      await expect(textOptions).toBeVisible();
       // The Type bar's own control is the Commit/Cancel pair and not a text field, because the
       // bar has no text field: the draft is typed into a `div[contenteditable]` on the canvas and
       // that element does not exist until a placement, so a probe naming it could not be
@@ -455,7 +446,7 @@ test.describe('Keyboard shortcuts', () => {
       await page.keyboard.type('v');
 
       await expect(name, 'the letter belongs to the name').toContainText('v');
-      await expectToolSelected(page, 'text');
+      await expect(textOptions).toBeVisible();
       await expectToolSelected(page, 'reposition', false);
     });
   });
