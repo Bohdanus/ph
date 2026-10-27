@@ -840,29 +840,28 @@ describe('magnetic lasso preview path discrimination', () => {
 });
 
 /**
- * P2 — the letterbox is still read as ink by two predicates. `getStrokeAnalysis` excludes
- * the two exact letterbox cell colours, but `hasDarkPixels` and `getDarkPixelBounds` do not —
- * they only check `alpha === 0` and `DARK_PIXEL_THRESHOLD`. Under the dark theme the cell
- * colours (`#121212`, `#121212` gaps of `#000`) satisfy that threshold, so a clip containing
- * no stroke can still satisfy a `hasDarkPixels` wait. This block pins the dependency:
- * the suite's `colorScheme: 'light'` default in `playwright.config.ts` is the only thing
- * that makes those waits correct today, and a spec that pins `colorScheme: 'dark'` without
- * its own letterbox exclusion would silently wrong-pass.
+ * P2 — dark workspace backdrop pixels are indistinguishable from ink to these color-only
+ * helpers. `getStrokeAnalysis` excludes two exact cell colours, but `hasDarkPixels` and
+ * `getDarkPixelBounds` do not. Under the dark theme, both `#121212` cells and `#000` gaps
+ * satisfy their dark-pixel thresholds. Normal fresh app contexts are seeded light by the
+ * shared `extended-test` fixture; that is an app-theme pin, unlike Playwright's
+ * `colorScheme` media preference. These raw-image cases document the helper limitation if
+ * a dark-theme capture reaches a color-only assertion.
  */
 describe('hasDarkPixels on the workspace backdrop (theme-dependent)', () => {
   const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
 
-  it('returns true for the DARK cell, which is below DARK_PIXEL_THRESHOLD — the latent wrong-pass', async () => {
+  it('returns true for the DARK cell, which is below DARK_PIXEL_THRESHOLD', async () => {
     // `18 < 60`, so the dark theme's checkerboard cell satisfies `hasDarkPixels` exactly
     // as a `#000` gap does. The light cell (`243`) does not. This is the asymmetry that
-    // makes `colorScheme: 'light'` a live precondition rather than a cosmetic default.
+    // explains why a dark-theme backdrop must not be passed to this color-only predicate.
     expect(LETTERBOX_DARK_CELL.red).toBeLessThan(STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD);
 
     const darkBackdrop = await createTestImageData(LETTERBOX_DARK_CELL, 50, 50);
     expect(await hasDarkPixels(darkBackdrop)).toBe(true);
   });
 
-  it('returns false for the LIGHT cell, which is above DARK_PIXEL_THRESHOLD — why light is the live default', async () => {
+  it('returns false for the LIGHT cell, which is above DARK_PIXEL_THRESHOLD', async () => {
     expect(LETTERBOX_LIGHT_CELL.red).toBeGreaterThanOrEqual(STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD);
 
     const lightBackdrop = await createTestImageData(LETTERBOX_LIGHT_CELL, 50, 50);
@@ -891,13 +890,13 @@ describe('hasDarkPixels on the workspace backdrop (theme-dependent)', () => {
     expect(bounds!.bottom).toBe(99);
   });
 
-  it('pins the light theme as the live precondition: a pure #000 stroke is detected, and the light cell is not', async () => {
+  it('detects black ink while the light checkerboard cell remains above the dark threshold', async () => {
     // This is the inverse of the `#000` pin in `reads a pure #000 capture as ink`. Under
     // light theme the cell colour is `0xf3f3f3` — above `NEAR_WHITE_THRESHOLD` for the
     // stroke classifier's backdrop check, but `hasDarkPixels` does not exclude it either.
     // So a `hasDarkPixels` wait under light is satisfied by any dark ink, period — the
     // backdrop does not interfere because it is not dark. This test pins that fact:
-    // the light cell does NOT trigger `hasDarkPixels`, so the wait is clean.
+    // the predicate does not mistake the light workspace cell for dark ink.
     const lightBackdrop = await createTestImageData(LETTERBOX_LIGHT_CELL, 50, 50);
     expect(await hasDarkPixels(lightBackdrop)).toBe(false);
 
