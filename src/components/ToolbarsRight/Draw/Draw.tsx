@@ -7,6 +7,13 @@ import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import type { Point } from '../../../contexts/general-types.ts';
+import {
+  AIRBRUSH_INTERVAL_MS,
+  PAINT_FLOW_DEFAULT,
+  PAINT_FLOW_MAX,
+  PAINT_FLOW_MIN,
+} from '../../../util/brush-airbrush.ts';
+import { TouchSlider } from '../../Common/TouchSlider.tsx';
 
 const PREVIEW_WIDTH = 96;
 const PREVIEW_HEIGHT = 48;
@@ -39,6 +46,7 @@ const Draw: React.FC<{}> = () => {
       alpha: newArgs.alpha,
       lineWidth: newArgs.lineWidth,
       lineDash: newArgs.lineDash,
+      ...(newArgs.penType === 'spray' ? { flow: newArgs.flow ?? PAINT_FLOW_DEFAULT } : {}),
     };
     setToolArgs(newArgs as DrawToolArgs);
   };
@@ -51,6 +59,11 @@ const Draw: React.FC<{}> = () => {
   const handleAlphaChange = (event: ChangeEvent<HTMLInputElement>) => {
     const alpha = Number(event.target.value);
     handleChange({ ...args, alpha });
+  };
+
+  const handleFlowChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const flow = Number(event.target.value);
+    handleChange({ ...args, flow });
   };
 
   const handleDashChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -68,13 +81,17 @@ const Draw: React.FC<{}> = () => {
   const handlePenTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const penType = event.target.value as PenType;
     const preset = savedDrawPerPen[penType];
+    const nextArgs = { ...args };
+    delete nextArgs.flow;
+    delete nextArgs.pointTimes;
     // Only the dashed pen carries a dash pattern. Its own preset declares one, but `pen` and
     // `spray` declare none, so the leading `...args` spread would otherwise hand the active
     // pen's dash to the next one — and `handleChange` would then bake that dash into the new
     // pen's own record, so it survives the next tool switch too.
     handleChange({
-      ...args,
+      ...nextArgs,
       ...preset,
+      ...(penType === 'spray' ? { flow: preset.flow ?? PAINT_FLOW_DEFAULT } : {}),
       lineDash: penType === 'pen-dashed' ? (preset.lineDash ?? null) : null,
       penType,
     });
@@ -111,14 +128,20 @@ const Draw: React.FC<{}> = () => {
       arcPoints.push({ x, y });
     }
 
-    const previewArgs = { ...args, color, points: arcPoints, lineWidth: args.lineWidth * dpr };
+    const previewArgs = {
+      ...args,
+      color,
+      points: arcPoints,
+      lineWidth: args.lineWidth * dpr,
+      ...(penType === 'spray' ? { pointTimes: arcPoints.map((_, index) => index * AIRBRUSH_INTERVAL_MS) } : {}),
+    };
 
     // Draw the toolCanvas into previewCanvas with scaling and centering
     const [toolCanvas] = draw({ size: { width: scaledWidth, height: scaledHeight } })(previewArgs);
 
     // 1:1, because `scaledWidth`/`scaledHeight` were already multiplied by `dpr` above.
     ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH * dpr, PREVIEW_HEIGHT * dpr);
-  }, [args, brushScale, color, dpr]);
+  }, [args, brushScale, color, dpr, penType]);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
@@ -146,9 +169,8 @@ const Draw: React.FC<{}> = () => {
           Size
           <span className="font-bold text-gray-900 dark:text-gray-200">{brushSize}px</span>
         </label>
-        <input
+        <TouchSlider
           id="size-slider"
-          type="range"
           min="0.5"
           max="500"
           step="0.5"
@@ -168,9 +190,8 @@ const Draw: React.FC<{}> = () => {
               Dash
               <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[0]}px</span>
             </label>
-            <input
+            <TouchSlider
               id="dash-size"
-              type="range"
               min="1"
               max="100"
               value={lineDash[0]}
@@ -187,9 +208,8 @@ const Draw: React.FC<{}> = () => {
               Gap
               <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[1]}px</span>
             </label>
-            <input
+            <TouchSlider
               id="gap-size"
-              type="range"
               min="1"
               max="100"
               value={lineDash[1]}
@@ -208,9 +228,8 @@ const Draw: React.FC<{}> = () => {
           Opacity
           <span className="font-bold text-gray-900 dark:text-gray-200">{Math.round(alpha * 100)}%</span>
         </label>
-        <input
+        <TouchSlider
           id="alpha-slider"
-          type="range"
           min="0"
           max="1"
           step="0.01"
@@ -219,6 +238,29 @@ const Draw: React.FC<{}> = () => {
           className="h-1.5 w-30 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
+
+      {penType === 'spray' && (
+        <div className="flex flex-col">
+          <label
+            htmlFor="flow-slider"
+            className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          >
+            Flow
+            <span className="font-bold text-gray-900 dark:text-gray-200">
+              {Math.round(args.flow ?? PAINT_FLOW_DEFAULT)}%
+            </span>
+          </label>
+          <TouchSlider
+            id="flow-slider"
+            min={PAINT_FLOW_MIN}
+            max={PAINT_FLOW_MAX}
+            step="1"
+            value={args.flow ?? PAINT_FLOW_DEFAULT}
+            onChange={handleFlowChange}
+            className="h-1.5 w-30 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          />
+        </div>
+      )}
 
       <div
         className={`flex h-12 w-24 items-center justify-center flex-shrink-0 ${

@@ -22,6 +22,7 @@ function runtimeLayer(overrides: Partial<Layer> = {}): Layer {
     blendMode: 'source-over',
     order: 2,
     pos: { ...pos },
+    presentationBounds: null,
     bitmap: null,
     tmpCanvas: null,
     operations: [],

@@ -78,10 +78,11 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     };
   }, []);
 
-  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
-    ref: containerRef,
-    imageSize: totalSize,
-  });
+  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, releasePointer } =
+    usePointerPosition({
+      ref: containerRef,
+      imageSize: totalSize,
+    });
 
   const flushDrawingFrame = () => {
     frameRequested.current = null;
@@ -105,9 +106,8 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!isPointerDownValid(event)) return;
-
     if (!overlayCtxRef.current) return;
+    if (!isPointerDownValid(event)) return;
 
     // The shape commits from `handlePointerUp`, so the press-to-release window is exactly the window
     // a document-mutating shortcut would corrupt: an undo there replaces `selections` from the SAME
@@ -115,9 +115,11 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     // `entries.slice(0, cursor + 1)` truncates the redo tail with no other symptom. Claimed after
     // `isPointerDownValid`, so a refused press claims nothing, and only when the claim succeeded, so
     // a loser never records an id it does not own.
-    if (claimDocumentGesture('shape-draw', event.pointerId)) {
-      claimedPointerIdRef.current = event.pointerId;
+    if (!claimDocumentGesture('shape-draw', event.pointerId)) {
+      releasePointer();
+      return;
     }
+    claimedPointerIdRef.current = event.pointerId;
 
     const point = getLocalCoords(event);
     startRef.current = point;
@@ -209,6 +211,13 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     }
 
     commitShape(start, end);
+
+    // The committed layer will be rendered by the document surface. Clear the shared preview
+    // backing store after a successful commit so the same shape is not composited twice.
+    const ctx = overlayCtxRef.current;
+    if (ctx) {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
   };
 
   /**
@@ -244,6 +253,9 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     } else {
       createLayerFromTool(fullArgs);
     }
+
+    // The committed layer is now the source of truth; remove the preview so it is not painted twice.
+    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
   };
 
   const handleDialogCreate = ({ width, height, fromCenter, cornerRadius }: CreateShapeParams) => {
@@ -262,10 +274,24 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     commitShape(start, end, cornerRadius);
   };
 
-  const handlePointerCancel = () => {
-    // Paired with the abort the hook already performs: a cancel is a gesture that will never commit,
-    // so a claim left open here would gate every later keystroke for a shape that does not exist.
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    // Cancellation belongs to one pointer stream. A second pointer's cancel must not release this
+    // shape's document claim or clear its live preview.
+    if (claimedPointerIdRef.current !== event.pointerId) return;
+
+    releasePointer();
     releaseDocumentClaim();
+    if (frameRequested.current !== null) {
+      cancelAnimationFrame(frameRequested.current);
+      frameRequested.current = null;
+    }
+    startRef.current = null;
+    endRef.current = null;
+    anchorRef.current = null;
+    fromCenterRef.current = false;
+    lastPointRef.current = null;
+    originalShapeRef.current = null;
+    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
   };
 
   useEffect(() => {
@@ -287,17 +313,8 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
         frameRequested.current = null;
       }
 
-      // This area never clears the overlay on pointer up at all: `handlePointerUp`'s last
-      // `flushDrawingFrame` REDRAWS the shape and the commit at :200 leaves it there, so the
-      // teardown below is the only thing that ever removes it. The overlay canvas is shared,
-      // long-lived and only ever `display`-toggled (`Main.tsx:239-284`), which never touches a
-      // backing store, so without it the preview stays painted over the next tool's document — and
-      // over this one, for as long as the shape tool stays selected. Safe for the reason it is safe
-      // in `useRect` and `DrawToolArea`: exactly one tool area is mounted at a time, and React runs
-      // passive destroys before passive creates, so an outgoing area's cleanup cannot wipe the
-      // incoming area's mount paint. The size is read off `ctx.canvas` at call time rather than off
-      // `totalSize` for the same reason as in `useRect`: a render-scope size frozen into this
-      // cleanup under-clears after a document resize.
+      // The overlay is shared, so unmount cleanup still clears any in-flight preview. The size is
+      // read from the canvas at call time to cover a document resize between renders.
       if (ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }

@@ -1,4 +1,4 @@
-import { expect, type Page, test } from './fixtures/extended-test';
+import { expect, type Locator, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   drawLine,
@@ -170,50 +170,73 @@ test.describe('Keyboard shortcuts', () => {
      * the entire question, since neither has a tile that can answer it. The tile assertion is
      * kept anyway, because it pins the reachability contract this branch is about — a tool
      * the rail could not show is still represented, and the tile standing for it lights.
+     *
+     * `bar` is a LOCATOR FACTORY and not a CSS string, and the Type row is why: its control
+     * carries no `id` to select. The Type tool has no text field any more — the user clicks
+     * the canvas to place a box and types into a `div[contenteditable]` overlay there — and
+     * the control that now proves the bar mounted is Adobe's own edit-mode tell, the
+     * Commit/Cancel pair ("To determine whether a type tool is in edit mode, look in the
+     * options bar — if you see the Commit button and the Cancel button", Text.tsx's own
+     * comment quotes it). Neither button has an `id`, so `getByRole('button', { name })` is
+     * the address and a string in this table cannot express it. Every row is a factory for
+     * that uniformity: the other three read exactly as they did, and `page` is a fixture the
+     * table cannot see, so the factory is what hands it over.
+     *
+     * The pair is asserted DISABLED as well as present, and that half is not decoration. The
+     * pair is `disabled={!editing}` and `editing` is `hasPendingText(toolArgs)`, so with no
+     * draft open — the state a bare tool selection produces, because nothing places a box
+     * until the user clicks the canvas — both are on screen and both are inert. A probe that
+     * only asked for visibility would pass against a pair wired to the wrong handler, and
+     * the pair's whole job is to be the bar's commit/cancel while a draft is open.
      */
-    const SINGLE_TOOL_SHORTCUTS = [
-      { key: 'v', tool: 'reposition', bar: '[data-testid="reposition-hint-text"]' },
-      { key: 'c', tool: 'crop', bar: '#aspect-ratio' },
-      { key: 't', tool: 'text', bar: '#text-input' },
-      { key: 's', tool: 'clone-stamp', bar: '#clone-stamp-size' },
-    ] as const;
+    interface ShortcutRow {
+      key: string;
+      /** The name `expectToolSelected` reads, which is a `string` and not a `ToolName`. */
+      tool: string;
+      /** A control of that tool's own options bar: absent before the keystroke, present after. */
+      bar: (page: Page) => Locator;
+      /** Controls that must be absent with no draft open, on top of `bar`. */
+      absentWithoutDraft?: (page: Page) => readonly Locator[];
+    }
 
-    for (const { key, tool, bar } of SINGLE_TOOL_SHORTCUTS) {
+    const SINGLE_TOOL_SHORTCUTS: readonly ShortcutRow[] = [
+      { key: 'v', tool: 'reposition', bar: (page: Page) => page.locator('[data-testid="reposition-hint-text"]') },
+      { key: 'c', tool: 'crop', bar: (page: Page) => page.locator('#aspect-ratio') },
+      {
+        key: 't',
+        tool: 'text',
+        bar: (page: Page) => page.locator('#font-family-select'),
+        absentWithoutDraft: (page: Page) => [
+          page.getByRole('button', { name: 'Commit' }),
+          page.getByRole('button', { name: 'Cancel' }),
+        ],
+      },
+      { key: 's', tool: 'clone-stamp', bar: (page: Page) => page.locator('#clone-stamp-size') },
+    ];
+
+    for (const { key, tool, bar, absentWithoutDraft } of SINGLE_TOOL_SHORTCUTS) {
       test(`${key.toUpperCase()} selects ${tool}`, async ({ page }) => {
         await page.keyboard.press(key);
         await expectToolSelected(page, tool);
-        await expect(page.locator(bar), 'the tile is lit for a tool of its own, not a neighbour of one').toBeVisible();
+        await expect(bar(page), 'the tile is lit for a tool of its own, not a neighbour of one').toBeVisible();
+        for (const control of absentWithoutDraft?.(page) ?? []) {
+          await expect(control, 'the commit pair appears only while a draft is open').toHaveCount(0);
+        }
       });
     }
 
-    test('E selects the eraser, and the brush tile is the one that lights for it', async ({ page }) => {
-      // The eraser is a secondary member of the brush group, so the tile it lights is the
-      // brush's. Asserting the tile alone would pass for the brush too, which is why the
-      // eraser bar's own control is the assertion that carries the meaning here.
-      //
-      // WHICH tile that is depends on the window, and the rule is the same either way: the
-      // brush group keeps a tile of its own while the rail can show it, and becomes a row of
-      // the three-dots tile's flyout once it cannot. At the suite's viewport it is already
-      // the latter, so this resolves the tile rather than assuming the brush's own.
-      //
-      // `V` first, and that keystroke is part of the test rather than setup. The rail starts
-      // on a tool that has been folded away, so the tile that represents the brush group is
-      // ALREADY lit when the test begins and pressing `E` cannot make it change state — the
-      // light would prove nothing. Selecting the Move tool first puts the rail in a state
-      // where that tile is dark, which is what turns "this tile lit" back into the
-      // observation it was before the collapse: a tile that was not lit lights for a member
-      // of the brush group that is not the group's own identity.
+    test('E selects the eraser tile', async ({ page }) => {
       await page.keyboard.press('v');
-      await expectToolSelected(page, 'brush', false);
+      await expectToolSelected(page, 'eraser', false);
 
       await page.keyboard.press('e');
-      await expectToolSelected(page, 'brush');
+      await expectToolSelected(page, 'eraser');
       await expect(page.locator('#eraser-mode')).toBeVisible();
       await expect(page.locator('#brush-size'), 'the paint bar is not the one on screen').toHaveCount(0);
     });
 
     test('B selects the brush, and Shift+B cycles the whole brush family and wraps', async ({ page }) => {
-      // The cycle is `brush -> pencil -> color-replacement -> eraser -> brush`
+      // The cycle is `brush -> pencil -> color-replacement -> brush`
       // (`brushGroup` in AppKeyboardShortcuts). The paint bar mints its control ids from
       // the tool name (`${toolName}-size`), and Color Replacement and the Eraser each render
       // a real bar of their own (`color-replacement-*` / `eraser-*` ids), so every step of the
@@ -236,10 +259,18 @@ test.describe('Keyboard shortcuts', () => {
       await expect(page.locator('#pencil-size')).toHaveCount(0);
 
       await page.keyboard.press('Shift+b');
-      await expect(page.locator('#eraser-mode'), 'color replacement -> eraser').toBeVisible();
+      await expect(page.locator('#brush-size'), 'color replacement -> brush wrap').toBeVisible();
+    });
 
-      await page.keyboard.press('Shift+b');
-      await expect(page.locator('#brush-size'), 'the cycle wraps back to the brush').toBeVisible();
+    test('Shift+E cycles the eraser family', async ({ page }) => {
+      await page.keyboard.press('e');
+      await expect(page.locator('#eraser-mode')).toBeVisible();
+
+      await page.keyboard.press('Shift+e');
+      await expect(page.locator('#magic-eraser-tolerance')).toBeVisible();
+
+      await page.keyboard.press('Shift+e');
+      await expect(page.locator('#eraser-mode'), 'the eraser family wraps').toBeVisible();
     });
 
     test('G selects the paint bucket and Shift+G the gradient', async ({ page }) => {
@@ -300,28 +331,44 @@ test.describe('Keyboard shortcuts', () => {
       await expect(page.getByText('Right-click also finishes the selection')).toHaveCount(0);
     });
 
-    test('U selects the shape tool and Shift+U cycles the figure, oval included', async ({ page }) => {
-      // This pins the bug the source comment at `selectShapeTool` records: matching the
-      // display name "ellipse" against the stored figure "oval" made `indexOf` return -1,
-      // so Shift+U from the ellipse wrapped back to the rectangle instead of advancing.
-      // The figure is read off the bar's own `aria-label="Current shape"` readout, which
-      // is the one place the stored `figure` is in the document.
+    test('U selects the shape tool and Shift+U walks the whole shapes flyout and closes it', async ({ page }) => {
+      // The cycle IS the rail's shapes flyout, and it CLOSES: the press after Custom Shape
+      // returns to the Rectangle. That last step is the one worth driving from the browser,
+      // because the Custom Shape tool carries its own tool name rather than a figure, so it is
+      // the only entry whose position cannot come from the stored `figure`. This pins three
+      // defects at once: matching the display name "ellipse" against the stored figure "oval"
+      // made `indexOf` return -1, so Shift+U from the ellipse wrapped back to the rectangle;
+      // the Triangle and the Polygon were absent from the cycle list, so Shift+U from either of
+      // them also restarted at the rectangle; and the Custom Shape tool resolved to -1 as well,
+      // which closed the cycle over five entries and lost the rectangle from it for good. The
+      // five figures are read off the bar's own `aria-label="Current shape"` readout, which is
+      // the one place the stored `figure` is in the document; the Custom Shape tool has its own
+      // bar, so it is named off the placeholder panel instead.
       const figure = page.locator('[aria-label="Current shape"]');
+      const customShape = page.locator('div.border-dashed').first().getByText('Custom Shape Tool', { exact: true });
 
       await page.keyboard.press('u');
       await expect(figure).toContainText('Rectangle');
 
-      await page.keyboard.press('Shift+u');
-      await expect(figure, 'rectangle -> ellipse').toContainText('Ellipse');
+      const expectedFigures = [
+        { label: 'Ellipse', key: 'rectangle -> ellipse, not back to the rectangle' },
+        { label: 'Line', key: 'ellipse -> line, not back to the rectangle' },
+        { label: 'Triangle', key: 'line -> triangle, which the old cycle skipped' },
+        { label: 'Polygon', key: 'triangle -> polygon, which the old cycle also skipped' },
+        { label: 'Star', key: 'polygon -> star, which the old cycle also skipped' },
+      ];
+
+      for (const step of expectedFigures) {
+        await page.keyboard.press('Shift+u');
+        await expect(figure, step.key).toContainText(step.label);
+      }
 
       await page.keyboard.press('Shift+u');
-      await expect(figure, 'ellipse -> line, not back to the rectangle').toContainText('Line');
+      await expect(customShape, 'star -> custom shape, the seventh and last entry of the group').toBeVisible();
 
       await page.keyboard.press('Shift+u');
-      await expect(
-        page.locator('div.border-dashed').first().getByText('Custom Shape Tool', { exact: true }),
-        'line -> custom shape'
-      ).toBeVisible();
+      await expect(figure, 'custom shape -> rectangle, the step that closes the group').toContainText('Rectangle');
+      await expect(customShape).toHaveCount(0);
     });
   });
 
@@ -377,29 +424,29 @@ test.describe('Keyboard shortcuts', () => {
 
     test('a tool shortcut is ignored while a layer name is being edited', async ({ page }) => {
       await page.keyboard.press('t');
-      // Resolved, for the reason the first guard above states: the Type tool has no tile of
-      // its own at this window, and `V` is what this test proves did not reach the shortcut.
-      // The Move assertion is the other half of the same fact and cannot be the same
-      // element, for the same suffix reason.
-      await expectToolSelected(page, 'text');
-      // The bar, for the same reason the Draw guard above states it: the three-dots tile
-      // was already lit when this test began, so the tile cannot establish that `T` did
-      // anything. What makes the rest of the test meaningful is the PAIR below — the tile
-      // still lit and the Move tile still dark after `V` was typed — and `V` reaching the
-      // shortcut would flip both, so neither assertion is satisfied by the opening state.
-      await expect(page.locator('#text-input'), 'the Type tool is the one selected').toBeVisible();
+      const textOptions = page.getByRole('region', { name: 'text tool options', exact: true });
+      await expect(textOptions).toBeVisible();
+      // The Type bar's own control is the Commit/Cancel pair and not a text field, because the
+      // bar has no text field: the draft is typed into a `div[contenteditable]` on the canvas and
+      // that element does not exist until a placement, so a probe naming it could not be
+      // evaluated at all in this state. Adobe's pair is rendered only while a draft is open, so
+      // selecting the tool alone must leave both controls absent.
+      const commit = page.getByRole('button', { name: 'Commit' });
+      const cancel = page.getByRole('button', { name: 'Cancel' });
+      await expect(commit, 'a tool selection places no box').toHaveCount(0);
+      await expect(cancel, 'a tool selection places no box').toHaveCount(0);
 
       // `LayersTab` mints the name span without `contenteditable` until a mousedown
       // flips it, and that flip does not focus: the first click enters edit mode and the
       // second is what the browser focuses.
       const row = page.getByTitle('Drag to reorder').first();
-      const name = row.locator('div.flex-1 > span');
+      const name = row.getByTestId('layer-name');
       await name.click();
       await name.click();
       await page.keyboard.type('v');
 
       await expect(name, 'the letter belongs to the name').toContainText('v');
-      await expectToolSelected(page, 'text');
+      await expect(textOptions).toBeVisible();
       await expectToolSelected(page, 'reposition', false);
     });
   });

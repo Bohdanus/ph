@@ -4,10 +4,14 @@ import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
 import {
   shape,
+  DEFAULT_STAR_RATIO,
   DEFAULT_POLYGON_SIDES,
   MAX_POLYGON_SIDES,
   MIN_POLYGON_SIDES,
   polygonSides,
+  MIN_STAR_RATIO,
+  MAX_STAR_RATIO,
+  starRatio,
   type ShapeLineCap,
   type ShapeToolArgs,
   type ShapeToolMode,
@@ -19,17 +23,51 @@ import { useStore } from '../../../contexts/StoreContext.tsx';
 const PREVIEW_WIDTH = 96;
 const PREVIEW_HEIGHT = 48;
 
+/**
+ * The tool names this panel is mounted under: `toolsMap` routes all six to it —
+ * `shape` itself plus the five named figure tools — and `defaultSettings` seeds
+ * each of the six with its own entry, so each arrives with its own `toolName`.
+ *
+ * Kept HERE, beside its one consumer, rather than exported from `src/tools/shape.ts`.
+ * A sibling spec mocks that module with an explicit key list, so a shape export
+ * consumed here would break a test file this change does not own, and the list has
+ * exactly one production reader. It is duplicated in `toolsMap`, `Main`'s
+ * interaction-mode dispatch and the two tool-selection surfaces, and folding them
+ * all onto one exported constant is a separate change.
+ *
+ * `figure` and `toolName` are NOT the same vocabulary, and the difference is a
+ * spelling trap rather than a synonym: the Ellipse TOOL is `ellipse` while its
+ * FIGURE is `oval`, so neither list can be derived from the other.
+ */
+const SHAPE_FAMILY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  'shape',
+  'rectangle',
+  'ellipse',
+  'triangle',
+  'polygon',
+  'line',
+]);
+
+/**
+ * Whether args naming `toolName` belong to a tool this panel serves. `unknown`
+ * rather than `string` because the args under a panel are whatever the current
+ * tool carries, so a panel can be mounted with a seventh tool's arguments.
+ */
+const isShapeFamilyToolName = (toolName: unknown): toolName is string =>
+  typeof toolName === 'string' && SHAPE_FAMILY_TOOL_NAMES.has(toolName);
+
 const figureLabel = (figure: ShapeToolArgs['figure']) => {
   if (figure === 'oval') return 'Ellipse Tool';
   if (figure === 'triangle') return 'Triangle Tool';
   if (figure === 'polygon') return 'Polygon Tool';
+  if (figure === 'star') return 'Star Tool';
   if (figure === 'line') return 'Line Tool';
   return 'Rectangle Tool';
 };
 
 const Shape: React.FC = () => {
   const [{ containerRef, color, backgroundColor, totalSize }] = useStore();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, isDocumentBacked } = useCurrentTool();
   const previewRef = useRef<HTMLCanvasElement | null>(null);
 
   const args = toolArgs as ShapeToolArgs;
@@ -39,10 +77,28 @@ const Shape: React.FC = () => {
 
   usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
 
+  /**
+   * The store-colour mirror, which every one of the six shape-family tool names
+   * runs — each of the six mounts THIS panel, and each carries its own
+   * `defaultSettings` entry seeded at the hardcoded black. The membership test is
+   * what admits all six rather than the one that opened the panel: a
+   * `toolName === 'shape'` guard returned for the other five, so their args kept
+   * the seeded colour forever and the committed layer was black however the
+   * foreground swatch was set — while the preview, which reads the store colour
+   * directly, showed the right one. Membership rather than "always mirror",
+   * because the args under a panel are the current tool's whatever that tool is,
+   * and a panel mounted with a seventh tool's arguments must not rewrite them.
+   *
+   * Both swatches are mirrored, stroke and background alike, which is what the
+   * `shape` entry has always done and what `setShapeCtx` fills with. A dedicated
+   * Fill swatch is a separate product decision and not this effect's business.
+   */
   useEffect(() => {
-    if (args.toolName !== 'shape' || (args.color === color && args.backgroundColor === backgroundColor)) return;
+    if (isDocumentBacked) return;
+    if (!isShapeFamilyToolName(args.toolName)) return;
+    if (args.color === color && args.backgroundColor === backgroundColor) return;
     setToolArgs({ ...args, color, backgroundColor });
-  }, [args, backgroundColor, color, setToolArgs]);
+  }, [args, backgroundColor, color, isDocumentBacked, setToolArgs]);
 
   const handleChange = (newArgs: ShapeToolArgs) => {
     savedArgsPerFigure[newArgs.figure] = {
@@ -52,6 +108,7 @@ const Shape: React.FC = () => {
       lineCap: newArgs.lineCap,
       cornerRadius: newArgs.cornerRadius,
       sides: newArgs.sides,
+      starRatio: newArgs.starRatio,
       toolMode: newArgs.toolMode,
     };
     setToolArgs(newArgs);
@@ -151,6 +208,10 @@ const Shape: React.FC = () => {
     }
   };
 
+  const handleStarRatioChange = (event: ChangeEvent<HTMLInputElement>) => {
+    handleChange({ ...args, starRatio: starRatio(Number(event.target.value)) });
+  };
+
   const handleCapChange = (event: ChangeEvent<HTMLSelectElement>) => {
     handleChange({ ...args, lineCap: event.target.value as ShapeLineCap });
   };
@@ -162,9 +223,6 @@ const Shape: React.FC = () => {
   // be controlled". `e2e/shape-tools.spec.ts` saw that on every run and could not
   // report it, because nothing in `e2e/` attached a console listener until
   // `ConsolePolice` (e2e/helpers/console-police.ts).
-  //
-  // Photoshop's Rectangle/Shape tools default to unfilled, so false is also the
-  // correct value rather than merely a defined one.
   const {
     alpha,
     hasFill = false,
@@ -173,6 +231,7 @@ const Shape: React.FC = () => {
     lineDash,
     cornerRadius = 0,
     sides = DEFAULT_POLYGON_SIDES,
+    starRatio: ratio = DEFAULT_STAR_RATIO,
     lineCap = 'butt',
     toolMode = 'shape',
   } = args;
@@ -280,20 +339,20 @@ const Shape: React.FC = () => {
         * off-step entry invalid and dispatches `onChange` anyway, which is why the
         * bound lives in `polygonSides` at commit and is tested there.
       */}
-      {figure === 'polygon' && (
+      {(figure === 'polygon' || figure === 'star') && (
         <div className="flex flex-col">
           <label
-            htmlFor="polygon-sides-input"
+            htmlFor={`${figure === 'star' ? 'star-points' : 'polygon-sides'}-input`}
             className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
           >
-            Sides{' '}
+            {figure === 'star' ? 'Points' : 'Sides'}{' '}
             <span className="font-bold text-gray-900 dark:text-gray-200">
               {sidesDraft === null ? sides : polygonSides(Number(sidesDraft)) || DEFAULT_POLYGON_SIDES}
             </span>
           </label>
           <input
-            id="polygon-sides-input"
-            aria-label="Sides"
+            id={`${figure === 'star' ? 'star-points' : 'polygon-sides'}-input`}
+            aria-label={figure === 'star' ? 'Points' : 'Sides'}
             type="number"
             min={MIN_POLYGON_SIDES}
             max={MAX_POLYGON_SIDES}
@@ -303,6 +362,28 @@ const Shape: React.FC = () => {
             onBlur={handleSidesCommit}
             onKeyDown={handleSidesKeyDown}
             className="h-7 w-20 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
+          />
+        </div>
+      )}
+
+      {figure === 'star' && (
+        <div className="flex flex-col">
+          <label
+            htmlFor="star-ratio-slider"
+            className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          >
+            Star Ratio <span className="font-bold text-gray-900 dark:text-gray-200">{starRatio(ratio)}%</span>
+          </label>
+          <input
+            id="star-ratio-slider"
+            aria-label="Star Ratio"
+            type="range"
+            min={MIN_STAR_RATIO}
+            max={MAX_STAR_RATIO}
+            step={1}
+            value={starRatio(ratio)}
+            onChange={handleStarRatioChange}
+            className="h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
           />
         </div>
       )}

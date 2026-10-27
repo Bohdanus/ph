@@ -45,6 +45,11 @@
  *   rather than guessing a label the board would then filter on
  * @property {ImportItem[]} items
  * @property {number[]} dead    the item numbers the document records as finished
+ * @property {number[]} duplicateNumbers numbered headings that share an origin
+ * @property {{origin: string, number: number, line: number, heading: string}[]} ambiguousRetirements
+ *   numbered headings whose status suffix could be prose or a retirement marker
+ * @property {{line: number, level: number, text: string}[]} letterSuffixedHeadings
+ *   numbered-looking headings whose letter suffix has no supported origin grammar
  */
 
 /**
@@ -124,12 +129,12 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * revision of this comment quoted was the merge-base figure, and it is the whole
  * defect the other counts here are dated to avoid. This branch's own new entry
  * takes the corpus to 98 on the merged tree without moving a single verdict.
- * The four live ones are
- * `### The self-anchored move: a converter defect, deliberately not fixed here`
- * (`HANDOFF.md:368`), `## 69. An eraser gesture abandoned by switching tools …`
- * (`HANDOFF.md:1508`), `## 76. A closure check reported "3 FIXED" …`
- * (`HANDOFF.md:1788`) and `## 77. … and a suffixed retirement retires its
- * PARENT` (`HANDOFF.md:1821`). §69 and §77 are the cases with no boundary at
+ * The four live matches in that tree are:
+ * - `### The self-anchored move: a converter defect, deliberately not fixed here` under `§15`
+ * - `§69`: `An eraser gesture abandoned by switching tools …`
+ * - `§76`: `A closure check reported "3 FIXED" …`
+ * - `§77`: `… and a suffixed retirement retires its PARENT`.
+ * §69 and §77 are the cases with no boundary at
  * all — `abandoned` contains `done` and `suffixed` contains `fixed`, both
  * inside an ordinary word rather than after a hyphen — and they are the two the
  * corpus actually has. The hyphenated severities that motivated the rule were
@@ -185,6 +190,17 @@ const DEAD_HEADING = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed
  */
 const NUMBERED = /^(?:item\s+)?#?(\d+)\b/i;
 
+/** A numbered heading whose leading list contains an unsupported letter suffix. */
+const LETTER_SUFFIXED_NUMBERED =
+  /^(?:items?\s+)?(?:#?\d+[a-z]+(?:\s*,\s*#?\d+)*|#?\d+(?:\s*,\s*#?\d+)*\s*,\s*#?\d+[a-z]+)/i;
+
+/**
+ * A numbered heading ending in a status word is a retirement only when the
+ * heading itself is an explicit list, not when it also has an item title.
+ */
+const RETIREMENT_LIST_PREFIX =
+  /^(?:items?\s+)?\d{1,6}(?:(?:\s*,\s*|\s*[-–—]\s*)\d{1,6})*(?:\s*,\s*(?:\.{3}|…))?[.,\s]*(?:\.{3}|…)?$/i;
+
 /**
  * A leading severity tag, as in `## P2 — an empty CDP capture ...`. This is the
  * item marker the documents that do not number their entries use, and it has to
@@ -223,7 +239,7 @@ const WHITESPACE = /\s/;
  * that would let `draw.ts` in a sentence become a path.
  */
 const ROOT_FILE =
-  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|DEPENDENCIES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
+  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
 
 /**
  * A severity tag inside a heading, removed before its numbers are harvested as
@@ -238,6 +254,9 @@ const SEVERITY_TOKEN = /\bP\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/gi;
  * endpoints would leave the entries between them live.
  */
 const NUMBER_OR_RANGE = /(\d{1,6})\s*(?:[-–—]\s*(\d{1,6}))?/g;
+
+/** A letter-suffixed number is not a valid retirement-list number. */
+const LETTER_SUFFIXED_NUMBER = /(?:^|[^\d])\d{1,6}[A-Za-z]+\b/;
 
 /**
  * A range wider than this is treated as its endpoints rather than expanded. It
@@ -295,14 +314,33 @@ function scan(text) {
   return { lines, records };
 }
 
+/** A status-suffixed numbered title is ambiguous unless its prefix is only a list. */
+function ambiguousRetirementNumber(record) {
+  if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) return null;
+  const numbered = NUMBERED.exec(record.text);
+  if (!numbered) return null;
+
+  const withoutSeverities = record.text.replace(SEVERITY_TOKEN, ' ');
+  const marker = DEAD_HEADING.exec(withoutSeverities);
+  const prefix = marker
+    ? withoutSeverities
+        .slice(0, marker.index)
+        .trim()
+        .replace(/[\s\-–—]+$/, '')
+        .trim()
+    : '';
+  if (RETIREMENT_LIST_PREFIX.test(prefix)) return null;
+
+  return Number(numbered[1]);
+}
+
 /**
  * The item numbers the document records as finished, sorted and deduplicated.
  *
- * Both readings of a dead heading are collected: the number of a dead heading
- * that is itself an entry (`## 5. ... — resolved`) and the numbers in a list of
- * them (`### Items 5, 7, 9, ... — deleted`). The heading is the only place a
- * document states this, so a parser that read only one form would file entries
- * the document has already retired.
+ * Explicit retirement lists are collected (`## Items 5, 7, 9 — deleted`, or a
+ * bare number list). A numbered heading with a descriptive title and a trailing
+ * status word is instead reported as ambiguous: it could be a live title or an
+ * individual retirement, and silently choosing either would lose information.
  */
 /**
  * The item numbers a dead heading retires.
@@ -316,7 +354,9 @@ function scan(text) {
  */
 function retiredNumbersIn(record) {
   if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) return [];
+  if (ambiguousRetirementNumber(record) !== null) return [];
   const withoutSeverities = record.text.replace(SEVERITY_TOKEN, ' ');
+  if (LETTER_SUFFIXED_NUMBER.test(withoutSeverities)) return [];
   const numbers = new Set();
   for (const match of withoutSeverities.matchAll(NUMBER_OR_RANGE)) {
     const from = Number(match[1]);
@@ -367,13 +407,27 @@ function cap(text, limit) {
   return (boundary > limit / 2 ? clipped.slice(0, boundary) : clipped).trimEnd();
 }
 
+function clipBody(text, base) {
+  let clipped = cap(text, BODY_LIMIT);
+  if (clipped === text) return text;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const dropped = text.length - clipped.length;
+    const marker = `[… clipped — ${dropped} of ${text.length} characters dropped. The rest is in ${base}; read it there.]`;
+    const next = cap(text, Math.max(0, BODY_LIMIT - marker.length - 2));
+    if (next === clipped) return `${clipped}\n\n${marker}`;
+    clipped = next;
+  }
+  const dropped = text.length - clipped.length;
+  return `${clipped}\n\n[… clipped — ${dropped} of ${text.length} characters dropped. The rest is in ${base}; read it there.]`;
+}
+
 /**
  * The body is the item's own text up to the next marker, and it stops at any
  * heading at the same or a higher level because that heading belongs to whatever
  * comes next — a deeper heading is the item's own sub-structure. The rules
  * between two entries are dropped as layout.
  */
-function bodyOf(lines, open, endLine, endColumn) {
+function bodyOf(lines, open, endLine, endColumn, base) {
   const kept = [];
 
   for (let line = open.startLine; line < endLine; line += 1) {
@@ -385,7 +439,7 @@ function bodyOf(lines, open, endLine, endColumn) {
 
   while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
 
-  return cap(kept.join('\n').trim(), BODY_LIMIT);
+  return clipBody(kept.join('\n').trim(), base);
 }
 
 /**
@@ -434,10 +488,10 @@ function slugOf(title, run) {
 /**
  * Builds the item and its `origin`.
  *
- * A repeated number in one document is a document defect, and the first
- * occurrence wins: two entries cannot share an `origin` without one of them
- * being unfileable on every later run. Two entries that slug identically get a
- * run suffix instead, because a slug is derived from prose and two entries can
+ * A repeated number in one document is a document defect. The first occurrence
+ * remains parseable, but the duplicate is reported and the planner refuses to
+ * file either ambiguous entry. Two entries that slug identically get a run
+ * suffix instead, because a slug is derived from prose and two entries can
  * legitimately open the same way.
  */
 function makeItem(base, number, rawTitle, body, seen, runs) {
@@ -467,6 +521,9 @@ function makeItem(base, number, rawTitle, body, seen, runs) {
  */
 function assemble(base, { lines, records }) {
   const items = [];
+  const duplicateNumbers = new Set();
+  const ambiguousRetirements = [];
+  const letterSuffixedHeadings = [];
   const seen = new Set();
   const runs = new Map();
   let ambient = 1;
@@ -475,7 +532,8 @@ function assemble(base, { lines, records }) {
 
   const close = (endLine, endColumn) => {
     if (!open) return;
-    const item = makeItem(base, open.number, open.title, bodyOf(lines, open, endLine, endColumn), seen, runs);
+    if (open.number !== null && seen.has(`${base}#${open.number}`)) duplicateNumbers.add(open.number);
+    const item = makeItem(base, open.number, open.title, bodyOf(lines, open, endLine, endColumn, base), seen, runs);
     if (item) items.push(item);
     open = null;
   };
@@ -483,6 +541,32 @@ function assemble(base, { lines, records }) {
   for (const record of records) {
     if (record.kind === 'heading') {
       ambient = record.level;
+
+      if (LETTER_SUFFIXED_NUMBERED.test(record.text)) {
+        close(record.line, 0);
+        inDeadSection = false;
+        letterSuffixedHeadings.push({ line: record.line + 1, level: record.level, text: record.text });
+        continue;
+      }
+
+      const ambiguousNumber = ambiguousRetirementNumber(record);
+      if (ambiguousNumber !== null) {
+        close(record.line, 0);
+        inDeadSection = false;
+        ambiguousRetirements.push({
+          origin: `${base}#${ambiguousNumber}`,
+          number: ambiguousNumber,
+          line: record.line + 1,
+          heading: record.text,
+        });
+        open = {
+          number: ambiguousNumber,
+          title: record.text,
+          level: record.level,
+          startLine: record.line + 1,
+        };
+        continue;
+      }
 
       if (DEAD_HEADING.test(record.text)) {
         close(record.line, 0);
@@ -540,7 +624,12 @@ function assemble(base, { lines, records }) {
   }
 
   close(lines.length, 0);
-  return items;
+  return {
+    items,
+    duplicateNumbers: [...duplicateNumbers].sort((a, b) => a - b),
+    ambiguousRetirements,
+    letterSuffixedHeadings,
+  };
 }
 
 function scopeOf(file) {
@@ -582,20 +671,25 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
   const path = String(file);
   const parsed = scan(text);
   const base = path.split('/').filter(Boolean).pop() || 'unknown.md';
+  const { items, duplicateNumbers, ambiguousRetirements, letterSuffixedHeadings } = assemble(base, parsed);
 
-  return { scope: scopeOf(path), items: assemble(base, parsed), dead: deadNumbersIn(parsed.records) };
+  return {
+    scope: scopeOf(path),
+    items,
+    dead: deadNumbersIn(parsed.records),
+    duplicateNumbers,
+    ambiguousRetirements,
+    letterSuffixedHeadings,
+  };
 }
 
 /**
  * The dedupe half of the import: what to file, and what to leave alone.
  *
- * Three things keep an item out of `create`. It is already on the board, under
- * the origin the document gave it. Its number is in the same document's dead
- * set, which is the document's own statement that the entry is finished — the
- * Markdown stays the record of what was retired, and filing a retired entry as
- * open work is how a board starts lying. Or the same origin was already planned
- * earlier in this batch, which happens when two documents are parsed from the
- * same file.
+ * Four things keep an item out of `create`: its origin is already known, its
+ * number is explicitly dead, its origin is duplicated, or its heading has an
+ * ambiguous retirement marker. The Markdown remains the durable record; the
+ * board indexes only entries the parser can classify safely.
  *
  * A dead item lands in neither bucket. `skip` means "already known", and a dead
  * origin is not known to the board; the numbers are reported separately on the
@@ -627,12 +721,18 @@ export function planImport(results, known) {
   const skip = [];
   const drift = [];
   const planned = new Set();
+  const ambiguousOrigins = new Set(
+    documents.flatMap((document) => (document?.ambiguousRetirements ?? []).map((entry) => entry.origin))
+  );
 
   for (const document of documents) {
     const dead = new Set((document?.dead ?? []).map(Number).filter(Number.isInteger));
+    const duplicates = new Set((document?.duplicateNumbers ?? []).map(Number).filter(Number.isInteger));
 
     for (const item of document?.items ?? []) {
+      if (ambiguousOrigins.has(item.origin)) continue;
       const number = /#(\d+)$/.exec(String(item.origin));
+      if (number && duplicates.has(Number(number[1]))) continue;
       if (number && dead.has(Number(number[1]))) continue;
       if (planned.has(item.origin)) {
         skip.push(item.origin);

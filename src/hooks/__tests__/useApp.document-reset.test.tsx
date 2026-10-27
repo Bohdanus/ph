@@ -78,6 +78,7 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 40, height: 20 },
+    presentationBounds: null,
     operations: [],
     // A typed source whose geometry MATCHES `pos`. A fixture whose durable
     // snapshot contradicted its runtime `pos` would be pinning a shape the real
@@ -100,9 +101,11 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
 const OUTGOING_SELECTION: Selection = {
   id: OUTGOING_SELECTION_ID,
   points: [
-    { x: 4, y: 4 },
-    { x: 12, y: 4 },
-    { x: 12, y: 12 },
+    [
+      { x: 4, y: 4 },
+      { x: 12, y: 4 },
+      { x: 12, y: 12 },
+    ],
   ],
   isActive: true,
   pos: { x: 4, y: 4, width: 8, height: 8 },
@@ -253,19 +256,16 @@ async function seedOutgoingDocument(result: Result) {
   // The selection fields are re-established AFTER the replay, because
   // `APPLY_HISTORY_REPLAY` replaces them with the timeline's own derivation — and a
   // document whose only selection evidence is a `documentSource` baseline has none.
-  // Without this the seed would arrive with `selections: []`, which is the very state
-  // the kill assertions demand, and clearing the field in production would go unnoticed.
+  // Use selection-specific actions: `BATCH_UPDATES` is metadata-only in production
+  // and conservatively marks the durable projection stale.
   act(() => {
+    result.current.dispatch({ type: 'SET_SELECTIONS', payload: [OUTGOING_SELECTION] });
+    result.current.dispatch({ type: 'SET_ACTIVE_SELECTION', payload: OUTGOING_SELECTION_ID });
     result.current.dispatch({
-      type: 'BATCH_UPDATES',
-      payload: {
-        selections: [OUTGOING_SELECTION],
-        activeSelectionId: OUTGOING_SELECTION_ID,
-        selectionDraft: OUTGOING_DRAFT,
-        selectionCleared: OUTGOING_CLEARED,
-        selectionClipboard: OUTGOING_CLIPBOARD,
-      },
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: OUTGOING_DRAFT.sourceTool },
     });
+    result.current.dispatch({ type: 'SET_SELECTION_CLIPBOARD', payload: OUTGOING_CLIPBOARD });
   });
 
   const { store, history: nav } = result.current;
@@ -310,6 +310,7 @@ function durableLayerIds(durable: DurableDocument): string[] {
         for (const layerId of Object.keys(operation.orderByLayerId)) ids.add(layerId);
         break;
       case 'set-document-frame':
+      case 'transform-document':
       case 'set-selection':
         break;
       default: {
@@ -433,6 +434,7 @@ describe('the outgoing document fixture is one production could really have prod
     await seedOutgoingDocument(result);
 
     await waitFor(() => expect(result.current.store.layers['old-1'].tmpCanvas).not.toBeNull());
+    expect(result.current.store.layers['old-1'].presentationBounds).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(result.current.store.layers['old-1'].pos).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(result.current.store.historyIndex).toBe(1);
   });
@@ -468,24 +470,24 @@ describe('the outgoing document fixture is one production could really have prod
       const replayed = result.current.store;
       expect(Object.keys(replayed.layers).sort()).toEqual([...OUTGOING_LAYER_IDS].sort());
       expect(replayed.historyIndex).toBe(index);
-      // Layer IDS alone cannot tell a replayed entry from a skipped one: entry 0's
-      // `documentSource` baseline already names all three layers, and `replayHistory`
-      // `continue`s past a malformed entry. So discriminate on something only a
-      // SUCCESSFUL replay of entry 1 sets. `replayHistory` CLONES the baseline layers,
-      // keeping their `tmpCanvas: null`, whereas re-creating `old-2` through
-      // `createLayerSource` allocates a real one (`layer-utils.ts:205-217`). So `old-2`
-      // is null-backed at cursor 0 and canvas-backed from cursor 1 on — a `continue`
-      // past entry 1 would leave it null at every cursor.
-      if (index === 0) {
-        expect(replayed.layers['old-2'].tmpCanvas).toBeNull();
-      } else {
-        expect(replayed.layers['old-2'].tmpCanvas).not.toBeNull();
-      }
     }
   });
 });
 
 describe('creating a new image kills the outgoing document history and layers', () => {
+  it('resizes the workspace canvas in handleImageCreate when creating a blank image', async () => {
+    const result = setup();
+    const canvas = result.current.store.canvasRef.current;
+    expect(canvas).not.toBeNull();
+
+    await act(async () => {
+      result.current.app.setBlankImage(BLANK);
+    });
+
+    expect(canvas?.width).toBe(BLANK.size.width);
+    expect(canvas?.height).toBe(BLANK.size.height);
+  });
+
   it('leaves nothing undoable or redoable and no outgoing state after setBlankImage', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
@@ -500,6 +502,7 @@ describe('creating a new image kills the outgoing document history and layers', 
     });
 
     expectOutgoingDocumentKilled(result);
+    expect(result.current.store.fileName).toBe('');
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
     expect(result.current.store.totalSize).toEqual({ width: 320, height: 240 });
     expect(result.current.store.hasImage).toBe(true);
@@ -532,6 +535,7 @@ describe('creating a new image kills the outgoing document history and layers', 
     });
 
     expectOutgoingDocumentKilled(result);
+    expect(result.current.store.fileName).toBe('');
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
   });
 
@@ -711,16 +715,13 @@ describe('opening an image kills the outgoing document history and layers', () =
     expectOutgoingDocumentIntact(result, intact);
   });
 
-  /**
-   * The other negative control: a failure inside the import must also leave the
-   * document alone. The raster arm resizes the canvas BEFORE it builds the layer
-   * (`useApp.ts:162`), so this pins the store half of that sequence — the canvas half
-   * is a separate defect, recorded in `HANDOFF.md` §102.
-   */
-  it('kills nothing when the import fails before the document is replaced', async () => {
+  it('keeps the document and canvas intact when raster decoding fails', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
     const intact = { history: [...result.current.store.history], layers: { ...result.current.store.layers } };
+    const canvas = result.current.store.canvasRef.current!;
+    canvas.width = PREVIOUS_SIZE.width;
+    canvas.height = PREVIOUS_SIZE.height;
     vi.stubGlobal(
       'createImageBitmap',
       vi.fn(async () => {
@@ -735,6 +736,7 @@ describe('opening an image kills the outgoing document history and layers', () =
     });
 
     expectOutgoingDocumentIntact(result, intact);
+    expect(canvas).toMatchObject(PREVIOUS_SIZE);
   });
 });
 

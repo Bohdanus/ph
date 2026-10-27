@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CropToolArea } from './CropToolArea.tsx';
 import { DrawToolArea } from './DrawToolArea.tsx';
 import { TextToolArea } from './TextToolArea.tsx';
+import { TextEditOverlay } from './TextEditOverlay.tsx';
 import { DummyToolArea } from './DummyToolArea.tsx';
 
 import './Main.scss';
@@ -15,8 +16,12 @@ import { QuickSelectionToolArea } from './QuickSelectionToolArea.tsx';
 import { SingleRowColumnMarqueeToolArea } from './SingleRowColumnMarqueeToolArea.tsx';
 import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
-import { HandToolArea } from './HandToolArea.tsx';
-import { RotateViewToolArea } from './RotateViewToolArea.tsx';
+import { RulerToolArea } from './RulerToolArea.tsx';
+import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
+import { RedEyeToolArea } from './RedEyeToolArea.tsx';
+import { SpotHealingToolArea } from './SpotHealingToolArea.tsx';
+import { HealingBrushToolArea } from './HealingBrushToolArea.tsx';
+import { PatchToolArea } from './PatchToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -26,6 +31,7 @@ import { BurnToolArea } from './BurnToolArea.tsx';
 import { SpongeToolArea } from './SpongeToolArea.tsx';
 import { GradientToolArea } from './GradientToolArea.tsx';
 import { FillToolArea } from './FillToolArea.tsx';
+import { ViewToolArea, type ViewToolMode } from './ViewToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -37,32 +43,35 @@ import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
-import { resetView, stepZoomAt, panBy } from '../../hooks/document-view.ts';
-import { isSpaceHeld, useSpaceHeld } from '../../hooks/useTemporaryHand.ts';
-import { useViewTransform } from '../../hooks/useViewTransform.ts';
+import { DEFAULT_VIEW_STATE, effectiveViewZoom } from '../../contexts/view-state.ts';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 
 /**
- * The mode a tool falls through to when nothing above claims it, and the one that mounts
- * `DummyToolArea`.
+ * The interaction modes whose tool owns a selection, which is every mode that can have a
+ * marching-ants border — the ants ARE the selection border in this editor, for all of them.
  *
- * NAMED, and previously spelled `'zoom'`. That string read like a feature and was not one: no
- * branch in the chain below ever assigned it, so it was the value every unrecognised tool
- * landed on — a hidden no-op area wearing the name of the one tool the rail used to have a tile
- * for. `HANDOFF.md` §151 named it as one of the two cheap sub-items of the view work.
+ * This replaces a narrower list that named only the polygon modes and left the rectangular
+ * selection out on the stated ground that `useRect` strokes a border of its own. That reason
+ * has two halves and only one of them was ever true. `useRect` still owns the four handles,
+ * and they are the resize hit area, so they stay; but Adobe documents the ants as the display
+ * of a selection and not as a per-tool option
+ * (`helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html`
+ * lists all nine marquee and lasso tools as making selections, and none of them as producing a
+ * different kind of border), and nothing in `useRect`'s own API makes its static stroke the
+ * selection border rather than a draft preview of it.
  *
- * Renaming it is the whole of the fix. It deliberately still routes to `DummyToolArea` rather
- * than to the Hand: the tools that reach it have no gesture surface by design — `custom-shape`
- * is a placeholder panel, `transform` is a one-shot operation the canvas route drives, the pen
- * family drives its own paths — and giving them a pan surface would be inventing behaviour
- * nobody asked for. `Main.toolAreas.test.tsx` pins that allow-list, and its comment is the
- * reason this stayed a no-op rather than becoming one.
+ * Exported so the tool-area test asserts the list itself rather than a copy of it that can
+ * drift.
  */
-const UNHANDLED_TOOL_MODE = 'unhandled-tool';
-
-// The tools that commit a polygon selection, and so the only modes with a border
-// to march. The rectangular selection tool is absent on purpose: `useRect` strokes
-// its own rect, with handles, and marching it as well would double the outline.
-const POLYGON_SELECTION_MODES: string[] = ['lasso', 'feather-magnetic-lasso', 'magic-wand'];
+export const SELECTION_INTERACTION_MODES: ReadonlySet<string> = new Set([
+  'lasso',
+  'feather-magnetic-lasso',
+  'magic-wand',
+  'quick-selection',
+  'elliptical-selection',
+  'single-row-column-marquee',
+  'rectangular-selection',
+]);
 
 const Main = () => {
   const [
@@ -76,7 +85,7 @@ const Main = () => {
       toolName,
       totalSize,
       documentFrame,
-      documentId,
+      viewState,
     },
   ] = useStore();
   const { theme } = useTheme();
@@ -86,108 +95,40 @@ const Main = () => {
   const { drawAllLayers } = useLayers();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [spacePressed, setSpacePressed] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || !hasImage || toolName === 'text') return;
+      event.preventDefault();
+      setSpacePressed(true);
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') setSpacePressed(false);
+    };
+    const handleBlur = () => setSpacePressed(false);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [hasImage, toolName]);
 
   const toolCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const selectionAntsOverlayRef = useRef<HTMLCanvasElement | null>(null);
-  /**
-   * The transformed element. Separate from `containerRef`, which the store owns and which the
-   * tool areas measure: the view transform belongs to `Main` because `Main` is what renders
-   * `.zoom-container`, and `useViewTransform` writes to the node imperatively rather than
-   * through a style prop so that a pan does not re-render this subtree sixty times a second.
-   */
-  const zoomContainerRef = useRef<HTMLDivElement | null>(null);
 
-  useViewTransform(zoomContainerRef);
-
-  /**
-   * The spring-loaded Hand, subscribed for its RENDER and not for its value.
-   *
-   * Called with no assignment on purpose. `Main` has to re-render when `Space` arms so that the
-   * routing below mounts `HandToolArea` and the canvas cursor changes with it; the boolean this
-   * returns would be the same answer the synchronous read gives, one commit later. Keeping the
-   * two apart is what lets the pointer path read `isSpaceHeld()` and be correct on the same tick
-   * as the keypress.
-   */
-  useSpaceHeld();
-
-  /**
-   * Drop the view when the document identity changes.
-   *
-   * On `documentId` rather than on `totalSize`, which is the distinction that matters: `Canvas
-   * Size` changes `totalSize` without changing the document, and a user who has zoomed in to
-   * retouch should keep that view across a canvas resize. `fitScale` belongs to the OLD
-   * document's dimensions, so carrying a zoom multiplier across an Open or New would open the
-   * next document at an arbitrary magnification of the last one's fit.
-   */
-  useEffect(() => {
-    resetView();
-  }, [documentId]);
-
-  /**
-   * Wheel: zoom at the pointer, pan otherwise.
-   *
-   * ATTACHED DIRECTLY RATHER THAN THROUGH `onWheel`, and that is the whole point of the
-   * `{ passive: false }` third argument. React registers `wheel` as passive on its root, so a
-   * React `onWheel` cannot `preventDefault()` — the call is a no-op and logs a warning, and the
-   * e2e suite's `consolePolice` fixture fails a test on an unaccepted console error. Without the
-   * `preventDefault` the browser zooms the PAGE on a `Ctrl`/`Cmd` wheel, which is the one
-   * behaviour here that is not ours to choose. The same shape as the `pointercancel` listener
-   * `usePointerPosition` installs.
-   *
-   * `overscroll-behavior: none` on `.zoom-container` is already suppressing scroll-chaining; it
-   * does not stop the browser's own zoom shortcut, which is why this handler exists.
-   */
-  useEffect(() => {
-    const node = containerRef.current;
-    if (!node) return;
-
-    const handleWheel = (event: WheelEvent) => {
-      if (!hasImage) return;
-
-      event.preventDefault();
-
-      // Anchor the zoom at the pointer so the pixel under the cursor stays under the cursor,
-      // which is what makes a wheel zoom read as moving a window rather than jumping.
-      const rect = node.getBoundingClientRect();
-
-      if (event.ctrlKey || event.metaKey) {
-        stepZoomAt({ x: event.clientX, y: event.clientY }, rect, event.deltaY < 0 ? 1 : -1);
-        return;
-      }
-
-      // A trackpad's two-finger scroll arrives as a wheel event with no modifier, and it is the
-      // gesture most people reach for. `shiftKey` is the browser's own horizontal-scroll
-      // convention and Adobe's too, so a Shift+wheel pans sideways and a plain one pans down.
-      panBy(event.shiftKey ? -event.deltaY : 0, event.shiftKey ? 0 : -event.deltaY);
-    };
-
-    node.addEventListener('wheel', handleWheel, { passive: false });
-
-    return () => {
-      node.removeEventListener('wheel', handleWheel);
-    };
-  }, [containerRef, hasImage]);
-
-  let interactionMode = UNHANDLED_TOOL_MODE;
-  if (toolName === 'rotate-view') {
-    // Checked BEFORE the Hand, not after, and the ordering is not a preference. Both tools share
-    // one rail tile, and the spring-loaded Spacebar below routes to the Hand when it is held — so
-    // a toolName check placed after the `isSpaceHeld()` arm could be pre-empted by a held Space
-    // bar, which would mean Space silently switches a selected Rotate View back to the Hand. The
-    // `toolName === 'hand'` arm keeps its own precedence for the same reason.
-    interactionMode = 'rotate-view';
+  let interactionMode = 'idle';
+  if (toolName === 'reposition') {
+    interactionMode = 'reposition';
   } else if (toolName === 'hand') {
     interactionMode = 'hand';
-  } else if (isSpaceHeld()) {
-    // SPRING-LOADED, and deliberately not `goToTool`. Adobe's page: "press and hold the
-    // spacebar key to temporarily switch to the Hand tool" — temporary means the selected tool
-    // is untouched and comes back on release, so the rail's pressed tile must not move.
-    //
-    // Checked AFTER `toolName === 'hand'` so that holding Space while the Hand is already
-    // selected is a no-op rather than a second source of truth competing with the first.
-    interactionMode = 'hand';
-  } else if (toolName === 'reposition') {
-    interactionMode = 'reposition';
+  } else if (toolName === 'zoom') {
+    interactionMode = 'zoom';
+  } else if (toolName === 'rotate-view') {
+    interactionMode = 'rotate-view';
   } else if (toolName === 'crop') {
     interactionMode = 'crop';
   } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil') {
@@ -234,6 +175,19 @@ const Main = () => {
     interactionMode = 'quick-selection';
   } else if (toolName === 'eyedropper') {
     interactionMode = 'eyedropper';
+  } else if (toolName === 'ruler') {
+    // Its own mode, not a mode shared with the Eyedropper: the two are one `I`-family tile but they
+    // do different things with a pointer — one samples a pixel, the other drags a nonprinting line
+    // across the overlay — and one mode mounts one area, so a shared mode would mount one of them.
+    interactionMode = 'ruler';
+  } else if (toolName === 'color-sampler') {
+    // Its own mode, and NOT a mode shared with the eyedropper above. The two are one `I`-family
+    // tile and they both read a pixel, but they do different things with the result — one writes it
+    // to the foreground swatch and commits nothing, the other leaves a numbered marker on the
+    // overlay that a later drag can pick up and move — and one mode mounts one area. The Eyedropper's
+    // Shift-click place-a-sampler path calls the same store rather than sharing this mode, which is
+    // why the two can agree about the hit test without one area mounting for both.
+    interactionMode = 'color-sampler';
   } else if (toolName === 'eraser') {
     // A brush, but NOT the `draw` mode: `DrawToolArea` creates a new layer from a
     // `{ ...args, points }` and draws the `DrawToolArgs` preview, where the eraser
@@ -250,6 +204,14 @@ const Main = () => {
     interactionMode = 'sponge';
   } else if (toolName === 'clone-stamp') {
     interactionMode = 'clone-stamp';
+  } else if (toolName === 'red-eye') {
+    interactionMode = 'red-eye';
+  } else if (toolName === 'spot-healing') {
+    interactionMode = 'spot-healing';
+  } else if (toolName === 'healing-brush') {
+    interactionMode = 'healing-brush';
+  } else if (toolName === 'patch') {
+    interactionMode = 'patch';
   } else if (toolName === 'sharpen') {
     interactionMode = 'sharpen';
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
@@ -261,6 +223,14 @@ const Main = () => {
     interactionMode = 'gradient';
   }
 
+  if (spacePressed && toolName !== 'text' && hasImage) interactionMode = 'hand';
+
+  // One read, because the canvas's `display` and the loop's `enabled` gate the same question and
+  // have to answer it identically: the canvas is the ants' only output, so a `display: none`
+  // beside a running loop would run 60 frames a second into a canvas nobody can see.
+  const selectionToolActive = SELECTION_INTERACTION_MODES.has(interactionMode);
+  const dpr = useDevicePixelRatio();
+
   useEffect(() => {
     drawAllLayers();
   }, [documentFrame, drawAllLayers, layers]);
@@ -268,24 +238,8 @@ const Main = () => {
   useLayoutEffect(() => {
     const { width, height } = totalSize;
     if (toolOverlayRef.current) {
-      resizeCanvas(toolOverlayRef.current, width, height);
+      resizeCanvas(toolOverlayRef.current, width, height, dpr);
 
-      // `getContext('2d')` returns null when the canvas has no 2D context, and the
-      // `!` here used to turn that into a TypeError on the next line. It threw inside
-      // this layout effect, so it escaped render and landed in the `Canvas`
-      // ErrorBoundary: the whole canvas region became the fallback, the layer stack
-      // and the tool rail stopped responding, and nothing retried.
-      //
-      // Nothing downstream needs it not to be null. `toolCtxRef` is declared
-      // `CanvasRenderingContext2D | null`, it is handed to the tool areas as
-      // `overlayCtxRef: RefObject<CanvasRenderingContext2D | null>`, and they all
-      // already handle the null case — `DrawToolArea.tsx:81` returns early and
-      // `DrawToolArea.tsx:146` optional-chains. So publishing the null is the
-      // contract; throwing on it was the bug.
-      //
-      // `e2e/error-boundary.spec.ts` reaches this line deliberately by making
-      // `getContext('2d')` return null, so the fallback's behaviour stays pinned
-      // while this line stops feeding it.
       const toolCtx = toolOverlayRef.current.getContext('2d');
       toolCtxRef.current = toolCtx;
       if (toolCtx) {
@@ -295,17 +249,16 @@ const Main = () => {
     }
 
     if (rectOverlayRef.current) {
-      resizeCanvas(rectOverlayRef.current, width, height);
-      // Same null-tolerance as the tool overlay above, and the same reason.
+      resizeCanvas(rectOverlayRef.current, width, height, dpr);
       const rectCtx = rectOverlayRef.current.getContext('2d');
       if (rectCtx) {
         rectCtx.imageSmoothingEnabled = false;
       }
     }
     if (selectionAntsOverlayRef.current) {
-      resizeCanvas(selectionAntsOverlayRef.current, width, height);
+      resizeCanvas(selectionAntsOverlayRef.current, width, height, dpr);
     }
-  }, [rectOverlayRef, toolOverlayRef, totalSize]);
+  }, [rectOverlayRef, toolOverlayRef, totalSize, dpr]);
 
   const handleDragOver = (event: React.DragEvent) => {
     if (event.dataTransfer.types.includes('Files')) {
@@ -338,6 +291,12 @@ const Main = () => {
   };
 
   const renderContent = () => {
+    const view = viewState ?? DEFAULT_VIEW_STATE;
+    const viewZoom = effectiveViewZoom(view);
+    const viewTransform =
+      view.panX === 0 && view.panY === 0 && viewZoom === 1 && view.rotation === 0
+        ? ''
+        : `translate(${view.panX}px, ${view.panY}px) scale(${viewZoom}) rotate(${view.rotation}deg)`;
     type ToolAreaComponent =
       | typeof DummyToolArea
       | typeof MoveToolArea
@@ -353,8 +312,8 @@ const Main = () => {
       | typeof SingleRowColumnMarqueeToolArea
       | typeof QuickSelectionToolArea
       | typeof EyedropperToolArea
-      | typeof HandToolArea
-      | typeof RotateViewToolArea
+      | typeof RulerToolArea
+      | typeof ColorSamplerToolArea
       | typeof EraserToolArea
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
@@ -364,7 +323,11 @@ const Main = () => {
       | typeof SharpenToolArea
       | typeof GradientToolArea
       | typeof FillToolArea
-      | typeof ColorReplacementToolArea;
+      | typeof ColorReplacementToolArea
+      | typeof RedEyeToolArea
+      | typeof SpotHealingToolArea
+      | typeof HealingBrushToolArea
+      | typeof PatchToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -382,14 +345,18 @@ const Main = () => {
       else if (interactionMode === 'quick-selection') EventHandler = QuickSelectionToolArea;
       else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
-      else if (interactionMode === 'hand') EventHandler = HandToolArea;
-      else if (interactionMode === 'rotate-view') EventHandler = RotateViewToolArea;
+      else if (interactionMode === 'ruler') EventHandler = RulerToolArea;
+      else if (interactionMode === 'color-sampler') EventHandler = ColorSamplerToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
       else if (interactionMode === 'burn') EventHandler = BurnToolArea;
       else if (interactionMode === 'sponge') EventHandler = SpongeToolArea;
       else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
+      else if (interactionMode === 'red-eye') EventHandler = RedEyeToolArea;
+      else if (interactionMode === 'spot-healing') EventHandler = SpotHealingToolArea;
+      else if (interactionMode === 'healing-brush') EventHandler = HealingBrushToolArea;
+      else if (interactionMode === 'patch') EventHandler = PatchToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
       else if (interactionMode === 'gradient') EventHandler = GradientToolArea;
@@ -401,7 +368,7 @@ const Main = () => {
         className={`absolute left-0 top-0 flex h-full w-full items-center justify-center ${theme === 'dark' ? 'chessboard-dark' : 'chessboard-light'}`}
         style={{ display: hasImage ? undefined : 'none' }}
       >
-        <div className="zoom-container h-full w-full" ref={zoomContainerRef}>
+        <div className="zoom-container relative h-full w-full" style={{ transform: viewTransform }}>
           <canvas
             ref={canvasRef}
             data-testid="workspace-canvas"
@@ -413,13 +380,14 @@ const Main = () => {
           data-testid="tool-overlay-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
+            transform: viewTransform,
             // One entry per mode whose mounted area paints into `overlayCtxRef` — the
             // list is a LOOKUP KEY, not a summary of "tools with an area", so a mode that
             // paints and is missing here renders a blank preview with no error, and a
             // mode listed here that paints nothing just shows an already-clear canvas.
             // Painted: clone-stamp (the Alt source marker, CloneStampToolArea.tsx:249),
-            // and the two selection tools (EllipticalSelectionToolArea.tsx:107,
-            // QuickSelectionToolArea.tsx:99). NOT painted, and so deliberately absent:
+            // and the two selection tools (EllipticalSelectionToolArea.tsx:113,
+            // QuickSelectionToolArea.tsx:120). NOT painted, and so deliberately absent:
             // eraser, smudge, dodge, burn, sharpen, paint-bucket, gradient and the
             // eyedropper — every one of them previews through `tempUpdateLayer`, which
             // republishes the layer and redraws the document canvas, and the eyedropper
@@ -444,6 +412,17 @@ const Main = () => {
               'single-row-column-marquee',
               'quick-selection',
               'clone-stamp',
+              // The Ruler paints its measuring line here and nowhere else: it commits no pixels, so
+              // there is no layer to preview through `tempUpdateLayer`, and the line is chrome that
+              // must survive on top of the document rather than be composited into it.
+              'ruler',
+              // The Color Sampler paints its markers here for the Ruler's reason: a sampler is
+              // chrome over the document and never part of it, so there is no layer to preview
+              // through `tempUpdateLayer` and the markers must sit on top of the canvas instead.
+              'color-sampler',
+              'spot-healing',
+              'healing-brush',
+              'patch',
             ].includes(interactionMode)
               ? 'block'
               : 'none',
@@ -454,6 +433,7 @@ const Main = () => {
           data-testid="rect-overlay-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
+            transform: viewTransform,
             display: ['reposition'].includes(interactionMode) ? 'block' : 'none',
           }}
         />
@@ -467,14 +447,37 @@ const Main = () => {
           data-testid="selection-ants-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
-            display: POLYGON_SELECTION_MODES.includes(interactionMode) ? 'block' : 'none',
+            transform: viewTransform,
+            display: selectionToolActive ? 'block' : 'none',
           }}
         />
-        <SelectionMarchingAnts
-          overlayRef={selectionAntsOverlayRef}
-          enabled={POLYGON_SELECTION_MODES.includes(interactionMode)}
-        />
-        <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
+        <SelectionMarchingAnts overlayRef={selectionAntsOverlayRef} enabled={selectionToolActive} />
+        {(['hand', 'zoom', 'rotate-view'] as string[]).includes(interactionMode) ? (
+          <ViewToolArea className="absolute inset-0 h-full w-full" mode={interactionMode as ViewToolMode} />
+        ) : (
+          <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
+        )}
+        {/*
+         * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so
+         * the last child paints on top. Its full-size coordinate plane mirrors the canvas's view
+         * transform; only the contenteditable child receives pointers, so clicks outside the type
+         * box still reach `EventHandler`.
+         *
+         * Gated on the text mode for the same reason `EventHandler` gates the tool areas: the
+         * editor reads `useCurrentTool`, and a hook that throws outside its provider takes the whole
+         * canvas region down with it through the `Canvas` ErrorBoundary. Measuring the workspace
+         * fit for every one of the twenty-odd tools would also be work no tool but this one needs.
+         * See `TextEditOverlay.tsx`.
+         */}
+        {interactionMode === 'text' && (
+          <div
+            data-testid="text-edit-view-transform"
+            className="pointer-events-none absolute inset-0"
+            style={{ transform: viewTransform, transformOrigin: 'center center' }}
+          >
+            <TextEditOverlay />
+          </div>
+        )}
       </div>
     );
   };
@@ -487,6 +490,11 @@ const Main = () => {
       // lets the e2e suite name that element instead of selecting a bare `main` tag and
       // trusting that it is the one the fit was computed from.
       data-testid="workspace-container"
+      data-view-pan-x={String((viewState ?? DEFAULT_VIEW_STATE).panX)}
+      data-view-pan-y={String((viewState ?? DEFAULT_VIEW_STATE).panY)}
+      data-view-zoom={String((viewState ?? DEFAULT_VIEW_STATE).zoom)}
+      data-view-effective-zoom={String(effectiveViewZoom(viewState ?? DEFAULT_VIEW_STATE))}
+      data-view-rotation={String((viewState ?? DEFAULT_VIEW_STATE).rotation)}
       className={`relative overflow-y-auto [grid-area:main] mobile-safe-bottom ${
         isDragging
           ? 'bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-blue-500'

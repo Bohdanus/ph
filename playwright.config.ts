@@ -51,6 +51,38 @@ export default defineConfig({
   // discriminate — `!!process.env.CI` is already `true` under CI.
   forbidOnly: true,
   retries: process.env.CI ? 2 : 0,
+  // A FLAKY test is one that failed an attempt and passed a later one, and
+  // Playwright REPORTS that as a pass: `ok()` accepts `"expected"`, `"flaky"` and
+  // `"skipped"` alike. `failOnFlakyTests` below turns a pass after retry into a
+  // failed run; the policy is documented in `docs/TESTING.md#ci`.
+  //
+  // Playwright's own default is `false`, and the key gates ONLY the flaky term of a
+  // five-term disjunction, so its absence is not a permissive default that happens
+  // to be inherited: it is the reason the other four terms are the only ones that
+  // can turn a run red.
+  //
+  // UNCONDITIONAL, and deliberately not `!!process.env.CI`, for the opposite reason
+  // to the one above `forbidOnly`. `retries` is 0 locally, so a local test cannot be
+  // flaky in the sense this key measures — `computeTestCaseOutcome` answers `"flaky"`
+  // only when a test has at least one expected AND one unexpected RESULT, which
+  // requires a second attempt to exist — so the key is TRUE LOCALLY AND CANNOT FIRE.
+  // Stating it costs a developer nothing, and it stops a value this file does not
+  // declare from being what decides the question.
+  failOnFlakyTests: true,
+  // The WHOLE-RUN clock, and deliberately BELOW the `e2e` matrix legs'
+  // `timeout-minutes` (35 on Linux, 40 on Windows/macOS) in .github/workflows/ci.yml.
+  // Playwright's default is `0`, which is unbounded, so today a hung suite is stopped
+  // by GitHub killing the job — and a job killed for exceeding `timeout-minutes` runs
+  // NONE of its remaining steps: no HTML report, no `test-results/results.json`, no
+  // trace, no diff image. The timeout and the evidence it was meant to preserve cancel
+  // out, and that is the whole reason this number is not 1800 or more.
+  //
+  // The macOS two-way shard reached the 20-minute limit after 280 tests, leaving
+  // 11 assigned tests unrun. Give macOS 30 minutes while preserving 10 minutes
+  // before its 40-minute job timeout for report upload. Linux and Windows keep
+  // 20 minutes because this run had no timeout there (jobs 35/40 minutes).
+  // Local diagnostics retain the longer limit, and --debug disables it.
+  globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
   // machine is not running two browsers per core. The port argument that used to sit
@@ -121,35 +153,17 @@ export default defineConfig({
     // constructed. kilo.jsonc denies that flag on its own pattern instead.
     headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1',
 
-    /* The pixel helpers in e2e/helpers/canvas-helpers.ts classify a pixel with FIXED
-     * thresholds that are only correct against the app's LIGHT theme, and nothing
-     * declared that. DARK_THRESHOLD is 50 and NEAR_WHITE_THRESHOLD is 250
-     * (the `DARK_THRESHOLD` / `NEAR_WHITE_THRESHOLD` constants), and the workspace backdrop the
-     * canvas sits on is a
-     * 20px checkerboard chosen from the resolved theme: `#f3f3f3` over `#fff` for
-     * light, `#121212` over `#000` for dark (the `.chessboard-light` / `.chessboard-dark`
-     * rules in `src/index.scss`, switched by `Main.tsx`). So under dark the backdrop is
-     * itself below
-     * the dark threshold, and under light the letterbox is above the near-white one.
-     * The thresholds are not "roughly right"; they are calibrated to one palette.
-     *
-     * Playwright's own default is 'light', so every already-green test is correct today
-     * and is correct by an inherited value that this file never stated.
-     * `e2e/document-dialogs.spec.ts` no longer pins the theme itself; its own comment
-     * records that as a deletion rather than a demotion, which is what makes this line
-     * the only pin.
-     *
-     * What breaks without it, in the canvas helpers: every `hasDarkPixels` wait can be
-     * satisfied by the dark letterbox alone, and every `getStrokeAnalysis` reads a
-     * backdrop it believes is the page's background. A stroke that never landed passes
-     * its wait and fails later, or passes for the wrong reason.
-     *
-     * This DECLARES a precondition every green test already relies on; it constrains
-     * nothing new. It is deliberately not a variable: an escape hatch on a pixel
-     * threshold is a way to turn the suite's colour measurements off, which is the same
-     * move as raising a threshold, and it would not be greppable as one. A spec that
-     * genuinely needs the dark palette should pin `colorScheme: 'dark'` on itself and
-     * measure the direction it depends on, exactly as document-dialogs.spec.ts did. */
+    /* This sets the browser's `prefers-color-scheme` media query. It does not select
+     * the app's workspace theme: ThemeContext no longer reads that query. The shared
+     * `e2e/fixtures/extended-test.ts` fixture seeds `localStorage.theme` to `light` in
+     * a fresh context, and its unit tests pin that behavior. Pixel helpers depend on
+     * that app-level fixture because the workspace checkerboard is `#f3f3f3` over
+     * `#fff` in light and `#121212` over `#000` in dark. Keep the browser preference
+     * stable for browser-native rendering, but do not treat this option as the app-theme
+     * guard. A test that needs the dark app theme must use the app's theme controls or
+     * the fixture's release mechanism, then keep backdrop pixels out of color-only
+     * assertions until those helpers receive enough geometry to distinguish backdrop
+     * from ink. */
     colorScheme: 'light',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */

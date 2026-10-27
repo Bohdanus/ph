@@ -16,8 +16,7 @@ import type { EraserToolArgs } from '../tools/eraser.ts';
 import type { FillToolArgs } from '../tools/fill.ts';
 import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
 import type { EyedropperToolArgs } from '../tools/eyedropper.ts';
-import type { HandToolArgs } from '../tools/hand.ts';
-import type { RotateViewToolArgs } from '../tools/rotate-view.ts';
+import type { ColorSamplerToolArgs } from '../tools/colorSampler.ts';
 import type { EllipticalSelectionToolArgs } from '../tools/ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from '../tools/quickSelection.ts';
 import type { GradientToolArgs } from '../tools/gradient.ts';
@@ -26,6 +25,10 @@ import type { SmudgeToolArgs } from '../tools/smudge.ts';
 import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
 import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { CloneStampToolArgs } from '../tools/cloneStamp.ts';
+import type { RedEyeToolArgs } from '../tools/redEye.ts';
+import type { SpotHealingToolArgs } from '../tools/spotHealing.ts';
+import type { HealingBrushToolArgs } from '../tools/healingBrush.ts';
+import type { PatchToolArgs } from '../tools/patch.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -60,6 +63,10 @@ export type ToolArgsByName = {
    */
   sponge: SpongeToolArgs;
   'clone-stamp': CloneStampToolArgs;
+  'red-eye': RedEyeToolArgs;
+  'spot-healing': SpotHealingToolArgs;
+  'healing-brush': HealingBrushToolArgs;
+  patch: PatchToolArgs;
   brush: PaintToolArgs;
   pencil: PaintToolArgs;
   'color-replacement': ColorReplacementToolArgs;
@@ -67,8 +74,24 @@ export type ToolArgsByName = {
   'magic-eraser': FillToolArgs;
   'paint-bucket': FillToolArgs;
   eyedropper: EyedropperToolArgs;
-  hand: HandToolArgs;
-  'rotate-view': RotateViewToolArgs;
+  /**
+   * The Color Sampler shares the Eyedropper's Sample Size and has no other setting.
+   *
+   * The samplers themselves are NOT args: they are placed by gesture and read by the options bar, so
+   * an arg here would be a setting the user chose, and the only one this tool has is the footprint
+   * the Eyedropper already owns. See `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has
+   * no processor at all.
+   */
+  'color-sampler': ColorSamplerToolArgs;
+  /**
+   * The Ruler carries no args beyond its own name. Every number it reports is a property of the
+   * gesture the user just made, not a setting they chose, so there is nothing here to persist —
+   * see `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has no processor at all.
+   */
+  ruler: { toolName: 'ruler' };
+  hand: { toolName: 'hand' };
+  zoom: { toolName: 'zoom' };
+  'rotate-view': { toolName: 'rotate-view' };
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };
@@ -93,6 +116,8 @@ export type ToolArgsByName = {
 };
 
 export type ToolName = keyof ToolArgsByName;
+
+export type VectorToolName = Extract<ToolName, 'shape' | 'rectangle' | 'ellipse' | 'triangle' | 'polygon' | 'line'>;
 
 export type ToolArgsFor<TName extends ToolName> = ToolArgsByName[TName];
 

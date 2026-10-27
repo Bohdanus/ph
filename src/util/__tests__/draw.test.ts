@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   pointsBoundingPos,
+  pointsBoundingPosOutward,
   bezierSmoothedLine,
   drawSmoothLine,
   catmullRomToBezier,
@@ -47,6 +48,135 @@ describe('pointsBoundingPos', () => {
   it('pads a single point by the stroke diameter rather than reporting no extent', () => {
     const result = pointsBoundingPos({ points: [{ x: 50, y: 50 }], lineWidth: 2 });
     expect(result).toEqual({ x: 48, y: 48, width: 4, height: 4 });
+  });
+
+  it('rounds fractional stroke bounds outward to integer raster dimensions', () => {
+    const result = pointsBoundingPosOutward({
+      points: [
+        { x: 10.25, y: 20.75 },
+        { x: 50.5, y: 40.125 },
+      ],
+      lineWidth: 1.5,
+    });
+
+    expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
+  });
+
+  it('rounds outward for every fractional drag, never inward', () => {
+    for (const lineWidth of [0.5, 1, 2, 3, 3.5, 7]) {
+      for (const points of [
+        [
+          { x: 10.4, y: 20.6 },
+          { x: 50.2, y: 80.9 },
+        ],
+        [
+          { x: -3.7, y: -1.2 },
+          { x: 99.9, y: 12.05 },
+        ],
+        [
+          { x: 0.5, y: 0.5 },
+          { x: 0.5, y: 0.5 },
+        ],
+      ]) {
+        const bounds = pointsBoundingPosOutward({ points, lineWidth });
+        const label = `lw=${lineWidth} ${points[0].x},${points[0].y} -> ${points[1].x},${points[1].y}`;
+
+        expect(bounds.x, label).toBeLessThanOrEqual(Math.min(points[0].x, points[1].x) - lineWidth);
+        expect(bounds.y, label).toBeLessThanOrEqual(Math.min(points[0].y, points[1].y) - lineWidth);
+        expect(bounds.x + bounds.width, label).toBeGreaterThanOrEqual(Math.max(points[0].x, points[1].x) + lineWidth);
+        expect(bounds.y + bounds.height, label).toBeGreaterThanOrEqual(Math.max(points[0].y, points[1].y) + lineWidth);
+        expect(Number.isInteger(bounds.x), label).toBe(true);
+        expect(Number.isInteger(bounds.y), label).toBe(true);
+        expect(Number.isInteger(bounds.width), label).toBe(true);
+        expect(Number.isInteger(bounds.height), label).toBe(true);
+      }
+    }
+  });
+
+  it('is the identity on integer geometry with an integral lineWidth', () => {
+    const bounds = pointsBoundingPosOutward({
+      points: [
+        { x: 10, y: 20 },
+        { x: 50, y: 60 },
+      ],
+      lineWidth: 2,
+    });
+
+    expect(bounds).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+  });
+
+  it('rounds fractional bounds outward to integer raster dimensions', () => {
+    // §163: pointer coordinates divided by the contain fit are fractional, and the
+    // Draw tool must use its outward-rounded bounds before allocating the layer bitmap,
+    // because `new OffscreenCanvas(width, height)` truncates fractional dimensions —
+    // the declared box disagrees with its own raster by up to a pixel, and the composite
+    // path draws back at the untruncated size with bilinear smoothing on.
+    //
+    // The fix mirrors shapeGeometryBounds: floor the origin, ceil the far edge.
+    const result = pointsBoundingPosOutward({
+      points: [
+        { x: 10.25, y: 20.75 },
+        { x: 50.5, y: 40.125 },
+      ],
+      lineWidth: 1.5,
+    });
+
+    // minX - lw = 8.75 → floor → 8; minY - lw = 19.25 → floor → 19
+    // maxX + lw = 52 → ceil → 52; maxY + lw = 41.625 → ceil → 42
+    // width = 52 - 8 = 44; height = 42 - 19 = 23
+    expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
+    expect(Number.isInteger(result.x)).toBe(true);
+    expect(Number.isInteger(result.y)).toBe(true);
+    expect(Number.isInteger(result.width)).toBe(true);
+    expect(Number.isInteger(result.height)).toBe(true);
+  });
+
+  it('rounds outward on every axis for a fractional drag, never inward', () => {
+    // Mirrors the shapeGeometryBounds sweep: the guarantee that matters is the direction
+    // of the rounding. Inward rounding would clip a stroke the geometry genuinely covers,
+    // and that only shows up on the axis whose fraction happens to round the wrong way.
+    const lineWidths = [1, 2, 3, 3.5, 7, 7.5];
+    const pointSets = [
+      [
+        { x: 0.3, y: 0.7 },
+        { x: 10.4, y: 5.2 },
+      ],
+      [
+        { x: -3.7, y: -1.2 },
+        { x: 50.2, y: 80.9 },
+      ],
+      [
+        { x: 0.5, y: 0.5 },
+        { x: 99.9, y: 12.05 },
+      ],
+      [{ x: 12.3, y: 7.8 }],
+    ];
+
+    for (const lineWidth of lineWidths) {
+      for (const points of pointSets) {
+        const result = pointsBoundingPosOutward({ points, lineWidth });
+        const xs = points.map((p) => p.x);
+        const ys = points.map((p) => p.y);
+        const minX = Math.min(...xs);
+        const minY = Math.min(...ys);
+        const maxX = Math.max(...xs);
+        const maxY = Math.max(...ys);
+
+        // Outward rounding: the box must contain the padded geometry.
+        expect(result.x, String(result)).toBeLessThanOrEqual(minX - lineWidth);
+        expect(result.y, String(result)).toBeLessThanOrEqual(minY - lineWidth);
+        expect(result.x + result.width, String(result)).toBeGreaterThanOrEqual(maxX + lineWidth);
+        expect(result.y + result.height, String(result)).toBeGreaterThanOrEqual(maxY + lineWidth);
+        // And every field is an integer, so the OffscreenCanvas constructor agrees.
+        expect(Number.isInteger(result.x), String(result)).toBe(true);
+        expect(Number.isInteger(result.y), String(result)).toBe(true);
+        expect(Number.isInteger(result.width), String(result)).toBe(true);
+        expect(Number.isInteger(result.height), String(result)).toBe(true);
+        // A valid canvas size: ceil is identity, so the buffer is no larger than declared.
+        expect(Math.ceil(result.width), String(result)).toBe(result.width);
+        expect(Math.ceil(result.height), String(result)).toBe(result.height);
+      }
+    }
   });
 });
 
@@ -213,6 +343,50 @@ describe('drawSpray', () => {
     expect(ctx.arc).toHaveBeenCalledTimes(2);
     expect(ctx.fill).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps the initial tap unchanged and scales later deposits by Flow and elapsed time', () => {
+    const ctx = makeMockCtx();
+    const gradients: CanvasGradient[] = [];
+    vi.spyOn(ctx, 'createRadialGradient').mockImplementation(() => {
+      const gradient: CanvasGradient = { addColorStop: vi.fn() };
+      gradients.push(gradient);
+      return gradient;
+    });
+    const args = {
+      points: [
+        { x: 5, y: 5 },
+        { x: 5, y: 5 },
+      ],
+      pointTimes: [0, 8.3],
+      alpha: 0.8,
+      flow: 50,
+      color: '#ff0000',
+      lineWidth: 10,
+      toolName: 'draw' as const,
+      penType: 'spray' as const,
+    };
+
+    drawSpray({ args, ctx });
+
+    const rgb = hexToRgb('#ff0000');
+    expect(gradients[0].addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32)`);
+    expect(gradients[1].addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.16)`);
+
+    const slower = makeMockCtx();
+    const slowerGradient: CanvasGradient = { addColorStop: vi.fn() };
+    vi.spyOn(slower, 'createRadialGradient').mockReturnValue(slowerGradient);
+    drawSpray({
+      args: { ...args, flow: 25, pointTimes: [0, 16.6] },
+      ctx: slower,
+    });
+    expect(slowerGradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.1536)`);
+
+    const tap = makeMockCtx();
+    const tapGradient: CanvasGradient = { addColorStop: vi.fn() };
+    vi.spyOn(tap, 'createRadialGradient').mockReturnValue(tapGradient);
+    drawSpray({ args: { ...args, points: [args.points[0]], pointTimes: [0], flow: 1 }, ctx: tap });
+    expect(tapGradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32)`);
+  });
 });
 
 describe('drawLine', () => {
@@ -269,5 +443,211 @@ describe('drawLine', () => {
     const strokeSpy = vi.spyOn(ctx, 'stroke');
     drawLine({ args, ctx });
     expect(strokeSpy).toHaveBeenCalled();
+  });
+});
+
+describe('pointsBoundingPos edge cases', () => {
+  // `getPointExtents` reads `points[0]` unconditionally, so a bounds helper handed an empty
+  // sample throws before the renderer's `points.length === 0` guard can save it. The renderer
+  // guards, the geometry helper does not — which is the fragility these cases pin down.
+
+  it('propagates NaN coordinates through the box as NaN (known behaviour)', () => {
+    const result = pointsBoundingPos({
+      points: [
+        { x: Number.NaN, y: Number.NaN },
+        { x: 4, y: 4 },
+      ],
+    });
+
+    expect(Number.isNaN(result.x)).toBe(true);
+    expect(Number.isNaN(result.y)).toBe(true);
+    expect(Number.isNaN(result.width)).toBe(true);
+    expect(Number.isNaN(result.height)).toBe(true);
+  });
+
+  it('propagates +Infinity coordinates into an unbounded width (known behaviour)', () => {
+    const result = pointsBoundingPos({
+      points: [
+        { x: Number.POSITIVE_INFINITY, y: 0 },
+        { x: 4, y: 4 },
+      ],
+    });
+
+    expect(result.width).toBe(Infinity);
+    expect(result.height).toBe(6);
+  });
+
+  it.fails('does not throw on empty points and returns a zero-sized box (draw.ts:7)', () => {
+    expect(() => pointsBoundingPos({ points: [] })).not.toThrow();
+  });
+
+  it.fails('clamps a non-finite lineWidth rather than letting it poison the box (draw.ts:25)', () => {
+    for (const lineWidth of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const result = pointsBoundingPos({
+        points: [
+          { x: 0, y: 0 },
+          { x: 4, y: 4 },
+        ],
+        lineWidth,
+      });
+
+      expect(Number.isFinite(result.width), `lw=${lineWidth}`).toBe(true);
+    }
+  });
+});
+
+describe('pointsBoundingPosOutward edge cases', () => {
+  it.fails('does not throw on empty points and returns a zero-sized box (draw.ts:37)', () => {
+    expect(() => pointsBoundingPosOutward({ points: [] })).not.toThrow();
+  });
+
+  it.fails('clamps a non-finite lineWidth rather than emitting NaN or infinite raster dimensions (draw.ts:37)', () => {
+    for (const lineWidth of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const result = pointsBoundingPosOutward({
+        points: [
+          { x: 0, y: 0 },
+          { x: 4, y: 4 },
+        ],
+        lineWidth,
+      });
+
+      expect(Number.isFinite(result.width), `lw=${lineWidth}`).toBe(true);
+      expect(Number.isInteger(result.width), `lw=${lineWidth}`).toBe(true);
+    }
+  });
+
+  it.fails('sanitizes non-finite coordinates instead of emitting a NaN box (draw.ts:37)', () => {
+    const result = pointsBoundingPosOutward({
+      points: [
+        { x: Number.NaN, y: Number.NaN },
+        { x: 4, y: 4 },
+      ],
+    });
+
+    expect(Number.isFinite(result.width)).toBe(true);
+  });
+});
+
+describe('degenerate stroke rendering', () => {
+  // A click with the Draw tool is the only committed single-point gesture (pointerdown pushes
+  // exactly one point, `DrawToolArea.tsx:129`), so the single-point branch of every renderer must
+  // be exercised, not only the empty short-circuit.
+
+  it('drawPen is a no-op on an empty point set', () => {
+    const ctx = makeMockCtx();
+    drawPen({
+      args: {
+        points: [],
+        alpha: 1,
+        color: '#000000',
+        penType: 'pen',
+        lineWidth: 5,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('drawSpray is a no-op on an empty point set', () => {
+    const ctx = makeMockCtx();
+    drawSpray({
+      args: {
+        points: [],
+        alpha: 0.8,
+        color: '#ff0000',
+        penType: 'spray',
+        lineWidth: 10,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    expect(ctx.createRadialGradient).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+    expect(ctx.fill).not.toHaveBeenCalled();
+  });
+
+  it('bezierSmoothedLine draws one lineTo and no curve for a single point', () => {
+    const ctx = makeMockCtx();
+    bezierSmoothedLine(ctx, [{ x: 5, y: 10 }]);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(1);
+    expect(ctx.lineTo).toHaveBeenCalledWith(5, 10);
+    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+  });
+
+  it('catmullRomToBezier issues no curve for a single point', () => {
+    const ctx = makeMockCtx();
+    catmullRomToBezier(ctx, [{ x: 5, y: 10 }]);
+    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+  });
+
+  it('passes NaN coordinates straight through to the path command (known behaviour)', () => {
+    const ctx = makeMockCtx();
+    drawSmoothLine(ctx, [{ x: Number.NaN, y: Number.NaN }]);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(1);
+    expect(ctx.lineTo).toHaveBeenCalledWith(Number.NaN, Number.NaN);
+  });
+});
+
+describe('non-finite lineWidth in renderers', () => {
+  it('passes a NaN lineWidth straight through to the block stamp size (known behaviour)', () => {
+    const ctx = makeMockCtx();
+    drawPen({
+      args: {
+        points: [{ x: 0, y: 0 }],
+        alpha: 1,
+        color: '#000000',
+        penType: 'pen',
+        lineWidth: Number.NaN,
+        toolName: 'draw',
+        blockStamp: true,
+      },
+      ctx,
+    });
+
+    const stampWidth = vi.mocked(ctx.fillRect).mock.calls[0][2];
+    expect(Number.isNaN(stampWidth)).toBe(true);
+  });
+
+  it.fails('clamps a non-finite lineWidth for block stamps instead of stamping a NaN-sized tile (draw.ts:138)', () => {
+    const ctx = makeMockCtx();
+    drawPen({
+      args: {
+        points: [{ x: 0, y: 0 }],
+        alpha: 1,
+        color: '#000000',
+        penType: 'pen',
+        lineWidth: Number.NaN,
+        toolName: 'draw',
+        blockStamp: true,
+      },
+      ctx,
+    });
+
+    const stampWidth = vi.mocked(ctx.fillRect).mock.calls[0][2];
+    expect(Number.isFinite(stampWidth)).toBe(true);
+  });
+
+  it.fails('clamps a non-finite lineWidth to a finite spray radius (draw.ts:221)', () => {
+    const ctx = makeMockCtx();
+    drawSpray({
+      args: {
+        points: [{ x: 5, y: 5 }],
+        alpha: 0.8,
+        color: '#ff0000',
+        penType: 'spray',
+        lineWidth: Number.NaN,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    const radius = vi.mocked(ctx.arc).mock.calls[0][2];
+    expect(Number.isFinite(radius)).toBe(true);
   });
 });

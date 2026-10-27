@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -14,10 +14,13 @@ import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
 import { AppKeyboardShortcuts } from './components/Common/AppKeyboardShortcuts.tsx';
 import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
+import { FirstUseProvider } from './contexts/FirstUseContext.tsx';
+import { FirstUseTour, hasSeenFirstUseTour } from './components/Common/FirstUseTour.tsx';
 import { useApp } from './hooks/useApp.ts';
 import { useIsMobileViewport } from './hooks/useMediaQuery.ts';
-import { RightPanelVisibilityProvider } from './contexts/RightPanelVisibility.tsx';
-import { PanelLayoutProvider } from './contexts/PanelLayout.tsx';
+import { RightPanelVisibilityProvider, useRightPanelVisibility } from './contexts/RightPanelVisibility.tsx';
+import { PanelLayoutProvider, usePanelLayout } from './contexts/PanelLayout.tsx';
+import { edgePlacement } from './util/edge-placement.ts';
 
 const DEFAULT_BLANK_IMAGE = {
   color: '#ffffff',
@@ -44,6 +47,22 @@ function BlankImageStarter() {
 function AppContainer() {
   const [isLayersDrawerOpen, setIsLayersDrawerOpen] = useState(false);
   const [isToolSheetOpen, setIsToolSheetOpen] = useState(false);
+  const [{ hasImage, toolName }] = useStore();
+  const layout = usePanelLayout();
+  const isMobile = useIsMobileViewport();
+
+  // Defer the first-use tour until the blank document is ready: SidebarLeft is
+  // intentionally absent before then, and the tour's steps point at its tiles.
+  // Keep eligibility separate from viewport visibility so crossing into the
+  // mobile band hides, but does not permanently dismiss, the desktop/tablet tour.
+  const [shouldOfferFirstUseTour, setShouldOfferFirstUseTour] = useState(() => !hasImage && !hasSeenFirstUseTour());
+  const isFirstUseTourVisible = shouldOfferFirstUseTour && hasImage && !isMobile;
+  const completeFirstUseTour = useCallback(() => setShouldOfferFirstUseTour(false), []);
+  const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
+  const rightPanelPlacement = edgePlacement(
+    layout.dockSide,
+    !toolName || !hasImage || layout.dockSide !== layout.toolsSide ? 'full' : 'bottom'
+  );
 
   // Close both mobile surfaces on leaving the mobile band.
   //
@@ -51,7 +70,7 @@ function AppContainer() {
   // `display: none` hides without unmounting — so a surface left open on a phone stays
   // rendered on desktop, and `MobileToolSheet` holds a second live instance of the active
   // tool's options panel next to the one `ToolbarHorizontal` owns: duplicate
-  // `id="text-input"`, duplicate `id="font-family-select"`, duplicate window Escape
+  // `id="font-size-input"`, duplicate `id="font-family-select"`, duplicate window Escape
   // listeners. Resetting the flags here, where they live, is the fix; unmounting the shell
   // is not, because the always-mounted design is what keeps the canvas alive across a
   // crossing.
@@ -59,7 +78,6 @@ function AppContainer() {
   // Adjusted during render rather than in an effect — React's documented pattern for
   // resetting state on an external change, and it avoids the extra render pass a setState
   // in an effect body costs.
-  const isMobile = useIsMobileViewport();
   const [wasMobile, setWasMobile] = useState(isMobile);
   if (wasMobile !== isMobile) {
     setWasMobile(isMobile);
@@ -81,25 +99,39 @@ function AppContainer() {
     // The `left` and `right` area NAMES are unchanged, and so is the DOM order of the children.
     // Re-docking swaps which component claims which area, which is a grid placement and not a
     // reorder, so the focus order the shell has always had is intact.
-    <div className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900">
-      <AppKeyboardShortcuts />
-      <BlankImageStarter />
-      <Menu />
-      <SidebarLeft />
+    <>
+      <div
+        aria-hidden={isFirstUseTourVisible || undefined}
+        className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900"
+      >
+        <AppKeyboardShortcuts />
+        <BlankImageStarter />
+        <Menu />
+        <SidebarLeft />
 
-      {/* The canvas and the tool sidebar are the two regions that own user work.
+        {/* The canvas and the tool sidebar are the two regions that own user work.
           Each is contained on its own so a throw in one still leaves the other,
           the menu and the footer usable. */}
-      <ErrorBoundary label="Canvas">
-        <Main />
-      </ErrorBoundary>
+        <ErrorBoundary
+          label="Canvas"
+          fallbackClassName="relative overflow-y-auto mobile-safe-bottom"
+          fallbackStyle={{ gridArea: 'main' }}
+        >
+          <Main />
+        </ErrorBoundary>
 
-      <ErrorBoundary label="Right sidebar">
-        <SidebarRight />
-      </ErrorBoundary>
-      <Footer />
+        <ErrorBoundary
+          label="Right sidebar"
+          fallbackClassName={`relative flex min-h-0 flex-col overflow-y-auto bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
+            layout.dockSide === 'left' ? 'border-r border-gray-300' : 'border-l border-gray-300'
+          } ${isRightPanelOpen ? rightPanelPlacement : 'hidden'}`}
+          fallbackStyle={{ width: layout.effectiveDockWidth }}
+        >
+          <SidebarRight />
+        </ErrorBoundary>
+        <Footer />
 
-      {/* Mounted unconditionally and hidden with `md:hidden`, rather than swapped in by a
+        {/* Mounted unconditionally and hidden with `md:hidden`, rather than swapped in by a
           `isMobile` ternary.
 
           A ternary makes crossing 768px an unmount: the two branches are both Fragments, so
@@ -116,13 +148,15 @@ function AppContainer() {
           subscriptions stay live on desktop. That is a deliberate trade: the store only
           dispatches on discrete events, not per pointer-move, so a handful of extra
           subscribers costs nothing per frame — while a remount costs the user's work. */}
-      <MobileShell
-        isToolSheetOpen={isToolSheetOpen}
-        onToggleToolSheet={() => setIsToolSheetOpen((open) => !open)}
-        isLayersOpen={isLayersDrawerOpen}
-        onToggleLayers={() => setIsLayersDrawerOpen((open) => !open)}
-      />
-    </div>
+        <MobileShell
+          isToolSheetOpen={isToolSheetOpen}
+          onToggleToolSheet={() => setIsToolSheetOpen((open) => !open)}
+          isLayersOpen={isLayersDrawerOpen}
+          onToggleLayers={() => setIsLayersDrawerOpen((open) => !open)}
+        />
+      </div>
+      {isFirstUseTourVisible && <FirstUseTour onComplete={completeFirstUseTour} />}
+    </>
   );
 }
 
@@ -142,7 +176,9 @@ function App() {
                     neither reads the store. Order between them does not matter. */}
                 <PanelLayoutProvider>
                   <RightPanelVisibilityProvider>
-                    <AppContainer />
+                    <FirstUseProvider>
+                      <AppContainer />
+                    </FirstUseProvider>
                   </RightPanelVisibilityProvider>
                 </PanelLayoutProvider>
               </CurrentToolProvider>

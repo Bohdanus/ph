@@ -25,6 +25,17 @@ const Color: React.FC<{}> = () => {
     };
   }, []);
 
+  /**
+   * `pendingUpdateRef.current` is the base for the next change, not the render-time
+   * `args`. Two sliders that move inside one animation frame are both built from
+   * the same render closure, so the second would carry the new second value over
+   * the stale first one and silently drop the first edit; merging onto the pending
+   * value makes each change inherit the one before it. `args` is the right base
+   * only for the first change of a frame, which is exactly when the pending value
+   * has already been cleared — by this callback on publish, and by
+   * `discardAdjustment()` on reset, so the ref holds the unpublished edits and
+   * nothing else.
+   */
   const throttledOnChange = (newArgs: ColorsToolArgs) => {
     pendingUpdateRef.current = newArgs;
 
@@ -42,17 +53,20 @@ const Color: React.FC<{}> = () => {
 
   const handleGrayscaleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const grayscale = Number(event.target.value);
-    throttledOnChange({ ...args, grayscale });
+    const base = pendingUpdateRef.current ?? args;
+    throttledOnChange({ ...base, grayscale });
   };
 
   const handleSepiaChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const sepia = Number(event.target.value);
-    throttledOnChange({ ...args, sepia });
+    const base = pendingUpdateRef.current ?? args;
+    throttledOnChange({ ...base, sepia });
   };
 
   const handleSaturationChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const saturation = Number(event.target.value);
-    throttledOnChange({ ...args, saturation });
+    const base = pendingUpdateRef.current ?? args;
+    throttledOnChange({ ...base, saturation });
   };
 
   /**

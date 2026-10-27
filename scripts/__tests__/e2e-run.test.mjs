@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +14,7 @@ import {
   resolvePort,
   run as runUnderTest,
   runOutputPaths,
+  runPlaywright,
 } from '../e2e-run.mjs';
 
 /**
@@ -90,8 +91,7 @@ const REPO_ROOT = join(import.meta.dirname, '..', '..');
 /**
  * A real board in a temp directory, for the tests that need the real CLI.
  *
- * `AGENT_BOARD_DIR` is what `resolveBoardDir` reads first
- * (scripts/lib/agent-board/db.mjs:250), so a test never touches the operator's board
+ * `AGENT_BOARD_DIR` is what `resolveBoardDir()` reads first, so a test never touches the operator's board
  * in the common git dir. The repository itself is NOT faked: path normalization is
  * lexical but the git home and worktree list are real.
  *
@@ -204,7 +204,7 @@ function run(argv, options = {}) {
 function fakeSuite(onRun) {
   const calls = [];
   const fn = async (args, options) => {
-    calls.push({ args, env: options?.env });
+    calls.push({ args, env: options?.env, quiet: options?.quiet });
     if (onRun) await onRun({ args, env: options?.env });
     return 0;
   };
@@ -367,8 +367,8 @@ describe('e2e-run: the own-server guarantee', () => {
 
   it('leaves a caller-supplied --output alone in BOTH spellings', async () => {
     // `--output=dir` is the one an earlier version missed: `includes('--output')` on
-    // the bare token does not match it, and the bundled commander accepts both
-    // (playwright/lib/program.js:207 and the option parser it uses), so the caller's
+    // the bare token does not match it, but Playwright's parser accepts both
+    // spellings, so the caller's
     // choice was silently discarded and the log still named the wrapper's directory.
     for (const form of [['--output', 'test-results/mine'], ['--output=test-results/mine']]) {
       const suite = fakeSuite();
@@ -390,9 +390,8 @@ describe('e2e-run: the own-server guarantee', () => {
 
   it('pins --last-failed to a path the per-run output directory cannot move', async () => {
     // `--last-failed` reads `<outputDir>/.last-run.json` and silently runs the WHOLE
-    // suite when that file is not where it expects it
-    // (playwright/lib/runner/index.js:6608-6625 swallows the read error and applies
-    // no filter at all). A per-run outputDir moves that file every run, so without
+    // suite when that file is not where it expects it. The CLI silently applies no
+    // filter. A per-run outputDir moves that file every run, so without
     // this pin the flag quietly stops meaning anything after the first run — and an
     // agent that used it to re-check a fix would be told everything passed.
     const suite = fakeSuite();
@@ -748,8 +747,8 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
   it('never reclaims a holder that this wrapper did not create', async () => {
     // The reclaim UNLOCKS as the holder it is reclaiming, so a wrong liveness answer
     // is not a wrong log line — it releases a real agent's queue slot. The board's
-    // default identity is the sanitized branch and `sanitize` preserves `/`
-    // (scripts/lib/agent-board/identity.mjs:28), so a holder on `fix/1234`, or anyone
+    // default identity uses `sanitize()`, which preserves `/`, so a holder on
+    // `fix/1234`, or anyone
     // who passed `--agent 2026`, has an identity whose last segment parses as a pid.
     // An earlier version of `isHolderAlive` probed it, found nothing, and stole it.
     for (const identity of ['fix/1234', '2026', 'somebody-else', 'e2e-run/branch/1234abc']) {
@@ -930,7 +929,7 @@ describe('e2e-run: ports and arguments', () => {
     // gap between them, and the port is released inside the gap, so that assertion is
     // also a claim about what every other process on the machine did during it — which
     // is the one promise this repository's own header refuses to make.
-    // `scripts/e2e-run.mjs:191-199` says so in the code that matters: the check "cannot
+    // the production comment for `reservePort()` says so in the code that matters: the check "cannot
     // close the gap between this returning and Vite calling bind", and `reservePort`
     // exists because one pick is not a guarantee. A test that asserted the one-shot
     // shape was therefore asserting a property of the machine, and it went red against
@@ -1000,6 +999,207 @@ describe('e2e-run: ports and arguments', () => {
       ]);
     } finally {
       boardDir.cleanup();
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Quiet mode: capture and replay on failure                                   */
+/* -------------------------------------------------------------------------- */
+
+describe('e2e-run: quiet mode (--quiet / E2E_QUIET=1)', () => {
+  let boardDir;
+
+  beforeEach(() => {
+    boardDir = tempBoard();
+    // Quiet-mode assertions use a fake Playwright process; they do not need to
+    // race the ephemeral-port allocator while another E2E task starts.
+    boardDir.env.PLAYWRIGHT_PORT = '5391';
+  });
+
+  afterEach(() => {
+    boardDir.cleanup();
+  });
+
+  it.each([
+    ['the --quiet flag', ['--quiet'], {}],
+    ['E2E_QUIET=1', [], { E2E_QUIET: '1' }],
+  ])('enables quiet mode via %s', async (_label, argv, extraEnv) => {
+    const suite = fakeSuite();
+    await run(argv, {
+      env: { ...boardDir.env, ...extraEnv, E2E_LOCK_TIMEOUT: '0' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+    expect(suite.calls[0].quiet, 'the suite is told to run quietly').toBe(true);
+  });
+
+  it('defaults to quiet output', async () => {
+    const suite = fakeSuite();
+    await run([], {
+      env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+    expect(suite.calls[0].quiet, 'the routine e2e command suppresses passing output').toBe(true);
+  });
+
+  it('allows live output with --verbose or E2E_QUIET=0', async () => {
+    for (const [argv, extraEnv] of [
+      [['--verbose'], {}],
+      [[], { E2E_QUIET: '0' }],
+    ]) {
+      const suite = fakeSuite();
+      await run(argv, {
+        env: { ...boardDir.env, ...extraEnv, E2E_LOCK_TIMEOUT: '0' },
+        log: recorder().log,
+        runPlaywright: suite,
+      });
+      expect(suite.calls[0].quiet, 'the caller explicitly requested live output').toBe(false);
+      expect(suite.calls[0].args).not.toContain('--verbose');
+    }
+  });
+
+  it('consumes --quiet so it is not forwarded to Playwright', async () => {
+    const suite = fakeSuite();
+    await run(['--quiet', 'e2e/foo.spec.ts'], {
+      env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+    expect(suite.calls[0].args, '--quiet is a wrapper flag, not a Playwright flag').not.toContain('--quiet');
+    expect(suite.calls[0].args).toContain('e2e/foo.spec.ts');
+  });
+
+  it('forwards wrapper-shaped grep patterns after -- unchanged', async () => {
+    const suite = fakeSuite();
+    await run(['e2e/foo.spec.ts', '--', '--quiet', '--verbose', '--no-lock'], {
+      env: { ...boardDir.env, E2E_QUIET: '0', E2E_LOCK_TIMEOUT: '0' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+
+    expect(suite.calls[0].args.slice(1, 6)).toEqual(['e2e/foo.spec.ts', '--', '--quiet', '--verbose', '--no-lock']);
+    expect(suite.calls[0].quiet, 'post-separator tokens do not alter wrapper quiet mode').toBe(false);
+  });
+
+  it('combines --quiet with --no-lock', async () => {
+    const suite = fakeSuite();
+    await run(['--quiet', '--no-lock', 'e2e/foo.spec.ts'], {
+      env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+    expect(suite.calls[0].quiet).toBe(true);
+    expect(suite.calls[0].args).not.toContain('--quiet');
+    expect(suite.calls[0].args).not.toContain('--no-lock');
+    expect(suite.calls[0].args).toContain('e2e/foo.spec.ts');
+  });
+
+  it('logs that quiet mode is active', async () => {
+    const suite = fakeSuite();
+    const log = recorder();
+    await run(['--quiet'], {
+      env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
+      log: log.log,
+      runPlaywright: suite,
+    });
+    expect(log.text(), 'the operator can see quiet was on').toMatch(/quiet/);
+  });
+
+  it('does not silence a help request even with --quiet', async () => {
+    const suite = fakeSuite();
+    await run(['--quiet', '-h'], {
+      env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
+      log: recorder().log,
+      runPlaywright: suite,
+      quiet: true,
+    });
+    expect(suite.calls[0].quiet, 'help is not silenced even if its caller requested quiet').toBe(false);
+    expect(suite.calls[0].args.join(' '), '-h reaches Playwright').toContain('-h');
+  });
+});
+
+describe('e2e-run: runPlaywright quiet capture', () => {
+  function makeScript(content) {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-quiet-'));
+    const file = join(dir, 'fake-cli.mjs');
+    writeFileSync(file, content);
+    return { file, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  it('suppresses stdout and stderr from a passing suite', async () => {
+    const script = makeScript(
+      "process.stdout.write('SHOULD BE SUPPRESSED'); process.stderr.write('ALSO SUPPRESSED'); process.exit(0);"
+    );
+    const stdoutWrites = [];
+    const stderrWrites = [];
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutWrites.push(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
+      return true;
+    });
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderrWrites.push(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
+      return true;
+    });
+    try {
+      const code = await runPlaywright([], { cli: script.file, quiet: true, env: { ...process.env } });
+      expect(code).toBe(0);
+      expect(stdoutWrites.join(''), 'parent stdout never receives the suppressed text').not.toContain(
+        'SHOULD BE SUPPRESSED'
+      );
+      expect(stderrWrites.join(''), 'parent stderr never receives the suppressed text').not.toContain(
+        'ALSO SUPPRESSED'
+      );
+    } finally {
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      script.cleanup();
+    }
+  });
+
+  it('replays captured output when the suite fails', async () => {
+    const script = makeScript(
+      "process.stdout.write('STDOUT FAILED'); process.stderr.write('STDERR FAILED'); process.exit(1);"
+    );
+    const stdoutWrites = [];
+    const stderrWrites = [];
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutWrites.push(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
+      return true;
+    });
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderrWrites.push(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
+      return true;
+    });
+    try {
+      const code = await runPlaywright([], { cli: script.file, quiet: true, env: { ...process.env } });
+      expect(code, 'the suite exit code is preserved').toBe(1);
+      expect(stderrWrites.join(''), 'captured stdout is replayed on failure').toContain('STDOUT FAILED');
+      expect(stderrWrites.join(''), 'captured stderr is replayed on failure').toContain('STDERR FAILED');
+      expect(stdoutWrites.join(''), 'replay goes to stderr, not stdout').not.toContain('STDOUT FAILED');
+      expect(stdoutWrites.join(''), 'replay goes to stderr, not stdout').not.toContain('STDERR FAILED');
+    } finally {
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      script.cleanup();
+    }
+  });
+
+  it('replays captured output and preserves a signalled suite exit', async () => {
+    const script = makeScript("process.stdout.write('SIGNALED OUTPUT'); process.kill(process.pid, 'SIGTERM');");
+    const stderrWrites = [];
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderrWrites.push(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
+      return true;
+    });
+    try {
+      const code = await runPlaywright([], { cli: script.file, quiet: true, env: { ...process.env } });
+      expect(code, 'SIGTERM maps to the shell status').toBe(128 + 15);
+      expect(stderrWrites.join(''), 'captured diagnostics are replayed on signal exit').toContain('SIGNALED OUTPUT');
+    } finally {
+      stderrSpy.mockRestore();
+      script.cleanup();
     }
   });
 });

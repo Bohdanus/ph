@@ -30,7 +30,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -43,8 +43,15 @@ import { execFileSync } from 'node:child_process';
  * for a different migration, and a board stamped 2 by either script would be
  * indistinguishable from a board stamped 2 by the other. v2 therefore means
  * `migrateFileLockAttribution` and only that, which is why `issue_files` is v3.
+ *
+ * v4 was the GPT token-budget poll subsystem. It was removed because the
+ * readings it produced were unreliable (always "incomplete" with no budget),
+ * so the routing policy it fed was fail-closed and never informed a real
+ * subagent decision. The version is retained at 4 so existing boards are not
+ * refused; the `token_window` table and its migration step are kept as no-ops
+ * for backward compatibility.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /**
  * Issue statuses whose issues still describe work somebody may pick up. A
@@ -164,7 +171,13 @@ const CLAIMABLE = new Set(['open', 'deferred']);
 const RECLAIMABLE = 'claimed';
 
 /** Offerable to the swarm: unclaimed, unfinished, and not already taken. */
-const READY_STATUSES = new Set(['open', 'deferred', 'claimed']);
+const READY_STATUSES = new Set(['open', 'claimed']);
+
+function deferredIssueIsReady(issue, at) {
+  if (issue.status !== 'deferred' || !issue.defer_until) return false;
+  const deferUntil = Date.parse(issue.defer_until);
+  return Number.isFinite(deferUntil) && deferUntil <= at;
+}
 
 /**
  * A dependency is satisfied once its work is finished — `resolved` or
@@ -382,6 +395,7 @@ function resolveSymlinksBestEffort(path) {
   const parts = String(path).split('/');
   for (let index = parts.length - 1; index > 0; index -= 1) {
     const candidate = parts.slice(0, index).join('/');
+    if (candidate === '') continue;
     try {
       // Everything from `index` onwards is the part that does not exist yet, so
       // it is re-attached verbatim. Building a tail by hand here lost the
@@ -394,6 +408,66 @@ function resolveSymlinksBestEffort(path) {
     }
   }
   return null;
+}
+
+function isMissingPath(error) {
+  return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+/**
+ * True when a normalised path is NOT inside any worktree of this repository.
+ *
+ * Two forms escape the repo: a Unix absolute path (`/…`) and a relative one
+ * that climbs out (`…`). On Windows, a drive-absolute path (`C:\…` after
+ * backslash conversion, or `C:…`) is a third form that must also be refused,
+ * because `normalizePaths` leaves such paths untouched when no worktree prefix
+ * matches.
+ */
+function isOutsideRepoPath(path) {
+  return path.startsWith('/') || path.startsWith('..') || /^[a-z]:\//i.test(path);
+}
+
+/**
+ * On case-insensitive volumes, return the directory-entry spelling for existing
+ * components. A failed stat leaves a differently-cased path distinct.
+ */
+function canonicalizeExistingPathCase(root, path) {
+  if (!root || path.startsWith('/') || /^[a-z]:\//i.test(path) || path === '..' || path.startsWith('../')) {
+    return path;
+  }
+
+  const segments = path.split('/');
+  const normalized = [];
+  let current = root;
+
+  for (const [index, segment] of segments.entries()) {
+    let entries;
+    try {
+      entries = readdirSync(current);
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      normalized.push(...segments.slice(index));
+      break;
+    }
+
+    let actual = segment;
+    if (!entries.includes(segment)) {
+      const caseMatch = entries.find((entry) => entry.toLowerCase() === segment.toLowerCase());
+      if (caseMatch) {
+        try {
+          statSync(join(current, segment));
+          actual = caseMatch;
+        } catch (error) {
+          if (!isMissingPath(error)) throw error;
+        }
+      }
+    }
+
+    normalized.push(actual);
+    current = join(current, actual);
+  }
+
+  return normalized.join('/');
 }
 
 /**
@@ -648,7 +722,19 @@ export class Board {
    * answers.
    */
   migrationSteps() {
-    return { 1: () => this.migrateFileLockAttribution(), 2: () => this.indexIssueFiles() };
+    return {
+      1: () => this.migrateFileLockAttribution(),
+      2: () => this.indexIssueFiles(),
+      3: () => this.migrateTokenConsumptionKnown(),
+    };
+  }
+
+  migrateTokenConsumptionKnown() {
+    // The GPT token-budget poll subsystem has been removed. This v3→v4 step is
+    // retained as a no-op so that boards at v3 can still advance to v4 without
+    // error; existing `token_window` tables (if present in an old database) are
+    // left untouched as dead data.
+    return true;
   }
 
   /**
@@ -1261,9 +1347,10 @@ export class Board {
   }
 
   /**
-   * What the swarm can pick up right now: open or deferred, unblocked, and not
-   * already claimed under a live lease. This is the query that replaces reading
-   * a handoff document to find out whether something is already being done.
+   * What the swarm can pick up right now: open, claimed with an expired lease,
+   * or deferred until its deadline, unblocked, and not already claimed under a
+   * live lease. This is the query that replaces reading a handoff document to
+   * find out whether something is already being done.
    * Expiry is evaluated on read, not by a sweeper: a lease nobody sweeps is
    * still a lease nobody can hold past, and there is no process that would have
    * to be responsible for sweeping it.
@@ -1271,7 +1358,7 @@ export class Board {
   readyIssues({ limit = NO_LIMIT } = {}) {
     const at = this.now();
     return this.listIssues({ limit: NO_LIMIT })
-      .filter((issue) => READY_STATUSES.has(issue.status))
+      .filter((issue) => READY_STATUSES.has(issue.status) || deferredIssueIsReady(issue, at))
       .filter((issue) => {
         // A `claimed` issue whose lease ran out is back on offer: the status
         // still says somebody claimed it, and the lease is the only thing that
@@ -1482,7 +1569,7 @@ export class Board {
     // Both ways of naming a file outside this repository: an absolute path that
     // no worktree prefix matched, and a relative one that climbs out of the
     // worktree root. Either way there is no lock it could ever collide with.
-    const outside = list.filter((path) => path.startsWith('/') || path.startsWith('..'));
+    const outside = list.filter((path) => isOutsideRepoPath(path));
     if (outside.length > 0) {
       throw new BoardError(
         `not inside this repository: ${outside.join(', ')}. Locks cover this repository's files; ` +
@@ -1820,7 +1907,8 @@ export class Board {
    */
   toRepoPath(path) {
     const typed = String(path ?? '').trim();
-    const direct = normalizePaths([path], { roots: this.pathRoots() })[0];
+    const roots = this.pathRoots();
+    const direct = normalizePaths([path], { roots })[0];
     // A path that WAS given and normalised to nothing — the empty string, or a
     // worktree root with a trailing slash — is not a free file. It is a path
     // this board does not cover, and `check` answering "free" there is the
@@ -1831,11 +1919,14 @@ export class Board {
     // it against the process's directory would turn the stored answer into an
     // absolute path that matches nothing.
     if (direct === undefined) return undefined;
-    if (!String(path).trim().startsWith('/')) return direct;
-    if (direct !== String(path).trim().replace(/^\.\//, '')) return direct;
+    const input = typed.split('\\').join('/');
+    const root = roots.find((candidate) => input.startsWith(candidate))?.slice(0, -1) ?? this.identity?.worktree;
+    const canonicalize = (candidate) => canonicalizeExistingPathCase(root, candidate);
+    if (!input.startsWith('/')) return canonicalize(direct);
+    if (direct !== input.replace(/^\.\//, '')) return canonicalize(direct);
     const resolved = resolveSymlinksBestEffort(path);
-    if (resolved === null) return direct;
-    return normalizePaths([resolved], { roots: this.pathRoots() })[0] ?? direct;
+    if (resolved === null) return canonicalize(direct);
+    return canonicalize(normalizePaths([resolved], { roots })[0] ?? direct);
   }
 
   /**
@@ -1948,7 +2039,7 @@ export class Board {
     // free — `hold` refuses such a path outright, and `check` answering "free"
     // where `hold` answers "no" is the disagreement that lets a shell gate on
     // the wrong one.
-    if (normalized.startsWith('/') || normalized.startsWith('..')) {
+    if (isOutsideRepoPath(normalized)) {
       // `issues: []` on every early return, not just here: this object is what
       // the CLI renders, and a consumer that reads `.issues` must never have to
       // guard for the key being absent on one of three paths.
@@ -2090,6 +2181,9 @@ export class Board {
   deferIssue(id, { agent, reason, until = null } = {}) {
     const who = agent ?? this.identity?.agentId;
     if (!reason) throw new BoardError('a deferral needs a reason', { code: 1 });
+    if (until !== null && !Number.isFinite(Date.parse(until))) {
+      throw new BoardError('a deferral deadline must be a valid date', { code: 1 });
+    }
     return this.transaction(() => {
       this.getIssue(id);
       this.db
@@ -2236,11 +2330,9 @@ export class Board {
     // invocation turned a six-event board into one that was two-thirds sweep
     // noise, which is the same flood the tailing fix was written for, and it
     // made `health` inflate the very number it was reporting.
-    if (record && findings.length > 0) {
+    if (record && !dryRun && findings.length > 0) {
       this.addEvent('doctor.run', {
-        message: findings.length
-          ? `${findings.length} stale holding(s) ${dryRun ? 'would be released' : 'released'}`
-          : 'nothing stale',
+        message: findings.length ? `${findings.length} stale holding(s) released` : 'nothing stale',
       });
     }
     if (!dryRun) {
@@ -2305,8 +2397,11 @@ export class Board {
     const agentId = this.identity?.agentId;
     if (!agentId) return [];
     // An agent with no worktree has no way to prove it is alive, so it keeps
-    // the manual contract. That is the outside-a-worktree case, and it is the
-    // one where `claim.renew` still means something.
+    // the manual contract, and that is where `claim.renew` still means something.
+    // "Outside a worktree" means outside ANY git repository: `resolveIdentity` fills
+    // `worktree` from `git rev-parse --show-toplevel`, which succeeds in every checkout,
+    // so `main` and a detached HEAD both renew. The only caller that falls out is one
+    // run outside a repository. See `renewOwnLocks` for the measurement.
     const worktree = this.identity?.worktree;
     if (!worktree || !existsDir(worktree)) return [];
     const until = new Date(at + leaseMs).toISOString();
@@ -2367,7 +2462,13 @@ export class Board {
     const agentId = this.identity?.agentId;
     if (!agentId) return [];
     // Same rule as claims: no worktree, no way to prove liveness, so the
-    // manual contract stands. That is the `main`-checkout and detached case.
+    // manual contract stands. NOT the `main`-checkout and detached case, as this comment
+    // used to say for years: `resolveIdentity` fills `worktree` from `git rev-parse
+    // --show-toplevel`, which succeeds in every checkout, so `main` and a detached HEAD
+    // both renew and a detached one is simply `detached@<short-sha>`. The only caller that
+    // falls out is one run outside any git repository. Measured 2026-10-03 across four
+    // working directories, and the wrong version was copied into docs/ORCHESTRATION.md as
+    // fact before anyone checked it against this function.
     const worktree = this.identity?.worktree;
     if (!worktree || !existsDir(worktree)) return [];
     const until = msFromNow(leaseMs, at);
@@ -2441,16 +2542,12 @@ export class Board {
   }
 
   /**
-   * The maintenance a board should never need a human to run: keep my own
-   * claims and file locks alive because I exist, then release the ones whose
-   * holder does not.
+   * Renew this caller's own claims and locks, then apply the global expiry sweep.
    *
-   * Order matters and is the whole reason this is safe. Renewing first means a
-   * working agent's lease is never the thing that gets swept, so the sweep can
-   * only ever reclaim a holding whose worktree is gone — which is precisely
-   * when reclaiming it is correct. Sweeping first, as a bare `doctor` on every
-   * open would, hands a 45-minute timer the power to strip a lock off an agent
-   * in the middle of an edit.
+   * Renewal protects only this caller's rows, and only while its worktree
+   * exists. The following sweep releases any expired lease even if its owner's
+   * worktree still exists. This is not proof that a session ended: a long task
+   * that outlives its lease can lose the claim to a peer's next board command.
    */
   autoSweep({ at = this.now(), dryRun = false } = {}) {
     if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at, dryRun, record: false }) };

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorBoundary } from '../ErrorBoundary.tsx';
 import type { DurableDocumentStatus } from '../../../contexts/StoreContext.tsx';
 import type { MigrationDiagnostic } from '../../../contexts/history-adapter.ts';
-import { LAYER_TRANSPARENCY_ACTION } from '../../../util/constants.ts';
+import { LAYER_TRANSPARENCY_ACTION, type ActionType } from '../../../util/constants.ts';
 
 // `Partial`, not the full `StoreData`: the test below deletes `durableDiagnostics` to stand in for
 // a hand-built store slice, and the property is what makes that assignment a legal expression.
@@ -80,6 +80,18 @@ describe('ErrorBoundary catches a throw', () => {
     expect(screen.getByTestId('sibling')).toBeInTheDocument();
   });
 
+  it('keeps fallback layout styles on the failed grid region', () => {
+    render(
+      <ErrorBoundary label="Canvas" fallbackClassName="relative overflow-y-auto" fallbackStyle={{ gridArea: 'main' }}>
+        <Thrower error={new Error('canvas context failed')} />
+      </ErrorBoundary>
+    );
+
+    const fallback = screen.getByTestId('error-boundary-fallback');
+    expect(fallback).toHaveClass('relative', 'overflow-y-auto');
+    expect(fallback).toHaveStyle({ gridArea: 'main' });
+  });
+
   it('reports the error and the React component stack under the boundary label', () => {
     const failure = new Error('canvas context failed');
     const consoleError = vi.mocked(console.error);
@@ -152,7 +164,9 @@ describe('ErrorBoundary fallback surfaces durable diagnostics', () => {
       // branch chain in `history-adapter.ts` has no `else if` for, so it falls
       // through to the `Unsupported legacy action` throw. Naming it here keeps
       // the fixture honest about the case it is standing in for.
-      actionName: LAYER_TRANSPARENCY_ACTION,
+      // This is intentionally outside the legal ActionType union: it models
+      // a legacy diagnostic from a history shape the app no longer writes.
+      actionName: LAYER_TRANSPARENCY_ACTION as unknown as ActionType,
       message: `${code} happened`,
     }));
 

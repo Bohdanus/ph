@@ -198,6 +198,13 @@ describe('AnchoredOverlay', () => {
     expect(position().position).toBe('fixed');
   });
 
+  it('leaves accessible semantics to the overlay content rather than the positioning wrapper', () => {
+    renderOverlay({ anchor: RAIL_TILE, overlaySize: { width: 200, height: 120 } });
+
+    expect(wrapper()).not.toHaveAttribute('role');
+    expect(wrapper()).not.toHaveAttribute('aria-label');
+  });
+
   it('keeps the wrapper out of hit testing, so two overlapping overlays cannot shadow each other', () => {
     renderOverlay({ anchor: RAIL_TILE, overlaySize: { width: 200, height: 120 } });
 

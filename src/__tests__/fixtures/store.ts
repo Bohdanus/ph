@@ -14,7 +14,6 @@ export interface MockStoreState {
   toolOverlayRef?: { current: HTMLCanvasElement | null };
   rectOverlayRef?: { current: HTMLCanvasElement | null };
   containerRef?: { current: HTMLDivElement | null };
-  textareaRef?: { current: HTMLTextAreaElement | null };
   currentArgs?: { current: ToolArgs };
   clearPreviewLayers?: () => void;
   promoteLayerPresentation?: (request: unknown) => void;
@@ -50,7 +49,6 @@ export const createMockStoreState = (overrides: MockStoreState = {}): MockStoreS
   toolOverlayRef: { current: null },
   rectOverlayRef: { current: null },
   containerRef: { current: null },
-  textareaRef: { current: null },
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: vi.fn(),
   promoteLayerPresentation: vi.fn(),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
 
 /**
@@ -77,7 +77,7 @@ export function useDialogFocusContainment({ onEscape }: { onEscape: () => void }
     onEscapeRef.current = onEscape;
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -122,6 +122,7 @@ export function useDialogFocusContainment({ onEscape }: { onEscape: () => void }
         return;
       }
       event.stopPropagation();
+      event.preventDefault();
       if (event.key === 'Escape') onEscapeRef.current();
     };
 

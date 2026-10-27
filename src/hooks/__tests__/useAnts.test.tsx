@@ -1,12 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Layer } from '../../contexts/layer-types.ts';
-import { useMarchingAnts } from '../useAnts.ts';
+import { DASH_LENGTH, SPEED, useMarchingAnts } from '../useAnts.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
 
 function createRafMocks() {
   const frames: Map<number, FrameRequestCallback> = new Map();
-  let nextId = 0;
+  let nextId = 1;
 
   const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
     const id = nextId++;
@@ -93,9 +93,11 @@ describe('useMarchingAnts', () => {
     frame();
     frame();
 
-    // SPEED 1 CSS px per frame is 2 document px at scale 0.5, and the black/white half-shift is
-    // the whole dash (12), not the undivided 6.
-    expect(offsets).toEqual([0, 12, -2, 10]);
+    // `SPEED` is a CSS px per frame, so at scale 0.5 it is twice as many document px; the
+    // black/white half-shift is the whole dash (12), not the undivided 6. Written against the
+    // constant rather than its value on purpose: a rate change must not be a number here that
+    // silently stops being the rate.
+    expect(offsets).toEqual([0, 12, -SPEED / 0.5, 12 - SPEED / 0.5]);
   });
 
   it('pads the erase by the scaled line width, so the clear covers what was stroked', () => {
@@ -139,7 +141,7 @@ describe('useMarchingAnts', () => {
     expect(path.closePath).toHaveBeenCalledOnce();
     expect(containerRef.current.classList.contains('cursor-grab')).toBe(false);
     frame();
-    expect(offsets).toEqual([0, 6, -1, 5]);
+    expect(offsets).toEqual([0, DASH_LENGTH, -SPEED, DASH_LENGTH - SPEED]);
     expect(ctx.clearRect).toHaveBeenCalledWith(9, 19, 32, 32);
     expect(ctx.save).toHaveBeenCalled();
     expect(ctx.restore).toHaveBeenCalled();
@@ -231,5 +233,93 @@ describe('useMarchingAnts', () => {
     frame();
 
     expect(alphaAtStroke).toEqual([1, 1]);
+  });
+
+  it('does not throw on NaN coordinates and propagates non-finite bounds into the erase', () => {
+    const { result, ctx } = setup();
+    expect(() =>
+      act(() =>
+        result.current.drawPoints([
+          { x: Number.NaN, y: Number.NaN },
+          { x: 40, y: 25 },
+        ])
+      )
+    ).not.toThrow();
+    frame();
+    frame();
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledWith(Number.NaN, Number.NaN, Number.NaN, Number.NaN);
+  });
+
+  it('does not throw on Infinity coordinates and propagates them through the erase padding', () => {
+    const { result, ctx } = setup();
+    expect(() =>
+      act(() =>
+        result.current.drawPoints([
+          { x: 10, y: 20 },
+          { x: Infinity, y: 25 },
+        ])
+      )
+    ).not.toThrow();
+    frame();
+    frame();
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledWith(9, 19, Infinity, 7);
+  });
+
+  it('animates zero-size bounds (identical endpoints) without throwing', () => {
+    const { result, ctx } = setup();
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 10, y: 20 },
+      ])
+    );
+    frame();
+    frame();
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledWith(9, 19, 2, 2);
+  });
+
+  it('does not throw and stops animating when the overlay is detached before the first frame', () => {
+    const { result, ctx, overlayRef } = setup();
+    overlayRef.current = null;
+    act(() =>
+      result.current.drawPoints([
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+      ])
+    );
+    frame();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.clearRect).not.toHaveBeenCalled();
+    expect(rafMocks.frames.size).toBe(0);
+  });
+
+  // Tripwires: the hook currently accepts degenerate geometry and animates it forever.
+  // Flip to a passing assertion once `schedule`/`drawPoints` reject it, which makes
+  // `it.fails` turn red and flags the regression.
+  it.fails('abandons the animation when the outline bounds are non-finite', () => {
+    const { result } = setup();
+    act(() =>
+      result.current.drawPoints([
+        { x: Number.NaN, y: 20 },
+        { x: 40, y: 25 },
+      ])
+    );
+    frame();
+    expect(rafMocks.frames.size).toBe(0);
+  });
+
+  it.fails('abandons the animation for zero-area bounds', () => {
+    const { result } = setup();
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 10, y: 20 },
+      ])
+    );
+    frame();
+    expect(rafMocks.frames.size).toBe(0);
   });
 });

@@ -128,6 +128,35 @@ describe('useCurrentTool', () => {
     expect(result.current.getToolArgs('draw')).toMatchObject({ penType: 'pen', lineWidth: 5 });
   });
 
+  it('delivers one-shot Text focus requests and only consumes the matching request id', () => {
+    const { result } = renderWithProviders();
+    const firstTarget = { kind: 'select-all' as const, layerId: 'text-1' };
+    const secondTarget = { kind: 'point' as const, layerId: 'text-2', clientX: 40, clientY: 60 };
+
+    act(() => {
+      result.current.requestTextEditFocus(firstTarget);
+    });
+    const firstRequest = result.current.textEditFocusRequest;
+    expect(firstRequest?.target).toEqual(firstTarget);
+
+    act(() => {
+      result.current.requestTextEditFocus(secondTarget);
+    });
+    const secondRequest = result.current.textEditFocusRequest;
+    expect(secondRequest?.target).toEqual(secondTarget);
+    expect(secondRequest?.id).toBeGreaterThan(firstRequest!.id);
+
+    act(() => {
+      result.current.consumeTextEditFocusRequest(firstRequest!.id);
+    });
+    expect(result.current.textEditFocusRequest).toEqual(secondRequest);
+
+    act(() => {
+      result.current.consumeTextEditFocusRequest(secondRequest!.id);
+    });
+    expect(result.current.textEditFocusRequest).toBeNull();
+  });
+
   describe('setToolArgs', () => {
     it('updates toolArgs and marks tool as dirty', () => {
       const { result } = renderWithProviders();

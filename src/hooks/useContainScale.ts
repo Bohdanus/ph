@@ -1,6 +1,7 @@
 import { type RefObject, useCallback, useLayoutEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
 import { containFit } from '../util/contain-fit.ts';
+import { readClientViewportRect } from '../util/client-viewport.ts';
 import type { Size } from '../contexts/general-types.ts';
 
 /**
@@ -20,24 +21,22 @@ import type { Size } from '../contexts/general-types.ts';
 export function useContainScale(ref: RefObject<HTMLElement | null>, imageSize: Size): RefObject<number> {
   const scaleRef = useRef(1);
 
-  const measure = useCallback(
-    (observed?: { width: number; height: number }) => {
-      const rect = observed ?? ref.current?.getBoundingClientRect();
-      if (!rect || !rect.width || !rect.height || !imageSize.width || !imageSize.height) return;
+  const measure = useCallback(() => {
+    const rect = ref.current ? readClientViewportRect(ref.current) : null;
+    if (!rect || !rect.width || !rect.height || !imageSize.width || !imageSize.height) return;
 
-      scaleRef.current = containFit(
-        { width: rect.width, height: rect.height },
-        { width: imageSize.width, height: imageSize.height }
-      ).scale;
-    },
-    [ref, imageSize]
-  );
+    scaleRef.current = containFit(
+      { width: rect.width, height: rect.height },
+      { width: imageSize.width, height: imageSize.height }
+    ).scale;
+  }, [ref, imageSize]);
 
   useLayoutEffect(() => {
     measure();
   }, [measure]);
 
-  useResizeObserverRAF(ref, (rect) => measure({ width: rect.width, height: rect.height }));
+  // The observer is a resize trigger; re-read the client viewport shared with pointer mapping.
+  useResizeObserverRAF(ref, () => measure());
 
   return scaleRef;
 }

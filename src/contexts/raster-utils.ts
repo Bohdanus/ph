@@ -1,3 +1,20 @@
+/**
+ * The largest document this app can create: NewImageDialog caps both axes at 10,000 px.
+ */
+export const MAX_CREATABLE_DOCUMENT_PIXELS = 100_000_000;
+
+export type PixelDimensions = { width: number; height: number };
+
+export function assertWithinDocumentPixelBudget(dimensions: PixelDimensions, label = 'Image'): void {
+  const { width, height } = dimensions;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`${label} has invalid dimensions`);
+  }
+  if (width * height > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(`${label} is too large (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`);
+  }
+}
+
 export type RgbaImageData = {
   data: Uint8Array | Uint8ClampedArray;
   width: number;

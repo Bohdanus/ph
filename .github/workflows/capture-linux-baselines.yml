@@ -1,0 +1,207 @@
+name: Capture Linux export baselines
+run-name: Linux baselines ${{ github.event.client_payload.request_id }} @ ${{ github.event.client_payload.source_sha }}
+
+on:
+  repository_dispatch:
+    types: [capture-linux-baselines]
+
+concurrency:
+  group: linux-baselines-${{ github.event.client_payload.request_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - name: Require the compute mirror
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "${REPOSITORY,,}" != "bohdanus/ph" ]]; then
+            echo "::error::Linux baseline promotion is restricted to Bohdanus/ph"
+            exit 1
+          fi
+          [[ "$REF" == "refs/heads/main" ]] || { echo "::error::Baseline promotion workflow must run from trusted main"; exit 1; }
+
+      - name: Validate trusted workflow revision and capture target
+        env:
+          EXPECTED_WORKFLOW_SHA: ${{ github.event.client_payload.expected_workflow_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          REQUEST_ID: ${{ github.event.client_payload.request_id }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          SOURCE_BRANCH: ${{ github.event.client_payload.source_branch }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id }}
+          PROMOTE_JSON: ${{ toJSON(github.event.client_payload.promote) }}
+        shell: bash
+        run: |
+          [[ "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || { echo "::error::Trusted mirror main advanced after workflow preflight"; exit 1; }
+          [[ "$REQUEST_ID" =~ ^[a-fA-F0-9]{32}$ ]] || { echo "::error::request_id must be 32 hexadecimal characters"; exit 1; }
+          [[ "$SOURCE_SHA" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "::error::source_sha must be a full Git object ID"; exit 1; }
+          [[ -n "$SOURCE_BRANCH" && "$SOURCE_BRANCH" != "main" ]] || { echo "::error::Promotion requires a non-main branch"; exit 1; }
+          git check-ref-format "refs/heads/$SOURCE_BRANCH"
+          [[ "$CHAT_ID" =~ ^(ses_[A-Za-z0-9]{26}|[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12}|copilotcli:/[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12})$ ]] || { echo "::error::A valid Kilo ID, Codex UUID, or Copilot session URI is required"; exit 1; }
+          [[ "$PROMOTE_JSON" == "true" || "$PROMOTE_JSON" == "false" ]] || { echo "::error::promote must be a JSON boolean"; exit 1; }
+
+      - name: Checkout exact source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chrome and Linux dependencies
+        run: npx playwright install --with-deps chrome
+
+      - name: Record Linux export baselines
+        run: npm run test:e2e:update-baselines -- --workers=1
+
+      - name: Verify recorded baselines
+        run: npm run test:e2e -- e2e/export/visual-regression.spec.ts --workers=1
+
+      - name: Validate exact Linux baseline set
+        run: |
+          node --input-type=module <<'NODE'
+          import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+
+          const dir = 'e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux';
+          const expected = [
+            'drawing.avif.png',
+            'drawing.bmp.png',
+            'drawing.gif.png',
+            'drawing.jpeg.png',
+            'drawing.png.png',
+            'drawing.svg.png',
+            'drawing.webp.png',
+          ].sort();
+          const actual = readdirSync(dir).sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new Error(`Expected exactly ${expected.join(', ')} in ${dir}; found ${actual.join(', ')}`);
+          }
+          for (const name of expected) {
+            const file = `${dir}/${name}`;
+            if (!lstatSync(file).isFile()) throw new Error(`${file} is not a regular file`);
+            const signature = readFileSync(file).subarray(0, 8).toString('hex');
+            if (signature !== '89504e470d0a1a0a') throw new Error(`${file} is not a PNG`);
+          }
+          NODE
+
+      - name: Upload Linux export baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-export-baselines-${{ github.event.client_payload.request_id }}-${{ github.run_id }}
+          path: e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux/
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload Playwright diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-baseline-diagnostics-${{ github.event.client_payload.request_id }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: warn
+
+  promote:
+    if: ${{ toJSON(github.event.client_payload.promote) == 'true' }}
+    needs: capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.source_sha }}
+          fetch-depth: 0
+
+      - name: Validate branch, source SHA and chat ID
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_BRANCH: ${{ github.event.client_payload.source_branch }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${REPOSITORY,,}" == "bohdanus/ph" ]] || { echo "::error::Promotion is restricted to Bohdanus/ph"; exit 1; }
+          [[ -n "$SOURCE_BRANCH" && "$SOURCE_BRANCH" != "main" ]] || { echo "::error::Promotion requires a non-main branch"; exit 1; }
+          git check-ref-format "refs/heads/$SOURCE_BRANCH"
+          [[ "$SOURCE_SHA" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "::error::Invalid source SHA"; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo "::error::Checkout does not match source SHA"; exit 1; }
+          remote_sha="$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | cut -f1)"
+          [[ "$remote_sha" == "$SOURCE_SHA" ]] || { echo "::error::Mirror branch moved; no baseline was promoted"; exit 1; }
+          [[ "$CHAT_ID" =~ ^(ses_[A-Za-z0-9]{26}|[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12}|copilotcli:/[[:xdigit:]]{8}-[[:xdigit:]]{4}-[1-8][[:xdigit:]]{3}-[89aAbB][[:xdigit:]]{3}-[[:xdigit:]]{12})$ ]] || { echo "::error::A valid Kilo ID, Codex UUID, or Copilot session URI is required"; exit 1; }
+
+      - name: Download captured Linux baselines
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-export-baselines-${{ github.event.client_payload.request_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/linux-export-baselines
+
+      - name: Validate and stage baseline allowlist
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/linux-export-baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob dotglob
+          target_dir='e2e/export/visual-regression.spec.ts-snapshots/export-baselines/linux'
+          workspace="$(pwd -P)"
+          target_real="$(realpath -e "$target_dir")"
+          [[ "$target_real" == "$workspace/$target_dir" && ! -L "$target_dir" ]] || { echo "::error::Linux baseline target resolves outside its expected repository path"; exit 1; }
+          expected=(drawing.avif.png drawing.bmp.png drawing.gif.png drawing.jpeg.png drawing.png.png drawing.svg.png drawing.webp.png)
+          actual=("$ARTIFACT_DIR"/*)
+          [[ ${#actual[@]} -eq ${#expected[@]} ]] || { echo "::error::Unexpected Linux baseline artifact contents"; exit 1; }
+          for name in "${expected[@]}"; do
+            file="$ARTIFACT_DIR/$name"
+            target="$target_dir/$name"
+            [[ -f "$file" && ! -L "$file" ]] || { echo "::error::Missing or unsafe baseline $name"; exit 1; }
+            [[ ! -L "$target" && ( ! -e "$target" || -f "$target" ) ]] || { echo "::error::Unsafe target baseline $name"; exit 1; }
+            [[ "$(file --brief --mime-type "$file")" == "image/png" ]] || { echo "::error::$name is not a PNG"; exit 1; }
+            attributes="$(git check-attr text eol filter ident working-tree-encoding -- "$target")"
+            [[ "$attributes" == *": text: unset"* && "$attributes" == *": eol: unspecified"* && "$attributes" == *": filter: unspecified"* && "$attributes" == *": ident: unspecified"* && "$attributes" == *": working-tree-encoding: unspecified"* ]] || { echo "::error::Unsafe Git byte-conversion attributes for $name"; exit 1; }
+            cp -- "$file" "$target"
+            git add -- "$target"
+          done
+
+      - name: Commit and push baseline changes
+        env:
+          SOURCE_BRANCH: ${{ github.event.client_payload.source_branch }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            echo "Linux export baselines already match; no commit created."
+            exit 0
+          fi
+          if [[ "$CHAT_ID" == copilotcli:/* ]]; then
+            COMMIT_TRAILERS=$(printf 'Chat: %s\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>' "$CHAT_ID")
+          else
+            COMMIT_TRAILERS="Chat: $CHAT_ID"
+          fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'test: refresh Linux export baselines' -m "$COMMIT_TRAILERS"
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"

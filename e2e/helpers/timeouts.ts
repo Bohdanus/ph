@@ -52,3 +52,11 @@ export const THIRD_PARTY_PAGE_TEST_TIMEOUT_MS = 90_000;
  * here with it if the number moves.
  */
 export const PAINT_TOOLS_TEST_TIMEOUT_MS = 120_000;
+
+/**
+ * A search test that iterates many viewport heights and reloads the page at each step.
+ * The search in `no-document-overflow.spec.ts` does ~45 page loads (descent + bisect + sweep)
+ * in a single test. Under parallel CPU contention, each page load takes 2-5s instead of 1s,
+ * so 60s is insufficient. 180s provides ~4s per load headroom.
+ */
+export const SEARCH_TEST_TIMEOUT_MS = 180_000;

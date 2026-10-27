@@ -147,6 +147,10 @@ test.describe('SidebarLeft - Keyboard Navigation', () => {
 
     await expect(page.getByRole('menu')).toBeHidden();
     await verifyPrimaryTool(page, SECOND_IN_LASSO.toolName, SECOND_IN_LASSO.label);
+    await expect(
+      page.getByText('Right-click also finishes the selection'),
+      'selecting polygonal-lasso mounts its options-bar hint'
+    ).toBeVisible();
   });
 
   test('full keyboard flow: open, navigate, select', async ({ page }) => {
@@ -162,5 +166,9 @@ test.describe('SidebarLeft - Keyboard Navigation', () => {
     // `primaryTool.name`, so this is the assertion that the selection actually landed. Before
     // it, the test asserted only that the menu closed — which any wrong pick also satisfies.
     await verifyPrimaryTool(page, SECOND_IN_LASSO.toolName, SECOND_IN_LASSO.label);
+    await expect(
+      page.getByText('Right-click also finishes the selection'),
+      'selecting polygonal-lasso mounts its options-bar hint'
+    ).toBeVisible();
   });
 });

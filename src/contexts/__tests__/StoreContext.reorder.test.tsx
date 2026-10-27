@@ -11,7 +11,7 @@ import type { HistoryItem } from '../history-types.ts';
 import { documentFrameFromSize } from '../document-frame.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 import { getSortedLayersArray } from '../layer-utils.ts';
-import { OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, REORDER_ACTION } from '../../util/constants.ts';
+import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, REORDER_ACTION } from '../../util/constants.ts';
 
 /**
  * `buildDurableDocument` is the store's only conversion call, and a published
@@ -360,7 +360,7 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(published.history.at(-1)).toMatchObject({
       id: store.history.at(-1)!.id,
       enabled: true,
-      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 2 } },
+      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 3 } },
     });
 
     // THE ORACLE: the whole document, against a real conversion of the same
@@ -388,11 +388,11 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(published.history.map((entry) => entry.operation.kind)).toEqual(['reorder-layers', 'reorder-layers']);
     expect(published.history[0]!.operation).toEqual({
       kind: 'reorder-layers',
-      orderByLayerId: { bottom: 0, top: 1, middle: 2 },
+      orderByLayerId: { bottom: 0, top: 1, middle: 3 },
     });
     expect(published.history[1]!.operation).toEqual({
       kind: 'reorder-layers',
-      orderByLayerId: { top: 0, bottom: 1, middle: 2 },
+      orderByLayerId: { top: 1, bottom: 2, middle: 5 },
     });
     expect(published.cursor).toBe(1);
     expect(published.durableRevision).toBe(base.durableRevision + 1);
@@ -457,50 +457,140 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     // shadow itself holds. A published map would name the runtime-only layer and
     // renumber the three layers the two models do agree on.
     expect(orders(store.layers)).toEqual({ bottom: 0, top: 1, middle: 3, extra: 5 });
-    expect(orderMap(store)).toEqual({ bottom: 0, top: 1, middle: 2 });
+    expect(orderMap(store)).toEqual({ bottom: 0, top: 1, middle: 3 });
   });
 
-  it('refuses a reorder once a refused one has left the shadow and the document ordered differently', () => {
+  it('refuses a reorder when the layer sequence matches but sparse order values disagree', () => {
+    const durable = makeLayers();
+    const runtime = makeLayers();
+    runtime.top!.order = 4;
+    const result = setupWithDocument(runtime, durable);
+    conversions.mockClear();
+
+    reorder(result.current.dispatch, 'middle', 'bottom');
+
+    expect(conversions).toHaveBeenCalledTimes(1);
+    const store = result.current.store;
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument).toEqual(conversionOracle(store, store.durableDocument!.durableRevision));
+    expect(durableSequence(store)).toEqual(sequence(store.layers));
+    expect(orders(store.layers)).toEqual({ bottom: 0, middle: 1, top: 6 });
+    const replayed = replayDurableDocument(store.durableDocument!);
+    expect(
+      Object.fromEntries(Object.entries(replayed.layers).map(([id, layer]) => [id, layer.snapshot.order]))
+    ).toEqual({
+      bottom: 0,
+      middle: 1,
+      top: 4,
+    });
+
+    conversions.mockClear();
+    const source = store.layers.bottom!.source;
+    const addedLayer = {
+      ...createMockLayer({ id: 'new-layer', name: 'Blank 7', order: 7 }),
+      source,
+    };
+    act(() => {
+      result.current.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { ...store.layers, 'new-layer': addedLayer }, activeLayerId: 'new-layer' },
+          historyItem: {
+            id: 'create-after-divergent-reorder',
+            actionName: NEW_LAYER_ACTION,
+            layerId: 'new-layer',
+            layerSource: source,
+          },
+        },
+      });
+    });
+    expect(conversions).toHaveBeenCalledTimes(1);
+    const afterCreate = result.current.store;
+    expect(afterCreate.durableDocument).toEqual(
+      conversionOracle(afterCreate, afterCreate.durableDocument!.durableRevision)
+    );
+    const created = afterCreate.durableDocument!.history.at(-1)?.operation;
+    expect(created?.kind).toBe('create-layer');
+    if (created?.kind === 'create-layer') expect(created.layer).toMatchObject({ name: 'Blank 5', order: 5 });
+  });
+
+  // FAILS WITHOUT THE CHANGE: the durable projection would omit the runtime-only layer.
+  it('does not publish durable presentation when a reorder leaves a runtime-only layer', async () => {
+    const result = setupWithDocument({ ...makeLayers(), extra: runtimeOnlyLayer() }, makeLayers());
+
+    reorder(result.current.dispatch, 'top', 'bottom');
+    await vi.waitFor(() => {
+      expect(result.current.store.durablePresentation.status).toBe('legacy-fallback');
+    });
+
+    const store = result.current.store;
+    expect(store.renderSelector.source).toBe('legacy');
+    expect(store.durablePresentation).toMatchObject({ status: 'legacy-fallback', reason: 'renderer-incompatible' });
+    expect(store.durableRenderProjection).toBeNull();
+  });
+
+  // FAILS WITHOUT THE CHANGE: navigation would accept a projection with the wrong order.
+  it('rejects durable navigation when the runtime layer order differs from replay', async () => {
+    const durable = makeLayers();
+    const runtime = Object.fromEntries(
+      Object.entries(durable).map(([id, layer], index) => [id, { ...layer, order: (index + 1) % 3 }])
+    ) as LayersRecord;
+    const result = setupWithDocument(runtime, durable);
+
+    const before = result.current.store;
+    act(() => {
+      result.current.dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { layers: runtime, deletedLayers: {}, activeLayerId: null },
+          timeline: {
+            entries: before.history,
+            cursor: before.historyIndex,
+            branchRevision: before.branchRevision,
+          },
+        },
+      });
+    });
+
+    let outcome: Awaited<ReturnType<StoreData['publishDurableNavigationPresentation']>>;
+    await act(async () => {
+      outcome = await result.current.store.publishDurableNavigationPresentation();
+    });
+
+    expect(outcome!).toMatchObject({ status: 'legacy-fallback', reason: 'renderer-incompatible' });
+    expect(result.current.store.durablePresentation).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'renderer-incompatible',
+    });
+    expect(result.current.store.renderSelector.source).toBe('legacy');
+    expect(result.current.store.durableRenderProjection).toBeNull();
+  });
+
+  it('publishes a self-anchored reorder without desynchronizing the next append', () => {
     const result = setupWithDocument();
     const before = result.current.store.durableDocument!;
     const documentSequenceBefore = sequence(result.current.store.layers);
     conversions.mockClear();
 
-    // A self-anchored move is the one intent where the converter and the document
-    // genuinely disagree: `reorderLayers` leaves the visible sequence alone and
-    // the converter records a move to the bottom. The append is refused, the
-    // fallback converts, and the shadow is now ordered the converter's way while
-    // the document is not.
     reorder(result.current.dispatch, 'top', 'top');
     const afterSelfAnchor = result.current.store;
-    expect(afterSelfAnchor.durableDocument).toEqual(conversionOracle(afterSelfAnchor, before.durableRevision + 1));
-    // The document's sequence did not move; the shadow's did. That gap is the
-    // thing the next append has to notice, and it is invisible to a membership
-    // check — the two models still name exactly the same layers.
+    expect(conversions).not.toHaveBeenCalled();
     expect(sequence(afterSelfAnchor.layers)).toEqual(documentSequenceBefore);
-    // The shadow now says something different about the same layers, which no
-    // membership check can see: both models still name exactly the same ids.
-    expect(durableSequence(afterSelfAnchor)).not.toEqual(documentSequenceBefore);
+    expect(durableSequence(afterSelfAnchor)).toEqual(documentSequenceBefore);
+    expect(afterSelfAnchor.durableDiagnostics).toEqual([]);
+    expect(afterSelfAnchor.durableDocument).toEqual(conversionOracle(afterSelfAnchor, before.durableRevision + 1));
+    expect(conversions).toHaveBeenCalledTimes(1);
     conversions.mockClear();
 
-    // The next reorder's layer SETS still match, so nothing but the order
-    // comparison can refuse it. This is the case that matters: publishing here
-    // would normalise the runtime order into the shadow and leave a durable
-    // document that no reconversion of this history would produce — the shadow
-    // would be laundered into a third answer and the conversion defect would
-    // stop being visible.
     reorder(result.current.dispatch, 'bottom', 'middle');
 
-    // The refusal is a precondition: it converts, reports nothing, and still
-    // reorders the document.
-    expect(conversions).toHaveBeenCalledTimes(1);
+    expect(conversions).not.toHaveBeenCalled();
     const store = result.current.store;
     expect(store.durableStatus).toBe('current');
     expect(store.durableDiagnostics).toEqual([]);
-    // Two appends, two refused publications, so two whole-timeline conversions:
-    // the shadow is still exactly what a conversion produces, which is the
-    // property a publication would have destroyed.
+    expect(durableSequence(store)).toEqual(sequence(store.layers));
     expect(store.durableDocument).toEqual(conversionOracle(store, before.durableRevision + 2));
+    expect(conversions).toHaveBeenCalledTimes(1);
   });
 
   it('carries an earlier durable-append-mismatch into a published reorder', () => {
@@ -526,7 +616,7 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(published.history.map((entry) => entry.id)).toEqual([planted.id, store.history.at(-1)!.id]);
     expect(published.history.at(-1)).toMatchObject({
       enabled: true,
-      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 2 } },
+      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 3 } },
     });
     expect(published.cursor).toBe(1);
     expect(published.durableRevision).toBe(base.durableRevision + 1);

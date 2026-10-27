@@ -4,7 +4,12 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
 import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
-import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import {
+  claimDocumentGesture,
+  isDocumentGestureOpen,
+  readDocumentGesture,
+  resetDocumentGestures,
+} from '../../../hooks/document-gesture.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -114,9 +119,11 @@ const committedTriangle = (overrides: Partial<Selection> = {}): Selection =>
     lifecycle: 'committed',
     pos: { x: 9, y: 9, width: 92, height: 92 },
     points: [
-      { x: 1, y: 1 },
-      { x: 91, y: 1 },
-      { x: 91, y: 91 },
+      [
+        { x: 1, y: 1 },
+        { x: 91, y: 1 },
+        { x: 91, y: 91 },
+      ],
     ],
     ...overrides,
   }) as Selection;
@@ -320,9 +327,11 @@ describe('PolygonClickToolArea', () => {
       expect(committedSelection()).toMatchObject({
         pos: { x: 13, y: 15, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       });
     });
@@ -356,7 +365,7 @@ describe('PolygonClickToolArea', () => {
         id: expect.any(String),
       });
       // Exactly the one commit, over every anchor the gesture accumulated.
-      expect(committedSelection().points).toHaveLength(6);
+      expect(committedSelection().points[0]).toHaveLength(6);
     });
   });
 
@@ -451,9 +460,11 @@ describe('PolygonClickToolArea', () => {
         id: 'selection-1',
         pos: { x: 24, y: 29, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
         metadata: { movedAtVersion: 2 },
       });
@@ -511,9 +522,11 @@ describe('PolygonClickToolArea', () => {
         isActive: true,
         pos: { x: 59, y: 9, width: 42, height: 92 },
         points: [
-          { x: 1, y: 31 },
-          { x: 41, y: 1 },
-          { x: 41, y: 91 },
+          [
+            { x: 1, y: 31 },
+            { x: 41, y: 1 },
+            { x: 41, y: 91 },
+          ],
         ],
         metadata: { movedAtVersion: 1 },
       });
@@ -669,9 +682,11 @@ describe('PolygonClickToolArea', () => {
         id: 'selection-1',
         pos: { x: 59, y: 9, width: 42, height: 92 },
         points: [
-          { x: 1, y: 31 },
-          { x: 41, y: 1 },
-          { x: 41, y: 91 },
+          [
+            { x: 1, y: 31 },
+            { x: 41, y: 1 },
+            { x: 41, y: 91 },
+          ],
         ],
         metadata: { movedAtVersion: 1 },
       });
@@ -889,11 +904,16 @@ describe('PolygonClickToolArea', () => {
     it('claims the document for the length of a body drag and releases it on the release', () => {
       storeState.selections = [committedTriangle()];
       const toolArea = renderArea({ current: createMockContext() }).ctx;
+      const setPointerCapture = vi.fn();
+      const releasePointerCapture = vi.fn();
+      toolArea.setPointerCapture = setPointerCapture;
+      toolArea.releasePointerCapture = releasePointerCapture;
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 80, clientY: 40 });
 
       expect(isDocumentGestureOpen()).toBe(true);
       expect(readDocumentGesture()).toEqual({ kind: 'polygon-selection', pointerId: 7 });
+      expect(setPointerCapture).toHaveBeenCalledWith(7);
 
       fireEvent.pointerMove(toolArea, { pointerId: 7, clientX: 90, clientY: 55 });
       // Still held mid-drag, which is the entire window the gate exists for.
@@ -904,6 +924,27 @@ describe('PolygonClickToolArea', () => {
       // Released by the time `commitSelection` appends, so the keyboard is open
       // again for the entry this gesture just wrote.
       expect(isDocumentGestureOpen()).toBe(false);
+      expect(releasePointerCapture).toHaveBeenCalledWith(7);
+    });
+
+    it('does not capture or release a pointer when its document claim is refused', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+      const setPointerCapture = vi.fn();
+      const releasePointerCapture = vi.fn();
+      toolArea.setPointerCapture = setPointerCapture;
+      toolArea.releasePointerCapture = releasePointerCapture;
+
+      // A different owner already holds the document. The selection press must
+      // not record its pointer as if it owned the claim.
+      expect(claimDocumentGesture('brush-stroke', 11)).toBe(true);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 80, clientY: 40 });
+      fireEvent.pointerUp(toolArea, { pointerId: 7, clientX: 80, clientY: 40 });
+
+      expect(setPointerCapture).not.toHaveBeenCalled();
+      expect(releasePointerCapture).not.toHaveBeenCalled();
+      expect(readDocumentGesture()).toEqual({ kind: 'brush-stroke', pointerId: 11 });
     });
 
     it('claims the document for an anchor drag, and releases it when the drag is cancelled', () => {
@@ -918,6 +959,25 @@ describe('PolygonClickToolArea', () => {
       // give the claim back. A gate with no cancel route is worse than no gate.
       fireEvent.pointerCancel(toolArea, { pointerId: 3, clientX: 40, clientY: 40 });
 
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('ignores a foreign pointer cancel while preserving the captured selection drag', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 3, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { pointerId: 3, clientX: 40, clientY: 40 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerCancel(toolArea, { pointerId: 99, clientX: 40, clientY: 40 });
+
+      expect(isDocumentGestureOpen()).toBe(true);
+      expect(selectionEdits()).toHaveLength(0);
+
+      fireEvent.pointerUp(toolArea, { pointerId: 3, clientX: 40, clientY: 40 });
+
+      expect(selectionEdits()).toHaveLength(1);
       expect(isDocumentGestureOpen()).toBe(false);
     });
 
@@ -1050,9 +1110,11 @@ describe('PolygonClickToolArea', () => {
         sourceTool: 'freehand-lasso',
         pos: { x: 9, y: 9, width: 92, height: 92 },
         points: [
-          { x: 1, y: 1 },
-          { x: 91, y: 1 },
-          { x: 91, y: 91 },
+          [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
         ],
       });
     });

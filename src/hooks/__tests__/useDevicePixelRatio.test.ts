@@ -12,6 +12,24 @@ function withDpr<T>(value: number, body: () => T): T {
   }
 }
 
+function createMatchMediaMock() {
+  const listeners = new Set<() => void>();
+  const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+    () =>
+      ({
+        matches: true,
+        media: '',
+        onchange: null,
+        addEventListener: (_t: string, l: () => void) => listeners.add(l),
+        removeEventListener: (_t: string, l: () => void) => listeners.delete(l),
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList
+  );
+  return { listeners, matchMedia };
+}
+
 describe('currentDevicePixelRatio', () => {
   it('reads the ratio the compositor uses', () => {
     withDpr(2, () => expect(currentDevicePixelRatio()).toBe(2));
@@ -70,6 +88,73 @@ describe('useDevicePixelRatio', () => {
       // would be invisible.
       expect(matchMedia.mock.calls.length).toBe(queriesAtMount + 1);
       expect(matchMedia.mock.calls.at(-1)?.[0]).toBe('(resolution: 2dppx)');
+    });
+  });
+});
+
+describe('useDevicePixelRatio edge cases', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('falls back to 1 at mount when devicePixelRatio is NaN', () => {
+    createMatchMediaMock();
+    withDpr(Number.NaN, () => {
+      const { result } = renderHook(() => useDevicePixelRatio());
+      expect(result.current).toBe(1);
+    });
+  });
+
+  it('falls back to 1 at mount when devicePixelRatio is zero', () => {
+    createMatchMediaMock();
+    withDpr(0, () => {
+      const { result } = renderHook(() => useDevicePixelRatio());
+      expect(result.current).toBe(1);
+    });
+  });
+
+  it('tracks a move through a non-finite ratio back to a finite one', () => {
+    const { listeners, matchMedia } = createMatchMediaMock();
+    withDpr(2, () => {
+      const { result } = renderHook(() => useDevicePixelRatio());
+      expect(result.current).toBe(2);
+      const queriesAtMount = matchMedia.mock.calls.length;
+
+      Object.defineProperty(window, 'devicePixelRatio', { value: Number.NaN, configurable: true });
+      act(() => {
+        [...listeners].forEach((l) => l());
+      });
+      expect(result.current).toBe(1);
+
+      Object.defineProperty(window, 'devicePixelRatio', { value: 3, configurable: true });
+      act(() => {
+        [...listeners].forEach((l) => l());
+      });
+      expect(result.current).toBe(3);
+      expect(matchMedia.mock.calls.length).toBe(queriesAtMount + 2);
+    });
+  });
+
+  it.fails('updates when a plain resize event fires', () => {
+    createMatchMediaMock();
+    withDpr(1, () => {
+      const { result } = renderHook(() => useDevicePixelRatio());
+      Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+      expect(result.current).toBe(2);
+    });
+  });
+
+  it.fails('re-subscribes with a finite resolution query after a non-finite change', () => {
+    const { listeners, matchMedia } = createMatchMediaMock();
+    withDpr(1, () => {
+      renderHook(() => useDevicePixelRatio());
+      Object.defineProperty(window, 'devicePixelRatio', { value: Number.NaN, configurable: true });
+      act(() => {
+        [...listeners].forEach((l) => l());
+      });
+      const lastQuery = matchMedia.mock.calls.at(-1)?.[0];
+      expect(lastQuery).toBe('(resolution: 1dppx)');
     });
   });
 });

@@ -2,7 +2,7 @@ import type { CreatorToolParams, ToolResult } from './toolProcessors.ts';
 import type { Ctx2D, Point } from '../contexts/general-types.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 
-export type FigureType = 'line' | 'rectangle' | 'oval' | 'triangle' | 'polygon';
+export type FigureType = 'line' | 'rectangle' | 'oval' | 'triangle' | 'polygon' | 'star';
 
 export type LegacyFigureType = FigureType | 'circle' | 'square';
 
@@ -12,7 +12,12 @@ const legacyFigureMap: Record<'circle' | 'square', FigureType> = {
 };
 
 export const isFigureType = (figure: unknown): figure is FigureType =>
-  figure === 'line' || figure === 'rectangle' || figure === 'oval' || figure === 'triangle' || figure === 'polygon';
+  figure === 'line' ||
+  figure === 'rectangle' ||
+  figure === 'oval' ||
+  figure === 'triangle' ||
+  figure === 'polygon' ||
+  figure === 'star';
 
 /**
  * Photoshop exposes Circle and Square as Shift-constrained outcomes of the
@@ -42,6 +47,12 @@ export const DEFAULT_POLYGON_SIDES = 5;
  */
 export const MAX_POLYGON_SIDES = 100;
 
+/** Adobe documents the Star Ratio control as a percentage, but not its default. */
+export const MIN_STAR_RATIO = 1;
+export const MAX_STAR_RATIO = 99;
+/** App decision: 50% gives the conventional five-point star used by polygon tools. */
+export const DEFAULT_STAR_RATIO = 50;
+
 export type ShapeToolArgs = {
   alpha: number;
   color: string;
@@ -53,6 +64,7 @@ export type ShapeToolArgs = {
   lineCap?: ShapeLineCap;
   cornerRadius?: number;
   sides?: number;
+  starRatio?: number;
   toolMode?: ShapeToolMode;
   start?: Point;
   end?: Point;
@@ -73,6 +85,7 @@ export type ShapeGeometry = {
 };
 
 const LINE_ANGLE_STEP = Math.PI / 4;
+const EQUILATERAL_TRIANGLE_HEIGHT_RATIO = Math.sqrt(3) / 2;
 
 const snapLineGeometry = (anchor: Point, pointer: Point, altKey: boolean, shiftKey: boolean): ShapeGeometry => {
   if (!shiftKey) {
@@ -95,6 +108,29 @@ const snapLineGeometry = (anchor: Point, pointer: Point, altKey: boolean, shiftK
   };
 };
 
+const equilateralBox = (width: number, height: number): { width: number; height: number } =>
+  width >= height
+    ? { width, height: width * EQUILATERAL_TRIANGLE_HEIGHT_RATIO }
+    : { width: height / EQUILATERAL_TRIANGLE_HEIGHT_RATIO, height };
+
+const triangleGeometry = (anchor: Point, pointer: Point, altKey: boolean, equilateral: boolean): ShapeGeometry => {
+  const directionX = Math.sign(pointer.x - anchor.x) || 1;
+  const directionY = Math.sign(pointer.y - anchor.y) || 1;
+  const span = altKey ? 2 : 1;
+  const rawWidth = Math.abs(pointer.x - anchor.x) * span;
+  const rawHeight = Math.abs(pointer.y - anchor.y) * span;
+  const { width, height } = equilateral ? equilateralBox(rawWidth, rawHeight) : { width: rawWidth, height: rawHeight };
+
+  return {
+    start: altKey
+      ? { x: anchor.x - directionX * (width / 2), y: anchor.y - directionY * (height / 2) }
+      : { x: anchor.x, y: anchor.y },
+    end: altKey
+      ? { x: anchor.x + directionX * (width / 2), y: anchor.y + directionY * (height / 2) }
+      : { x: anchor.x + directionX * width, y: anchor.y + directionY * height },
+  };
+};
+
 /**
  * Single source of truth for shape drag geometry.
  *
@@ -113,6 +149,7 @@ export const normalizeShapeGeometry = (
   const { shiftKey, altKey } = constraints;
 
   if (figure === 'line') return snapLineGeometry(anchor, pointer, altKey, shiftKey);
+  if (figure === 'triangle') return triangleGeometry(anchor, pointer, altKey, shiftKey);
 
   if (shiftKey) {
     // Measure half-extents from the anchor, which is the shape center when
@@ -223,6 +260,15 @@ export const polygonSides = (sides: number | undefined): number => {
   return rounded;
 };
 
+/** Normalize the percentage of the outer radius used by a star's inner vertices. */
+export const starRatio = (ratio: number | undefined): number => {
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return DEFAULT_STAR_RATIO;
+  const rounded = Math.round(ratio);
+  if (rounded < MIN_STAR_RATIO) return MIN_STAR_RATIO;
+  if (rounded > MAX_STAR_RATIO) return MAX_STAR_RATIO;
+  return rounded;
+};
+
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { figure, start, end } = args;
   // `backgroundColor` is half the condition, not a detail: `setShapeCtx` only assigns `fillStyle`
@@ -239,19 +285,35 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
     ctx.stroke();
-  } else if (figure === 'triangle' || figure === 'polygon') {
+  } else if (figure === 'triangle') {
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+    ctx.beginPath();
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+    if (hasFill) ctx.fill();
+    ctx.stroke();
+  } else if (figure === 'polygon' || figure === 'star') {
     const centerX = (start.x + end.x) / 2;
     const centerY = (start.y + end.y) / 2;
     const radiusX = Math.abs(end.x - start.x) / 2;
     const radiusY = Math.abs(end.y - start.y) / 2;
-    const sides = figure === 'triangle' ? 3 : polygonSides(args.sides);
+    const sides = polygonSides(args.sides);
+    const vertexCount = figure === 'star' ? sides * 2 : sides;
+    const innerRatio = figure === 'star' ? starRatio(args.starRatio) / 100 : 1;
+    const angleStep = figure === 'star' ? Math.PI / sides : (Math.PI * 2) / sides;
 
     ctx.beginPath();
-    for (let index = 0; index < sides; index += 1) {
-      const angle = -Math.PI / 2 + (index * Math.PI * 2) / sides;
+    for (let index = 0; index < vertexCount; index += 1) {
+      const angle = -Math.PI / 2 + index * angleStep;
+      const radius = index % 2 === 0 ? 1 : innerRatio;
       const point = {
-        x: centerX + Math.cos(angle) * radiusX,
-        y: centerY + Math.sin(angle) * radiusY,
+        x: centerX + Math.cos(angle) * radiusX * radius,
+        y: centerY + Math.sin(angle) * radiusY * radius,
       };
       if (index === 0) ctx.moveTo(point.x, point.y);
       else ctx.lineTo(point.x, point.y);

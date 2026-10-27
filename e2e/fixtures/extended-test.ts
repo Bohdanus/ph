@@ -89,25 +89,21 @@ import { ConsolePolice } from '../helpers/console-police';
  *
  *   So the suite pins light and states it here, where every spec's `test` comes from.
  *   The pin is a property of the ORACLE, not a claim about the app. What the app does
- *   with nothing stored is ASSERTED, not RENDERED, by exactly one test
+ *   with nothing stored is ASSERTED, not RENDERED, by one test
  *   (`e2e/document-dialogs.spec.ts`, "with nothing stored the document starts dark"),
  *   which releases this pin and reloads rather than running under it — and all it reads
  *   is the class on `<html>` and the string in `localStorage`. A `dark:` Tailwind
- *   variant that stopped applying would leave it green, so that test is a claim about
- *   the DEFAULT and not about dark mode as it reaches the screen. There is very little
- *   of the latter here, and the gap is recorded rather than left to be inferred:
- *   `e2e/accessibility.spec.ts` measures that the dark palette reports two EXTRA
- *   `color-contrast` violations, on the panel tab labels
- *   (`src/components/SidebarRight/PanelGroup.tsx:42`), that a light-only green run says
- *   nothing at all about.
+ *   variant that stopped applying would leave the default-theme assertion green, so it
+ *   is a claim about the DEFAULT and not about dark mode as it reaches the screen. The
+ *   accessibility suite separately releases this pin, reloads, and scans the shell,
+ *   dialogs, options bar, and tablet flyout in dark theme.
  *
  * WHY `addInitScript` AND NOT A NAVIGATION-TIME `evaluate`
- *   `ThemeProvider` reads `localStorage.getItem('theme')` synchronously inside its
- *   `useState` initializer (`src/contexts/ThemeContext.tsx:30-33`), so the value has to
- *   exist before the bundle's first statement. Setting it after `goto()` resolves is a
- *   race with the first paint: the app has already picked a theme, and a test that
- *   "sets the theme then waits for light" would be asserting on a repaint it provoked
- *   rather than on the value the app started from. `addInitScript` is evaluated before
+ *   `ThemeProvider` reads `localStorage.getItem('theme')` synchronously in its
+ *   `useState` initializer, so the value has to exist before the bundle's first statement.
+ *   Setting it after `goto()` resolves races the first paint: the app has already picked a
+ *   theme, and a test that "sets the theme then waits for light" would assert on a repaint
+ *   it provoked rather than the value the app started from. `addInitScript` is evaluated before
  *   any page script, on every navigation and every reload, which is also what lets the
  *   pin survive the `page.reload()` several specs use to prove a preference persisted.
  *
@@ -138,6 +134,8 @@ export * from '@playwright/test';
 
 /** The `localStorage` key `ThemeProvider` reads (`src/contexts/ThemeContext.tsx:31`). */
 const THEME_STORAGE_KEY = 'theme';
+const FIRST_USE_TOUR_STORAGE_KEY = 'ph.firstUseTourSeen';
+const FIRST_USE_TOUR_RELEASE_KEY = 'e2e-first-use-tour-released';
 
 /** The theme this suite runs under. A property of the pixel oracle above, not of the app. */
 const PINNED_THEME = 'light';
@@ -155,7 +153,11 @@ const PINNED_THEME = 'light';
  */
 const THEME_PIN_RELEASE_KEY = 'e2e-theme-pin-released';
 
-export const test = base.extend<{ consolePolice: ConsolePolice; pinnedTheme: null }>({
+export const test = base.extend<{
+  consolePolice: ConsolePolice;
+  pinnedTheme: null;
+  firstUseTourSuppressed: null;
+}>({
   consolePolice: [
     async ({ page }, use, testInfo) => {
       const police = new ConsolePolice(page);
@@ -190,7 +192,38 @@ export const test = base.extend<{ consolePolice: ConsolePolice; pinnedTheme: nul
     },
     { auto: true },
   ],
+  firstUseTourSuppressed: [
+    async ({ page }, use) => {
+      await page.addInitScript(
+        ({ storageKey, releaseKey }) => {
+          try {
+            if (window.sessionStorage.getItem(releaseKey) === '1') return;
+            if (window.localStorage.getItem(storageKey) === null) {
+              window.localStorage.setItem(storageKey, 'true');
+            }
+          } catch {
+            // An opaque origin has no storage to seed.
+          }
+        },
+        { storageKey: FIRST_USE_TOUR_STORAGE_KEY, releaseKey: FIRST_USE_TOUR_RELEASE_KEY }
+      );
+      await use(null);
+    },
+    { auto: true },
+  ],
 });
+
+/** Show the first-use tour for a dedicated E2E test in this tab. */
+export async function showFirstUseTour(page: Page): Promise<void> {
+  await page.evaluate(
+    ({ storageKey, releaseKey }) => {
+      window.sessionStorage.setItem(releaseKey, '1');
+      window.localStorage.removeItem(storageKey);
+    },
+    { storageKey: FIRST_USE_TOUR_STORAGE_KEY, releaseKey: FIRST_USE_TOUR_RELEASE_KEY }
+  );
+  await page.reload();
+}
 
 /**
  * Releases the pin for the rest of this tab, so the next load starts from whatever the

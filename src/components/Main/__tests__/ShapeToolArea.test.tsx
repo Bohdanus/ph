@@ -125,6 +125,10 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
       pointerState.isMouseDown.current = false;
       return true;
     }),
+    releasePointer: vi.fn(() => {
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
+    }),
     getLocalCoords: vi.fn((event: PointerEvent) => ({ x: event.clientX, y: event.clientY })),
     isMouseDown: pointerState.isMouseDown,
   }),
@@ -1184,6 +1188,10 @@ describe('ShapeToolArea', () => {
     it('cancels a pending animation frame on pointer up', () => {
       vi.useFakeTimers();
       const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
+      // The handle is read off the scheduler the component itself calls, so the claim is "the frame
+      // THIS drag queued" and not merely "some id reached `cancelAnimationFrame`" — a cancel of an
+      // unrelated id, or of nothing at all, satisfies a bare call count.
+      const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -1193,12 +1201,25 @@ describe('ShapeToolArea', () => {
       act(() => {
         fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
+      expect(rafSpy).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+      const pendingFrame = rafSpy.mock.results[0].value as number;
 
       act(() => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
 
-      expect(cancelSpy).toHaveBeenCalled();
+      expect(cancelSpy).toHaveBeenCalledExactlyOnceWith(pendingFrame);
+      // The cancelled frame is replaced by a synchronous flush, not dropped: the payload is the
+      // final drag's, so a commit that lost its preview is visible here.
+      expect(drawShapeMock).toHaveBeenCalledExactlyOnceWith(
+        storeMocks.ctx,
+        expect.objectContaining({
+          toolName: 'shape',
+          figure: 'rectangle',
+          start: { x: 10, y: 20 },
+          end: { x: 50, y: 60 },
+        })
+      );
     });
 
     it('falls back to documentFrameFromSize when currentFrame is null', () => {
@@ -1225,10 +1246,10 @@ describe('ShapeToolArea', () => {
 
   /**
    * The overlay canvas is shared, long-lived and only ever `display`-toggled
-   * (`Main.tsx:239-284`), and toggling `display` never touches a backing store. This area never
-   * clears it on pointer up at all — the last `flushDrawingFrame` in `handlePointerUp` REDRAWS the
-   * shape and the commit leaves it there — so the unmount teardown is the only thing that ever
-   * removes the preview. Without it the shape stays painted over the next tool's document.
+   * (`Main.tsx:239-284`), and toggling `display` never touches a backing store.
+   * `commitShape` (called from `handlePointerUp`) clears the preview after a successful
+   * commit so the committed layer is not painted twice — once in the overlay and once by
+   * the layer renderer. The unmount teardown provides a secondary clear for aborted gestures.
    */
   describe('overlay teardown', () => {
     it('clears the whole backing store on unmount', () => {
@@ -1244,7 +1265,20 @@ describe('ShapeToolArea', () => {
       act(() => {
         vi.advanceTimersByTime(20);
       });
-      expect(drawShapeMock).toHaveBeenCalled();
+      expect(drawShapeMock).toHaveBeenCalledExactlyOnceWith(
+        storeMocks.ctx,
+        expect.objectContaining({
+          toolName: 'shape',
+          figure: 'rectangle',
+          start: { x: 10, y: 20 },
+          end: { x: 50, y: 60 },
+          lineWidth: 2,
+          cornerRadius: 0,
+          color: '#000000',
+          backgroundColor: null,
+          alpha: 1,
+        })
+      );
 
       vi.mocked(storeMocks.ctx.clearRect).mockClear();
       view.unmount();
@@ -1275,10 +1309,10 @@ describe('ShapeToolArea', () => {
 
       // Cancel first, then clear: a frame that survived would have repainted after the clear.
       expect(drawShapeMock).not.toHaveBeenCalled();
-      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
+      expect(vi.mocked(storeMocks.ctx.clearRect)).toHaveBeenCalledWith(0, 0, 640, 480);
     });
 
-    it('clears the preview a committed shape leaves painted, which nothing else removes', () => {
+    it('clears the preview after committing a shape', () => {
       vi.useFakeTimers();
       const { view, toolArea } = renderToolArea();
 
@@ -1295,13 +1329,23 @@ describe('ShapeToolArea', () => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
 
-      // The commit ran and left the preview on the overlay: `handlePointerUp`'s last
-      // `flushDrawingFrame` redraws it and `createLayerFromTool` does not clear it. The shape is
-      // now a layer AND is painted twice, and the overlay keeps painting over the next tool's
-      // document because toggling `display` never touches a backing store.
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
-      expect(drawShapeMock).toHaveBeenCalled();
+      expect(drawShapeMock).toHaveBeenCalledExactlyOnceWith(
+        storeMocks.ctx,
+        expect.objectContaining({
+          toolName: 'shape',
+          figure: 'rectangle',
+          start: { x: 10, y: 20 },
+          end: { x: 50, y: 60 },
+          lineWidth: 2,
+          cornerRadius: 0,
+          color: '#000000',
+          backgroundColor: null,
+          alpha: 1,
+        })
+      );
 
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
       vi.mocked(storeMocks.ctx.clearRect).mockClear();
       view.unmount();
 
@@ -1329,7 +1373,7 @@ describe('ShapeToolArea', () => {
       view.unmount();
     });
 
-    it.each(['rectangle', 'oval', 'triangle', 'polygon'] as const)(
+    it.each(['rectangle', 'oval', 'polygon'] as const)(
       'applies the aspect constraint to %s when shift is held',
       (figure) => {
         toolArgsState.toolArgs.figure = figure;
@@ -1351,6 +1395,21 @@ describe('ShapeToolArea', () => {
         view.unmount();
       }
     );
+
+    it('uses an equilateral triangle box when shift is held', () => {
+      toolArgsState.toolArgs.figure = 'triangle';
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 10, y: 20 };
+      const pointer = { x: 50, y: 80 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer, { shiftKey: true });
+      const expected = normalizeShapeGeometry(anchor, pointer, 'triangle', { shiftKey: true, altKey: false });
+
+      expect(expected).toEqual({ start: { x: 10, y: 20 }, end: { x: 79.2820323027551, y: 80 } });
+      expect(committedGeometry(fullArgs)).toEqual(toDocumentShape(expected));
+      expect(fullArgs.args.figure).toBe('triangle');
+      view.unmount();
+    });
 
     it('constrains a shifted line to 45 degrees and keeps its length', () => {
       toolArgsState.toolArgs.figure = 'line';
@@ -1618,6 +1677,9 @@ describe('ShapeToolArea', () => {
     // about to paint into, with a shape this component never released.
     it('cancels the pending frame on unmount, so no shape is painted afterwards', () => {
       vi.useFakeTimers();
+      // Spying the scheduler too is what makes the cancel claimable: the handle the teardown
+      // cancels must be the one THIS drag queued, so a cancel of an unrelated or stale id fails.
+      const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
       const { container, unmount } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -1627,6 +1689,10 @@ describe('ShapeToolArea', () => {
       act(() => {
         fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
+      expect(rafSpy).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+      const pendingFrame = rafSpy.mock.results[0].value as number;
+
+      // Spied after the drag, so the only cancel it can see is the teardown's.
       const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
 
       unmount();
@@ -1634,7 +1700,7 @@ describe('ShapeToolArea', () => {
         vi.advanceTimersByTime(20);
       });
 
-      expect(cancelSpy).toHaveBeenCalled();
+      expect(cancelSpy).toHaveBeenCalledExactlyOnceWith(pendingFrame);
       expect(drawShapeMock).not.toHaveBeenCalled();
     });
 
@@ -1733,15 +1799,34 @@ describe('ShapeToolArea', () => {
       expect(isDocumentGestureOpen()).toBe(true);
     });
 
-    it('releases the claim on a pointer cancel, which is the abort route', () => {
+    it('ignores a foreign pointer cancel while preserving the owner shape gesture', () => {
       const { toolArea } = renderToolArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
-      expect(isDocumentGestureOpen()).toBe(true);
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 4, clientX: 160, clientY: 180 });
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 42 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'shape-draw', pointerId: 4 });
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, clientX: 160, clientY: 180 });
+
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim and clears the shape preview on an owning pointer cancel', () => {
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 4, clientX: 160, clientY: 180 });
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
 
       fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 4 });
 
       expect(isDocumentGestureOpen()).toBe(false);
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
     });
 
     it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {

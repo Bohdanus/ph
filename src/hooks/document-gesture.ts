@@ -42,6 +42,7 @@ export type DocumentGestureKind =
   | 'single-row-marquee'
   | 'single-column-marquee'
   | 'layer-transform'
+  | 'paint-stroke'
   | 'brush-stroke'
   | 'shape-draw'
   | 'eraser-stroke';
@@ -56,7 +57,7 @@ export type DocumentGesture = {
  * document has one owner at a time, and that is enforced PER SURFACE rather than
  * here: every tool area routes its press through
  * `usePointerPosition.isPointerDownValid` — directly (`DrawToolArea`,
- * `ShapeToolArea`, `EraserToolArea`) or through `useRect`
+ * `ShapeToolArea`, `EraserToolArea`) or through `usePaintStroke` / `useRect`
  * (`MoveToolArea`, `RectangularSelectionToolArea`, `CropToolArea`,
  * `TextToolArea`) — which refuses a non-primary button and a second pointer,
  * and `PolygonClickToolArea`, which never asks the hook, refuses a second press

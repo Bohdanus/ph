@@ -1,7 +1,16 @@
 import type { ToolDescription } from './types.ts';
 
 export const paintDescriptions: Record<
-  'brush' | 'pencil' | 'color-replacement' | 'eraser' | 'magic-eraser' | 'paint-bucket' | 'clone-stamp',
+  | 'brush'
+  | 'pencil'
+  | 'color-replacement'
+  | 'eraser'
+  | 'magic-eraser'
+  | 'paint-bucket'
+  | 'clone-stamp'
+  | 'red-eye'
+  | 'spot-healing'
+  | 'healing-brush',
   ToolDescription
 > = {
   brush: {
@@ -33,14 +42,14 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode the stroke composites with, offering the 27 layer blend modes — Dissolve among them — plus the two the painting tools add, Behind and Clear. Behind is the Brush's alone, and works only on a layer whose transparency is not locked. Default Normal.",
+          'The blend mode the stroke composites with. The app offers sixteen canvas compositing operations: Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Overlay, Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color and Luminosity. Photoshop additionally offers Behind for the Brush and Clear for the painting tools, but those values are not present in this bar. Default Normal.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
       {
         control: 'Opacity',
         detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke, not a per-dab rate. The app seeds its Brush at 90 percent, not Photoshop’s 100.',
+          "A label with a numeric field, 0 to 100 percent. Default 100. A hard ceiling for one stroke, not a per-dab rate. The app seeds its Brush at 100 percent, matching Photoshop's 100.",
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
       },
@@ -53,7 +62,7 @@ export const paintDescriptions: Record<
       {
         control: 'Flow',
         detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. The per-dab build-up rate inside the Opacity ceiling.',
+          'A label with a numeric field, 0 to 100 percent. Default 100. The per-dab build-up rate inside the Opacity ceiling.',
         status: 'missing',
       },
       {
@@ -125,7 +134,7 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:538',
     ],
     appNotes:
-      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path, though the bar seeds it at 90 percent where Photoshop’s is 100. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture, and so no Brush Angle; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s 29 for this tool, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here, both living in the Brush Preset picker popout and the Brush Settings panel — and it is capped at 500 px, not the 5000 the picker offers, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one. One caveat on the bindings above, and it is narrower than an earlier version of this record claimed: `B` selects the tool, and the four shortcut rows that follow it ARE implemented. `AppKeyboardShortcuts.tsx` keeps a per-tool `tipSizeField` table and a per-tool `opacityField` table, the brush appears in both, and `[`, `]`, `0` and `1` are registered against them — so `[` and `]` step the tip size by one pixel and `0` and `1` set Opacity to 100 and 10 percent, which is exactly what those four rows describe. What the app binds none of is the two MODIFIER rows: no Alt eyedropper swap and no Shift straight-line constraint on a stroke, because `DrawToolArea.tsx` reads no modifier at all and `AppKeyboardShortcuts.tsx` registers no Alt-bearing keybinding for any paint tool.',
+      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path, though the bar seeds it at 100 percent, matching Photoshop’s 100. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture, and so no Brush Angle; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s 29 for this tool, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here, both living in the Brush Preset picker popout and the Brush Settings panel — and it is capped at 500 px, not the 5000 the picker offers, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one. One caveat on the bindings above, and it is narrower than an earlier version of this record claimed: `B` selects the tool, and the four shortcut rows that follow it ARE implemented. `AppKeyboardShortcuts.tsx` keeps a per-tool `tipSizeField` table and a per-tool `opacityField` table, the brush appears in both, and `[`, `]`, `0` and `1` are registered against them — so `[` and `]` step the tip size by one pixel and `0` and `1` set Opacity to 100 and 10 percent, which is exactly what those four rows describe. What the app binds none of is the two MODIFIER rows: no Alt eyedropper swap and no Shift straight-line constraint on a stroke, because `DrawToolArea.tsx` reads no modifier at all and `AppKeyboardShortcuts.tsx` registers no Alt-bearing keybinding for any paint tool.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://asktimgrey.com/2023/09/01/flow-versus-opacity-for-brushes',
@@ -174,14 +183,14 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode the stroke composites with, offering the 27 layer blend modes — Dissolve among them — plus Clear. Behind is the Brush's alone, so it is not offered here; Clear is offered to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command. Default Normal.",
+          'The blend mode the stroke composites with. The app offers sixteen canvas compositing operations: Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Overlay, Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color and Luminosity. Photoshop additionally offers Clear for the Pencil, but that value is not present in this bar; Behind is Brush-only. Default Normal.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
       {
         control: 'Opacity',
         detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke. The app seeds its Pencil at 90 percent, not Photoshop’s 100.',
+          "A label with a numeric field, 0 to 100 percent. Default 100. A hard ceiling for one stroke. The app seeds its Pencil at 100 percent, matching Photoshop's 100.",
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
       },
@@ -277,7 +286,7 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:538',
     ],
     appNotes:
-      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. Mode offers sixteen canvas operations and is applied to the layer the stroke creates, not to the stroke’s pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 90 percent where Photoshop’s is 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. The `[`, `]`, `0` and `1` shortcut rows, by contrast, ARE implemented: the global table’s `tipSizeField` and `opacityField` maps both list the pencil. The Pencil has no keyboard shortcut of its own here for the tool-select row: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
+      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. Mode offers sixteen canvas operations and is applied to the layer the stroke creates, not to the stroke’s pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 100 percent, matching Photoshop’s 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. The `[`, `]`, `0` and `1` shortcut rows, by contrast, ARE implemented: the global table’s `tipSizeField` and `opacityField` maps both list the pencil. The Pencil has no keyboard shortcut of its own here for the tool-select row: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html',
@@ -661,7 +670,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode for the fill, offering the 27 layer blend modes — Dissolve among them — plus Clear, the one extra this tool gets. Behind is the Brush's alone, so it is not offered here. Default Normal.",
+          "The blend mode for the fill. Photoshop offers the 27 layer blend modes — Dissolve among them — plus Clear, the one extra this tool gets; Behind is the Brush's alone. The app renders no Mode control for the Paint Bucket. Default Normal.",
         status: 'missing',
       },
       {
@@ -750,7 +759,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode the copied pixels composite with, offering the 27 layer blend modes, Dissolve among them, and neither of the two extras the painting tools add: Behind is the Brush’s alone and Clear goes to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command, so the Clone Stamp gets neither. Default Normal.',
+          "The blend mode the copied pixels composite with. Photoshop offers the 27 layer blend modes, Dissolve among them, and neither of the two extras the painting tools add: Behind is the Brush's alone and Clear goes to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command, so the Clone Stamp gets neither. The app renders no Mode control for the Clone Stamp. Default Normal.",
         status: 'missing',
       },
       {
@@ -883,6 +892,159 @@ export const paintDescriptions: Record<
       'https://www.psdvault.com/basics/photoshop-clone-stamp-tool/',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
       'https://graphicdesign.stackexchange.com/questions/21866/why-does-the-clone-stamp-tool-seem-to-be-misaligned',
+    ],
+  },
+  'healing-brush': {
+    photoshopName: 'Healing Brush Tool',
+    summary: 'Blends sampled texture into a brush stroke while preserving destination lighting and tone.',
+    purpose:
+      'Photoshop’s Healing Brush uses an Alt/Option-clicked source and blends its texture into the target. This deterministic MVP supports sampled source pixels, aligned or non-aligned offsets, size, hardness, opacity and one replayable active-layer stroke. Pattern, Sample Layers, Diffusion, pressure and blend-mode controls remain deferred.',
+    options: [
+      {
+        control: 'Size',
+        detail: 'Tip diameter in pixels.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Hardness',
+        detail: 'Controls the falloff at the tip edge.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Opacity',
+        detail: 'Per-dab healing strength from 0 to 100 percent.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Aligned',
+        detail: 'Keeps the sampled offset continuous across the stroke or resets it per stroke.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Source',
+        detail: 'Sampled source via Alt/Option-click; Pattern is deferred.',
+        status: 'partial',
+        appRef: 'src/components/Main/HealingBrushToolArea.tsx:1',
+      },
+      {
+        control: 'Sample',
+        detail: 'Current & Below and All Layers are deferred; the MVP edits the active layer.',
+        status: 'missing',
+      },
+      { control: 'Diffusion', detail: 'Adobe’s 1–7 diffusion control is deferred.', status: 'missing' },
+    ],
+    modifiers: [{ keys: 'Alt/Option-click', action: 'Sets the sampled source point without creating history.' }],
+    shortcuts: [{ keys: 'J', action: 'Selects the healing-tool family; this app selects Healing Brush directly.' }],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/healingBrush.ts:1',
+      'src/components/Main/HealingBrushToolArea.tsx:1',
+      'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+    ],
+    appNotes:
+      'Healing uses source texture with a destination-luminance correction, not Adobe’s private Poisson or Content-Aware implementation. It is deterministic and replayable through the raster processor path.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html',
+      'https://helpx.adobe.com/photoshop/using/healing-examples.html',
+      'https://helpx.adobe.com/photoshop/using/nondestructive-editing.html',
+    ],
+  },
+  'spot-healing': {
+    photoshopName: 'Spot Healing Brush Tool',
+    summary: 'Repairs small marks by blending nearby texture into a soft brush stroke.',
+    purpose:
+      'Photoshop’s Spot Healing Brush repairs a spot or short stroke without an explicit source point. This implementation provides a deterministic Proximity Match approximation: each dab samples an outward ring from the active layer and blends it through the brush tip. Content-Aware and Create Texture synthesis are intentionally deferred because Adobe does not publish a deterministic algorithm for them.',
+    options: [
+      {
+        control: 'Size',
+        detail: 'Tip diameter in pixels.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Hardness',
+        detail: 'Controls the falloff at the tip edge.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Opacity',
+        detail: 'Per-dab healing strength from 0 to 100 percent.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Type',
+        detail:
+          'Content-Aware, Proximity Match and Create Texture are documented Photoshop modes; only the deterministic Proximity Match approximation is implemented.',
+        status: 'missing',
+      },
+      {
+        control: 'Sample',
+        detail:
+          'Sample All Layers is required for non-destructive healing on a new layer; the current MVP edits the active layer only.',
+        status: 'missing',
+      },
+      {
+        control: 'Diffusion',
+        detail: 'Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.',
+        status: 'missing',
+      },
+    ],
+    modifiers: [],
+    shortcuts: [{ keys: 'J', action: 'Selects the healing-tool flyout family.' }],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/spotHealing.ts:1',
+      'src/components/Main/SpotHealingToolArea.tsx:1',
+      'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+    ],
+    appNotes:
+      'The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.',
+    sources: [
+      'https://www.adobe.com/products/photoshop/spot-heal.html',
+      'https://helpx.adobe.com/photoshop/using/healing-examples.html',
+      'https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
+    ],
+  },
+  'red-eye': {
+    photoshopName: 'Red Eye Tool',
+    summary: 'Reduces the red flash reflection in an eye with adjustable pupil size and darkening.',
+    purpose:
+      'The Red Eye tool corrects the red appearance caused when flash reflects from the retina. Click the red pupil on the active layer; Pupil Size limits the local region examined, and Darken Amount controls how strongly the red pixels are darkened. Adobe’s current help page explains the cause and prevention of red eye but does not describe the tool’s detection algorithm, slider ranges, defaults, or shortcut. The app therefore uses a bounded connected red-pixel correction as an explicit approximation, not as a claim to Photoshop’s undocumented detector.',
+    options: [
+      {
+        control: 'Pupil Size',
+        detail:
+          'Sets the bounded local region examined around the click. The inventory identifies this as a Photoshop control; its exact range and default are not specified by the current Adobe help page. This app maps 0–100 to a radius proportional to the image dimensions and seeds it at 50.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/RedEye/RedEye.tsx:21',
+      },
+      {
+        control: 'Darken Amount',
+        detail:
+          'Controls how strongly pixels in the detected red region are darkened after the red cast is neutralized. The current Adobe help page does not specify a range or default. This app exposes a 0–100 percent slider seeded at 50.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/RedEye/RedEye.tsx:25',
+      },
+    ],
+    modifiers: [],
+    shortcuts: [],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/redEye.ts:38',
+      'src/components/Main/RedEyeToolArea.tsx:19',
+      'src/tools/toolProcessors.ts:314',
+      'src/tools/toolsMap.ts:115',
+    ],
+    appNotes:
+      'The app corrects a connected region of red-dominant pixels on the active layer and records the edit as a replayable raster operation. It does not implement Photoshop’s proprietary eye/pupil detector, and this bounded threshold-based correction can miss low-red eyes or include connected red detail. The current Adobe HelpX page establishes the flash-reflection cause and prevention advice, not the tool interaction or numerical controls; the exact shortcut, ranges, defaults and detection method remain unverified. The app deliberately does not claim Photoshop fidelity for those details.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/remove-red-eye-in-flash-photos.html',
     ],
   },
 };

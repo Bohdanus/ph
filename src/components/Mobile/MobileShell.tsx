@@ -45,7 +45,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({
   // hides without unmounting. So a surface left open on a phone stays *rendered* after the
   // window widens, and `MobileToolSheet` renders a second live instance of the active tool's
   // options panel alongside the one `ToolbarHorizontal` already owns — two
-  // `id="text-input"`, two `id="font-family-select"`, and two `window`-level Escape
+  // `id="font-size-input"`, two `id="font-family-select"`, and two `window`-level Escape
   // listeners. Duplicate ids break `getElementById`, `<label for>` and Playwright strict
   // mode, none of it on the path that a CSS-only crossing is supposed to leave untouched.
   //

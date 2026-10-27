@@ -9,9 +9,10 @@ import {
 } from '../../../util/brush-engine.ts';
 import { SMUDGE_STRENGTH_MAX, SMUDGE_STRENGTH_MIN } from '../../../tools/smudge.ts';
 import type { ToolPatch } from '../../../contexts/tool-types.ts';
+import { TouchSlider } from '../../Common/TouchSlider.tsx';
 
 /**
- * Layout copied from `Paint/Paint.tsx:23-26`, which is the house shape for a paint family's
+ * Layout copied from `Paint/Paint.tsx`, which is the house shape for a paint family's
  * options bar: a column per control, the label and its live readout in the same line, and the
  * slider underneath.
  *
@@ -28,7 +29,7 @@ const SLIDER_CLASS = 'h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gr
  * `strength` as the slider percentage it already is, clamped for display.
  *
  * `SmudgeToolArgs.strength` is Photoshop's `Strength`: a PERCENTAGE of the carried colour
- * blended per dab, seeded at 50 by `src/tools/settings.ts:162`. The brush engine takes the
+ * blended per dab, seeded at 50 by `defaultSettings.smudge`. The brush engine takes the
  * same quantity as a 0-1 `opacity`; `SMUDGE_STRENGTH_SCALE` is the divisor the processor uses
  * for that mapping, and the bar keeps the percentage so the number on screen is the number the
  * user picked in Photoshop. A non-finite value falls to the near end, for the reason
@@ -73,7 +74,7 @@ const Smudge: React.FC<{}> = () => {
    * Coalesce the frame's writes into one `patchToolArgs`, the shape `Levels.tsx` uses for the
    * same reason. A drag emits an event per pointer sample, and each `setToolArgs` re-renders
    * the panel and calls `saveLastSettings`, so unthrottled a single drag is hundreds of
-   * renders and hundreds of localStorage writes.
+   * renders and hundreds of `saveLastSettings` calls.
    *
    * Patches MERGE rather than replace: each control writes a disjoint field, so the last write
    * per field in a frame is the one that must survive, and merging is what lets two sliders
@@ -110,10 +111,13 @@ const Smudge: React.FC<{}> = () => {
   /**
    * What the sliders RENDER is the clamped value, not `args` verbatim.
    *
-   * A persisted args object can hold a value outside Photoshop's range — settings are
-   * round-tripped through `localStorage` and restored before anything clamps them — and a
-   * controlled `<input type="range">` whose `value` is out of its own `min`/`max` pins the
-   * thumb to the bound while reporting the raw value, so the readout and the thumb disagree.
+   * The args object holds per-session module state — written by
+   * `saveLastSettings()` to `lastSavedSettings` in `src/tools/settings.ts`, not
+   * serialized to `localStorage` — and a hand-edited default outside Photoshop's
+   * range would populate it with an out-of-bounds value, so a
+   * controlled `<input type="range">` whose `value` is out of its own `min`/`max`
+   * pins the thumb to the bound while reporting the raw value, so the readout
+   * and the thumb disagree.
    * Clamping once, here, and deriving every control from that one copy also means the bar and
    * the processor agree on what the tip is without each re-deriving it.
    */
@@ -136,14 +140,13 @@ const Smudge: React.FC<{}> = () => {
     <div className="flex h-full flex-row items-center gap-5 overflow-x-auto">
       <label htmlFor="smudge-size" className={FIELD_CLASS}>
         Size <span className={VALUE_CLASS}>{tip.size}px</span>
-        <input
+        <TouchSlider
           id="smudge-size"
           aria-label="Size"
           className={SLIDER_CLASS}
           max={BRUSH_SIZE_MAX}
           min={BRUSH_SIZE_MIN}
           step="1"
-          type="range"
           value={tip.size}
           onChange={handleSizeChange}
         />
@@ -151,14 +154,13 @@ const Smudge: React.FC<{}> = () => {
 
       <label htmlFor="smudge-hardness" className={FIELD_CLASS}>
         Hardness <span className={VALUE_CLASS}>{tip.hardness}%</span>
-        <input
+        <TouchSlider
           id="smudge-hardness"
           aria-label="Hardness"
           className={SLIDER_CLASS}
           max={BRUSH_HARDNESS_MAX}
           min={BRUSH_HARDNESS_MIN}
           step="1"
-          type="range"
           value={tip.hardness}
           onChange={handleHardnessChange}
         />
@@ -166,14 +168,13 @@ const Smudge: React.FC<{}> = () => {
 
       <label htmlFor="smudge-strength" className={FIELD_CLASS}>
         Strength <span className={VALUE_CLASS}>{strength}%</span>
-        <input
+        <TouchSlider
           id="smudge-strength"
           aria-label="Strength"
           className={SLIDER_CLASS}
           max={SMUDGE_STRENGTH_MAX}
           min={SMUDGE_STRENGTH_MIN}
           step="1"
-          type="range"
           value={strength}
           onChange={handleStrengthChange}
         />

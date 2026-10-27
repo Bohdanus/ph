@@ -265,6 +265,18 @@ export interface TestInfoMock {
   attach: AttachSpy;
 }
 
+/**
+ * A `TestInfo` double, with an `attach` spy that resolves.
+ *
+ * `outputDir` is OPTIONAL on purpose, and required would be wrong: a no-argument call is
+ * the only way to build the double every `outputDir` guard is written against — a
+ * `TestInfo` that carries no usable directory — and both helpers that guard it pin that
+ * case this way, `takeLineScreenshot` in `canvas-interaction.unit.test.ts` and
+ * `captureCanvasScreenshot` in `cdp-helpers.unit.test.ts`. Making the parameter required
+ * does not make those tests stricter, it makes them unwriteable: `tsc -b` then fails on
+ * the no-argument call in `canvas-interaction.unit.test.ts` with `Expected 1 arguments,
+ * but got 0`, which is a fixture change reaching outside the file that made it.
+ */
 export function createTestInfoMock(outputDir?: string): TestInfoMock {
   const attach: AttachSpy = vi
     .fn<(name: string, options: AttachOptions) => Promise<void>>()

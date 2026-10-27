@@ -34,17 +34,22 @@
 
       // Playwright flags that override `use.headless` after the config is read.
       //
-      // `--ui` IS DENIED ON THE FLAG ALONE, and the pattern used to require `playwright`
-      // to appear before it. That was wrong in a way only a counter-example shows:
-      // `npm run test:e2e -- --ui` — the spelling a model reaches for, because the
-      // npm script is already in its head — contains neither `playwright` nor
-      // `test:e2e:ui`, and fell through to the catch-all. e2e/global-setup.ts cannot
-      // cover it either: `runUIMode` RETURNS at cli/testActions.js:77, and
-      // `globalSetup` is only ever constructed inside `runAllTestsWithConfig`
-      // (runner/index.js:6949-6954), so the guard runs after the window is already up.
-      // Matching the flag is the only shape that catches the command whatever carries it.
+      // `--headed` opens a browser window regardless of config — denied.
+      // `--ui` launches Playwright's UI mode which also opens a window — asked so a
+      //   human can confirm if they genuinely want it. Using `ask` instead of `deny`
+      //   prevents blocking other tools that might use `--ui`.
+      // `--debug` launches a Playwright inspector — asked for the same reason.
+      //
+      // The patterns match the flag regardless of what carries it. For example,
+      // `npm run test:e2e -- --ui` — the spelling a model reaches for — contains
+      // neither `playwright` nor `test:e2e:ui`, and falls through to the catch-all.
+      // e2e/global-setup.ts cannot cover it either: `runUIMode` RETURNS at
+      // cli/testActions.js:77, and `globalSetup` is only ever constructed inside
+      // `runAllTestsWithConfig` (runner/index.js:6949-6954), so the guard runs after
+      // the window is already up. Matching the flag is the only shape that catches
+      // the command whatever carries it.
       "*--headed*": "deny",
-      "*--ui*": "deny",
+      "*--ui*": "ask",
       "*--debug*": "ask",
 
       // The HTML report opens a browser window and then waits forever
@@ -167,11 +172,46 @@
       "*rm -fr*.kilo*": "deny",
       "*rm -r -f*.kilo*": "deny",
 
-      // `-d` refuses an unmerged branch, and that refusal is the guard on the
-      // irreversible step. `-D` overrides it, so it reaches a human rather than a
-      // silent block: a branch the inventory called `dispose` needs `-d`, and one
-      // it did not needs `scripts/dispose-worktree.mjs` to say so.
+      // Keep direct shell commands from removing Git metadata shared by linked
+      // worktrees. These command-text glob matches are defense in depth, not a
+      // filesystem boundary; wrappers and scripts can bypass them.
+      "*rm *.git*": "deny",
+      "*rm *GIT_DIR*": "deny",
+      "*rm *GIT_COMMON_DIR*": "deny",
+      "*rm *GIT_WORK_TREE*": "deny",
+      "*unlink *.git*": "deny",
+      "*unlink *GIT_DIR*": "deny",
+      "*unlink *GIT_COMMON_DIR*": "deny",
+      "*unlink *GIT_WORK_TREE*": "deny",
+      "*worktree repair*": "ask",
+
+      // This permission layer matches command strings and is a speed bump, not a
+      // repository-aware guard. Retire worktrees through `npm run dispose`.
+      //
+      // HANDOFF #215 records these equivalent force-delete spellings. Keep each
+      // behind a human prompt just like `git branch -D`.
+      "*branch --delete --force*": "ask",
+      "*branch -d -f*": "ask",
+
+      // HANDOFF #215 records `update-ref -d refs/heads/<branch>` as an unguarded
+      // way to delete a local branch ref, so require a human prompt for it too.
+      "*update-ref -d refs/heads/*": "ask",
+
+      // This project-scoped deny also catches the bare command: pruning has no
+      // target path to match, yet can discard this repository's kilo worktrees.
+      "*worktree prune*": "deny",
+
+      // `-d` refuses an unmerged branch, while `-D` overrides that protection.
+      // Keep force-deleting a local branch behind a human prompt.
       "*branch -D*": "ask",
+    },
+
+    "external_directory": {
+      "/tmp/kilo/**": "allow",
+      ".kilo/worktrees/**": "allow",
+    },
+    "edit": {
+      ".kilo/**": "allow",
     },
   },
 

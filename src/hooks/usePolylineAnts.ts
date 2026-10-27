@@ -131,9 +131,6 @@ export function useMarchingPath({
   // Start/stop animation when `isPaused` changes and clean up on unmount.
   // Pausing needs no work in the body: on a re-run the cleanup below has already
   // cancelled and nulled the pending frame, and on mount the ref is still null.
-  // A pending handle of 0 is the one case the cleanup's own truthy guard skips,
-  // but 0 is falsy here too, so cancelling here never had anything to do. That
-  // falsy-0 path is why pausing with frame 0 pending does not stop the loop.
   useEffect(() => {
     if (!isPaused) {
       // Start animation loop (will be a no-op if already running because

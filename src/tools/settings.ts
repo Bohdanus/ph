@@ -1,14 +1,15 @@
 import { cloneDeep } from 'lodash-es';
 
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
+import { PAINT_FLOW_DEFAULT } from '../util/brush-airbrush.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
-import { AUTO_LEADING } from './text.ts';
+import { AUTO_LEADING, NEUTRAL_TEXT_ANGLE } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
 import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
-import { DEFAULT_POLYGON_SIDES } from './shape.ts';
+import { DEFAULT_POLYGON_SIDES, DEFAULT_STAR_RATIO } from './shape.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
@@ -25,8 +26,8 @@ import {
   type ColorReplacementToolArgs,
 } from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
-import type { HandToolArgs } from './hand.ts';
-import type { RotateViewToolArgs } from './rotate-view.ts';
+import type { ColorSamplerToolArgs } from './colorSampler.ts';
+import type { RulerToolArgs } from './ruler.ts';
 import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from './quickSelection.ts';
 import type { GradientToolArgs } from './gradient.ts';
@@ -36,14 +37,23 @@ import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
 import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
 import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
 import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
+import {
+  RED_EYE_DEFAULT_DARKEN_AMOUNT,
+  RED_EYE_DEFAULT_PUPIL_SIZE,
+  type RedEyeToolArgs,
+  type RedEyeToolSettings,
+} from './redEye.ts';
+import type { SpotHealingToolArgs } from './spotHealing.ts';
+import type { HealingBrushToolArgs } from './healingBrush.ts';
+import type { PatchToolArgs } from './patch.ts';
 
-type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
+type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'pointTimes' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
 
 export const savedDrawPerPen: Record<PenType, PenSettings> = {
   pen: { alpha: 0.9, lineWidth: 10 },
   'pen-dashed': { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] },
-  spray: { alpha: 0.5, lineWidth: 100 },
+  spray: { alpha: 0.5, flow: PAINT_FLOW_DEFAULT, lineWidth: 100 },
 };
 
 export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
@@ -59,6 +69,15 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
     // the eraser seeds `mode` and its tip width a few hundred lines down: a settings object
     // that arrives without the key is an object the bar has nothing to show.
     sides: DEFAULT_POLYGON_SIDES,
+    toolMode: 'shape',
+  },
+  star: {
+    alpha: 1,
+    lineWidth: 5,
+    // Adobe publishes the Star Ratio control but not its initial value. 50% is an app decision
+    // matching the conventional five-point polygon star used by this shape family.
+    sides: DEFAULT_POLYGON_SIDES,
+    starRatio: DEFAULT_STAR_RATIO,
     toolMode: 'shape',
   },
 };
@@ -79,7 +98,15 @@ export const defaultSettings = {
 
     toolName: 'transform',
   } satisfies TransformToolArgs,
-  crop: { aspectRatio: null, rect: null, toolName: 'crop' } satisfies CropToolArgs,
+  crop: {
+    aspectRatio: null,
+    rect: null,
+    overlayType: 'ruleOfThirds',
+    overlayOrientation: 0,
+    overlayVisibility: 'always',
+    gridDivisions: 10,
+    toolName: 'crop',
+  } satisfies CropToolArgs,
   draw: {
     ...savedDrawPerPen['pen'],
     color: '#000000',
@@ -89,6 +116,9 @@ export const defaultSettings = {
   } satisfies DrawToolArgs,
   shape: {
     ...savedArgsPerFigure['rectangle'],
+    // Keep the shared shape args safe when the generic shape tool is switched directly to Star.
+    sides: DEFAULT_POLYGON_SIDES,
+    starRatio: DEFAULT_STAR_RATIO,
     figure: 'rectangle',
     color: '#000000',
     backgroundColor: null,
@@ -96,6 +126,7 @@ export const defaultSettings = {
   } satisfies ShapeToolArgs,
   text: {
     text: '',
+    angle: NEUTRAL_TEXT_ANGLE,
     fontSize: 64,
     lineHeight: AUTO_LEADING,
     fontFamily: 'Arial',
@@ -117,6 +148,8 @@ export const defaultSettings = {
   'polygonal-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
@@ -125,6 +158,8 @@ export const defaultSettings = {
   'freehand-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
@@ -148,16 +183,19 @@ export const defaultSettings = {
     contiguous: true,
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
-  'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
-  // No settings at all, which is a statement about Photoshop and not a shortcut: the
-  // options bar for both of these carries no Style, no Width/Height and no Anti-alias,
-  // because Adobe scopes all three to the Rectangular and Elliptical Marquees by name.
+  'rectangular-selection': {
+    style: 'normal',
+    fixedRatio: 1,
+    fixedWidth: 100,
+    fixedHeight: 100,
+    toolName: 'rectangular-selection',
+  } satisfies RectangularSelectionToolArgs,
   'single-row-marquee': { toolName: 'single-row-marquee' } satisfies SingleRowMarqueeToolArgs,
   'single-column-marquee': {
     toolName: 'single-column-marquee',
   } satisfies SingleColumnMarqueeToolArgs,
   brush: {
-    alpha: 0.9,
+    alpha: 1,
     color: '#000000',
     penType: 'pen',
     lineWidth: 10,
@@ -174,7 +212,7 @@ export const defaultSettings = {
     toolName: 'brush',
   } satisfies PaintToolArgs,
   pencil: {
-    alpha: 0.9,
+    alpha: 1,
     color: '#000000',
     penType: 'pen',
     lineWidth: 3,
@@ -228,7 +266,6 @@ export const defaultSettings = {
     alpha: 1,
     color: '#000000',
     pos: { x: 0, y: 0 },
-    size: { width: 1, height: 1 },
     toolName: 'magic-eraser',
   } satisfies FillToolArgs,
   'paint-bucket': {
@@ -237,7 +274,6 @@ export const defaultSettings = {
     alpha: 1,
     color: '#000000',
     pos: { x: 0, y: 0 },
-    size: { width: 1, height: 1 },
     toolName: 'paint-bucket',
   } satisfies FillToolArgs,
   eyedropper: {
@@ -245,8 +281,23 @@ export const defaultSettings = {
     sampleAllLayers: false,
     toolName: 'eyedropper',
   } satisfies EyedropperToolArgs,
-  hand: { toolName: 'hand' } satisfies HandToolArgs,
-  'rotate-view': { toolName: 'rotate-view' } satisfies RotateViewToolArgs,
+  // The Color Sampler's only setting is the Sample Size it shares with the Eyedropper, seeded to
+  // Point Sample because that is the footprint Adobe's own worked examples use and the one that
+  // reports a pixel rather than a neighbourhood. The samplers are NOT seeded here: they are placed by
+  // gesture and dropped when the document frame size changes, which is view state rather than
+  // document state (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
+  'color-sampler': {
+    sampleSize: 1,
+    toolName: 'color-sampler',
+  } satisfies ColorSamplerToolArgs,
+  // The Ruler has no settings to seed: every number it reports belongs to the gesture that produced
+  // it rather than to a choice the user made, so the args object is the tool's name and nothing
+  // else. The measuring line itself is deliberately not here — it is view state, not document state
+  // (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
+  ruler: { toolName: 'ruler' } satisfies RulerToolArgs,
+  hand: { toolName: 'hand' },
+  zoom: { toolName: 'zoom' },
+  'rotate-view': { toolName: 'rotate-view' },
   'elliptical-selection': {
     style: 'normal',
     fixedRatio: 1,
@@ -313,6 +364,34 @@ export const defaultSettings = {
     points: [],
     toolName: 'clone-stamp',
   } satisfies CloneStampToolArgs,
+  'red-eye': {
+    pupilSize: RED_EYE_DEFAULT_PUPIL_SIZE,
+    darkenAmount: RED_EYE_DEFAULT_DARKEN_AMOUNT,
+    point: null,
+    toolName: 'red-eye',
+  } satisfies RedEyeToolArgs,
+  'spot-healing': {
+    size: 40,
+    hardness: 100,
+    opacity: 1,
+    points: [],
+    toolName: 'spot-healing',
+  } satisfies SpotHealingToolArgs,
+  'healing-brush': {
+    size: 20,
+    hardness: 0,
+    opacity: 1,
+    source: null,
+    aligned: true,
+    points: [],
+    toolName: 'healing-brush',
+  } satisfies HealingBrushToolArgs,
+  patch: {
+    sourceRect: { x: 0, y: 0, width: 0, height: 0 },
+    donorPoint: { x: 0, y: 0 },
+    diffusion: 4,
+    toolName: 'patch',
+  } satisfies PatchToolArgs,
   pen: { toolName: 'pen' },
   'freeform-pen': { toolName: 'freeform-pen' },
   'curvature-pen': { toolName: 'curvature-pen' },
@@ -383,6 +462,7 @@ export type SavedSettings =
   | SmudgeToolSettings
   | DodgeBurnToolSettings
   | SpongeToolSettings
-  | CloneStampToolSettings;
+  | CloneStampToolSettings
+  | RedEyeToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

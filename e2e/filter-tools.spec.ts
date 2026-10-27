@@ -1,7 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
-  canvasOffsetToDocument,
   documentToCanvasOffset,
   drawLine,
   getColorAtPoint,
@@ -23,7 +22,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  */
 const VIOLET = '#8060a0';
 
-/** Canvas-relative geometry of the stroke the Colors tests adjust. */
+/** Document geometry of the stroke the Colors tests adjust. */
 const STROKE_ROW = 150;
 const STROKE_START_X = 100;
 const STROKE_END_X = 400;
@@ -131,19 +130,19 @@ async function dragAcrossDocument(
 }
 
 /**
- * Draws the stroke and RETURNS the box it drew with. The box has to be the one the gesture
- * used, not one measured later: the sample point is derived by converting a box-relative
- * offset out into document space, and a box measured after a tool switch describes a
- * different set of canvas offsets. The clip waits re-measure, because a clip is about where
- * the canvas is now, not where the stroke is.
+ * Draws the violet stroke at document coordinates, following the same document-space
+ * pattern as `dragAcrossDocument`: the endpoints are converted through the contain fit
+ * before reaching `drawLine`, so the gesture lands on the document point it names.
+ * The redraw wait re-measures the box, because a clip is about where the canvas is now.
  */
-async function drawVioletStroke(page: Page): Promise<BoundingBox> {
+async function drawVioletStroke(page: Page): Promise<void> {
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, VIOLET, true);
   const box = await canvasBox(page);
-  await drawLine(page, box, STROKE_START_X, STROKE_ROW, STROKE_END_X, STROKE_ROW);
+  const start = documentToCanvasOffset(box, STROKE_START_X, STROKE_ROW);
+  const end = documentToCanvasOffset(box, STROKE_END_X, STROKE_ROW);
+  await drawLine(page, box, start.x, start.y, end.x, end.y);
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasPaintedPixel, { description: 'the stroke' });
-  return box;
 }
 
 /**
@@ -180,22 +179,25 @@ function besideTheLine(onLine: { x: number; y: number }): { x: number; y: number
 }
 
 /**
- * Selects the Colors panel through `Image ▸ Adjustments ▸ Photo Filter`.
+ * Selects the Colors panel through `Image ▸ Adjustments ▸ Desaturate`.
  *
  * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
  * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
  * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
  * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
- * hold it is gone from `toolbarMap`. `Photo Filter` is the enabled item that selects it, and
- * the slug is `slugifyToolLabel('Photo Filter')` (`toolbar-mapping.ts`).
+ * hold it is gone from `toolbarMap`. `Desaturate` is the enabled item that selects it, and
+ * the slug is `slugifyToolLabel('Desaturate')` (`toolbar-mapping.ts`). It used to be
+ * `Photo Filter`, which named a command whose bar this is not: Adobe's Photo Filter is a
+ * lens filter with Density and Preserve Luminosity, and the app computes
+ * `grayscale(%) sepia(%) saturate(%)`.
  *
- * The other sixteen items in that submenu render `disabled`, so this is the one path in and a
+ * The other twenty items in that submenu render `disabled`, so this is the one path in and a
  * spec cannot reach the panel any other way.
  */
 async function openColorsPanel(page: Page): Promise<void> {
   await page.getByTestId('header-image-menu-button').click();
   await page.getByTestId('image-menu-adjustments-button').click();
-  await page.getByTestId('image-menu-adjustments-photo-filter-button').click();
+  await page.getByTestId('image-menu-adjustments-desaturate-button').click();
 }
 
 test.describe('Adjustment tools', () => {
@@ -207,10 +209,10 @@ test.describe('Adjustment tools', () => {
   test.describe('Colors', () => {
     test('grayscale reaches the pixels, and Reset puts them back', async ({ page }, testInfo) => {
       test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
-      const drawBox = await drawVioletStroke(page);
-      // The stroke was placed in box-relative offsets, so the point to sample has to be
-      // converted OUT of that space rather than into it.
-      const sample = canvasOffsetToDocument(drawBox, SAMPLE_X, STROKE_ROW);
+      await drawVioletStroke(page);
+      // The stroke and the sample are both named in document space, so no conversion
+      // is needed between them.
+      const sample = { x: SAMPLE_X, y: STROKE_ROW };
 
       const original = await sampleDocumentPoint(page, sample.x, sample.y);
       expect(original, 'the stroke must be on the canvas to be adjusted').toBeTruthy();
@@ -277,8 +279,8 @@ test.describe('Adjustment tools', () => {
     });
 
     test('grayscale and sepia are separate controls and neither moves the other', async ({ page }) => {
-      const drawBox = await drawVioletStroke(page);
-      const sample = canvasOffsetToDocument(drawBox, SAMPLE_X, STROKE_ROW);
+      await drawVioletStroke(page);
+      const sample = { x: SAMPLE_X, y: STROKE_ROW };
 
       await openColorsPanel(page);
       const grayscale = page.locator('#grayscale-slider');

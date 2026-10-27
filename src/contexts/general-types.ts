@@ -1,4 +1,6 @@
 export type Point = { x: number; y: number };
+/** Historical processors may carry one flat path; new selection snapshots preserve all contours. */
+export type SelectionPointPaths = Point[] | Point[][];
 export type Size = { width: number; height: number };
 export type Pos = Point & Size;
 
@@ -11,11 +13,27 @@ export type RectXY = {
 
 export type RectXYSorted = RectXY;
 
+export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Delta = { dx: number; dy: number };
 
 export type SelectionSourceTool =
-  'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand' | 'rectangular-selection';
+  | 'polygonal-lasso'
+  | 'freehand-lasso'
+  | 'feather-magnetic-lasso'
+  | 'magic-wand'
+  | 'quick-selection'
+  | 'rectangular-selection';
 export type SelectionGeometry = 'polygon' | 'rectangle';
+
+/** A lossless, packed, row-major binary selection mask stored as standard Base64. */
+export type RasterSelectionMask = {
+  width: number;
+  height: number;
+  data: string;
+};
+
+/** A raster mask positioned in the coordinate space of a raster processor. */
+export type PositionedRasterSelectionMask = RasterSelectionMask & Point;
 
 export type IdleSelectionDraftState = { status: 'idle' };
 export type ActiveSelectionDraftState = {
@@ -46,7 +64,6 @@ export type SelectionMetadata = {
     tolerance: number;
     smoothing: number;
     selectedPixelCount: number;
-    boundaryPointCount: number;
     seed: Point;
     sampleColor: {
       r: number;
@@ -54,12 +71,17 @@ export type SelectionMetadata = {
       b: number;
       a: number;
     };
-  };
+  } & (
+    | { boundaryEdgeCount: number; boundaryPointCount?: undefined }
+    | { boundaryPointCount: number; boundaryEdgeCount?: undefined }
+  );
 };
 
 export type Selection = {
   id: string;
-  points: Point[];
+  points: Point[][];
+  /** Present for complex pixel selections that would be unsafe to materialize as millions of points. */
+  rasterMask?: RasterSelectionMask;
   isActive: boolean;
   pos: Pos;
   lifecycle?: 'committed';

@@ -15,6 +15,16 @@ const storeState = vi.hoisted(
     documentFrame: null,
   })
 );
+const toolArgsState = vi.hoisted(() => ({
+  current: {
+    toolName: 'draw',
+    alpha: 1,
+    color: '#000000',
+    penType: 'pen',
+    lineWidth: 10,
+    points: [],
+  } as Record<string, unknown>,
+}));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
@@ -37,14 +47,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
-    toolArgs: {
-      toolName: 'draw',
-      alpha: 1,
-      color: '#000000',
-      penType: 'pen',
-      lineWidth: 10,
-      points: [],
-    },
+    toolArgs: toolArgsState.current,
   }),
 }));
 
@@ -75,6 +78,10 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
       pointerState.activePointer = null;
       pointerState.isMouseDown.current = false;
       return true;
+    }),
+    releasePointer: vi.fn(() => {
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
     }),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: pointerState.isMouseDown,
@@ -132,6 +139,14 @@ describe('DrawToolArea', () => {
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
     storeState.documentFrame = null;
+    toolArgsState.current = {
+      toolName: 'draw',
+      alpha: 1,
+      color: '#000000',
+      penType: 'pen',
+      lineWidth: 10,
+      points: [],
+    };
   });
 
   it('normalizes a finished stroke to its bounding box instead of snapping it to the origin', () => {
@@ -186,6 +201,42 @@ describe('DrawToolArea', () => {
     expect(drawLine).toHaveBeenCalledWith(
       expect.objectContaining({ args: expect.objectContaining({ points: [{ x: 10, y: 20 }] }) })
     );
+  });
+
+  it('keeps a stationary Spray stroke building and records its elapsed samples', () => {
+    vi.useFakeTimers();
+    toolArgsState.current = {
+      toolName: 'draw',
+      alpha: 0.5,
+      color: '#000000',
+      penType: 'spray',
+      lineWidth: 10,
+      flow: 50,
+      points: [],
+    };
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+    act(() => {
+      vi.advanceTimersByTime(40);
+    });
+
+    const previewArgs = vi.mocked(drawLine).mock.lastCall?.[0].args;
+    expect(previewArgs?.points).toEqual([
+      { x: 10, y: 20 },
+      { x: 10, y: 20 },
+    ]);
+    expect(previewArgs?.pointTimes?.[1]).toBeGreaterThan(0);
+
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+
+    const committedArgs = createLayerFromToolMock.mock.calls[0][0].args;
+    expect(committedArgs.points).toHaveLength(2);
+    expect(committedArgs.points[1]).toEqual(committedArgs.points[0]);
+    expect(committedArgs.pointTimes).toEqual([0, expect.any(Number)]);
+    expect(committedArgs.pointTimes[1]).toBeGreaterThan(0);
   });
 
   it('coalesces a burst of pointer moves into exactly one overlay repaint', () => {
@@ -481,7 +532,7 @@ describe('DrawToolArea', () => {
 
     fireEvent.pointerUp(toolArea, { button: 0, clientX: 30, clientY: 50 });
 
-    expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 300, 200);
+    expect(vi.mocked(overlayCtx.clearRect)).toHaveBeenCalledWith(0, 0, 300, 200);
   });
 
   it('starts a fresh preview after a stroke was committed', () => {
@@ -518,7 +569,7 @@ describe('DrawToolArea', () => {
     const renderArea = () => {
       const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
       const view = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
-      return { view, toolArea: view.container.firstElementChild as HTMLDivElement };
+      return { view, overlayCtx, toolArea: view.container.firstElementChild as HTMLDivElement };
     };
 
     it('claims the document for a brush stroke and releases it on the release', () => {
@@ -569,15 +620,34 @@ describe('DrawToolArea', () => {
       expect(isDocumentGestureOpen()).toBe(true);
     });
 
-    it('releases the claim on a pointer cancel, which is the abort route', () => {
+    it('ignores a foreign pointer cancel while preserving the owner stroke', () => {
       const { toolArea } = renderArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 10, clientY: 20 });
-      expect(isDocumentGestureOpen()).toBe(true);
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 7, clientX: 40, clientY: 50 });
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 99 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'brush-stroke', pointerId: 7 });
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, clientX: 60, clientY: 40 });
+
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim and clears the preview on an owning pointer cancel', () => {
+      const { overlayCtx, toolArea } = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 10, clientY: 20 });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 7, clientX: 40, clientY: 50 });
+      vi.mocked(overlayCtx.clearRect).mockClear();
 
       fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 7 });
 
       expect(isDocumentGestureOpen()).toBe(false);
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 300, 200);
     });
 
     it('releases the claim on unmount, so a gesture that dies mid-stroke cannot leave the keyboard dead', () => {

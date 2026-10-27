@@ -7,7 +7,15 @@ import type { BitmapSource, Pos } from '../general-types.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 
-const CONTEXT_METHOD_NAMES = ['save', 'restore', 'translate', 'transform', 'clearRect', 'drawImage'] as const;
+const CONTEXT_METHOD_NAMES = [
+  'save',
+  'restore',
+  'translate',
+  'transform',
+  'setTransform',
+  'clearRect',
+  'drawImage',
+] as const;
 
 function createDrawContext(canvas: HTMLCanvasElement | null = null) {
   return {
@@ -16,6 +24,7 @@ function createDrawContext(canvas: HTMLCanvasElement | null = null) {
     restore: vi.fn(),
     translate: vi.fn(),
     transform: vi.fn(),
+    setTransform: vi.fn(),
     clearRect: vi.fn(),
     drawImage: vi.fn(),
     globalAlpha: 1,
@@ -44,7 +53,8 @@ let consoleError = createConsoleErrorSpy();
 
 const getContextImplementation = function (this: HTMLCanvasElement) {
   contextRequests.push(this);
-  if (nullContextCallIndex === contextRequests.length) return null;
+  const shouldReturnNull = nullContextCallIndex === contextRequests.length;
+  if (shouldReturnNull) return null;
   if (contextOverrides.has(this)) return contextOverrides.get(this) as CanvasRenderingContext2D;
   const created = contextFactory ? contextFactory() : createDrawContext(this);
   contextOverrides.set(this, toContext(created));
@@ -143,17 +153,19 @@ function createImageLayer(id: string, pos: Pos, overrides: Partial<Layer> = {}):
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     operations: [],
     ...overrides,
   };
 }
 
-function createVectorLayer(id: string, pos: Pos): Layer {
+function createPixelShapeLayer(id: string, pos: Pos): Layer {
   const source: ToolLayerSource = {
     kind: 'tool',
     pos,
     args: {
       toolName: 'shape',
+      toolMode: 'pixels',
       figure: 'rectangle',
       alpha: 1,
       color: '#000000',
@@ -285,6 +297,18 @@ describe('drawLayersToCanvas', () => {
     expect(target.context.drawImage).toHaveBeenCalledWith(stagingCanvas, 0, 0);
   });
 
+  it('refuses strict navigation when a visible layer has no bitmap', () => {
+    const target = createTargetCanvas();
+    const healthy = createImageLayer('healthy', { x: 0, y: 0, width: 20, height: 10 });
+    const missing = createImageLayer('missing', { x: 1, y: 1, width: 20, height: 10 }, { bitmap: null });
+
+    expect(drawLayersToCanvas(target.canvas, [healthy, missing], frame(0, 0, 100, 100), undefined, 1, true)).toBe(
+      false
+    );
+    expect(target.context.clearRect).not.toHaveBeenCalled();
+    expect(target.context.drawImage).not.toHaveBeenCalled();
+  });
+
   it('treats a zero-sized bitmap as a skippable layer rather than a failure', () => {
     const target = createTargetCanvas();
     const collapsed = createImageLayer('collapsed', { x: 0, y: 0, width: 0, height: 0 });
@@ -302,7 +326,7 @@ describe('drawLayersToCanvas', () => {
     const failure = new Error('bitmap decode failed');
     vi.spyOn(toolProcessors.shape, 'imageProcessor').mockImplementation(throwing(failure));
     const drawn = createImageLayer('drawn', { x: 0, y: 0, width: 20, height: 10 });
-    const broken = createVectorLayer('broken', { x: 4, y: 6, width: 20, height: 10 });
+    const broken = createPixelShapeLayer('broken', { x: 4, y: 6, width: 20, height: 10 });
     const never = createImageLayer('never', { x: 8, y: 9, width: 20, height: 10 });
 
     expect(drawLayersToCanvas(target.canvas, [drawn, broken, never], frame(0, 0, 640, 480))).toBe(false);
@@ -397,21 +421,46 @@ describe('drawLayersToCanvas', () => {
     expect(target.context.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
   });
 
-  it('reports a publish failure when resizing the visible canvas throws', () => {
+  it('restores the visible canvas when resizing fails after changing one dimension', () => {
     const target = createTargetCanvas();
     const failure = new Error('resize failed');
-    Object.defineProperty(target.canvas, 'width', {
-      configurable: true,
-      get: () => 300,
-      set: () => {
-        throw failure;
+    let width = 300;
+    let height = 150;
+    const resizeWrites: ResizeRecord[] = [];
+    Object.defineProperties(target.canvas, {
+      width: {
+        configurable: true,
+        get: () => width,
+        set: (value: number) => {
+          resizeWrites.push(['width', value]);
+          width = value;
+        },
+      },
+      height: {
+        configurable: true,
+        get: () => height,
+        set: (value: number) => {
+          resizeWrites.push(['height', value]);
+          if (value === 480) throw failure;
+          height = value;
+        },
       },
     });
 
     expect(drawLayersToCanvas(target.canvas, [], frame(0, 0, 640, 480))).toBe(false);
 
+    expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
-    expectNoContextCalls(target.context);
+    expect(resizeWrites).toEqual([
+      ['width', 640],
+      ['height', 480],
+      ['width', 300],
+      ['height', 150],
+    ]);
+    expect(target.canvas.width).toBe(300);
+    expect(target.canvas.height).toBe(150);
+    expect(target.context.clearRect).not.toHaveBeenCalled();
+    expect(target.context.drawImage).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed without touching the visible canvas when the staging context is unavailable', () => {
@@ -429,8 +478,9 @@ describe('drawLayersToCanvas', () => {
     expect(consoleError).not.toHaveBeenCalled();
     expect(target.canvas.width).toBe(300);
     expect(target.canvas.height).toBe(150);
+    // Staging canvas context is requested first and returns null; target is never touched
     expect(contextRequests).toHaveLength(1);
-    expect(contextRequests).not.toContain(target.canvas);
+    expect(contextRequests[0]).not.toBe(target.canvas);
     expectNoContextCalls(target.context);
   });
 
@@ -702,6 +752,54 @@ describe('drawLayersToCanvas', () => {
       ['height', 480],
     ]);
   });
+
+  it('keeps HiDPI backing dimensions stable across repeated publication', () => {
+    const target = createTargetCanvas();
+    const targetResizes = trackCanvasResizes(target.canvas);
+    const documentFrame = frame(0, 0, 640, 480);
+
+    expect(drawLayersToCanvas(target.canvas, [], documentFrame, undefined, 2)).toBe(true);
+    expect(target.canvas.width).toBe(1280);
+    expect(target.canvas.height).toBe(960);
+    expect(target.canvas.getAttribute('data-hidpi-ratio')).toBe('2');
+    const firstPublicationResizes = [...targetResizes];
+
+    expect(drawLayersToCanvas(target.canvas, [], documentFrame, undefined, 2)).toBe(true);
+    expect(targetResizes).toEqual(firstPublicationResizes);
+    expect(target.canvas.width).toBe(1280);
+    expect(target.canvas.height).toBe(960);
+    expect(target.canvas.getAttribute('data-hidpi-ratio')).toBe('2');
+  });
+
+  it.each([
+    { backingScale: 2, backingWidth: 1280, backingHeight: 960 },
+    { backingScale: 0.5, backingWidth: 320, backingHeight: 240 },
+  ])(
+    'restores the existing $backingWidth×$backingHeight backing pixels after a $backingScale× publish blit fails',
+    ({ backingScale, backingWidth, backingHeight }) => {
+      const target = createTargetCanvas(backingWidth, backingHeight);
+      target.canvas.setAttribute('data-hidpi-ratio', String(backingScale));
+      const targetResizes = trackCanvasResizes(target.canvas);
+      const failure = new Error('blit failed');
+      target.context.drawImage.mockImplementationOnce(throwing(failure));
+
+      expect(drawLayersToCanvas(target.canvas, [], frame(0, 0, 640, 480), undefined, backingScale)).toBe(false);
+
+      expect(target.canvas.width).toBe(backingWidth);
+      expect(target.canvas.height).toBe(backingHeight);
+      expect(target.canvas.getAttribute('data-hidpi-ratio')).toBe(String(backingScale));
+      expect(targetResizes).toEqual([
+        ['width', backingWidth],
+        ['height', backingHeight],
+      ]);
+      expect(target.context.drawImage).toHaveBeenCalledTimes(2);
+      const snapshot = target.context.drawImage.mock.calls[1][0] as HTMLCanvasElement;
+      expect(snapshot.width).toBe(backingWidth);
+      expect(snapshot.height).toBe(backingHeight);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
+    }
+  );
 
   it('resizes only the staging canvas when composition fails', () => {
     const target = createTargetCanvas();

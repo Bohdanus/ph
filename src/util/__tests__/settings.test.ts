@@ -35,7 +35,14 @@ const legacyTextArgs = (): TextToolArgs => omit(cloneDeep(defaultSettings.text),
  * Hard-coded copy of the narrowed `FigureType` union. The imported type cannot be
  * enumerated at runtime, so the expectations must be written out literally.
  */
-const figureTypes = ['line', 'rectangle', 'oval', 'triangle', 'polygon'] as const satisfies readonly FigureType[];
+const figureTypes = [
+  'line',
+  'rectangle',
+  'oval',
+  'triangle',
+  'polygon',
+  'star',
+] as const satisfies readonly FigureType[];
 
 const legacyFigures = ['circle', 'square'] as const;
 
@@ -110,6 +117,7 @@ describe('saveLastSettings', () => {
   it('stores text settings without text and rect', () => {
     saveLastSettings({
       text: 'hello',
+      angle: 37,
       rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
       fontSize: 32,
       lineHeight: 1.2,
@@ -123,6 +131,7 @@ describe('saveLastSettings', () => {
     const text = lastSavedSettings.text;
     expect(text.text).toBeUndefined();
     expect(text.rect).toBeUndefined();
+    expect(text.angle).toBeUndefined();
     expect(text.fontSize).toBe(32);
     expect(text.color).toBe('#0000ff');
     expect(text.bold).toBe(true);
@@ -139,6 +148,7 @@ describe('saveLastSettings', () => {
   it('persists the text character attributes verbatim, and invents none of them', () => {
     saveLastSettings({
       text: 'hello',
+      angle: 37,
       rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
       fontSize: 32,
       lineHeight: 1.8,
@@ -300,6 +310,8 @@ describe('saveLastSettings', () => {
       color: '#ff0000',
       lineWidth: 2,
       alpha: 1,
+      featherRadius: 0,
+      antiAlias: true,
       fill: false,
       toolName: 'freehand-lasso',
     });
@@ -314,6 +326,8 @@ describe('saveLastSettings', () => {
       color: '#0000ff',
       lineWidth: 4,
       alpha: 0.5,
+      featherRadius: 8,
+      antiAlias: false,
       fill: true,
       toolName: 'polygonal-lasso',
     });
@@ -845,17 +859,24 @@ describe('defaultSettings and lastSavedSettings', () => {
   it('savedDrawPerPen has entries for all pen types', () => {
     expect(savedDrawPerPen.pen).toMatchObject({ alpha: 0.9, lineWidth: 10 });
     expect(savedDrawPerPen['pen-dashed']).toMatchObject({ alpha: 0.9, lineWidth: 10, lineDash: [5, 30] });
-    expect(savedDrawPerPen.spray).toMatchObject({ alpha: 0.5, lineWidth: 100 });
+    expect(savedDrawPerPen.spray).toMatchObject({ alpha: 0.5, flow: 50, lineWidth: 100 });
   });
 
   it('savedArgsPerFigure has entries for all figure types', () => {
-    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon'] as const) {
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const) {
       expect(savedArgsPerFigure[figure]).toMatchObject({ alpha: 1, lineWidth: 5 });
     }
   });
 
   it('savedArgsPerFigure has no legacy circle or square entries', () => {
-    expect(Object.keys(savedArgsPerFigure).sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle']);
+    expect(Object.keys(savedArgsPerFigure).sort()).toEqual([
+      'line',
+      'oval',
+      'polygon',
+      'rectangle',
+      'star',
+      'triangle',
+    ]);
   });
 
   it('savedArgsPerFigure keys match the narrowed figure union exactly', () => {
@@ -888,6 +909,14 @@ describe('defaultSettings and lastSavedSettings', () => {
 
   it('keeps defaultSettings figure tools aligned with the figure union', () => {
     for (const figure of figureTypes) {
+      if (figure === 'star') {
+        expect(defaultSettings.shape).toMatchObject({
+          sides: savedArgsPerFigure.star.sides,
+          starRatio: savedArgsPerFigure.star.starRatio,
+        });
+        continue;
+      }
+
       const toolName = (figure === 'oval' ? 'ellipse' : figure) as
         'rectangle' | 'ellipse' | 'line' | 'triangle' | 'polygon';
 
@@ -936,7 +965,13 @@ describe('defaultSettings and lastSavedSettings', () => {
     });
     expect(defaultSettings.crop).toMatchObject({ aspectRatio: null, rect: null, toolName: 'crop' });
     expect(defaultSettings['magic-wand']).toMatchObject({ tolerance: 28, smoothing: 1.5, toolName: 'magic-wand' });
-    expect(defaultSettings['rectangular-selection']).toEqual({ toolName: 'rectangular-selection' });
+    expect(defaultSettings['rectangular-selection']).toEqual({
+      style: 'normal',
+      fixedRatio: 1,
+      fixedWidth: 100,
+      fixedHeight: 100,
+      toolName: 'rectangular-selection',
+    });
     expect(defaultSettings['feather-magnetic-lasso']).toMatchObject({
       featherRadius: 12,
       magneticWidth: 18,
@@ -955,6 +990,7 @@ describe('defaultSettings and lastSavedSettings', () => {
       [
         'align',
         'allCaps',
+        'angle',
         'bold',
         'color',
         'fontFamily',

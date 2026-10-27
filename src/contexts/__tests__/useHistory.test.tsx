@@ -1,4 +1,5 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
 
 import {
   HIDE_LAYER_ACTION,
@@ -11,7 +12,6 @@ import {
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
-import { useHistory } from '../useHistory.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerOperationArgs, LayerSource, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
@@ -19,6 +19,10 @@ import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { getSortedLayersArray } from '../layer-utils.ts';
 import { updateHistoryTimeline } from '../history-timeline.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
+
+vi.mock('../../hooks/useDevicePixelRatio.ts', () => ({
+  useDevicePixelRatio: vi.fn(() => 1),
+}));
 
 /**
  * What this file's store mock is NOT evidence for.
@@ -33,7 +37,8 @@ import { createMockCanvasContext } from '../../test/setup.ts';
  * 1. anything about what the STORE does with the payload — only what the hook
  *    dispatches is in scope;
  * 2. durable state, in any form — the mock has no durable projection at all;
- * 3. `hasUnsavedChanges` — the mock hardcodes it to `true` on every replay;
+ * 3. `hasUnsavedChanges` transitions in the real reducer — the mock mirrors the
+ *    compensation flag only; the provider-level proof lives in StoreContext tests;
  * 4. selection projection through the reducer — the assertion that reads
  *    `selections` back out of `storeStateMock` reads state the mock just wrote
  *    from the same payload, so it is a tautology. The dispatch payload is the
@@ -47,6 +52,14 @@ import { createMockCanvasContext } from '../../test/setup.ts';
  * Where a real provider is mandatory, and therefore not here: every durable
  * assertion, and the reducer's own `APPLY_HISTORY_REPLAY` arm.
  */
+const historyPresentationEvents = vi.hoisted(() => [] as string[]);
+const historyReplayAttemptState = vi.hoisted(() => ({
+  value: 0,
+  pending: false,
+  pendingDocumentId: null as string | null,
+  pendingDocumentRevision: null as number | null,
+}));
+
 const storeStateMock = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
   history: [] as HistoryItem[],
@@ -64,8 +77,52 @@ const storeStateMock = vi.hoisted(() => ({
   }>,
   activeSelectionId: null as string | null,
   branchRevision: 0,
+  documentId: 'document-1',
+  documentRevision: 0,
   hasUnsavedChanges: false,
-  clearPreviewLayers: vi.fn(),
+  clearPreviewLayers: vi.fn(() => {
+    historyPresentationEvents.push('preview-clear');
+  }),
+  publishDurableNavigationPresentation: undefined as
+    | ((
+        attemptId: number
+      ) => Promise<
+        | { status: 'stale'; reason: 'stale'; cursor: number }
+        | { status: 'legacy-fallback'; reason: 'stale'; cursor: number }
+      >)
+    | undefined,
+  beginHistoryReplayPresentation: vi.fn((documentId: string, documentRevision: number) => {
+    historyReplayAttemptState.value += 1;
+    historyReplayAttemptState.pending = true;
+    historyReplayAttemptState.pendingDocumentId = documentId;
+    historyReplayAttemptState.pendingDocumentRevision = documentRevision;
+    historyPresentationEvents.push('begin');
+    return historyReplayAttemptState.value;
+  }),
+  isHistoryReplayPresentationCurrent: vi.fn(
+    (attemptId: number) => historyReplayAttemptState.pending && attemptId === historyReplayAttemptState.value
+  ),
+  hasPendingHistoryReplayPresentation: vi.fn(
+    (documentId: string, documentRevision: number) =>
+      historyReplayAttemptState.pending &&
+      historyReplayAttemptState.pendingDocumentId === documentId &&
+      historyReplayAttemptState.pendingDocumentRevision === documentRevision
+  ),
+  cancelHistoryReplayPresentation: vi.fn((attemptId: number) => {
+    if (attemptId === historyReplayAttemptState.value) {
+      historyReplayAttemptState.pending = false;
+      historyReplayAttemptState.pendingDocumentId = null;
+      historyReplayAttemptState.pendingDocumentRevision = null;
+    }
+  }),
+  finalizeHistoryReplayPresentation: vi.fn((token: { attemptId: number }) => {
+    historyPresentationEvents.push('finalize');
+    if (token.attemptId !== historyReplayAttemptState.value || !historyReplayAttemptState.pending) return false;
+    historyReplayAttemptState.pending = false;
+    historyReplayAttemptState.pendingDocumentId = null;
+    historyReplayAttemptState.pendingDocumentRevision = null;
+    return true;
+  }),
 }));
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -74,21 +131,48 @@ vi.mock('../StoreContext.tsx', () => ({
   useStore: () => [storeStateMock, dispatchMock],
 }));
 
+const { useHistory } = await import('../useHistory.ts');
+
 // The renderer now stages every presentation on a canvas created through
 // document.createElement, so a failing publication must be simulated through the
 // module boundary rather than through the visible canvas context.
 const rendererControl = vi.hoisted(() => ({
-  drawCalls: [] as Array<{ canvas: HTMLCanvasElement; layers: readonly Layer[]; frame: DocumentFrame }>,
+  drawCalls: [] as Array<{
+    canvas: HTMLCanvasElement;
+    layers: readonly Layer[];
+    frame: DocumentFrame;
+    requireVisibleLayerBitmaps: boolean;
+  }>,
   result: null as boolean | null,
+  failure: null as unknown,
 }));
 
 vi.mock('../layer-renderer.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../layer-renderer.ts')>();
   return {
     ...actual,
-    drawLayersToCanvas: (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => {
-      rendererControl.drawCalls.push({ canvas, layers, frame });
-      return rendererControl.result ?? actual.drawLayersToCanvas(canvas, layers, frame);
+    drawLayersToCanvas: (
+      canvas: HTMLCanvasElement,
+      layers: readonly Layer[],
+      frame: DocumentFrame,
+      silentMissingLayerIds?: ReadonlySet<string>,
+      backingScale = 1,
+      requireVisibleLayerBitmaps = false
+    ) => {
+      rendererControl.drawCalls.push({ canvas, layers, frame, requireVisibleLayerBitmaps });
+      historyPresentationEvents.push('draw');
+      if (rendererControl.failure !== null) throw rendererControl.failure;
+      return (
+        rendererControl.result ??
+        actual.drawLayersToCanvas(
+          canvas,
+          layers,
+          frame,
+          silentMissingLayerIds,
+          backingScale,
+          requireVisibleLayerBitmaps
+        )
+      );
     },
   };
 });
@@ -205,15 +289,22 @@ function makeReplayLayer(id: string, order: number, bitmap: ImageBitmap): Layer 
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 40, height: 20 },
+    presentationBounds: null,
     operations: [],
   };
 }
 
 function resetStoreState(history: HistoryItem[]) {
+  historyReplayAttemptState.value = 0;
+  historyReplayAttemptState.pending = false;
+  historyReplayAttemptState.pendingDocumentId = null;
+  historyReplayAttemptState.pendingDocumentRevision = null;
   Object.assign(storeStateMock, {
     canvasRef: { current: document.createElement('canvas') },
     history,
     historyIndex: history.length - 1,
+    documentId: 'document-1',
+    documentRevision: 0,
     layers: {},
     deletedLayers: {},
     activeLayerId: null,
@@ -223,23 +314,71 @@ function resetStoreState(history: HistoryItem[]) {
     activeSelectionId: null,
     branchRevision: 0,
     hasUnsavedChanges: false,
+    publishDurableNavigationPresentation: undefined,
+    beginHistoryReplayPresentation: vi.fn((documentId: string, documentRevision: number) => {
+      historyReplayAttemptState.value += 1;
+      historyReplayAttemptState.pending = true;
+      historyReplayAttemptState.pendingDocumentId = documentId;
+      historyReplayAttemptState.pendingDocumentRevision = documentRevision;
+      historyPresentationEvents.push('begin');
+      return historyReplayAttemptState.value;
+    }),
+    isHistoryReplayPresentationCurrent: vi.fn(
+      (attemptId: number) => historyReplayAttemptState.pending && attemptId === historyReplayAttemptState.value
+    ),
+    hasPendingHistoryReplayPresentation: vi.fn(
+      (documentId: string, documentRevision: number) =>
+        historyReplayAttemptState.pending &&
+        historyReplayAttemptState.pendingDocumentId === documentId &&
+        historyReplayAttemptState.pendingDocumentRevision === documentRevision
+    ),
+    cancelHistoryReplayPresentation: vi.fn((attemptId: number) => {
+      if (attemptId === historyReplayAttemptState.value) {
+        historyReplayAttemptState.pending = false;
+        historyReplayAttemptState.pendingDocumentId = null;
+        historyReplayAttemptState.pendingDocumentRevision = null;
+      }
+    }),
+    finalizeHistoryReplayPresentation: vi.fn((token: { attemptId: number }) => {
+      historyPresentationEvents.push('finalize');
+      if (token.attemptId !== historyReplayAttemptState.value || !historyReplayAttemptState.pending) return false;
+      historyReplayAttemptState.pending = false;
+      historyReplayAttemptState.pendingDocumentId = null;
+      historyReplayAttemptState.pendingDocumentRevision = null;
+      return true;
+    }),
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function createDispatch() {
   return vi.fn((action: { type: string; payload: unknown }) => {
     if (action.type === 'APPLY_HISTORY_REPLAY') {
+      historyPresentationEvents.push('replay-dispatch');
       const payload = action.payload as {
         updates: Record<string, unknown>;
         timeline: { entries: HistoryItem[]; cursor: number; branchRevision: number };
+        preserveHasUnsavedChanges?: boolean;
       };
       Object.assign(storeStateMock, payload.updates, {
         history: [...payload.timeline.entries],
         historyIndex: payload.timeline.cursor,
         branchRevision: payload.timeline.branchRevision,
-        hasUnsavedChanges: true,
+        hasUnsavedChanges: payload.preserveHasUnsavedChanges
+          ? (payload.updates.hasUnsavedChanges ?? storeStateMock.hasUnsavedChanges)
+          : true,
       });
     } else if (action.type === 'COMMIT_DOCUMENT_EDIT') {
+      historyPresentationEvents.push('edit-dispatch');
       const payload = action.payload as { updates: Record<string, unknown>; historyItem: HistoryItem };
       const timeline = updateHistoryTimeline(
         {
@@ -255,6 +394,8 @@ function createDispatch() {
         branchRevision: timeline.branchRevision,
         hasUnsavedChanges: true,
       });
+    } else if (action.type === 'SET_DURABLE_STATUS') {
+      historyPresentationEvents.push('status-dispatch');
     }
   });
 }
@@ -301,9 +442,11 @@ describe('useHistory undo replay', () => {
     dispatchMock.mockReset();
     rendererControl.drawCalls.length = 0;
     rendererControl.result = null;
+    rendererControl.failure = null;
     replayControl.failure = null;
     replayControl.replayCount = 0;
     replayControl.calls = [];
+    historyPresentationEvents.length = 0;
     installCanvasContextStub();
     offscreenContexts.length = 0;
   });
@@ -455,7 +598,7 @@ describe('useHistory undo replay', () => {
       // The DOCUMENT keeps the frame the initial entry established — 128x64, from
       // `resetStoreState`'s `totalSize` and `createHistory('layerSource')[0]`'s own
       // bedrock source. An imported image appended at cursor 1 is a layer commit, not
-      // a document-size authority (`history-replay.ts:85-97`), so replaying past it
+      // a document-size authority: only the initial entry's bedrock source can set the frame, so replaying past it
       // must not resize the canvas to the bitmap's 40x20. Only `documentSource` and an
       // explicit `SET_DOCUMENT_FRAME` may do that, and a replace-document import is
       // already a single-entry history whose bedrock sits at index 0.
@@ -546,7 +689,7 @@ describe('useHistory undo replay', () => {
     // through the evaluator, showed the evaluated one.
     expect(processor).toHaveBeenCalledWith({
       bitmap: expect.objectContaining({ width: 80, height: 40 }),
-      size: { x: 15, y: 8, width: 80, height: 40 },
+      size: { width: 80, height: 40 },
     });
     // The buffer handed over is the evaluated presentation rather than the layer's own
     // raster, so the affine has to have reached the draw call and not just the arithmetic.
@@ -566,6 +709,72 @@ describe('useHistory undo replay', () => {
     // reason, so the two replay paths now publish the same layer.
     expect(state.layers.top.pos).toEqual({ x: 15, y: 8, width: 80, height: 40 });
     expect(state.layers.top.operations).toEqual([]);
+  });
+
+  it('passes integer staged pixels to history processors and keeps fractional replay bounds', () => {
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(41, 20);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 40, height: 20 },
+        operations: [
+          {
+            id: 'fractional-scale',
+            kind: 'affine-transform',
+            enabled: true,
+            transform: { a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          },
+        ],
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    expect(processor).toHaveBeenCalledWith({
+      bitmap: expect.objectContaining({ width: 41, height: 20 }),
+      size: { width: 41, height: 20 },
+    });
+    expect(state.layers.top.pos).toEqual({ x: 10, y: 5, width: 40.5, height: 20 });
+  });
+
+  it('replays a pixel edit against a resized layer presentation', () => {
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(80, 40);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 80, height: 40 },
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    expect(processor).toHaveBeenCalledWith({
+      bitmap: expect.objectContaining({ width: 80, height: 40 }),
+      size: { width: 80, height: 40 },
+    });
+    expect(state.layers.top.pos).toEqual({ x: 10, y: 5, width: 80, height: 40 });
   });
 
   it('keeps a disabled operation on a layer whose enabled ones it baked into the raster', () => {
@@ -719,6 +928,65 @@ describe('useHistory undo replay', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
+  it('refuses navigation to a disabled opening row instead of publishing an empty state', () => {
+    const disabledOpening: HistoryItem = {
+      id: 'disabled-opening',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      documentSource: {
+        layers: {},
+        size: { width: 128, height: 64 },
+        frame: { x: 0, y: 0, width: 128, height: 64 },
+      },
+      disabled: true,
+    };
+    setup([disabledOpening]);
+
+    useHistory().resetHistoryTo(0);
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(replayControl.replayCount).toBe(0);
+  });
+
+  it('does not disable an enabled opening row through the history eye control', () => {
+    const opening: HistoryItem = {
+      id: 'opening',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      documentSource: {
+        layers: {},
+        size: { width: 128, height: 64 },
+        frame: { x: 0, y: 0, width: 128, height: 64 },
+      },
+    };
+    setup([opening]);
+
+    useHistory().toggleDisabled('opening');
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(storeStateMock.history[0]?.disabled).toBeUndefined();
+  });
+
+  it('allows a persisted disabled opening row to be re-enabled', () => {
+    const disabledOpening: HistoryItem = {
+      id: 'opening',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      documentSource: {
+        layers: {},
+        size: { width: 128, height: 64 },
+        frame: { x: 0, y: 0, width: 128, height: 64 },
+      },
+      disabled: true,
+    };
+    setup([disabledOpening]);
+
+    useHistory().toggleDisabled('opening');
+
+    expect(dispatchMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'APPLY_HISTORY_REPLAY' }));
+    expect(storeStateMock.history[0]?.disabled).toBe(false);
+  });
+
   it('publishes navigation without mutating the old deleted-layer record', () => {
     const { state } = setup();
     const deletedLayers = state.deletedLayers;
@@ -742,6 +1010,7 @@ describe('useHistory undo replay', () => {
         blendMode: 'multiply',
         order: 7,
         pos: { x: -8, y: 13, width: 40, height: 20 },
+        presentationBounds: null,
         operations: [],
       },
       bottom: {
@@ -756,6 +1025,7 @@ describe('useHistory undo replay', () => {
         blendMode: 'screen',
         order: 2,
         pos: { x: 4, y: -2, width: 40, height: 20 },
+        presentationBounds: null,
         operations: [],
       },
     };
@@ -792,7 +1062,10 @@ describe('useHistory undo replay', () => {
     expect(state.layers.top.pos).not.toBe(layers.top.pos);
 
     useHistory().redo();
-    expect(processor).toHaveBeenCalledWith({ bitmap, size: original.top.pos });
+    expect(processor).toHaveBeenCalledWith({
+      bitmap,
+      size: { width: original.top.pos.width, height: original.top.pos.height },
+    });
     expect(state.layers.top).toMatchObject({
       ...original.top,
       tmpCanvas: canvas,
@@ -834,8 +1107,7 @@ describe('useHistory undo replay', () => {
 
       useHistory().undo();
 
-      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
-      expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'APPLY_HISTORY_REPLAY' }));
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
       expect(dispatchMock).toHaveBeenCalledWith({
         type: 'SET_DURABLE_STATUS',
         payload: {
@@ -855,12 +1127,13 @@ describe('useHistory undo replay', () => {
       expect(consoleError.mock.calls[0][1]).toMatchObject({
         message: 'Unable to publish replayed history presentation',
       });
-      expect(state.layers).toEqual({});
+      expect(state.layers['layer-1']).toBeUndefined();
       expect(state.history).toHaveLength(2);
       expect(state.historyIndex).toBe(1);
+      expect(state.hasUnsavedChanges).toBe(false);
       expect(state.activeLayerId).toBeNull();
       expect(state.totalSize).toEqual({ width: 128, height: 64 });
-      expect(state.documentFrame).toBe(currentFrame);
+      expect(state.documentFrame).toEqual(currentFrame);
     });
 
     it('fails closed on redo as well when the staged presentation cannot be published', () => {
@@ -871,24 +1144,369 @@ describe('useHistory undo replay', () => {
 
       useHistory().redo();
 
-      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
-      expect(dispatchedActions()[0].payload?.diagnostics?.[0]).toMatchObject({
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedActions()[2].payload?.diagnostics?.[0]).toMatchObject({
         historyId: 'h-2',
         actionName: RENAME_LAYER_ACTION,
         code: 'conversion-failed',
       });
-      expect(state.layers).toEqual({});
+      expect(state.layers['layer-1']).toBeUndefined();
       expect(state.historyIndex).toBe(0);
     });
 
-    it('applies the replay without touching the durable status when the staged presentation publishes', () => {
+    it('compensates when the final renderer throws after replay dispatch', async () => {
+      const { state } = setup();
+      const previousHistory = [...state.history];
+      const failure = new Error('staging allocation failed');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      rendererControl.failure = failure;
+      const { result } = renderHook(() => useHistory());
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(state.history).toEqual(previousHistory);
+      expect(state.historyIndex).toBe(previousHistory.length - 1);
+      expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
+      expect(historyPresentationEvents).toEqual([
+        'replay-dispatch',
+        'begin',
+        'draw',
+        'replay-dispatch',
+        'status-dispatch',
+        'finalize',
+      ]);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledWith({
+        attemptId: 1,
+        documentId: 'document-1',
+        documentRevision: 0,
+        branchRevision: 0,
+        historyIndex: previousHistory.length - 1,
+      });
+    });
+
+    it('finalizes cache retirement after drawing and clearing the preview', async () => {
       const { state } = setup();
 
-      useHistory().undo();
+      await useHistory().undo();
 
+      expect(historyPresentationEvents).toEqual(['replay-dispatch', 'begin', 'draw', 'preview-clear', 'finalize']);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledWith({
+        attemptId: 1,
+        documentId: 'document-1',
+        documentRevision: 0,
+        branchRevision: 0,
+        historyIndex: 0,
+      });
       expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
       expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_DURABLE_STATUS' }));
       expect(state.layers['layer-1']).toMatchObject({ id: 'layer-1', visible: true });
+      expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not overwrite a newer status when navigation publication is stale', async () => {
+      const { state } = setup();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn(async () => ({
+        status: 'stale' as const,
+        reason: 'stale' as const,
+        cursor: 0,
+      }));
+      const { result } = renderHook(() => useHistory());
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
+      expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not supersede a pending replay when a later replay fails before dispatch', async () => {
+      const { state } = setup();
+      const publication = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn(() => publication.promise);
+      const { result } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(historyReplayAttemptState.pending).toBe(true);
+
+      const failure = new Error('second replay conversion failed');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = failure;
+      await act(async () => {
+        await result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.isHistoryReplayPresentationCurrent(1)).toBe(true);
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
+      expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
+
+      replayControl.failure = null;
+      await act(async () => {
+        publication.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(historyPresentationEvents).toEqual(['replay-dispatch', 'begin', 'draw', 'preview-clear', 'finalize']);
+      expect(rendererControl.drawCalls).toHaveLength(1);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledWith({
+        attemptId: 1,
+        documentId: 'document-1',
+        documentRevision: 0,
+        branchRevision: 0,
+        historyIndex: 0,
+      });
+      expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not let another document pending replay suppress a failure before dispatch', async () => {
+      const { state } = setup();
+      const publication = deferred<{ status: 'stale'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn(() => publication.promise);
+      const { result, rerender } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      expect(storeStateMock.hasPendingHistoryReplayPresentation('document-1', 0)).toBe(true);
+
+      act(() => {
+        state.documentId = 'document-2';
+        state.documentRevision = 1;
+      });
+      rerender();
+
+      const failure = new Error('new document replay conversion failed');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = failure;
+      await act(async () => {
+        await result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.hasPendingHistoryReplayPresentation).toHaveBeenLastCalledWith('document-2', 1);
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-1');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(0);
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedActions()[1].payload).toMatchObject({
+        status: 'unavailable',
+        diagnostics: [expect.objectContaining({ code: 'conversion-failed', message: failure.message })],
+      });
+      expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
+
+      replayControl.failure = null;
+      await act(async () => {
+        publication.resolve({ status: 'stale', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(historyReplayAttemptState.pending).toBe(false);
+      expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not let an older revision pending replay suppress a replacement with the same document ID', async () => {
+      const { state } = setup();
+      const publication = deferred<{ status: 'stale'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn(() => publication.promise);
+      const { result, rerender } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      expect(storeStateMock.hasPendingHistoryReplayPresentation('document-1', 0)).toBe(true);
+
+      // REPLACE_DOCUMENT may reuse the ID, but always advances the revision.
+      act(() => {
+        state.documentRevision = 1;
+      });
+      rerender();
+
+      const failure = new Error('replacement replay conversion failed');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = failure;
+      await act(async () => {
+        await result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.hasPendingHistoryReplayPresentation).toHaveBeenLastCalledWith('document-1', 1);
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-1');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(0);
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedActions()[1].payload).toMatchObject({
+        status: 'unavailable',
+        diagnostics: [expect.objectContaining({ code: 'conversion-failed', message: failure.message })],
+      });
+      expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
+
+      replayControl.failure = null;
+      await act(async () => {
+        publication.resolve({ status: 'stale', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(historyReplayAttemptState.pending).toBe(false);
+      expect(state.documentRevision).toBe(1);
+    });
+
+    it('ignores an older document replay while a replacement replay is still pending', async () => {
+      const { state } = setup();
+      const older = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      const newer = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn((attemptId) =>
+        attemptId === 1 ? older.promise : newer.promise
+      );
+      const { result, rerender } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      act(() => {
+        state.documentId = 'document-2';
+        state.documentRevision = 1;
+      });
+      rerender();
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(2);
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-2');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(1);
+
+      await act(async () => {
+        older.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // The old result cannot draw into the new document, clear its preview,
+      // finalize its replay, roll back its state, or publish an old failure.
+      expect(rendererControl.drawCalls).toHaveLength(0);
+      expect(storeStateMock.clearPreviewLayers).not.toHaveBeenCalled();
+      expect(storeStateMock.finalizeHistoryReplayPresentation).not.toHaveBeenCalled();
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY']);
+      expect(dispatchedTypes()).not.toContain('SET_DURABLE_STATUS');
+      expect(historyReplayAttemptState.pending).toBe(true);
+      expect(historyReplayAttemptState.pendingDocumentId).toBe('document-2');
+      expect(historyReplayAttemptState.pendingDocumentRevision).toBe(1);
+
+      await act(async () => {
+        newer.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(rendererControl.drawCalls).toHaveLength(1);
+      expect(storeStateMock.clearPreviewLayers).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledWith({
+        attemptId: 2,
+        documentId: 'document-2',
+        documentRevision: 1,
+        branchRevision: 0,
+        historyIndex: 0,
+      });
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY']);
+      expect(historyReplayAttemptState.pending).toBe(false);
+    });
+
+    it('ignores an older same-cursor publication that completes after its replacement', async () => {
+      const { state } = setup();
+      const older = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      const newer = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn((attemptId) =>
+        attemptId === 1 ? older.promise : newer.promise
+      );
+      const { result } = renderHook(() => useHistory());
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+
+      expect(storeStateMock.beginHistoryReplayPresentation).toHaveBeenCalledTimes(2);
+      expect(state.historyIndex).toBe(0);
+      await act(async () => {
+        newer.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const afterNewer = [...historyPresentationEvents];
+      expect(afterNewer).toEqual([
+        'replay-dispatch',
+        'begin',
+        'replay-dispatch',
+        'begin',
+        'draw',
+        'preview-clear',
+        'finalize',
+      ]);
+      await act(async () => {
+        older.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(historyPresentationEvents).toEqual(afterNewer);
+      expect(rendererControl.drawCalls).toHaveLength(1);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledWith({
+        attemptId: 2,
+        documentId: 'document-1',
+        documentRevision: 0,
+        branchRevision: 0,
+        historyIndex: 0,
+      });
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY']);
+      expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not roll back or mark history unavailable when an older same-cursor publication rejects', async () => {
+      const { state } = setup();
+      const older = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      const newer = deferred<{ status: 'legacy-fallback'; reason: 'stale'; cursor: number }>();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn((attemptId) =>
+        attemptId === 1 ? older.promise : newer.promise
+      );
+      const { result } = renderHook(() => useHistory());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      act(() => {
+        void result.current.resetHistoryTo(0);
+      });
+      await act(async () => {
+        newer.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: 0 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const afterNewer = [...historyPresentationEvents];
+
+      await act(async () => {
+        older.reject(new Error('older composition refused'));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(historyPresentationEvents).toEqual(afterNewer);
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY']);
+      expect(storeStateMock.finalizeHistoryReplayPresentation).toHaveBeenCalledTimes(1);
+      expect(consoleError).not.toHaveBeenCalledWith('History replay is unavailable', expect.anything());
       expect(state.historyIndex).toBe(0);
     });
 
@@ -896,16 +1514,14 @@ describe('useHistory undo replay', () => {
       resetStoreState(createHistory('layerSource'));
       storeStateMock.canvasRef = { current: null };
       dispatchMock.mockImplementation(createDispatch());
-      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-      const { undo } = useHistory();
+      const { result } = renderHook(() => useHistory());
 
-      expect(() => undo()).not.toThrow();
+      expect(() => result.current.undo()).not.toThrow();
       expect(rendererControl.drawCalls).toEqual([]);
       expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
       expect(storeStateMock.layers['layer-1']).toBeDefined();
       expect(storeStateMock.historyIndex).toBe(0);
-      expect(consoleError).not.toHaveBeenCalled();
     });
 
     it('publishes the mounted canvas with the sorted replayed layers and the replayed document frame', () => {
@@ -930,6 +1546,7 @@ describe('useHistory undo replay', () => {
       expect(call.canvas).toBe(state.canvasRef.current);
       expect(call.frame).toEqual({ x: 0, y: 0, width: 300, height: 200 });
       expect(call.layers).toEqual(getSortedLayersArray(state.layers));
+      expect(call.requireVisibleLayerBitmaps).toBe(true);
       expect(call.layers.map((layer) => layer.id)).toEqual(['bottom', 'top']);
       expect(Object.keys(state.layers)).toEqual(['top', 'bottom']);
     });
@@ -1196,17 +1813,51 @@ describe('useHistory undo replay', () => {
       expect(clearPreviewLayers()).toHaveBeenCalledTimes(2);
     });
 
-    it('drops the preview even when the navigation goes on to fail closed', () => {
+    it('drops the preview only once the replay has been published and dispatched', () => {
+      setup();
+      // The ORDER is the contract, so it is read at the moment of the clear rather than
+      // inferred from the counts above: a clear ahead of the dispatch could strand an
+      // in-progress draft in front of a replay that then refused to publish.
+      const dispatchedAtClear: string[][] = [];
+      clearPreviewLayers().mockImplementationOnce(() => {
+        dispatchedAtClear.push(dispatchedTypes());
+      });
+
+      useHistory().undo();
+
+      expect(dispatchedAtClear).toEqual([['APPLY_HISTORY_REPLAY']]);
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+      // Canvas publication is the other precondition, and it is unchanged: one staged
+      // draw, the same call the successful path always made.
+      expect(rendererControl.drawCalls).toHaveLength(1);
+    });
+
+    it('keeps the in-progress preview when the replay itself throws', () => {
+      setup();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = new Error('replay refused');
+
+      useHistory().undo();
+
+      // The refusal moves neither the store nor the canvas, so it must not cost the user
+      // the stroke they are still dragging. `SET_DURABLE_STATUS` is the whole dispatch.
+      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
+      expect(rendererControl.drawCalls).toHaveLength(0);
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
+    });
+
+    it('keeps the in-progress preview when the replayed canvas cannot be published', () => {
       setup();
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
       rendererControl.result = false;
 
       useHistory().undo();
 
-      // The clear sits ahead of the replay, so an unpublished replay cannot leave a
-      // stale preview standing in for the document it failed to draw.
-      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
-      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+      // Same reasoning one step later: the renderer was asked, and declined, so the
+      // document on screen is still the one the preview was drawn over.
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(rendererControl.drawCalls).toHaveLength(1);
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
     });
 
     it('does not drop the preview for a navigation it refuses', () => {

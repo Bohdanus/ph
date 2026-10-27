@@ -11,30 +11,35 @@ import {
   copyPolygonToCanvas,
   copyRectSelectionToCanvas,
   copySelectionToCanvas,
+  createCommittedRasterSelection,
   createCommittedPolygonSelection,
+  createCommittedPolygonSelectionFromContours,
   createCommittedRectangleSelection,
   distanceBetweenPoints,
-  drawClosedSelectionPath,
   drawSelectionAnchors,
-  drawSelectionOutline,
   findSelectionAnchorAtPoint,
   getActiveRectangularSelection,
   getActiveSelection,
   getSelectionAbsolutePoints,
+  getSelectionAbsoluteContours,
   getSelectionAtPoint,
   getSelectionRect,
   hasSameSelectionGeometry,
   isPointInPolygon,
+  isPointInContours,
+  isPointInSelection,
   moveSelectionAnchor,
   moveSelectionByDelta,
   normalizeRectangleSelectionRect,
   normalizeSelectionPoints,
+  createSelectionAlphaMask,
   type SelectionCanvasSnapshot,
 } from '../selection.ts';
 import { makeMockCanvas, makeMockCtx, makeMockImageData, makeMockOffscreenCanvas } from '@/__tests__/canvas-mock.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import type { Point, Pos, RectXYSorted, Selection, Size } from '../../contexts/general-types.ts';
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
+import { encodeRasterSelectionMask } from '../selection-mask.ts';
 
 /** A shared-mock 2D context whose read-back and write-back entry points stay spyable. */
 type RecordedCtx = ReturnType<typeof makeMockCtx> & { getImageData: Mock; putImageData: Mock };
@@ -54,7 +59,7 @@ const triangle = (offset = 0): Point[] => [
  * unguarded `ctx.getImageData` at `src/util/selection.ts:549` and still reaches the
  * CPU rasterization fallback at `src/util/selection.ts:405`.
  */
-type MaskReadBack = 'all-opaque' | 'left-half-opaque' | 'throw';
+type MaskReadBack = 'all-opaque' | 'left-half-opaque' | 'partial-alpha' | 'throw';
 
 const readBacks: MaskReadBack[] = [];
 
@@ -67,8 +72,15 @@ const maskReadBack = (width: number, height: number, readBack: MaskReadBack): Im
   const imageData = makeMockImageData(width, height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const opaque = readBack === 'all-opaque' || x < Math.floor(width / 2);
-      imageData.data[(y * width + x) * 4 + 3] = opaque ? 255 : 0;
+      const alpha =
+        readBack === 'all-opaque'
+          ? 255
+          : readBack === 'partial-alpha' && x === Math.floor(width / 2)
+            ? 64
+            : readBack === 'left-half-opaque' && x < Math.floor(width / 2)
+              ? 255
+              : 0;
+      imageData.data[(y * width + x) * 4 + 3] = alpha;
     }
   }
 
@@ -157,9 +169,11 @@ const installOffscreenCanvas = () => {
 const selection = (overrides: Partial<Selection> = {}): Selection => ({
   id: 'sel-1',
   points: [
-    { x: 0, y: 0 },
-    { x: 10, y: 0 },
-    { x: 10, y: 10 },
+    [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+    ],
   ],
   isActive: true,
   pos: { x: 5, y: 5, width: 10, height: 10 },
@@ -215,16 +229,18 @@ describe('normalizeSelectionPoints', () => {
     expect(result).not.toBeNull();
     expect(result!.pos).toEqual({ x: 21, y: 21, width: 8, height: 8 });
     expect(result!.points).toEqual([
-      { x: 1, y: 1 },
-      { x: 7, y: 1 },
-      { x: 7, y: 7 },
+      [
+        { x: 1, y: 1 },
+        { x: 7, y: 1 },
+        { x: 7, y: 7 },
+      ],
     ]);
   });
 
   it('keeps the pos and the normalized points mutually consistent', () => {
     const result = normalizeSelectionPoints(triangle(20))!;
 
-    expect(result.points.map((point) => ({ x: point.x + result.pos.x, y: point.y + result.pos.y }))).toEqual(
+    expect(result.points[0]!.map((point) => ({ x: point.x + result.pos.x, y: point.y + result.pos.y }))).toEqual(
       triangle(20)
     );
   });
@@ -247,7 +263,69 @@ describe('normalizeSelectionPoints', () => {
     ]);
 
     expect(result!.pos).toEqual({ x: -11, y: -6, width: 8, height: 8 });
-    expect(result!.points[0]).toEqual({ x: 1, y: 1 });
+    expect(result!.points[0]![0]).toEqual({ x: 1, y: 1 });
+  });
+
+  it('propagates non-finite coordinates without clamping or guarding', () => {
+    // `normalizeSelectionPoints` has no NaN/Infinity guard: `pointsBoundingPos` reads them
+    // straight through `getPointExtents`, whose `<`/`>` compares are all false for NaN, so
+    // the pos and every normalized point inherit the non-finite values verbatim rather than
+    // being coerced to a finite fallback. Callers that build a selection from a traced path
+    // are expected to have already rejected non-finite input upstream.
+    const nanResult = normalizeSelectionPoints([
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+      { x: NaN, y: NaN },
+    ]);
+
+    expect(nanResult!.pos).toEqual({ x: NaN, y: NaN, width: NaN, height: NaN });
+    expect(nanResult!.points).toEqual([
+      [
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+      ],
+    ]);
+
+    // Infinity is handled the same way: `Infinity - 1` stays Infinity for pos.x/pos.y, but
+    // `Infinity - Infinity` in the width/height extents and in the per-point subtraction
+    // both collapse to NaN, leaving the normalized points NaN even though the origin is finite.
+    const infResult = normalizeSelectionPoints([
+      { x: Infinity, y: Infinity },
+      { x: Infinity, y: Infinity },
+      { x: Infinity, y: Infinity },
+    ]);
+
+    expect(infResult!.pos).toEqual({ x: Infinity, y: Infinity, width: NaN, height: NaN });
+    expect(infResult!.points).toEqual([
+      [
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+        { x: NaN, y: NaN },
+      ],
+    ]);
+  });
+
+  it('accepts three coincident points as a degenerate polygon', () => {
+    // The only guard is the length check; three identical points pass it. The bounds are
+    // non-zero because `pointsBoundingPos` applies a default lineWidth of 1, so the
+    // normalized points collapse to (1,1) relative to the padded origin. This is a point,
+    // not a real polygon — `isPointInPolygon` reports no interior for it — but nothing here
+    // rejects it, so a click that commits before any real drag reaches this path.
+    const result = normalizeSelectionPoints([
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+    ]);
+
+    expect(result!.pos).toEqual({ x: 4, y: 4, width: 2, height: 2 });
+    expect(result!.points).toEqual([
+      [
+        { x: 1, y: 1 },
+        { x: 1, y: 1 },
+        { x: 1, y: 1 },
+      ],
+    ]);
   });
 });
 
@@ -284,6 +362,60 @@ describe('createCommittedPolygonSelection', () => {
   });
 });
 
+describe('compound polygon selections', () => {
+  const rect = (left: number, top: number, right: number, bottom: number): Point[] => [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom },
+  ];
+
+  const contours = [rect(0, 0, 5, 5), rect(1, 1, 4, 4), rect(2, 2, 3, 3), rect(7, 1, 9, 3)];
+
+  it('normalizes every contour against one shared bound without flattening the paths', () => {
+    const created = createCommittedPolygonSelectionFromContours({
+      id: 'compound',
+      points: contours,
+      sourceTool: 'magic-wand',
+    })!;
+
+    // Polygon selections reserve one document pixel around the traced path for the outline.
+    expect(created.pos).toEqual({ x: -1, y: -1, width: 11, height: 7 });
+    expect(getSelectionAbsoluteContours(created)).toEqual(contours);
+    expect(created.points).toHaveLength(4);
+  });
+
+  it('uses even-odd membership for holes, nested islands and disconnected regions', () => {
+    const created = createCommittedPolygonSelectionFromContours({
+      id: 'compound',
+      points: contours,
+      sourceTool: 'magic-wand',
+    })!;
+
+    expect(isPointInSelection({ x: 0.5, y: 0.5 }, created)).toBe(true);
+    expect(isPointInSelection({ x: 1.5, y: 1.5 }, created)).toBe(false);
+    expect(isPointInSelection({ x: 2.5, y: 2.5 }, created)).toBe(true);
+    expect(isPointInSelection({ x: 6.5, y: 1.5 }, created)).toBe(false);
+    expect(isPointInSelection({ x: 7.5, y: 1.5 }, created)).toBe(true);
+    expect(isPointInContours({ x: 1.5, y: 1.5 }, contours)).toBe(false);
+  });
+
+  it('rasterizes disconnected regions and nested holes with matching even-odd coverage', () => {
+    const expected = new Uint8Array(9 * 5);
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 9; x++) {
+        const inOuter = x < 5 && y < 5;
+        const inHole = x >= 1 && x < 4 && y >= 1 && y < 4;
+        const inIsland = x === 2 && y === 2;
+        const inSecondRegion = x >= 7 && x < 9 && y >= 1 && y < 3;
+        if ((inOuter && !inHole) || inIsland || inSecondRegion) expected[y * 9 + x] = 255;
+      }
+    }
+
+    expect(createSelectionAlphaMask(contours, { width: 9, height: 5 }, { antiAlias: false })).toEqual(expected);
+  });
+});
+
 describe('rectangle selection normalization', () => {
   const imageSize: Size = { width: 100, height: 100 };
 
@@ -293,10 +425,12 @@ describe('rectangle selection normalization', () => {
     expect(result).toEqual({
       pos: { x: 10, y: 10, width: 30, height: 30 },
       points: [
-        { x: 0, y: 0 },
-        { x: 30, y: 0 },
-        { x: 30, y: 30 },
-        { x: 0, y: 30 },
+        [
+          { x: 0, y: 0 },
+          { x: 30, y: 0 },
+          { x: 30, y: 30 },
+          { x: 0, y: 30 },
+        ],
       ],
     });
   });
@@ -401,13 +535,13 @@ type OverlayState = {
  *
  * `makeMockCtx`'s `save` and `restore` are bare `vi.fn()` spies that neither push nor pop
  * anything (`src/__tests__/canvas-mock.ts:22-23`), so a context built from it cannot state
- * what `CanvasRenderingContext2D` states: that the `restore()` closing
- * `drawSelectionOutline` gives the caller back the `globalAlpha` it had. Every method stays a
- * `vi.fn()`, so call counts and `invocationCallOrder` still read off it. The stack covers all
- * five members the outline writes, not just the one the assertions below read: a stack that
- * restored only the member under test would be the same mock-shaped lie, one field narrower.
- * The line dash rides along by pairing `setLineDash` with a `getLineDash` reading the same
- * list, because the shared mock's answers `[]` every time.
+ * what `CanvasRenderingContext2D` states: that the `restore()` closing `drawSelectionAnchors`
+ * gives the caller back the `globalAlpha` it had. Every method stays a `vi.fn()`, so call counts
+ * and `invocationCallOrder` still read off it. The stack covers all five members the anchors
+ * write, not just the one the assertions below read: a stack that restored only the member under
+ * test would be the same mock-shaped lie, one field narrower. The line dash rides along by pairing
+ * `setLineDash` with a `getLineDash` reading the same list, because the shared mock's answers
+ * `[]` every time.
  */
 function withStateStack(ctx: CanvasRenderingContext2D) {
   let lineDash: number[] = [];
@@ -440,166 +574,15 @@ function withStateStack(ctx: CanvasRenderingContext2D) {
   return ctx;
 }
 
-describe('drawClosedSelectionPath', () => {
-  it('strokes a closed path through every point', () => {
-    const ctx = makeMockCtx();
-    drawClosedSelectionPath(ctx, triangle());
-
-    expect(ctx.beginPath).toHaveBeenCalledTimes(1);
-    expect(ctx.moveTo).toHaveBeenCalledWith(2, 2);
-    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(1, 8, 2);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(2, 8, 8);
-    expect(ctx.closePath).toHaveBeenCalledTimes(1);
-    expect(ctx.stroke).toHaveBeenCalledTimes(1);
-  });
-
-  it('draws nothing for fewer than two points', () => {
-    const ctx = makeMockCtx();
-    drawClosedSelectionPath(ctx, []);
-    drawClosedSelectionPath(ctx, [{ x: 1, y: 1 }]);
-
-    expect(ctx.beginPath).not.toHaveBeenCalled();
-    expect(ctx.stroke).not.toHaveBeenCalled();
-  });
-});
-
-describe('drawSelectionOutline', () => {
-  it('draws the dashed path and one anchor per vertex for interactive tools', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection());
-
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(1, [6, 4]);
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(2, []);
-    expect(ctx.arc).toHaveBeenCalledTimes(3);
-    expect(ctx.arc).toHaveBeenCalledWith(5, 5, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
-    expect(ctx.restore).toHaveBeenCalledTimes(1);
-  });
-
-  /**
-   * The outline is drawn into a DOCUMENT-sized overlay canvas that CSS displays with
-   * `object-contain`, so the context draws in document px while these constants are CSS px. Below
-   * a scale of 1 the undivided numbers are sub-pixel — the outline smears — which is what this
-   * pins: at scale 0.5 (document shown at half size) the dash must be 12 document px to stay the
-   * same 6 CSS px on screen.
-   */
-  it('divides its chrome by the contain scale so the outline is constant in CSS px', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection(), undefined, 0.5);
-
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(1, [12, 8]);
-    expect(ctx.arc).toHaveBeenCalledWith(5, 5, SELECTION_ANCHOR_RADIUS * 2, 0, Math.PI * 2);
-  });
-
-  it.each(['freehand-lasso', 'magic-wand'] as const)('omits anchors for %s', (sourceTool) => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ sourceTool }));
-
-    expect(ctx.stroke).toHaveBeenCalledTimes(1);
-    expect(ctx.arc).not.toHaveBeenCalled();
-    expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
-  });
-
-  it('resets globalAlpha to 1 before it strokes, inside a bracket that hands the caller its own back', () => {
-    // The reset is `resetOverlayAlpha` at `src/util/selection.ts:168` — `ctx.globalAlpha = 1` and
-    // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
-    // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
-    // asserting 1 on a fresh context would pass whether or not the reset existed.
-    //
-    // The context carries a real state stack, so both halves of the contract are read off the one
-    // call: the alpha DURING the draw, and the alpha the caller is left holding.
-    const ctx = withStateStack(makeMockCtx());
-    ctx.globalAlpha = 0.25;
-    let alphaAtStroke: number | undefined;
-    ctx.stroke = vi.fn(() => {
-      alphaAtStroke = ctx.globalAlpha;
-    });
-
-    drawSelectionOutline(ctx, selection());
-
-    // A reset placed after the path was stroked would leave the outline painted at 0.25 while
-    // still reading back as 1, so the value has to be sampled during the draw.
-    expect(alphaAtStroke).toBe(1);
-    // …and what the context is left holding is the CALLER's 0.25, not 1. The reset is inside
-    // the bracket, so the `restore()` at `selection.ts:175` undoes it on the way out; a 1 here
-    // would be a reset that outlived the bracket that was supposed to contain it.
-    expect(ctx.globalAlpha).toBe(0.25);
-
-    // The `save()` is the half `expect(ctx.restore).toHaveBeenCalledTimes(1)` cannot see, and the
-    // half the contamination it exists to contain is made of: the tool overlay is ONE 2D context
-    // for the whole session and every tool area is handed the same object
-    // (`selection.ts:151-155`), so without the `save()` at `:150` the `restore()` at `:175` pops
-    // an empty stack and `strokeStyle`, `fillStyle`, `lineWidth`, the dash and the alpha all
-    // stay written for the next tool to draw on.
-    expect(ctx.save).toHaveBeenCalledTimes(1);
-    // The ORDER carries the other half. A `resetOverlayAlpha(ctx)` hoisted ABOVE the `save()`
-    // makes all three calls in exactly this order and leaks the alpha just the same, so the call
-    // sequence alone cannot separate "reset inside the bracket" from "reset in front of it" —
-    // only the state read back above can.
-    expect(vi.mocked(ctx.save).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(ctx.stroke).mock.invocationCallOrder[0]
-    );
-    expect(vi.mocked(ctx.stroke).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(ctx.restore).mock.invocationCallOrder[0]
-    );
-  });
-
-  it.each(['freehand-lasso', 'magic-wand'] as const)(
-    'resets globalAlpha on the anchor-less %s path too',
-    (sourceTool) => {
-      // These two skip the anchor loop, which is where an early return could have skipped the
-      // reset: the per-caller resets this retired were added one tool at a time and were
-      // missing the magic wand's, which is the whole reason the reset moved inside the function.
-      const ctx = withStateStack(makeMockCtx());
-      ctx.globalAlpha = 0.25;
-      let alphaAtStroke: number | undefined;
-      ctx.stroke = vi.fn(() => {
-        alphaAtStroke = ctx.globalAlpha;
-      });
-
-      drawSelectionOutline(ctx, selection({ sourceTool }));
-
-      expect(alphaAtStroke).toBe(1);
-      // The anchored path and this one share the bracket, so they share the post-condition: the
-      // caller gets its own 0.25 back, and the reset leaves with the bracket.
-      expect(ctx.globalAlpha).toBe(0.25);
-      expect(ctx.stroke).toHaveBeenCalledTimes(1);
-    }
-  );
-
-  it('skips inactive selections entirely', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ isActive: false }));
-
-    expect(ctx.beginPath).not.toHaveBeenCalled();
-    expect(ctx.save).not.toHaveBeenCalled();
-  });
-
-  it('skips degenerate selections with fewer than three points', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ points: [{ x: 0, y: 0 }] }));
-
-    expect(ctx.save).not.toHaveBeenCalled();
-  });
-
-  it('converts document points to canvas coordinates when a frame is supplied', () => {
-    const ctx = makeMockCtx();
-    const frame: DocumentFrame = { x: 100, y: 50, width: 500, height: 400 };
-    drawSelectionOutline(ctx, selection(), frame);
-
-    expect(ctx.moveTo).toHaveBeenCalledWith(-95, -45);
-    expect(ctx.arc).toHaveBeenCalledWith(-95, -45, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
-  });
-});
-
 describe('drawSelectionAnchors', () => {
   /**
-   * The anchors left the border when `drawSelectionOutline` gave it to the ants canvas, and they
-   * took the divisor with it. This canvas is DOCUMENT-sized and displayed with `object-contain`, so
-   * the context draws in document px while `SELECTION_ANCHOR_RADIUS` is CSS px: at scale 0.5 the
-   * undivided 5 is a 2.5 CSS px dot, and the grab target `findSelectionAnchorAtPoint` scales is a
-   * 4 CSS px circle around it. Asserting the scaled numbers is the only way this is a pin — a
-   * hardcoded 5 would read the same with no divisor in the file.
+   * The border belongs to the marching ants on their own canvas and nothing here draws it, so the
+   * divisor is these anchors' own to apply. This canvas is DOCUMENT-sized and displayed with
+   * `object-contain`, so the context draws in document px while `SELECTION_ANCHOR_RADIUS` is CSS px:
+   * at scale 0.5 the undivided 5 is a 2.5 CSS px dot, and the grab target
+   * `findSelectionAnchorAtPoint` scales is a 4 CSS px circle around it. Asserting the scaled
+   * numbers is the only way this is a pin — a hardcoded 5 would read the same with no divisor in
+   * the file.
    */
   it('divides the dot by the contain scale so it is constant in CSS px', () => {
     const ctx = makeMockCtx();
@@ -645,7 +628,7 @@ describe('drawSelectionAnchors', () => {
     expect(ctx.stroke).toHaveBeenCalledTimes(3);
   });
 
-  it.each(['freehand-lasso', 'magic-wand'] as const)('draws nothing at all for %s', (sourceTool) => {
+  it.each(['freehand-lasso', 'magic-wand', 'quick-selection'] as const)('draws nothing at all for %s', (sourceTool) => {
     const ctx = makeMockCtx();
     drawSelectionAnchors(ctx, selection({ sourceTool }));
 
@@ -669,7 +652,7 @@ describe('drawSelectionAnchors', () => {
 
   it('skips degenerate selections with fewer than three points', () => {
     const ctx = makeMockCtx();
-    drawSelectionAnchors(ctx, selection({ points: [{ x: 0, y: 0 }] }));
+    drawSelectionAnchors(ctx, selection({ points: [[{ x: 0, y: 0 }]] }));
 
     expect(ctx.save).not.toHaveBeenCalled();
     expect(ctx.arc).not.toHaveBeenCalled();
@@ -688,12 +671,6 @@ describe('drawSelectionAnchors', () => {
     // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
     // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
     // asserting 1 on a fresh context would pass whether or not the reset existed.
-    //
-    // This assertion moved here from `drawSelectionOutline` when the polygon tools gave their
-    // border to the marching-ants canvas. The anchors inherited the reset from the outline that
-    // used to draw the border and the handles in one pass, so it is the anchors that must still
-    // be legible on a shared context — a tool that left `globalAlpha` at 0.2 makes them
-    // invisible, which is the exact class the reset retired for the outline.
     const ctx = withStateStack(makeMockCtx());
     ctx.globalAlpha = 0.25;
     let alphaAtStroke: number | undefined;
@@ -768,18 +745,23 @@ describe('findSelectionAnchorAtPoint', () => {
   it('returns the first matching anchor when two are inside the radius', () => {
     const tiny = selection({
       points: [
-        { x: 0, y: 0 },
-        { x: 2, y: 0 },
-        { x: 2, y: 2 },
+        [
+          { x: 0, y: 0 },
+          { x: 2, y: 0 },
+          { x: 2, y: 2 },
+        ],
       ],
       pos: { x: 0, y: 0, width: 2, height: 2 },
     });
     expect(findSelectionAnchorAtPoint(tiny, { x: 1, y: 0 })).toBe(0);
   });
 
-  it.each(['freehand-lasso', 'magic-wand'] as const)('never reports anchors for %s', (sourceTool) => {
-    expect(findSelectionAnchorAtPoint(selection({ sourceTool }), { x: 5, y: 5 })).toBeNull();
-  });
+  it.each(['freehand-lasso', 'magic-wand', 'quick-selection'] as const)(
+    'never reports anchors for %s',
+    (sourceTool) => {
+      expect(findSelectionAnchorAtPoint(selection({ sourceTool }), { x: 5, y: 5 })).toBeNull();
+    }
+  );
 });
 
 describe('isPointInPolygon', () => {
@@ -836,6 +818,120 @@ describe('isPointInPolygon', () => {
     expect(isPointInPolygon({ x: 2, y: 8 }, lShape)).toBe(true);
     expect(isPointInPolygon({ x: 8, y: 8 }, lShape)).toBe(false);
   });
+
+  it('reports false for a point whose coordinates are non-finite', () => {
+    // NaN and ±Infinity in the probed point make every `pi.y > point.y` comparison false
+    // (for any finite vertex), so the straddle term `false !== false` is always false and
+    // no ray crossing is ever counted — the point reads as outside regardless of polygon.
+    expect(isPointInPolygon({ x: NaN, y: NaN }, square)).toBe(false);
+    expect(isPointInPolygon({ x: Infinity, y: Infinity }, square)).toBe(false);
+    expect(isPointInPolygon({ x: -Infinity, y: -Infinity }, square)).toBe(false);
+  });
+
+  it('reports false for polygons whose vertices carry non-finite coordinates', () => {
+    // A NaN y makes `pi.y > point.y` false; an Infinity y makes the x-intersection
+    // `((pj.x - pi.x) * (point.y - pi.y)) / (pj.y - pi.y) + pi.x` resolve to NaN
+    // (Infinity / Infinity) for at least one operand, and `point.x < NaN` is always
+    // false. No crossing is counted, so the point reads as outside.
+    expect(isPointInPolygon({ x: 5, y: 5 }, [{ x: NaN, y: NaN }, ...square.slice(0, 2)])).toBe(false);
+    expect(isPointInPolygon({ x: 5, y: 5 }, [{ x: Infinity, y: Infinity }, ...square.slice(0, 2)])).toBe(false);
+    expect(isPointInPolygon({ x: 5, y: 5 }, [{ x: -Infinity, y: -Infinity }, ...square.slice(0, 2)])).toBe(false);
+  });
+
+  it('handles a self-intersecting (bowtie) polygon without throwing', () => {
+    // A bowtie: (0,0)→(10,10)→(10,0)→(0,10)→(0,0). The two lobes share only the crossing
+    // point, and the ray-cast crossing-count rule does not know about winding, so a point
+    // inside one lobe but not the other reads as outside — and the crossing point itself
+    // reads as inside. The contract pinned here is that the function returns a boolean and
+    // never throws on a self-intersecting input.
+    const bowtie: Point[] = [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+      { x: 10, y: 0 },
+      { x: 0, y: 10 },
+    ];
+
+    expect(isPointInPolygon({ x: 5, y: 5 }, bowtie)).toBe(true);
+    expect(isPointInPolygon({ x: 2, y: 2 }, bowtie)).toBe(false);
+    expect(isPointInPolygon({ x: 15, y: 15 }, bowtie)).toBe(false);
+  });
+
+  it('handles very large coordinate magnitudes without precision loss', () => {
+    // Ray-casting is magnitude-agnostic: the same `>` and `<` comparisons run unchanged
+    // at 1e9 as at 1. This pins that no overflow or float wraparound silently flips a
+    // point that is genuinely inside to outside, or vice versa.
+    const largeSquare: Point[] = [
+      { x: 1e9, y: 1e9 },
+      { x: 1e9 + 10, y: 1e9 },
+      { x: 1e9 + 10, y: 1e9 + 10 },
+      { x: 1e9, y: 1e9 + 10 },
+    ];
+
+    expect(isPointInPolygon({ x: 1e9 + 5, y: 1e9 + 5 }, largeSquare)).toBe(true);
+    expect(isPointInPolygon({ x: 1e9 + 15, y: 1e9 + 5 }, largeSquare)).toBe(false);
+  });
+
+  it('puts a triangle vertex on the inclusive side or the exclusive side of the half-open rule', () => {
+    // The rule is edge-driven, not vertex-driven: a vertex shared by an inclusive edge and
+    // an exclusive edge reads as inside, while a vertex on two exclusive edges reads as
+    // outside. Triangle here is (2,2)→(8,2)→(8,8): the (2,2) corner sits on the inclusive
+    // left/top edges — same as the square's (0,0) — while (8,2) and (8,8) sit on the
+    // exclusive right/bottom edges.
+    const tri = triangle();
+
+    expect(isPointInPolygon(tri[0], tri)).toBe(true);
+    expect(isPointInPolygon(tri[1], tri)).toBe(false);
+    expect(isPointInPolygon(tri[2], tri)).toBe(false);
+  });
+
+  it('treats a point on a diagonal edge by the same half-open rule as an axis-aligned edge', () => {
+    // Triangle (2,2)→(8,2)→(8,8). The diagonal edge (2,2)→(8,8) carries the inclusive
+    // side: its midpoint (5,5) reads as inside, just as the square's left-edge midpoint
+    // (0,5) does. The vertical edge (8,2)→(8,8) carries the exclusive side: its midpoint
+    // (8,5) reads as outside, matching the square's right-edge midpoint (10,5).
+    const tri = triangle();
+
+    expect(isPointInPolygon({ x: 5, y: 5 }, tri)).toBe(true);
+    expect(isPointInPolygon({ x: 8, y: 5 }, tri)).toBe(false);
+  });
+});
+
+describe('getSelectionRect', () => {
+  it('collapses to a zero-area rect when the selection pos has no extent', () => {
+    // `getSelectionRect` is a pure pos-to-rect conversion: it never re-derives bounds from
+    // the points array. A selection built from a single click (or from three coincident
+    // points) gets a pos with width=0, height=0, and the rect it returns has x1===x2 and
+    // y1===y2 — a degenerate rectangle that the copy path will refuse.
+    expect(getSelectionRect(selection({ pos: { x: 0, y: 0, width: 0, height: 0 } }))).toEqual({
+      x1: 0,
+      y1: 0,
+      x2: 0,
+      y2: 0,
+    });
+  });
+
+  it('returns the same zero-area rect for a single-point selection regardless of its offset', () => {
+    // Even with a non-zero origin the width/height are still zero, so the rect is a single
+    // point in document space — not a zero rect at the origin.
+    expect(getSelectionRect(selection({ pos: { x: 42, y: 17, width: 0, height: 0 } }))).toEqual({
+      x1: 42,
+      y1: 17,
+      x2: 42,
+      y2: 17,
+    });
+  });
+
+  it('does not consult the selection points, so an empty point list still yields the pos rect', () => {
+    // The points array may be empty (every lasso tool seeds `points: []`), but as long as
+    // the pos carries real dimensions the rect is well-defined. This pins that the two
+    // halves of a Selection stay independent at this seam.
+    expect(getSelectionRect(selection({ points: [], pos: { x: 10, y: 10, width: 30, height: 20 } }))).toEqual({
+      x1: 10,
+      y1: 10,
+      x2: 40,
+      y2: 30,
+    });
+  });
 });
 
 describe('getSelectionAtPoint', () => {
@@ -861,9 +957,11 @@ describe('moveSelectionAnchor', () => {
 
     expect(moved.pos).toEqual({ x: 4, y: 4, width: 17, height: 12 });
     expect(moved.points).toEqual([
-      { x: 1, y: 1 },
-      { x: 16, y: 8 },
-      { x: 11, y: 11 },
+      [
+        { x: 1, y: 1 },
+        { x: 16, y: 8 },
+        { x: 11, y: 11 },
+      ],
     ]);
     expect(moved.metadata?.movedAtVersion).toBe(3);
   });
@@ -885,10 +983,12 @@ describe('moveSelectionAnchor', () => {
     expect(moved.id).toBe('rect-move');
     expect(moved.pos).toEqual({ x: 5, y: 5, width: 25, height: 4 });
     expect(moved.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 25, y: 0 },
-      { x: 25, y: 4 },
-      { x: 0, y: 4 },
+      [
+        { x: 0, y: 0 },
+        { x: 25, y: 0 },
+        { x: 25, y: 4 },
+        { x: 0, y: 4 },
+      ],
     ]);
   });
 
@@ -899,7 +999,7 @@ describe('moveSelectionAnchor', () => {
   });
 
   it('returns the original selection when the remaining points can no longer form a polygon', () => {
-    const single = selection({ points: [{ x: 0, y: 0 }] });
+    const single = selection({ points: [[{ x: 0, y: 0 }]] });
     expect(moveSelectionAnchor(single, 0, { x: 9, y: 9 })).toBe(single);
   });
 
@@ -925,10 +1025,12 @@ describe('moveSelectionAnchor', () => {
       sourceTool: 'rectangular-selection',
       pos: { x: 5, y: 5, width: 10, height: 10 },
       points: [
-        { x: 0, y: 0 },
-        { x: 10, y: 0 },
-        { x: 10, y: 10 },
-        { x: 0, y: 10 },
+        [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ],
       ],
       metadata: { movedAtVersion: 4 },
     });
@@ -937,10 +1039,12 @@ describe('moveSelectionAnchor', () => {
 
     expect(moved.pos).toEqual({ x: 5, y: 5, width: 20, height: 20 });
     expect(moved.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      { x: 20, y: 20 },
-      { x: 0, y: 20 },
+      [
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 20 },
+        { x: 0, y: 20 },
+      ],
     ]);
     expect(moved.metadata?.movedAtVersion).toBe(5);
     // Index 0 is the top-left of the rebuilt box, not the (25, 25) the drag was dropped at.
@@ -961,10 +1065,12 @@ describe('moveSelectionAnchor', () => {
       sourceTool: 'rectangular-selection',
       pos: { x: 5, y: 5, width: 0, height: 10 },
       points: [
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-        { x: 0, y: 10 },
-        { x: 0, y: 10 },
+        [
+          { x: 0, y: 0 },
+          { x: 0, y: 0 },
+          { x: 0, y: 10 },
+          { x: 0, y: 10 },
+        ],
       ],
     });
 
@@ -972,10 +1078,12 @@ describe('moveSelectionAnchor', () => {
 
     expect(moved.pos).toEqual({ x: 5, y: 3, width: 0, height: 12 });
     expect(moved.points).toEqual([
-      { x: 0, y: 0 },
-      { x: 0, y: 0 },
-      { x: 0, y: 12 },
-      { x: 0, y: 12 },
+      [
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 12 },
+        { x: 0, y: 12 },
+      ],
     ]);
     // A drag that leaves the shape degenerate still counts as a move, so the writers' own
     // `hasSameSelectionGeometry` guard is what suppresses the commit, not the version counter.
@@ -1210,6 +1318,25 @@ describe('canvas snapshot helpers', () => {
       expect(alphaAt(1, 9)).toBe(255);
     });
 
+    it('preserves partial canvas coverage instead of promoting it to fully selected', () => {
+      readBacks.push('all-opaque', 'partial-alpha');
+      copyFeatheredPolygonSelectionToCanvas(
+        makeMockCanvas(20, 20),
+        [
+          { x: 2, y: 2 },
+          { x: 17, y: 2 },
+          { x: 17, y: 17 },
+        ],
+        { featherRadius: 0, imageSize: { width: 20, height: 20 } }
+      );
+
+      const ctx = firstConstructed().contexts[0];
+      const written = ctx.putImageData.mock.calls[0][0] as ImageData;
+      const alphaAt = (x: number, y: number) => written.data[(y * written.width + x) * 4 + 3];
+
+      expect(alphaAt(8, 1)).toBe(64);
+    });
+
     it('rasterizes the mask on the CPU when canvas read-back throws', () => {
       readBacks.push('all-opaque', 'throw');
       const result = copyFeatheredPolygonSelectionToCanvas(
@@ -1257,6 +1384,35 @@ describe('canvas snapshot helpers', () => {
 
   describe('copySelectionToCanvas dispatch', () => {
     const dispatchImageSize: Size = { width: 100, height: 100 };
+
+    it('samples logical rectangle bounds from a high-DPI source while keeping the snapshot logical', () => {
+      const source = makeMockCanvas(200, 200);
+      const result = copySelectionToCanvas(
+        source,
+        selection({
+          geometry: 'rectangle',
+          sourceTool: 'rectangular-selection',
+          pos: { x: 10, y: 20, width: 10, height: 10 },
+        }),
+        dispatchImageSize,
+        { x: 2, y: 2 }
+      );
+
+      expect(result?.pos).toEqual({ x: 10, y: 20, width: 10, height: 10 });
+      expect(result?.bitmap.width).toBe(10);
+      expect(result?.bitmap.height).toBe(10);
+      expect(firstConstructed().contexts[0].drawImage).toHaveBeenCalledExactlyOnceWith(
+        source,
+        20,
+        40,
+        20,
+        20,
+        0,
+        0,
+        10,
+        10
+      );
+    });
 
     it('returns null when there is no source canvas', () => {
       expect(copySelectionToCanvas(null, selection(), imageSize)).toBeNull();
@@ -1323,6 +1479,44 @@ describe('canvas snapshot helpers', () => {
       expect(result!.pos).toEqual({ x: 5, y: 5, width: 10, height: 10 });
     });
 
+    it('copies every Magic Wand contour with the same even-odd rule used by raster masks', () => {
+      const source = makeMockCanvas(100, 100);
+      const result = copySelectionToCanvas(
+        source,
+        selection({
+          sourceTool: 'magic-wand',
+          pos: { x: 0, y: 0, width: 5, height: 5 },
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 5, y: 0 },
+              { x: 5, y: 5 },
+              { x: 0, y: 5 },
+            ],
+            [
+              { x: 1, y: 1 },
+              { x: 4, y: 1 },
+              { x: 4, y: 4 },
+              { x: 1, y: 4 },
+            ],
+          ],
+        }),
+        dispatchImageSize
+      );
+
+      expect(result!.pos).toEqual({ x: 0, y: 0, width: 5, height: 5 });
+      const ctx = firstConstructed().contexts[0];
+      expect(ctx.clip).toHaveBeenCalledWith('evenodd');
+      expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+      expect(ctx.closePath).toHaveBeenCalledTimes(2);
+      const drawImage = ctx.drawImage as unknown as Mock;
+      expect(drawImage).toHaveBeenCalledTimes(1);
+      const [drawnSource, drawX, drawY] = drawImage.mock.calls[0] as [CanvasImageSource, number, number];
+      expect(drawnSource).toBe(source);
+      expect(Math.abs(drawX)).toBe(0);
+      expect(Math.abs(drawY)).toBe(0);
+    });
+
     it('returns null for a selection whose polygon cannot be rasterized', () => {
       expect(
         copySelectionToCanvas(
@@ -1369,6 +1563,12 @@ describe('mask rasterization on the HTMLCanvasElement fallback path', () => {
     // A CPU-rasterized mask would have kept those pixels, so this pins the branch.
     expect(alphaAt(1, 1)).toBe(255);
     expect(alphaAt(9, 1)).toBe(0);
+  });
+
+  it('preserves partial canvas coverage on the HTMLCanvasElement path', () => {
+    const alphaAt = copyWithDomContexts(installPixelDomContexts(['all-opaque', 'partial-alpha']));
+
+    expect(alphaAt(6, 1)).toBe(64);
   });
 
   it('takes the CPU fallback when only the mask read-back throws', () => {
@@ -1696,6 +1896,18 @@ describe('hasSameSelectionGeometry', () => {
     expect(hasSameSelectionGeometry(base, base)).toBe(true);
   });
 
+  it('compares packed pixels as part of raster selection geometry', () => {
+    const a = selection({
+      points: [],
+      pos: { x: 10, y: 20, width: 2, height: 2 },
+      rasterMask: { width: 2, height: 2, data: 'AQ==' },
+    });
+    const b = { ...a, rasterMask: { width: 2, height: 2, data: 'Ag==' } };
+
+    expect(hasSameSelectionGeometry(a, { ...a, rasterMask: { ...a.rasterMask! } })).toBe(true);
+    expect(hasSameSelectionGeometry(a, b)).toBe(false);
+  });
+
   it.each([
     ['a moved pos', { pos: { x: 6, y: 5, width: 10, height: 10 } }],
     ['a resized pos', { pos: { x: 5, y: 5, width: 11, height: 10 } }],
@@ -1703,9 +1915,11 @@ describe('hasSameSelectionGeometry', () => {
       'a moved anchor',
       {
         points: [
-          { x: 1, y: 0 },
-          { x: 10, y: 0 },
-          { x: 10, y: 10 },
+          [
+            { x: 1, y: 0 },
+            { x: 10, y: 0 },
+            { x: 10, y: 10 },
+          ],
         ],
       },
     ],
@@ -1713,8 +1927,10 @@ describe('hasSameSelectionGeometry', () => {
       'a different point count',
       {
         points: [
-          { x: 0, y: 0 },
-          { x: 10, y: 0 },
+          [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ],
         ],
       },
     ],
@@ -1722,13 +1938,77 @@ describe('hasSameSelectionGeometry', () => {
       'a moved point',
       {
         points: [
-          { x: 0, y: 0 },
-          { x: 10, y: 1 },
-          { x: 10, y: 10 },
+          [
+            { x: 0, y: 0 },
+            { x: 10, y: 1 },
+            { x: 10, y: 10 },
+          ],
         ],
       },
     ],
   ])('is false for %s', (_label, overrides) => {
     expect(hasSameSelectionGeometry(selection(), selection(overrides as Partial<Selection>))).toBe(false);
+  });
+});
+
+describe('raster-backed selections', () => {
+  it('hit-tests packed pixel membership and returns an empty contour list', () => {
+    const rasterMask = { width: 2, height: 2, data: 'AQ==' };
+    const committed = createCommittedRasterSelection({
+      id: 'raster-selection',
+      pos: { x: 10, y: 20, width: 2, height: 2 },
+      rasterMask,
+      sourceTool: 'magic-wand',
+    });
+
+    expect(committed).not.toBeNull();
+    expect(getSelectionAbsoluteContours(committed!)).toEqual([]);
+    expect(isPointInSelection({ x: 10.5, y: 20.5 }, committed!)).toBe(true);
+    expect(isPointInSelection({ x: 11.5, y: 20.5 }, committed!)).toBe(false);
+    expect(isPointInSelection({ x: 10.5, y: 22 }, committed!)).toBe(false);
+    expect(
+      createCommittedRasterSelection({
+        id: 'invalid-dimensions',
+        pos: { x: 0, y: 0, width: 3, height: 2 },
+        rasterMask,
+        sourceTool: 'magic-wand',
+      })
+    ).toBeNull();
+  });
+
+  it('owns an immutable copy of a committed raster mask', () => {
+    const rasterMask = { width: 2, height: 1, data: 'AQ==' };
+    const committed = createCommittedRasterSelection({
+      id: 'owned-raster-selection',
+      pos: { x: 0, y: 0, width: 2, height: 1 },
+      rasterMask,
+      sourceTool: 'magic-wand',
+    });
+
+    expect(committed).not.toBeNull();
+    expect(committed!.rasterMask).not.toBe(rasterMask);
+    expect(Object.isFrozen(committed!.rasterMask)).toBe(true);
+    rasterMask.data = 'Ag==';
+    expect(isPointInSelection({ x: 0.5, y: 0.5 }, committed!)).toBe(true);
+    expect(isPointInSelection({ x: 1.5, y: 0.5 }, committed!)).toBe(false);
+  });
+
+  it('preserves exact subpixel coverage when raster masks are translated', () => {
+    const mask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
+
+    expect(
+      createSelectionAlphaMask(
+        { points: [], rasterMask: { ...mask, x: 0.5, y: 0.5 } },
+        { width: 2, height: 2 },
+        { antiAlias: true }
+      )
+    ).toEqual(Uint8Array.from([64, 64, 64, 64]));
+    expect(
+      createSelectionAlphaMask(
+        { points: [], rasterMask: { ...mask, x: 0.5, y: 0.5 } },
+        { width: 2, height: 2 },
+        { antiAlias: false }
+      )
+    ).toEqual(Uint8Array.from([0, 0, 0, 0]));
   });
 });

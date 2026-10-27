@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppKeyboardShortcuts } from '../AppKeyboardShortcuts.tsx';
 import { KeyboardEventsProvider } from '../../../hooks/useKeyboardEvents.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
+import { claimDocumentGesture, releaseDocumentGesture } from '../../../hooks/document-gesture.ts';
 
 /**
  * These tests use the real KeyboardEventsProvider, so the guard conditions
@@ -14,18 +15,37 @@ const goToTool = vi.hoisted(() => vi.fn());
 const patchToolArgs = vi.hoisted(() => vi.fn());
 const copyActiveSelection = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboard = vi.hoisted(() => vi.fn());
+const pasteSystemClipboardImage = vi.hoisted(() => vi.fn());
 const layerViaCopy = vi.hoisted(() => vi.fn());
+const arrangeLayer = vi.hoisted(() => vi.fn());
 const undo = vi.hoisted(() => vi.fn());
 const redo = vi.hoisted(() => vi.fn());
 const canUndo = vi.hoisted(() => vi.fn(() => false));
 const canRedo = vi.hoisted(() => vi.fn(() => false));
+/** `openSaveImageDialog` resolves an `ImageSaveResponse`, and `null` for a cancelled dialog. */
+const openSaveImageDialog = vi.hoisted(() =>
+  vi.fn<() => Promise<{ fileName: string; format: string } | null>>(() =>
+    Promise.resolve({ fileName: 'saved.png', format: 'image/png' })
+  )
+);
+const handleImageSave = vi.hoisted(() => vi.fn());
+const commitDirtyTool = vi.hoisted(() => vi.fn(() => ({ committed: 'layer' })));
 
 const storeState = vi.hoisted(
   () =>
     ({
+      fileName: 'untitled.png',
+      totalSize: { width: 800, height: 600 },
+      documentFrame: { x: 0, y: 0, width: 800, height: 600 },
       hasImage: true,
       toolName: 'brush' as ToolName,
-    }) as { hasImage: boolean; toolName: ToolName }
+    }) as {
+      fileName: string;
+      totalSize: { width: number; height: number };
+      documentFrame: { x: number; y: number; width: number; height: number };
+      hasImage: boolean;
+      toolName: ToolName;
+    }
 );
 
 const toolState = vi.hoisted(() => ({ toolArgs: { toolName: 'brush' } as ToolArgs }));
@@ -45,7 +65,17 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => ({ canUndo, undo, canRedo, redo }) }));
 
-vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool }) }));
+vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool, handleImageSave }) }));
+vi.mock('../../../hooks/useWorkspaceFitScale.ts', () => ({ useWorkspaceFitScale: () => 1 }));
+vi.mock('../../../hooks/useDevicePixelRatio.ts', () => ({ useDevicePixelRatio: () => 1 }));
+
+vi.mock('../../../contexts/useFile.tsx', () => ({
+  useFile: () => ({ openSaveImageDialog }),
+}));
+
+vi.mock('../../../contexts/useLayer.ts', () => ({
+  useLayers: () => ({ arrangeLayer, commitDirtyTool }),
+}));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
@@ -59,6 +89,7 @@ vi.mock('../../../contexts/useSelectionClipboard.ts', () => ({
     copyActiveSelection,
     hasActiveSelection: clipboardState.hasActiveSelection,
     pasteSelectionClipboard,
+    pasteSystemClipboardImage,
     layerViaCopy,
   }),
 }));
@@ -105,9 +136,44 @@ beforeEach(() => {
   // refused layer in every test that presses the key.
   layerViaCopy.mockResolvedValue(true);
   clipboardState.hasActiveSelection = true;
+  openSaveImageDialog.mockResolvedValue({ fileName: 'saved.png', format: 'image/png' });
+  handleImageSave.mockReset();
+  commitDirtyTool.mockReturnValue({ committed: 'layer' });
+  arrangeLayer.mockReset();
+  pasteSelectionClipboard.mockResolvedValue(true);
+  pasteSystemClipboardImage.mockResolvedValue(false);
+  storeState.fileName = 'untitled.png';
+  storeState.totalSize = { width: 800, height: 600 };
+  storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
   storeState.hasImage = true;
   storeState.toolName = 'brush';
   toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
+});
+
+describe('layer Arrange shortcuts', () => {
+  it.each([
+    [']', {}, 'bring-forward'],
+    ['}', { shiftKey: true }, 'bring-to-front'],
+    ['[', {}, 'send-backward'],
+    ['{', { shiftKey: true }, 'send-to-back'],
+  ] as const)('maps Meta/Ctrl+%s to %s', (key, modifiers, command) => {
+    renderShortcuts();
+
+    expect(press(key, { metaKey: true, ...modifiers })).toBe(true);
+    expect(arrangeLayer).toHaveBeenCalledExactlyOnceWith(command);
+  });
+
+  it('does not arrange layers when no document is loaded', () => {
+    storeState.hasImage = false;
+    renderShortcuts();
+
+    press(']', { metaKey: true });
+    press('}', { metaKey: true, shiftKey: true });
+    press('[', { ctrlKey: true });
+    press('{', { ctrlKey: true, shiftKey: true });
+
+    expect(arrangeLayer).not.toHaveBeenCalled();
+  });
 });
 
 afterEach(() => {
@@ -354,7 +420,7 @@ describe('AppKeyboardShortcuts undo and redo', () => {
 });
 
 describe('AppKeyboardShortcuts clipboard', () => {
-  it('copies the active selection with Meta+C and pastes with Meta+V', () => {
+  it('copies the active selection with Meta+C and pastes with Meta+V', async () => {
     renderShortcuts();
 
     press('c', { metaKey: true });
@@ -362,6 +428,20 @@ describe('AppKeyboardShortcuts clipboard', () => {
 
     expect(copyActiveSelection).toHaveBeenCalledTimes(1);
     expect(pasteSelectionClipboard).toHaveBeenCalledTimes(1);
+    await flushAsync();
+    expect(pasteSystemClipboardImage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the system image clipboard when the in-app clipboard is empty', async () => {
+    pasteSelectionClipboard.mockResolvedValue(false);
+    pasteSystemClipboardImage.mockResolvedValue(true);
+    renderShortcuts();
+
+    press('v', { metaKey: true });
+    await flushAsync();
+
+    expect(pasteSelectionClipboard).toHaveBeenCalledExactlyOnceWith();
+    expect(pasteSystemClipboardImage).toHaveBeenCalledExactlyOnceWith();
   });
 
   it('reports a Meta+C copy that returns false instead of dropping the failure', () => {
@@ -542,6 +622,244 @@ describe('AppKeyboardShortcuts clipboard', () => {
   });
 });
 
+describe('AppKeyboardShortcuts save', () => {
+  /**
+   * Adobe's own shortcut table gives Save as `Ctrl+S` on Windows and `Cmd+S` on macOS
+   * (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`),
+   * so the two platforms are two ROWS rather than one row described in prose: a registration that
+   * bound only `meta` would leave every Windows and Linux user on the browser's Save Page, and
+   * `matchesShortcut` compares `(event.metaKey || event.ctrlKey)` against the single declared
+   * `mod`, which is what makes one registration cover both.
+   *
+   * These rows assert against `saveDocument`'s own mocks, not against a shared save hook: the
+   * handler restates the header's four steps rather than calling an extracted `useSaveDocument`,
+   * so a change to that sequence shows up HERE rather than in one place. That is the duplication
+   * the component comment records on purpose, and this block is the fourth place to look when the
+   * save stops matching `File > Save`.
+   */
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('opens the SaveDialog with mod+S on %s', async (_platform, modifiers) => {
+    renderShortcuts();
+
+    expect(press('s', modifiers)).toBe(true);
+    await flushAsync();
+
+    expect(commitDirtyTool).toHaveBeenCalledTimes(1);
+    expect(openSaveImageDialog).toHaveBeenCalledExactlyOnceWith({
+      fileName: 'untitled.png',
+      layers: { committed: 'layer' },
+      size: { width: 800, height: 600 },
+      documentFrame: { x: 0, y: 0, width: 800, height: 600 },
+    });
+    expect(handleImageSave).toHaveBeenCalledExactlyOnceWith({ fileName: 'saved.png', format: 'image/png' });
+  });
+
+  it('commits the pending tool preview before the dialog is handed the document', async () => {
+    // Pins the ORDER, which is the part a wrong flow would actually get wrong: a save that
+    // staged the document first would call both mocks and export the un-committed record.
+    // It does NOT pin the `flushSync` around `commitDirtyTool` — that wrapper exists to force
+    // the commit to land before the read in production, and a synchronous mock cannot observe a
+    // React batch at all. Dropping the wrapper leaves this row green; what catches a reordered
+    // flow is the `layers` argument in the table row above.
+    renderShortcuts();
+
+    press('s', { ctrlKey: true });
+    await flushAsync();
+
+    expect(commitDirtyTool.mock.invocationCallOrder[0]).toBeLessThan(openSaveImageDialog.mock.invocationCallOrder[0]);
+  });
+
+  it('records nothing when the dialog is cancelled, because a cancel is not a save', async () => {
+    // `null` is the in-band refusal every caller of `openSaveImageDialog` guards with `if (data)`.
+    // Treating it as a failure would put a console error in front of a user who simply changed
+    // their mind, which is the same mistake the Meta+C and Meta+J rows above pin against.
+    openSaveImageDialog.mockResolvedValue(null);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('s', { metaKey: true });
+      await flushAsync();
+
+      expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+      expect(handleImageSave).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('cancels the browser Save Page default, which is the whole reason to claim the key', () => {
+    renderShortcuts();
+
+    // `press` reports the `preventDefault`, not a side effect of saving. `Ctrl+S`/`Cmd+S` is the
+    // browser's own Save Page in every engine, so an in-app Save that also saved the HTML would be
+    // worse than the missing shortcut this replaces.
+    expect(press('s', { ctrlKey: true })).toBe(true);
+    expect(press('s', { metaKey: true })).toBe(true);
+
+    // And a bare `s` is still the Clone Stamp's own key, unclaimed by this registration: every
+    // other `s` in the file declares `mod: false`, so a press carrying either modifier fails
+    // their `mod` test before their undeclared `shift`/`alt` are ever compared.
+    expect(press('s')).toBe(false);
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('clone-stamp');
+  });
+
+  it.each([
+    ['a text input', 'input'],
+    ['a textarea', 'textarea'],
+  ])('does not save from inside %s, and leaves the key to the browser there', (_label, tag) => {
+    renderShortcuts();
+    const field = document.createElement(tag);
+    if (tag === 'input') (field as HTMLInputElement).type = 'text';
+    document.body.appendChild(field);
+
+    // `allowInInput` defaults to false and `useKeyboardEvents` tests the editable target BEFORE
+    // `preventDefault`, so a focused text field neither runs the save flow nor has its browser
+    // Save Page cancelled. That is the file's uniform rule and it is what stops a Ctrl+S aimed at
+    // the SaveDialog's own file-name field from re-entering the save flow underneath the dialog.
+    expect(press('s', { ctrlKey: true }, field)).toBe(false);
+    expect(press('s', { metaKey: true }, field)).toBe(false);
+
+    expect(commitDirtyTool).not.toHaveBeenCalled();
+    expect(openSaveImageDialog).not.toHaveBeenCalled();
+    expect(goToTool).not.toHaveBeenCalled();
+  });
+
+  it('does nothing at all while no image is loaded, and does not claim the key either', () => {
+    storeState.hasImage = false;
+    renderShortcuts();
+
+    // `useKeyboardEvents` resolves `enabled` with a `continue` that runs BEFORE `preventDefault`,
+    // so a disabled registration cannot cancel the browser default. This row pins that
+    // consequence rather than pretending it away: with no document there is nothing to save, and
+    // the key is handed back rather than swallowed by a registration that would do nothing.
+    expect(press('s', { ctrlKey: true })).toBe(false);
+
+    expect(commitDirtyTool).not.toHaveBeenCalled();
+    expect(openSaveImageDialog).not.toHaveBeenCalled();
+    expect(handleImageSave).not.toHaveBeenCalled();
+  });
+
+  it('reaches the save flow on Shift+mod+S too, because that is Adobe’s Save As', async () => {
+    // This app's only save IS Save As — `useFile.tsx` proposes "<name> (copy)" — so the chord
+    // Adobe pairs with Save belongs on the same dialog rather than nowhere. `shift` is left
+    // undeclared, which is what lets it fall through exactly as it does for `I`/`E`/`S`.
+    renderShortcuts();
+
+    press('s', { ctrlKey: true, shiftKey: true });
+    await flushAsync();
+
+    expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+    expect(goToTool).not.toHaveBeenCalled();
+    expect(patchToolArgs).not.toHaveBeenCalled();
+  });
+
+  it('saves rather than setting a Sponge mode on mod+S', async () => {
+    // The inverse direction of the row the tool-cycling block pins: with the Sponge selected,
+    // `Alt+Shift+S` is Saturate and a bare `S` is still the Clone Stamp, but `Ctrl+S` carries
+    // `mod` and neither of those declares it, so the save flow gets the press.
+    storeState.toolName = 'sponge';
+    renderShortcuts();
+
+    press('s', { ctrlKey: true });
+    await flushAsync();
+
+    expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+    expect(patchToolArgs).not.toHaveBeenCalled();
+    expect(goToTool).not.toHaveBeenCalled();
+  });
+
+  it('does not re-open the dialog on auto-repeat, because one press is one save', async () => {
+    renderShortcuts();
+
+    // The registration does NOT set `repeat`, and `useKeyboardEvents` drops `event.repeat`
+    // BEFORE `onKeyDown` runs, so a held key never reaches the dialog — while still cancelling
+    // the browser default on every repeat, which is the property the provider's own comment pins.
+    expect(press('s', { ctrlKey: true, repeat: true })).toBe(true);
+    await flushAsync();
+
+    expect(openSaveImageDialog).not.toHaveBeenCalled();
+
+    press('s', { ctrlKey: true });
+    await flushAsync();
+
+    expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses mod+S while a document gesture is open, before it can consume the gesture’s preview', () => {
+    // `mutatesDocument` is left at its `true` default, and `saveDocument` commits a live tool
+    // preview — so the refusal has to happen at `keydown`, before dispatch and therefore before
+    // `commitDirtyTool`. A mid-gesture save would bake the preview the gesture's own release is
+    // about to write. The press is dropped, not queued: there is no flush point, and the
+    // correct post-release target is the gesture's OWN history entry, which does not exist yet.
+    renderShortcuts();
+    claimDocumentGesture('rectangular-selection', 1);
+
+    try {
+      expect(press('s', { ctrlKey: true })).toBe(false);
+
+      expect(commitDirtyTool).not.toHaveBeenCalled();
+      expect(openSaveImageDialog).not.toHaveBeenCalled();
+    } finally {
+      releaseDocumentGesture('rectangular-selection', 1);
+    }
+  });
+
+  it('refuses mod+V while a document gesture is open', () => {
+    renderShortcuts();
+    claimDocumentGesture('rectangular-selection', 1);
+
+    try {
+      expect(press('v', { ctrlKey: true })).toBe(false);
+      expect(pasteSelectionClipboard).not.toHaveBeenCalled();
+      expect(pasteSystemClipboardImage).not.toHaveBeenCalled();
+    } finally {
+      releaseDocumentGesture('rectangular-selection', 1);
+    }
+  });
+
+  it('reports a throwing commitDirtyTool instead of letting it escape the document listener', async () => {
+    commitDirtyTool.mockImplementation(() => {
+      throw new Error('commit failed');
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('s', { metaKey: true });
+      await flushAsync();
+
+      expect(openSaveImageDialog).not.toHaveBeenCalled();
+      expect(handleImageSave).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Unable to prepare document export', expect.any(Error));
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('reports a rejected save the way the header does, so a failed export is not silent', async () => {
+    openSaveImageDialog.mockRejectedValue(new Error('disk offline'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('s', { ctrlKey: true });
+      await flushAsync();
+
+      expect(handleImageSave).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Unable to prepare document export', expect.any(Error));
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+});
+
 describe('AppKeyboardShortcuts tool cycling', () => {
   it('selects the brush group anchor for a bare B from any other tool', () => {
     storeState.toolName = 'text';
@@ -561,34 +879,30 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith('pencil');
   });
 
-  it('keeps the eraser on a bare B, because the eraser is a brush group member', () => {
-    // `toolbar-mapping.ts` puts the eraser in the Brush flyout, so `AppKeyboardShortcuts.tsx:18`
-    // lists it in `brushGroup` as well. It additionally owns a bare `E`; both are correct,
-    // and a bare `B` from the eraser has to stay on the eraser rather than snapping to the
-    // brush.
-    storeState.toolName = 'eraser';
-    renderShortcuts();
-
-    press('b');
-
-    expect(goToTool).toHaveBeenCalledExactlyOnceWith('eraser');
-  });
-
   it.each([
     ['brush', 'pencil'],
     ['pencil', 'color-replacement'],
-    ['color-replacement', 'eraser'],
-    ['eraser', 'brush'],
+    ['color-replacement', 'brush'],
   ])('cycles Shift+B from %s to %s', (from, to) => {
-    // The brush group is four members now, so the cycle has to close: without the
-    // `eraser -> brush` row a regression that dropped the eraser out of the array would
-    // leave the other three rows green.
+    // The brush group is three members now (brush, pencil, color-replacement). Eraser has
+    // its own Photoshop `E` group, so Shift+B must not cross into it.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
     press('b', { shiftKey: true });
 
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([['brush'], ['pencil'], ['color-replacement']])('keeps %s on a bare B', (tool) => {
+    // The bare-key arm of `selectBrushTool` keeps the current tool when it is already in the
+    // group and otherwise falls to the group's anchor (brush).
+    storeState.toolName = tool as ToolName;
+    renderShortcuts();
+
+    press('b');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(tool);
   });
 
   it.each([
@@ -703,6 +1017,31 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(patchToolArgs).toHaveBeenCalledWith('sponge', { mode: 'saturate' });
   });
 
+  it.each([
+    ['dodge', 's', 'shadows'],
+    ['dodge', 'm', 'midtones'],
+    ['dodge', 'h', 'highlights'],
+    ['burn', 's', 'shadows'],
+    ['burn', 'm', 'midtones'],
+    ['burn', 'h', 'highlights'],
+  ] as const)('sets the %s range to %s on Alt+Shift+%s', (toolName, key, range) => {
+    storeState.toolName = toolName;
+    toolState.toolArgs = {
+      toolName,
+      exposure: 50,
+      range: 'midtones',
+      size: 20,
+      hardness: 0.5,
+      points: [],
+    };
+    renderShortcuts();
+
+    press(key, { shiftKey: true, altKey: true });
+
+    expect(patchToolArgs).toHaveBeenCalledExactlyOnceWith(toolName, { range });
+    expect(goToTool).not.toHaveBeenCalled();
+  });
+
   it('still selects the Clone Stamp on a bare S and on Shift+S', () => {
     // The other half of the row above: pinning that the Sponge's chord takes precedence must
     // not have been achieved by narrowing the Clone Stamp's own registration.
@@ -732,17 +1071,14 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith('sponge');
   });
 
-  it.each([
-    ['eyedropper', 'I'],
-    ['eraser', 'E'],
-    ['clone-stamp', 'S'],
-  ] as const)('selects %s with a bare %s and with Shift+%s', (toolName, key) => {
-    // The three single-tool tiles get one plain registration each and no `shift: true` twin.
+  it.each([['clone-stamp', 'S']] as const)('selects %s with a bare %s and with Shift+%s', (toolName, key) => {
+    // The single-tool tiles get one plain registration each and no `shift: true` twin.
     // `matchesShortcut` only compares a modifier the registration actually declares
     // (`src/hooks/useKeyboardEvents.tsx:70`), so these keys are unshifted-only by DEFAULT
     // rather than by an explicit `shift: false` — a shifted press falls through to the same
     // registration and selects the tool once, which is the whole reason a twin would be
-    // redundant rather than load-bearing here.
+    // redundant rather than load-bearing here. `i` was one of the three until the Ruler joined
+    // the tile and gave the key something to cycle; its own cases are below.
     storeState.toolName = 'text';
     renderShortcuts();
 
@@ -750,6 +1086,71 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     press(key, { shiftKey: true });
 
     expect(goToTool.mock.calls).toEqual([[toolName], [toolName]]);
+  });
+
+  it.each([
+    ['eraser', 'magic-eraser'],
+    ['magic-eraser', 'eraser'],
+  ])('cycles Shift+E from %s to %s', (from, to) => {
+    // The eraser group is two members (eraser, magic-eraser). The bare E selects eraser;
+    // Shift+E cycles to magic-eraser and wraps back.
+    storeState.toolName = from as ToolName;
+    renderShortcuts();
+
+    press('e', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([['eraser'], ['magic-eraser']])('keeps %s on a bare E', (tool) => {
+    // The bare-key arm of `goToTool('eraser')` keeps the current tool when it is already in the
+    // group and otherwise falls to the group's anchor (eraser).
+    storeState.toolName = tool as ToolName;
+    renderShortcuts();
+
+    press('e');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(tool);
+  });
+
+  it.each([
+    ['eyedropper', 'color-sampler'],
+    ['color-sampler', 'ruler'],
+    ['ruler', 'eyedropper'],
+  ] as const)('cycles Shift+I from %s to %s', (from, to) => {
+    // Adobe's `I` family: "Eyedropper, Color Sampler, Ruler, Note, and Count Tool I". The app has
+    // three of the five, and the cycle covers exactly those three — a name the app cannot select
+    // would make Shift+I land on the inert tool area. Three rows rather than a hand-written wrap,
+    // because a three-member cycle has two in-group edges and one wrap and all three are the
+    // property; a two-row table could not tell a correct wrap from an off-by-one.
+    storeState.toolName = from as ToolName;
+    renderShortcuts();
+
+    press('i', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it('cycles Shift+I from another tool past the tile anchor to the member after it', () => {
+    // From outside the group the cycle enters AT the anchor and then advances one step, so it lands
+    // on the SECOND member rather than on the first. That is the existing mechanism's behaviour and
+    // this title now says it, because the old title claimed the anchor while asserting the member
+    // after it — which is only visible once a group has a third entry.
+    storeState.toolName = 'text';
+    renderShortcuts();
+
+    press('i', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('color-sampler');
+  });
+
+  it('keeps the current member of the I tile on a bare I', () => {
+    storeState.toolName = 'ruler';
+    renderShortcuts();
+
+    press('i');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('ruler');
   });
 
   it('falls back to the rectangular selection for a bare M from another tool', () => {

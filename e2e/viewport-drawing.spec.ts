@@ -1,12 +1,15 @@
 import { expect, test, type TestInfo } from './fixtures/extended-test';
 import {
+  ANTIALIASED_FLANGE_CSS_PX,
   type BoundingBox,
   type CssBounds,
   DEFAULT_DOCUMENT_SIZE,
+  DRAW_HALF_WIDTH_DOC_PX,
   containFit,
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
+  toleranceFor,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
@@ -22,34 +25,10 @@ const VIEWPORTS = [
 ] as const;
 
 /**
- * Half of the Draw tool's default `lineWidth`, which is 10 DOCUMENT pixels
- * (`src/tools/settings.ts:38`, `pen: { alpha: 0.9, lineWidth: 10 }`, spread into the `draw`
- * args at `:68-74`). A stroke's painted extent therefore runs half a stroke WIDER than the
- * point that was asked for on each side, and `getDarkPixelBounds` reports the whole painted
- * extent rather than its centre line. That is the entire legitimate reason a stroke's edge
- * is not at the cursor, and it is why the bound below is a function of the fit scale rather
- * than a constant: the same 10 document pixels are 12.7 CSS px in the `wide` window and 9.4
- * in `narrow`, so any single constant is either loose at one window or tight at another.
- */
-const DRAW_HALF_WIDTH_DOC_PX = 5;
-
-/**
- * What is left after the geometric half-width: the faint antialiased fringe of the round
- * cap, and the one-image-pixel convention of `imageBoundsToCss`, which maps an inclusive
- * pixel index to the CENTRE of that pixel (see its JSDoc, `screenshot-scale.ts:153-176`) and
- * so under-reports a covered span by half a CSS pixel on a 1:1 capture. `getDarkPixelBounds`
- * also applies a DARK THRESHOLD, so it discards the faintest fringe pixels entirely, which
- * is why the measured deviation lands a little UNDER `DRAW_HALF_WIDTH_DOC_PX * scale` rather
- * than on it. 2px covers both; the measured slack over it is 2.9-3.7px at the three windows
- * below, so this is a margin and not a fit.
- */
-const ANTIALIASED_FLANGE_CSS_PX = 2;
-
-/**
  * The fixed constant this test used before, kept ONLY as a ceiling the derived tolerance is
- * asserted against. It is not the tolerance; see `expect(toleranceFor(...)).toBeLessThan`
- * below. It is here so that a future edit which replaces the derived bound with a literal
- * fails loudly instead of quietly re-widening the gate.
+ * asserted against. It is not the tolerance; the active geometry control below checks that
+ * `toleranceFor(...)` stays below it. It is here so a future edit replacing the derived bound
+ * with a literal fails loudly instead of quietly re-widening the gate.
  */
 const LEGACY_FIXED_SLACK_CSS_PX = 25;
 
@@ -60,47 +39,31 @@ const LEGACY_FIXED_SLACK_CSS_PX = 25;
  */
 const MAX_BOX_DRIFT_CSS_PX = 0.5;
 
-/**
- * How far the stroke's painted edge may sit from the cursor point that asked for it: the
- * brush's own half-width converted to CSS by the app's contain fit, plus the fringe above.
- *
- * Derived from `containFit`, which is the suite's single implementation of the app's fit and
- * is asserted equal to the app's own published `data-fit-*` at more than one rect size by
- * `e2e/export/visual-regression.spec.ts`. So the bound moves WITH the window instead of
- * being a constant that happened to hold.
- *
- * What it does NOT absorb is any mapping error, and that is the load-bearing property. The
- * `drawLine` P2 (`e2e/OPEN_PROBLEMS.md`, "drawLine applies no contain scale") is a mismatch
- * worth TENS of CSS pixels: at the `wide` window below, the difference between painting the
- * document stretched across the box and painting it contained is 88px in x (379.5 against
- * 291.5 for the start point). A bound of 8.36px still catches that with an order of
- * magnitude to spare, so this number can absorb the stroke's own width and nothing else.
- */
-function toleranceFor(box: BoundingBox): number {
-  return DRAW_HALF_WIDTH_DOC_PX * containFit(box, DEFAULT_DOCUMENT_SIZE).scale + ANTIALIASED_FLANGE_CSS_PX;
-}
-
 interface ViewportMeasurement {
   name: string;
   box: BoundingBox;
   start: { x: number; y: number };
   end: { x: number; y: number };
   line: CssBounds;
-  scale: number;
-  offsetX: number;
-  offsetY: number;
 }
 
 /**
  * Draws the line at one window and reports where the stroke actually landed.
  *
- * The box is measured AFTER `clickToolButton`, not before it, which is the fix for a filed
- * and separately real defect ("a cached canvas box addresses a different pixel after a tool
- * switch", same file): the tool's options bar is the main grid row's height, so selecting a
- * tool can move and resize the canvas, and a box measured before the switch addresses a
- * different pixel. The sanctioned remedy is "measure it once per tool after the options bar
- * for that tool has rendered", which is what this is. On the current layout the two boxes
- * coincide, so this changes no number today; it removes the dependence on them continuing to.
+ * The box is measured AFTER `clickToolButton`, not before it, and the order is kept because a
+ * fresh read is the box the finished layout produced and it costs one `boundingBox()`. It is
+ * not kept because a tool switch can move the box: it cannot. The tool's options mount in the
+ * TOOLBAR row — `ToolbarHorizontal` renders `<ToolComponent key={toolName} />` inside
+ * `TOOLBAR_BASE_CLASS`, a fixed `h-[50px]` strip — while the canvas sits in the main area,
+ * which `App.tsx` declares as a different row, so no tool choice resizes the box. A panel
+ * column taller than 50px paints over the workspace instead of reflowing it, and painting is
+ * not layout.
+ *
+ * So the two boxes coincide on this layout, and measuring per tool changes no number today.
+ * What it removes is the dependence on them continuing to: a layout that did let a tool resize
+ * the workspace would have the box read here already correct, and every coordinate below it is
+ * box-relative, so a stale one would aim the stroke and photograph the capture at a different
+ * pixel rather than fail loudly.
  */
 async function measureAtViewport(
   page: Parameters<typeof clickToolButton>[0],
@@ -199,18 +162,78 @@ async function measureAtViewport(
   const bounds = await getDarkPixelBounds(screenshot);
   if (!bounds) throw new Error(`${name}: line not found on screenshot`);
 
-  const fit = containFit(box, DEFAULT_DOCUMENT_SIZE);
   return {
     name,
     box,
     start,
     end,
     line: imageBoundsToCss({ width: bounds.imageWidth, height: bounds.imageHeight }, box, bounds),
-    scale: fit.scale,
-    offsetX: fit.offsetX,
-    offsetY: fit.offsetY,
   };
 }
+
+/**
+ * Keeps the viewport-specific tolerance proof active while the pixel comparison below remains
+ * skipped. It reads only the live canvas box and contain-fit geometry; it never captures,
+ * samples, or compares pixels, so it does not depend on the unresolved capture drift.
+ */
+test('viewport-derived stroke tolerance stays bounded on live canvas geometry', async ({ page }) => {
+  test.setTimeout(DEFAULT_TEST_TIMEOUT_MS * VIEWPORTS.length);
+
+  const measurements: { name: string; box: BoundingBox; scale: number; tolerance: number }[] = [];
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    await clickToolButton(page, 'draw');
+
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error(`${viewport.name}: canvas not found`);
+    expect(box.width, `${viewport.name}: canvas width`).toBeGreaterThan(0);
+    expect(box.height, `${viewport.name}: canvas height`).toBeGreaterThan(0);
+
+    const scale = containFit(box, DEFAULT_DOCUMENT_SIZE).scale;
+    const tolerance = toleranceFor(box);
+    const expectedTolerance = DRAW_HALF_WIDTH_DOC_PX * scale + ANTIALIASED_FLANGE_CSS_PX;
+
+    expect(tolerance, `${viewport.name}: tolerance must use the measured contain scale`).toBeCloseTo(
+      expectedTolerance,
+      10
+    );
+    expect(
+      tolerance,
+      `${viewport.name}: derived tolerance must stay below the old ${LEGACY_FIXED_SLACK_CSS_PX}px bound`
+    ).toBeLessThan(LEGACY_FIXED_SLACK_CSS_PX);
+    expect(
+      tolerance,
+      `${viewport.name}: derived tolerance must stay below 40px (actual ${tolerance.toFixed(2)}px)`
+    ).toBeLessThan(40);
+
+    measurements.push({ name: viewport.name, box, scale, tolerance });
+  }
+
+  // Prove these requested windows produced distinct geometry before trusting tolerances derived
+  // from their boxes and scales.
+  expect(
+    new Set(measurements.map((measurement) => measurement.box.width)).size,
+    `the three windows produced the same canvas width: ${measurements
+      .map(({ name, box }) => `${name}=${box.width}x${box.height}`)
+      .join(', ')}`
+  ).toBe(VIEWPORTS.length);
+  expect(
+    new Set(measurements.map((measurement) => measurement.scale.toFixed(6))).size,
+    `the three windows produced the same contain scale: ${measurements
+      .map(({ name, scale }) => `${name}=${scale.toFixed(6)}`)
+      .join(', ')}`
+  ).toBe(VIEWPORTS.length);
+  expect(
+    new Set(measurements.map((measurement) => measurement.tolerance.toFixed(6))).size,
+    `the three windows produced the same derived tolerance: ${measurements
+      .map(({ name, tolerance }) => `${name}=${tolerance.toFixed(6)}px`)
+      .join(', ')}`
+  ).toBe(VIEWPORTS.length);
+});
 
 test.describe('Viewport Drawing', () => {
   /**
@@ -225,14 +248,14 @@ test.describe('Viewport Drawing', () => {
    *
    * KNOWN, and measured in this file 40 lines above: `captureCanvasScreenshot`
    * intermittently returns a page that is 87 CSS px SHORTER than the one measured, and
-   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
+   * that drift is a filed defect (`e2e/OPEN_PROBLEMS.md`, the CDP-capture P2). The
    * `expect` before the stroke assertion exists to catch it and it is a HARD
    * assertion, so a drift failure names itself and prints both bounding boxes.
    *
    * NOT known: whether the remaining red runs are all that same drift, or a second
    * cause. The chain from screenshot to verdict is `waitForCanvasRedraw` (polls a
    * CDP screenshot for ink) then `getDarkPixelBounds` (thresholds that screenshot)
-   * then this file's derived `toleranceFor(box)` — 6.7-8.4px across the three
+   * then `toleranceFor(box)` — 6.7-8.4px across the three
    * windows, NOT the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
    * derived bound is asserted *against* and is never applied to anything. Nothing in
    * the chain records which step gave, so a red run does not yet say.
@@ -276,8 +299,8 @@ test.describe('Viewport Drawing', () => {
    * about the SET. In a per-viewport loop each test is blind to the other two, so a
    * `setViewportSize` that silently did nothing would leave three green tests that had all
    * measured the same rectangle — the resize claim, which is this test's entire subject,
-   * reduced to nothing while still reporting green. That is the non-vacuity control below,
-   * and it is unexpressible in the old shape.
+   * reduced to nothing while still reporting green. The active geometry-only test above proves
+   * the windows produce distinct widths and contain scales without depending on this pixel test.
    *
    * The second reason is reporting: with `expect.soft`, one run now reports all three
    * windows' deviations together, instead of the reader discovering them one run at a time.
@@ -287,8 +310,8 @@ test.describe('Viewport Drawing', () => {
    * 6.7-8.4px (the brush's own half-width at that window's scale, plus the antialias
    * fringe), and the measured deviations are 3.0-5.5px. So the fixed 25 was absorbing about
    * 17px of nothing, and a real mapping error of the size the filed P2 describes would have
-   * been partly inside it. The bound is now derived per window, and asserted to be strictly
-   * below the old constant.
+   * been partly inside it. The bound is now derived per window; the active geometry-only test
+   * above asserts its formula and that it stays strictly below the old constant.
    */
   test('line stays under cursor after window resize (normal, wide and narrow)', async ({ page }, testInfo) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS * VIEWPORTS.length);
@@ -298,62 +321,8 @@ test.describe('Viewport Drawing', () => {
       measurements.push(await measureAtViewport(page, testInfo, viewport));
     }
 
-    // ---- NON-VACUITY CONTROL, first and hard. ----
-    // Everything below is a per-window comparison against that window's OWN geometry, which
-    // is precisely what makes it blind to the windows collapsing into one another. If the
-    // three windows stopped producing different geometry, all three comparisons would still
-    // pass while proving nothing about resize. So the control runs first, as a hard assert:
-    // if it fails, the measurements it guards are meaningless and failing immediately is
-    // the honest outcome.
-    //
-    // Width AND scale, and both are load-bearing. Width is the axis the tools rail
-    // collapsed by 52px (108 -> 56), so it is the one a rail change moves. Scale is the
-    // quantity every tolerance below is derived from, so three windows sharing a scale
-    // would mean three identical tolerances. The three heights also differ as measured,
-    // but height is deliberately NOT asserted: it is the axis `containFit` collapses
-    // whenever the box is wider than 0.75 of its ratio, so pinning it would fail on a
-    // legitimate layout change rather than on a defect.
-    expect(
-      new Set(measurements.map((m) => m.box.width)).size,
-      `the three windows produced the same canvas width — the resize claim is vacuous: ${measurements
-        .map((m) => `${m.name}=${m.box.width}x${m.box.height}`)
-        .join(', ')}`
-    ).toBe(VIEWPORTS.length);
-    expect(
-      new Set(measurements.map((m) => m.scale.toFixed(6))).size,
-      `the three windows produced the same contain scale — the resize claim is vacuous: ${measurements
-        .map((m) => `${m.name}=${m.scale.toFixed(6)}`)
-        .join(', ')}`
-    ).toBe(VIEWPORTS.length);
-
-    // ---- THE TOLERANCE IS A DERIVED NUMBER, NOT A CONSTANT. ----
-    // Asserted against the largest of the three so the claim is about the whole set: if a
-    // future edit replaced `toleranceFor` with a literal, this fires instead of the gate
-    // quietly re-widening to 25 and going back to absorbing mapping errors.
-    const widestTolerance = Math.max(...measurements.map((m) => toleranceFor(m.box)));
-    expect(
-      widestTolerance,
-      `the derived tolerance (${widestTolerance.toFixed(2)}px) is not tighter than the fixed ` +
-        `${LEGACY_FIXED_SLACK_CSS_PX}px this test used to absorb a mapping error with`
-    ).toBeLessThan(LEGACY_FIXED_SLACK_CSS_PX);
-
-    // ---- NON-VACUITY CONTROL for the COMPARISON ITSELF. ----
-    // A derived bound can be wrong in the direction that matters: too large, or computed
-    // from a term that evaluates to zero. So the exact expression each assertion below uses
-    // is run against a stroke displaced by 40 CSS px — 5x the widest tolerance above, and
-    // well past any plausible fit failure — and must reject it. This is the same shape as
-    // the deliberate-overflow control in `e2e/no-document-overflow.spec.ts`: prove the
-    // numbers notice, because "found nothing" and "measured nothing" are otherwise the
-    // same result.
-    for (const measurement of measurements) {
-      const tolerance = toleranceFor(measurement.box);
-      expect(
-        Math.abs(40) > tolerance,
-        `${measurement.name}: the comparison cannot detect a 40px displacement (tolerance ${tolerance.toFixed(2)}px)`
-      ).toBe(true);
-    }
-
-    // ---- THE CLAIM. ----
+    // The tolerance and geometry non-vacuity controls run in the separate active test above.
+    // Keep this skipped body limited to the pixel assertion whose cause remains under study.
     for (const { name, box, start, end, line } of measurements) {
       const tolerance = toleranceFor(box);
       expect.soft(Math.abs(line.left - start.x), `${name}: line start far from cursor`).toBeLessThanOrEqual(tolerance);

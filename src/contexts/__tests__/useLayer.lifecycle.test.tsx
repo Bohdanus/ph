@@ -9,12 +9,15 @@ import type { ToolArgs } from '../tool-types.ts';
 import type { BitmapSource } from '../general-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import type { ToolResult } from '../../tools/toolProcessors.ts';
+import { createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
+  OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
   REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -44,6 +47,7 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 40, height: 20 },
+    presentationBounds: null,
     operations: [],
     ...overrides,
   };
@@ -88,12 +92,64 @@ function setup({
   return { result };
 }
 
+function setupWithDocument() {
+  const layer = makeLayer('edited', 0, {
+    source: {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    },
+  });
+  const layers = { edited: layer };
+  const { result } = setup({ layers, activeLayerId: layer.id });
+
+  act(() => {
+    result.current.dispatch({
+      type: 'REPLACE_DOCUMENT',
+      payload: {
+        documentId: 'doc-layer-lifecycle',
+        history: [
+          {
+            id: 'baseline',
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId: layer.id,
+            documentSource: { layers, size, frame },
+          },
+        ],
+        historyIndex: 0,
+        updates: { layers, totalSize: size, documentFrame: frame, hasImage: true },
+      },
+    });
+  });
+
+  return { result };
+}
+
 function drawnLayers(callIndex = 0): readonly Layer[] {
   return drawLayersToCanvas.mock.calls[callIndex]?.[1] ?? [];
 }
 
 function lastDrawnLayers(): readonly Layer[] {
   return drawnLayers(drawLayersToCanvas.mock.calls.length - 1);
+}
+
+const incrementalToolNames = ['eraser', 'dodge', 'burn', 'sponge'] as const;
+type IncrementalToolName = (typeof incrementalToolNames)[number];
+
+function incrementalStrokeArgs(
+  toolName: IncrementalToolName,
+  points: { x: number; y: number }[],
+  overrides: Record<string, unknown> = {}
+): ToolArgs {
+  const settings = {
+    eraser: { mode: 'brush', lineWidth: 12, alpha: 0.7, hardness: 55, spacing: 30, color: '#000000' },
+    dodge: { exposure: 45, range: 'midtones', size: 16, hardness: 60 },
+    burn: { exposure: 45, range: 'midtones', size: 16, hardness: 60 },
+    sponge: { mode: 'saturate', flow: 50, vibrance: true, size: 16, hardness: 60 },
+  } satisfies Record<IncrementalToolName, Record<string, unknown>>;
+
+  return { ...settings[toolName], ...overrides, toolName, points } as ToolArgs;
 }
 
 beforeEach(() => {
@@ -103,6 +159,7 @@ beforeEach(() => {
 afterEach(() => {
   drawLayersToCanvas.mockReset();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('useLayers mergeAllLayers', () => {
@@ -490,6 +547,142 @@ describe('useLayers tempUpdateLayer tool boundaries', () => {
   });
 });
 
+describe('useLayers incremental raster previews', () => {
+  it.each(incrementalToolNames)('%s sends only the appended segment over its previous preview', (toolName) => {
+    const sourceBitmap = { width: 40, height: 20 } as ImageBitmap;
+    const firstPreview = createMockOffscreenCanvas(40, 20);
+    const secondPreview = createMockOffscreenCanvas(40, 20);
+    const outputs = [firstPreview, secondPreview];
+    const processorCalls: Array<{ params: unknown; args: ToolArgs }> = [];
+    vi.spyOn(toolProcessors[toolName], 'imageProcessor').mockImplementation((params) => {
+      const output = outputs.shift();
+      if (!output) throw new Error('incremental preview processor ran more than twice');
+      return (args) => {
+        processorCalls.push({ params, args });
+        return [output] as ToolResult;
+      };
+    });
+
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0, { bitmap: sourceBitmap }) },
+      activeLayerId: 'edited',
+    });
+    const previousPoints = [
+      { x: 2, y: 3 },
+      { x: 8, y: 9 },
+    ];
+    const nextPoint = { x: 14, y: 15 };
+    const previousArgs = incrementalStrokeArgs(toolName, previousPoints);
+    const currentArgs = incrementalStrokeArgs(toolName, [...previousPoints, nextPoint]);
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: previousArgs });
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: currentArgs });
+    });
+
+    expect(processorCalls).toHaveLength(2);
+    expect(processorCalls[0]!.args).toBe(previousArgs);
+    expect((processorCalls[0]!.params as { bitmap: unknown }).bitmap).toBe(sourceBitmap);
+    expect(processorCalls[1]!.args).toMatchObject({
+      ...currentArgs,
+      points: [previousPoints[1], nextPoint],
+    });
+    expect((processorCalls[1]!.args as { points: unknown[] }).points).not.toBe(
+      (currentArgs as { points: unknown[] }).points
+    );
+    expect((processorCalls[1]!.params as { bitmap: unknown }).bitmap).toBe(firstPreview);
+    expect((processorCalls[1]!.params as { previousCanvas: unknown }).previousCanvas).toBe(firstPreview);
+    expect(result.current.store.previewLayers.current.edited?.toolArgs).toBe(currentArgs);
+    expect(result.current.store.previewLayers.current.edited?.layer.tmpCanvas).toBe(secondPreview);
+  });
+
+  it.each(incrementalToolNames)('%s falls back to the committed raster when a stroke setting changes', (toolName) => {
+    const sourceBitmap = { width: 40, height: 20 } as ImageBitmap;
+    const firstPreview = createMockOffscreenCanvas(40, 20);
+    const secondPreview = createMockOffscreenCanvas(40, 20);
+    const outputs = [firstPreview, secondPreview];
+    const processorCalls: Array<{ params: unknown; args: ToolArgs }> = [];
+    vi.spyOn(toolProcessors[toolName], 'imageProcessor').mockImplementation((params) => {
+      const output = outputs.shift();
+      if (!output) throw new Error('incremental preview processor ran more than twice');
+      return (args) => {
+        processorCalls.push({ params, args });
+        return [output] as ToolResult;
+      };
+    });
+
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0, { bitmap: sourceBitmap }) },
+      activeLayerId: 'edited',
+    });
+    const previousPoints = [
+      { x: 2, y: 3 },
+      { x: 8, y: 9 },
+    ];
+    const nextPoint = { x: 14, y: 15 };
+    const changedSetting = {
+      eraser: { hardness: 56 },
+      dodge: { exposure: 46 },
+      burn: { exposure: 46 },
+      sponge: { flow: 51 },
+    } satisfies Record<IncrementalToolName, Record<string, unknown>>;
+    const previousArgs = incrementalStrokeArgs(toolName, previousPoints);
+    const currentArgs = incrementalStrokeArgs(toolName, [...previousPoints, nextPoint], changedSetting[toolName]);
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: previousArgs });
+      result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: currentArgs });
+    });
+
+    expect(processorCalls).toHaveLength(2);
+    expect(processorCalls[1]!.args).toBe(currentArgs);
+    expect((processorCalls[1]!.params as { bitmap: unknown }).bitmap).toBe(sourceBitmap);
+    expect(processorCalls[1]!.params).not.toHaveProperty('previousCanvas');
+  });
+
+  it.each(incrementalToolNames)(
+    '%s falls back to the committed raster when the previous point prefix changes',
+    (toolName) => {
+      const sourceBitmap = { width: 40, height: 20 } as ImageBitmap;
+      const firstPreview = createMockOffscreenCanvas(40, 20);
+      const secondPreview = createMockOffscreenCanvas(40, 20);
+      const outputs = [firstPreview, secondPreview];
+      const processorCalls: Array<{ params: unknown; args: ToolArgs }> = [];
+      vi.spyOn(toolProcessors[toolName], 'imageProcessor').mockImplementation((params) => {
+        const output = outputs.shift();
+        if (!output) throw new Error('incremental preview processor ran more than twice');
+        return (args) => {
+          processorCalls.push({ params, args });
+          return [output] as ToolResult;
+        };
+      });
+
+      const { result } = setup({
+        layers: { edited: makeLayer('edited', 0, { bitmap: sourceBitmap }) },
+        activeLayerId: 'edited',
+      });
+      const previousPoints = [
+        { x: 2, y: 3 },
+        { x: 8, y: 9 },
+      ];
+      const nextPoint = { x: 14, y: 15 };
+      const changedPrefix = [{ x: 90, y: 91 }, previousPoints[1]!, nextPoint];
+      const previousArgs = incrementalStrokeArgs(toolName, previousPoints);
+      const currentArgs = incrementalStrokeArgs(toolName, changedPrefix);
+
+      act(() => {
+        result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: previousArgs });
+        result.current.layers.tempUpdateLayer({ id: 'edited', toolArgs: currentArgs });
+      });
+
+      expect(processorCalls).toHaveLength(2);
+      expect(processorCalls[1]!.args).toBe(currentArgs);
+      expect((processorCalls[1]!.params as { bitmap: unknown }).bitmap).toBe(sourceBitmap);
+      expect(processorCalls[1]!.params).not.toHaveProperty('previousCanvas');
+    }
+  );
+});
+
 describe('useLayers updateLayerByTool', () => {
   it('commits a retained filter as one history entry and drops the preview from the layer', async () => {
     const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
@@ -688,6 +881,85 @@ describe('useLayers layer mutation commands', () => {
     });
   });
 
+  it('does not reorder the bedrock layer through the shared move path', () => {
+    const { result } = setup({
+      layers: {
+        bottom: makeLayer('bottom', 0, { isBedrock: true }),
+        top: makeLayer('top', 1),
+      },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.moveLayerAfter('bottom', 'top');
+    });
+
+    expect(result.current.store.layers.bottom!.order).toBe(0);
+    expect(result.current.store.layers.top!.order).toBe(1);
+    expect(result.current.store.history).toEqual([]);
+  });
+
+  it.each([
+    ['bring-forward', { bottom: 0, middle: 3, top: 2 }],
+    ['bring-to-front', { bottom: 0, middle: 3, top: 2 }],
+    ['send-backward', { bottom: 0, middle: -1, top: 2 }],
+    ['send-to-back', { bottom: 0, middle: -1, top: 2 }],
+  ] as const)('arranges the active layer with %s through reorder history', (command, expected) => {
+    const { result } = setup({
+      layers: { bottom: makeLayer('bottom', 0), middle: makeLayer('middle', 1), top: makeLayer('top', 2) },
+      activeLayerId: 'middle',
+    });
+
+    act(() => {
+      result.current.layers.arrangeLayer(command);
+    });
+
+    expect(result.current.store.layers.bottom!.order).toBe(expected.bottom);
+    expect(result.current.store.layers.middle!.order).toBe(expected.middle);
+    expect(result.current.store.layers.top!.order).toBe(expected.top);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      layerId: 'middle',
+    });
+  });
+
+  it('keeps the locked background below the stack when sending a layer to the back', () => {
+    const { result } = setup({
+      layers: {
+        background: makeLayer('background', 0, { isBedrock: true }),
+        middle: makeLayer('middle', 1),
+        top: makeLayer('top', 2),
+      },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.arrangeLayer('send-to-back');
+    });
+
+    expect(result.current.store.layers.background!.order).toBe(0);
+    expect(result.current.store.layers.top!.order).toBe(1);
+    expect(result.current.store.layers.middle!.order).toBe(3);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      args: { layerToMoveId: 'top', afterWhichLayerId: 'background' },
+    });
+  });
+
+  it.each([
+    ['bedrock', { only: makeLayer('only', 0, { isBedrock: true }) }, 'only'],
+    ['locked', { only: makeLayer('only', 0, { locked: true }) }, 'only'],
+  ] as const)('does not arrange a %s active layer', (_kind, layers, activeLayerId) => {
+    const { result } = setup({ layers, activeLayerId });
+
+    act(() => {
+      result.current.layers.arrangeLayer('bring-to-front');
+    });
+
+    expect(result.current.store.layers.only!.order).toBe(0);
+    expect(result.current.store.history).toEqual([]);
+  });
+
   it('sends a missing active layer to null', () => {
     const { result } = setup({ layers: { only: makeLayer('only', 0) }, activeLayerId: 'only' });
 
@@ -696,6 +968,103 @@ describe('useLayers layer mutation commands', () => {
     });
 
     expect(result.current.store.activeLayerId).toBeNull();
+  });
+
+  it('toggles visibility for an unknown layer without touching the document', () => {
+    const { result } = setup({ layers: { only: makeLayer('only', 0) }, activeLayerId: 'only' });
+
+    act(() => {
+      result.current.layers.toggleVisibility('missing');
+    });
+
+    expect(result.current.store.layers.only!.visible).toBe(true);
+    expect(result.current.store.history).toEqual([]);
+  });
+
+  it('sets opacity to zero and back to one through the opacity action', () => {
+    const { result } = setupWithDocument();
+
+    act(() => {
+      result.current.layers.updateLayer('edited', { opacity: 0 }, SET_LAYER_OPACITY_ACTION);
+    });
+    expect(result.current.store.layers.edited!.opacity).toBe(0);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: SET_LAYER_OPACITY_ACTION,
+      layerId: 'edited',
+      args: { opacity: 0 },
+    });
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDiagnostics).toEqual([]);
+    expect(result.current.store.durableDocument!.history).toHaveLength(1);
+    expect(result.current.store.durableDocument!.history[0]).toMatchObject({
+      id: result.current.store.history.at(-1)!.id,
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 0 } },
+    });
+    expect(result.current.store.durableDocument!.cursor).toBe(0);
+
+    act(() => {
+      result.current.layers.updateLayer('edited', { opacity: 1 }, SET_LAYER_OPACITY_ACTION);
+    });
+    expect(result.current.store.layers.edited!.opacity).toBe(1);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: SET_LAYER_OPACITY_ACTION,
+      layerId: 'edited',
+      args: { opacity: 1 },
+    });
+    expect(result.current.store.durableDocument!.history).toHaveLength(2);
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDiagnostics).toEqual([]);
+    expect(result.current.store.durableDocument!.history[0]).toMatchObject({
+      id: result.current.store.history[1]!.id,
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 0 } },
+    });
+    expect(result.current.store.durableDocument!.history[1]).toMatchObject({
+      id: result.current.store.history[2]!.id,
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 1 } },
+    });
+    expect(result.current.store.durableDocument!.cursor).toBe(1);
+  });
+
+  it('moves a layer to the bottom when the anchor is null', () => {
+    const { result } = setup({
+      layers: { bottom: makeLayer('bottom', 0), middle: makeLayer('middle', 1), top: makeLayer('top', 2) },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.moveLayerAfter('top', null);
+    });
+
+    const store = result.current.store;
+    const orderOf = (id: string) => store.layers[id]!.order;
+    expect(orderOf('top')).toBe(-1);
+    expect(orderOf('bottom')).toBe(0);
+    expect(orderOf('middle')).toBe(1);
+    expect(store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      layerId: 'top',
+      args: { layerToMoveId: 'top', afterWhichLayerId: null },
+    });
+  });
+
+  it('returns null and leaves the layer untouched when the replacement source cannot be rendered', () => {
+    const source = {
+      kind: 'tool' as const,
+      args: { toolName: 'shape', figure: 'rectangle', color: '#000000' } as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    };
+    const { result } = setup({ layers: { edited: makeLayer('edited', 0, { source }) }, activeLayerId: 'edited' });
+
+    const before = result.current.store.history.length;
+    const replaced = result.current.layers.replaceLayerSource('edited', {
+      kind: 'tool',
+      args: { toolName: 'no-such-tool' } as unknown as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    });
+
+    expect(replaced).toBeNull();
+    expect(result.current.store.layers.edited!.source).toEqual(source);
+    expect(result.current.store.history).toHaveLength(before);
   });
 });
 
@@ -719,6 +1088,10 @@ describe('useLayers applyDocumentCrop', () => {
     // re-anchored at 100,50.
     expect(store.documentFrame).toEqual({ x: 100, y: 50, width: 800, height: 600 });
     expect(store.totalSize).toEqual({ width: 800, height: 600 });
+    // Layer positions are world-space coordinates. The renderer and export path subtract the
+    // document-frame origin when composing, so changing the frame must not translate the layer
+    // record itself or a crop would move pixels twice.
+    expect(store.layers.edited?.pos).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(store.history.at(-1)).toMatchObject({
       actionName: SET_DOCUMENT_FRAME_ACTION,
       layerId: 'document',
@@ -727,10 +1100,9 @@ describe('useLayers applyDocumentCrop', () => {
         nextFrame: { x: 100, y: 50, width: 800, height: 600 },
       },
     });
-    // This harness intentionally starts with no legacy timeline. The append is
-    // still published through the legacy authority, while the durable shadow
-    // reports the undefined cursor mapping instead of claiming parity.
-    expect(store.durableStatus).toBe('unavailable');
+    // An empty legacy timeline has a valid append cursor at zero, so the first
+    // crop can publish a current durable projection without a baseline row.
+    expect(store.durableStatus).toBe('current');
   });
 
   it('refuses a crop that trims to nothing and records no history', () => {
@@ -764,6 +1136,27 @@ describe('useLayers applyDocumentCrop', () => {
 
     expect(applied).toBe(false);
     expect(result.current.store.history).toEqual([]);
+  });
+
+  it('refuses a non-finite crop rectangle without publishing an invalid frame', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    let applied = true;
+    act(() => {
+      applied = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: Number.NaN, y2: 200 });
+    });
+
+    expect(applied).toBe(false);
+    expect(result.current.store.documentFrame).toEqual(frame);
+    expect(result.current.store.totalSize).toEqual(size);
+    expect(result.current.store.history).toEqual([]);
+    expect(warn).toHaveBeenCalledWith('applyDocumentCrop refused a non-finite crop rectangle');
+    warn.mockRestore();
   });
 
   it('accumulates crops relative to the already-cropped frame', () => {

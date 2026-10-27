@@ -45,6 +45,7 @@ forgotten it. Two rows have weaker coverage than the table implies:
 npm run test            # vitest, jsdom - app unit tests
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
 npm run test:e2e        # playwright, HEADLESS - starts its OWN server on a port it picks
+npm run test:e2e:verbose # like test:e2e, but streams suite output live
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
@@ -54,7 +55,14 @@ npm run build           # production bundle, and a real CI step
 baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
 
+For local work, run focused specs and fast gates on the developer machine. Broad
+headless Playwright runs use the `mirror` workflow; see [`E2E-MIRROR.md`](E2E-MIRROR.md).
+Use the SSH `e2e` host only for targeted Linux/ARM64 reproduction and checks, as
+described in [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md).
+
 **`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
+It captures suite output by default and replays it only on failure; use
+`npm run test:e2e:verbose` or `--verbose` when live output is needed.
 It does two independent things, and telling them apart is the whole design.
 
 **The guarantee: the run starts its own server.** It picks a port, verifies it is
@@ -94,6 +102,7 @@ drop.
   - **THE SILENCE COMES FROM `references`, NOT FROM ANY SETTING.** Measured on the repo's own TypeScript: a config written `"files": []`, `"include": []`, or `"composite": true` **with no `references`** is not silent at all — plain `tsc` exits 2 with TS18002/TS18003 ("the files list is empty", "no inputs were found"). Add a non-empty `references` and the same config goes quiet: plain `tsc` exits 0 on zero files, while `tsc -b` works. Empty `references: []` stays loud, because it is not a solution root. So nothing inside that combination can be adjusted to fail one mode and not the other, and the stub is not fixable by tuning. An earlier version of this bullet claimed those shapes were each silent; a review showed all of them exit 2, and the mechanism is the references array.
   - **A DIFFERENT SHAPE WOULD PARTLY WORK, and is not adopted.** Make the root own `src` and turn the two satellite projects `composite`, and bare `tsc` does catch app errors. It is still wrong to gate on: a root that owns `src` cannot see `e2e/` (measured — adding `"e2e"` to its `include` is what brings those files in), so it would be a **partial** check reading as a whole one. Both the command (`tsc -b`) and the interception below close that case too.
 - **`node_modules/.bin/tsc` IS A GUARD, NOT THE COMPILER.** `npm install` links `scripts/tsc-guard.mjs` there, so `npx tsc`, a bare `tsc` on an npm script's PATH, and `./node_modules/.bin/tsc` all hit it. It **refuses any invocation that is not build mode** (with a short whitelist of flags that print, and a refusal for `--noCheck`, which is a build that checks nothing), exits 1, and names `npm run tsc` and `npx tsc -b <project>` instead. Build mode takes a project as its argument, so the narrow check is never lost — that is what makes an unconditional refusal honest rather than merely strict. `kilo.jsonc` denies `npx tsc` at the permission layer for the same reason, and re-allows the two build-mode spellings; the guard is the layer that also covers the other spellings.
+  - **The shim is bypassed by invoking the compiler file directly.** `node node_modules/typescript/bin/tsc` runs the unguarded compiler against the empty root solution, so it is not a typecheck. Use `npm run tsc`.
   - **If `npx tsc` ever exits 0 again, the guard is missing, not the rule.** npm relinks bins with `force: true` from inside `reify`, and only `install` and `ci` re-run `prepare` afterwards, so a reifying command can silently restore the plain npm symlink. `npm rebuild` is the one measured end to end; `update`, `dedupe`, `prune` and `audit fix` share that code path but were NOT each observed to clobber (an audit found `dedupe` and `prune` did not), so treat the list as the risk surface rather than as observations. That cannot be prevented inside `node_modules`, so it is made LOUD instead: `scripts/__tests__/tsc-guard.test.mjs` resolves the same link npm would and fails when it is the wrong file. **Run `npm install` to repair; do not "fix" the failing test.**
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive
   test that only fails in a full run is usually the pool, not the code.
@@ -165,21 +174,30 @@ drop.
 ### Local
 
 Two of the four hooks wrap a `package.json` script — `pre-commit` ends at
-`npm run gate:commit`, and `pre-push` at `npm run gate:push`. The other two run
+`npm run gate:commit`, and `pre-push` ends at `npm run gate:push` after the stale-branch
+check. The other two run
 `scripts/*.mjs` directly — `pre-merge-commit` at `merge-takeover-guard.mjs`, `post-merge` at
-`merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev servers** is
+`merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Coordination Rules** is
 where the takeover guard is documented.
 
-The default headless e2e run must have **zero failures**; known failures are not
-allowed. Produce counts from the suite rather than storing them here. If a dead
-Vite server causes a wall of `ERR_CONNECTION_REFUSED`, rerun on a fresh
-`PLAYWRIGHT_PORT` before treating the output as test failures.
+The headless E2E gate requires **zero failures**; do not adopt known failures as
+an acceptable baseline or suppress them. The latest recorded result and open
+E2E issues are in [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md); run the suite
+for its current status. If a dead Vite server causes a wall of
+`ERR_CONNECTION_REFUSED`, rerun on a fresh `PLAYWRIGHT_PORT` before treating the
+output as test failures.
 Hooks use a shared common-git entry rather than a per-worktree husky directory;
-`HUSKY=0 git commit` is the escape hatch.
+`HUSKY=0` disables the hooks and bypasses these gates; do not use it to get around
+a failing check.
 
 - `.husky/pre-commit` runs `npm run gate:commit`; `.husky/pre-push` runs
-  `npm run gate:push`. Keep the gate line last in each of those two; `pre-commit`'s
+  `node scripts/stale-branch-files.mjs` and then `npm run gate:push`. Keep the gate line last in
+  each of those two; `pre-commit`'s
   first two steps are guards.
+
+- The commit and push gates buffer successful subprocess output. Lint, typecheck, build,
+  and unit-test output is replayed on failure, so a successful hook stays silent without
+  hiding diagnostics from a failed check.
 
 - `test:e2e:unit` is a Node Vitest suite for e2e helpers, not a browser run or
   commit-gate step. It is the blocking `e2e-unit` CI job; run it when touching
@@ -241,13 +259,36 @@ unquoted `$(...)` word-splits and globs into a silent pass.
 
 ### CI
 
-- `ci`: lint, high-severity audit, typecheck, TS-project coverage assertion,
-  coverage tests, build.
+The checked-in default-branch CI workflow in `.github/workflows/ci.yml` is
+read-only: it sets `contents: read` and `persist-credentials: false`. CLI-launched
+mirror runs use a pinned `repository_dispatch` workflow from the default branch.
+Automatic `pull_request` runs use GitHub's PR merge ref; fork PRs receive read-only
+tokens, but same-repository PR authors can edit workflow permissions. Treat
+contributors with repository write access as trusted workflow authors.
+
+- `validate-dispatch`: verifies manual mirror dispatches use `Bohdanus/ph` and a
+  full commit SHA, then passes that exact SHA to every checkout. Automatic runs
+  use the event SHA.
+- `ci-checks`: lint, typecheck, TS-project coverage assertion, unit tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
-- `e2e`: headless Playwright.
-- **Dependency licences are not a gate.** The allow/deny list and the high-severity
-  threshold are in `DEPENDENCIES.md`, enforced by nothing; `npm audit
---audit-level=high` in `ci` is the vulnerability half and it does run.
+- `audit`: `npm audit --audit-level=high`, a non-blocking vulnerability-advisory check.
+- `e2e`: headless Playwright on Linux, Windows, and macOS, split into two shards
+  per platform (`--shard=1/2` and `--shard=2/2`) with `fail-fast: false` and
+  `retries: 2` (three total attempts). `failOnFlakyTests`
+  makes a test that passes only after a retry fail the job, so investigate it as a
+  defect rather than treating it as a pass. `darwin/`, `win32/`, and Linux
+  visual-regression baselines are committed; Linux capture is verified on
+  `ubuntu-latest` and can be promoted only through the isolated writer in
+  `.github/workflows/capture-linux-baselines.yml`.
+- `e2e-skip-baseline`: downloads all six Playwright report artifacts and compares
+  their per-platform skipped-test identities with `e2e/skip-baseline.json`.
+- `ci`: lightweight summary check that fails unless `ci-checks`, `e2e-unit`,
+  `e2e`, and `e2e-skip-baseline` all succeed. The expensive jobs still run in
+  parallel; their results are collected here so skip-baseline failures reach the
+  existing `ci` status context.
+- **Dependency licences are not checked by CI.** The `audit` job checks
+  vulnerability advisories, not licence terms. The README records this limitation
+  and the expectation to review dependency licences.
 
 **DO NOT WEAKEN A GATE TO GET GREEN: no skips, raised thresholds, deleted
 assertions, or re-recorded baselines.** Fix the defect or leave the recording
@@ -269,13 +310,16 @@ decision to the operator.
   `test-results/` and `playwright-report/`, and keeps `test-results/results.json`,
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
-- **The default headless run has zero failures, and three tests are `test.skip` by
-  declaration.** Two need an external service or a manual gesture; the third is
-  `e2e/viewport-drawing.spec.ts`, skipped on the operator's decision of 2026-09-29
-  because it is intermittently red — 1 run in 4, with the failing case moving
-  between cases — and a suite that is randomly red trains agents to ignore the
-  gate. **It is a gate decision, not a fix and not a waiver:** the defect is still
-  open in `TEST-FLAKES.md` §12 with its exact remaining verification, and a skip is
-  not permission to loosen the assertion, raise the bound or add retries.
-- Read failures from `test-results/`; `trace.zip` needs a window, so ask the
-  operator.
+- **The latest recorded full headless run passed; its machine-specific result is
+  in `e2e/OPEN_PROBLEMS.md`.** Two tests are `test.skip` by declaration: the Photopea
+  round-trip needs an external service, and `e2e/viewport-drawing.spec.ts` is skipped
+  by the operator's decision of 2026-09-29 because of intermittent capture drift. Its
+  frequency is unknown: `TEST-FLAKES.md` §12 explicitly says the observations have
+  not been reconciled into a rate. The skip is a gate decision, not a fix or waiver;
+  do not loosen the assertion or add retries.
+- The CI skip baseline check recombines the JSON reports from all three platforms
+  and both shards before comparing them with `e2e/skip-baseline.json`. Each reviewed
+  skip must appear exactly once per platform; adding or removing one requires a
+  matching baseline review.
+- Read failures from `test-results/`. Do not open `trace.zip` in a trace viewer,
+  because that opens a browser window; ask the operator to inspect it if needed.

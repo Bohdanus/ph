@@ -1,7 +1,8 @@
-import { expect, type Page, test } from './fixtures/extended-test';
+import { expect, type Page, type TestInfo, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   type ClipOptions,
+  canvasOffsetToDocument,
   documentToCanvasOffset,
   drawLine,
   getColorAtPoint,
@@ -11,6 +12,7 @@ import {
   loadImageData,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
@@ -31,6 +33,36 @@ const STROKE_BLACK = '#000000';
 
 type Point = { x: number; y: number };
 type Rect = { from: Point; to: Point };
+
+type Figure = { label: string; toolName: string; slug: string; rect: Rect };
+
+const FIGURES: readonly Figure[] = [
+  {
+    label: 'Rectangle Tool',
+    toolName: 'shape',
+    slug: 'rectangle',
+    rect: { from: { x: 40, y: 40 }, to: { x: 250, y: 180 } },
+  },
+  {
+    label: 'Ellipse Tool',
+    toolName: 'shape',
+    slug: 'ellipse',
+    rect: { from: { x: 300, y: 40 }, to: { x: 510, y: 180 } },
+  },
+  { label: 'Line Tool', toolName: 'shape', slug: 'line', rect: { from: { x: 560, y: 40 }, to: { x: 760, y: 180 } } },
+  {
+    label: 'Triangle Tool',
+    toolName: 'shape',
+    slug: 'triangle',
+    rect: { from: { x: 40, y: 260 }, to: { x: 250, y: 400 } },
+  },
+  {
+    label: 'Polygon Tool',
+    toolName: 'shape',
+    slug: 'polygon',
+    rect: { from: { x: 300, y: 260 }, to: { x: 510, y: 400 } },
+  },
+];
 
 /**
  * The half-width of the square the sample window averages, in capture pixels. 3 is a 7x7
@@ -85,9 +117,10 @@ function documentClip(box: BoundingBox, rect: Rect, margin = 20): Required<ClipO
 }
 
 /**
- * A 17px window centred on a DOCUMENT point. The box is re-measured per sample, because the
- * shape bar is a different height from the bar that precedes it and a stale box maps every
- * document point onto the wrong pixel — the defect `e2e/OPEN_PROBLEMS.md` records.
+ * Samples a DOCUMENT point from a 17 CSS-pixel clip, mapping its center into the actual
+ * device-scale screenshot. The box is re-measured per sample because the toolbar changes its
+ * height; the inverse mapping verifies the selected capture pixel still names the requested
+ * document point within one device pixel.
  */
 async function sampleDocumentPoint(
   page: Page,
@@ -97,10 +130,135 @@ async function sampleDocumentPoint(
   const box = await canvasBox(page);
   const offset = documentToCanvasOffset(box, documentX, documentY);
   const half = 8;
+  const documentPointOnPage = { x: box.x + offset.x, y: box.y + offset.y };
+  const clip = {
+    x: documentPointOnPage.x - half,
+    y: documentPointOnPage.y - half,
+    width: half * 2 + 1,
+    height: half * 2 + 1,
+  };
   const screenshot = await page.screenshot({
-    clip: { x: box.x + offset.x - half, y: box.y + offset.y - half, width: half * 2 + 1, height: half * 2 + 1 },
+    clip,
   });
-  return getColorAtPoint(screenshot, half, half, SAMPLE_RADIUS);
+  const image = await loadImageData(screenshot);
+  const deviceScale = await page.evaluate(() => window.devicePixelRatio || 1);
+  const capturePoint = documentPointToCapturePixel(box, clip, image, { x: documentX, y: documentY }, deviceScale);
+  return getColorAtPoint(image, capturePoint.x, capturePoint.y, SAMPLE_RADIUS);
+}
+
+async function toolOverlayHasInk(page: Page): Promise<boolean> {
+  return page.getByTestId('tool-overlay-canvas').evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    if (canvas.width === 0 || canvas.height === 0) return false;
+    const sample = document.createElement('canvas');
+    sample.width = canvas.width;
+    sample.height = canvas.height;
+    const sampleCtx = sample.getContext('2d', { willReadFrequently: true });
+    if (!sampleCtx) return true;
+    sampleCtx.drawImage(canvas, 0, 0);
+    const pixels = sampleCtx.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] !== 0) return true;
+    }
+    return false;
+  });
+}
+
+type CaptureImage = { width: number; height: number; data: Uint8Array | Uint8ClampedArray };
+type EdgeProfilePoint = { x: number; y: number; scaleX: number; scaleY: number };
+
+const MAX_EDGE_PROFILE_MAE = 4;
+
+// The 5 CSS-pixel band suppresses isolated AA differences; the test's blur control must exceed this limit.
+/** Average edge luminance across a 5 CSS-pixel band, over a 10 CSS-pixel profile. */
+function edgeLuminanceProfile(image: CaptureImage, center: EdgeProfilePoint): number[] {
+  const xRadius = Math.max(1, Math.round(2.5 * center.scaleX));
+  const yRadius = Math.max(1, Math.round(5 * center.scaleY));
+  const left = Math.max(0, center.x - xRadius);
+  const right = Math.min(image.width - 1, center.x + xRadius);
+  const top = Math.max(0, center.y - yRadius);
+  const bottom = Math.min(image.height - 1, center.y + yRadius);
+  const profile: number[] = [];
+
+  for (let y = top; y <= bottom; y += 1) {
+    let luminance = 0;
+    let count = 0;
+    for (let x = left; x <= right; x += 1) {
+      const index = (y * image.width + x) * 4;
+      const alpha = image.data[index + 3]! / 255;
+      const red = image.data[index]! * alpha + 255 * (1 - alpha);
+      const green = image.data[index + 1]! * alpha + 255 * (1 - alpha);
+      const blue = image.data[index + 2]! * alpha + 255 * (1 - alpha);
+      luminance += 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+      count += 1;
+    }
+    profile.push(luminance / count);
+  }
+  return profile;
+}
+
+function meanProfileDifference(left: readonly number[], right: readonly number[]): number {
+  if (left.length !== right.length || left.length === 0) return Number.POSITIVE_INFINITY;
+  return left.reduce((sum, value, index) => sum + Math.abs(value - right[index]!), 0) / left.length;
+}
+
+function boxBlurProfile(profile: readonly number[], radius: number): number[] {
+  return profile.map((_, index) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(profile.length - 1, index + radius);
+    let sum = 0;
+    for (let sample = start; sample <= end; sample += 1) sum += profile[sample]!;
+    return sum / (end - start + 1);
+  });
+}
+
+function documentPointToCapturePixel(
+  box: BoundingBox,
+  clip: Required<ClipOptions>,
+  image: CaptureImage,
+  documentPoint: Point,
+  deviceScale: number
+): EdgeProfilePoint {
+  const offset = documentToCanvasOffset(box, documentPoint.x, documentPoint.y);
+  const pagePoint = { x: box.x + offset.x, y: box.y + offset.y };
+  const scaleX = image.width / clip.width;
+  const scaleY = image.height / clip.height;
+  if (Math.abs(scaleX - deviceScale) > 0.03 || Math.abs(scaleY - deviceScale) > 0.03) {
+    throw new Error(`Screenshot scale ${scaleX},${scaleY} does not match the browser's ${deviceScale}x device scale`);
+  }
+  const x = Math.round((pagePoint.x - clip.x) * scaleX);
+  const y = Math.round((pagePoint.y - clip.y) * scaleY);
+  if (x < 0 || x >= image.width || y < 0 || y >= image.height || scaleX <= 0 || scaleY <= 0) {
+    throw new Error('The document point does not map into its screenshot capture');
+  }
+
+  const sampleCenterOnPage = {
+    x: clip.x + (x + 0.5) / scaleX,
+    y: clip.y + (y + 0.5) / scaleY,
+  };
+  const mappedDocumentPoint = canvasOffsetToDocument(box, sampleCenterOnPage.x - box.x, sampleCenterOnPage.y - box.y);
+  const nextXDocumentPoint = canvasOffsetToDocument(
+    box,
+    sampleCenterOnPage.x - box.x + 1 / deviceScale,
+    sampleCenterOnPage.y - box.y
+  );
+  const nextYDocumentPoint = canvasOffsetToDocument(
+    box,
+    sampleCenterOnPage.x - box.x,
+    sampleCenterOnPage.y - box.y + 1 / deviceScale
+  );
+  const pixelResolutionX = Math.abs(nextXDocumentPoint.x - mappedDocumentPoint.x);
+  const pixelResolutionY = Math.abs(nextYDocumentPoint.y - mappedDocumentPoint.y);
+  if (
+    Math.abs(mappedDocumentPoint.x - documentPoint.x) > pixelResolutionX + 1e-6 ||
+    Math.abs(mappedDocumentPoint.y - documentPoint.y) > pixelResolutionY + 1e-6
+  ) {
+    throw new Error(
+      `Capture pixel ${x},${y} maps to ${mappedDocumentPoint.x},${mappedDocumentPoint.y}, not ${documentPoint.x},${documentPoint.y}; one-pixel tolerance ${pixelResolutionX},${pixelResolutionY}`
+    );
+  }
+
+  return { x, y, scaleX, scaleY };
 }
 
 /** A drag given in document coordinates, performed at the box's own contain scale. */
@@ -138,6 +296,30 @@ async function measureShape(page: Page, rect: Rect, name: string): Promise<{ wid
   const bounds = await getDarkPixelBounds(await page.screenshot({ clip }));
   expect(bounds, `${name} has to leave something on the canvas`).not.toBeNull();
   return { width: bounds!.width, height: bounds!.height };
+}
+
+/** Selects a member of the Shape flyout. */
+async function selectFigure(page: Page, figure: { label: string; toolName: string }): Promise<void> {
+  await openToolFlyout(page, 'shape');
+  await selectFromFlyout(page, { toolName: figure.toolName, label: figure.label });
+}
+
+const toolMode = (page: Page) => page.getByRole('combobox', { name: 'Tool mode' });
+const cornerRadius = (page: Page) => page.locator('#corner-radius-slider');
+
+/**
+ * Captures the toolbar thumbnail separately from the document. The matching names put both
+ * images beside each other in the Playwright report, making it possible to compare the preview
+ * a user was shown with the figure that their drag actually committed.
+ */
+async function captureShapeThumbnail(page: Page, testInfo: TestInfo, name: string): Promise<Buffer> {
+  const thumbnail = page.getByRole('region', { name: 'shape tool options' }).locator('canvas');
+  await expect(thumbnail, 'the Shape options bar exposes its drawing thumbnail').toBeVisible();
+  const box = await thumbnail.boundingBox();
+  if (!box) throw new Error('The Shape options thumbnail has no box');
+  const screenshot = await page.screenshot({ clip: box });
+  await testInfo.attach(`${name}-toolbar-preview`, { body: screenshot, contentType: 'image/png' });
+  return screenshot;
 }
 
 test.describe('Shape tools', () => {
@@ -180,6 +362,100 @@ test.describe('Shape tools', () => {
       Math.abs(squared.width - squared.height) / Math.max(squared.width, squared.height),
       `a Shift-constrained rectangle must be a square, measured ${squared.width}x${squared.height}`
     ).toBeLessThan(0.08);
+  });
+
+  test.describe('Retina backing store', () => {
+    test.use({ deviceScaleFactor: 2 });
+
+    test('the committed shape preserves the live preview edge quality', async ({ page }) => {
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+      const rect: Rect = { from: { x: 90, y: 100 }, to: { x: 290, y: 250 } };
+      const edgePoint = { x: (rect.from.x + rect.to.x) / 2, y: rect.from.y };
+      const outsidePoint = { x: edgePoint.x, y: rect.from.y - 16 };
+      const deviceScale = await page.evaluate(() => window.devicePixelRatio || 1);
+      const box = await canvasBox(page);
+      const start = documentToCanvasOffset(box, rect.from.x, rect.from.y);
+      const end = documentToCanvasOffset(box, rect.to.x, rect.to.y);
+      const clip = documentClip(box, rect, 32);
+      const layerRows = page.getByTestId('layer-row');
+      const historyRows = page.getByTitle('Click to go back to this state');
+      const startingLayerCount = await layerRows.count();
+      const startingHistoryCount = await historyRows.count();
+
+      await page.mouse.move(box.x + start.x, box.y + start.y);
+      await page.mouse.down();
+      await page.mouse.move(box.x + end.x, box.y + end.y, { steps: 8 });
+      await waitForCanvasPixels(page, clip, hasPaintedPixel, { description: 'the live vector preview' });
+      await expect.poll(() => toolOverlayHasInk(page)).toBe(true);
+      const previewScreenshot = await page.screenshot({ clip });
+      const preview = await loadImageData(previewScreenshot);
+
+      await page.mouse.up();
+      await expect(layerRows, 'the committed shape adds a layer row').toHaveCount(startingLayerCount + 1);
+      await expect(historyRows, 'the committed shape adds a history state').toHaveCount(startingHistoryCount + 1);
+      await expect
+        .poll(() => toolOverlayHasInk(page), {
+          message: 'the whole Shape preview overlay is cleared after commit',
+        })
+        .toBe(false);
+
+      const edgeColor = await sampleDocumentPoint(page, edgePoint.x, edgePoint.y);
+      const outsideColor = await sampleDocumentPoint(page, outsidePoint.x, outsidePoint.y);
+      expect(edgeColor, 'the expected top edge is painted in the committed document').not.toBeNull();
+      expect(Math.min(edgeColor!.red, edgeColor!.green, edgeColor!.blue)).toBeLessThan(250);
+      expect(outsideColor, 'the point outside the expected rectangle remains background').not.toBeNull();
+      expect(Math.min(outsideColor!.red, outsideColor!.green, outsideColor!.blue)).toBeGreaterThan(250);
+
+      const committedScreenshot = await page.screenshot({ clip });
+      const committed = await loadImageData(committedScreenshot);
+
+      expect([committed.width, committed.height]).toEqual([preview.width, preview.height]);
+      const previewBounds = await getDarkPixelBounds(previewScreenshot);
+      const committedBounds = await getDarkPixelBounds(committedScreenshot);
+      expect(previewBounds, 'the live preview has measurable rectangle edges').not.toBeNull();
+      expect(committedBounds, 'the committed shape has measurable rectangle edges').not.toBeNull();
+      const previewEdges = {
+        left: previewBounds!.left,
+        top: previewBounds!.top,
+        right: previewBounds!.right,
+        bottom: previewBounds!.bottom,
+      };
+      const committedEdges = {
+        left: committedBounds!.left,
+        top: committedBounds!.top,
+        right: committedBounds!.right,
+        bottom: committedBounds!.bottom,
+      };
+      const maxEdgeDisplacement = Math.max(
+        Math.abs(previewEdges.left - committedEdges.left),
+        Math.abs(previewEdges.top - committedEdges.top),
+        Math.abs(previewEdges.right - committedEdges.right),
+        Math.abs(previewEdges.bottom - committedEdges.bottom)
+      );
+      expect(
+        maxEdgeDisplacement,
+        'sparse antialias rounding is allowed, but displaced edges are not'
+      ).toBeLessThanOrEqual(1);
+
+      const previewEdgePoint = documentPointToCapturePixel(box, clip, preview, edgePoint, deviceScale);
+      const committedEdgePoint = documentPointToCapturePixel(box, clip, committed, edgePoint, deviceScale);
+      const previewProfile = edgeLuminanceProfile(preview, previewEdgePoint);
+      const committedProfile = edgeLuminanceProfile(committed, committedEdgePoint);
+      const edgeProfileMae = meanProfileDifference(previewProfile, committedProfile);
+      expect(
+        edgeProfileMae,
+        'the top-edge luminance profile should allow sparse antialias rounding but reject visible softness'
+      ).toBeLessThanOrEqual(MAX_EDGE_PROFILE_MAE);
+
+      const oneCssPixelBlurRadius = Math.max(1, Math.round(previewEdgePoint.scaleY));
+      const blurSensitivity = meanProfileDifference(
+        previewProfile,
+        boxBlurProfile(previewProfile, oneCssPixelBlurRadius)
+      );
+      expect(blurSensitivity, 'the edge-profile tolerance must reject a one-CSS-pixel blur').toBeGreaterThan(
+        MAX_EDGE_PROFILE_MAE
+      );
+    });
   });
 
   test('a thicker tip lays down a proportionally thicker band', async ({ page }) => {
@@ -297,6 +573,103 @@ test.describe('Shape tools', () => {
       ovalCorner!.red,
       `an oval's corner is outside the curve, read ${JSON.stringify(ovalCorner)}`
     ).toBeGreaterThan(240);
+  });
+
+  test('the Star tool selects from the flyout, shows Star Ratio control, and draws a star', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await selectShape(page, 'Star Tool');
+
+    // Verify Star Ratio / Indent control is present
+    const starRatioSlider = page.locator('#star-ratio-slider');
+    await expect(starRatioSlider).toBeVisible();
+    await expect(starRatioSlider).toHaveAttribute('aria-label', 'Star Ratio');
+    // Default value is 50%
+    await expect(starRatioSlider).toHaveValue('50');
+
+    // Change the Star Ratio and verify it updates
+    await starRatioSlider.fill('75');
+    await expect(starRatioSlider).toHaveValue('75');
+
+    // Draw a star
+    const star: Rect = { from: { x: 40, y: 40 }, to: { x: 340, y: 300 } };
+    await dragShape(page, star, 'the star');
+
+    // Measure the drawn star - it should have visible pixels
+    const bounds = await measureShape(page, star, 'the star');
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(bounds.height).toBeGreaterThan(0);
+  });
+
+  test('Rectangle Path mode thumbnail matches its rounded unfilled result', async ({ page }, testInfo) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const before = await captureShapeThumbnail(page, testInfo, 'shape-rectangle-default');
+
+    await toolMode(page).selectOption('path');
+    await cornerRadius(page).fill('54');
+    await thickness(page).fill('20');
+    await filledToggle(page).check();
+    await page.locator('#alpha-slider').fill('0.5');
+    await expect(toolMode(page)).toHaveValue('path');
+    await expect(cornerRadius(page)).toHaveValue('54');
+    await expect(filledToggle(page)).toBeChecked();
+    await expect(page.locator('#alpha-slider')).toHaveValue('0.5');
+
+    const configured = await captureShapeThumbnail(page, testInfo, 'shape-rectangle-path-rounded');
+    expect(configured, 'changing the Shape settings must redraw the toolbar thumbnail').not.toEqual(before);
+
+    const rectangle: Rect = { from: { x: 40, y: 80 }, to: { x: 340, y: 280 } };
+    await dragShape(page, rectangle, 'the rounded Path-mode rectangle');
+    const canvas = await canvasBox(page);
+    await captureCanvasScreenshot(
+      page,
+      canvas,
+      testInfo,
+      'shape-rectangle-path-rounded-document',
+      documentClip(canvas, rectangle)
+    );
+
+    const roundedCorner = await sampleDocumentPoint(page, 45, 85);
+    const topStroke = await sampleDocumentPoint(page, 190, 85);
+    const interior = await sampleDocumentPoint(page, 190, 180);
+    expect(roundedCorner, 'the rounded corner is reachable').toBeTruthy();
+    expect(topStroke, 'the top stroke is reachable').toBeTruthy();
+    expect(interior, 'the rectangle interior is reachable').toBeTruthy();
+    expect(
+      roundedCorner!.red,
+      'a 54px radius leaves the drag-box corner substantially lighter than the top stroke'
+    ).toBeGreaterThan(topStroke!.red + 40);
+    expect(interior!.red, 'Path mode suppresses the fill, just as the thumbnail shows').toBeGreaterThan(220);
+  });
+
+  test('all figures preview during one held drag and remain after release', async ({ page }, testInfo) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    for (const figure of FIGURES) {
+      // Each gesture starts with one pointerdown and ends with one pointerup. The capture
+      // between them proves the user can see the figure before deciding where to release.
+      await selectFigure(page, figure);
+      await captureShapeThumbnail(page, testInfo, `shape-${figure.slug}`);
+      const box = await canvasBox(page);
+      const clip = documentClip(box, figure.rect, 12);
+      const baseline = await page.screenshot({ clip });
+      const start = documentToCanvasOffset(box, figure.rect.from.x, figure.rect.from.y);
+      const end = documentToCanvasOffset(box, figure.rect.to.x, figure.rect.to.y);
+
+      await page.mouse.move(box.x + start.x, box.y + start.y);
+      await page.mouse.down();
+      await page.mouse.move(box.x + end.x, box.y + end.y, { steps: 10 });
+
+      await expect
+        .poll(() => regionChanged(page, clip, baseline), { message: `${figure.label} is visible before pointerup` })
+        .toBe(true);
+      await captureCanvasScreenshot(page, box, testInfo, `shape-${figure.slug}-preview`, clip);
+
+      await page.mouse.up();
+      await expect
+        .poll(() => regionChanged(page, clip, baseline), { message: `${figure.label} remains visible after pointerup` })
+        .toBe(true);
+      await captureCanvasScreenshot(page, box, testInfo, `shape-${figure.slug}-committed`, clip);
+    }
   });
 });
 

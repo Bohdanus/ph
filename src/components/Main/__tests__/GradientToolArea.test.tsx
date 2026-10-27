@@ -3,9 +3,11 @@ import { fireEvent, render } from '@testing-library/react';
 import { GradientToolArea } from '../GradientToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { GradientToolArgs } from '../../../tools/gradient.ts';
+import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
+const cancelLayerPreviewMock = vi.hoisted(() => vi.fn());
 /**
  * `createLayerFromTool` is present in the mock on purpose even though the component must never
  * reach it. A `useLayers` mock that simply omitted it would make a regression that committed
@@ -53,6 +55,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: tempUpdateLayerMock,
     updateLayerByTool: updateLayerByToolMock,
+    cancelLayerPreview: cancelLayerPreviewMock,
     createLayerFromTool: createLayerFromToolMock,
   }),
 }));
@@ -93,6 +96,10 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
     }),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: pointerState.isMouseDown,
+    releasePointer: vi.fn(() => {
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
+    }),
   }),
 }));
 
@@ -111,6 +118,7 @@ const makeLayer = (id: string, overrides: Partial<Layer> = {}): Layer => ({
   blendMode: 'source-over',
   order: 0,
   pos: { x: LAYER_ORIGIN.x, y: LAYER_ORIGIN.y, width: 180, height: 105 },
+  presentationBounds: null,
   operations: [],
   ...overrides,
 });
@@ -135,8 +143,10 @@ type ToolLayerCall = { id?: string; toolArgs: { from: { x: number; y: number }; 
 
 describe('GradientToolArea', () => {
   beforeEach(() => {
+    resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
+    cancelLayerPreviewMock.mockClear();
     createLayerFromToolMock.mockClear();
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
@@ -174,6 +184,31 @@ describe('GradientToolArea', () => {
     fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 70, clientY: 45 });
 
     expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels an existing preview when the drag returns to its start before release', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 70 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
+
+    expect(tempUpdateLayerMock).toHaveBeenCalledOnce();
+    expect(cancelLayerPreviewMock).toHaveBeenCalledExactlyOnceWith('base');
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels a preview when release returns to the zero-length axis', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 70 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
+
+    expect(tempUpdateLayerMock).toHaveBeenCalledOnce();
+    expect(cancelLayerPreviewMock).toHaveBeenCalledExactlyOnceWith('base');
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
   });
 

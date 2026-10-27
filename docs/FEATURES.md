@@ -3,8 +3,8 @@
 What this app can do, system-wide, measured against Photoshop.
 
 **This is not a per-tool document.** That is [`TOOLS.md`](TOOLS.md) — generated,
-44 sections, one per tool or per Adobe command the rail carries, with an options-bar
-table and Adobe citations. Four of the 44 are not Tools-panel tools — the Shape group
+54 tool-level sections, one per implemented tool or Adobe command, with an options-bar
+table and Adobe citations. Four of the 54 are not Tools-panel tools — the Shape group
 placeholder, Free Transform, Levels and Black & White are named for what Adobe calls
 them. This
 page is the capability level: documents, formats, selection, layers, history,
@@ -46,22 +46,22 @@ platform limit.
 
 ## Summary
 
-| Area              | Status      | The gap in one line                                                            |
-| ----------------- | ----------- | ------------------------------------------------------------------------------ |
-| Document model    | `partial`   | One document, no colour mode, no Image Size                                    |
-| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                     |
-| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                       |
-| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels |
-| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only         |
-| History           | `have`      | Linear, unbounded, with a History panel                                        |
-| Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
-| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
-| View / navigation | `partial`   | Hand, zoom and pan; no Zoom tool, no Rotate View, no rulers, no guides         |
-| Keyboard          | `partial`   | 53 bindings against Photoshop's ~200                                           |
-| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
-| Export options    | `partial`   | JPEG quality is the only user-controllable option                              |
-| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — a missing gesture, not a missing view  |
-| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                        |
+| Area              | Status      | The gap in one line                                                                                          |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| Document model    | `partial`   | One document, no colour mode, no Image Size                                                                  |
+| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                                                   |
+| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                                                     |
+| Selection         | `divergent` | Compound contours with derived masks, not a persistent alpha channel; no full selection commands or channels |
+| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; no separate Fill opacity                                    |
+| History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush                          |
+| Panels            | `partial`   | Two panels. Photoshop has seventeen                                                                          |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                                                        |
+| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                                                      |
+| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                                         |
+| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                                               |
+| Export options    | `partial`   | JPEG quality is the only user-controllable option                                                            |
+| Tablet touch      | `partial`   | Tablet-sized touch shell; Retina/high-DPI matters; handheld phone layouts are out of scope                   |
+| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                                                      |
 
 ## Documents
 
@@ -174,27 +174,48 @@ it "SVG
 Add / Subtract / Intersect), inverts, modifies (Feather / Expand / Contract),
 refines, saves to and loads from a named channel, and is viewed in a Channels panel.
 
-**This app:** a selection is **a polygon point list with a bounding box**, not a
-pixel channel — `general-types.ts` — `Selection`. Seven selection tools write
-it (`toolProcessors.ts` — the selection entries carrying `creator: true`).
-Marching ants read the points
-(`useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`). An alpha
-mask does exist, but only as a derived copy for clipboard and copy-to-layer
-(`selection.ts` — `createFeatheredAlphaMask()`), reached from
-`copySelectionToCanvas()` and
-nowhere else. Feather is a parameter on that copy, not a modification of the
+**This app:** `Selection` has one authoritative geometry per committed selection
+(`general-types.ts`). Ordinary selections store compound contour paths. Highly
+fragmented Magic Wand and Quick Selection results store a cropped, row-major,
+one-bit-per-pixel mask when their exposed boundary exceeds the safe vector budget;
+those records have no point paths. Both forms preserve disconnected regions and
+holes. Marching ants use contour paths for vector selections and a cached raster
+edge image for mask-backed selections (`useSelectionAnts.ts`). Clipboard and
+copy-to-layer derive alpha from either form through `copySelectionToCanvas()`;
+Fill, Eraser and Clone Stamp use `createSelectionAlphaMask()` to clip pixel
+operations. Feather is still a copy parameter, not a modification of the stored
 selection.
+
+Rectangular, elliptical, and single-row/column marquee drags stay captured when
+the pointer leaves the canvas and commit on a valid release; `pointercancel`
+aborts the gesture.
+
+Magic Wand, Quick Selection, and Magnetic Lasso sample the composited canvas on
+the logical document-pixel grid, including on high-DPI displays. They support
+documents up to 16,777,216 pixels for pixel sampling; larger documents remain
+openable but these three tools do not start, and their options bars show the
+limit. The 100,000,000-pixel document ceiling is higher because canvas loading
+and selection's multi-buffer algorithms have different memory budgets.
 
 **Status:** `divergent`
 
-**Gap:** No Combine (Add / Subtract / Intersect), no Invert, no Modify (Feather /
-Expand / Contract), no Save or Load Selection, no Quick Mask, no Channels panel
-(`PanelLayout.tsx` — `PanelId` admits only `history` and `layers`). **A
-selection does not clip a stroke**: no tool in `src/tools/` reads `selections`.
+**Gap:** No general New / Add / Subtract / Intersect controls across selection
+tools, no Invert, no Modify (Feather / Expand / Contract), no Save or Load
+Selection, no Quick Mask, and no Channels panel (`PanelLayout.tsx` — `PanelId`
+admits only `history` and `layers`). Quick Selection alone offers Add and
+Subtract. Fill, Eraser and Clone Stamp consume derived masks; Brush, Draw and
+the other paint tools do not apply selection coverage.
 
-That last one is the largest single selection gap and it is a model problem, not
-a missing control — a shape list cannot mask pixels. Fixing it means the selection
-becomes a channel, which is the same change Photoshop's data model makes.
+The stored selection is not Photoshop's general 8-bit alpha channel. The packed
+mask is binary and used only for high-complexity Magic Wand and Quick Selection
+results; other selections remain vector paths. There is no partial coverage in
+the stored geometry, Quick Mask, channel editing, selection-channel save/load,
+or the full set of Photoshop selection operations. The Magic Wand Smooth control
+simplifies vector-backed contours; the high-complexity mask path keeps the exact
+matched pixels and therefore does not apply that contour simplification. Quick
+Selection rasterizes an active selection by destination pixel-center membership
+before Add or Subtract, so fractional positioning and antialiased edge coverage are
+quantized to binary membership when the brush edits the selection.
 
 ## Layers
 
@@ -216,22 +237,28 @@ and opacity and blend mode are applied at draw time
 `Record<LayerId, Layer>` (`layer-types.ts` — the `Layer` record and the
 `LayersRecord` map) with no `parentId`, and the panel offers visibility, reorder,
 rename and delete
-(`LayersTab.tsx` — its `layers-list` rows).
+(`LayersTab.tsx` — its `layers-list` rows). Desktop rows also render a 48x32 `LayerThumbnail`
+through the shared `drawLayerSource()` presentation path; the tablet drawer currently has no preview.
+Selecting a matching tool layer hydrates its arguments, and selecting text can re-enter text editing
+(`textLayerEditTarget()` / `beginTextLayerEdit()`), including for retained affine operations. Layers
+with filter operations remain outside that overlay path. Desktop and tablet expose opacity, the
+supported blend-mode menu, and one full-layer lock control; desktop also exposes `Layer from
+Background` for the lone backing layer.
 
 **Status:** `partial`
 
 **Gap:** No groups or nesting, no layer masks, no clipping masks, no adjustment
-or smart-object layers. **No panel control for opacity, blend mode or locking** —
-those fields exist in the model and round-trip through PSD, but nothing in the UI
-sets them, so the Layers panel cannot express what the layer model can.
-
-That opacity field is a live defect, not a scope note: `HANDOFF.md` §56 records
-that the obvious writer is discarded by replay.
+or smart-object layers. The blend-mode menu supports a subset of Photoshop's modes, and the single
+`locked` flag implements a strict full-layer lock rather than Photoshop's four independent lock
+protections. Photoshop's separate Fill opacity and preset drop-down remain absent. See
+[`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates).
 
 ## History
 
-**Photoshop:** a linear History States panel with named states, a per-step
-visibility toggle, unlimited states, and History States snapshots.
+**Photoshop:** a History panel with named states, configurable History States (default 50,
+maximum 1,000), snapshots, optional non-linear history, and the History Brush. See
+<https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/history-panel-overview.html>
+and <https://helpx.adobe.com/photoshop/using/performance-preferences.html>.
 
 **This app:** a linear `HistoryItem[]` with a cursor
 (`history-types.ts` — `HistoryItem`, carried in a `HistoryTimeline` whose
@@ -243,7 +270,10 @@ exists
 per-step disabled toggle, plus Undo/Redo in the header
 (`HistoryControls.tsx` — its `undo-button` and `redo-button`).
 
-**Status:** `have`
+**Status:** `partial`
+
+**Gap:** The app has no configurable History States limit, snapshots, non-linear-history option or
+History Brush. Its linear cursor and redo-tail truncation are the portions that match Photoshop.
 
 **Note, because it is the opposite of what the code looks like:** entries store
 _args_, never pixels, and undo re-runs the tool processors from index zero
@@ -257,8 +287,8 @@ Swatches, Styles, Character, Paragraph, Brush presets, Navigator, Info, Histogra
 Actions, Measurement Log — dockable, with panel groups.
 
 **This app:** exactly two dockable panels, `PanelId = 'history' | 'layers'`
-(`PanelLayout.tsx` — `PanelId`). They dock, drag-reorder, resize, collapse to
-icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
+(`PanelLayout.tsx` — `PanelId`). They remain pinned to the window edges, resize by
+width and shared split, collapse to icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
 plus `PanelGroup.tsx`), and Window has Reset Workspace
 (`DesktopHeader.tsx` — its `handleResetWorkspace`).
 
@@ -268,7 +298,7 @@ plus `PanelGroup.tsx`), and Window has Reset Workspace
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
 (`SidebarLeft.tsx` — its `color-pickers` cluster); the closest analogues to
-Color and Character are the Photo Filter command's three sliders and the Type options bar,
+Color and Character are the Desaturate command's three sliders and the Type options bar,
 which are options bars, not panels.
 
 ## Menu bar
@@ -279,7 +309,7 @@ Help.
 **This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
 (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
-Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Desaturate` — and
 twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
 records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,
@@ -308,64 +338,51 @@ from the menu, not from the app.
 Hand-tool panning, rotate view, rulers, guides, snap, a grid overlay, and
 screen-mode switching.
 
-**This app:** the view is a `{ dx, dy, zoom }` transform over the contain fit
-(`document-view.ts`, `view-transform.ts`), applied to `.zoom-container`
-(`Main.tsx` — `useViewTransform`). `zoom` is a multiplier over the fit, so
-`zoom === 1` IS Fit on Screen and Actual Pixels is `1 / fitScale`; the
-options-bar percentage is printed against actual pixels, not against the fit.
-
-The Hand tool is the rail's last tile and in the Tools menu
-(`toolbar-mapping.ts` — `toolbarMap`, `DesktopHeader.tsx` — `TOOL_MENU_ITEMS`),
-selectable with `H`, and it pans by the raw client delta without touching the
-zoom (`HandToolArea.tsx`). Holding `Space` arms it from any tool and restores
-the previous tool on release without changing `toolName`
-(`useTemporaryHand.ts`). Magnification is reached from `Cmd/Ctrl+0` (Fit),
-`Cmd/Ctrl+1` (100%), `Cmd/Ctrl++` and `Cmd/Ctrl+-`, `Ctrl/Cmd+wheel` to zoom at
-the pointer and a plain wheel to pan.
-
-A pan is **not clamped**, which is Adobe behaviour: a drag takes the image as far
-as the pointer goes, at every zoom including Fit on Screen, and the image may be
-pulled onto the pasteboard and out of the window. Fit On Screen is therefore a
-recovery path as much as a convenience. Adobe scopes the Hand to the magnified case
-because that is when panning is useful, not because it is refused when it is not.
+**This app:** contain-fit remains the base scale — `scale = min(scaleX, scaleY)`
+with centring offsets (`contain-fit.ts` — `containFit()`, which
+`usePointerPosition`'s `calculateDimensions()` calls). The Hand, Zoom and Rotate
+View tools now keep transient `ViewState` (`src/contexts/view-state.ts`) and
+apply the same presentation transform to the canvas and overlays (`Main.tsx` —
+`renderContent()`). `usePointerPosition` inverts that transform before returning
+document-space coordinates, so pixel tools continue to target the document rather
+than the screen. View changes do not enter history or durable replay.
 
 **Status:** `partial`
 
-**Gap:** No Zoom tool, so none of Adobe's zoom presets, Scrubby Zoom, zoom
-selection or its own options bar; no Rotate View (`R`); no Navigator panel; no
-rulers, guides, snap or grid overlay. Two-finger pan and pinch-zoom are still
-absent, which is now a gap in the _gesture_ rather than in the view — the
-transform underneath exists and one pointer already uses it.
+**Gap:** Flick panning, wheel and animated zoom preferences, pinch/two-finger
+gestures, the Rotate View compass, angle snapping and multi-window sync remain
+absent. The implementation deliberately caps the options-bar zoom control at
+1600% pending a product-specific desktop maximum.
 
-`absent` → `partial` here, and the three knock-on areas improved with it: a
-magnifiable view means detail work is possible, and mobile's pinch-zoom is now
-one gesture away rather than a whole view transform away.
+`absent`, not `platform`. Every one of these is a browser's ordinary business.
 
 ## Keyboard
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 53. Forty-two registrations in
+**This app:** 58 `useKeyDownShortcut` call sites: 49 in
 `AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
-`useKeyDownShortcut` registrations each), the `Space` press and release that
-spring-load the Hand (`useTemporaryHand.ts`), and one `Escape` in `FontSelect`'s
-font popup.
+`useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
+These are hook call sites, not a count of unique key chords; modifiers and enabled states share the
+same registration path.
 
 **Status:** `partial`
 
-**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O, H; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`; `[` and `]` for brush size; `0` and `1`
-for opacity; `Ctrl+0`, `Ctrl+1`, `Ctrl++` and `Ctrl+-` for the view; and
-`Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
+**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `[` and `]` for brush size; `0` and `1`
+for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
 Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
 and the Burn, so the Sponge must be the active tool.
 
-**Gap:** `A`, `Z`, `X` and bare `D` are unbound — Automatic Select, Zoom,
+Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
+only save is Save As, which is what `File > Save` opens
+(`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
+`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two.
+
+**Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
 Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
-the Sponge is active. `Ctrl++` and `Ctrl+-` are registered under both the shifted and
-unshifted spelling of the key, because `key` is matched literally and `Cmd+Shift+=`
-arrives as `key: '+'` on a US layout. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
+the Sponge is active. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
 `Ctrl+Shift+I` — Select All, Deselect, Invert — are unbound, which follows from the
 selection model above rather than from the keyboard layer. `Tab`, `F`,
 `Ctrl++`, `Ctrl+-` and `Ctrl+0` are unbound, and Space does not pan.
@@ -410,12 +427,16 @@ encoder (`avif-utils.ts` — `encodeAvif()`).
 **Gap:** No PNG compression, subsampling, progressive, interlacing, bit-depth or
 metadata option; no WebP, AVIF, GIF or TIFF encoder settings.
 
-## Mobile
+## Tablet Touch (Not Handheld Phone)
+
+**Hard boundary:** this product supports desktop and tablet-sized touch devices, including Retina/high-DPI
+tablets. It does **not** support handheld phone layouts such as iPhone-sized screens. "Mobile" component
+names are historical and mean the tablet touch surface here; they are not a phone product.
 
 **Photoshop:** a touch-optimised workspace with one-finger draw, two-finger pan and
 pinch-zoom.
 
-**This app:** a full mobile shell (`App.tsx` — the `MobileShell` it mounts) —
+**This app:** a tablet touch shell (`App.tsx` — the `MobileShell` it mounts) —
 header with menu, undo,
 redo, layers drawer and Export (`MobileHeader.tsx` — its `mobile-header`
 region),
@@ -431,11 +452,13 @@ through Pointer Events with single-pointer capture, so drawing works on touch
 
 **Status:** `partial`
 
-**Gap:** No pinch-zoom and no two-finger pan. This used to be inherited from the
-total absence of a view transform; it is now a missing GESTURE rather than a
-missing view. One pointer already pans through `HandToolArea`, so the Hand tile
-arrives in the bottom bar from `toolbarMap` for free, and what is missing is the
-second pointer: `isPointerDownValid()` refuses one, and a pinch needs both.
+**Gap:** No pinch-zoom and no two-finger pan — inherited from the absence of zoom
+and pan entirely, not a mobile-specific omission.
+
+**Retina/High-DPI Status:** Pointer mapping is DPR-correct (tested at 3×). Paint tools are DPR-proof — all geometry paths are document-pixel invariant. Option-bar thumbnails and display surfaces (workspace canvas and overlays) use DPR-scaled backing stores while retaining document-pixel coordinates. Export remains decoupled from display resolution, and the marching-ants clear path uses logical frame bounds.
+
+**Priority:** tablet touch and Retina/high-DPI behavior are supported product surfaces. Handheld phone
+layouts and phone-only gestures remain explicitly out of scope.
 
 ## Non-destructive editing
 
@@ -490,7 +513,7 @@ ordinary browser capabilities that this app simply does not use yet:
 | Capability          | In a browser                                                                 |
 | ------------------- | ---------------------------------------------------------------------------- |
 | Print               | `window.print()` — a real API                                                |
-| Zoom and pan        | Transforms and pointer capture — both now implemented for one pointer        |
+| Zoom and pan        | Transforms and pointer capture; the app has neither implemented              |
 | Wider gamut         | `getContext('2d', { colorSpace: 'display-p3' })`                             |
 | Off-thread work     | `OffscreenCanvas` in a worker — used for working surfaces, never in a worker |
 | Transferable pixels | `ImageBitmapTransfer` — zero occurrences in `src/`                           |

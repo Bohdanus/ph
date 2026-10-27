@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_POLYGON_SIDES,
+  DEFAULT_STAR_RATIO,
   drawShape,
   isFigureType,
   MAX_POLYGON_SIDES,
   MIN_POLYGON_SIDES,
+  MIN_STAR_RATIO,
+  MAX_STAR_RATIO,
   polygonSides,
+  starRatio,
   normalizeFigure,
   normalizeShapeGeometry,
   setShapeCtx,
@@ -15,6 +19,26 @@ import {
 } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import type { CreatorToolParams } from '../toolProcessors.ts';
+import { defaultSettings } from '../settings.ts';
+
+/**
+ * The six tool names the shape family registers under, as an INDEPENDENT literal.
+ *
+ * Sourced from `defaultSettings` in the assertions below rather than imported from the module
+ * under test, so a list that lost a name fails here instead of quietly shrinking the sweep. The
+ * tool name and the figure are different vocabularies — `ellipse` is the tool and `oval` is its
+ * figure — so neither can be derived from `FigureType`.
+ */
+const SHAPE_FAMILY_TOOL_NAMES = ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
+
+/**
+ * Every seeded default that carries a `figure`, which is the shape family and nothing else:
+ * a tool with a figure of its own is one of these six.
+ */
+const seededShapeToolNames = Object.entries(defaultSettings)
+  .filter(([, args]) => 'figure' in args)
+  .map(([name]) => name)
+  .sort();
 
 const baseArgs: ShapeToolArgs = {
   toolName: 'shape',
@@ -82,7 +106,7 @@ const noModifiers = { shiftKey: false, altKey: false };
 
 describe('normalizeFigure', () => {
   it('passes through every supported figure unchanged', () => {
-    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon'] as const) {
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const) {
       expect(normalizeFigure(figure)).toBe(figure);
       expect(isFigureType(figure)).toBe(true);
     }
@@ -282,7 +306,7 @@ describe('normalizeShapeGeometry', () => {
     });
   });
 
-  it.each(['triangle', 'polygon'] as const)('keeps %s geometry consistent with the other figures', (figure) => {
+  it.each(['polygon', 'star'] as const)('keeps %s geometry consistent with the other figures', (figure) => {
     expect(normalizeShapeGeometry({ x: 0, y: 0 }, { x: 30, y: 10 }, figure, noModifiers)).toEqual({
       start: { x: 0, y: 0 },
       end: { x: 30, y: 10 },
@@ -290,6 +314,51 @@ describe('normalizeShapeGeometry', () => {
     expect(normalizeShapeGeometry({ x: 0, y: 0 }, { x: 30, y: 10 }, figure, { shiftKey: true, altKey: false })).toEqual(
       { start: { x: 0, y: 0 }, end: { x: 30, y: 30 } }
     );
+  });
+
+  describe('triangle', () => {
+    it('uses the drag box for an isosceles triangle without shift', () => {
+      expect(normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'triangle', noModifiers)).toEqual({
+        start: { x: 10, y: 20 },
+        end: { x: 90, y: 45 },
+      });
+    });
+
+    it('uses an equilateral box when the drag is wider than tall', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'triangle', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.x).toBe(90);
+      expect(result.end.y).toBeCloseTo(20 + 80 * (Math.sqrt(3) / 2), 10);
+      expect(result.end.y - result.start.y).toBeCloseTo((result.end.x - result.start.x) * (Math.sqrt(3) / 2), 10);
+    });
+
+    it('uses an equilateral box when the drag is taller than wide', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 35, y: 100 }, 'triangle', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.y).toBe(100);
+      expect(result.end.x).toBeCloseTo(10 + 80 / (Math.sqrt(3) / 2), 10);
+      expect(result.end.y - result.start.y).toBeCloseTo((result.end.x - result.start.x) * (Math.sqrt(3) / 2), 10);
+    });
+
+    it('keeps an equilateral triangle centered with alt and shift', () => {
+      const result = normalizeShapeGeometry({ x: 100, y: 100 }, { x: 150, y: 130 }, 'triangle', {
+        shiftKey: true,
+        altKey: true,
+      });
+
+      expect((result.start.x + result.end.x) / 2).toBe(100);
+      expect((result.start.y + result.end.y) / 2).toBe(100);
+      expect(result.end.x - result.start.x).toBeCloseTo(100, 10);
+      expect(result.end.y - result.start.y).toBeCloseTo(100 * (Math.sqrt(3) / 2), 10);
+    });
   });
 });
 
@@ -424,6 +493,24 @@ describe('shapeGeometryBounds', () => {
   });
 });
 
+describe('the shape family', () => {
+  it('is exactly the set of tools the seeded defaults give a figure', () => {
+    // The cross-check that makes the sweeps below mean something: `toolsMap` registers one image
+    // processor for all six names, so the family is also what one options bar and one commit path
+    // serve. A tool added here and to the defaults without the other list would be missed.
+    expect(seededShapeToolNames).toEqual([...SHAPE_FAMILY_TOOL_NAMES].sort());
+    expect(seededShapeToolNames).toHaveLength(6);
+  });
+
+  it('separates tool names from figures, which are a different list', () => {
+    // `oval` is the figure and `ellipse` the tool; neither list contains the other's odd member,
+    // which is the trap a guard derived from `FigureType` would fall into.
+    expect(seededShapeToolNames).not.toContain('oval');
+    expect(isFigureType('ellipse')).toBe(false);
+    expect(isFigureType('oval')).toBe(true);
+  });
+});
+
 describe('drawShape', () => {
   it('draws nothing without start or end', () => {
     const ctx = createCtx();
@@ -431,6 +518,34 @@ describe('drawShape', () => {
     drawShape(ctx, { ...baseArgs, figure: 'rectangle', start: { x: 0, y: 0 } });
     expect(ctx.strokeRect).not.toHaveBeenCalled();
     expect(ctx.beginPath).not.toHaveBeenCalled();
+  });
+
+  it('draws nothing for null start or end on any figure', () => {
+    // `!start || !end` must catch null as well as the omitted/undefined case above: a null
+    // that slipped past the guard would inject NaN into every coordinate of every branch.
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const) {
+      const ctx = createCtx();
+      drawShape(ctx, { ...baseArgs, figure, start: null, end: null } as unknown as ShapeToolArgs);
+      expect(ctx.beginPath, `${figure}/null`).not.toHaveBeenCalled();
+      expect(ctx.moveTo, `${figure}/null`).not.toHaveBeenCalled();
+      expect(ctx.stroke, `${figure}/null`).not.toHaveBeenCalled();
+    }
+  });
+
+  it('draws nothing when only one of start/end is supplied on any figure', () => {
+    // The guard fires on `!start` and `!end` independently — a drag that released without
+    // an end (or started with no anchor) is incomplete, not a degenerate zero box.
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const) {
+      const missingEnd = createCtx();
+      drawShape(missingEnd, { ...baseArgs, figure, start: { x: 10, y: 20 } });
+      expect(missingEnd.beginPath, `${figure}/missing end`).not.toHaveBeenCalled();
+      expect(missingEnd.stroke, `${figure}/missing end`).not.toHaveBeenCalled();
+
+      const missingStart = createCtx();
+      drawShape(missingStart, { ...baseArgs, figure, end: { x: 60, y: 45 } });
+      expect(missingStart.beginPath, `${figure}/missing start`).not.toHaveBeenCalled();
+      expect(missingStart.stroke, `${figure}/missing start`).not.toHaveBeenCalled();
+    }
   });
 
   it('strokes a plain rectangle with the given geometry', () => {
@@ -566,6 +681,19 @@ describe('drawShape', () => {
     expect(pathCalls(drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 10))).toEqual(roundedBox50x25);
   });
 
+  it('clamps cornerRadius that exceeds half the smaller dimension', () => {
+    // 50 wide × 25 tall: half-height (12.5) is the binding edge. A radius of 20 and 250
+    // both clamp to 12.5, so the paths must be identical — the clamp, not the input,
+    // determines the corner.
+    const clamped = drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 20);
+    const huge = drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 250);
+
+    expect(pathCalls(clamped)).toEqual(pathCalls(huge));
+    // moveTo starts at x + r where r = 12.5 = half the 25px height.
+    expect(pathCalls(clamped)).toContainEqual({ method: 'moveTo', args: [22.5, 20] });
+    expect(pathCalls(clamped)).toContainEqual({ method: 'quadraticCurveTo', args: [60, 45, 47.5, 45] });
+  });
+
   it('draws an oval with independent radii', () => {
     const ctx = createCtx();
     drawShape(ctx, { ...baseArgs, figure: 'oval', start: { x: 10, y: 20 }, end: { x: 60, y: 50 } });
@@ -589,9 +717,19 @@ describe('drawShape', () => {
     expect(ctx.lineTo).toHaveBeenCalledWith(30, 10);
   });
 
+  it('draws a drag-defined isosceles triangle', () => {
+    const ctx = createCtx();
+    drawShape(ctx, { ...baseArgs, figure: 'triangle', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
+    expect(ctx.moveTo).toHaveBeenCalledWith(10, 0);
+    expect(ctx.lineTo).toHaveBeenNthCalledWith(1, 20, 20);
+    expect(ctx.lineTo).toHaveBeenNthCalledWith(2, 0, 20);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+    expect(ctx.closePath).toHaveBeenCalled();
+  });
+
   it.each([
-    ['triangle', 3],
     ['polygon', 5],
+    ['star', 10],
   ] as const)('closes a %s path with %i vertices', (figure, sides) => {
     const ctx = createCtx();
     drawShape(ctx, { ...baseArgs, figure, start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
@@ -665,6 +803,90 @@ describe('drawShape', () => {
       drawShape(ctx, { ...baseArgs, figure: 'polygon', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
       expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
     });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'draws the fallback polygon when sides is %p',
+      (sides) => {
+        const ctx = createCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'polygon',
+          sides,
+          start: { x: 0, y: 0 },
+          end: { x: 20, y: 20 },
+        });
+        expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+        expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
+      }
+    );
+  });
+
+  describe("the Star's points and ratio", () => {
+    it('alternates outer and inner vertices for the requested point count', () => {
+      const { ctx, calls } = createRecordingCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'star',
+        sides: 5,
+        starRatio: 50,
+        start: { x: 0, y: 0 },
+        end: { x: 100, y: 100 },
+      });
+
+      const vertices = pathCalls(calls).filter(({ method }) => method === 'moveTo' || method === 'lineTo');
+      expect(vertices).toHaveLength(10);
+      expect(vertices[0]).toEqual({ method: 'moveTo', args: [50, 0] });
+      expect(vertices[1].args[0]).toBeCloseTo(50 + Math.cos(-Math.PI / 2 + Math.PI / 5) * 25, 8);
+      expect(vertices[1].args[1]).toBeCloseTo(50 + Math.sin(-Math.PI / 2 + Math.PI / 5) * 25, 8);
+    });
+
+    it('reaches the renderer, so changing Star Ratio changes inner vertices', () => {
+      const innerRadius = (ratio: number) => {
+        const { ctx, calls } = createRecordingCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'star',
+          sides: 5,
+          starRatio: ratio,
+          start: { x: 0, y: 0 },
+          end: { x: 100, y: 100 },
+        });
+        const [x, y] = pathCalls(calls)[1].args;
+        return Math.hypot(x - 50, y - 50);
+      };
+
+      expect(innerRadius(25)).toBeCloseTo(12.5, 8);
+      expect(innerRadius(75)).toBeCloseTo(37.5, 8);
+    });
+
+    it('normalizes missing, fractional and out-of-range ratios', () => {
+      expect(starRatio(undefined)).toBe(DEFAULT_STAR_RATIO);
+      expect(starRatio(Number.NaN)).toBe(DEFAULT_STAR_RATIO);
+      expect(starRatio(0)).toBe(MIN_STAR_RATIO);
+      expect(starRatio(100)).toBe(MAX_STAR_RATIO);
+      expect(starRatio(49.6)).toBe(50);
+    });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'draws a finite star when starRatio is %p',
+      (ratio) => {
+        const { ctx, calls } = createRecordingCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'star',
+          sides: 5,
+          starRatio: ratio,
+          start: { x: 0, y: 0 },
+          end: { x: 100, y: 100 },
+        });
+        // starRatio sanitizes before the angle loop, so no coordinate NaN/Infinity leaks.
+        for (const { args } of calls) {
+          for (const arg of args) {
+            expect(Number.isFinite(arg), `${ratio} produced ${arg}`).toBe(true);
+          }
+        }
+      }
+    );
   });
 
   it('fills only when hasFill is set and toolMode is not path', () => {
@@ -849,6 +1071,34 @@ describe('setShapeCtx', () => {
 
     expect(ctx.fillStyle).toBe('#00ff00');
   });
+
+  it('passes lineWidth 0 straight to the context without clamping', () => {
+    // The Size slider floor is 0.5, so 0 should not arrive from the panel — but setShapeCtx
+    // writes the value verbatim, and that pass-through is the current contract.
+    const ctx = createCtx();
+    setShapeCtx(ctx, { ...baseArgs, lineWidth: 0 });
+    expect(ctx.lineWidth).toBe(0);
+  });
+
+  /*
+   * `setShapeCtx` (shape.ts:222-224) assigns `ctx.lineWidth` and `ctx.globalAlpha` with no
+   * sanitisation, mirroring the pen processors `paint-tools.test.ts` pins with the same pair.
+   * A non-finite lineWidth renders nothing per the canvas spec, and a non-finite alpha makes
+   * `globalAlpha` NaN — both silent, invisible to the `drawShape` call-count assertions above.
+   */
+  describe('known limitations (it.fails tripwires)', () => {
+    it.fails('clamps non-finite lineWidth before it reaches the tool context (shape.ts)', () => {
+      const ctx = createCtx();
+      setShapeCtx(ctx, { ...baseArgs, lineWidth: Number.NaN });
+      expect(Number.isFinite(ctx.lineWidth)).toBe(true);
+    });
+
+    it.fails('clamps non-finite alpha into [0, 1] before it reaches globalAlpha (shape.ts)', () => {
+      const ctx = createCtx();
+      setShapeCtx(ctx, { ...baseArgs, alpha: Number.NaN });
+      expect(Number.isFinite(ctx.globalAlpha)).toBe(true);
+    });
+  });
 });
 
 /**
@@ -878,12 +1128,19 @@ function createBracketedCtx() {
   const stack: State[] = [];
   /**
    * The writer state in effect at the moment a paint op ran. A bracket bounds the state without
-   * neutralising the paint, so the alpha a stroke was committed at can only be read here — after
-   * the call the context holds the caller's value whether or not anything was written.
+   * neutralising the paint, so the alpha and the colours a stroke was committed at can only be read
+   * here — after the call the context holds the caller's value whether or not anything was written,
+   * so a post-hoc read of `strokeStyle` is always `''` and would pass for any colour at all.
    */
-  const observedAtPaint: { globalAlpha: number } = { globalAlpha: 1 };
+  const observedAtPaint: { globalAlpha: number; strokeStyle: string; fillStyle: string } = {
+    globalAlpha: 1,
+    strokeStyle: '',
+    fillStyle: '',
+  };
   const recordPaint = () => {
     observedAtPaint.globalAlpha = state.globalAlpha;
+    observedAtPaint.strokeStyle = state.strokeStyle;
+    observedAtPaint.fillStyle = state.fillStyle;
   };
 
   const ctx = {
@@ -1013,5 +1270,66 @@ describe('shape processor', () => {
     expect(state.strokeStyle).toBe('');
     expect(state.lineWidth).toBe(1);
     expect(state.dash).toEqual([]);
+  });
+
+  /**
+   * The committed layer is what the options bar's mirrored colours are FOR, so this is the end of
+   * the chain the mirror effect starts: whatever the panel publishes as `color`/`backgroundColor`
+   * has to reach the paint, for all six tool names and not only for the one the panel was opened
+   * under. Swept rather than asserted once, because a case naming only `shape` passes while the
+   * other five commit black.
+   *
+   * Each colour is read at the paint op, never after the call: `shape()` brackets the writer, so a
+   * post-call `strokeStyle` is `''` for every input and the assertion would pass for a processor
+   * that ignored its arguments entirely.
+   */
+  describe('paints with the colours carried in the arguments of all six tools', () => {
+    const STROKE = '#ff8800';
+    const FILL = '#0044ff';
+
+    it.each(SHAPE_FAMILY_TOOL_NAMES)('strokes %s in its own colour rather than the seeded black', (toolName) => {
+      const { ctx, observedAtPaint } = createBracketedCtx();
+      stubOffscreenCanvas(ctx);
+      const args = {
+        ...baseArgs,
+        toolName,
+        color: STROKE,
+        backgroundColor: FILL,
+        hasFill: true,
+        start: { x: 4, y: 6 },
+        end: { x: 30, y: 28 },
+      } as ShapeToolArgs;
+
+      shape(creatorParams)(args);
+
+      expect(observedAtPaint.strokeStyle).toBe(STROKE);
+      // The colour every one of the six defaults is seeded with, so a processor that fell back to
+      // it — or to a constant of its own — cannot pass by painting something merely non-default.
+      expect(observedAtPaint.strokeStyle).not.toBe('#000000');
+      // The fill half, read at the same paint op. `line` never fills, but `setShapeCtx` writes the
+      // fill style before the figure branch, so the colour a filled sibling would use is here.
+      expect(observedAtPaint.fillStyle).toBe(FILL);
+    });
+
+    it.each(SHAPE_FAMILY_TOOL_NAMES)('does not fill %s whose arguments carry no background colour', (toolName) => {
+      // The colourless half of the pair above, on every tool: a fill with nothing to fill with is
+      // the stale fill the `save`/`restore` bracket exists around, and it must stay suppressed.
+      const { ctx } = createBracketedCtx();
+      stubOffscreenCanvas(ctx);
+      const args = {
+        ...baseArgs,
+        toolName,
+        color: STROKE,
+        backgroundColor: null,
+        hasFill: true,
+        start: { x: 4, y: 6 },
+        end: { x: 30, y: 28 },
+      } as ShapeToolArgs;
+
+      shape(creatorParams)(args);
+
+      expect(ctx.fill).not.toHaveBeenCalled();
+      expect(ctx.fillRect).not.toHaveBeenCalled();
+    });
   });
 });

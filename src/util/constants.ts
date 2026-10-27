@@ -12,6 +12,7 @@ export const CURSOR_MAP = {
   left: 'ew-resize',
   'top-left': 'nwse-resize',
   inside: 'move',
+  rotate: 'ew-resize',
 };
 
 export const DEFAULT_TOOL = 'draw';
@@ -23,7 +24,13 @@ export const TOOL_ACTION = 'tool';
 export const SHOW_LAYER_ACTION = 'show';
 export const HIDE_LAYER_ACTION = 'hide';
 export const RENAME_LAYER_ACTION = 'rename';
-export const LAYER_TRANSPARENCY_ACTION = 'layer transparency'; // todo this is not triggered not recorded nor replayed yet
+export const SET_LAYER_OPACITY_ACTION = 'set layer opacity';
+export const SET_LAYER_BLEND_MODE_ACTION = 'set layer blend mode';
+export const LOCK_LAYER_ACTION = 'lock layer';
+export const UNLOCK_LAYER_ACTION = 'unlock layer';
+// Retained as a legacy diagnostic label only; it is not a legal ActionType
+// because no writer, durable translator, or replay arm exists for it.
+export const LAYER_TRANSPARENCY_ACTION = 'layer transparency';
 // export const UPDATE_LAYER_ACTION = 'some update'; // fallback, and maybe never used
 export const REORDER_ACTION = 'reorder layers';
 export const MERGE_ACTION = 'merge layers';
@@ -39,7 +46,10 @@ export type ActionType =
   | typeof SHOW_LAYER_ACTION
   | typeof HIDE_LAYER_ACTION
   | typeof RENAME_LAYER_ACTION
-  | typeof LAYER_TRANSPARENCY_ACTION
+  | typeof SET_LAYER_OPACITY_ACTION
+  | typeof SET_LAYER_BLEND_MODE_ACTION
+  | typeof LOCK_LAYER_ACTION
+  | typeof UNLOCK_LAYER_ACTION
   // | typeof UPDATE_LAYER_ACTION
   | typeof REORDER_ACTION
   | typeof MERGE_ACTION

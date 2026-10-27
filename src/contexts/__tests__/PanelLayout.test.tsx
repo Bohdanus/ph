@@ -32,15 +32,21 @@ describe('PanelLayout', () => {
 
       // These four are not preferences. 250px is the width the dock had as a grid track,
       // 0.2/0.8 is the `h-[20%]`/`h-[80%]` the two sections carried, History above Layers is
-      // the order the headings are asserted in, and the dock on the right is where it has
-      // always been. A first render that differs is a regression in every e2e clip derived
-      // from the shell's arithmetic, not a design choice.
+      // the order the headings are asserted in, and the rail on the left with the dock on the
+      // right is the arrangement the shell has always rendered. A first render that differs is
+      // a regression in every e2e clip derived from the shell's arithmetic, not a design
+      // choice.
+      //
+      // The edge pair is TWO assertions because it is two fields now. `dockOnLeft: false` was
+      // one fact about one subject, and reading it as the dock's edge while the rail claimed
+      // the same field is precisely how the two ended up pinned to opposite edges.
       expect(result.current.dockWidth).toBe(250);
       expect(result.current.effectiveDockWidth).toBe(250);
       expect(result.current.splitRatio).toBe(0.2);
       expect(result.current.panelOrder).toEqual(['history', 'layers']);
       expect(result.current.rolledUp).toEqual({ history: false, layers: false });
-      expect(result.current.dockOnLeft).toBe(false);
+      expect(result.current.toolsSide).toBe('left');
+      expect(result.current.dockSide).toBe('right');
       expect(result.current.isCollapsed).toBe(false);
       expect(result.current.isIconOnly).toBe(false);
     });
@@ -129,6 +135,11 @@ describe('PanelLayout', () => {
   });
 
   describe('persistence', () => {
+    // The whole record, asserted exactly, because this is the only place the persisted SHAPE is
+    // pinned at all. A field added to `LayoutState` without a line here would persist silently
+    // and read back through the guards in `readStoredLayout` without any test noticing that the
+    // record grew. The two sides are moved to their non-default values here so the assertion
+    // cannot be satisfied by the opening arrangement.
     it('writes every field under one key', () => {
       const { result } = renderLayout();
 
@@ -137,7 +148,8 @@ describe('PanelLayout', () => {
         result.current.setSplitRatio(0.4);
         result.current.setPanelOrder(['layers', 'history']);
         result.current.setRolledUp('layers', true);
-        result.current.setDockOnLeft(true);
+        result.current.setToolsSide('right');
+        result.current.setDockSide('left');
       });
 
       expect(persisted()).toEqual({
@@ -145,7 +157,8 @@ describe('PanelLayout', () => {
         splitRatio: 0.4,
         panelOrder: ['layers', 'history'],
         rolledUp: { history: false, layers: true },
-        dockOnLeft: true,
+        toolsSide: 'left',
+        dockSide: 'right',
         isCollapsed: false,
       });
     });
@@ -158,7 +171,8 @@ describe('PanelLayout', () => {
           splitRatio: 0.35,
           panelOrder: ['layers', 'history'],
           rolledUp: { history: true, layers: false },
-          dockOnLeft: true,
+          toolsSide: 'right',
+          dockSide: 'left',
           isCollapsed: false,
         })
       );
@@ -168,7 +182,8 @@ describe('PanelLayout', () => {
       expect(result.current.splitRatio).toBe(0.35);
       expect(result.current.panelOrder).toEqual(['layers', 'history']);
       expect(result.current.rolledUp.history).toBe(true);
-      expect(result.current.dockOnLeft).toBe(true);
+      expect(result.current.toolsSide).toBe('left');
+      expect(result.current.dockSide).toBe('right');
     });
 
     // A stored value that parses but is out of range is the case a naive `JSON.parse` guard
@@ -211,6 +226,19 @@ describe('PanelLayout', () => {
       const { result } = renderLayout();
       expect(result.current.rolledUp).toEqual({ history: false, layers: false });
     });
+
+    // A side is an enum with exactly two members, so `'middle'` is a record this app never
+    // wrote and `readStoredSide` returns `undefined` for it rather than letting it reach a
+    // comparison. The half of the rule that matters is what happens NEXT: the stored record is
+    // spread over `DEFAULT_STATE` to seed the provider's state, and an `undefined` in that
+    // spread is a VALUE that overwrites the default rather than an absence that leaves it — so
+    // an unrecognised side has to read back as the default, not as nothing at all.
+    it('degrades an unrecognised side to the default', () => {
+      localStorage.setItem('panelLayout', JSON.stringify({ toolsSide: 'middle' }));
+
+      const { result } = renderLayout();
+      expect(result.current.toolsSide).toBe('left');
+    });
   });
 
   describe('rememberDockWidth', () => {
@@ -247,6 +275,9 @@ describe('PanelLayout', () => {
   });
 
   describe('resetWorkspace', () => {
+    // Both edges are moved to their non-default values, because a reset that returned the rail
+    // but not the dock — or the dock but not the rail — is the failure this pair of fields makes
+    // newly possible, and it is invisible unless both were moved first.
     it('returns every field to the opening layout', () => {
       const { result } = renderLayout();
 
@@ -255,7 +286,8 @@ describe('PanelLayout', () => {
         result.current.setSplitRatio(0.7);
         result.current.setPanelOrder(['layers', 'history']);
         result.current.setRolledUp('history', true);
-        result.current.setDockOnLeft(true);
+        result.current.setToolsSide('right');
+        result.current.setDockSide('left');
         result.current.toggleCollapsed();
       });
 
@@ -265,7 +297,8 @@ describe('PanelLayout', () => {
       expect(result.current.splitRatio).toBe(0.2);
       expect(result.current.panelOrder).toEqual(['history', 'layers']);
       expect(result.current.rolledUp).toEqual({ history: false, layers: false });
-      expect(result.current.dockOnLeft).toBe(false);
+      expect(result.current.toolsSide).toBe('left');
+      expect(result.current.dockSide).toBe('right');
       expect(result.current.isCollapsed).toBe(false);
     });
 
@@ -281,19 +314,23 @@ describe('PanelLayout', () => {
         result.current.setSplitRatio(0.7);
         result.current.setPanelOrder(['layers', 'history']);
         result.current.setRolledUp('history', true);
-        result.current.setDockOnLeft(true);
+        result.current.setToolsSide('right');
+        result.current.setDockSide('left');
         result.current.toggleCollapsed();
       });
       act(() => result.current.resetWorkspace());
 
       // The persisted record has to agree with the in-memory one, or the very next reload
-      // restores the layout the reset was supposed to discard.
+      // restores the layout the reset was supposed to discard. The two sides are in the record
+      // for the same reason the legacy flag was: a record missing one of them would let
+      // `readStoredLayout` restore an edge the reset moved rather than discarded.
       expect(persisted()).toEqual({
         dockWidth: 250,
         splitRatio: 0.2,
         panelOrder: ['history', 'layers'],
         rolledUp: { history: false, layers: false },
-        dockOnLeft: false,
+        toolsSide: 'left',
+        dockSide: 'right',
         isCollapsed: false,
       });
     });
@@ -316,11 +353,16 @@ describe('PanelLayout', () => {
 
       expect(() => {
         result.current.setDockWidth(400);
-        result.current.setDockOnLeft(true);
+        result.current.setToolsSide('right');
+        result.current.setDockSide('left');
         result.current.resetWorkspace();
       }).not.toThrow();
       expect(result.current.dockWidth).toBe(250);
-      expect(result.current.dockOnLeft).toBe(false);
+      // Both setters, not one: `noProviderValue` is a hand-written object rather than a
+      // generated one, so a field added to `PanelLayout` without a no-op to match is a
+      // component that renders fine under a provider and throws on its own.
+      expect(result.current.toolsSide).toBe('left');
+      expect(result.current.dockSide).toBe('right');
       expect(localStorage.getItem('panelLayout')).toBeNull();
     });
   });

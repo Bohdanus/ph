@@ -23,6 +23,7 @@ const layer: Layer = {
   blendMode: 'source-over',
   order: 0,
   pos: { x: 0, y: 0, width: 100, height: 80 },
+  presentationBounds: null,
   source: {
     kind: 'blank',
     color: '#ffffff',
@@ -180,7 +181,7 @@ const base = {
     activeLayerId: null,
   },
   history: [],
-  cursor: 0,
+  cursor: -1,
 } as unknown as DurableDocument;
 
 function decide(
@@ -239,14 +240,25 @@ type RepositionOperation = Extract<ToolOperation, { kind: 'reposition-layer' }>;
 
 /** A plan carrying only the given kind, borrowed from a retainable append. */
 function operationOfKind(kind: ToolOperation['kind']): DurableHistoryEntry {
-  return rewriteOperation(
-    { toolName: 'reposition', move: { x: 1, y: 2 } },
-    () =>
-      ({
+  let operation: ToolOperation;
+  switch (kind) {
+    case 'apply-filter':
+      operation = {
         kind,
         layerId: 'layer-1',
-      }) as ToolOperation
-  );
+        filter: { toolName: 'blur', version: 1, args: { toolName: 'blur', radius: 4 } },
+      };
+      break;
+    case 'apply-affine-transform':
+      operation = { kind, layerId: 'layer-1', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } };
+      break;
+    case 'reposition-layer':
+      operation = { kind, layerId: 'layer-1', move: { x: 1, y: 2 } };
+      break;
+    default:
+      throw new Error(`operationOfKind does not handle ${kind}`);
+  }
+  return rewriteOperation({ toolName: 'reposition', move: { x: 1, y: 2 } }, () => operation);
 }
 
 describe('decideDurableAppend: retained tool operations', () => {
@@ -272,6 +284,10 @@ describe('decideDurableAppend: retained tool operations', () => {
     expect(decision.outcome).toBe('published');
   });
 
+  it('publishes object arguments with own undefined fields using JSON omission semantics', () => {
+    expect(decide({ toolName: 'color', grayscale: 0.5, optional: undefined }).outcome).toBe('published');
+  });
+
   /**
    * The two copies of the affine rule — the boundary's independent re-derivation
    * here and `transformToolArgsToAffine` in the plan — pinned against each other.
@@ -282,6 +298,7 @@ describe('decideDurableAppend: retained tool operations', () => {
   it.each([
     { toolName: 'transform' as const },
     { toolName: 'transform' as const, rotate: 30 },
+    { toolName: 'transform' as const, rotate: 90 },
     { toolName: 'transform' as const, rotate: -22.5, skewX: 12 },
     { toolName: 'transform' as const, resizeX: 140, resizeY: 60 },
     { toolName: 'transform' as const, mirrorH: true },
@@ -451,6 +468,53 @@ describe('decideDurableAppend: a wrong retained tool operation is still refused'
     expect(reasonFor(args, rewriteNarrow<ProcessorOperation>(args, rewrite))).toBe(reason);
   });
 
+  it('refuses a supplied raster-processor plan with a sparse nested argument array', () => {
+    const args = { toolName: 'brush', color: '#123456', size: 4, lineDash: [4, 2] };
+    const planned = rewriteNarrow<ProcessorOperation>(args, (operation) => ({
+      ...operation,
+      args: { ...operation.args, lineDash: new Array(2) },
+    }));
+
+    expect(reasonFor(args, planned)).toBe('the durable processor arguments do not match the legacy entry');
+  });
+
+  it('refuses a sparse tool argument object shared by the legacy entry and supplied plan', () => {
+    const sparseArgs = { toolName: 'brush', color: '#123456', size: 4, lineDash: new Array(2) };
+    const sparseResult = planHistoryAppend({
+      item: { actionName: TOOL_ACTION, layerId: 'layer-1', args: sparseArgs },
+      timeline: { entries: [baseline], cursor: 0, branchRevision: 0 },
+      currentFrame: frame,
+      currentLayer: layer,
+      id: 'tool',
+    });
+    const densePlan = plan({ toolName: 'brush', color: '#123456', size: 4, lineDash: [4, 2] }).durableEntry;
+    if (!densePlan || densePlan.operation.kind !== 'apply-raster-processor') {
+      throw new Error('expected a dense raster-processor plan');
+    }
+    const sharedLegacyArgs = sparseResult.entry.args as ProcessorOperation['args'];
+    const planned: DurableHistoryEntry = {
+      ...densePlan,
+      operation: { ...densePlan.operation, args: sharedLegacyArgs },
+    };
+    if (planned.operation.kind !== 'apply-raster-processor') throw new Error('expected a processor operation');
+    expect(planned.operation.args).toBe(sparseResult.entry.args);
+
+    const decision = decideDurableAppend({
+      documentId: 'tool-append-doc',
+      base,
+      prior: { entries: [baseline], cursor: 0, branchRevision: 0 },
+      next: { entries: [baseline, sparseResult.entry], cursor: 1, branchRevision: 0 },
+      entry: sparseResult.entry,
+      planned,
+      documentRevision: 0,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable processor arguments do not match the legacy entry');
+    }
+  });
+
   it.each(REPOSITIONS)('refuses a reposition-layer %s', (_label, args, rewrite, reason) => {
     expect(reasonFor(args, rewriteNarrow<RepositionOperation>(args, rewrite))).toBe(reason);
   });
@@ -479,15 +543,34 @@ describe('decideDurableAppend: a wrong retained tool operation is still refused'
 
   it('accepts a raster-processor plan when its canonical legacy args match', () => {
     const args = { toolName: 'sponge', mode: 'desaturate', size: 4 };
-    const planned = rewriteNarrow<ProcessorOperation>({ toolName: 'transform', trapezoid: 20 }, () => ({
-      kind: 'apply-raster-processor',
-      layerId: 'layer-1',
-      processorId: 'sponge',
-      version: 1,
-      args,
-    }));
+    const planned = {
+      ...rewriteNarrow<ProcessorOperation>({ toolName: 'transform', trapezoid: 20 }, () => ({
+        kind: 'apply-raster-processor',
+        layerId: 'layer-1',
+        processorId: 'sponge',
+        version: 1,
+        args,
+      })),
+      provenance: { actionName: TOOL_ACTION, toolName: 'sponge' } as const,
+    };
 
     expect(decide(args, { planned }).outcome).toBe('published');
+  });
+
+  it('refuses a valid raster-processor operation whose provenance does not match the legacy entry', () => {
+    const args = { toolName: 'sponge', mode: 'desaturate', size: 4 };
+    const planned = {
+      ...rewriteNarrow<ProcessorOperation>({ toolName: 'transform', trapezoid: 20 }, () => ({
+        kind: 'apply-raster-processor',
+        layerId: 'layer-1',
+        processorId: 'sponge',
+        version: 1,
+        args,
+      })),
+      provenance: { actionName: TOOL_ACTION, toolName: 'transform' } as const,
+    };
+
+    expect(reasonFor(args, planned)).toBe('the durable history provenance does not match the legacy entry');
   });
 
   it('refuses a trapezoid whose legacy args also carry affine values', () => {

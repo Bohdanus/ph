@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createSelectionHistoryItem } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
+import { isValidLegacySelectionSnapshot } from '../selection-baseline.ts';
 import {
   convertLegacyHistorySafely,
   deriveSetSelectionEntry,
@@ -17,7 +18,7 @@ import {
 } from '../history-model.ts';
 import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
-import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 
 const layerId = 'layer-1';
@@ -30,7 +31,7 @@ function selectionState(id = 'sel'): SelectionSnapshot {
     selections: [
       {
         id,
-        points: [{ x: 1, y: 2 }],
+        points: [[{ x: 1, y: 2 }]],
         isActive: true,
         pos: { x: 1, y: 2, width: 3, height: 4 },
       } satisfies Selection,
@@ -50,6 +51,18 @@ const UNUSABLE_NEXT_STATES: readonly (readonly [string, unknown])[] = [
   ['a non-array selections value', { selections: { id: 'sel' }, activeSelectionId: 'sel' }],
   ['a string', 'selections'],
   ['a number', 7],
+  [
+    'an array with an extra own property',
+    (() => {
+      const selections = [...selectionState().selections];
+      Object.defineProperty(selections, 'audit', { enumerable: true, value: true });
+      return { selections, activeSelectionId: 'sel' };
+    })(),
+  ],
+  [
+    'array-shaped selection metadata',
+    { selections: [{ ...selectionState().selections[0], metadata: [] }], activeSelectionId: 'sel' },
+  ],
 ];
 
 function blankLayer(id = layerId) {
@@ -65,6 +78,7 @@ function blankLayer(id = layerId) {
     blendMode: 'source-over' as GlobalCompositeOperation,
     order: 0,
     pos: { x: 0, y: 0, width: 100, height: 80 },
+    presentationBounds: null,
     source: {
       kind: 'blank' as const,
       color: '#ffffff',
@@ -250,14 +264,25 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
 });
 
 describe('convertLegacyHistorySafely boundary (P0.1)', () => {
-  it('returns unavailable status with a diagnostic and null document for an unsupported tool entry', () => {
+  it('requires a document id before converting a legacy history array', () => {
+    const registry = new AssetRegistry();
+    const beginTransaction = vi.spyOn(registry, 'beginDocumentAssetTransaction');
+
+    expect(() => convertLegacyHistorySafely(baselineHistory(), { registry })).toThrow(
+      'documentId is required when converting a legacy history array'
+    );
+    expect(beginTransaction).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
+  it('returns partial status with a diagnostic and null document for an unsupported tool entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
@@ -268,7 +293,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     });
   });
 
-  it('returns unavailable status for an unknown processor entry', () => {
+  it('returns partial status for an unknown processor entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [
@@ -282,7 +307,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'unknown-tool',
@@ -292,7 +317,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     });
   });
 
-  it('returns unavailable status for non-finite transform values', () => {
+  it('returns partial status for non-finite transform values', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [
@@ -306,7 +331,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'nan-transform',
@@ -344,12 +369,21 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
           layerId: 'img-layer',
           args: { toolName: 'pen' },
         },
+        {
+          id: 'after-unsupported',
+          actionName: RENAME_LAYER_ACTION,
+          layerId: 'img-layer',
+          args: { name: 'Renamed after unsupported entry' },
+        },
       ],
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
+    // A rejected conversion must not expose a cursor map whose suffix was
+    // derived after the unsupported entry from stale fold state.
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
     expect(close).not.toHaveBeenCalled();
   });
 
@@ -360,7 +394,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
       registry
     );
-    expect(badResult.status).toBe('unavailable');
+    expect(badResult.status).toBe('partial');
     expect(badResult.document).toBeNull();
 
     const goodResult = convertSafely(
@@ -459,11 +493,14 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(reconcile).not.toHaveBeenCalled();
     const registeredIds = register.mock.results.map((call) => call.value as AssetId);
-    expect(registeredIds).toHaveLength(1);
+    expect(registeredIds).toHaveLength(2);
     expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
+    expect(registry.getRecord(registeredIds[1]!)).toBeDefined();
+    result.safePrefix?.release();
+    expect(registry.getRecord(registeredIds[1]!)).toBeUndefined();
     expect(close).not.toHaveBeenCalled();
   });
 });
@@ -578,7 +615,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     const registry = new AssetRegistry();
     const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
@@ -588,6 +625,21 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     });
   });
 
+  it('does not invoke an accessor-backed selection array entry during conversion', () => {
+    const registry = new AssetRegistry();
+    const selectionGetter = vi.fn(() => selectionState().selections[0]);
+    const selections = new Array(1);
+    Object.defineProperty(selections, '0', { configurable: true, enumerable: true, get: selectionGetter });
+    const next = { selections, activeSelectionId: 'sel' } as unknown as SelectionSnapshot;
+    const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics[0]?.message).toMatch(/unusable nextSelectionState/);
+    expect(selectionGetter).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
   it('names the offending entry id in the diagnostic message', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
@@ -595,7 +647,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.diagnostics[0]?.message).toContain('unreadable-selection');
   });
 
@@ -613,6 +665,17 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     const operation = result.document?.history[0]?.operation;
     expect(operation).toMatchObject({ kind: 'set-selection', after: { selections: [], activeSelectionId: null } });
     expect(operation?.kind === 'set-selection' && operation.before.selections[0]?.id).toBe('sel');
+  });
+
+  it('stays current for own undefined selection metadata', () => {
+    const registry = new AssetRegistry();
+    const selection = { ...selectionState().selections[0], metadata: undefined };
+    const next = { selections: [selection], activeSelectionId: 'sel' };
+    const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    expect(result.status).toBe('current');
+    expect(result.diagnostics).toEqual([]);
+    registry.shutdown();
   });
 
   it('separates an absent next state, which clears, from an unreadable one, which only reports', () => {
@@ -657,6 +720,7 @@ describe('deriveSetSelectionEntry', () => {
       id: 'selection-clear',
       schemaVersion: DURABLE_SCHEMA_VERSION,
       enabled: true,
+      provenance: { actionName: SELECTION_ACTION },
       operation: { kind: 'set-selection', before: previousSelection, after: nextSelection },
     });
   });
@@ -728,14 +792,15 @@ describe('deriveSetSelectionEntry', () => {
     expect(before?.selections[0]).not.toBe(previousSelection.selections[0]);
   });
 
-  it('normalizes a key-absent activeSelectionId to null', () => {
+  it('normalizes a key-absent activeSelectionId from its unique active selection', () => {
     const bare = { selections: selectionState('next').selections };
 
     const derived = deriveSetSelectionEntry(createSelectionHistoryItem(undefined, bare), currentSelection);
     const after = afterOf(derived);
 
-    expect(after?.activeSelectionId).toBeNull();
+    expect(after?.activeSelectionId).toBe('next');
     expect(after?.selections.map((selection) => selection.id)).toEqual(['next']);
+    expect(isValidLegacySelectionSnapshot(after)).toBe(true);
   });
 
   it('carries the disabled state of the legacy item', () => {

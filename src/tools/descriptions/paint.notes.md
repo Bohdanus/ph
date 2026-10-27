@@ -47,7 +47,7 @@ The Tool Preset Picker is first because Adobe places it by position and not by n
 
 **Mode is a layer property, not a stroke property.** The app seeds the created layer's `blendMode` from the tool args. That is a defensible simplification for a Normal-mode brush and a visible divergence for the other fifteen.
 
-**The blend-mode list was wrong in two ways, and both are the kind of error a count hides.** The old text said the Brush offers "the 27 layer blend modes plus Dissolve, Behind and Clear", which counts Dissolve twice — **Dissolve is one of the 27**, as Adobe's own `BlendMode` enum shows (`DISSOLVE` in the list at the UXP constants reference, alongside `PASSTHROUGH` and the 25 others). And the availability is not uniform across the family: **Behind is the Brush's alone**, documented as working "only in layers with Lock Transparency deselected" and as a Brush blend mode, while **Clear goes to "the Shape tools (when fill region is selected), Paint Bucket tool, Brush tool, Pencil tool, Fill command, and Stroke command"**. So the Brush's list is the 27 plus two, the Pencil's and the Paint Bucket's are the 27 plus `Clear`, and the Clone Stamp's is the 27 with neither. The Brush's total is 29, not "thirty-plus" — the old `appNotes` said "thirty-plus" and that has been corrected to 29.
+**The blend-mode list was wrong in two ways, and both are the kind of error a count hides.** The old text said the Brush offers "the 27 layer blend modes plus Dissolve, Behind and Clear", which counts Dissolve twice — **Dissolve is one of the 27**, as Adobe's own `BlendMode` enum shows (`DISSOLVE` in the list at the UXP constants reference, alongside `PASSTHROUGH` and the 26 others). And the availability is not uniform across the family: **Behind is the Brush's alone**, documented as working "only in layers with Lock Transparency deselected" and as a Brush blend mode, while **Clear goes to "the Shape tools (when fill region is selected), Paint Bucket tool, Brush tool, Pencil tool, Fill command, and Stroke command"**. So the Brush's list is the 27 plus two, the Pencil's and the Paint Bucket's are the 27 plus `Clear`, and the Clone Stamp's is the 27 with neither. The Brush's total is 29, not "thirty-plus" — the old `appNotes` said "thirty-plus" and that has been corrected to 29.
 
 **The Tool Preset Picker is a current control, and a removal claim here was wrong.** Photoshop's bar opens with a **Tool Preset Picker** at the far left, beside the tool icon, whose menu carries `New Tool Preset`, `Rename Tool Preset`, `Delete Tool Preset`, `Reset Tool` and `Reset All Tools`. An earlier pass recorded this control as gone, on the strength of one secondary source: clippingpathca.com (2025) says Tool Presets "had their own dropdown menu at the far left of the Options bar" in "Photoshop CS6 or early CC versions" and that they are "now found inside the Brush Settings or Presets interface." **That is refuted by Adobe's own current page**, last updated 2026-02-23, which states: "You can also select the Tool Presets dropdown menu next to the tool at the upper-left of the Options bar," with a Create New Tool Preset icon on it. Julieanne Kost's Adobe blog independently gives the same two access routes and the right-click `Reset Tool` / `Reset All Tools` items. A blog post is not a sufficient authority for an absence, and here it was not even right.
 
@@ -59,7 +59,7 @@ So the row is `missing` because the **app** does not render the control, not bec
 | Brush Preset Picker             | Tip thumbnail + chevron; popout with Size, Hardness, Angle/Roundness, settings gear, New Preset, tip grid                                                            | last used; Size 1–5000                         | `partial` | No tip asset to show; the app's settings-snapshot select sits in the same position and is its own addition                                                                            |
 | Toggle the Brush Settings panel | Opens Brush Tip Shape, Shape Dynamics, Scattering, Texture, Dual Brush, Color Dynamics, Transfer, Brush Pose, Noise, Wet Edges, Airbrush, Smoothing, Protect Texture | closed                                         | `missing` | No panel, no tip model, no RNG. Third from the left, not last — see the bar-order paragraph above                                                                                     |
 | Mode                            | Blend mode of the stroke                                                                                                                                             | Normal; 27 modes + Behind + Clear              | `partial` | 16 canvas operations (`PAINT_BLEND_MODES` in `src/tools/brush.ts`); applied to the created layer by `createLayerSource()` in `src/contexts/layer-utils.ts` not to the stroke's pixels |
-| Opacity                         | Per-stroke ceiling                                                                                                                                                   | 100%; 0–100                                    | `present` | `globalAlpha` on one `stroke()` over the whole path is exactly a per-stroke cap. The app seeds 90% — see below                                                                        |
+| Opacity                         | Per-stroke ceiling                                                                                                                                                   | 100%; 0–100                                    | `present` | `globalAlpha` on one `stroke()` over the whole path is exactly a per-stroke cap. The app seeds 100% — see below                                                                       |
 | Always Use Pressure for Opacity | Forces stylus pressure onto opacity                                                                                                                                  | off                                            | `missing` | No pointer-pressure pipeline                                                                                                                                                          |
 | Flow                            | Per-dab build-up                                                                                                                                                     | 100%; 0–100                                    | `missing` | No `flow` field in `settings.ts`, no control in the bar                                                                                                                               |
 | Airbrush                        | Keeps stamping while the pointer is still                                                                                                                            | off                                            | `missing` | Needs a dwell timer; a mouse-driven stroke ends at pointer-up                                                                                                                         |
@@ -77,7 +77,7 @@ So the row is `missing` because the **app** does not render the control, not bec
 
 **What matches.** One history state per stroke: the commit is the pointer-up (`handlePointerUp` in `src/components/Main/DrawToolArea.tsx`). Opacity as a per-stroke ceiling. Smoothing at Photoshop's own 10% default (`PAINT_SMOOTHING_DEFAULT` in `src/tools/brush.ts`).
 
-**What does not match, and is easy to miss: the app's default Opacity is 90, not 100.** The `brush` entry of `defaultSettings` in `src/tools/settings.ts` seeds the brush's `alpha: 0.9`, and its `pencil` entry does the same for the pencil, so a fresh document opens with the bar reading 90% where Photoshop's reads 100%. The control is still `present` and not `partial`: a wrong default is a default, not a divergence in what the control does, and the per-stroke-ceiling behaviour itself is exactly right. `ToolControl` — its `detail` field, in `src/tools/descriptions/types.ts` — requires the difference to be written down rather than left for a reader to discover, so the `Opacity` rows in `paint.ts` carry it in `detail` and both `appNotes` repeat it. The Brush's own three synthetic presets carry their own `alpha` values and overwrite the seed on selection, so 90% is what a user sees on open, not an invariant.
+**What does not match, and is easy to miss: the app's default Opacity is 100, not 90.** The `brush` entry of `defaultSettings` in `src/tools/settings.ts` seeds the brush's `alpha: 1`, and its `pencil` entry does the same for the pencil, so a fresh document opens with the bar reading 100% where Photoshop's reads 100%. The control is still `present` and not `partial`: a wrong default is a default, not a divergence in what the control does, and the per-stroke-ceiling behaviour itself is exactly right. `ToolControl` — its `detail` field, in `src/tools/descriptions/types.ts` — requires the difference to be written down rather than left for a reader to discover, so the `Opacity` rows in `paint.ts` carry it in `detail` and both `appNotes` repeat it. The Brush's own three synthetic presets carry their own `alpha` values and overwrite the seed on selection, so 100% is what a user sees on open, not an invariant.
 
 **The largest divergence is not on the bar.** A brush stroke is committed by `createLayerFromTool` — it creates a **new layer** rather than painting the active one. Photoshop's Brush paints into the active layer. Nothing in the options table shows this.
 
@@ -125,20 +125,20 @@ A Brush whose tip is always hard-edged. Adobe's own one-line distinction: "The B
 
 **Flow really is absent from this bar, and that is now double-sourced.** The previous citation was Ask Tim Grey alone ("The Pencil tool also lacks the Flow setting on the Options bar"). glensmith's Pencil page states it structurally — "The Brush tool has the Flow and Spray Paint options, which the Pencil tool does not have. The Pencil tool has Auto Erase which the Brush tool does not have" — which is the same fact from the other side and names Auto Erase as the Pencil's own compensation for it.
 
-| Photoshop control               | What it does                                                            | Default / range                 | App       | Why                                                                                                                     |
-| ------------------------------- | ----------------------------------------------------------------------- | ------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Tool Preset Picker              | Applies a saved options-bar state                                       | last used                       | `missing` | Nothing renders it; the app's settings-snapshot select is a separate control in the same position                       |
-| Brush Preset Picker             | Tip popout with Size, Hardness, Angle/Roundness, gear, New Preset, grid | last used; Size 1–5000          | `partial` | No tip asset; the app's settings-snapshot select sits in the same position                                              |
-| Toggle the Brush Settings panel | Opens the panel                                                         | closed                          | `missing` | No panel                                                                                                                |
-| Mode                            | Blend mode of the stroke                                                | Normal; 27 modes + Clear        | `partial` | 16 operations; layer property                                                                                           |
-| Opacity                         | Per-stroke ceiling                                                      | 100%; 0–100                     | `present` | Same single-pass alpha as the Brush; seeded at 90% (the `pencil` entry of `defaultSettings` in `src/tools/settings.ts`) |
-| Always Use Pressure for Opacity | Forces stylus pressure onto opacity                                     | off                             | `missing` | No pressure pipeline                                                                                                    |
-| Auto Erase                      | Paints background over foreground, decided at mouse-down                | off                             | `missing` | No background color in the tool state                                                                                   |
-| Smoothing                       | Amount of stroke smoothing                                              | 10%; 0–100                      | `partial` | Point-space filter, not a raw-input anchor                                                                              |
-| Smoothing Options               | Gear: four checkboxes                                                   | Catch-up on, Adjust for Zoom on | `missing` | No args fields                                                                                                          |
-| Brush Angle                     | Exact tip angle in degrees                                              | not stated                      | `missing` | Single current source for this bar                                                                                      |
-| Always Use Pressure for Size    | Forces stylus pressure onto tip size                                    | on for Hard-Round class         | `missing` | No pressure pipeline                                                                                                    |
-| Symmetry                        | Butterfly: 10 modes                                                     | off                             | `missing` | Brush, Pencil and Eraser only in Photoshop; nothing here                                                                |
+| Photoshop control               | What it does                                                            | Default / range                 | App       | Why                                                                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------- | ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Tool Preset Picker              | Applies a saved options-bar state                                       | last used                       | `missing` | Nothing renders it; the app's settings-snapshot select is a separate control in the same position                        |
+| Brush Preset Picker             | Tip popout with Size, Hardness, Angle/Roundness, gear, New Preset, grid | last used; Size 1–5000          | `partial` | No tip asset; the app's settings-snapshot select sits in the same position                                               |
+| Toggle the Brush Settings panel | Opens the panel                                                         | closed                          | `missing` | No panel                                                                                                                 |
+| Mode                            | Blend mode of the stroke                                                | Normal; 27 modes + Clear        | `partial` | 16 operations; layer property                                                                                            |
+| Opacity                         | Per-stroke ceiling                                                      | 100%; 0–100                     | `present` | Same single-pass alpha as the Brush; seeded at 100% (the `pencil` entry of `defaultSettings` in `src/tools/settings.ts`) |
+| Always Use Pressure for Opacity | Forces stylus pressure onto opacity                                     | off                             | `missing` | No pressure pipeline                                                                                                     |
+| Auto Erase                      | Paints background over foreground, decided at mouse-down                | off                             | `missing` | No background color in the tool state                                                                                    |
+| Smoothing                       | Amount of stroke smoothing                                              | 10%; 0–100                      | `partial` | Point-space filter, not a raw-input anchor                                                                               |
+| Smoothing Options               | Gear: four checkboxes                                                   | Catch-up on, Adjust for Zoom on | `missing` | No args fields                                                                                                           |
+| Brush Angle                     | Exact tip angle in degrees                                              | not stated                      | `missing` | Single current source for this bar                                                                                       |
+| Always Use Pressure for Size    | Forces stylus pressure onto tip size                                    | on for Hard-Round class         | `missing` | No pressure pipeline                                                                                                     |
+| Symmetry                        | Butterfly: 10 modes                                                     | off                             | `missing` | Brush, Pencil and Eraser only in Photoshop; nothing here                                                                 |
 
 **Flow is absent from the Pencil's bar entirely** — not listed above because Adobe's current Pencil bar does not carry it, which is now stated twice over (see the bar-order paragraph above). That is a Photoshop fact the app happens to match, and the one place the app is not behind.
 
@@ -466,6 +466,48 @@ What survives is the narrower, verified fact that was already in the third versi
 - <https://graphicdesign.stackexchange.com/questions/21866/why-does-the-clone-stamp-tool-seem-to-be-misaligned>
 
 ---
+
+## Spot Healing Brush Tool
+
+Adobe documents Spot Healing as a click-or-drag retouch tool with Content-Aware,
+Proximity Match and Create Texture modes, plus Diffusion and Sample All Layers
+controls. Adobe does not publish the Content-Aware or Create Texture algorithm,
+so this app implements only a deterministic Proximity Match approximation: each
+brush dab samples an outward ring from the active layer and blends that local
+texture through the configured size, hardness and opacity. The processor is a
+replayable `raster-processor` action, and one stroke creates one history item.
+
+The current MVP deliberately omits Content-Aware, Create Texture, Diffusion,
+Sample All Layers, pressure-driven size and blend-mode selection. Those controls
+remain `missing` in `paint.ts` rather than appearing as dead options. Photoshop's
+J shortcut is represented by the app's Spot Healing selection; the other J-family
+retouch tools are not yet registered for cycling.
+
+Sources:
+
+- <https://www.adobe.com/products/photoshop/spot-heal.html>
+- <https://helpx.adobe.com/photoshop/web/edit-images/retouch/remove-spots.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+
+## Healing Brush Tool
+
+Adobe distinguishes the Healing Brush from Spot Healing by its manual
+Alt/Option-click source. This implementation samples a source point, carries the
+source offset across the stroke when Aligned is on, and adjusts the sampled RGB
+texture toward the destination luminance before compositing it through the tip.
+That is a deterministic approximation, not a claim to Adobe’s private
+Poisson-blending implementation.
+
+Pattern source, Sample Current & Below / All Layers, Ignore Adjustment Layers,
+Diffusion, pressure-driven size, blend-mode selection, cross-document sampling
+and selection clipping remain deferred. They are recorded as missing controls in
+`paint.ts` rather than exposed as inert options.
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
 
 ## Unverified
 

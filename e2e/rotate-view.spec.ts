@@ -26,7 +26,7 @@ import { fillSaveDialog, openSaveDialog, submitSaveDialogForDownload, type Expor
  * a view that tilts without the number moving is the failure the snapshot test caught in jsdom.
  */
 
-/** Read the view transform off `.zoom-container`, the element `useViewTransform` writes to. */
+/** Read the transient view transform off the rendered `.zoom-container`. */
 async function viewTransform(page: Page): Promise<string> {
   return page.locator('.zoom-container').evaluate((node) => (node as HTMLElement).style.transform);
 }
@@ -97,12 +97,15 @@ test.describe('Rotate View', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await openDocument(page);
+    await ensureOwnRailTile(page, 'hand');
 
     // Adobe's own page prints `R` beside the tool, so this letter is Adobe-table confirmed rather
     // than inherited from a shortcut sheet the way several others in this app are.
     await page.keyboard.press('r');
 
-    await expectToolSelected(page, 'rotate-view');
+    // Rotate View shares Hand's visible rail tile. The options bar identifies the nested tool;
+    // the tile itself exposes selection only at group level.
+    await expectToolSelected(page, 'hand');
     // And its options bar is the rotate one, not a leftover from the tool it replaced.
     await expect(page.getByTestId('rotate-view-reset')).toBeVisible();
     await expect(page.getByTestId('rotate-view-angle')).toBeVisible();
@@ -112,14 +115,17 @@ test.describe('Rotate View', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await openDocument(page);
+    await ensureOwnRailTile(page, 'hand');
     await page.keyboard.press('r');
-    await expectToolSelected(page, 'rotate-view');
+    await expectToolSelected(page, 'hand');
+    await expect(page.getByTestId('rotate-view-angle')).toBeVisible();
 
     await page.keyboard.press('Shift+H');
 
     // The mitigation for the cost of a flyout: a plain click on the shared tile opens the menu
     // rather than selecting the Hand, so `Shift+H` is the keyboard way across.
     await expectToolSelected(page, 'hand');
+    await expect(page.getByTestId('hand-zoom-level')).toBeVisible();
   });
 
   test('a drag tilts the view and the angle field follows it', async ({ page }) => {
@@ -261,7 +267,9 @@ test.describe('Rotate View', () => {
     expect(upright.byteLength).toBeGreaterThan(0);
 
     // Tilt it hard, well past anything a snap would land on.
-    await clickToolButton(page, 'rotate-view');
+    await ensureOwnRailTile(page, 'hand');
+    await page.getByTestId('tool-button-hand').click();
+    await page.keyboard.press('r');
     await page.getByTestId('rotate-view-angle').fill('38');
     await expect.poll(async () => rotationOf(await viewTransform(page))).toBeCloseTo(38, 0);
 

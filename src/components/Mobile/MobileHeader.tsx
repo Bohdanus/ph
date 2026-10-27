@@ -69,6 +69,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
       flushSync(() => {
         exportLayers = commitDirtyTool();
       });
+      if (exportLayers === null) return;
       const data = await openSaveImageDialog({
         fileName,
         layers: exportLayers,

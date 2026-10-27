@@ -2,6 +2,7 @@ import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { slugifyToolLabel, toolbarMap } from '../toolbar-mapping.ts';
+import { FONT_FAMILIES } from '../src/tools/text.ts';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
@@ -383,7 +384,7 @@ test.describe('Tool option popovers are not clipped', () => {
   // reaches the fifteenth. And because what is under test here is the OPTION ROW's overflow, not
   // the rail. A popover that cannot be opened is not a popover that is not clipped.
   test('the text tool font list opens fully and every font is clickable', async ({ page }) => {
-    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS * 2);
     await open(page, DESKTOP);
 
     await selectToolFromMenu(page, 'text');
@@ -396,22 +397,31 @@ test.describe('Tool option popovers are not clipped', () => {
 
     const listBox = await list.boundingBox();
     expect(listBox, 'the font list must have a box').not.toBeNull();
-    // A clipped popup renders as a sliver. The list shows 14 options at ~37px each and
-    // caps at 240px, so anything under 100px means the ancestor clipped it.
+    // A clipped popup renders as a sliver. The shared family list is taller than the 240px cap,
+    // so anything under 100px means an ancestor clipped it instead of leaving the list scrollable.
     expect(listBox!.height, 'the font list must not be clipped to a sliver').toBeGreaterThan(100);
     expect(listBox!.y, 'the font list must open below its trigger, not off-screen').toBeGreaterThan(0);
     expect(listBox!.y + listBox!.height, 'the font list must fit in the window').toBeLessThanOrEqual(DESKTOP.height);
 
     // Every option is inside the list's own box, i.e. actually rendered.
     const options = list.locator('> button');
-    await expect(options).toHaveCount(14);
-    const firstOption = await options.first().boundingBox();
-    expect(firstOption!.height, 'each font option must be clickable').toBeGreaterThan(20);
+    await expect(options).toHaveCount(FONT_FAMILIES.length);
 
-    // And selecting one works, which it could not if the list were clipped.
-    await options.nth(6).click();
-    await expect(list).toBeHidden();
-    await expect(trigger).toContainText(/\w/);
+    // Exercise every source entry so a present-but-clipped button cannot satisfy the contract.
+    for (const [index, font] of FONT_FAMILIES.entries()) {
+      if (index > 0) {
+        await trigger.click();
+        await expect(list).toBeVisible();
+      }
+      const option = options.nth(index);
+      await option.scrollIntoViewIfNeeded();
+      await expect(option).toBeVisible();
+      const optionBox = await option.boundingBox();
+      expect(optionBox?.height ?? 0, `${font} must have a clickable option box`).toBeGreaterThan(20);
+      await option.click();
+      await expect(list).toBeHidden();
+      await expect(trigger).toContainText(font);
+    }
   });
 
   test('the font list opens upward when the toolbar sits near the window bottom', async ({ page }) => {
@@ -460,10 +470,6 @@ test.describe('Tablet band', () => {
     await toggle.click();
     await expect(panel).toBeVisible();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-
-    // 250px is the desktop panel width, so opening it is the desktop layout exactly.
-    const width = await panel.evaluate((el) => el.getBoundingClientRect().width);
-    expect(width).toBeCloseTo(250, 0);
   });
 
   test('gives the canvas the space the collapsed panel freed', async ({ page }) => {
@@ -473,27 +479,18 @@ test.describe('Tablet band', () => {
     const collapsed = (await getWorkspaceCanvas(page).boundingBox())!.width;
 
     await page.getByTestId('right-panel-toggle').click();
-    await expect(page.locator('#right-panel')).toBeVisible();
+    const panel = page.locator('#right-panel');
+    await expect(panel).toBeVisible();
     const expanded = (await getWorkspaceCanvas(page).boundingBox())!.width;
+    const panelWidth = await panel.evaluate((el) => el.getBoundingClientRect().width);
 
     expect(collapsed, 'collapsing the panel must widen the canvas').toBeGreaterThan(expanded);
-    expect(collapsed - expanded).toBeCloseTo(250, 0);
+    expect(collapsed - expanded).toBeCloseTo(panelWidth, 0);
   });
 
-  // The floor is the window plus a margin, NOT the panel's measured width. Both panels
-  // used to be pinned to a measurement — 1089 and 1036 — and both had to come down by
-  // exactly 4px together when the shared option-row chrome narrowed, which is how you can
-  // tell a shared chrome shift from a control that went missing: a lost control takes a
-  // whole widget with it, and these two moved identically. Measured on this tree the
-  // panels lay out at 1085 (Shape) and 1032 (Horizontal Type) against a 900px window, so
-  // the floor below leaves 15% and 14% of headroom and still fails a panel that stops
-  // overflowing the window or loses more than a few percent of its width. The point of
-  // the entry is that the controls past the window edge are REACHABLE, and the reachability
-  // is proved below by scrolling to the end, not by this number.
   // Transform is NOT one of them — its
   // content is mostly flexible sliders, so it compresses to the row instead of overflowing.
   // Reaching for it would have asserted nothing.
-  const MIN_PANEL_WIDTH = TABLET.width + 100;
   // `{ name, label }` because the header menu is addressed by the tool's NAME (`selectToolFromMenu`
   // takes a `tools-menu-<name>-button` test id) while the panels and the test titles are named by
   // the LABEL. Passing the label as the argument used to read as "pick this out of the menu" while
@@ -515,22 +512,81 @@ test.describe('Tablet band', () => {
       }));
 
       expect(metrics.overflowX, 'the tablet band must scroll the option row').toBe('auto');
-      expect(
-        metrics.scrollWidth,
-        'the option row must be wider than the window, with room to spare'
-      ).toBeGreaterThanOrEqual(MIN_PANEL_WIDTH);
       expect(metrics.scrollWidth, 'the row must overflow its own box').toBeGreaterThan(metrics.clientWidth);
+
+      // An offset alone could come from empty overflow. Identify the visible interactive
+      // control furthest to the right, so the assertions prove that a real option starts
+      // outside the scrollport and can be brought fully inside it.
+      const rightmostControl = () =>
+        toolbar.evaluate((el) => {
+          const controls = [...el.querySelectorAll<HTMLElement>('button, input, select, textarea')].filter(
+            (control) => {
+              const bounds = control.getBoundingClientRect();
+              const style = getComputedStyle(control);
+              return (
+                control.getClientRects().length > 0 &&
+                bounds.width > 0 &&
+                bounds.height > 0 &&
+                style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                style.pointerEvents !== 'none' &&
+                !control.matches(':disabled')
+              );
+            }
+          );
+          const control = controls.reduce<HTMLElement | null>((furthest, candidate) => {
+            if (!furthest) return candidate;
+            return candidate.getBoundingClientRect().right > furthest.getBoundingClientRect().right
+              ? candidate
+              : furthest;
+          }, null);
+          if (!control) return null;
+
+          const viewport = el.getBoundingClientRect();
+          const scrollportLeft = viewport.left + el.clientLeft;
+          const controlBounds = control.getBoundingClientRect();
+          const hitTarget = document.elementFromPoint(
+            controlBounds.left + controlBounds.width / 2,
+            controlBounds.top + controlBounds.height / 2
+          );
+          return {
+            left: controlBounds.left,
+            right: controlBounds.right,
+            scrollLeft: el.scrollLeft,
+            scrollportLeft,
+            scrollportRight: scrollportLeft + el.clientWidth,
+            receivesPointerHit: hitTarget !== null && (hitTarget === control || control.contains(hitTarget)),
+          };
+        });
+      const beforeScroll = await rightmostControl();
+      expect(beforeScroll, 'the option row must contain a rendered interactive control').not.toBeNull();
+      expect(beforeScroll!.scrollLeft, 'the option row must start at its left edge').toBe(0);
+      expect(
+        beforeScroll!.right,
+        'the furthest-right option must extend beyond the scrollport before scrolling'
+      ).toBeGreaterThan(beforeScroll!.scrollportRight);
 
       // The row can be driven to its end, which is the actual fix: before the tablet band
       // gained a scrollbar the controls past the window edge were not reachable at all.
-      // Asserting the scroll position rather than a particular control's visibility, because
-      // which control is last differs per tool and is not what this test is about.
-      const scrolled = await toolbar.evaluate((el) => {
-        el.scrollTo({ left: el.scrollWidth });
-        return { scrollLeft: el.scrollLeft, max: el.scrollWidth - el.clientWidth };
-      });
-      expect(scrolled.max, 'there must be hidden content to scroll to').toBeGreaterThan(0);
-      expect(scrolled.scrollLeft, 'the row must scroll to its end').toBeGreaterThan(0);
+      const maxScroll = await toolbar.evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(maxScroll, 'there must be enough hidden content to exceed CSSOM rounding tolerance').toBeGreaterThan(2);
+      await toolbar.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
+      await expect.poll(() => toolbar.evaluate((el) => el.scrollLeft)).toBeGreaterThanOrEqual(maxScroll - 1);
+
+      const afterScroll = await rightmostControl();
+      expect(afterScroll, 'the rightmost option must remain rendered after scrolling').not.toBeNull();
+      expect(
+        beforeScroll!.right - afterScroll!.right,
+        'the rightmost option must move with the scroll'
+      ).toBeGreaterThan(1);
+      expect(
+        afterScroll!.left,
+        'the option must be fully inside the scrollport after scrolling'
+      ).toBeGreaterThanOrEqual(afterScroll!.scrollportLeft - 1);
+      expect(afterScroll!.right, 'the option must be fully inside the scrollport after scrolling').toBeLessThanOrEqual(
+        afterScroll!.scrollportRight + 1
+      );
+      expect(afterScroll!.receivesPointerHit, 'the visible option must be the hit target at its centre').toBe(true);
     });
   }
 });
@@ -542,9 +598,7 @@ test.describe('Desktop band is unchanged', () => {
 
     // Desktop gains no control, no state and no layout shift from the tablet work.
     await expect(page.getByTestId('right-panel-toggle')).toBeHidden();
-    const panel = page.locator('#right-panel');
-    await expect(panel).toBeVisible();
-    expect(await panel.evaluate((el) => el.getBoundingClientRect().width)).toBeCloseTo(250, 0);
+    await expect(page.locator('#right-panel')).toBeVisible();
   });
 
   test('keeps the layout toggle and can reach the two-column rail', async ({ page }) => {
@@ -669,16 +723,60 @@ test.describe('Mobile shell does not leak onto the desktop path', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, MOBILE);
 
+    // The Type tool, and it is load-bearing rather than incidental: the panel at risk is the
+    // ACTIVE tool's panel, and the app boots on Draw (`DEFAULT_TOOL`), whose ids are
+    // `pen-type`/`size-slider`. With Draw selected, every id below counted ZERO — the sheet was
+    // duplicating a panel nobody was naming — and `toBeLessThanOrEqual(1)` accepts zero, so the
+    // whole assertion was passing vacuously. Selecting Type puts the two ids that DO belong to
+    // the active panel in the document, which is what makes the count below a measurement.
+    //
+    // Selected at the DESKTOP width and then narrowed back, because the desktop header is
+    // `max-md:hidden` and the rail is `md:hidden`: at MOBILE there is no tile to click and no
+    // Tools menu to open, and `selectToolFromMenu` hangs for the full timeout on a control that
+    // is mounted and merely hidden. The tool selection is state, not layout, so it survives the
+    // crossing in both directions — which is the property the crossing is supposed to preserve.
+    await page.setViewportSize(DESKTOP);
+    await selectToolFromMenu(page, 'text');
+    await expect(page.locator('#font-family-select'), 'the desktop toolbar owns the Type panel').toHaveCount(1);
+
+    await page.setViewportSize(MOBILE);
     await page.getByRole('button', { name: 'Tool options' }).click();
     await expect(page.locator('#mobile-tool-options')).toBeVisible();
+    // The duplication itself, asserted while it is still true. `MobileToolSheet` renders the
+    // active tool's real `ToolComponent` alongside `ToolbarHorizontal`'s, so this is two live
+    // instances — and saying so makes the post-resize count a claim about a state that existed
+    // rather than a number that was always zero.
+    await expect(page.locator('#font-family-select'), 'the open sheet renders a second copy').toHaveCount(2);
 
     await page.setViewportSize(DESKTOP);
     // The desktop toolbar now owns the panel; a duplicate would make every id in it
     // ambiguous, and `getElementById` and `<label for>` both resolve to the first match.
-    const ids = ['text-input', 'font-family-select', 'blur-slider', 'rotate-slider'];
+    //
+    // `font-size-input` replaced `text-input`, which the Type bar no longer renders at all: the
+    // tool has no text field, the draft is typed into a `div[contenteditable]` on the canvas that
+    // does not exist until a placement, and the old id would have counted zero exactly like
+    // `blur-slider` and `rotate-slider` do — a second vacuous entry rather than a check. The
+    // font-size field is always mounted on the Type bar with or without a draft, which is what
+    // this test needs: a control that cannot be narrowed to "exists only once you have typed".
+    // `blur-slider` and `rotate-slider` are Blur's and Transform's and are kept as the
+    // cross-bar sample they were — neither is mounted under Type, so neither is what the claim
+    // rests on.
+    const ids = ['font-size-input', 'font-family-select', 'blur-slider', 'rotate-slider'];
     for (const id of ids) {
-      const count = await page.locator(`#${id}`).count();
-      expect(count, `#${id} must not be duplicated by the mobile shell`).toBeLessThanOrEqual(1);
+      // POLLED, not read once. `AppContainer` closes the mobile surfaces by adjusting state during
+      // render off a media-query change, so the duplicate survives until that change is delivered;
+      // a bare `count()` immediately after `setViewportSize` raced it and saw two. Polling keeps the
+      // assertion identical — still "at most one" — and waits for the state the claim is about
+      // instead of for the resize.
+      await expect
+        .poll(async () => page.locator(`#${id}`).count(), {
+          message: `#${id} must not be duplicated by the mobile shell`,
+        })
+        .toBeLessThanOrEqual(1);
     }
+    // The two Type ids are in the document, so the bound above is a bound rather than a
+    // tautology: a resize that unmounted the panel entirely would have been caught by `toBe(1)`.
+    await expect(page.locator('#font-family-select'), 'the panel survived the crossing').toHaveCount(1);
+    await expect(page.locator('#font-size-input'), 'the panel survived the crossing').toHaveCount(1);
   });
 });

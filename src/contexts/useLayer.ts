@@ -3,14 +3,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type { BitmapSource } from './general-types.ts';
 import { useSetToolArgs } from './set-tool-args.ts';
-import type {
-  BlankLayerSource,
-  ImageLayerSource,
-  Layer,
-  LayerId,
-  LayerOperationArgs,
-  LayersRecord,
-  ToolLayerSource,
+import {
+  isLayerBlendMode,
+  type BlankLayerSource,
+  type ImageLayerSource,
+  type Layer,
+  type LayerId,
+  type LayerOperationArgs,
+  type LayersRecord,
+  type ToolLayerSource,
 } from './layer-types.ts';
 import {
   createLayerOperation,
@@ -19,6 +20,9 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
+import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
+import { assertWithinDocumentPixelBudget } from './raster-utils.ts';
+
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
   type CreatorToolParams,
@@ -29,26 +33,43 @@ import {
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import { calculateNewRect, reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
+import { isTextToolArgs } from '../util/typeGuards.ts';
+import { isValidTextLayerGeometry } from './text-layer-edit.ts';
+import { selectionPointPathsToContours } from '../util/selection.ts';
 import {
   type ActionType,
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
   REPLACE_LAYER_SOURCE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
-import type { TextToolArgs } from '../tools/text.ts';
+import { clearTextDraftArgs, type TextToolArgs } from '../tools/text.ts';
+import { canvasRectToLocal } from '../util/rect.ts';
+import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
+import type { EraserToolArgs } from '../tools/eraser.ts';
+import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
+import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { planHistoryAppend } from './history-append.ts';
 import { derivedLayerPropertyPatch, isSetLayerPropertiesAction } from './history-adapter.ts';
 import type { LayerPresentationRequest } from './layer-presentation.ts';
-import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
+import {
+  drawEvaluatedPresentation,
+  evaluatePresentation,
+  operationsRetainedAfterBake,
+  stageProcessorInputForTool,
+} from './presentation-evaluator.ts';
 import {
   canvasRectToDocumentFrame,
   canvasToDocumentPos,
@@ -58,10 +79,14 @@ import {
   isValidDocumentFrame,
 } from './document-frame.ts';
 import {
+  documentAffineToLayerLocal,
   isIdentityAffineTransform,
   isTrapezoidOnlyTransform,
   normalizeTransformHistoryArgs,
+  rotationAffineAroundPoint,
+  rasterizeBounds,
   transformToolArgsToAffine,
+  validateAffineTransform,
 } from './affine-transform.ts';
 
 export type LayerEditParams = {
@@ -69,11 +94,180 @@ export type LayerEditParams = {
   toolArgs: ToolArgs;
 };
 
+function createPresentationCanvas(width: number, height: number): OffscreenCanvas | HTMLCanvasElement {
+  const safeWidth = Math.max(1, Math.ceil(width));
+  const safeHeight = Math.max(1, Math.ceil(height));
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(safeWidth, safeHeight);
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = safeWidth;
+    canvas.height = safeHeight;
+    return canvas;
+  }
+  throw new Error('No canvas implementation is available for a document transform');
+}
+
+function transformLayerForDocument(
+  layer: Layer,
+  transform: ReturnType<typeof rotationAffineAroundPoint>,
+  operationId: string
+): Layer {
+  const layerTransform = validateAffineTransform(documentAffineToLayerLocal(transform, layer.pos), {
+    width: layer.pos.width,
+    height: layer.pos.height,
+  });
+  const operations = [...layer.operations, createAffineLayerOperation(layerTransform, operationId)];
+  if (!layer.tmpCanvas) {
+    return { ...layer, operations, tmpCanvas: null, presentationBounds: null };
+  }
+
+  const position = layer.presentationBounds ?? layer.pos;
+  const sourceSize = { width: layer.tmpCanvas.width, height: layer.tmpCanvas.height };
+  const cacheTransform = validateAffineTransform(documentAffineToLayerLocal(transform, position), sourceSize);
+  const evaluation = evaluatePresentation({
+    position,
+    sourceSize,
+    operations: [createAffineLayerOperation(cacheTransform, operationId)],
+  });
+  const rasterSize = rasterizeBounds(evaluation.localBounds);
+  const canvas = createPresentationCanvas(rasterSize.width, rasterSize.height);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Unable to create a canvas context for a document transform');
+  drawEvaluatedPresentation(context, layer.tmpCanvas, evaluation, { kind: 'bounds' });
+  return { ...layer, operations, tmpCanvas: canvas, presentationBounds: evaluation.bounds };
+}
+
 type EditableToolLayerSource = {
   kind: 'tool';
   args: ToolArgs;
   pos: Layer['pos'];
   isBedrock?: false;
+};
+
+/**
+ * Extend only a stroked draw path or block-stamp path from the previous preview.
+ *
+ * A stroked segment needs the previous endpoint as its first point to stay connected;
+ * a block stamp deposits an independent square at each point, so re-stamping the shared
+ * endpoint would double-deposit it. Stroked paths therefore keep the shared endpoint
+ * in the delta, while block-stamp paths return only the newly added points.
+ *
+ * A spray stroke keeps the full-raster fallback: each point carries a time-tagged dab
+ * and the delta contract does not generalise to it.
+ */
+export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: ToolArgs): DrawToolArgs | null => {
+  if (toolArgs.toolName !== 'draw' || !previousToolArgs || previousToolArgs.toolName !== 'draw') return null;
+
+  const drawArgs = toolArgs as DrawToolArgs;
+  const previousDrawArgs = previousToolArgs as DrawToolArgs;
+  if (drawArgs.penType === 'spray') return null;
+  if (previousDrawArgs.penType !== drawArgs.penType || previousDrawArgs.blockStamp !== drawArgs.blockStamp) return null;
+
+  const currentPoints = drawArgs.points;
+  const previousPoints = previousDrawArgs.points;
+  if (
+    !currentPoints ||
+    !previousPoints ||
+    previousPoints.length === 0 ||
+    currentPoints.length <= previousPoints.length
+  ) {
+    return null;
+  }
+  if (
+    !previousPoints.every((point, index) => point.x === currentPoints[index]?.x && point.y === currentPoints[index]?.y)
+  ) {
+    return null;
+  }
+
+  // Block stamps deposit an independent square at every point, so re-stamping the shared
+  // endpoint would double-deposit it: return only the newly added points. A stroked segment
+  // needs the previous endpoint as its first point to remain connected.
+  const deltaStart = drawArgs.blockStamp ? previousPoints.length : previousPoints.length - 1;
+  return { ...drawArgs, points: currentPoints.slice(deltaStart) };
+};
+
+/**
+ * Extend only an eraser brush-mode stroke from the previous preview.
+ *
+ * Incremental is allowed ONLY when:
+ * - Both current and previous are eraser brush-mode (not pencil, not block)
+ * - All raster-affecting settings are identical (lineWidth, alpha, hardness, spacing, color)
+ * - Previous points are an exact prefix of current points
+ * The shared endpoint is preserved so brush spacing/falloff remains continuous.
+ * Any mismatch falls back to full processing.
+ */
+export const getIncrementalEraserArgs = (toolArgs: ToolArgs, previousToolArgs?: ToolArgs): EraserToolArgs | null => {
+  if (toolArgs.toolName !== 'eraser' || !previousToolArgs || previousToolArgs.toolName !== 'eraser') return null;
+
+  const current = toolArgs as EraserToolArgs;
+  const previous = previousToolArgs as EraserToolArgs;
+
+  // Only brush mode supports incremental
+  if (current.mode !== 'brush' || previous.mode !== 'brush') return null;
+
+  // All raster-affecting settings must be identical
+  if (
+    current.lineWidth !== previous.lineWidth ||
+    current.alpha !== previous.alpha ||
+    current.hardness !== previous.hardness ||
+    current.spacing !== previous.spacing ||
+    current.color !== previous.color
+  ) {
+    return null;
+  }
+
+  const currentSelection = current.selection;
+  const previousSelection = previous.selection;
+  if ((currentSelection === undefined) !== (previousSelection === undefined)) return null;
+  if (currentSelection && previousSelection) {
+    const currentContours = selectionPointPathsToContours(currentSelection.points);
+    const previousContours = selectionPointPathsToContours(previousSelection.points);
+    const currentMask = currentSelection.rasterMask;
+    const previousMask = previousSelection.rasterMask;
+    if (
+      currentSelection.featherRadius !== previousSelection.featherRadius ||
+      currentSelection.antiAlias !== previousSelection.antiAlias ||
+      (currentMask === undefined) !== (previousMask === undefined) ||
+      (currentMask !== undefined &&
+        previousMask !== undefined &&
+        (currentMask.x !== previousMask.x ||
+          currentMask.y !== previousMask.y ||
+          currentMask.width !== previousMask.width ||
+          currentMask.height !== previousMask.height ||
+          currentMask.data !== previousMask.data)) ||
+      currentContours.length !== previousContours.length ||
+      !currentContours.every(
+        (contour, contourIndex) =>
+          contour.length === previousContours[contourIndex]?.length &&
+          contour.every(
+            (point, pointIndex) =>
+              point.x === previousContours[contourIndex]?.[pointIndex]?.x &&
+              point.y === previousContours[contourIndex]?.[pointIndex]?.y
+          )
+      )
+    ) {
+      return null;
+    }
+  }
+
+  const currentPoints = current.points;
+  const previousPoints = previous.points;
+  if (
+    !currentPoints ||
+    !previousPoints ||
+    previousPoints.length === 0 ||
+    currentPoints.length <= previousPoints.length
+  ) {
+    return null;
+  }
+  if (
+    !previousPoints.every((point, index) => point.x === currentPoints[index]?.x && point.y === currentPoints[index]?.y)
+  ) {
+    return null;
+  }
+
+  // Preserve the shared endpoint (previousPoints.length - 1) so spacing/falloff is continuous
+  return { ...current, points: currentPoints.slice(previousPoints.length - 1) };
 };
 
 function isTransformArgs(args: ToolArgs): args is TransformToolArgs {
@@ -113,17 +307,95 @@ function canvasFilterRefusal(candidateToolName: ToolName): Error | null {
 /**
  * Whether a layer's own protection forbids a tool writing to it.
  *
- * `src/util/psd-utils.ts:160` reads the flag off an imported PSD and `:267-268` writes it back
- * out as composite + position protection, so `locked` is exactly "this layer's PIXELS and POSITION
- * may not change" — every `commit` kind the processors declare, which is why the check belongs
- * above them all rather than in the raster branch alone. Nothing consulted it: `psd-utils.ts` is
- * the only place that ever sets it true, every other construction path writes `false`, and no
- * panel renders a lock control, so a layer a PSD protected was freely overwritten by every tool.
+ * PSD import maps protection flags to `locked` and export maps it back to composite + position
+ * protection. Tool and layer-property mutation entry points consult this predicate so they share
+ * one lock policy.
  *
  * `=== true` rather than a truthiness test, so a future flag-shaped value is a compile error
  * rather than a layer that silently locks itself.
  */
 const isLayerLocked = (layer: Layer): boolean => layer.locked === true;
+
+/**
+ * Returns the appended Dodge/Burn args only when tool name, exposure, range, size, hardness, and
+ * the exact point prefix are unchanged. The shared endpoint is preserved to maintain continuity.
+ */
+function getIncrementalDodgeBurnArgs(prevArgs: ToolArgs | undefined, currArgs: ToolArgs): DodgeBurnToolArgs | null {
+  if (!prevArgs || prevArgs.toolName !== currArgs.toolName) return null;
+  if (!isDodgeBurnToolArgs(prevArgs) || !isDodgeBurnToolArgs(currArgs)) return null;
+
+  const prev = prevArgs as DodgeBurnToolArgs;
+  const curr = currArgs as DodgeBurnToolArgs;
+
+  if (prev.exposure !== curr.exposure) return null;
+  if (prev.range !== curr.range) return null;
+  if (prev.size !== curr.size) return null;
+  if (prev.hardness !== curr.hardness) return null;
+
+  const prevPoints = prev.points;
+  const currPoints = curr.points;
+
+  if (!Array.isArray(prevPoints) || !Array.isArray(currPoints)) return null;
+  if (prevPoints.length === 0) return null;
+
+  // Current points must start with the previous points as a prefix
+  if (currPoints.length <= prevPoints.length) return null;
+
+  // Check exact point prefix match
+  for (let i = 0; i < prevPoints.length; i++) {
+    const pp = prevPoints[i];
+    const cp = currPoints[i];
+    if (pp.x !== cp.x || pp.y !== cp.y) return null;
+  }
+
+  // Preserve shared endpoint: last point of prev === first new point of curr
+  // This is already enforced by the prefix check above since the prefix includes the last point
+
+  return { ...curr, points: currPoints.slice(prevPoints.length - 1) };
+}
+
+function isDodgeBurnToolArgs(args: ToolArgs): args is DodgeBurnToolArgs {
+  return args.toolName === 'dodge' || args.toolName === 'burn';
+}
+
+/**
+ * Returns the appended Sponge args only when tool name, mode, flow, vibrance, size, hardness, and
+ * the exact point prefix are unchanged. The shared endpoint is preserved to maintain continuity.
+ */
+function getIncrementalSpongeArgs(prevArgs: ToolArgs | undefined, currArgs: ToolArgs): SpongeToolArgs | null {
+  if (!prevArgs || prevArgs.toolName !== currArgs.toolName) return null;
+  if (currArgs.toolName !== 'sponge') return null;
+
+  const prev = prevArgs as SpongeToolArgs;
+  const curr = currArgs as SpongeToolArgs;
+
+  if (prev.mode !== curr.mode) return null;
+  if (prev.flow !== curr.flow) return null;
+  if (prev.vibrance !== curr.vibrance) return null;
+  if (prev.size !== curr.size) return null;
+  if (prev.hardness !== curr.hardness) return null;
+
+  const prevPoints = prev.points;
+  const currPoints = curr.points;
+
+  if (!Array.isArray(prevPoints) || !Array.isArray(currPoints)) return null;
+  if (prevPoints.length === 0) return null;
+
+  // Current points must start with the previous points as a prefix
+  if (currPoints.length <= prevPoints.length) return null;
+
+  // Check exact point prefix match
+  for (let i = 0; i < prevPoints.length; i++) {
+    const pp = prevPoints[i];
+    const cp = currPoints[i];
+    if (pp.x !== cp.x || pp.y !== cp.y) return null;
+  }
+
+  // Preserve shared endpoint: last point of prev === first new point of curr
+  // This is already enforced by the prefix check above since the prefix includes the last point
+
+  return { ...curr, points: currPoints.slice(prevPoints.length - 1) };
+}
 
 // A frame allocates SIX surfaces at its own size — the staging canvas `drawLayersToCanvas`
 // composites into (`layer-renderer.ts:195`), the visible canvas it resizes to (`:238`), the
@@ -143,8 +415,10 @@ const isLayerLocked = (layer: Layer): boolean => layer.locked === true;
 //
 // Crop-local, and NOT a document-size limit: nothing else in the stack caps a frame, so a PSD
 // open or a canvas resize bypasses both ceilings here entirely.
-const MAX_DOCUMENT_FRAME_SIDE = 4096;
-const MAX_DOCUMENT_FRAME_AREA = 16777216;
+export const MAX_DOCUMENT_FRAME_SIDE = 4096;
+export const MAX_DOCUMENT_FRAME_AREA = 16777216;
+
+export type ArrangeLayerCommand = 'bring-to-front' | 'bring-forward' | 'send-backward' | 'send-to-back';
 
 export const useLayers = () => {
   const [
@@ -160,6 +434,11 @@ export const useLayers = () => {
       history,
       historyIndex,
       branchRevision = 0,
+      documentId,
+      documentRevision,
+      durablePresentation,
+      durableRenderProjection,
+      renderSelector,
       currentArgs: currentArgsRef,
       previewLayers: previewLayersRef,
       promoteLayerPresentation,
@@ -171,6 +450,7 @@ export const useLayers = () => {
 
   const setToolArgs = useSetToolArgs();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
+  const dpr = useDevicePixelRatio();
 
   /**
    * Hands adopted rasters to the presentation scope. It has to run *after* the
@@ -208,7 +488,11 @@ export const useLayers = () => {
   const _addLayer = (
     layer: Layer,
     historyItem: NewHistoryItem,
-    newDocument?: { size: { width: number; height: number }; hasUnsavedChanges: boolean },
+    newDocument?: {
+      size: { width: number; height: number };
+      hasUnsavedChanges: boolean;
+      fileName: string;
+    },
     currentLayers: LayersRecord = layers
   ) => {
     const entry = createHistoryItem(historyItem);
@@ -225,6 +509,7 @@ export const useLayers = () => {
             deletedLayers: {},
             totalSize: { ...newDocument.size },
             documentFrame: documentFrameFromSize(newDocument.size),
+            fileName: newDocument.fileName,
             hasImage: true,
             hasUnsavedChanges: newDocument.hasUnsavedChanges,
             selections: [],
@@ -250,7 +535,11 @@ export const useLayers = () => {
   };
 
   const createBlankLayer = (params: BlankImageParams, replaceDocument = false) => {
+    if ('size' in params && params.size.width > 0 && params.size.height > 0) {
+      assertWithinDocumentPixelBudget(params.size, 'Document');
+    }
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
+    if (currentLayers === null) return;
 
     const source: BlankLayerSource = { kind: 'blank', ...params };
     const newLayer = createLayerSource({ layers: currentLayers, source });
@@ -266,6 +555,7 @@ export const useLayers = () => {
         ? {
             size: 'size' in params ? params.size : { width: params.pos.width, height: params.pos.height },
             hasUnsavedChanges: true,
+            fileName: '',
           }
         : undefined,
       currentLayers
@@ -274,6 +564,7 @@ export const useLayers = () => {
 
   const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
+    if (currentLayers === null) return false;
 
     const source: ImageLayerSource = {
       kind: 'image',
@@ -293,6 +584,7 @@ export const useLayers = () => {
         ? {
             size: params.isBedrock ? params.size : { width: params.pos.width, height: params.pos.height },
             hasUnsavedChanges: false,
+            fileName: params.name ?? '',
           }
         : undefined,
       currentLayers
@@ -302,6 +594,7 @@ export const useLayers = () => {
     // the live history entry's `layerSource.bitmap`. They are the same object, and
     // `trackPublished` keys on a `Set`.
     adoptLayerBitmaps([source.bitmap]);
+    return true;
   };
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
     // commented out because causes infinite recursion
@@ -355,12 +648,39 @@ export const useLayers = () => {
   const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
+    if (isLayerLocked(layer)) return null;
+    const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
+    const currentArgs = layer.source?.kind === 'tool' ? layer.source.args : null;
+    const nextArgs = nextSource.args as ToolArgs & { editingLayerId?: unknown };
+    if (
+      currentArgs &&
+      JSON.stringify({ ...currentArgs, editingLayerId: undefined }) ===
+        JSON.stringify({ ...nextArgs, editingLayerId: undefined }) &&
+      layer.pos.x === nextSource.pos.x &&
+      layer.pos.y === nextSource.pos.y
+    ) {
+      delete previewLayersRef.current[id];
+      drawAllLayers();
+      return layer;
+    }
+    // Render the replacement before recording it so the live layer's source and raster advance
+    // together; otherwise the canvas, export, or merge could retain the previous text pixels.
+    let rebuilt: Layer;
+    try {
+      rebuilt = createLayerSource({ layerId: id, layers, source: nextSource });
+    } catch (error) {
+      console.error('Unable to render a replacement layer source', error);
+      return null;
+    }
+    delete previewLayersRef.current[id];
     const nextLayer: Layer = {
       ...layer,
-      source: { ...source, args: { ...source.args }, pos: { ...source.pos } },
-      pos: { ...source.pos },
-      bitmap: null,
-      tmpCanvas: null,
+      name: rebuilt.name,
+      source: rebuilt.source,
+      pos: { ...rebuilt.pos },
+      bitmap: rebuilt.bitmap,
+      tmpCanvas: rebuilt.tmpCanvas,
+      presentationBounds: null,
     };
     const item = {
       layerId: id,
@@ -423,8 +743,18 @@ export const useLayers = () => {
 
     // should mark layer dirty
     if (!tempUpdateLayer({ id, toolArgs })) return;
-    // should pick that dirty later and do all hardening
-    const committedLayers = commitDirtyTool(true);
+    // should pick that dirty later and do all hardening. `id` is the ownership scope: this
+    // function records ONE `TOOL_ACTION` entry, for ONE layer, so no other layer's pixels may
+    // ride out in the record it is about to publish.
+    //
+    // That scope is safe for the whole window because NOTHING between `tempUpdateLayer` and the
+    // dispatch below awaits. This function is `async`, but the window is straight-line — no
+    // `await`, no promise — so it runs to completion inside the tick the pixel write happened in.
+    // No removal, no second document and no other commit can be dispatched into the store in
+    // between, so the `layers` this scope was chosen from is the same record `commitDirtyTool`
+    // reads, and the layer it publishes is the layer whose pixels were written.
+    const committedLayers = commitDirtyTool(true, id);
+    if (committedLayers === null) return;
     const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
     if (!committedArgs) return;
     const item = { layerId: id, actionName: TOOL_ACTION, args: committedArgs } as const;
@@ -442,6 +772,13 @@ export const useLayers = () => {
     } catch (error) {
       console.error('Unable to plan durable history for a tool commit', error);
     }
+    // The scope re-validated here, so it is never published out of a record this function can see
+    // has lost the layer. A TRIPWIRE rather than the protection the window above claims: `layers` is
+    // the snapshot this invocation destructured at its last render, and a resumed continuation keeps
+    // that snapshot, so an `await` in the window would hide a removal from this check as surely as
+    // from the guards above. `useLayers` reading live store state instead is what would make it
+    // load-bearing; until then it costs one lookup and breaks nothing.
+    if (!layers[id]) return;
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
@@ -454,38 +791,149 @@ export const useLayers = () => {
   };
 
   // honestly, the only dirty tool that needs saving is text and maybe crop
-  const commitDirtyTool = (deferDispatch = false): LayersRecord => {
+  /**
+   * `ownedLayerId` is the ownership scope, and `undefined` is "every preview the map holds".
+   * It is `LayerId | undefined` and not `LayerId | null | undefined` so an absent scope has ONE
+   * spelling: the type can no longer be read as "null means unscoped", which would be a second
+   * way to say the same thing that a call site could use by accident. The one scoped caller
+   * narrows its id to `LayerId` before it gets here (`updateLayerByTool` returns above unless
+   * `id` is truthy), so nothing has to pass `null`.
+   *
+   * The tool switch, the merge, the new-document and the export paths own no single layer and
+   * must land all of them, which is what an unscoped call means. A caller committing ONE layer's
+   * edit — only `updateLayerByTool` does, and it appends exactly one `TOOL_ACTION` entry for
+   * exactly one layer — names that layer instead. Folding the rest of the preview map into the
+   * record it publishes would put another layer's draft pixels into committed state that no
+   * history entry reproduces, and clearing that preview would make them unrecoverable: a later
+   * navigation clears the drafts and rebuilds every layer from the timeline, which names no
+   * change to the layer whose pixels were published. So a scoped call leaves every preview and
+   * every dirty cache it does not own exactly where it found them.
+   */
+  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId): LayersRecord | null => {
     // can be run safely if no dirty layer
 
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
-      if (!args.text || !args.rect) return layers;
+      // Successful sources capture angle before their clear path. Angle is per-layer geometry;
+      // character formatting remains reusable for the next text draft.
+      // An empty existing edit is a source replacement, not a new empty layer. Keep its original
+      // geometry and position so deleting all characters does not shrink the raster origin.
+      if (!args.text && args.rect && args.editingLayerId) {
+        const activeLayer = layers[args.editingLayerId];
+        const activeTextArgs =
+          activeLayer?.source?.kind === 'tool' && isTextToolArgs(activeLayer.source.args)
+            ? activeLayer.source.args
+            : null;
+        const originalRect = activeTextArgs?.rect;
+        const originalPos = activeLayer?.pos;
+        if (!activeLayer || !activeTextArgs || !originalPos || !isValidTextLayerGeometry(originalRect, originalPos)) {
+          return null;
+        }
 
-      const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+        const replacementArgs = { ...args, text: '', rect: originalRect, placeholderUntouched: false };
+        delete replacementArgs.editingLayerId;
+        const replaced = replaceLayerSource(activeLayer.id, {
+          kind: 'tool',
+          args: replacementArgs,
+          pos: { ...originalPos },
+        });
+        if (!replaced) return null;
+
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const cleared = clearTextDraftArgs(persistedArgs);
+        if (setToolArgs) setToolArgs(cleared);
+        else currentArgsRef.current = cleared;
+        clearOverlay();
+        return { ...layers, [activeLayer.id]: replaced };
+      }
+
+      // An emptied new draft has no source to replace. Close it on implicit commit rather than
+      // leaving an editor open that cannot create a valid raster.
+      if (!args.text && args.rect) {
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const closed = clearTextDraftArgs(persistedArgs);
+        if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
+        if (setToolArgs) setToolArgs(closed);
+        else currentArgsRef.current = closed;
+        clearOverlay();
+        return layers;
+      }
+      if (!args.text || !args.rect) return layers;
+      // An UNTOUCHED placeholder is discarded, not committed. This is the implicit path — a tool
+      // switch, or a click elsewhere on the canvas — and a box the user never typed into is not a
+      // layer: clicking with the Type tool and then clicking away in Photoshop leaves the document
+      // unchanged, and the placeholder is a preview of the font rather than content. The explicit
+      // Commit button deliberately still commits it, because there the user has said "take this".
+      // The flag is the whole of the test: a string comparison would discard real content that
+      // happens to be those words, which is the defect the flag replaced.
+      if (args.placeholderUntouched === true) {
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const discarded = clearTextDraftArgs(persistedArgs);
+        if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
+        if (setToolArgs) setToolArgs(discarded);
+        else currentArgsRef.current = discarded;
+        clearOverlay();
+        return layers;
+      }
+
+      const requestedLayerId = (args as TextToolArgs).editingLayerId;
+      const activeLayer = requestedLayerId
+        ? layers[requestedLayerId]
+        : activeLayerId
+          ? layers[activeLayerId]
+          : undefined;
+      if (
+        requestedLayerId &&
+        (!activeLayer || activeLayer.source?.kind !== 'tool' || activeLayer.source.args.toolName !== 'text')
+      ) {
+        const cleared = clearTextDraftArgs(args);
+        delete cleared.editingLayerId;
+        cancelLayerPreview(requestedLayerId);
+        if (setToolArgs) setToolArgs(cleared);
+        else currentArgsRef.current = cleared;
+        clearOverlay();
+        return layers;
+      }
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
         const measuredRect = calculateNewRect(args, canvasRef, totalSize) ?? args.rect;
         const pos = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
         // A new drag on a different origin creates a new text layer. Selection hydration
         // preserves the active layer's origin, which is the explicit in-place-edit signal.
-        if (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y) {
+        if (requestedLayerId || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y)) {
+          const replacementArgs = { ...args };
+          delete replacementArgs.editingLayerId;
           const source: ToolLayerSource = {
             kind: 'tool',
-            args: { ...args, rect: measuredRect },
+            // Layer-LOCAL, because that is what the create arm stores and what `createLayerSource`
+            // renders from: the creator builds a `pos`-sized canvas and draws at the rect's own
+            // coordinates. An unreduced canvas-space rect puts the ink outside that canvas whenever
+            // the document frame is not the origin — MEASURED on a crop with `documentFrame.x` at
+            // -100, a replace armed rendered an EMPTY layer at the right position. The origin
+            // comparison above still uses the un-reduced rect, so the guard is unaffected.
+            args: {
+              ...replacementArgs,
+              rect: canvasRectToLocal(measuredRect, pos, documentFrame),
+              placeholderUntouched: false,
+            },
             pos,
           };
           const replaced = replaceLayerSource(activeLayer.id, source);
-          if (replaced) {
-            const cleared = { ...args, text: '', rect: null };
-            if (setToolArgs) setToolArgs(cleared);
-            else currentArgsRef.current = cleared;
-            return { ...layers, [activeLayer.id]: replaced };
-          }
+          if (!replaced) return null;
+
+          const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+          const cleared = clearTextDraftArgs(persistedArgs);
+          if (setToolArgs) setToolArgs(cleared);
+          else currentArgsRef.current = cleared;
+          clearOverlay();
+          return { ...layers, [activeLayer.id]: replaced };
         }
       }
+      if (requestedLayerId) return null;
 
-      const layer = createLayerFromTool({ args });
-      const cleared = { ...args, text: '', rect: null };
+      const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+      const layer = createLayerFromTool({ args: { ...persistedArgs, placeholderUntouched: false } });
+      const cleared = clearTextDraftArgs(persistedArgs);
       if (setToolArgs) {
         setToolArgs(cleared);
       } else {
@@ -502,6 +950,10 @@ export const useLayers = () => {
 
     const pendingToolEdits: Array<{ layerId: LayerId; args: ToolArgs | object }> = [];
     for (const [id, preview] of Object.entries(previewLayersRef.current)) {
+      // The ownership scope, ahead of the publication boundary below: a preview the caller does
+      // not own is still a draft, and a draft the caller did not stage must not become published
+      // state on this caller's history entry.
+      if (ownedLayerId && id !== ownedLayerId) continue;
       // The publication boundary, not a second copy of the preview guard: `commitDirtyTool` is
       // reached from the tool switch, the merge and the new-document paths as well as from
       // `updateLayerByTool`, so this is where a preview that no longer renders stops becoming a
@@ -521,16 +973,21 @@ export const useLayers = () => {
       }
       if (layer.tmpCanvas) pendingPresentations.set(id, layer);
     }
-    previewLayersRef.current = {};
+    // Only the previews this call consumed leave the map. A scoped commit must not discard a
+    // draft it declined to publish, or the pixels are gone from both the record and the map.
+    if (ownedLayerId) delete previewLayersRef.current[ownedLayerId];
+    else previewLayersRef.current = {};
 
-    // Find any remaining dirty layer and save a detached copy.
+    // Find every remaining dirty layer and save detached copies. A document-scoped
+    // commit can carry more than one staged cache; stopping at the first one leaves
+    // later layers dirty and makes their promotion depend on an unrelated layer order.
     for (const layer of Object.values(committedLayers)) {
+      if (ownedLayerId && layer.id !== ownedLayerId) continue;
       if (layer.tmpCanvas) {
         const detachedLayer = { ...layer, pos: { ...layer.pos } };
         pendingPresentations.set(detachedLayer.id, detachedLayer);
         committedLayers[layer.id] = detachedLayer;
         hasPreviewLayers = true;
-        break;
       }
     }
 
@@ -576,9 +1033,15 @@ export const useLayers = () => {
     return committedLayers;
   };
 
+  const activeTextEditArgs = () => {
+    const args = currentArgsRef.current;
+    return toolName === 'text' && args?.toolName === 'text' && args.rect ? args : null;
+  };
+
   const removeLayer = (id: LayerId) => {
     const layer = layers[id];
     if (!layer) return;
+    if (activeTextEditArgs()?.editingLayerId === id) return;
 
     const { [id]: removedLayer, ...remainingLayers } = layers;
     const deletedLayer = { ...removedLayer, bitmap: null, tmpCanvas: null };
@@ -624,6 +1087,23 @@ export const useLayers = () => {
   const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
     const layer = layers[id];
     if (!layer) return;
+    if (
+      (actionName === SET_LAYER_OPACITY_ACTION || actionName === SET_LAYER_BLEND_MODE_ACTION) &&
+      (layer.isBedrock || isLayerLocked(layer))
+    ) {
+      return;
+    }
+    if (actionName === SET_LAYER_BLEND_MODE_ACTION && !isLayerBlendMode(patch.blendMode)) return;
+    if (
+      (actionName === LOCK_LAYER_ACTION && patch.locked !== true) ||
+      (actionName === UNLOCK_LAYER_ACTION && patch.locked !== false) ||
+      ((actionName === LOCK_LAYER_ACTION || actionName === UNLOCK_LAYER_ACTION) && layer.isBedrock)
+    ) {
+      return;
+    }
+    if (actionName === LOCK_LAYER_ACTION && activeTextEditArgs()) {
+      return;
+    }
     const item = { layerId: id, actionName, args: patch };
     const planned = isSetLayerPropertiesAction(actionName)
       ? planHistoryAppend({
@@ -653,11 +1133,48 @@ export const useLayers = () => {
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
+    const layerToMove = layers[layerToMoveId];
+    if (!layerToMove || layerToMove.isBedrock || isLayerLocked(layerToMove)) return;
     dispatch({
       type: 'REORDER_LAYERS',
       payload: { layerToMoveId, afterWhichLayerId },
     });
     drawAllLayers();
+  };
+
+  const arrangeLayer = (command: ArrangeLayerCommand) => {
+    if (!activeLayerId) return;
+    const layerToMove = layers[activeLayerId];
+    if (!layerToMove || layerToMove.isBedrock || isLayerLocked(layerToMove)) return;
+
+    const sortedLayers = getSortedLayersArray(layers);
+    const currentIndex = sortedLayers.findIndex((layer) => layer.id === activeLayerId);
+    if (currentIndex < 0) return;
+
+    const bedrockIndex = sortedLayers.findIndex((layer) => layer.isBedrock);
+    const bedrockId = bedrockIndex >= 0 ? sortedLayers[bedrockIndex]!.id : null;
+    let afterWhichLayerId: LayerId | null | undefined;
+
+    switch (command) {
+      case 'bring-to-front':
+        if (currentIndex === sortedLayers.length - 1) return;
+        afterWhichLayerId = sortedLayers.at(-1)!.id;
+        break;
+      case 'bring-forward':
+        if (currentIndex === sortedLayers.length - 1) return;
+        afterWhichLayerId = sortedLayers[currentIndex + 1]!.id;
+        break;
+      case 'send-backward':
+        if (currentIndex <= bedrockIndex + 1) return;
+        afterWhichLayerId = sortedLayers[currentIndex - 2]?.id ?? bedrockId;
+        break;
+      case 'send-to-back':
+        if (currentIndex <= bedrockIndex + 1) return;
+        afterWhichLayerId = bedrockId;
+        break;
+    }
+
+    moveLayerAfter(activeLayerId, afterWhichLayerId);
   };
 
   const setActiveLayer = (id?: LayerId | null) => dispatch({ type: 'SET_ACTIVE_LAYER', payload: id ?? null });
@@ -718,6 +1235,7 @@ export const useLayers = () => {
           ...layer,
           operations: [...layer.operations, createAffineLayerOperation(transform)],
           tmpCanvas: null,
+          presentationBounds: null,
         };
         previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
         drawAllLayers();
@@ -733,6 +1251,7 @@ export const useLayers = () => {
         ...layer,
         operations: [...layer.operations, createLayerOperation(toolArgs as LayerOperationArgs)],
         tmpCanvas: null,
+        presentationBounds: null,
       };
       previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
       drawAllLayers();
@@ -743,13 +1262,62 @@ export const useLayers = () => {
       const { move, resize } = toolArgs as RepositionToolArgs;
       const positionPatch = resize ?? move;
       if (!positionPatch) return false;
-      const previewLayer = { ...layer, pos: { ...layer.pos, ...positionPatch }, tmpCanvas: null };
+      const previewLayer = {
+        ...layer,
+        pos: { ...layer.pos, ...positionPatch },
+        tmpCanvas: null,
+        presentationBounds: null,
+      };
       previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
       drawAllLayers();
       return true;
     }
 
-    const bitmap = layer.tmpCanvas ?? layer.bitmap;
+    const preview = previewLayersRef.current[id];
+    const processorArgs = preview?.layer.tmpCanvas ? getIncrementalStrokeArgs(toolArgs, preview.toolArgs) : null;
+    const canAppendStroke = processorArgs !== null;
+
+    // Check for incremental eraser brush-mode
+    let incrementalEraserArgs: EraserToolArgs | null = null;
+    let canIncrementalEraser = false;
+    if (!canAppendStroke && toolArgs.toolName === 'eraser' && preview?.layer.tmpCanvas) {
+      incrementalEraserArgs = getIncrementalEraserArgs(toolArgs, preview.toolArgs);
+      canIncrementalEraser = incrementalEraserArgs !== null;
+    }
+
+    // Check for incremental dodge/burn
+    let incrementalDodgeBurnArgs: DodgeBurnToolArgs | null = null;
+    if (
+      !canAppendStroke &&
+      !canIncrementalEraser &&
+      (toolArgs.toolName === 'dodge' || toolArgs.toolName === 'burn') &&
+      preview?.layer.tmpCanvas
+    ) {
+      incrementalDodgeBurnArgs = getIncrementalDodgeBurnArgs(preview.toolArgs, toolArgs);
+    }
+    const canIncrementalDodgeBurn = incrementalDodgeBurnArgs !== null;
+
+    // Check for incremental sponge
+    let incrementalSpongeArgs: SpongeToolArgs | null = null;
+    if (
+      !canAppendStroke &&
+      !canIncrementalEraser &&
+      !canIncrementalDodgeBurn &&
+      toolArgs.toolName === 'sponge' &&
+      preview?.layer.tmpCanvas
+    ) {
+      incrementalSpongeArgs = getIncrementalSpongeArgs(preview.toolArgs, toolArgs);
+    }
+    const canIncrementalSponge = incrementalSpongeArgs !== null;
+
+    const processorLayer =
+      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
+        ? preview!.layer
+        : layer;
+    const bitmap =
+      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
+        ? preview!.layer.tmpCanvas
+        : (layer.tmpCanvas ?? layer.bitmap);
     if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
       console.error('No active layer or bitmap to update preview');
       return false;
@@ -762,14 +1330,27 @@ export const useLayers = () => {
     // trapezoid, a non-invertible homography, degenerate affine bounds). Without the
     // guard the throw escapes `tempUpdateLayer` into a React event handler.
     let result: ToolResult;
-    let input: ReturnType<typeof stageProcessorInput> | null = null;
+    let input: ReturnType<typeof stageProcessorInputForTool> | null = null;
     try {
-      input = bitmap ? stageProcessorInput(layer, bitmap) : null;
-      result = processor.imageProcessor(
-        input
-          ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
-          : ({ size: layer.pos } as CreatorToolParams)
-      )(toolArgs);
+      input = bitmap ? stageProcessorInputForTool(processorLayer, bitmap, processor) : null;
+      const processorParams: ProcessorToolParams | CreatorToolParams = input
+        ? ({ bitmap: input.bitmap, size: input.rasterSize } as ProcessorToolParams)
+        : ({ size: layer.pos } as CreatorToolParams);
+      // Pass previousCanvas for incremental eraser brush-mode
+      if (canIncrementalEraser && preview?.layer.tmpCanvas) {
+        (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
+      }
+      // Pass previousCanvas for incremental dodge/burn
+      if (canIncrementalDodgeBurn && preview?.layer.tmpCanvas) {
+        (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
+      }
+      // Pass previousCanvas for incremental sponge
+      if (canIncrementalSponge && preview?.layer.tmpCanvas) {
+        (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
+      }
+      result = processor.imageProcessor(processorParams)(
+        processorArgs ?? incrementalEraserArgs ?? incrementalDodgeBurnArgs ?? incrementalSpongeArgs ?? toolArgs
+      );
     } catch (error) {
       console.error(error);
       return false;
@@ -782,7 +1363,7 @@ export const useLayers = () => {
     // already routes this branch through `applyRasterTool`; the live preview must publish the
     // same baked bounds and drop the retained operations or undo/redo will diverge.
     const rasterBoundary = processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
-    const bakedPresentation = rasterBoundary && input !== null && input.operations.length > 0;
+    const bakedPresentation = rasterBoundary && input !== null && input.presentationIsBaked;
     const publishedPosition = bakedPresentation && input ? input.bounds : layer.pos;
     const previewLayer = {
       ...layer,
@@ -792,6 +1373,7 @@ export const useLayers = () => {
         ? { source: undefined }
         : {}),
       tmpCanvas: canvas,
+      presentationBounds: null,
     };
     previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
 
@@ -804,18 +1386,60 @@ export const useLayers = () => {
     drawAllLayers();
   }
 
+  const beginTextLayerEdit = (id: LayerId) => {
+    const layer = layers[id];
+    if (!layer || isLayerLocked(layer)) return;
+    previewLayersRef.current[id] = {
+      // Remove only the runtime raster from this preview. The contenteditable overlay is the sole
+      // visible representation while the source is being edited; the marker is never persisted.
+      layer: {
+        ...layer,
+        bitmap: null,
+        tmpCanvas: null,
+        presentationBounds: null,
+      },
+      toolArgs: undefined,
+    };
+    drawAllLayers();
+  };
+
   const drawAllLayers = useCallback(() => {
     if (!canvasRef.current) return;
 
-    const renderLayers = Object.keys(previewLayersRef.current).length
+    // Navigation has moved logical state but no complete presentation authority
+    // has been accepted yet. Keep the prior canvas intact until then.
+    if (renderSelector.source === 'pending') return;
+
+    const previewLayerIds = Object.keys(previewLayersRef.current);
+    const hasPreview = previewLayerIds.length > 0;
+    // Live gestures stay on the legacy base: incremental tools depend on the
+    // preview layer's temporary canvas and are published only after commit.
+    const durableProjection =
+      !hasPreview &&
+      renderSelector.source === 'durable' &&
+      renderSelector.historyCursor === historyIndex &&
+      durablePresentation.status === 'durable' &&
+      durablePresentation.cursor !== null &&
+      durableRenderProjection &&
+      durableRenderProjection.documentId === documentId &&
+      durableRenderProjection.documentRevision === documentRevision &&
+      durableRenderProjection.branchRevision === branchRevision &&
+      durableRenderProjection.historyCursor === durablePresentation.cursor &&
+      documentFrameEquals(durableRenderProjection.frame, documentFrame) &&
+      documentFrameEquals(renderSelector.frame, documentFrame)
+        ? durableRenderProjection
+        : null;
+    const durableLayers = durableProjection?.layers ?? null;
+    const renderLayers = hasPreview
       ? ({
           ...layers,
           ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
         } as LayersRecord)
-      : layers;
+      : (durableLayers ?? layers);
     const sorted = getSortedLayersArray(renderLayers);
+    const renderFrame = durableProjection ? durableProjection.frame : documentFrame;
     try {
-      if (!drawLayersToCanvas(canvasRef.current, sorted, documentFrame)) {
+      if (!drawLayersToCanvas(canvasRef.current, sorted, renderFrame, new Set(previewLayerIds), dpr)) {
         console.error('Unable to publish runtime layer presentation');
       }
     } catch (error) {
@@ -823,9 +1447,27 @@ export const useLayers = () => {
       // event boundary. The renderer already preserves the last good canvas.
       console.error('Unable to publish runtime layer presentation', error);
     }
-  }, [canvasRef, documentFrame, layers, previewLayersRef]);
+  }, [
+    branchRevision,
+    canvasRef,
+    documentFrame,
+    documentId,
+    documentRevision,
+    dpr,
+    durablePresentation,
+    durableRenderProjection,
+    historyIndex,
+    layers,
+    previewLayersRef,
+    renderSelector,
+  ]);
 
-  const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
+  const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }, angle = 0): boolean => {
+    if (![rect.x1, rect.y1, rect.x2, rect.y2, angle].every((value) => Number.isFinite(value))) {
+      console.warn('applyDocumentCrop refused a non-finite crop rectangle');
+      return false;
+    }
+
     // Unclamped on purpose, and that is the whole feature: Photoshop's crop box may be dragged
     // past the image edge, which extends the canvas. `sortRoundRect` sorts, rounds each edge once
     // and derives the extent from the rounded edges, so a rect reaching past an edge grows the
@@ -849,7 +1491,16 @@ export const useLayers = () => {
     }
 
     const nextFrame = canvasRectToDocumentFrame({ x, y, width, height }, documentFrame);
-    if (!isValidDocumentFrame(nextFrame) || documentFrameEquals(documentFrame, nextFrame)) return false;
+    if (!isValidDocumentFrame(nextFrame)) return false;
+    const transform =
+      angle === 0
+        ? undefined
+        : rotationAffineAroundPoint((-angle * Math.PI) / 180, {
+            x: nextFrame.x + nextFrame.width / 2,
+            y: nextFrame.y + nextFrame.height / 2,
+          });
+    const documentTransform = transform && !isIdentityAffineTransform(transform) ? transform : undefined;
+    if (!documentTransform && documentFrameEquals(documentFrame, nextFrame)) return false;
 
     // The append boundary derives the same durable entry as the adapter. The
     // store publishes it only when its preconditions prove the durable shadow
@@ -858,15 +1509,37 @@ export const useLayers = () => {
       item: {
         layerId: 'document',
         actionName: SET_DOCUMENT_FRAME_ACTION,
-        args: { previousFrame: documentFrame, nextFrame },
+        args: {
+          previousFrame: documentFrame,
+          nextFrame,
+          ...(documentTransform ? { transform: documentTransform } : {}),
+        },
       },
       timeline: { entries: history, cursor: historyIndex, branchRevision },
       currentFrame: documentFrame,
     });
+    let nextLayers = layers;
+    if (documentTransform) {
+      try {
+        nextLayers = Object.fromEntries(
+          Object.values(layers).map((layer) => [
+            layer.id,
+            transformLayerForDocument(layer, documentTransform, `${entry.id}:${layer.id}`),
+          ])
+        );
+      } catch (error) {
+        console.warn('applyDocumentCrop refused a document rotation that exceeds layer transform limits', error);
+        return false;
+      }
+    }
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
-        updates: { documentFrame: nextFrame, totalSize: documentFrameSize(nextFrame) },
+        updates: {
+          documentFrame: nextFrame,
+          totalSize: documentFrameSize(nextFrame),
+          ...(documentTransform ? { layers: nextLayers } : {}),
+        },
         historyItem: entry,
         durableEntry,
         durableDiagnostics: diagnostics,
@@ -877,6 +1550,7 @@ export const useLayers = () => {
 
   async function mergeLayers(name: string): Promise<Layer | null> {
     const currentLayers = commitDirtyTool();
+    if (currentLayers === null) return null;
 
     // getBitmap of the canvas
     if (!canvasRef.current) return null;
@@ -962,6 +1636,7 @@ export const useLayers = () => {
     if (!pixels) return null;
 
     const currentLayers = commitDirtyTool();
+    if (currentLayers === null) return null;
 
     // Through `immutableRaster`, so the editable layer can never alias a mutable
     // surface: a `File > New` backing image is an OffscreenCanvas, and aliasing it
@@ -1003,6 +1678,7 @@ export const useLayers = () => {
     updateLayerByTool,
     commitDirtyTool,
     cancelLayerPreview,
+    beginTextLayerEdit,
 
     removeLayer,
 
@@ -1010,6 +1686,7 @@ export const useLayers = () => {
     setActiveLayer,
     toggleVisibility,
     moveLayerAfter,
+    arrangeLayer,
 
     drawAllLayers,
     mergeAllLayers,

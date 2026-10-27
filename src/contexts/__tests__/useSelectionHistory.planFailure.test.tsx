@@ -103,9 +103,11 @@ function makeSelection(id: string, overrides: Partial<Selection> = {}): Selectio
   return {
     id,
     points: [
-      { x: 0, y: 0 },
-      { x: 8, y: 0 },
-      { x: 8, y: 6 },
+      [
+        { x: 0, y: 0 },
+        { x: 8, y: 0 },
+        { x: 8, y: 6 },
+      ],
     ],
     isActive: true,
     pos: { x: 0, y: 0, width: 8, height: 6 },

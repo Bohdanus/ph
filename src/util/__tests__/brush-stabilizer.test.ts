@@ -29,6 +29,12 @@ describe('smoothingPercentToWindowSize', () => {
       expect(Number.isInteger(size)).toBe(true);
     }
   });
+
+  it('maps non-finite percentages to the minimum window size', () => {
+    expect(smoothingPercentToWindowSize(Number.NaN)).toBe(SMOOTHING_WINDOW_MIN);
+    expect(smoothingPercentToWindowSize(Infinity)).toBe(SMOOTHING_WINDOW_MIN);
+    expect(smoothingPercentToWindowSize(-Infinity)).toBe(SMOOTHING_WINDOW_MIN);
+  });
 });
 
 describe('createStabilizer', () => {
@@ -130,6 +136,43 @@ describe('createStabilizer', () => {
     expect(createStabilizer({ smoothingPercent: 100, mode: 'adjust-for-zoom', zoom: 4 }).windowSize()).toBe(5);
     expect(createStabilizer({ smoothingPercent: 100, mode: 'adjust-for-zoom', zoom: 100 }).windowSize()).toBe(1);
   });
+
+  it('handles empty input: flush and tick emit nothing before the first sample', () => {
+    const stabilizer = createStabilizer({ smoothingPercent: 50, intervalMs: 10 });
+    expect(stabilizer.flush()).toEqual([]);
+    expect(stabilizer.tick(1000)).toEqual([]);
+    expect(stabilizer.flush()).toEqual([]);
+  });
+
+  it('emits the single pushed sample as the mean of a one-element buffer', () => {
+    const stabilizer = createStabilizer({ smoothingPercent: 50, intervalMs: 8.3 });
+    stabilizer.push({ x: 7, y: -3 }, 0);
+    expect(stabilizer.tick(0)).toEqual([{ x: 7, y: -3 }]);
+    expect(stabilizer.flush()).toEqual([{ x: 7, y: -3 }]);
+  });
+
+  it('treats non-finite zoom as 1 in adjust-for-zoom mode', () => {
+    expect(createStabilizer({ smoothingPercent: 100, mode: 'adjust-for-zoom', zoom: Number.NaN }).windowSize()).toBe(
+      20
+    );
+    expect(createStabilizer({ smoothingPercent: 100, mode: 'adjust-for-zoom', zoom: Infinity }).windowSize()).toBe(20);
+  });
+
+  it('propagates non-finite coordinates through the running mean', () => {
+    const stabilizer = createStabilizer({ smoothingPercent: 100, intervalMs: 1000 });
+    stabilizer.push({ x: 0, y: 0 }, 0);
+    stabilizer.push({ x: Number.NaN, y: Infinity }, 1);
+    expect(stabilizer.tick(1)).toEqual([{ x: Number.NaN, y: Infinity }]);
+    expect(stabilizer.flush()).toEqual([{ x: Number.NaN, y: Infinity }]);
+  });
+
+  it.fails('sanitizes non-finite coordinates so NaN/Infinity do not contaminate output', () => {
+    const stabilizer = createStabilizer({ smoothingPercent: 100, intervalMs: 1000 });
+    stabilizer.push({ x: 0, y: 0 }, 0);
+    stabilizer.push({ x: Number.NaN, y: Infinity }, 1);
+    const out = stabilizer.tick(1);
+    expect(out.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
+  });
 });
 
 describe('createExponentialSmoother', () => {
@@ -175,6 +218,20 @@ describe('createExponentialSmoother', () => {
     smoother.reset();
     expect(smoother.current()).toBeNull();
   });
+
+  it('seeds and holds through non-finite targets without throwing', () => {
+    const smoother = createExponentialSmoother({ smoothingPercent: 50 });
+    expect(smoother.step({ x: Number.NaN, y: Infinity }, 0)).toEqual({ x: Number.NaN, y: Infinity });
+    expect(smoother.current()).toEqual({ x: Number.NaN, y: Infinity });
+  });
+
+  it.fails('rejects non-finite target coordinates so they cannot seed or contaminate state', () => {
+    const smoother = createExponentialSmoother({ smoothingPercent: 50 });
+    smoother.step({ x: 0, y: 0 }, 0);
+    const contaminated = smoother.step({ x: Number.NaN, y: Infinity }, 100);
+    expect(Number.isFinite(contaminated.x)).toBe(true);
+    expect(Number.isFinite(contaminated.y)).toBe(true);
+  });
 });
 
 describe('coalescedPoints', () => {
@@ -203,5 +260,27 @@ describe('coalescedPoints', () => {
 
   it('falls back to the single event when the coalesced list is empty', () => {
     expect(coalescedPoints({ clientX: 1, clientY: 2, getCoalescedEvents: () => [] })).toEqual([{ x: 1, y: 2 }]);
+  });
+
+  it('returns a single finite point from a bare event', () => {
+    expect(coalescedPoints({ clientX: 5, clientY: -8 })).toEqual([{ x: 5, y: -8 }]);
+  });
+
+  it('carries through non-finite coordinates from the fallback event', () => {
+    expect(coalescedPoints({ clientX: Number.NaN, clientY: Infinity })).toEqual([{ x: Number.NaN, y: Infinity }]);
+    expect(coalescedPoints({ clientX: Infinity, clientY: -Infinity })).toEqual([{ x: Infinity, y: -Infinity }]);
+  });
+
+  it.fails('drops coalesced points whose coordinates are non-finite', () => {
+    expect(
+      coalescedPoints({
+        clientX: 1,
+        clientY: 2,
+        getCoalescedEvents: () => [
+          { clientX: Number.NaN, clientY: 5 },
+          { clientX: 3, clientY: 4 },
+        ],
+      })
+    ).toEqual([{ x: 3, y: 4 }]);
   });
 });

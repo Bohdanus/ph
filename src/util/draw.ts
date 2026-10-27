@@ -1,9 +1,10 @@
 import type { Ctx2D, Point, Pos } from '../contexts/general-types.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
+import { AIRBRUSH_INTERVAL_MS, PAINT_FLOW_DEFAULT, PAINT_FLOW_MAX, PAINT_FLOW_MIN } from './brush-airbrush.ts';
 import { smoothStrokePoints } from '../tools/brush.ts';
 import { hexToRgb } from './rect.ts';
 
-export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
+function getPointExtents(points: Point[]) {
   const pp = points!;
   let minX = pp[0].x;
   let minY = pp[0].y;
@@ -18,11 +19,31 @@ export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: numbe
     if (p.y > maxY) maxY = p.y;
   }
 
+  return { minX, minY, maxX, maxY };
+}
+
+export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
+  const { minX, minY, maxX, maxY } = getPointExtents(points);
+
   return {
     x: minX - lineWidth,
     y: minY - lineWidth,
     width: maxX - minX + 2 * lineWidth,
     height: maxY - minY + 2 * lineWidth,
+  };
+}
+
+/** Aligns padded stroke bounds to whole-pixel raster dimensions without narrowing them. */
+export function pointsBoundingPosOutward({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
+  const { minX, minY, maxX, maxY } = getPointExtents(points);
+  const x = Math.floor(minX - lineWidth);
+  const y = Math.floor(minY - lineWidth);
+
+  return {
+    x,
+    y,
+    width: Math.ceil(maxX + lineWidth) - x,
+    height: Math.ceil(maxY + lineWidth) - y,
   };
 }
 
@@ -88,7 +109,7 @@ export const drawLine = (params: DrawStrokeParams) => {
   } = params;
 
   // Smoothing is a filter over the sampled path, applied once here so the live
-  // overlay (src/components/Main/DrawToolArea.tsx:39-43), the committed stroke and
+  // overlay in `DrawToolArea`, the committed stroke and
   // every replay of it all smooth identically. It runs before the renderer choice
   // because both renderers consume the same point list, and it leaves the call
   // counts of a single-path pen stroke untouched.
@@ -194,12 +215,25 @@ export const drawSpray = ({ args, ctx }: DrawStrokeParams) => {
   const color = hexToRgb(args.color);
   // Rounded because the product carries binary-float noise into the colour string
   // (`0.8 * 0.4` is 0.32000000000000006); 8-bit output cannot resolve the difference.
-  const peak = Math.round(args.alpha * SPRAY_PEAK_ALPHA * 1e4) / 1e4;
-  const colorStart = `rgba(${color}, ${peak})`;
-  const colorStop = `rgba(${color}, 0)`;
+  const peak = args.alpha * SPRAY_PEAK_ALPHA;
+  const flowPercent = Number.isFinite(args.flow) ? (args.flow ?? PAINT_FLOW_DEFAULT) : PAINT_FLOW_DEFAULT;
+  const flow = Math.min(PAINT_FLOW_MAX, Math.max(PAINT_FLOW_MIN, flowPercent)) / 100;
   const radius = args.lineWidth * SPRAY_RADIUS_SCALE;
 
   for (let i = 0; i < points.length; i++) {
+    let dabPeak = peak;
+    if (args.pointTimes && i > 0) {
+      const previousTime = args.pointTimes[i - 1];
+      const currentTime = args.pointTimes[i];
+      if (!Number.isFinite(previousTime) || !Number.isFinite(currentTime) || currentTime <= previousTime) continue;
+
+      // A dab at the base opacity every AIRBRUSH_INTERVAL_MS builds exponentially. Scaling
+      // elapsed time this way makes the deposited alpha independent of pointer/refresh rate.
+      dabPeak = 1 - Math.pow(1 - peak * flow, (currentTime - previousTime) / AIRBRUSH_INTERVAL_MS);
+    }
+    const roundedPeak = Math.round(dabPeak * 1e4) / 1e4;
+    const colorStart = `rgba(${color}, ${roundedPeak})`;
+    const colorStop = `rgba(${color}, 0)`;
     const g = ctx.createRadialGradient(points[i].x, points[i].y, 0, points[i].x, points[i].y, radius);
     g.addColorStop(0, colorStart);
     g.addColorStop(SPRAY_CORE_FRACTION, colorStart);

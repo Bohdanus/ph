@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures/extended-test';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * `src/components/Common/ErrorBoundary.tsx` in a browser, which is the only environment where
@@ -109,14 +110,16 @@ const throwOnToolOverlayTwoDimensionalContext = () => {
 };
 
 test.describe('ErrorBoundary: a throw from the canvas region', () => {
+  test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
   test('publishes nothing at all while the canvas region is healthy', async ({ page }) => {
     // The negative case first, and it is not a formality. Every assertion below is about markup
     // that appears only after a catch, and markup that appears only after a catch is trivially
     // satisfiable by markup that is simply always there. Asserting the absence on a HEALTHY load
     // is what makes the positive assertions mean something: it proves the fallback is gated on a
-    // real throw, and it proves the four FIXED testids are absent together (the fifth is the
-    // per-code `error-boundary-diagnostic-${code}`, which cannot be named without a diagnostic and
-    // is covered by the wildcard assertion in the fourth test), so a later reader who finds one of
+    // real throw, and it proves the four FIXED testids are absent together — three of them in the
+    // loop below, `error-boundary-diagnostics` immediately after it (the fifth is the per-code
+    // `error-boundary-diagnostic-${code}`, which cannot be named without a diagnostic and is
+    // covered by the wildcard assertion in the fourth test) — so a later reader who finds one of
     // them permanently in the DOM learns it from this test rather than from a green run that never
     // mentioned it.
     //
@@ -127,17 +130,28 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
     await page.goto('/');
     await expect(page.getByTestId('workspace-canvas')).toBeVisible();
 
-    for (const testid of [
-      'error-boundary-fallback',
-      'error-boundary-message',
-      'error-boundary-durable-status',
-      'error-boundary-diagnostics',
-    ]) {
+    for (const testid of ['error-boundary-fallback', 'error-boundary-message', 'error-boundary-durable-status']) {
       await expect(
         page.getByTestId(testid),
         `${testid} must not exist before anything throws, or every assertion below is vacuous`
       ).toHaveCount(0);
     }
+
+    /**
+     * `error-boundary-diagnostics` is split out of that loop because it is the one member with
+     * no positive ANYWHERE in this file: the other three are asserted present by the three tests
+     * below, so each of their absences is read against a positive in the same file, while this
+     * testid is absent from every positive here and its only positive in the repository is
+     * `ErrorBoundary.test.tsx` asserting it in jsdom with a hand-built store slice. It still
+     * belongs in this test — nothing has thrown, so nothing may have published a diagnostics
+     * list — but it is a different claim and it carries a different reason.
+     */
+    await expect(
+      page.getByTestId('error-boundary-diagnostics'),
+      'the diagnostics list is conditional on a non-empty diagnostic list, so it must not exist before anything ' +
+        'throws either; its only positive in the repository is ErrorBoundary.test.tsx, which is why it is asserted ' +
+        'here rather than folded into the loop above'
+    ).toHaveCount(0);
 
     // The guarded subtree is really there, so the four absences above are about the boundary and
     // not about a blank document.
@@ -224,7 +238,8 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
   test('omits the diagnostics list when the store holds none, and keeps the store readable', async ({ page }) => {
     await page.addInitScript(throwOnToolOverlayTwoDimensionalContext);
     await page.goto('/');
-    await expect(page.getByTestId('error-boundary-fallback')).toBeVisible();
+    const fallback = page.getByTestId('error-boundary-fallback');
+    await expect(fallback).toBeVisible();
 
     // The list is conditional on a non-empty diagnostic list
     // (`src/components/Common/ErrorBoundary.tsx:60`), so for the empty list this app actually
@@ -236,25 +251,56 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
     // It is NOT the half that proves codes render. No diagnostic is reachable from the UI at all
     // (see the header comment), so there is nothing here to assert about a code's text or its
     // per-code testid, and inventing one would mean asserting a store mock.
+    //
+    // The two positively-anchored siblings come FIRST, and that ordering is the point. Without
+    // them the three absences below would be satisfied just as well by a fallback that rendered
+    // none of its children at all; with them, the region is known to be rendering the message
+    // and the status, so "no list, no items" is a statement about the conditional branch and not
+    // about an empty fallback. Each of these two is asserted present by an earlier test as well,
+    // so each of their absences in the healthy load is read against a positive.
+    await expect(
+      page.getByTestId('error-boundary-message'),
+      'the fallback rendered its message, so what follows is about the diagnostics branch alone'
+    ).toBeVisible();
+    await expect(page.getByTestId('error-boundary-durable-status')).toHaveText('Durable document: current');
+
     await expect(
       page.getByTestId('error-boundary-diagnostics'),
-      'the diagnostics list is conditional on a non-empty diagnostic list, so it must be absent here'
+      'the diagnostics list is conditional on a non-empty diagnostic list, so it must be absent and hidden here'
     ).toHaveCount(0);
-    await expect(page.locator('[data-testid^="error-boundary-diagnostic-"]')).toHaveCount(0);
+    await expect(
+      page.getByTestId('error-boundary-diagnostics'),
+      'the diagnostics list is not visible, so the fallback below is read against a real conditional branch rather than an empty shell'
+    ).toBeHidden();
+    await expect(
+      page.locator('[data-testid^="error-boundary-diagnostic-"]'),
+      'and no per-code item is rendered under any code, which is the only part of the list this app can ' +
+        'reach without a store mock'
+    ).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid^="error-boundary-diagnostic-"]'),
+      'and no per-code item exists or is visible under any code, which no rename can dodge'
+    ).toBeHidden();
+
+    // The two assertions above are both stated in terms of `data-testid` strings, and a testid is
+    // a name a component is free to change. If `ErrorBoundary` were to render the list and its
+    // items under different names, both counts would stay zero with the markup still on screen —
+    // so the same claim is also stated in terms of the ELEMENTS, which no rename can dodge. This
+    // is the direct property of the state under test: the fallback published no list and no list
+    // item at all.
+    await expect(fallback.locator('ul'), 'the fallback rendered no list element, whatever it was called').toHaveCount(
+      0
+    );
+    await expect(fallback.locator('li'), 'and no list item, whatever it was called').toHaveCount(0);
 
     // The fallback survived its own throw, which is the only way to know the store reader above
     // did not throw a second time: `useStore()` is called inside the fallback, and a fallback
     // that crashed would take the whole grid cell with it. The footer's independent reader of the
-    // same two fields (`src/components/DevStatusStrip/DevStatusStrip.tsx:18`) is mounted in the
-    // footer, outside the boundary, and renders nothing here — which is what "current with no
-    // diagnostics" looks like from the store's own point of view, and is an independent
-    // confirmation of the status asserted in the previous test rather than a restatement of it.
+    // durable presentation is mounted outside the boundary, so it remains observable while the
+    // canvas region is showing its fallback.
     await expect(page.locator('footer')).toBeVisible();
-    await expect(
-      page.getByTestId('dev-status-strip'),
-      'the footer reader returns null for `current` with no diagnostics (DevStatusStrip.tsx:26), so its ' +
-        'absence corroborates the fallback status without being computed from it'
-    ).toHaveCount(0);
+    await expect(page.getByTestId('dev-status-strip')).toBeVisible();
+    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-status', 'current');
   });
 
   test('leaves the rest of the editor mounted, interactive, and inside its own boundaries', async ({ page }) => {

@@ -23,6 +23,7 @@ function documentForClamp(): DurableDocument {
     blendMode: 'source-over' as const,
     order: 0,
     pos: { x: 0, y: 0, width: 100, height: 80 },
+    presentationBounds: null,
     source: {
       kind: 'blank' as const,
       color: '#ffffff',

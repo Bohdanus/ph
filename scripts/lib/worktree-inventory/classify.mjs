@@ -6,7 +6,7 @@
  * THE RULE THAT IS WORTH THE MOST
  * --------------------------------
  * A worktree is `prunable` only when three independent things hold at once:
- * its branch is already on `main`, its working tree is clean, AND it has no
+ * its branch is already on `main` (or every safe-to-compare patch is absorbed), its working tree is clean, AND it has no
  * curated finding attached. The third condition exists because the first two
  * are both true of a branch created from main and never committed to — and such
  * a branch can be holding the only copy of hours of work. Ahead/behind is
@@ -64,6 +64,11 @@ export const RECOMMENDATION = {
   KEEP: 'keep',
   /** Cannot be classified from what is known. Do not remove. */
   UNKNOWN: 'unknown',
+  /**
+   * Stale on purpose: nobody will work on this again, but the branch ref is
+   * worth the one ref it costs. See {@link ACTION.LEGACY}.
+   */
+  LEGACY: 'legacy',
 };
 
 /**
@@ -89,6 +94,31 @@ export const ACTION = {
   KEEP: 'keep',
   /** Cannot be decided from what is known. */
   UNDECIDED: 'undecided',
+  /**
+   * Keep the BRANCH, drop the WORKTREE. A curated `legacy: true`.
+   *
+   * WHY THIS IS NOT `at-risk`. `at-risk` means a human must act before anything
+   * can be lost, and it reads that way in every list an operator opens. A legacy
+   * branch is the opposite of a pending problem: nobody is going to act on it,
+   * the merge may never be wanted, and the only thing at stake is a ref that
+   * costs one entry in `.git/refs`. Filing it as `at-risk` put a permanent entry
+   * on the at-risk list, which is the list a sweep reads first, so a branch that
+   * was never going to be worked on kept being re-investigated every pass.
+   *
+   * WHAT IT BUYS. The worktree directory is the expensive thing — a checkout, a
+   * `node_modules`, a `dist/` — and git holds a branch without any worktree at
+   * all. So `legacy` separates the two: `npm run dispose` removes the directory
+   * and skips `git branch -d`, and the branch stays recoverable for the small
+   * chance it is ever needed. Keeping the whole worktree instead would cost a
+   * filesystem entry per legacy branch forever and buy nothing git does not
+   * already do with the ref.
+   *
+   * IT IS A CURATED CLAIM, LIKE `mustNotPrune`, AND IT IS NOT FREE OF GIT. It
+   * says "do not merge this and do not forget it", never "this is safe to
+   * delete" — the worktree half is disposable precisely because `legacy` is the
+   * reason the directory is safe to remove.
+   */
+  LEGACY: 'legacy',
 };
 
 /**
@@ -114,31 +144,19 @@ export const LIVE_WINDOW_MS = 30 * 60 * 1000;
  * it answers a different question: not "is a chat typing" but "did anything
  * demonstrably happen here".
  *
- * The width is the operator's own staleness threshold, and it is a parameter
- * rather than a constant of consequence: a worktree whose last recorded command
- * ran inside this window is not a deletion candidate at any window, because the
- * cost of being wrong is a live agent's work and the cost of being right is one
- * worktree kept a few hours longer.
+ * The two-hour width is the operator's stale-candidate threshold. A worktree
+ * with a command recorded inside this window is not a deletion candidate; the
+ * full session/family and overlay checks still decide whether it is dead.
  */
-export const RECENT_IO_WINDOW_MS = 4 * 60 * 60 * 1000;
+export const RECENT_IO_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 /**
- * Did anything demonstrably happen inside this worktree recently?
+ * Did a shell command demonstrably run inside this worktree recently?
  *
- * `shellHistory.lastAtMs` is a command whose recorded workdir, or whose target
- * path, is inside this worktree. That is weaker evidence than a file write and
- * stronger than a message: a `read` proves a reader, and a `write` here is
- * already covered by `writeHistory`. All three are folded in because a reader
- * inside a live window is still a live occupant — the skill is explicit that a
- * read is grounds for LIVE unless the hit can be shown to be an inventory row —
- * and because each history is a separate pass over the transcript, so any one
- * of them can be the pass that caught the activity and the other two can be
- * silent about the same session.
- *
- * A read is admitted on the same window as a write rather than a wider one,
- * because readers accumulate: `readHistory` is why `--release-reads` exists.
- * The release writes through to the same `lastAtMs`, so a released reader
- * reads as no signal here rather than as a permanent claim.
+ * Read history is intentionally excluded: reading a worktree is tracked in its
+ * own releasable structure, not treated as proof that somebody still owns it.
+ * Otherwise an audit that inspected a stale worktree would block its disposal
+ * for the whole two-hour shell window.
  *
  * `derivedChatIds` and not `activeNow` for the same reason `writeLive` reads the
  * former: `activeNow` is the value AFTER the suppression flag has been applied,
@@ -152,8 +170,12 @@ function isWorkingTreeHeld(wt) {
   return wt.workingTree.modified + wt.workingTree.untracked > 0;
 }
 
+function hasNetNoopMerge(wt) {
+  return wt.merge?.conflict === false && wt.mergeResultMatchesBase === true;
+}
+
 function hasUnmergedCommits(wt) {
-  return typeof wt.ahead === 'number' && wt.ahead > 0;
+  return typeof wt.ahead === 'number' && wt.ahead > 0 && wt.patchEquivalence !== 'absorbed' && !hasNetNoopMerge(wt);
 }
 
 /**
@@ -210,11 +232,15 @@ export function classify(
     shellHistory = null,
     readHistory = null,
     liveWritersSuppressed = null,
+    base = 'main',
   }
 ) {
   const reasons = [];
   const uncommitted = isWorkingTreeHeld(wt);
   const unmerged = hasUnmergedCommits(wt);
+  const treeUnreadable = Boolean(wt.workingTree.statusError);
+  const branchUnreadable = typeof wt.branch !== 'string' || wt.branch.length === 0;
+  const gitFactsUnreadable = branchUnreadable || wt.ahead === null || wt.behind === null || wt.mergedIntoBase === null;
   const liveAgent = boardAgents.find((a) => a.live);
   // EITHER source makes a worktree in-use. The session database is blind to a
   // session that was opened in the main checkout and then driven into a task
@@ -232,14 +258,14 @@ export function classify(
   // override erase its own evidence and `derivedLive` would quietly agree with
   // `live` about a signal nobody ever checked.
   const writeLive = Boolean(writeHistory?.derivedChatIds?.length);
-  // Direct I/O inside this directory, on the wider window. Without it the three
+  // Shell I/O inside this directory, on the wider window. Without it the three
   // signals above are all keyed on a chat's own liveness or on the board, and a
   // main-checkout agent that ran `git -C … worktrees/<name> …` minutes ago is in
   // neither: its `directory` is the main checkout, and the board is keyed on the
   // branch. That gap is not theoretical — it is why a worktree with agents
   // editing it an hour ago could carry `action: "dispose"` with `prunable: true`
   // and every one of its git facts correct.
-  const ioLive = hasRecentIo([shellHistory, writeHistory, readHistory], nowMs);
+  const ioLive = hasRecentIo([shellHistory], nowMs);
   const derivedLive = chatLive || writeLive || ioLive || Boolean(liveAgent);
 
   // A declared hard state outranks every heuristic above. Both of them are
@@ -271,9 +297,15 @@ export function classify(
   } else if (wt.tip === null) {
     status = STATUS.UNREADABLE;
     reasons.push('git could not read a tip commit for this worktree');
-  } else if (wt.isPrimary) {
-    status = STATUS.LANDED;
-    reasons.push('this is the main worktree');
+  } else if (treeUnreadable || gitFactsUnreadable) {
+    status = STATUS.UNREADABLE;
+    reasons.push(
+      treeUnreadable
+        ? `git could not read the working tree (${wt.workingTree.statusError})`
+        : branchUnreadable
+          ? 'git could not establish the worktree branch identity'
+          : 'git could not establish the branch relationship to the base'
+    );
   } else if (uncommitted && wt.ahead === 0) {
     status = STATUS.UNCOMMITTED_ONLY;
     reasons.push('the branch reports 0 commits ahead of main and is an ancestor of it');
@@ -283,10 +315,19 @@ export function classify(
         ? 'git cannot distinguish this from a branch that landed and was then edited'
         : 'the branch is not on main either'
     );
+  } else if (wt.isPrimary) {
+    status = STATUS.LANDED;
+    reasons.push('this is the main worktree');
   } else if (uncommitted || unmerged) {
     status = STATUS.UNMERGED_WORK;
     if (unmerged) reasons.push(`${wt.ahead} commit(s) ahead of main`);
     if (uncommitted) reasons.push('the working tree holds uncommitted changes');
+  } else if (hasNetNoopMerge(wt)) {
+    status = STATUS.LANDED;
+    reasons.push('a conflict-free merge produces exactly the current base tree, so there is no net change to land');
+  } else if (wt.patchEquivalence === 'absorbed') {
+    status = STATUS.LANDED;
+    reasons.push(wt.patchEquivalenceReason ?? 'every branch commit has an equivalent patch on the base');
   } else {
     status = STATUS.LANDED;
     reasons.push('the branch is an ancestor of main and the working tree is clean');
@@ -296,9 +337,24 @@ export function classify(
   // branch is landed, because a curated finding is a human claim about work
   // that may only exist in this directory.
   const curatedBlocksPrune = Boolean(curated?.mustNotPrune);
+  const curatedLegacy = Boolean(curated?.legacy);
+  const legacyUnknown = curatedLegacy
+    ? treeUnreadable
+      ? 'the working tree could not be read'
+      : wt.detached
+        ? 'the worktree has no branch to keep'
+        : branchUnreadable
+          ? 'the worktree branch identity could not be established'
+          : gitFactsUnreadable
+            ? 'the branch relationship to the base could not be established'
+            : null
+    : null;
   const mergeState = mergeVerdict(wt);
   let recommendation;
-  if (wt.isPrimary) {
+  if ((wt.isPrimary || wt.branch === base) && uncommitted && !live) {
+    recommendation = RECOMMENDATION.SALVAGE;
+    reasons.push('the base worktree holds uncommitted changes that are in no commit on this branch');
+  } else if (wt.isPrimary || wt.branch === base) {
     // The main checkout is never a prune candidate, whatever git says about
     // it. It is the landing site, it is where the operator works, and every
     // other session in the repository resolves paths through it.
@@ -306,7 +362,7 @@ export function classify(
     // written back onto the input record, so `wt.live` was always undefined
     // and the main worktree could never report `in-use`.
     recommendation = live ? RECOMMENDATION.IN_USE : RECOMMENDATION.KEEP;
-    reasons.push('the main worktree is never a deletion candidate');
+    reasons.push('the base worktree is never a deletion candidate');
   } else if (live) {
     recommendation = RECOMMENDATION.IN_USE;
     reasons.push(
@@ -315,11 +371,47 @@ export function classify(
         : chatLive
           ? 'a session messaged inside the last 30 minutes'
           : ioLive
-            ? `a command ran inside this worktree at ${new Date(
-                Math.max(shellHistory?.lastAtMs ?? 0, writeHistory?.lastAtMs ?? 0, readHistory?.lastAtMs ?? 0)
-              ).toISOString()}`
+            ? `a command ran inside this worktree at ${new Date(shellHistory?.lastAtMs ?? 0).toISOString()}`
             : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
+  } else if (wt.locked || wt.prunableReason) {
+    recommendation = RECOMMENDATION.UNKNOWN;
+    reasons.push(
+      wt.locked
+        ? 'git marks this worktree locked'
+        : `git marks this worktree administratively prunable (${wt.prunableReason})`
+    );
+  } else if (
+    curatedLegacy &&
+    !curatedBlocksPrune &&
+    legacyUnknown === null &&
+    !uncommitted &&
+    !treeUnreadable &&
+    !wt.detached &&
+    wt.tip !== null
+  ) {
+    // CHECKED HERE, NOT AT THE BOTTOM, AND ONLY FOR A CLEAN TREE.
+    //
+    // `uncommitted` is the load-bearing condition. `legacy` authorises removing
+    // the WORKTREE, so it is a licence to delete a directory — and a directory
+    // holding uncommitted changes is the only copy of them. A claim that the
+    // branch is worth keeping says nothing about files the branch has never
+    // seen, so allowing it here would let a prose field authorise the loss the
+    // whole program exists to prevent. A dirty legacy worktree therefore stays
+    // `at-risk`, which is where a human has to look.
+    //
+    // `detached` and an unreadable tip are excluded for the same reason
+    // `mustNotPrune` cannot rescue them: there is no branch to keep, so
+    // "keep the branch" has nothing to act on and would read as a clearance.
+    //
+    // It sits ABOVE the merge verdicts deliberately. A stale branch that no
+    // longer merges is the common case, not an exception — that is what "legacy"
+    // means — and leaving it `at-risk` is what put these on the list a sweep
+    // reads first, forever, for a branch nobody intends to reconcile.
+    recommendation = RECOMMENDATION.LEGACY;
+    reasons.push('a curated finding marks this branch legacy: keep the ref, drop the worktree');
+    if (wt.ahead > 0)
+      reasons.push(`${wt.ahead} commit(s) ahead of main are kept on the branch and not proposed for merge`);
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
     reasons.push('work here is not reachable from any commit on this branch');
@@ -375,9 +467,14 @@ export function classify(
   const prunable =
     wt.isPrimary !== true &&
     recommendation === RECOMMENDATION.PRUNE &&
-    wt.mergedIntoBase === true &&
+    wt.ahead !== null &&
+    wt.mergedIntoBase !== null &&
+    (wt.mergedIntoBase === true || wt.patchEquivalence === 'absorbed' || hasNetNoopMerge(wt)) &&
     wt.workingTree.modified === 0 &&
-    wt.workingTree.untracked === 0;
+    wt.workingTree.untracked === 0 &&
+    !wt.locked &&
+    !wt.prunableReason &&
+    !treeUnreadable;
 
   // The one decision. Derived from the recommendation rather than restated, so
   // the two cannot disagree.
@@ -403,6 +500,14 @@ export function classify(
     case RECOMMENDATION.KEEP:
       action = ACTION.KEEP;
       break;
+    case RECOMMENDATION.LEGACY:
+      // NOT read from `prunable`, unlike `dispose`. The worktree IS a disposal
+      // candidate — the tree is clean by the branch that got here — but the
+      // branch is not, and `prunable` means both at once. `npm run dispose` reads
+      // `action` and the skip is in the disposal program, so this is the one
+      // place the two halves can disagree.
+      action = ACTION.LEGACY;
+      break;
     default:
       action = ACTION.UNDECIDED;
   }
@@ -412,11 +517,14 @@ export function classify(
     recommendation,
     action,
     mergeConflict: wt.merge?.conflict ?? null,
+    mergeResultMatchesBase: wt.merge?.conflict === false ? (wt.mergeResultMatchesBase ?? null) : null,
     // Disambiguates the two things `mergeConflict: null` means: the check was
     // skipped (already on main, or detached), or attempted and unanswerable.
     mergeChecked: mergeState !== 'unknown',
     mergeConflictFiles: wt.merge?.files ?? [],
     prunable,
+    patchEquivalence: wt.patchEquivalence ?? 'unknown',
+    patchEquivalenceReason: wt.patchEquivalenceReason ?? null,
     reasons,
     live,
     // What the signals said before any declared hard state overrode them. Kept
@@ -463,6 +571,14 @@ export function riskScore(verdict) {
       return 30;
     case RECOMMENDATION.KEEP:
       return 40;
+    case RECOMMENDATION.LEGACY:
+      // Below `PRUNE`, which is the surprising half and deliberate: a legacy
+      // branch is the LEAST work in the repository. Nothing is at risk, nobody is
+      // waiting on it, and the only remaining task is a ref somebody may never
+      // touch. It sorts under everything so it is the last thing a reader
+      // reaches, and last is where a thing with a 1% chance of mattering belongs
+      // — `PRUNE`'s 10 leaves room beneath it.
+      return 5;
     case RECOMMENDATION.PRUNE:
       return 10;
     default:

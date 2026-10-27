@@ -1,4 +1,4 @@
-import { expect, test, type Page } from './fixtures/extended-test';
+import { expect, test, type Page, type TestInfo } from './fixtures/extended-test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
@@ -16,6 +16,7 @@ import {
   type BoundingBox,
   type CanvasPixelPredicate,
   type ClipOptions,
+  type ImageDataResult,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
@@ -72,6 +73,7 @@ const FIXTURE_SPLIT_BAND = { min: 0.48, max: 0.52 } as const;
 const ROUNDTRIP_TEST_TIMEOUT_MS = INTEGRATION_TEST_TIMEOUT_MS;
 
 const PNG_FORMAT: ExportFormat = { label: 'PNG', extension: '.png', verification: 'browser-pixels' };
+const SVG_FORMAT: ExportFormat = { label: 'SVG (flattened)', extension: '.svg', verification: 'browser-pixels' };
 
 /** The stroke colour the round trip puts on the canvas and reads back. */
 const STROKE_HEX = '#ff0000';
@@ -199,6 +201,188 @@ async function requireDominantRed(capture: Buffer, label: string) {
   return color!;
 }
 
+/** Captures the canvas backing pixels before CDP scales the visible CSS surface. */
+async function readWorkspaceRaster(page: Page): Promise<ImageDataResult> {
+  const dataUrl = await getWorkspaceCanvas(page).evaluate((canvas) =>
+    (canvas as HTMLCanvasElement).toDataURL('image/png')
+  );
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+  if (!match) throw new Error('Workspace canvas did not return a base64 PNG');
+  return loadImageData(Buffer.from(match[1], 'base64'));
+}
+
+/** Reads the document dimensions published by the active tool for the workspace canvas. */
+async function readWorkspaceDocumentSize(page: Page): Promise<{ width: number; height: number }> {
+  const workspace = page.getByTestId('workspace-container');
+  await expect(workspace).toHaveAttribute('data-fit-document-width', /^\d+$/);
+  await expect(workspace).toHaveAttribute('data-fit-document-height', /^\d+$/);
+  const dimensions = await workspace.evaluate((node) => ({
+    width: Number(node.getAttribute('data-fit-document-width')),
+    height: Number(node.getAttribute('data-fit-document-height')),
+  }));
+  if (!Number.isInteger(dimensions.width) || dimensions.width <= 0) {
+    throw new Error(`The app published an invalid document width: ${dimensions.width}`);
+  }
+  if (!Number.isInteger(dimensions.height) || dimensions.height <= 0) {
+    throw new Error(`The app published an invalid document height: ${dimensions.height}`);
+  }
+  return dimensions;
+}
+
+/** Compares RGBA values and reports the first differing document pixel. */
+function expectRasterPixelsEqual(actual: ImageDataResult, expected: ImageDataResult, label: string): void {
+  expect(actual.width, `${label}: width`).toBe(expected.width);
+  expect(actual.height, `${label}: height`).toBe(expected.height);
+  const expectedDataLength = expected.width * expected.height * 4;
+  expect(expected.data.length, `${label}: expected complete RGBA buffer length`).toBe(expectedDataLength);
+  expect(actual.data.length, `${label}: actual complete RGBA buffer length`).toBe(expectedDataLength);
+
+  const channelNames = ['red', 'green', 'blue', 'alpha'] as const;
+  for (let index = 0; index < expected.data.length; index += 1) {
+    if (actual.data[index] === expected.data[index]) continue;
+    const pixelIndex = Math.floor(index / 4);
+    const x = pixelIndex % expected.width;
+    const y = Math.floor(pixelIndex / expected.width);
+    const channel = channelNames[index % 4];
+    expect(
+      actual.data[index],
+      `${label}: first mismatch at (${x}, ${y}) ${channel}; expected ${expected.data[index]}`
+    ).toBe(expected.data[index]);
+  }
+}
+
+/** Samples the centre of each backing-store cell to recover document-resolution RGBA pixels. */
+function downsampleCanvasBacking(
+  backing: ImageDataResult,
+  documentWidth: number,
+  documentHeight: number,
+  devicePixelRatio: number
+): ImageDataResult {
+  if (!Number.isInteger(devicePixelRatio) || devicePixelRatio < 1) {
+    throw new Error(`Expected an integer device pixel ratio, received ${devicePixelRatio}`);
+  }
+  expect(backing.width, 'canvas backing width should match document width at this DPR').toBe(
+    documentWidth * devicePixelRatio
+  );
+  expect(backing.height, 'canvas backing height should match document height at this DPR').toBe(
+    documentHeight * devicePixelRatio
+  );
+  expect(backing.data.length, 'canvas backing should contain a complete RGBA buffer').toBe(
+    backing.width * backing.height * 4
+  );
+
+  const data = new Uint8ClampedArray(documentWidth * documentHeight * 4);
+  const offset = Math.floor(devicePixelRatio / 2);
+  for (let y = 0; y < documentHeight; y += 1) {
+    for (let x = 0; x < documentWidth; x += 1) {
+      const sourceIndex = ((y * devicePixelRatio + offset) * backing.width + x * devicePixelRatio + offset) * 4;
+      const destinationIndex = (y * documentWidth + x) * 4;
+      data.set(backing.data.subarray(sourceIndex, sourceIndex + 4), destinationIndex);
+    }
+  }
+  return { width: documentWidth, height: documentHeight, data };
+}
+
+/** Uses the app's document size, not the exported PNG size, to interpret canvas backing pixels. */
+async function readWorkspaceDocumentRaster(page: Page, expectedDpr: number): Promise<ImageDataResult> {
+  expect(await page.evaluate(() => window.devicePixelRatio), 'the browser should use the requested DPR').toBe(
+    expectedDpr
+  );
+  const { width, height } = await readWorkspaceDocumentSize(page);
+  const backing = await readWorkspaceRaster(page);
+  return downsampleCanvasBacking(backing, width, height, expectedDpr);
+}
+
+async function verifyPngRoundTrip(page: Page, testInfo: TestInfo, expectedDpr: number): Promise<void> {
+  test.setTimeout(ROUNDTRIP_TEST_TIMEOUT_MS);
+  expect(await page.evaluate(() => window.devicePixelRatio), 'the browser should use the requested DPR').toBe(
+    expectedDpr
+  );
+
+  const canvas = getWorkspaceCanvas(page);
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('Canvas not found');
+
+  await clickToolButton(page, 'draw');
+  await setForegroundColor(page, STROKE_HEX, true);
+  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+  await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'the red stroke' });
+
+  const beforeDocument = await readWorkspaceDocumentRaster(page, expectedDpr);
+  const beforeCapture = await captureCanvasScreenshot(
+    page,
+    box,
+    testInfo,
+    `file-roundtrip-before-save-dpr-${expectedDpr}`
+  );
+  const before = await requireDominantRed(beforeCapture, 'before save');
+
+  await openSaveDialog(page);
+  await fillSaveDialog(page, 'roundtrip', PNG_FORMAT.label);
+
+  const saveDialogTitle = page.getByRole('heading', { name: 'Save File As...' });
+  await expect(
+    saveDialogTitle,
+    'the open Save dialog is titled by a heading carrying this accessible name'
+  ).toHaveCount(1);
+  await expect(saveDialogTitle, 'and that heading is on screen, not merely in the DOM').toBeVisible();
+
+  const download = await submitSaveDialogForDownload(page, PNG_FORMAT);
+  const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
+  await download.saveAs(savedPath);
+  await expect(saveDialogTitle, 'the Save dialog unmounted once the download completed').toHaveCount(0);
+  await expect(saveDialogTitle, 'and that heading is no longer on screen, the dialog fully gone').toBeHidden();
+  const savedBytes = await readFile(savedPath);
+  expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
+
+  const savedDocument = await loadImageData(savedBytes);
+  expect(savedDocument.width, 'the exported PNG should retain the app document width').toBe(beforeDocument.width);
+  expect(savedDocument.height, 'the exported PNG should retain the app document height').toBe(beforeDocument.height);
+  expectRasterPixelsEqual(
+    savedDocument,
+    beforeDocument,
+    'the saved PNG should preserve every document pixel from the canvas before save'
+  );
+
+  await page.reload();
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+  expect(await page.evaluate(() => window.devicePixelRatio), 'reloading should retain the configured DPR').toBe(
+    expectedDpr
+  );
+  const reloadedCapture = await captureCanvasScreenshot(
+    page,
+    box,
+    testInfo,
+    `file-roundtrip-after-reload-dpr-${expectedDpr}`
+  );
+  expect(await hasRedPixels(reloadedCapture), 'reloading should have discarded the drawn stroke').toBe(false);
+
+  await openDocumentViaFileMenu(page, savedPath);
+  const reopenedBox = await getWorkspaceCanvas(page).boundingBox();
+  if (!reopenedBox) throw new Error('Canvas not found after reopening the saved file');
+  await waitForCanvasPixels(page, canvasRedrawClip(reopenedBox), hasRedPixels, {
+    description: 'the stroke carried back in by the saved file',
+  });
+
+  const afterDocument = await readWorkspaceDocumentRaster(page, expectedDpr);
+  const afterCapture = await captureCanvasScreenshot(
+    page,
+    reopenedBox,
+    testInfo,
+    `file-roundtrip-after-reopen-dpr-${expectedDpr}`
+  );
+  const after = await requireDominantRed(afterCapture, 'after reopening the saved file');
+  // CDP captures rendered-surface pixels; the exact document-space raster is compared below.
+  expect(
+    { red: after.red, green: after.green, blue: after.blue },
+    'the stroke should come back in the colour it was drawn'
+  ).toEqual({ red: before.red, green: before.green, blue: before.blue });
+  expect(after.red, 'the reopened stroke should be the red that was drawn').toBeGreaterThan(180);
+  expect(after.green, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
+  expect(after.blue, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
+  expectRasterPixelsEqual(afterDocument, savedDocument, 'reopening the saved PNG should restore every document pixel');
+}
+
 /**
  * Opens `filePath` through the real `File > Open` path.
  *
@@ -302,62 +486,105 @@ test.describe('File round trip', () => {
   });
 
   test('a PNG this app saves re-imports to the same pixels', async ({ page }, testInfo) => {
+    await verifyPngRoundTrip(page, testInfo, 1);
+  });
+
+  test.describe('at device pixel ratio 2', () => {
+    test.use({ deviceScaleFactor: 2 });
+
+    test('a PNG this app saves re-imports to the same pixels', async ({ page }, testInfo) => {
+      await verifyPngRoundTrip(page, testInfo, 2);
+    });
+  });
+
+  test('the exact pixel oracle detects a translated stroke with unchanged aggregate colour', async () => {
+    const makeStroke = (startX: number): ImageDataResult => {
+      const width = 6;
+      const height = 3;
+      const data = new Uint8ClampedArray(width * height * 4);
+      for (let pixel = 0; pixel < width * height; pixel += 1) data[pixel * 4 + 3] = 255;
+      for (let x = startX; x < startX + 3; x += 1) {
+        const index = (width + x) * 4;
+        data.set([255, 0, 0, 255], index);
+      }
+      return { width, height, data };
+    };
+    const original = makeStroke(1);
+    const translated = makeStroke(2);
+
+    expect(await dominantRed(translated)).toEqual(await dominantRed(original));
+    expect(() => expectRasterPixelsEqual(translated, original, 'translated-stroke control')).toThrow(
+      'translated-stroke control: first mismatch at (1, 1) red; expected 255'
+    );
+  });
+
+  test('an app-generated flattened SVG reopens to the same pixels', async ({ page }, testInfo) => {
     test.setTimeout(ROUNDTRIP_TEST_TIMEOUT_MS);
 
+    await openDocumentViaFileMenu(page, path.join(testInfo.config.rootDir, FIXTURE_PATH_FROM_ROOT));
     const canvas = getWorkspaceCanvas(page);
-    const box = await canvas.boundingBox();
-    if (!box) throw new Error('Canvas not found');
-
-    await clickToolButton(page, 'draw');
-    // verifySwatch asserts the store took the colour before the stroke is drawn with it.
-    await setForegroundColor(page, STROKE_HEX, true);
-    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'the red stroke' });
-
-    const beforeCapture = await captureCanvasScreenshot(page, box, testInfo, 'file-roundtrip-before-save');
-    const before = await requireDominantRed(beforeCapture, 'before save');
+    const sourceBox = await canvas.boundingBox();
+    if (!sourceBox) throw new Error('Canvas not found after opening the source fixture');
+    const sourceContent = integralClip(documentContentRect(sourceBox, FIXTURE_DOCUMENT_SIZE));
+    await waitForCanvasPixels(page, canvasRedrawClip(sourceContent), fixtureHalvesRendered, {
+      description: 'source fixture pixels before SVG export',
+    });
+    const sourceCapture = await captureCanvasScreenshot(
+      page,
+      sourceBox,
+      testInfo,
+      'svg-roundtrip-source',
+      sourceContent
+    );
+    const sourcePixels = await loadImageData(sourceCapture);
 
     await openSaveDialog(page);
-    await fillSaveDialog(page, 'roundtrip', PNG_FORMAT.label);
-    const download = await submitSaveDialogForDownload(page, PNG_FORMAT);
+    await fillSaveDialog(page, 'svg-roundtrip', SVG_FORMAT.label);
+    const download = await submitSaveDialogForDownload(page, SVG_FORMAT);
     const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
     await download.saveAs(savedPath);
-    await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
-    const savedBytes = await readFile(savedPath);
-    expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
 
-    // The control: reloading really does discard the document, so the pixels that
-    // appear below came from the file and not from a canvas that was never cleared.
-    // Nothing has to answer an unload prompt here, because this document is CLEAN: the
-    // save above dispatched `hasUnsavedChanges: false` (`src/hooks/useApp.ts:70`), which is
-    // the one path that makes the `beforeunload` guard silent, and the same reason `File >
-    // New` would not prompt here. Were it dirty, this reload would still need no handler —
-    // an unregistered `beforeunload` is accepted, so the navigation proceeds. The in-app
-    // prompt is a different event and does need an answer, which is what
-    // `openDocumentViaFileMenu` gives it below.
+    const svg = await readFile(savedPath, 'utf8');
+    expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">');
+    const embeddedPng = /<image href="data:image\/png;base64,([^"\s]+)" width="64" height="64" \/>/.exec(svg)?.[1];
+    expect(embeddedPng, 'the app export should have one canonical flattened PNG').toBeDefined();
+    const pngBytes = Buffer.from(embeddedPng!, 'base64');
+    expect([...pngBytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(pngBytes.readUInt32BE(16), 'the embedded PNG width should match the document').toBe(64);
+    expect(pngBytes.readUInt32BE(20), 'the embedded PNG height should match the document').toBe(64);
+
     await page.reload();
     await expect(getWorkspaceCanvas(page)).toBeVisible();
-    const reloadedCapture = await captureCanvasScreenshot(page, box, testInfo, 'file-roundtrip-after-reload');
-    expect(await hasRedPixels(reloadedCapture), 'reloading should have discarded the drawn stroke').toBe(false);
-
     await openDocumentViaFileMenu(page, savedPath);
-    const reopenedBox = await getWorkspaceCanvas(page).boundingBox();
-    if (!reopenedBox) throw new Error('Canvas not found after reopening the saved file');
-    await waitForCanvasPixels(page, canvasRedrawClip(reopenedBox), hasRedPixels, {
-      description: 'the stroke carried back in by the saved file',
+
+    await expect(page.getByTestId('footer-dimensions')).toHaveText('Dimensions: 64 × 64 px');
+    const reopenedCanvas = getWorkspaceCanvas(page);
+    const reopenedBox = await reopenedCanvas.boundingBox();
+    if (!reopenedBox) throw new Error('Canvas not found after reopening the flattened SVG');
+    const reopenedContent = integralClip(documentContentRect(reopenedBox, FIXTURE_DOCUMENT_SIZE));
+    await waitForCanvasPixels(page, canvasRedrawClip(reopenedContent), fixtureHalvesRendered, {
+      description: 'the source fixture pixels reopened from SVG',
     });
 
-    const afterCapture = await captureCanvasScreenshot(page, reopenedBox, testInfo, 'file-roundtrip-after-reopen');
-    const after = await requireDominantRed(afterCapture, 'after reopening the saved file');
-    expect(after, 'the stroke should come back in the colour it was drawn').toEqual({
-      red: before.red,
-      green: before.green,
-      blue: before.blue,
-      count: before.count,
-    });
-    expect(after.red, 'the reopened stroke should be the red that was drawn').toBeGreaterThan(180);
-    expect(after.green, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
-    expect(after.blue, 'the reopened stroke should be the red that was drawn').toBeLessThan(100);
+    const reopened = await captureCanvasScreenshot(
+      page,
+      reopenedBox,
+      testInfo,
+      'svg-roundtrip-reopened',
+      reopenedContent
+    );
+    const reopenedPixels = await loadImageData(reopened);
+    expect(reopenedPixels.width).toBe(sourcePixels.width);
+    expect(reopenedPixels.height).toBe(sourcePixels.height);
+    expect(reopenedPixels.data).toEqual(sourcePixels.data);
+    expect(
+      isExactly(await sampleFixtureColor(reopened, FIXTURE_LEFT_SAMPLE_X, FIXTURE_SAMPLE_Y), FIXTURE_LEFT_RGB)
+    ).toBe(true);
+    expect(
+      isExactly(await sampleFixtureColor(reopened, FIXTURE_RIGHT_SAMPLE_X, FIXTURE_SAMPLE_Y), FIXTURE_RIGHT_RGB)
+    ).toBe(true);
+    expect(await measureFixtureSplit(reopened)).toBeGreaterThan(FIXTURE_SPLIT_BAND.min);
+    expect(await measureFixtureSplit(reopened)).toBeLessThan(FIXTURE_SPLIT_BAND.max);
   });
 
   test('the open input accepts every format loadDocumentFile can open', async ({ page }) => {

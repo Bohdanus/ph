@@ -8,33 +8,51 @@
  *   1. A worktree reporting 0 commits ahead of main and being an ancestor of
  *      main is NOT prunable while its working tree holds changes. This is the
  *      "0 ahead is not a safety test" case, and it is the shape of every
- *      worktree here that looks disposable and is not. The set is DERIVED from
- *      the live worktrees on every run rather than listed by name: the list was
- *      the recurring red, and it was re-derived by hand three times in one
- *      session because an agent had committed, disposed a worktree, or created
- *      one.
+ *      worktree here that looks disposable and is not. Synthetic facts cover
+ *      dirty primary and merged worktrees, so the guard does not depend on which
+ *      worktrees happen to exist on this machine.
  *   2. A paid-model launch that died at zero tokens is classified as a
  *      failure, not as a finished session that happened to be quiet.
  *
- * Everything runs under the root jsdom project per AGENTS.md, so these are
- * environment-agnostic: no git repository is created, no clock is read, and
- * `node:sqlite` is only exercised where a real temporary database is cheap.
+ * The suite runs under the root jsdom project per AGENTS.md. Tests of git helpers
+ * use throwaway repositories; inventory-protection tests do not enumerate the
+ * operator's live worktree fleet.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
+import { formatSummary, inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
-import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
+import {
+  __testables,
+  collectWorktrees,
+  findMissingWorktrees,
+  historicalNameCollisions,
+  listBranchOnlyRefs,
+  listWorktrees,
+  mergeConflict,
+  PATCH_EQUIVALENCE,
+  BRANCH_ONLY_REF_CATEGORY,
+  baseRefName,
+  resolveBaseRef,
+  sameWorktreeRoster,
+} from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
+import {
+  parseWorktreeListing,
+  resolveInventoryPath,
+  resolveMainWorktreeRoot,
+  resolveRepositoryRoot,
+} from '../lib/worktree-inventory/location.mjs';
 import {
   auditWrites,
   buildPathIndex,
@@ -47,53 +65,15 @@ import {
   summariseWrites,
   worktreeNameFromPath,
 } from '../lib/worktree-inventory/writes.mjs';
+import { MAX_SESSION_DB_WINDOW_MS } from '../lib/worktree-inventory/session-audit-limits.mjs';
 import { resolveReadsReleasedBefore } from '../worktree-inventory.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
 import { Board } from '../lib/agent-board/db.mjs';
 
 /**
- * This file's budget, and the reason it is not Vitest's default 5s.
- *
- * The "against a real repository" blocks build a throwaway git repository per
- * test and then run real `git` against it, so a test here is bounded by process
- * spawns and git's own startup rather than by anything being computed. The
- * `curated table` block is worse: it reads git in every worktree in the
- * repository, so its cost is a function of how many worktrees exist on the
- * machine — 70-odd when these numbers were first taken, 93 when they were last
- * checked, and it grows with the fleet.
- *
- * The default is not merely tight for that, it is at or above the measured cost
- * of this file's own slowest test. Spawns and git cost whatever the machine is
- * doing, so the figure is an OBSERVATION OF ONE RUN and not a property of the
- * file: 3.0s across three isolated runs on an idle machine, and 2.9s for the same
- * test when the file was measured again on a busier day with 93 worktrees live.
- * `reports whether the commit list was cut off at the cap` has been reported
- * failing at the 5s default with no code change, and at the pre-fix commit on a
- * loaded machine the failure that appeared instead was a DIFFERENT test in this
- * file — which is what a population of marginal tests looks like, not five
- * specific ones.
- *
- * What is deliberately NOT claimed here: any contention factor. A full 266-file
- * run was measured against these same tests and came out FASTER per test than the
- * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
- * not a thing this suite can currently support. The headroom below is stated for
- * what it is: 15s against the worst span this file has been seen to take is 5x,
- * and is deliberately tighter than the two sibling suites because they spawn a CLI
- * per assertion and this one does not.
- *
- * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
- * only decides how long a test may run before the harness reports it, and no
- * assertion below is changed by it.
- *
- * A per-test `it(name, fn, timeout)` argument still wins over this. The THREE
- * tests that read every worktree keep their declared `60_000`, which is what they
- * actually need: the live worktree read measured 21.5s on a machine with 70
- * worktrees and 12.3s on a busier day with 93, and that is a function of how many
- * worktrees exist rather than of this test. `liveWorktreeFacts` memoises, so the
- * three pay for the read once, and which of them asks first is not something the
- * budget may depend on. 60s is the one budget here that is sized against a cost
- * that GROWS, so re-measure it if the worktree count changes by an order of
- * magnitude.
+ * Git integration tests use temporary repositories; inventory classification
+ * uses synthetic worktree records and never enumerates the operator's fleet.
+ * The 15s timeout accommodates process-spawning cases without changing assertions.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -274,6 +254,19 @@ function makeRepo() {
   return dir;
 }
 
+function branchRefRecord(cwd, name) {
+  const format = '%(refname:strip=2)%00%(objectname)%00%(subject)%00%(committerdate:iso-strict)%00%(authorname)%00';
+  const output = execFileSync('git', ['for-each-ref', `--format=${format}`, `refs/heads/${name}`], {
+    cwd,
+    encoding: 'utf8',
+  });
+  const fields = output.replace(/\0\n/g, '\0').split('\0');
+  if (fields.at(-1) === '') fields.pop();
+  if (fields.length !== 5) throw new Error(`expected one branch ref record for ${name}`);
+  const [refName, sha, subject, date, author] = fields;
+  return { name: refName, sha, subject, date, author };
+}
+
 /** A worktree shaped like the ones this repository actually has. */
 function wt(overrides = {}) {
   return {
@@ -295,6 +288,46 @@ function wt(overrides = {}) {
 const noChats = { count: 0, lastActivity: null };
 const noSessions = [];
 
+function protectionWorktreeFacts() {
+  return {
+    mainPath: '/repo',
+    worktrees: [
+      wt({
+        name: 'ph',
+        path: '/repo',
+        branch: 'main',
+        isPrimary: true,
+        ahead: 0,
+        behind: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 1, untracked: 1, paths: ['modified.txt', 'untracked.txt'] },
+      }),
+      wt({
+        name: 'inventory-fixture-dirty-merged',
+        path: '/repo/.kilo/worktrees/inventory-fixture-dirty-merged',
+        branch: 'fix/dirty-merged',
+        ahead: 0,
+        behind: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 1, untracked: 0, paths: ['src/change.ts'] },
+      }),
+    ],
+  };
+}
+
+function protectionInventory(facts = protectionWorktreeFacts()) {
+  const { mainPath, worktrees } = facts;
+  return buildInventory({
+    worktrees,
+    root: mainPath,
+    base: 'main',
+    mainHead: 'fixture-main-head',
+    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
+    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+    nowMs: NOW,
+  });
+}
+
 /**
  * The shape the curated table used to have to be told about by hand, read off a
  * GENERATED record rather than a fixture: a branch git already calls disposable
@@ -307,83 +340,88 @@ const noSessions = [];
  */
 const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true && r.dirty + r.untracked > 0;
 
-/**
- * Every worktree of this repository, with the git facts the rule above reads.
- *
- * `collectWorktrees` is not used because it also runs `git merge-tree` on every
- * unmerged branch: that is the right cost for a generator which has to print all
- * of them, and the wrong cost for a guard that only needs three facts per
- * worktree. The merge answer is deliberately absent below, and it cannot change
- * any verdict here — `STATUS.UNCOMMITTED_ONLY` is decided before the merge is
- * consulted, so a worktree of this shape is `salvage` whether or not anyone
- * asked git whether it would merge.
- *
- * `tip` is read for real rather than left out: `classify` reads a MISSING tip as
- * `STATUS.UNREADABLE`, which reports `unknown` and `prunable: false` for
- * everything, and a guard written that way is green no matter what the generator
- * does with a dirty merged branch.
- *
- * Memoised: two tests below need the same few seconds of git, and a second read
- * of a repository other agents are actively writing to could see a different
- * shape than the first.
- */
-let _liveFacts = null;
-function liveWorktreeFacts() {
-  if (_liveFacts) return _liveFacts;
-  const cwd = process.cwd();
-  const missing = new Set(findMissingWorktrees(cwd).map((w) => w.path));
-  // The MAIN checkout is the first entry of `git worktree list`, never `cwd`:
-  // this suite is run from a task worktree as often as from the root checkout,
-  // and "the main worktree" has to be the same worktree in both, or the guard
-  // asserts a different repository depending on where it was invoked.
-  const mainPath = listWorktrees(cwd)[0].path;
-  // A registration whose directory is gone is reported by the generator under
-  // `dataSources.git.missingWorktrees`; git cannot be asked about a tree that is
-  // not there, and an `ahead` of `null` would read as "not derived" for a
-  // worktree that is simply not there.
-  const worktrees = listWorktrees(cwd)
-    .filter((w) => !missing.has(w.path))
-    .map((w) => {
-      const { ahead, behind } = __testables.aheadBehind(w.path, 'main');
-      return {
-        ...w,
-        isPrimary: w.path === mainPath,
-        tip: __testables.tipCommit(w.path),
-        ahead,
-        behind,
-        mergedIntoBase: __testables.isMergedInto(w.path, 'main'),
-        workingTree: __testables.workingTreeState(w.path),
-        commitsAhead: [],
-      };
-    });
-  _liveFacts = { mainPath, worktrees };
-  return _liveFacts;
-}
-
-/**
- * The real inventory, built from the real worktrees, with every LIVENESS signal
- * deliberately empty.
- *
- * `in-use` is a protection of its own, so leaving the board and the chats in
- * would let this guard pass for the wrong reason: a worktree nobody happens to
- * be in is protected by the rule under test, and one somebody is in is protected
- * by liveness. With them out, the only thing standing between a dirty merged
- * branch and `disposalCandidates` is the derivation.
- */
-function liveInventory() {
-  const { mainPath, worktrees } = liveWorktreeFacts();
-  return buildInventory({
-    worktrees,
-    root: mainPath,
-    base: 'main',
-    mainHead: execFileSync('git', ['rev-parse', 'main'], { cwd: mainPath, encoding: 'utf8' }).trim(),
-    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
-    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
-    nowMs: NOW,
-  });
-}
-
 describe('git.mjs against a real repository', () => {
+  it('keeps tip commit details when the branch has no commits ahead', async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, 'one.txt'), 'modified');
+      const [worktree] = await collectWorktrees(dir, { base: 'main' });
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      expect(worktree.ahead).toBe(0);
+      expect(worktree.tip.sha).toBe(head);
+      expect(worktree.mergedIntoBase).toBe(true);
+      expect(worktree.workingTree.modified).toBe(1);
+      expect(worktree.workingTree.notOnBase).toBe(1);
+
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      const [side] = await collectWorktrees(dir, { base: 'main' });
+      expect(side.ahead).toBe(2);
+      expect(side.mergedIntoBase).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the base branch name out of collision advisories when history uses a pinned SHA', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['commit', '--allow-empty', '--quiet', '-m', "Merge branch 'main' into topic"], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const collisions = historicalNameCollisions(dir, mainHead, 'main');
+
+      expect(collisions.has('main')).toBe(false);
+      expect(collisions.has('topic')).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not label a patch-absorbed branch as a merge-result proof', async () => {
+    const dir = makeRepo();
+    try {
+      const absorbedCommits = execFileSync('git', ['rev-list', '--reverse', 'main..side'], {
+        cwd: dir,
+        encoding: 'utf8',
+      })
+        .trim()
+        .split('\n');
+      execFileSync('git', ['checkout', '--quiet', 'main'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['cherry-pick', '--quiet', ...absorbedCommits], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+
+      const [worktree] = await collectWorktrees(dir, { base: 'main' });
+      expect(worktree.ahead).toBe(2);
+      expect(worktree.patchEquivalence).toBe(PATCH_EQUIVALENCE.ABSORBED);
+      expect(worktree.merge.conflict).toBe(null);
+      expect(worktree.mergeResultMatchesBase).toBe(null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds concurrent tasks while preserving input order', async () => {
+    let active = 0;
+    let peak = 0;
+    const doubled = await __testables.mapConcurrent(
+      [1, 2, 3, 4, 5],
+      async (value) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return value * 2;
+      },
+      2
+    );
+
+    expect(peak).toBe(2);
+    expect(doubled).toEqual([2, 4, 6, 8, 10]);
+  });
+
   it('maps rev-list --left-right --count to behind=left, ahead=right', () => {
     const dir = makeRepo();
     try {
@@ -399,6 +437,44 @@ describe('git.mjs against a real repository', () => {
       const { ahead, behind } = __testables.aheadBehind(dir, 'main');
       expect(behind).toBe(1);
       expect(ahead).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recognises a branch whose non-merge patches were cherry-picked onto the base', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      g('checkout', '--quiet', 'side');
+      const commits = execFileSync('git', ['rev-list', '--reverse', 'main..HEAD'], { cwd: dir, encoding: 'utf8' })
+        .trim()
+        .split('\n');
+      g('checkout', '--quiet', 'main');
+      g('cherry-pick', '--quiet', ...commits);
+      g('branch', 'absorbed', 'side');
+      g('checkout', '--quiet', 'absorbed');
+      const result = __testables.patchEquivalence(dir, 'main', 2);
+      expect(result).toEqual({ status: PATCH_EQUIVALENCE.ABSORBED, reason: expect.any(String) });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats merge commits as unknown rather than letting git cherry hide them', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      g('branch', 'base', 'main');
+      g('checkout', '--quiet', '-b', 'merge-side', 'base');
+      writeFileSync(join(dir, 'merge.txt'), 'merge');
+      g('add', '.');
+      g('commit', '--quiet', '-m', 'merge-side');
+      g('checkout', '--quiet', '-b', 'merge-result', 'base');
+      g('merge', '--quiet', '--no-ff', '-m', 'merge merge-side', 'merge-side');
+      const result = __testables.patchEquivalence(dir, 'base', 2);
+      expect(result.status).toBe(PATCH_EQUIVALENCE.UNKNOWN);
+      expect(result.reason).toMatch(/merge commit/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -547,7 +623,7 @@ describe('resolveBoardDb', () => {
     const dir = makeRepo();
     try {
       const p = resolveBoardDb(dir);
-      expect(p.startsWith('/')).toBe(true);
+      expect(isAbsolute(p)).toBe(true);
       // The failure this pins: plain `git rev-parse --git-common-dir` answers
       // the RELATIVE string ".git", which DatabaseSync then resolves against
       // process.cwd() — a different directory in every worktree.
@@ -917,7 +993,7 @@ describe('blocked-question detection', () => {
       'Pending question requests: questionID "que_0e49a9650001UM8oJl32u9X3ko"',
   });
 
-  it('extracts the question id from the escaped payload', async () => {
+  it('extracts the latest question id without changing the database schema', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-blk-'));
     const dbPath = join(dir, 'kilo.db');
     const db = new DatabaseSync(dbPath);
@@ -941,6 +1017,14 @@ describe('blocked-question detection', () => {
         null
       );
       db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run('p1', 'm1', 'ses_x', NOW - 100, NOW - 100, payload);
+      db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run(
+        'p2',
+        'm2',
+        'ses_x',
+        NOW - 50,
+        NOW - 50,
+        payload.replace('que_0e49a9650001UM8oJl32u9X3ko', 'que_latest0001UM8oJl32u9X3ko')
+      );
       db.close();
 
       const { auditChats } = await_import();
@@ -949,15 +1033,42 @@ describe('blocked-question detection', () => {
       expect(s.state).toBe('blocked');
       // Not the `"/"` placeholder from the input JSON — that occurrence is
       // skipped because it is followed by a quote rather than a space.
-      expect(s.blockedOn).toBe('que_0e49a9650001UM8oJl32u9X3ko');
+      expect(s.blockedOn).toBe('que_latest0001UM8oJl32u9X3ko');
       expect(s.reasons.join(' ')).toContain('waiting for input');
+
+      const verify = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const indexes = verify
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_part_%'")
+          .all();
+        expect(indexes).toEqual([]);
+      } finally {
+        verify.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 });
 
+describe('argument parsing', () => {
+  it('leaves the base unset by default and requires an explicit value when --base is used', () => {
+    expect(parseArgs([]).base).toBeUndefined();
+    expect(parseArgs(['--base', 'refs/heads/feature/ref']).base).toBe('refs/heads/feature/ref');
+    expect(() => parseArgs(['--base'])).toThrow('--base requires a non-empty ref');
+    expect(() => parseArgs(['--base', '--stdout'])).toThrow('--base requires a non-empty ref');
+  });
+});
+
 describe('the pinned clock', () => {
+  it('rejects a future or invalid pinned clock before it can affect liveness', () => {
+    expect(() => validatePinnedNow(NOW + 1, NOW)).toThrow('--now cannot be in the future');
+    expect(() => validatePinnedNow(Number.NaN, NOW)).toThrow('--now must be a finite millisecond timestamp');
+    expect(() => validatePinnedNow(NOW - 1, NOW)).not.toThrow();
+    expect(() => parseArgs(['--now', String(Date.now() + 60_000)])).toThrow('--now cannot be in the future');
+    expect(() => parseArgs(['--now', 'not-a-number'])).toThrow('--now must be a finite millisecond timestamp');
+  });
+
   it('does not let --now in the past reclassify worktrees as in-use', () => {
     const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
     const lastActivity = NOW;
@@ -979,6 +1090,23 @@ describe('the pinned clock', () => {
       nowMs: NOW - 86_400_000,
     });
     expect(inv.worktrees[0].recommendation).toBe(RECOMMENDATION.SALVAGE);
+  });
+
+  it('keeps the wall-clock generation stamp separate from the pinned evaluation time', () => {
+    const pinnedNow = NOW + 5 * 60 * 60_000;
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'x', ahead: 2, mergedIntoBase: false })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board: { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] },
+      chatAudit: { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+      nowMs: pinnedNow,
+      generatedAtMs: NOW,
+    });
+
+    expect(inv.generatedAt).toBe(new Date(NOW).toISOString());
+    expect(inv.ownership.asOf).toBe(new Date(pinnedNow).toISOString());
   });
 
   it('still marks a genuinely live session in-use', () => {
@@ -1003,6 +1131,58 @@ describe('the pinned clock', () => {
   });
 });
 
+describe('the inventory output target', () => {
+  it('requires a resolvable canonical path for the default output', () => {
+    expect(() => inventoryTarget('/repo', undefined)).toThrow(/canonical inventory path/);
+    expect(inventoryTarget('/repo', 'reports/WORKTREES.json')).toBe('/repo/reports/WORKTREES.json');
+    expect(inventoryTarget('/repo', '/tmp/WORKTREES.json')).toBe('/tmp/WORKTREES.json');
+  });
+
+  it('writes the default inventory beside linked main, not beside the primary checkout', () => {
+    const run = (_cwd, args) => ({
+      stdout:
+        args[0] === 'worktree'
+          ? 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n'
+          : '/repo/.git\n',
+    });
+    expect(inventoryTarget('/repo', undefined, { run, realpath: (p) => p })).toBe(
+      '/repo/.kilo/worktrees/main/WORKTREES.json'
+    );
+  });
+
+  it('uses the primary checkout only when a readable roster confirms no main worktree', () => {
+    const run = (_cwd, args) => ({
+      stdout: args[0] === 'worktree' ? 'worktree /repo\nbare\n' : '/repo/.git\n',
+    });
+    expect(inventoryTarget('/repo', null, { run, realpath: (p) => p })).toBe('/repo/WORKTREES.json');
+  });
+
+  it('rejects an empty output path before attempting to write', () => {
+    expect(() => parseArgs(['--out'])).toThrow('--out requires a non-empty path');
+    expect(() => parseArgs(['--out', '   '])).toThrow('--out requires a non-empty path');
+  });
+
+  it('uses the root-relative target at the CLI write boundary', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../worktree-inventory.mjs'), 'utf8');
+
+    expect(source).toContain('const target = inventoryTarget(root, opts.out);');
+  });
+
+  it('pins merge calculations to the same base commit that the inventory records', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../worktree-inventory.mjs'), 'utf8');
+    const resolveMain = source.indexOf("const mainHead = execFileSync('git', ['rev-parse', '--verify'");
+    const collect = source.indexOf('collectWorktrees(root, {');
+
+    expect(resolveMain).toBeGreaterThanOrEqual(0);
+    expect(collect).toBeGreaterThan(resolveMain);
+    expect(source).toContain('const worktreeRoster = listWorktrees(root);');
+    expect(source).toContain('baseName: baseRefName(root, opts.base)');
+    expect(source).toContain('findMissingWorktrees(root, worktreeRoster)');
+    expect(source).toContain('listBranchOnlyRefs(root, { base: mainHead, worktreeRoster })');
+    expect(source).toContain('sameWorktreeRoster(worktreeRoster, listWorktrees(root))');
+  });
+});
+
 describe('mergeConflict, against a real repository', () => {
   /** `repo` has main at 3 commits; `side` adds 2 and never sees main\'s 3rd. */
   function repo() {
@@ -1013,7 +1193,51 @@ describe('mergeConflict, against a real repository', () => {
     const dir = repo();
     try {
       execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
-      expect(mergeConflict(dir, 'main')).toEqual({ conflict: false, files: [] });
+      const result = mergeConflict(dir, 'main');
+      expect(result).toMatchObject({ conflict: false, files: [] });
+      expect(result.mergeTree).toMatch(/^(?:[a-f\d]{40}|[a-f\d]{64})$/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes the base tree when a conflict-free merge has no net tree change', () => {
+    const dir = repo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', '-b', 'net-no-op', 'main'], { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'temporary.txt'), 'temporary');
+      execFileSync('git', ['add', 'temporary.txt'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'add temporary file'], { cwd: dir, stdio: 'ignore' });
+      rmSync(join(dir, 'temporary.txt'));
+      execFileSync('git', ['add', '-u'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'remove temporary file'], { cwd: dir, stdio: 'ignore' });
+
+      const baseTree = execFileSync('git', ['rev-parse', 'main^{tree}'], { cwd: dir, encoding: 'utf8' }).trim();
+      const ahead = execFileSync('git', ['rev-list', '--count', 'main..HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+      const result = mergeConflict(dir, 'main');
+
+      expect(ahead).toBe('2');
+      expect(result).toMatchObject({ conflict: false, mergeTree: baseTree });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('marks an unmerged worktree as net-no-op only when the computed merge tree equals the base tree', async () => {
+    const dir = repo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', '-b', 'net-no-op', 'main'], { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'temporary.txt'), 'temporary');
+      execFileSync('git', ['add', 'temporary.txt'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'add temporary file'], { cwd: dir, stdio: 'ignore' });
+      rmSync(join(dir, 'temporary.txt'));
+      execFileSync('git', ['add', '-u'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'remove temporary file'], { cwd: dir, stdio: 'ignore' });
+
+      const [worktree] = await collectWorktrees(dir, { base: 'main' });
+      expect(worktree.ahead).toBe(2);
+      expect(worktree.mergeResultMatchesBase).toBe(true);
+      expect(worktree.merge.conflict).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1115,6 +1339,101 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
     expect(v.prunable).toBe(true);
   });
 
+  it('calls a clean branch whose patches are already on main a disposal candidate', () => {
+    const v = classify(wt({ ahead: 2, mergedIntoBase: false, patchEquivalence: PATCH_EQUIVALENCE.ABSORBED }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.LANDED);
+    expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
+    expect(v.action).toBe(ACTION.DISPOSE);
+    expect(v.prunable).toBe(true);
+  });
+
+  it('calls a clean branch with a conflict-free merge result equal to main a disposal candidate', () => {
+    const v = classify(
+      unmergedClean({
+        patchEquivalence: PATCH_EQUIVALENCE.UNMERGED,
+        mergeResultMatchesBase: true,
+      }),
+      args()
+    );
+    expect(v.status).toBe(STATUS.LANDED);
+    expect(v.patchEquivalence).toBe(PATCH_EQUIVALENCE.UNMERGED);
+    expect(v.mergeResultMatchesBase).toBe(true);
+    expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
+    expect(v.action).toBe(ACTION.DISPOSE);
+    expect(v.prunable).toBe(true);
+  });
+
+  it('does not trust a base-tree flag when the merge check itself was not clean', () => {
+    const v = classify(
+      unmergedClean({
+        merge: { conflict: null },
+        mergeResultMatchesBase: true,
+      }),
+      args()
+    );
+    expect(v.mergeResultMatchesBase).toBe(null);
+    expect(v.status).toBe(STATUS.UNMERGED_WORK);
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('does not dispose a net-no-op branch whose working tree is dirty', () => {
+    const v = classify(
+      unmergedClean({
+        mergeResultMatchesBase: true,
+        workingTree: { modified: 1, untracked: 0, paths: ['changed.txt'] },
+      }),
+      args()
+    );
+    expect(v.status).toBe(STATUS.UNMERGED_WORK);
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('keeps an unreadable working-tree status out of every destructive verdict', () => {
+    const v = classify(
+      wt({
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 0, untracked: 0, paths: [], statusError: 'status failed' },
+      }),
+      { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
+    );
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('keeps git-protected worktrees out of destructive verdicts', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true, locked: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('does not call unknown branch facts landed', () => {
+    const v = classify(wt({ ahead: null, behind: null, mergedIntoBase: null }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
   it('derives the action from the recommendation, and covers every value', () => {
     // Each case builds inputs that actually PRODUCE that recommendation.
     // An earlier version fed one default worktree and asserted seven
@@ -1137,6 +1456,23 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.REVIEW_RESIDUE, wt({ ahead: 0, mergedIntoBase: true }), { curated: { mustNotPrune: true } }],
       [RECOMMENDATION.IN_USE, wt({ ahead: 0, mergedIntoBase: true }), { boardAgents: [{ live: true, agentId: 'a' }] }],
       [RECOMMENDATION.KEEP, wt({ isPrimary: true }), {}],
+      [RECOMMENDATION.KEEP, wt({ branch: 'main' }), {}],
+      [RECOMMENDATION.KEEP, wt({ branch: 'trunk' }), { base: 'trunk' }],
+      // A curated `legacy` on a branch git already calls disposable. The shape is
+      // the ordinary one so the ONLY thing producing the verdict is the flag.
+      [
+        RECOMMENDATION.LEGACY,
+        wt({ ahead: 0, mergedIntoBase: true }),
+        { curated: { legacy: true, note: 'kept for the off chance' } },
+      ],
+      // And the same flag on a branch that would otherwise be offered for merge:
+      // `legacy` says do not merge it either, which is why it cannot sit below
+      // `ready-to-land` in the ladder.
+      [
+        RECOMMENDATION.LEGACY,
+        wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: false } }),
+        { curated: { legacy: true, note: 'kept for the off chance' } },
+      ],
       // Detached and not in use: there is no branch identity to report, so
       // nothing can be decided about it. With a live agent it would be
       // `in-use` first, which is correct but not what this case is about.
@@ -1149,6 +1485,7 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.REVIEW_RESIDUE]: ACTION.AT_RISK,
       [RECOMMENDATION.IN_USE]: ACTION.IN_USE,
       [RECOMMENDATION.KEEP]: ACTION.KEEP,
+      [RECOMMENDATION.LEGACY]: ACTION.LEGACY,
       [RECOMMENDATION.UNKNOWN]: ACTION.UNDECIDED,
     };
     const seen = new Set();
@@ -1170,6 +1507,99 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
     expect(riskScore({ recommendation: RECOMMENDATION.READY_TO_LAND })).toBeLessThan(
       riskScore({ recommendation: RECOMMENDATION.SALVAGE })
     );
+  });
+});
+
+describe('classify: a curated legacy claim', () => {
+  const LEGACY = { legacy: true, note: 'kept for the off chance' };
+  const of = (worktree, curated) =>
+    classify(worktree, { chatSummary: noChats, chatSessions: noSessions, curated, nowMs: NOW });
+
+  it('marks a clean branch git would otherwise dispose legacy', () => {
+    const v = of(wt({ ahead: 0, mergedIntoBase: true }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    // The two halves must not be read from one field. `legacy` says the
+    // DIRECTORY may go and the BRANCH may not, and `prunable` asserts both at
+    // once, so a record where `action === DISPOSE` is the only truth is the one
+    // where `npm run dispose` would have deleted the ref.
+    expect(v.prunable).toBe(false);
+    expect(v.reasons.join(' ')).toContain('legacy');
+  });
+
+  it('suppresses a clean merge verdict, because legacy means do not merge it either', () => {
+    const v = of(wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: false } }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    expect(v.reasons.join(' ')).toContain('kept on the branch and not proposed for merge');
+  });
+
+  it('is ignored for a DIRTY tree, because that directory is the only copy of the files', () => {
+    // The load-bearing case. `legacy` authorises removing a worktree, and
+    // uncommitted changes exist in no commit and no ref — so a claim about the
+    // BRANCH says nothing about them, and honouring it here would let a prose
+    // field authorise the loss this whole program exists to prevent. It has to
+    // stay `at-risk`, which is where a human is required.
+    const v = of(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [] } }), LEGACY);
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('is ignored for a detached worktree, because there is no branch to keep', () => {
+    const v = of(wt({ detached: true, ahead: 0, mergedIntoBase: true }), LEGACY);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+  });
+
+  it.each([
+    ['an unknown branch identity', wt({ branch: null, ahead: 0, mergedIntoBase: true }), 'worktree branch identity'],
+    [
+      'an unreadable working-tree status',
+      wt({
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 0, untracked: 0, paths: [], statusError: 'status failed' },
+      }),
+      'status failed',
+    ],
+    [
+      'an unresolved branch relationship',
+      wt({ ahead: null, behind: null, mergedIntoBase: null }),
+      'branch relationship to the base',
+    ],
+  ])('refuses a legacy verdict with %s', (_description, worktree, reason) => {
+    const v = of(worktree, LEGACY);
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+    expect(v.reasons.join(' ')).toContain(reason);
+  });
+
+  it('loses to a live agent, because somebody is working here right now', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: LEGACY,
+      boardAgents: [{ live: true, agentId: 'a' }],
+      nowMs: NOW,
+    });
+    expect(v.action).toBe(ACTION.IN_USE);
+  });
+
+  it('ranks below every other verdict, because nothing about it is work', () => {
+    // The sort order IS the triage order: `legacy` is the least work in the
+    // repository, and a status with a 1% chance of mattering belongs last.
+    expect(riskScore({ recommendation: RECOMMENDATION.LEGACY })).toBeLessThan(
+      riskScore({ recommendation: RECOMMENDATION.PRUNE })
+    );
+    expect(riskScore({ recommendation: RECOMMENDATION.LEGACY })).toBeLessThan(
+      riskScore({ recommendation: RECOMMENDATION.READY_TO_LAND })
+    );
+  });
+
+  it('changes nothing when the branch is already disposable and no flag is set', () => {
+    // Guards the negative direction: adding a field to `classify` must not make
+    // every clean merged branch legacy by accident.
+    const v = of(wt({ ahead: 0, mergedIntoBase: true }), null);
+    expect(v.action).toBe(ACTION.DISPOSE);
   });
 });
 
@@ -1303,7 +1733,7 @@ describe('classify: the 0-ahead trap', () => {
     expect(v.prunable).toBe(false);
   });
 
-  it('reports a main worktree with uncommitted work as holding it, not as landed', () => {
+  it('reports uncommitted main-worktree content as at-risk, not merely kept', () => {
     const v = classify(
       wt({
         name: 'ph',
@@ -1314,6 +1744,9 @@ describe('classify: the 0-ahead trap', () => {
       }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
+    expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
+    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+    expect(v.action).toBe(ACTION.AT_RISK);
     expect(v.prunable).toBe(false);
     expect(v.uncommitted).toBe(true);
   });
@@ -1431,7 +1864,7 @@ describe('summariseChats', () => {
 });
 
 describe('auditChats against a real session database', () => {
-  it('reads the LAST step-finish per session, not the first', () => {
+  it('reads the LAST step-finish per session from a read-only database', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-'));
     const dbPath = join(dir, 'kilo.db');
     const db = new DatabaseSync(dbPath);
@@ -1470,6 +1903,7 @@ describe('auditChats against a real session database', () => {
       ins.run('p2', 'm2', 'ses_one', NOW - 800, NOW - 800, JSON.stringify({ type: 'step-finish', reason: 'stop' }));
 
       db.close();
+      chmodSync(dbPath, 0o444);
 
       const { auditChats } = await_import();
       const audit = auditChats({
@@ -1487,6 +1921,42 @@ describe('auditChats against a real session database', () => {
       expect(sessions).toHaveLength(1);
       expect(sessions[0].lastTurnReason).toBe('stop');
       expect(sessions[0].state).toBe('finished');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('caps an over-wide chat window at three days', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-window-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    const old = NOW - MAX_SESSION_DB_WINDOW_MS - 1;
+    try {
+      db.exec(`CREATE TABLE session (id TEXT, directory TEXT, title TEXT, parent_id TEXT, agent TEXT,
+                 slug TEXT, tokens_output INTEGER, tokens_input INTEGER, time_created INTEGER,
+                 time_updated INTEGER, time_archived INTEGER);
+               CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT);`);
+      db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+        'old',
+        '/wt',
+        'old session',
+        null,
+        'code',
+        's',
+        100,
+        10,
+        old,
+        old,
+        null
+      );
+      db.close();
+
+      const { auditChats } = await_import();
+      const audit = auditChats({ dbPath, sinceMs: 0, nowMs: NOW, existingPaths: new Set(['/wt']) });
+      expect(audit.available).toBe(true);
+      expect(audit.total).toBe(0);
+      expect(audit.byDirectory.size).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1513,6 +1983,12 @@ describe('buildInventory', () => {
 
   it('emits a document with counts that agree with the records it contains', () => {
     const inv = buildInventory({
+      branchOnlyRefs: [
+        { name: 'ancestor', category: 'ancestor', isAncestor: true, cherryPlusCount: null },
+        { name: 'unmatched', category: 'unmatched-patches', isAncestor: false, cherryPlusCount: 2 },
+        { name: 'zero-cherry', category: 'zero-cherry-patches', isAncestor: false, cherryPlusCount: 0 },
+        { name: 'unknown', category: 'unknown', isAncestor: null, cherryPlusCount: null },
+      ],
       worktrees: [
         wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
         wt({ name: 'b', ahead: 2, mergedIntoBase: false, workingTree: { modified: 1, untracked: 0, paths: [] } }),
@@ -1535,6 +2011,39 @@ describe('buildInventory', () => {
     const byRec = inv.totals.byRecommendation;
     expect(Object.values(byRec).reduce((a, b) => a + b, 0)).toBe(3);
     expect(inv.totals.prunable).toBe(inv.worktrees.filter((w) => w.prunable).length);
+    const branchOnlyCategoryTotal =
+      inv.totals.branchOnlyAncestor +
+      inv.totals.branchOnlyUnmatchedPatches +
+      inv.totals.branchOnlyZeroCherryPatches +
+      inv.totals.branchOnlyUnknown;
+    expect(branchOnlyCategoryTotal).toBe(inv.totals.branchOnlyRefs);
+    expect(formatSummary(inv)).toContain('1 ancestor · 1 unknown');
+  });
+
+  it('publishes the exact-base merge proof needed by the guarded disposer', () => {
+    const inv = buildInventory({
+      worktrees: [
+        wt({
+          ahead: 2,
+          mergedIntoBase: false,
+          patchEquivalence: PATCH_EQUIVALENCE.UNMERGED,
+          merge: { conflict: false },
+          mergeResultMatchesBase: true,
+        }),
+      ],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'fixture-main-head',
+      board,
+      chatAudit,
+      nowMs: NOW,
+    });
+
+    expect(inv.worktrees[0]).toMatchObject({
+      mergeResultMatchesBase: true,
+      action: ACTION.DISPOSE,
+      prunable: true,
+    });
   });
 
   it('sorts the highest-risk worktree first, so the list opens with what is at risk', () => {
@@ -1670,14 +2179,47 @@ describe('the headline lists and totals', () => {
 
   it('puts every record in exactly the list its action names', () => {
     const inv = build();
-    for (const action of [ACTION.LAND, ACTION.DISPOSE, ACTION.AT_RISK]) {
+    for (const action of [ACTION.LAND, ACTION.DISPOSE, ACTION.AT_RISK, ACTION.LEGACY]) {
       const expected = worktrees
         .map((w) => w.name)
         .filter((n) => inv.worktrees.find((r) => r.name === n).action === action);
       const actual =
-        inv[action === ACTION.LAND ? 'readyToLand' : action === ACTION.DISPOSE ? 'disposalCandidates' : 'atRisk'];
+        inv[
+          action === ACTION.LAND
+            ? 'readyToLand'
+            : action === ACTION.DISPOSE
+              ? 'disposalCandidates'
+              : action === ACTION.AT_RISK
+                ? 'atRisk'
+                : 'legacy'
+        ];
       expect(actual, `list for ${action}`).toEqual(expected);
     }
+  });
+
+  it('lists a legacy worktree under legacy and under nothing else', () => {
+    // A legacy record is disposable AND worth keeping, and one `action` field can
+    // only say one of those. `disposalCandidates` must therefore NOT hold it —
+    // `npm run dispose` reads that list, and an operator reading it would delete
+    // the ref that is the entire reason the status exists.
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'old-branch', ahead: 0, mergedIntoBase: true })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: emptyChats,
+      nowMs: NOW,
+      curatedOf: (name) =>
+        name === 'old-branch'
+          ? { legacy: true, summary: 'kept for the off chance', note: 'why it is kept' }
+          : undefined,
+    });
+    expect(inv.legacy).toEqual(['old-branch']);
+    expect(inv.disposalCandidates).toEqual([]);
+    expect(inv.atRisk).toEqual([]);
+    expect(inv.readyToLand).toEqual([]);
+    expect(inv.totals.legacy).toBe(1);
   });
 
   it('recomputes every total from the records it contains', () => {
@@ -1787,8 +2329,18 @@ describe('the transcript read audit', () => {
     // The falsifiable part of "all 105 sessions were read". Exact window
     // membership is NOT reproducible — `time_updated` keeps moving on a live
     // session — so this pins what is actually checkable: every id exists, is
-    // top-level, and falls after the documented window start.
+    // top-level, and falls after the documented window start. The session DB is
+    // deliberately bounded to MAX_SESSION_DB_WINDOW_MS, so an older hand-read
+    // audit is historical evidence rather than a claim that those ids remain
+    // queryable today.
     const a = loadChatAudit(dataPath);
+    const auditAge = Date.now() - Date.parse(a.asOf);
+    if (auditAge > MAX_SESSION_DB_WINDOW_MS) {
+      expect(auditAge, 'the hand-read audit is outside the session DB retention window').toBeGreaterThan(
+        MAX_SESSION_DB_WINDOW_MS
+      );
+      return;
+    }
     const startMs = Date.parse(a.windowStart);
     let db;
     try {
@@ -2117,7 +2669,7 @@ describe('the curated table', () => {
   // is derived: `describe('work git cannot see: derived from the worktrees,
   // never curated')` below pins it over the real repository with the curated
   // entry REMOVED — the state most of those worktrees are actually in — and pins
-  // that no curated field except `mustNotPrune` can move a verdict at all.
+  // that only the explicit safety fields (`mustNotPrune` and `legacy`) can move a verdict.
   //
   // What is left for a human is a judgement git cannot make about a tree it
   // already calls disposable, and that is `mustNotPrune` on a clean merged
@@ -2191,6 +2743,41 @@ describe('the curated table', () => {
     }
   });
 
+  it('gives every `legacy` entry a note, because the reason IS the entry', () => {
+    // `legacy` is the only field here that authorises deleting a directory while
+    // promising the branch survives, and what it promises is a claim about the
+    // future: this branch, kept for this reason, worth revisiting if that happens.
+    // An entry carrying only `legacy: true` asserts an indefinite hold on a ref
+    // and gives a later reader no way to tell a decision from a leftover — which
+    // is the failure mode the `landed` assertion exists to prevent.
+    const silent = Object.entries(CURATED)
+      .filter(([, e]) => e.legacy === true && !(typeof e.note === 'string' && e.note.trim().length > 20))
+      .map(([n]) => n);
+    expect(
+      silent,
+      `these entries mark a branch legacy with no note saying why it is kept: ${silent.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('marks no dirty worktree legacy, because the directory is the only copy', () => {
+    // The same condition `classify` enforces, asserted over the REAL table rather
+    // than over the shape `classify` is handed. A unit test proves the branch in
+    // `classify`; this proves no entry in `curated.mjs` relies on the branch not
+    // existing — a dirty legacy worktree would be at-risk, so an entry could hold
+    // the flag and get the wrong answer without anything here noticing.
+    const live = listWorktrees(process.cwd());
+    const dirty = Object.entries(CURATED)
+      .filter(([name]) => CURATED[name].legacy === true)
+      .map(([name]) => name)
+      .filter((name) => {
+        const w = live.find((x) => x.name === name);
+        return w ? w.workingTree.modified + w.workingTree.untracked > 0 : false;
+      });
+    expect(dirty, `these entries are legacy but their worktree holds uncommitted work: ${dirty.join(', ')}`).toEqual(
+      []
+    );
+  });
+
   it('keeps the main worktree and this one out of the curated table on purpose', () => {
     // `ph` is described in AGENTS.md, not per-worktree, and this worktree is
     // this change's own scratch space.
@@ -2229,9 +2816,11 @@ describe('the curated table', () => {
     // worktree of this shape protected nothing while asserting a claim that went
     // out of date on its own. The rule itself is the describe block below; this
     // test is the tripwire against the flag coming back for it.
-    const derived = liveInventory()
+    const derived = protectionInventory()
       .worktrees.filter((r) => r.inRepo && holdsWorkGitCannotSee(r))
-      .map((r) => r.name);
+      .map((r) => r.name)
+      .sort();
+    expect(derived).toEqual(['inventory-fixture-dirty-merged', 'ph']);
     const flagged = derived.filter((name) => CURATED[name]?.mustNotPrune);
     expect(
       flagged,
@@ -2239,12 +2828,7 @@ describe('the curated table', () => {
         'The generator derives that protection, so the flag is a claim that goes stale the moment the ' +
         'owner commits — delete the field and keep the note.'
     ).toEqual([]);
-    // A derived set cannot be cheaper than the facts it is derived from: this
-    // reads git in every worktree in the repository, which is precisely what the
-    // hand-written list was pretending not to have to do. `liveWorktreeFacts`
-    // memoises, so the suite pays for the read once, and which of the two tests
-    // asking first is not something the budget may depend on.
-  }, 60_000);
+  });
 
   it('declares no key twice, because a duplicate key silently discards a curation change', () => {
     // Five keys were declared twice: a rich entry written deliberately near the
@@ -2451,26 +3035,31 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
   });
 
-  it('never offers a live worktree that holds uncommitted work on no ref for disposal', () => {
-    // This is the whole rule, and it is asserted over the repository as it is
-    // rather than over a list of names in this file. There is no name here to go
-    // stale: the set is recomputed from `git` on every run, so an agent that
-    // commits, an agent that disposes a worktree and an agent that creates one
-    // all change the set without changing a line of this suite. That is the point
-    // — the hand-written list was re-derived three times in one session, and each
-    // pass cost ten minutes and a hold.
-    const inv = liveInventory();
+  it('never offers a worktree that holds uncommitted work on no ref for disposal', () => {
+    // These synthetic facts cover the dirty primary and merged-worktree shapes.
+    // Keeping the cases explicit makes the safety assertion independent of the
+    // operator's current worktree fleet.
+    const inv = protectionInventory();
     const inRepo = inv.worktrees.filter((r) => r.inRepo);
+    const holdingWork = inRepo.filter((r) => holdsWorkGitCannotSee(r));
+    expect(holdingWork.map((r) => r.name).sort()).toEqual(['inventory-fixture-dirty-merged', 'ph']);
+    const primary = inv.worktrees.find((r) => r.isPrimary);
+    expect(primary).toBeDefined();
+    expect(primary).toMatchObject({
+      status: STATUS.UNCOMMITTED_ONLY,
+      recommendation: RECOMMENDATION.SALVAGE,
+      action: ACTION.AT_RISK,
+      prunable: false,
+    });
 
-    // The facts must have been read at all. An `ahead` that is `null` means git
-    // could not be asked, and a derived set built from unread facts is not
-    // evidence that nothing is at risk — it is evidence that nothing was looked
-    // at, and the assertion below would pass on it.
+    // The fixture must provide the facts needed to derive the set. An `ahead`
+    // that is `null` means the fact is unreadable, and an empty result would not
+    // establish that no work is at risk.
     const unread = inRepo.filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean');
     expect(
       unread.map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
-      'git could not be read in these worktrees, so the derived set below would be empty for a ' +
-        'reason that has nothing to do with whether any work is at risk'
+      'the fixture did not provide readable git facts for these worktrees, so the derived set below ' +
+        'would be empty for a reason that has nothing to do with whether any work is at risk'
     ).toEqual([]);
 
     // Three ways to lose, not one. `prunable` and the disposal list are what an
@@ -2478,13 +3067,11 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     // generator that stopped reading the working tree at all still refuses to
     // prune a dirty tree, because the clean-tree clause is inside `prunable`
     // itself — and it would do that while printing `status: landed` and
-    // `recommendation: prune` for the one copy of the work. So the verdict is
-    // asserted too, and the message says which of the three gave.
-    const exposed = inRepo
-      .filter((r) => holdsWorkGitCannotSee(r))
-      .filter(
-        (r) => r.prunable || inv.disposalCandidates.includes(r.name) || r.recommendation === RECOMMENDATION.PRUNE
-      );
+    // `recommendation: prune` for the one copy of the work. The disposal verdict
+    // is asserted through all three signals, and the message says which failed.
+    const exposed = holdingWork.filter(
+      (r) => r.prunable || inv.disposalCandidates.includes(r.name) || r.recommendation === RECOMMENDATION.PRUNE
+    );
     expect(
       exposed.map(
         (r) =>
@@ -2495,46 +3082,51 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         'commit on the branch — so the only copy of it is the working tree, and the generator is ' +
         'calling it disposable'
     ).toEqual([]);
-    // See the timeout note on the curated-table test that shares this read.
-  }, 60_000);
+  });
 
   it('protects that shape in a worktree NOBODY has written anything down about', () => {
     // The guard above builds the document WITH the curated table, so a curated
     // entry is standing behind every verdict it checks. This one takes the entry
     // away, which is the state the deleted coverage rule used to make impossible
-    // to reach: of the ten live worktrees holding work on no ref when this was
-    // written, eight had no entry at all. If the protection came from the table,
-    // those eight would be disposable and nothing here would be able to say so.
+    // to reach: the fixture includes unlisted worktrees holding work on no ref.
+    // If protection came from the table, those fixtures would be disposable.
     //
     // So this is the coverage rule's actual subject — "a preservation branch gets
     // mistaken for a disposable one" — asserted as the invariant it needed,
-    // against `classify` on git's facts and nothing else. It cannot be made green
-    // by adding curated entries, which is the point: creating a worktree, and
-    // this agent's own worktree, change nothing here.
-    const inv = liveInventory();
-    const { worktrees } = liveWorktreeFacts();
-    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+    // against `classify` on worktree facts and nothing else. The primary checkout is
+    // never a disposal candidate: `dispose` refuses it outright, so its dirty
+    // state must not affect this check for disposable preservation branches.
+    const facts = protectionWorktreeFacts();
+    const inv = protectionInventory(facts);
+    const { worktrees } = facts;
+    const inRepo = inv.worktrees.filter((r) => r.inRepo && !r.isPrimary);
+    const holdingWork = inRepo.filter((r) => holdsWorkGitCannotSee(r));
+    expect(holdingWork.map((r) => r.name)).toEqual(['inventory-fixture-dirty-merged']);
 
-    // Non-vacuity, and it comes first so a green run cannot mean "git refused to
-    // answer, so the set below was empty for a reason unrelated to risk".
+    // Non-vacuity, and it comes first so a green run cannot mean the fixture
+    // failed to provide readable facts for a reason unrelated to risk.
     expect(
       inRepo
         .filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean')
         .map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
-      'git could not be read in these worktrees, so the set below would be empty for a reason that has ' +
-        'nothing to do with whether any work is at risk'
+      'the fixture did not provide readable git facts for these worktrees, so the set below would be ' +
+        'empty for a reason that has nothing to do with whether any work is at risk'
     ).toEqual([]);
 
     // The same three signals `buildInventory` would pass here, with the curated
-    // entry removed. `liveInventory()` builds with liveness deliberately empty,
-    // so `noChats`/`noSessions` reproduce it exactly and the only difference
+    // entry removed. Liveness is deliberately empty, so the only difference
     // between this call and the record it is compared against is the curation.
     const exposed = [];
     const silent = [];
-    for (const r of inRepo) {
-      if (!holdsWorkGitCannotSee(r)) continue;
-      const facts = worktrees.find((x) => x.name === r.name);
-      const bare = classify(facts, { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW });
+    for (const r of holdingWork) {
+      const worktreeFacts = worktrees.find((x) => x.path === r.absolutePath);
+      expect(worktreeFacts, `raw worktree facts missing for ${r.absolutePath}`).toBeDefined();
+      const bare = classify(worktreeFacts, {
+        chatSummary: noChats,
+        chatSessions: noSessions,
+        curated: null,
+        nowMs: NOW,
+      });
       const where =
         `${r.name} (curated: ${CURATED[r.name] ? 'yes' : 'NONE'}): ahead=${r.ahead} onMain=${r.mergedIntoMain} ` +
         `dirty=${r.dirty} untracked=${r.untracked} -> status=${bare.status} recommendation=${bare.recommendation} ` +
@@ -2544,8 +3136,8 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
       // `classify` reaches it precisely so the worktree is not removed.
       if (bare.prunable || bare.recommendation === RECOMMENDATION.PRUNE || bare.action === ACTION.DISPOSE) {
         exposed.push(where);
-      } else if (facts.tip === null || facts.detached) {
-        // git could not name a tip, so the shape is not classifiable and
+      } else if (worktreeFacts.tip === null || worktreeFacts.detached) {
+        // The fixture cannot name a tip, so the shape is not classifiable and
         // `undecided` is the honest answer. Reported rather than skipped, because
         // "the guard had nothing to check" and "the guard checked nothing" look
         // identical in a green run otherwise.
@@ -2557,6 +3149,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         exposed.push(`${where} — readable, so this must be reported as at-risk, not as anything else`);
       }
     }
+    expect(silent, 'every synthetic target must have a readable tip and branch identity').toEqual([]);
     expect(
       exposed,
       'these worktrees hold work that is in no commit on any branch, so the working tree is the only ' +
@@ -2566,14 +3159,14 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         // checked everything" when it could not classify something.
         (silent.length ? ` (skipped as unclassifiable: ${silent.join('; ')})` : '')
     ).toEqual([]);
-  }, 60_000);
+  });
 
-  it('lets the curated table move a verdict only by vetoing a disposal', () => {
+  it('lets the curated table move a verdict only by vetoing a disposal or marking a branch legacy', () => {
     // The reason the coverage rule could not simply be dropped: a curated entry
     // that changed a verdict would be a hand-written claim overriding git, and
     // `curated.mjs` is prose maintained by agents under time pressure. `classify`
-    // reads exactly one field, `mustNotPrune`, and it can only ever make a
-    // worktree LESS safe to delete. Everything else — `summary`, `note`,
+    // reads the explicit safety fields, `mustNotPrune` and `legacy`; they can only
+    // make a worktree less destructive or deliberately keep its branch. Everything else — `summary`, `note`,
     // `liveNote`, `issues`, `landed` — is documentation, and documentation that
     // moves a verdict is a lie the generator cannot detect.
     //
@@ -2620,6 +3213,17 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         verdictOf(shape, { mustNotPrune: true, note: PROSE.note }),
         `curated.mustNotPrune no longer changes the verdict for ${shape.name} (${bare}), so the assertions above ` +
           'prove nothing: the table has stopped being able to veto anything'
+      ).not.toBe(bare);
+      // The SECOND field that may, and it moves the verdict the other way:
+      // `mustNotPrune` says this work is unaccounted for and must be saved, while
+      // `legacy` says it is accounted for and will never be worked on again.
+      // Both are claims about intent that git cannot make, so both are allowed to
+      // move a verdict — and both are pinned in `describe('classify: a curated
+      // legacy claim')` for what they do.
+      expect(
+        verdictOf(shape, { legacy: true, note: PROSE.note }),
+        `curated.legacy no longer changes the verdict for ${shape.name} (${bare}), so the prose assertions ` +
+          'above no longer describe the whole table'
       ).not.toBe(bare);
     }
   });
@@ -2676,14 +3280,27 @@ describe('the CLI staleness check', () => {
   const { equivalent } = await_import_cli();
 
   const doc = (over = {}) =>
-    JSON.stringify({ generatedAt: '2026-01-01T00:00:00.000Z', totals: { worktrees: 2 }, worktrees: [], ...over });
+    JSON.stringify({
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      ownership: { asOf: '2026-01-01T00:00:00.000Z' },
+      totals: { worktrees: 2 },
+      worktrees: [],
+      ...over,
+    });
 
-  it('ignores only the generation timestamp', () => {
+  it('ignores generation and evaluation timestamps', () => {
     // This file is a live snapshot of a repository where agents message
-    // continuously, so a byte comparison fails on `generatedAt` alone and
-    // `--check` could never pass. A gate that always fails is noise that
-    // trains people to ignore it.
-    expect(equivalent(doc(), doc({ generatedAt: '2026-09-28T21:00:00.000Z' }))).toBe(true);
+    // continuously, so these clocks move while the verdict being checked can
+    // remain unchanged. Every verdict and per-worktree field is still compared.
+    expect(
+      equivalent(
+        doc(),
+        doc({
+          generatedAt: '2026-09-28T21:00:00.000Z',
+          ownership: { asOf: '2026-09-28T21:00:00.000Z' },
+        })
+      )
+    ).toBe(true);
   });
 
   it('still fails on a real change', () => {
@@ -2807,8 +3424,8 @@ describe('the generated inventory is untracked, and stays that way', () => {
 });
 
 /**
- * Call history: who wrote in each worktree, who read it, who ran commands in it,
- * ever, and which of those may be released.
+ * Call history: who wrote in each worktree, who read it, who ran commands in it
+ * during the database safety window, and which of those may be released.
  *
  * The property under test is ATTRIBUTION plus COMPLETENESS, and they pull against
  * each other. `chats.mjs` attributes a chat to a worktree by the directory the
@@ -2884,6 +3501,25 @@ describe('the call history', () => {
       liveWindowMs: 30 * 60 * 1000,
       ...extra,
     });
+
+  it('reads the session database without write access or query indexes', () => {
+    const fx = makeSessionDb({});
+    try {
+      chmodSync(fx.dbPath, 0o444);
+      expect(run(fx.dbPath).available).toBe(true);
+      const verify = new DatabaseSync(fx.dbPath, { readOnly: true });
+      try {
+        const indexes = verify
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_part_%'")
+          .all();
+        expect(indexes).toEqual([]);
+      } finally {
+        verify.close();
+      }
+    } finally {
+      fx.cleanup();
+    }
+  });
 
   it('reads the worktree name out of a path, and only out of a worktree path', () => {
     // The separator is the whole test. The root arrives with no trailing slash,
@@ -2998,6 +3634,79 @@ describe('the call history', () => {
       expect(rec.write.subagentCalls).toBe(1);
     } finally {
       fx.cleanup();
+    }
+  });
+
+  it('limits call history to three days while retaining an older parent for attribution', () => {
+    const old = NOW - MAX_SESSION_DB_WINDOW_MS - 1;
+    const fx = makeSessionDb({
+      sessions: [
+        { id: 'parent', projectId: 'p2', directory: ROOT, at: old },
+        { id: 'child', projectId: 'p1', parentId: 'parent', directory: `${ROOT}/.kilo/worktrees/x`, at: NOW - 10_000 },
+      ],
+      calls: [
+        { sessionId: 'parent', at: old, data: tool('edit', { filePath: `${ROOT}/src/old.ts` }) },
+        {
+          sessionId: 'child',
+          at: NOW - 10_000,
+          data: tool('edit', { filePath: `${ROOT}/.kilo/worktrees/x/src/current.ts` }),
+        },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`], sinceMs: 0 });
+      const record = audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`);
+      expect(record.write.calls).toBe(1);
+      expect([...record.write.chats.keys()]).toEqual(['parent']);
+      expect(record.write.subagentCalls).toBe(1);
+      expect(audit.byWorktree.has(ROOT)).toBe(false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('covers a session with recent `part.time_updated` but old `time_created`', () => {
+    const old = NOW - MAX_SESSION_DB_WINDOW_MS - 1;
+    const recent = NOW - 10_000;
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-part-updated-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`CREATE TABLE project_directory (project_id TEXT, directory TEXT, type TEXT);
+               INSERT INTO project_directory VALUES ('p2', '${ROOT.replace(/'/g, "''")}', 'primary');
+               CREATE TABLE session (id TEXT, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
+                 agent TEXT, time_created INTEGER, time_updated INTEGER);
+               CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT);`);
+      db.prepare(
+        'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+      ).run('parent', 'p2', null, ROOT, 'parent', 'code', old, old);
+      db.prepare(
+        'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+      ).run('child', 'p1', 'parent', `${ROOT}/.kilo/worktrees/x`, 'child', 'code', old, old);
+      db.prepare(
+        'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+      ).run('p1', 'm1', 'parent', old, old, JSON.stringify({ type: 'message', role: 'assistant', content: 'x' }));
+      // A child call created before the window but edited since. The session is
+      // retained because part.time_updated is recent, and the call is attributed.
+      db.prepare(
+        'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+      ).run(
+        'p2',
+        'm2',
+        'child',
+        old,
+        recent,
+        JSON.stringify(tool('edit', { filePath: `${ROOT}/.kilo/worktrees/x/src/a.ts` }))
+      );
+      db.close();
+
+      const audit = run(dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`], sinceMs: 0 });
+      const record = audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`);
+      expect(record.write.calls).toBe(1);
+      expect([...record.write.chats.keys()]).toEqual(['parent']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -3276,6 +3985,7 @@ describe('the call history', () => {
     const fresh = kind(recent);
     const released = summariseReads(stale, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 });
     expect(released.chatCount).toBe(0);
+    expect(released.lastAtMs).toBeNull();
     expect(released.releasedBefore).toBe(new Date(NOW - 3_600_000).toISOString());
     // A reader newer than the mark is not released.
     expect(summariseReads(fresh, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 }).chatCount).toBe(1);
@@ -3348,20 +4058,38 @@ describe('the call history', () => {
     expect(verdict.reasons.join(' ')).toContain('a command ran inside this worktree');
   });
 
-  it('counts a reader as occupying the worktree, and honours the read release', () => {
-    // A read is weaker evidence than a write and is admitted on the same window,
-    // because the skill treats a read as grounds for LIVE unless the hit can be
-    // shown to be an inventory row. Without this, a worktree whose agent only
-    // read its spec — and then went quiet for the rest of its task — read as
-    // empty while its owner was still live.
+  it('uses the two-hour recent-I/O window for stale-candidate classification', () => {
+    const recent = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - (2 * 60 - 1) * 60_000, derivedChatIds: [] },
+    });
+    expect(recent.derivedLive).toBe(true);
+    expect(recent.liveSignals.io).toBe(true);
+
+    const stale = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - (2 * 60 + 1) * 60_000, derivedChatIds: [] },
+    });
+    expect(stale.derivedLive).toBe(false);
+    expect(stale.liveSignals.io).toBe(false);
+  });
+
+  it('tracks readers without treating inspection as ownership, and honours the read release', () => {
+    // Read history is retained separately for audit and can be released, but a
+    // reviewer opening a stale worktree must not block its disposal merely by
+    // inspecting it.
     const reading = classify(wt({ ahead: 0, mergedIntoBase: true }), {
       chatSummary: { count: 0, lastActivity: null },
       chatSessions: [],
       nowMs: NOW,
       readHistory: { lastAtMs: NOW - 90 * 60_000 },
     });
-    expect(reading.live).toBe(true);
-    expect(reading.liveSignals.io).toBe(true);
+    expect(reading.live).toBe(false);
+    expect(reading.liveSignals.io).toBe(false);
 
     // A released reader must read as no signal rather than as a standing claim,
     // or every worktree any agent ever inspected becomes permanently in-use.
@@ -3372,6 +4100,18 @@ describe('the call history', () => {
       readHistory: { lastAtMs: null, releasedBefore: NOW - 60_000 },
     });
     expect(released.derivedLive).toBe(false);
+  });
+
+  it('does not let the wide shell-I/O window extend the write liveness window', () => {
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      writeHistory: { lastAtMs: NOW - 2 * 60 * 60_000, derivedChatIds: [] },
+    });
+    expect(verdict.live).toBe(false);
+    expect(verdict.liveSignals.write).toBe(false);
+    expect(verdict.liveSignals.io).toBe(false);
   });
 
   it('stops calling a worktree live once its I/O falls outside the window', () => {
@@ -3501,6 +4241,135 @@ describe('the call history', () => {
   });
 });
 
+describe('shared inventory-path resolver', () => {
+  const identityRealpath = (p) => p;
+
+  it('parseWorktreeListing: splits porcelain output into records', () => {
+    const porcelain = [
+      'worktree /repo',
+      'HEAD abc123',
+      'branch refs/heads/main',
+      '',
+      'worktree /repo/.kilo/worktrees/task',
+      'HEAD def456',
+      'branch refs/heads/fix/task',
+      '',
+      'worktree /repo/.kilo/worktrees/detached',
+      'HEAD ghi789',
+      'detached',
+    ].join('\n');
+
+    const records = parseWorktreeListing(porcelain);
+    expect(records).toHaveLength(3);
+    expect(records[0]).toEqual({ path: '/repo', branch: 'main', bare: false });
+    expect(records[1]).toEqual({ path: '/repo/.kilo/worktrees/task', branch: 'fix/task', bare: false });
+    expect(records[2]).toEqual({ path: '/repo/.kilo/worktrees/detached', branch: '(detached)', bare: false });
+  });
+
+  it('parseWorktreeListing: marks bare repositories', () => {
+    const records = parseWorktreeListing('worktree /repo\nbare\n');
+    expect(records).toEqual([{ path: '/repo', branch: '(unknown)', bare: true }]);
+  });
+
+  it('resolveMainWorktreeRoot: returns the main checkout path', () => {
+    const run = (cwd, args) => {
+      if (args[0] === 'worktree') {
+        return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+      }
+      return { stdout: '' };
+    };
+    expect(resolveMainWorktreeRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe('/repo');
+  });
+
+  it('resolveMainWorktreeRoot: returns null when no main worktree exists', () => {
+    const run = (cwd, args) => ({ stdout: 'worktree /repo\nbranch refs/heads/feature\n' });
+    expect(resolveMainWorktreeRoot('/repo', { run, realpath: identityRealpath })).toBeNull();
+  });
+
+  it.each([
+    ['missing', 'worktree /missing/main\nbranch refs/heads/main\n'],
+    ['ambiguous', 'worktree /repo/main-a\nbranch refs/heads/main\n\nworktree /repo/main-b\nbranch refs/heads/main\n'],
+  ])('resolveInventoryPath: refuses a %s registered main rather than falling back', (label, worktreeListing) => {
+    const asked = [];
+    const run = (_cwd, args) => {
+      asked.push(args);
+      return { stdout: args[0] === 'worktree' ? worktreeListing : '/repo/.git\n' };
+    };
+    const realpath = (p) => {
+      if (p === '/repo/.git') return p;
+      if (label === 'missing') throw new Error('main checkout does not exist');
+      return p;
+    };
+
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath })).toBeNull();
+    expect(asked).toEqual([['worktree', 'list', '--porcelain']]);
+  });
+
+  it('resolveInventoryPath: returns the main checkout path', () => {
+    const run = (cwd, args) => ({ stdout: 'worktree /repo\nbranch refs/heads/main\n' });
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
+      '/repo/WORKTREES.json'
+    );
+  });
+
+  it('resolveInventoryPath: returns the linked main worktree when main is not the primary', () => {
+    const run = (cwd, args) => ({
+      stdout:
+        'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n',
+    });
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
+      '/repo/.kilo/worktrees/main/WORKTREES.json'
+    );
+  });
+
+  it('resolveInventoryPath: bases fallback and main lookup on one roster snapshot', () => {
+    let calls = 0;
+    const run = () => {
+      calls += 1;
+      return {
+        stdout:
+          calls === 1
+            ? 'worktree /repo\nbranch refs/heads/feature\n'
+            : 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n',
+      };
+    };
+
+    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
+      '/repo/WORKTREES.json'
+    );
+    expect(calls).toBe(1);
+  });
+
+  it('resolveRepositoryRoot: keeps storage rooted at the primary checkout with linked main', () => {
+    const run = (_cwd, args) => ({
+      stdout:
+        args[0] === 'worktree'
+          ? 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n'
+          : '/repo/.git\n',
+    });
+    expect(resolveRepositoryRoot('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe('/repo');
+  });
+
+  it('resolveRepositoryRoot: uses the primary checkout with an external common directory', () => {
+    const run = (_cwd, args) => ({
+      stdout: args[0] === 'worktree' ? 'worktree /repo/project\nbranch refs/heads/main\n' : '/metadata/project\n',
+    });
+    expect(resolveRepositoryRoot('/repo/project', { run, realpath: identityRealpath })).toBe('/repo/project');
+  });
+
+  it('resolveRepositoryRoot: uses the bare repository path for a bare primary entry', () => {
+    const run = () => ({ stdout: 'worktree /repo/project.git\nbare\n' });
+    expect(resolveRepositoryRoot('/repo/project.git', { run, realpath: identityRealpath })).toBe('/repo/project.git');
+  });
+
+  it('resolveInventoryPath: returns null outside a repository', () => {
+    const run = () => {
+      throw new Error('not a git repository');
+    };
+    expect(resolveInventoryPath('/somewhere', { run, realpath: identityRealpath })).toBeNull();
+  });
+});
+
 describe('readBoard: a board it cannot query', () => {
   /**
    * The module header promises that "every function here returns an empty result
@@ -3528,5 +4397,326 @@ describe('readBoard: a board it cannot query', () => {
     // is reported rather than swallowed.
     expect(board.error).toBeTruthy();
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('classifyBranchOnlyRef', () => {
+  it('classifies a branch whose tip is already on the base as an ancestor', async () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['branch', 'early', 'main~1'], { cwd: dir, stdio: 'ignore' });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'early'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+      expect(result.isAncestor).toBe(true);
+      expect(result.cherryPlusCount).toBe(null);
+      expect(result.ahead).toBe(0);
+      expect(result.behind).toBe(1);
+      expect(result.reason).toMatch(/ancestor/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts unmatched non-merge patches without calling them live work', async () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'side'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.UNMATCHED_PATCHES);
+      expect(result.isAncestor).toBe(false);
+      expect(result.cherryPlusCount).toBe(2);
+      expect(result.ahead).toBe(2);
+      expect(result.reason).toMatch(/unmatched non-merge commit patches/i);
+      expect(result.reason).not.toMatch(/live work/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats zero cherry patches as an unresolved observation when a merge adds novel tree content', async () => {
+    // `git cherry` omits merge commits. Add a resolution file while a merge is
+    // paused before commit: the resulting branch is not an ancestor of main,
+    // yet cherry reports no unmatched non-merge patches and the tree differs.
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+
+      g('branch', 'pe', 'main~1');
+      g('checkout', '--quiet', 'pe');
+      g('merge', '--no-ff', '--no-commit', 'main');
+      writeFileSync(join(dir, 'merge-resolution.txt'), 'content introduced by the merge resolution\n');
+      g('add', 'merge-resolution.txt');
+      g('commit', '--quiet', '-m', 'merge main with a resolution');
+
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'pe'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.ZERO_CHERRY_PATCHES);
+      expect(result.isAncestor).toBe(false);
+      expect(result.cherryPlusCount).toBe(0);
+      expect(result.ahead).toBe(1);
+      expect(result.reason).toMatch(/does not establish tree equivalence/i);
+      expect(
+        execFileSync('git', ['show', `${result.tip.sha}:merge-resolution.txt`], { cwd: dir, encoding: 'utf8' })
+      ).toBe('content introduced by the merge resolution\n');
+      expect(() =>
+        execFileSync('git', ['cat-file', '-e', 'main:merge-resolution.txt'], { cwd: dir, stdio: 'ignore' })
+      ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('classifies a branch pinned to the base tip as an ancestor with zero drift', async () => {
+    // A branch created at the same commit as main has ahead=0 and behind=0 —
+    // the trivial ancestor case, distinct from the merge-only patch-equivalent
+    // case above where the tip differs but the patch matches.
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['branch', 'pinned', 'main'], { cwd: dir, stdio: 'ignore' });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await __testables.classifyBranchOnlyRef(dir, branchRefRecord(dir, 'pinned'), mainHead);
+
+      expect(result.category).toBe(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+      expect(result.isAncestor).toBe(true);
+      expect(result.ahead).toBe(0);
+      expect(result.behind).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('listBranchOnlyRefs', () => {
+  it('lists branches with no registered worktree', async () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['branch', 'early', 'main~1'], { cwd: dir, stdio: 'ignore' });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      const result = await listBranchOnlyRefs(dir, { base: mainHead });
+
+      expect(result.map((r) => r.name).sort()).toEqual(['early', 'side']);
+      expect(result.every((r) => r.category !== undefined)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits a linked worktree branch with a same-named tag', async () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const branch = 'release/feature';
+      const worktreePath = join(dir, 'held-release-feature');
+      execFileSync('git', ['branch', branch, 'main~1'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['tag', branch, 'main'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['worktree', 'add', '--quiet', worktreePath, branch], { cwd: dir, stdio: 'ignore' });
+
+      const result = await listBranchOnlyRefs(dir, { base: mainHead });
+
+      expect(result.map((r) => r.name)).not.toContain('main');
+      expect(result.map((r) => r.name)).not.toContain(branch);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sorts unresolved zero-cherry cases before unmatched patches and ancestors', async () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+
+      // Zero cherry patches: a merge-only branch whose tip differs from main.
+      g('branch', 'pe', 'main~1');
+      g('checkout', '--quiet', 'pe');
+      g('merge', '--no-ff', '--quiet', '-m', 'merge main into pe', 'main');
+
+      // Ancestor: branch pinned to main^1 (reachable from main).
+      g('branch', 'early', 'main~1');
+
+      g('checkout', '--quiet', 'main');
+
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const result = await listBranchOnlyRefs(dir, { base: mainHead });
+
+      const categories = result.map((r) => r.category);
+      const zeroCherryIdx = categories.indexOf(BRANCH_ONLY_REF_CATEGORY.ZERO_CHERRY_PATCHES);
+      const unmatchedIdx = categories.indexOf(BRANCH_ONLY_REF_CATEGORY.UNMATCHED_PATCHES);
+      const ancestorIdx = categories.indexOf(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+
+      expect(zeroCherryIdx).toBeGreaterThanOrEqual(0);
+      expect(unmatchedIdx).toBeGreaterThanOrEqual(0);
+      expect(ancestorIdx).toBeGreaterThanOrEqual(0);
+      expect(zeroCherryIdx).toBeLessThan(unmatchedIdx);
+      expect(unmatchedIdx).toBeLessThan(ancestorIdx);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('classifies refs as unknown when the base cannot be resolved, not as empty', async () => {
+    const dir = makeRepo();
+    try {
+      const result = await listBranchOnlyRefs(dir, { base: 'does-not-exist' });
+      expect(result.every((r) => r.category === BRANCH_ONLY_REF_CATEGORY.UNKNOWN)).toBe(true);
+      expect(result.every((r) => r.isAncestor === null)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('includes an unheld branch even when it is the selected base', async () => {
+    const dir = makeRepo();
+    try {
+      const baseHead = execFileSync('git', ['rev-parse', 'side'], { cwd: dir, encoding: 'utf8' }).trim();
+      const result = await listBranchOnlyRefs(dir, { base: baseHead });
+      const selectedBase = result.find((ref) => ref.name === 'side');
+
+      expect(selectedBase).toBeDefined();
+      expect(selectedBase.category).toBe(BRANCH_ONLY_REF_CATEGORY.ANCESTOR);
+      expect(selectedBase.ahead).toBe(0);
+      expect(selectedBase.behind).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the captured worktree roster when excluding held branch refs', async () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const sideHead = execFileSync('git', ['rev-parse', 'side'], { cwd: dir, encoding: 'utf8' }).trim();
+      const worktreeRoster = [
+        { path: dir, head: mainHead, branch: 'main' },
+        { path: join(dir, 'linked-side'), head: sideHead, branch: 'side' },
+      ];
+
+      const result = await listBranchOnlyRefs(dir, { base: mainHead, worktreeRoster });
+
+      expect(result.map((ref) => ref.name)).not.toContain('side');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws when local branch enumeration fails instead of reporting zero branches', async () => {
+    const dir = makeRepo();
+    try {
+      await expect(listBranchOnlyRefs(dir, { base: 'main', gitRunner: () => null })).rejects.toThrow(
+        /for-each-ref failed/i
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed branch metadata instead of skipping an incomplete inventory', async () => {
+    const dir = makeRepo();
+    try {
+      for (const output of ['partial-record', 'feature\0not-a-sha\0subject\0date\0author\0']) {
+        await expect(listBranchOnlyRefs(dir, { base: 'main', gitRunner: () => output })).rejects.toThrow(
+          /malformed local branch metadata|invalid local branch name or object ID/i
+        );
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveBaseRef', () => {
+  it('uses a fully qualified default ref and rejects ambiguous short names', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['tag', 'main', 'side'], { cwd: dir, stdio: 'ignore' });
+
+      expect(resolveBaseRef(dir)).toBe('refs/heads/main');
+      expect(resolveBaseRef(dir, ['refs/heads/main'])).toBe('refs/heads/main');
+      expect(() => resolveBaseRef(dir, ['main'])).toThrow(/ambiguous base ref .*refs\/heads\/main.*refs\/tags\/main/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the fully qualified origin main ref when local main is absent', () => {
+    const dir = makeRepo();
+    try {
+      const sideHead = execFileSync('git', ['rev-parse', 'side'], { cwd: dir, encoding: 'utf8' }).trim();
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['branch', '-D', 'main'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['update-ref', 'refs/remotes/origin/main', sideHead], { cwd: dir, stdio: 'ignore' });
+
+      expect(resolveBaseRef(dir)).toBe('refs/remotes/origin/main');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('expands unique short branch and remote-tracking refs before resolving', () => {
+    const dir = makeRepo();
+    try {
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      execFileSync('git', ['update-ref', 'refs/remotes/origin/release', mainHead], { cwd: dir, stdio: 'ignore' });
+
+      expect(resolveBaseRef(dir, ['side'])).toBe('refs/heads/side');
+      expect(resolveBaseRef(dir, ['origin/release'])).toBe('refs/remotes/origin/release');
+      expect(resolveBaseRef(dir, ['side~1'])).toBe('refs/heads/side~1');
+      expect(resolveBaseRef(dir, ['refs/heads/side~1'])).toBe('refs/heads/side~1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reduces qualified refs and symbolic remote HEADs to merge-advisory names', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['commit', '--allow-empty', '--quiet', '-m', "Merge branch 'main' into topic"], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      execFileSync('git', ['update-ref', 'refs/remotes/origin/main', mainHead], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+
+      expect(baseRefName(dir, 'refs/heads/main')).toBe('main');
+      expect(baseRefName(dir, 'refs/remotes/origin/main')).toBe('main');
+      expect(baseRefName(dir, 'refs/remotes/origin/release/feature')).toBe('release/feature');
+      expect(baseRefName(dir, 'refs/heads/feature/ref~2')).toBe('feature/ref');
+      expect(baseRefName(dir, 'refs/remotes/origin/HEAD')).toBe('main');
+      expect(resolveBaseRef(dir, ['refs/remotes/origin/HEAD'])).toBe('refs/remotes/origin/main');
+      expect(resolveBaseRef(dir, ['origin/HEAD'])).toBe('refs/remotes/origin/main');
+      expect(baseRefName(dir, 'refs/remotes/origin/missing/HEAD')).toBe(null);
+      expect(historicalNameCollisions(dir, mainHead, null).size).toBe(0);
+
+      execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', 'HEAD'], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+      expect(resolveBaseRef(dir, ['refs/remotes/origin/HEAD'])).toBe(null);
+      expect(baseRefName(dir, 'refs/remotes/origin/HEAD')).toBe(null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sameWorktreeRoster', () => {
+  it('ignores output ordering but detects worktree identity changes', () => {
+    const main = { path: '/repo', head: 'a', branch: 'main' };
+    const linked = { path: '/repo/.kilo/worktrees/side', head: 'b', branch: 'side', locked: true };
+
+    expect(sameWorktreeRoster([main, linked], [linked, main])).toBe(true);
+    expect(sameWorktreeRoster([main, linked], [main, { ...linked, branch: 'other' }])).toBe(false);
   });
 });

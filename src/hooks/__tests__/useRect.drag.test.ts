@@ -35,10 +35,12 @@ const pointer = vi.hoisted(() => {
     isPointerDownValid: vi.fn(() => state.downValid),
     isPointerMoveValid: vi.fn(() => state.moveValid),
     isPointerUpValid: vi.fn(() => state.upValid),
+    releasePointer: vi.fn(),
     getLocalCoords: vi.fn((event: { clientX: number; clientY: number }) => ({
       x: event.clientX,
       y: event.clientY,
     })),
+    getLocalCoordsFromClientPoint: vi.fn((clientX: number, clientY: number) => ({ x: clientX, y: clientY })),
     isMouseDown: { current: false },
     dimensionsRef: { current: { scale: 1 } },
     pointerIdRef: { current: null as number | null },
@@ -144,6 +146,32 @@ describe('useRect mask drawing', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
   });
 
+  /** The Type tool's outside grip and its hit target use the same full square. */
+  it('paints the handles whole outside the rect for a consumer that opts in', () => {
+    const { ctx } = setup({ initialRect: RECT, handlesOutside: true });
+
+    const handle = HANDLE_SIZE;
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 250, handle, handle);
+  });
+
+  it.each([
+    ['top-left', 100 - HANDLE_SIZE / 2, 100 - HANDLE_SIZE / 2],
+    ['top-right', 300 + HANDLE_SIZE / 2, 100 - HANDLE_SIZE / 2],
+    ['bottom-left', 100 - HANDLE_SIZE / 2, 250 + HANDLE_SIZE / 2],
+    ['bottom-right', 300 + HANDLE_SIZE / 2, 250 + HANDLE_SIZE / 2],
+  ])('hit-tests the whole outside %s handle', (edge, x, y) => {
+    const { result, event } = setup({ initialRect: RECT, handlesOutside: true });
+
+    act(() => {
+      result.current.pointerHandlers.onPointerDown(event(x, y));
+    });
+
+    expect(result.current.pointerState.currentEdgeRef.current).toBe(edge);
+  });
+
   it('reports the sorted rect to onRepaint but not to onChange while idle', () => {
     const onRepaint = vi.fn();
     const onChange = vi.fn();
@@ -213,6 +241,22 @@ describe('useRect mask drawing', () => {
     expect(onRepaint).toHaveBeenCalledWith(RECT);
   });
 
+  it('redraws a rotated crop guide when its guide type changes without pointer movement', () => {
+    const { ctx, rerender, initialProps } = setup({
+      initialRect: RECT,
+      rotationEnabled: true,
+      rotation: 24,
+      overlayType: 'ruleOfThirds',
+    });
+    vi.mocked(ctx.moveTo).mockClear();
+    vi.mocked(ctx.lineTo).mockClear();
+
+    rerender({ ...initialProps, overlayType: 'diagonal' });
+
+    expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+  });
+
   it('re-paints only when the initial rect prop actually changes', () => {
     const onRepaint = vi.fn();
     const { rerender, initialProps } = setup({ initialRect: RECT, onRepaint });
@@ -276,18 +320,33 @@ describe('useRect mask drawing', () => {
 describe('useRect overlay teardown', () => {
   beforeEach(resetPointerMock);
 
-  it('clears the whole backing store on unmount, so a marquee cannot outlive the tool switch', () => {
+  it('clears the logical frame bounds on unmount, so a marquee cannot outlive the tool switch', () => {
     const { ctx, unmount } = setup({ imageSize: { width: 320, height: 240 }, initialRect: RECT });
     // The mount paint is cleared from the record so the assertion can only be about the teardown.
     vi.mocked(ctx.clearRect).mockClear();
 
     unmount();
 
-    // 800x600 is the CANVAS, and `imageSize` above is 320x240.
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+    // With DPR scaling, the overlay context is scaled, so clearRect uses logical frame bounds
+    // (imageSize) rather than the full canvas backing store. The test runs at 1x DPR, so
+    // logical == device pixels, but the semantics are frame-relative.
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
   });
 
-  it('clears the whole backing store on unmount even when nothing was ever painted', () => {
+  it('clears the latest logical frame bounds after the document resizes', () => {
+    const { ctx, rerender, initialProps, unmount } = setup({
+      imageSize: { width: 320, height: 240 },
+      initialRect: RECT,
+    });
+    rerender({ ...initialProps, imageSize: { width: 640, height: 480 } });
+    vi.mocked(ctx.clearRect).mockClear();
+
+    unmount();
+
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+  });
+
+  it('clears the logical frame bounds on unmount even when nothing was ever painted', () => {
     // Unconditional on purpose. A teardown gated on "did this instance paint something" is a
     // landmine, and the abandoned-drag case is precisely the one where the content was painted by
     // a frame that never became `initialRect`.
@@ -296,7 +355,7 @@ describe('useRect overlay teardown', () => {
 
     unmount();
 
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
   });
 
   it('drops a queued repaint rather than letting it repaint the marquee over the teardown clear', () => {
@@ -317,7 +376,7 @@ describe('useRect overlay teardown', () => {
 
     // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
     expect(ctx.strokeRect).not.toHaveBeenCalled();
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
   });
 
   it('does not throw on unmount when the overlay canvas has no 2d context', () => {
@@ -437,6 +496,83 @@ describe('useRect handle detection', () => {
     expect(target.style.cursor).toBe('');
     // The guard rejects before the coordinates are even read.
     expect(pointer.data.getLocalCoords).not.toHaveBeenCalled();
+  });
+});
+
+describe('useRect marquee border animation', () => {
+  beforeEach(resetPointerMock);
+
+  it('advances the in-flight border at screen speed and stops on release', () => {
+    pointer.data.dimensionsRef.current.scale = 2;
+    const { ctx, result, event } = setup({ borderMode: 'while-dragging' });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+
+    expect(dashOffsets).toContain(-0.2);
+    const paintedFrames = dashOffsets.length;
+
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(paintedFrames);
+  });
+
+  it('starts crawling an existing selection border when the drag begins', () => {
+    const { ctx, result, event } = setup({ borderMode: 'while-dragging', initialRect: RECT });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    // The production pointer-down guard sets this before useRect handles the press. The test
+    // double leaves that responsibility to the helper, so set it before calling the handler here.
+    pointer.data.isMouseDown.current = true;
+    act(() => {
+      result.current.pointerHandlers.onPointerDown(event(200, 175));
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+
+    expect(dashOffsets.length).toBeGreaterThan(1);
+    expect(new Set(dashOffsets).size).toBeGreaterThan(1);
+
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(200, 175));
+    });
+  });
+
+  it('keeps the always-mode border static while dragging', () => {
+    const { ctx, result, event } = setup({ borderMode: 'always', initialRect: RECT });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(210, 185));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(1);
+    expect(dashOffsets).toEqual([0]);
   });
 });
 
@@ -901,6 +1037,119 @@ describe('useRect pointer up and move tool', () => {
     expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 180, y1: 140, x2: 300, y2: 250 });
   });
 
+  it('cancels a queued move and restores the crop rect on pointercancel', () => {
+    const onChangeEnd = vi.fn();
+    const onRepaint = vi.fn();
+    const { result, event, flushFrame } = setup({ initialRect: RECT, onChangeEnd, onRepaint });
+
+    startDrag({ result, event }, { x: 300, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(340, 175));
+    });
+    act(() => {
+      pointer.data.isMouseDown.current = false;
+      result.current.pointerHandlers.onPointerCancel(event(340, 175));
+    });
+    flushFrame();
+
+    expect(pointer.data.releasePointer).toHaveBeenCalledTimes(1);
+    expect(onChangeEnd).not.toHaveBeenCalled();
+    expect(onRepaint).toHaveBeenLastCalledWith(RECT);
+  });
+
+  it('ignores pointercancel from a second pointer while the captured gesture continues', () => {
+    const onRepaint = vi.fn();
+    const { result, event, flushFrame } = setup({ initialRect: RECT, onRepaint });
+
+    startDrag({ result, event }, { x: 300, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(340, 175));
+      result.current.pointerHandlers.onPointerCancel(event(200, 175, { pointerId: 2, pointerType: 'touch' }));
+    });
+    expect(pointer.data.releasePointer).not.toHaveBeenCalled();
+    flushFrame();
+
+    expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 340, y2: 250 });
+  });
+
+  it('maps only the latest captured move point inside the scheduled animation frame', () => {
+    const { result, event, flushFrame } = setup({ initialRect: RECT });
+    startDrag({ result, event }, { x: 300, y: 175 });
+    pointer.data.getLocalCoordsFromClientPoint.mockClear();
+
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(320, 175));
+      result.current.pointerHandlers.onPointerMove(event(340, 175));
+    });
+
+    expect(pointer.data.getLocalCoordsFromClientPoint).not.toHaveBeenCalled();
+    flushFrame();
+    expect(pointer.data.getLocalCoordsFromClientPoint).toHaveBeenCalledExactlyOnceWith(340, 175);
+  });
+
+  it('hit tests the visible rotation grip and keeps its canvas stroke at one document pixel', () => {
+    const { result, event, ctx } = setup({ initialRect: RECT, rotationEnabled: true });
+
+    expect(ctx.lineWidth).toBe(1);
+    act(() => {
+      result.current.pointerHandlers.onPointerDown(event(200, 88));
+    });
+
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('rotate');
+  });
+
+  it('uses the caller cached guide color instead of reading document pixels during a rotated paint', () => {
+    const documentCanvas = document.createElement('canvas');
+    const getImageData = vi.fn();
+    vi.spyOn(documentCanvas, 'getContext').mockReturnValue({ getImageData } as never);
+    const colorForRect = vi.fn(() => 'rgba(20, 40, 60, 0.8)');
+
+    setup({
+      initialRect: RECT,
+      rotationEnabled: true,
+      rotation: 15,
+      overlayType: 'ruleOfThirds',
+      documentCanvasRef: { current: documentCanvas },
+      overlayColorForRect: colorForRect,
+    });
+
+    expect(colorForRect).toHaveBeenCalledWith({ x: 100, y: 100, width: 200, height: 150 });
+    expect(getImageData).not.toHaveBeenCalled();
+  });
+
+  it('repaints only the previous crop bounds when an incremental overlay moves', () => {
+    const { result, event, ctx, flushFrame } = setup({
+      initialRect: RECT,
+      rotationEnabled: true,
+      incrementalOverlay: true,
+    });
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(220, 190));
+    });
+    flushFrame();
+
+    expect(ctx.clearRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalled();
+  });
+
+  it('leaves painting to the external overlay while still reporting rect geometry', () => {
+    const onRepaint = vi.fn();
+    const { ctx, result, event, flushFrame } = setup({ initialRect: RECT, externalOverlay: true, onRepaint });
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(240, 175));
+    });
+    flushFrame();
+
+    expect(onRepaint).toHaveBeenLastCalledWith({ x1: 140, y1: 100, x2: 340, y2: 250 });
+    expect(ctx.clearRect).not.toHaveBeenCalled();
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+  });
+
   it('ignores a pointer up that the capture layer refused', () => {
     const onChangeEnd = vi.fn();
     const { result, event, target } = setup({ initialRect: RECT, onChangeEnd });
@@ -992,9 +1241,12 @@ describe('useRect pointer up and move tool', () => {
  * rectangle out from the press point, and both at once is a square centred on it.
  *
  * They are per-consumer props rather than a behaviour of the hook, because `useRect` is shared
- * with crop and the Move tool and neither of them constrains a drag. The first case below is
- * the regression guard for that: the same gesture with neither prop set is the pre-existing
- * `adjustFreePoint` path, byte for byte.
+ * with the Move tool and the text tool and neither of them constrains a drag. The crop is the
+ * second consumer to opt in, beside the rectangular marquee, and it is the one that carries an
+ * aspect ratio of its own — so the cases below also pin that Shift is a square rather than
+ * "whatever ratio is in play", and that the ratio a marquee is NOT given is not read from the
+ * press either. The first case is the regression guard for the consumers that opt out: the same
+ * gesture with neither prop set is the pre-existing `adjustFreePoint` path, byte for byte.
  */
 describe('useRect fresh-drag modifiers', () => {
   beforeEach(resetPointerMock);
@@ -1078,7 +1330,8 @@ describe('useRect fresh-drag modifiers', () => {
       move: { altKey: true, shiftKey: true },
     });
 
-    // Crop and the Move tool: the modifiers are pressed and nothing about the rect changes.
+    // The Move tool and the text tool: the modifiers are pressed and nothing about the rect
+    // changes.
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 150 });
   });
 
@@ -1104,5 +1357,231 @@ describe('useRect fresh-drag modifiers', () => {
     // A 2:1 rect dragged by its top-left corner is still 2:1, measured from the shared
     // opposite corner the handle anchored it to: 250 wide, 125 tall.
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 75, x2: 300, y2: 200 });
+  });
+
+  it.each([
+    ['Command', { metaKey: true }],
+    ['Control', { ctrlKey: true }],
+  ] as const)('%s is not the aspect-ratio modifier on a fresh drag', (_name, modifier) => {
+    // The crop's own modifier table gives Command to Straighten and to disabling edge snapping,
+    // and neither Command nor Control constrains proportions on a marquee anywhere in Adobe's
+    // geometry modifiers — Shift is that key. So a fresh drag out of the existing 2:1 selection
+    // must take no ratio from it: before the gate in `getEdgeAtPoint`, this press recorded the
+    // selection's ratio as well and the drag out of it came out 2:1.
+    const onChange = dragFrom(
+      { from: { x: 500, y: 500 }, to: { x: 700, y: 550 }, down: modifier, move: modifier },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 500, y1: 500, x2: 700, y2: 550 });
+  });
+
+  it('keeps a Command corner resize on the ratio the box already has', () => {
+    // The gate is on WHERE the press landed, not on WHICH key was held: a resize still pins the
+    // box's own ratio, which is what the Move tool, the text tool and the marquees read it for.
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 320, y: 195 }, down: { metaKey: true }, move: { metaKey: true } },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 300, y1: 195, x2: 310, y2: 200 });
+  });
+
+  it('prefers the square over the ratio the consumer is configured with', () => {
+    // The crop's options bar can hold a Ratio while a fresh box is drawn, and Shift is Adobe's
+    // square rather than "the ratio, whichever it is".
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 300, y: 150 }, down: { shiftKey: true }, move: { shiftKey: true } },
+      { aspectRatio: 2, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 300 });
+  });
+
+  it('keeps the configured ratio on a fresh drag held under no modifier', () => {
+    const onChange = dragFrom({ from: { x: 100, y: 100 }, to: { x: 300, y: 150 } }, { aspectRatio: 2 });
+
+    // 200x50 is wider than 2:1, so the width collapses to the 50px height doubled.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 200, y2: 150 });
+  });
+
+  it('places a fixed-size marquee centred on the press point', () => {
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 300, y: 150 } },
+      { fixedSize: { width: 80, height: 40 } }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 60, y1: 80, x2: 140, y2: 120 });
+  });
+});
+
+/**
+ * Guards for inputs the hook does not yet handle: non-finite pointer coordinates
+ * (NaN, ±Infinity), degenerate drag deltas that collapse an aspect-ratio constraint
+ * to a point, and zero-area commits.
+ *
+ * The regular tests pin the CURRENT behaviour — including its faults — so a future
+ * change is visible as a breaking test rather than a silent pivot. The two
+ * `it.fails` tripwires below assert the guard each one currently lacks; when the
+ * guard lands they flip to red and are converted to `it`.
+ */
+describe('useRect drag edge cases: non-finite deltas, zero-area and constraints', () => {
+  beforeEach(resetPointerMock);
+
+  // --- Non-finite drag deltas ---
+
+  it('propagates NaN drag deltas through the free-drag path without throwing', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Number.NaN, 120));
+    });
+    flushFrame();
+
+    // adjustFreePoint passes NaN through verbatim; sortRect turns the pair into a
+    // rect whose x-edges are NaN while the y-edges stay finite.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      x1: Number.NaN,
+      y1: 60,
+      x2: Number.NaN,
+      y2: 120,
+    });
+  });
+
+  it('clamps an Infinity drag delta to the canvas edge on paint but reports Infinity', () => {
+    const onChange = vi.fn();
+    const { ctx, result, event, flushFrame } = setup({ onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Infinity, 120));
+    });
+    flushFrame();
+
+    // trimRect clamps x2 = Infinity to 800, so the painted stroke is (50, 60, 750, 60).
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(50, 60, 750, 60);
+    // The reported rect is never clamped — Infinity survives into onChange.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 60, x2: Infinity, y2: 120 });
+  });
+
+  it('clamps a -Infinity drag delta to the canvas origin on paint but reports -Infinity', () => {
+    const onChange = vi.fn();
+    const { ctx, result, event, flushFrame } = setup({ onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(-Infinity, -Infinity));
+    });
+    flushFrame();
+
+    // sortRect turns (50,60) + (-Inf,-Inf) into (-Inf,-Inf)-(50,60); trimRect
+    // clamps to (0,0)-(50,60).
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(0, 0, 50, 60);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      x1: -Infinity,
+      y1: -Infinity,
+      x2: 50,
+      y2: 60,
+    });
+  });
+
+  // --- Zero-area drags ---
+
+  it('keeps a zero-area drag degenerate under a 1:1 aspect ratio', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ aspectRatio: 1, onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(50, 60));
+    });
+    flushFrame();
+
+    // 0/0 yields NaN, NaN > 1 is false, so the else-branch runs: y2 = y1 + 0.
+    // No NaN leaks; the rect stays a point, exactly as the no-ratio zero-drag does.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 60, x2: 50, y2: 60 });
+  });
+
+  // --- Constraint edge cases ---
+
+  it('collapses a zero-width drag to a point under a 1:1 aspect ratio', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ aspectRatio: 1, onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(50, 120));
+    });
+    flushFrame();
+
+    // width = 0, height = 60. 0/60 = 0 < 1, so the else-branch derives y2 from
+    // width: y2 = y1 + (0/1) = y1. The whole rect collapses to its anchor.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 60, x2: 50, y2: 60 });
+  });
+
+  it('propagates NaN through the aspect-ratio path as well', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ aspectRatio: 1, onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Number.NaN, 120));
+    });
+    flushFrame();
+
+    // width = |NaN| = NaN, height = 60. NaN/60 = NaN, NaN > 1 is false, so
+    // y2 = y1 + NaN. sortRect then turns the pair into an all-NaN rect.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      x1: Number.NaN,
+      y1: Number.NaN,
+      x2: Number.NaN,
+      y2: Number.NaN,
+    });
+  });
+
+  // --- Tripwires: desired guards not yet implemented ---
+
+  /**
+   * `getLocalCoords` is a passthrough of `clientX`/`clientY`, so NaN flows
+   * through `calculateMaskRect` -> `sortRect` -> `onChangeEnd` unchecked. The hook
+   * should reject a non-finite delta before committing it.
+   */
+  it.fails('rejects a NaN drag delta instead of committing it', () => {
+    const onChangeEnd = vi.fn();
+    const { result, event, flushFrame } = setup({ onChangeEnd });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Number.NaN, 120));
+    });
+    flushFrame();
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(Number.NaN, 120));
+    });
+
+    expect(onChangeEnd).toHaveBeenCalled();
+    const committed = onChangeEnd.mock.calls[0][0];
+    expect(Number.isFinite(committed.x1)).toBe(true);
+    expect(Number.isFinite(committed.y1)).toBe(true);
+    expect(Number.isFinite(committed.x2)).toBe(true);
+    expect(Number.isFinite(committed.y2)).toBe(true);
+  });
+
+  /**
+   * A click-and-release with no pointer travel still commits a zero-extent rect.
+   * The hook should detect the empty delta and bail: "no travel, no commit."
+   */
+  it.fails('does not commit a zero-extent rect when the drag never moved', () => {
+    const onChangeEnd = vi.fn();
+    const { result, event } = setup({ onChangeEnd });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(50, 60));
+    });
+
+    expect(onChangeEnd).not.toHaveBeenCalled();
   });
 });

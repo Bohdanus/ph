@@ -1,12 +1,9 @@
 import { expect, test } from './fixtures/extended-test';
 import {
+  documentToCanvasOffset,
   drawLine,
   getWorkspaceCanvas,
   hasDarkPixels,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   takeLineScreenshot,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
@@ -21,10 +18,19 @@ test('screenshot of canvas area contains drawn black line', async ({ page }, tes
   const box = await canvas.boundingBox();
   expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
-  await clickToolButton(page, 'draw');
-  await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-  await waitForCanvasRedraw(page, box!);
+  const start = documentToCanvasOffset(box!, 150, 150);
+  const end = documentToCanvasOffset(box!, 350, 150);
+  const lineClip = {
+    x: box!.x + Math.min(start.x, end.x) - 20,
+    y: box!.y + Math.min(start.y, end.y) - 20,
+    width: Math.abs(end.x - start.x) + 40,
+    height: Math.abs(end.y - start.y) + 40,
+  };
 
-  const screenshot = await takeLineScreenshot(page, box!, 'drawn-line', testInfo);
+  await clickToolButton(page, 'draw');
+  await drawLine(page, box!, start.x, start.y, end.x, end.y);
+  await waitForCanvasRedraw(page, box!, { clip: lineClip });
+
+  const screenshot = await takeLineScreenshot(page, box!, 'drawn-line', testInfo, lineClip);
   await expect(hasDarkPixels(screenshot)).resolves.toBe(true);
 });

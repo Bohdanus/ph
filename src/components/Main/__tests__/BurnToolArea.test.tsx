@@ -3,9 +3,11 @@ import { fireEvent, render } from '@testing-library/react';
 import { BurnToolArea } from '../BurnToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { DodgeBurnToolArgs } from '../../../tools/dodgeBurn.ts';
+import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
+const cancelLayerPreviewMock = vi.hoisted(() => vi.fn());
 /**
  * `createLayerFromTool` is present in the mock on purpose even though the component must never
  * reach it. A `useLayers` mock that simply omitted it would make a regression that committed
@@ -52,6 +54,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: tempUpdateLayerMock,
     updateLayerByTool: updateLayerByToolMock,
+    cancelLayerPreview: cancelLayerPreviewMock,
     createLayerFromTool: createLayerFromToolMock,
   }),
 }));
@@ -109,6 +112,7 @@ const makeLayer = (id: string, overrides: Partial<Layer> = {}): Layer => ({
   blendMode: 'source-over',
   order: 0,
   pos: { x: 0, y: 0, width: 200, height: 120 },
+  presentationBounds: null,
   operations: [],
   ...overrides,
 });
@@ -154,8 +158,10 @@ type ToolLayerCall = { id?: string; toolArgs: { points: { x: number; y: number }
 
 describe('BurnToolArea', () => {
   beforeEach(() => {
+    resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
+    cancelLayerPreviewMock.mockClear();
     createLayerFromToolMock.mockClear();
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;

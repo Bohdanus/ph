@@ -6,6 +6,7 @@ import {
   legacyHistoryToDurable,
   UnsupportedHistoryFeatureError,
 } from '../history-adapter.ts';
+import { deriveCreateLayerEntry } from '../history-append.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, ToolLayerSource } from '../layer-types.ts';
@@ -30,6 +31,7 @@ function blankBaselineLayer(): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { ...layerPos },
+    presentationBounds: null,
     source: {
       kind: 'blank',
       color: '#ffffff',
@@ -105,6 +107,27 @@ describe('tool layer source conversion', () => {
     expect(created.layer.source).toHaveProperty('sourcePos', { ...layerPos });
     // The durable tool source must own its args copy, not alias the history entry.
     expect((created.layer.source as { args: unknown }).args).not.toBe(args);
+  });
+
+  it('ignores the runtime FullArgs canvas while converting a tool source', () => {
+    const registry = new AssetRegistry();
+    const args = { toolName: 'text', text: 'layer text' } as unknown as ToolArgs;
+    const canvas = globalThis.document.createElement('canvas');
+    const layerSource = { ...toolSource('text', args), canvas } as ToolLayerSource & { canvas: HTMLCanvasElement };
+
+    const { document, diagnostics } = convert(registry, {
+      id: 'create-text-with-runtime-canvas',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'tool-text-with-runtime-canvas',
+      layerSource,
+    });
+
+    expect(diagnostics).toEqual([]);
+    const created = document.history[0]?.operation;
+    if (created?.kind !== 'create-layer') throw new Error('expected a create-layer operation');
+    expect(created.layer.source.kind).toBe('text');
+    expect(created.layer.source).not.toHaveProperty('canvas');
+    expect(layerSource.canvas).toBe(canvas);
   });
 
   it('converts a creator paint source with its placement', () => {
@@ -257,6 +280,26 @@ describe('raster tool conversion', () => {
       },
     ]);
     expect(document.history).toEqual([]);
+  });
+
+  it('keeps legacy-tool source conversion distinct from append publication', () => {
+    const registry = new AssetRegistry();
+    const item: HistoryItem = {
+      id: 'create-eraser',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'tool-eraser',
+      layerSource: toolSource('eraser', { toolName: 'eraser' } as unknown as ToolArgs),
+    };
+
+    const converted = convert(registry, item);
+    expect(converted.diagnostics).toEqual([]);
+    const operation = converted.document.history[0]?.operation;
+    if (operation?.kind !== 'create-layer') throw new Error('expected a create-layer operation');
+    expect(operation.layer.source.kind).toBe('legacy-tool');
+
+    expect(() =>
+      deriveCreateLayerEntry(item, { documentId: 'tool-conversion', registry, preLayers: new Map() })
+    ).toThrow(/no durable source representation/);
   });
 
   it('rejects a transform that carries both a trapezoid and retained affine values', () => {
@@ -426,7 +469,7 @@ describe('baseline layer materialization', () => {
       UnsupportedHistoryFeatureError
     );
 
-    const attempt = convertLegacyHistorySafely(history, { registry });
+    const attempt = convertLegacyHistorySafely(history, { documentId: 'unmaterialized', registry });
     expect(attempt.status).toBe('unavailable');
     expect(attempt.document).toBeNull();
     expect(attempt.diagnostics).toStrictEqual([

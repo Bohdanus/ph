@@ -7,13 +7,14 @@ import { format, resolveConfig } from 'prettier';
 import { toolbarMap } from '../toolbar-mapping.ts';
 import { eyedropperDrawDescriptions } from '../src/tools/descriptions/eyedropper-draw.ts';
 import { focusDescriptions } from '../src/tools/descriptions/focus.ts';
-import { navigationDescriptions } from '../src/tools/descriptions/navigation.ts';
 import { paintDescriptions } from '../src/tools/descriptions/paint.ts';
 import { penDescriptions } from '../src/tools/descriptions/pen.ts';
 import { selectionDescriptions } from '../src/tools/descriptions/selection.ts';
 import { shapeDescriptions } from '../src/tools/descriptions/shape.ts';
 import { transformDescriptions } from '../src/tools/descriptions/transform.ts';
 import { typeCropDescriptions } from '../src/tools/descriptions/type-crop.ts';
+import { viewDescriptions } from '../src/tools/descriptions/view.ts';
+import { patchDescriptions } from '../src/tools/descriptions/patch.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(REPO_ROOT, 'docs/TOOLS.md');
@@ -43,7 +44,8 @@ const FAMILIES = [
   { title: 'Type and crop', record: typeCropDescriptions, notes: 'type-crop.notes.md' },
   { title: 'Move, transform and adjustments', record: transformDescriptions, notes: 'transform.notes.md' },
   { title: 'Eyedropper and draw', record: eyedropperDrawDescriptions, notes: 'eyedropper-draw.notes.md' },
-  { title: 'Navigation', record: navigationDescriptions, notes: 'navigation.notes.md' },
+  { title: 'View and navigation', record: viewDescriptions, notes: 'view.notes.md' },
+  { title: 'Patch', record: patchDescriptions, notes: 'patch.notes.md' },
 ];
 
 const toolDescriptions = Object.assign({}, ...FAMILIES.map(({ record }) => record));
@@ -59,9 +61,14 @@ const FIGURE_TOOL_NAMES = {
   line: 'line',
   triangle: 'triangle',
   polygon: 'polygon',
+  star: 'shape',
 };
 
 const descriptionKeyFor = (name, figure) => (figure === undefined ? name : FIGURE_TOOL_NAMES[figure]);
+
+// The generic shape group is a documentation record, not a tile. Its Star tile
+// needs the separate `star` record so the group description is emitted once too.
+const descriptionKeyForDocs = (name, figure) => (figure === 'star' ? 'star' : descriptionKeyFor(name, figure));
 
 const escapeCell = (text) => String(text).replaceAll('|', '\\|').replaceAll('\n', ' ');
 
@@ -140,7 +147,7 @@ export const renderToolDocs = async () => {
     for (const section of toolbarMap) {
       for (const group of section) {
         for (const entry of group) {
-          const key = descriptionKeyFor(entry.name, entry.figure);
+          const key = descriptionKeyForDocs(entry.name, entry.figure);
           if (owned.includes(key) && !entries.some(([existing]) => existing === key)) {
             entries.push([key, entry.label, entry.shortcut]);
           }
@@ -219,10 +226,16 @@ export const renderToolDocs = async () => {
  */
 export const renderTooltips = async () => {
   const entries = Object.entries(toolDescriptions)
-    .map(
-      ([key, tool]) =>
-        `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)} },`
-    )
+    // Star is a FigureType carried by the shared shape ToolName, not a separate registry name.
+    .filter(([key]) => key !== 'star')
+    .map(([key, tool]) => {
+      // Only show the key assigned to this toolbar entry. Description shortcuts also include
+      // family-cycling keys, modifiers and menu commands, which may select a different tool.
+      const toolbarEntry = toolbarMap.flat(2).find((entry) => descriptionKeyFor(entry.name, entry.figure) === key);
+      const shortcut = toolbarEntry?.shortcut;
+      const shortcutField = shortcut !== undefined ? `, shortcut: ${JSON.stringify(shortcut)}` : '';
+      return `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)}${shortcutField} },`;
+    })
     .join('\n');
 
   return `// GENERATED FILE - DO NOT EDIT. Source: src/tools/descriptions/*.ts
@@ -233,7 +246,7 @@ import type { FigureType } from '../shape.ts';
 import type { ToolImplementationStatus } from './types.ts';
 
 /**
- * The two fields the toolbar tooltip reads, and the only part of the description record that
+ * The fields the toolbar tooltip reads, and the only part of the description record that
  * reaches the browser. Everything else — the purpose prose, the options tables, the
  * modifiers, the citations — exists for \`docs/TOOLS.md\` and for the tests, and importing it
  * here cost 215 kB raw / 58 kB gzipped for one line of text per tool.
@@ -243,6 +256,8 @@ export type ToolTooltipProjection = {
   summary: string;
   /** How much of the tool this editor implements. Drives the tooltip's status line. */
   implementation: ToolImplementationStatus;
+  /** Photoshop's toolbar-level shortcut (e.g. 'B' for Brush), shown in the tooltip badge. Undefined when the tool has no shortcut. */
+  shortcut?: string;
 };
 
 export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
@@ -257,13 +272,14 @@ ${entries}
  * separately, so a figure added there with no entry here resolves to \`undefined\` at runtime
  * and renders a tooltip with no description; this turns that into a compile error instead.
  */
-const FIGURE_TOOL_NAMES = {
-  rectangle: 'rectangle',
-  oval: 'ellipse',
-  line: 'line',
-  triangle: 'triangle',
-  polygon: 'polygon',
-} satisfies Record<FigureType, ToolName>;
+ const FIGURE_TOOL_NAMES = {
+   rectangle: 'rectangle',
+   oval: 'ellipse',
+   line: 'line',
+   triangle: 'triangle',
+   polygon: 'polygon',
+   star: 'shape',
+ } satisfies Record<FigureType, ToolName>;
 
 /**
  * Which description a toolbar entry shows.

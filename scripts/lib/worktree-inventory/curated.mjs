@@ -39,6 +39,32 @@
  * derives that set from the live worktrees and asserts the generator's verdict
  * on it, so nothing in this file has to name them.
  *
+ * `legacy` KEEPS A BRANCH AND GIVES UP A DIRECTORY
+ * -----------------------------------------------
+ * `legacy: true` is the second field here that may move a verdict, and it is the
+ * opposite of `mustNotPrune` on purpose: that one says a worktree is not
+ * accounted for, this one says it IS accounted for and will never be worked on
+ * again, which is a claim only a human can make about intent.
+ *
+ * IT SEPARATES THE BRANCH FROM THE WORKTREE, WHICH IS THE WHOLE VALUE. Git holds
+ * a branch with no worktree, so the branch survives at the cost of one ref while
+ * the checkout, its `node_modules` and its `dist/` do not. `npm run dispose`
+ * removes the directory and skips `git branch -d`; see `ACTION.LEGACY` and
+ * `dispose()` in `scripts/dispose-worktree.mjs`.
+ *
+ * IT IS REFUSED FOR A DIRTY TREE, and that is not a formatting rule. `legacy`
+ * authorises deleting a directory, and a directory holding uncommitted changes
+ * is the only copy of them, so a `legacy` worktree that holds anything stays
+ * `at-risk` and the claim is ignored. `classify` enforces it and the suite pins
+ * both directions.
+ *
+ * IT IS A CLAIM ABOUT THE FUTURE, SO IT MUST CARRY A NOTE. The reason is the
+ * whole content of the entry: which branch, kept for what, and what would make
+ * it worth revisiting. An entry saying only `legacy: true` asserts an indefinite
+ * hold on a filesystem-free ref and gives a later reader no way to tell a
+ * deliberate decision from a leftover — the failure mode the `landed` assertion
+ * exists to prevent.
+ *
  * `landed` is ASSERTED AGAINST GIT, NOT BELIEVED
  * ----------------------------------------------
  * It records a human's claim that the work is on main. The suite re-derives

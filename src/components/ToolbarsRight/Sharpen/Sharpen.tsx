@@ -10,7 +10,7 @@ import {
 } from '../../../tools/sharpen.ts';
 
 /**
- * Layout copied from `Blur/Blur.tsx:95-113`, which is the house shape for a one-shot
+ * Layout copied from `Blur/Blur.tsx`, which is the house shape for a one-shot
  * filter's options bar: a row of label-over-slider columns.
  *
  * There is no `buttonStyles.ts` constant here because this bar has no buttons. Blur carries an
@@ -33,15 +33,16 @@ const clampPercent = (value: number, min: number, max: number, fallback: number)
  * The Photoshop Sharpen options bar: `Amount` and `Radius`.
  *
  * Both sliders drive the SAME interaction Blur's single Radius slider drives, and the
- * rAF-throttled write is the same shape as `Blur.tsx:30-43`: coalesce the frame, then
- * `tempUpdateLayer` the pending args and `setToolArgs` them together, in that order. The order
+ * rAF-throttled write coalesces the frame the same way: one frame, then `tempUpdateLayer`
+ * the pending args and `setToolArgs` them together, in that order. The order
  * is load-bearing — `previewLayers` is a mutable ref rather than state, so a render that
  * observed the args before the preview landed would be showing the previous radius's pixels
- * under the new radius's thumb.
+ * under the new radius's thumb. What is NOT the same as Blur's is the merge inside the frame:
+ * Blur has one control and needs no base to merge onto, so the merge follows Levels.
  *
  * THE ROUTE IS THE WHOLE ARGUMENT FOR THIS BAR. `tempUpdateLayer`
- * (`src/contexts/useLayer.ts:473`) is the only writer of `previewLayersRef`, and
- * `commitDirtyTool` (`:323`) bakes that preview into a real layer plus a `TOOL_ACTION` entry —
+ * `tempUpdateLayer()` is the only writer of `previewLayersRef`, and
+ * `commitDirtyTool()` bakes that preview into a real layer plus a `TOOL_ACTION` entry —
  * on tool switch, on export and in `mergeAllLayers`. A Sharpen that convolved into a canvas of
  * its own instead would produce pixels with no history entry at all, and `commitDirtyTool`
  * would then take its `PUBLISH_RUNTIME_PRESENTATION` branch and never warn: the sharpen would
@@ -78,8 +79,16 @@ const Sharpen: React.FC<{}> = () => {
     };
   }, []);
 
-  const throttledOnChange = (newArgs: SharpenToolArgs) => {
-    pendingUpdateRef.current = newArgs;
+  /**
+   * Each handler hands over ONE field, and the frame is the unit of coalescing — so the
+   * merge has to be against the PENDING args, not `args`. `args` is the render-time object
+   * and nothing republishes it until the frame runs, so two controls moved inside one frame
+   * would otherwise both be spread off the same stale base and the second spread would put
+   * the first control's field back to its pre-frame value. This is the merge `Levels.tsx` —
+   * `throttledOnChange()` — already uses for its two sliders.
+   */
+  const throttledOnChange = (newArgs: Partial<SharpenToolArgs>) => {
+    pendingUpdateRef.current = { ...(pendingUpdateRef.current ?? args), ...newArgs };
 
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
@@ -98,20 +107,23 @@ const Sharpen: React.FC<{}> = () => {
   };
 
   const handleAmountChange = (event: ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ ...args, amount: Number(event.target.value) });
+    throttledOnChange({ amount: Number(event.target.value) });
   };
 
   const handleRadiusChange = (event: ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ ...args, radius: Number(event.target.value) });
+    throttledOnChange({ radius: Number(event.target.value) });
   };
 
   /**
    * What the sliders RENDER is the clamped value, not `args` verbatim.
    *
-   * A persisted args object can hold a value outside Photoshop's range — settings are
-   * round-tripped through `localStorage` and restored before anything clamps them — and a
-   * controlled `<input type="range">` whose `value` is out of its own `min`/`max` pins the
-   * thumb to the bound while reporting the raw value, so the readout and the thumb disagree.
+   * The args object holds per-session module state — written by
+   * `saveLastSettings()` to `lastSavedSettings` in `src/tools/settings.ts`, not
+   * serialized to `localStorage` — and a hand-edited default outside Photoshop's
+   * range would populate it with an out-of-bounds value, so a
+   * controlled `<input type="range">` whose `value` is out of its own `min`/`max`
+   * pins the thumb to the bound while reporting the raw value, so the readout
+   * and the thumb disagree.
    * The clamp here is the same one `src/tools/sharpen.ts` applies before the kernel runs, so
    * the bar and the filter agree on what is about to be computed.
    */

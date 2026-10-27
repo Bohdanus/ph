@@ -12,7 +12,6 @@ function createMockStoreData(): StoreData {
     toolOverlayRef: { current: null },
     rectOverlayRef: { current: null },
     containerRef: { current: null },
-    textareaRef: { current: null },
     currentArgs: {
       current: { toolName: 'draw', alpha: 0.9, lineWidth: 10, color: '#000000', points: [], penType: 'pen' },
     } as { current: ToolArgs },
@@ -75,6 +74,7 @@ function setup(warnings: string[] = []) {
       blendMode: 'multiply' as const,
       order,
       pos: { x: -3, y: 7, width: 20, height: 30 },
+      presentationBounds: null,
       operations: [],
     };
   };

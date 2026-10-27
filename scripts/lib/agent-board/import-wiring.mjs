@@ -72,6 +72,35 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     read.push({ file, text, parsed: parseHandoffDoc({ file, text }) });
   }
 
+  const ambiguousRetirements = read.flatMap((entry) =>
+    (entry.parsed.ambiguousRetirements ?? []).map((retirement) => ({ file: entry.file, ...retirement }))
+  );
+  const letterSuffixedHeadings = read.flatMap((entry) =>
+    (entry.parsed.letterSuffixedHeadings ?? []).map((heading) => ({ file: entry.file, ...heading }))
+  );
+  if (letterSuffixedHeadings.length > 0) {
+    const details = letterSuffixedHeadings
+      .map(({ file, line, level, text }) => `  ${file}:${line} (level ${level}): ${JSON.stringify(text)}`)
+      .join('\n');
+    throw new BoardError(
+      'cannot import handoff documents: numbered headings with letter suffixes have no supported origin; ' +
+        'choose a numeric heading or resolve the origin grammar before importing:\n' +
+        details,
+      { code: 1 }
+    );
+  }
+  if (ambiguousRetirements.length > 0) {
+    const details = ambiguousRetirements
+      .map(({ file, line, origin, heading }) => `  ${file}:${line} (${origin}): ${JSON.stringify(heading)}`)
+      .join('\n');
+    throw new BoardError(
+      'cannot import handoff documents: numbered headings with retirement status words must use an explicit ' +
+        'retirement-list heading, or remove the status word if the entry is live:\n' +
+        details,
+      { code: 1 }
+    );
+  }
+
   // origin → title, not just origin: a bare origin cannot tell a re-run from a
   // document whose item 2 was renumbered upstream and now names a different
   // defect entirely. `createIssue` re-checks the same thing when it is called
@@ -87,10 +116,23 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     known
   );
 
+  const originForNumber = (file, number) => {
+    const base = file.split('/').filter(Boolean).pop() || 'unknown.md';
+    return `${base}#${number}`;
+  };
+  const retired = read
+    .flatMap((entry) => (entry.parsed.dead ?? []).map((number) => originForNumber(entry.file, number)))
+    .flatMap((origin) => {
+      const id = board.findIssue(origin)?.id;
+      return id ? [{ origin, id }] : [];
+    });
   const created = [];
   const skipped = [...plan.skip];
   const drifted = [...(plan.drift ?? [])];
-  const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`));
+  const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => originForNumber(entry.file, number)));
+  const duplicates = read.flatMap((entry) =>
+    (entry.parsed.duplicateNumbers ?? []).map((number) => originForNumber(entry.file, number))
+  );
   const notItems = [];
   const isNotItem = (item) =>
     NOT_ITEMS.some((entry) => entry.origin === item.origin && foldTitle(item.title).includes(foldTitle(entry.title)));
@@ -154,6 +196,8 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     skipped,
     drifted,
     dead,
+    retired,
+    duplicates,
     notItems,
   };
 }

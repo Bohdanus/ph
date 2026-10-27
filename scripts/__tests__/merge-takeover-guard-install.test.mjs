@@ -59,13 +59,13 @@ describe('the silent-revert gate is installed, not merely written', () => {
     expect(readFileSync(installed, 'utf8')).toContain('.husky/pre-merge-commit');
   });
 
-  it('runs the guard, and does not swallow its exit code', () => {
+  it('refuses direct merges and does not swallow the refusal', () => {
     const hook = readFileSync(join(REPO_ROOT, '.husky', 'pre-merge-commit'), 'utf8');
-    expect(hook).toMatch(/node scripts\/merge-takeover-guard\.mjs/);
-    // The dispatcher runs `sh -e "$hook"`, so the guard's exit code is what blocks the
-    // merge. A `|| true` or a piped swallow here would make the whole thing a report.
+    expect(hook).toContain('direct self-committing merges are refused');
+    expect(hook).toMatch(/exit 1/);
+    // A `|| true` or a piped swallow would turn the refusal into a report.
     expect(hook).not.toMatch(/\|\|\s*true/);
-    expect(hook).not.toMatch(/merge-takeover-guard\.mjs\s*\|\|/);
+    expect(hook).not.toMatch(/exit 1\s*\|\|/);
   });
 
   it('names the fast-forward limit rather than implying total coverage', () => {
@@ -73,11 +73,23 @@ describe('the silent-revert gate is installed, not merely written', () => {
     // A gate whose header claims more than it does is the failure this whole change was
     // made to stop. If the FF limit is ever removed from the comment, git behaviour has
     // to have changed first.
-    expect(hook.toUpperCase()).toContain('FAST-FORWARD');
+    //
+    // Read the whole bullet, not just the line naming it: the claim and its correction sit
+    // on different lines, and an assertion that only saw the heading could not tell them
+    // apart. `toContain('FAST-FORWARD')` was exactly that assertion — it passed for "fires
+    // no hook at all" and for "fires no gating hook" alike, so it sat green over the false
+    // claim for as long as the false claim was on main.
+    const bullet = hook.split('\n# - ').find((chunk) => chunk.toUpperCase().includes('FAST-FORWARD')) ?? '';
+    expect(bullet).not.toBe('');
+    // A fast-forward reaches `post-merge`, which cannot block. Verified against raw git,
+    // not read off a document, so the bullet has to name the hook rather than deny one.
+    expect(bullet).toContain('post-merge');
+    expect(bullet.toUpperCase()).not.toContain('NO HOOK AT ALL');
+    expect(bullet.toUpperCase()).not.toContain('FIRES NO HOOK');
   });
 });
 
-describe('the guard it installs exists and is honest about what it detects', () => {
+describe('the guard and policy it installs exist and are honest about what they detect', () => {
   it('is tracked', () => {
     expect(() => realpathSync(join(REPO_ROOT, 'scripts', 'merge-takeover-guard.mjs'))).not.toThrow();
   });

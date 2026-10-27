@@ -108,21 +108,34 @@ describe('readRgba', () => {
     const data = solidBuffer(2, 1, { r: 255, g: 255, b: 255, a: 255 });
 
     // A negative x, a y past the last row, and a half-pixel coordinate all address
-    // `undefined` in the buffer; letting that through turns the arithmetic in
-    // `blendPixel` and `premultiplyRgba` into NaN a caller cannot trace back here.
+    // nothing. In particular, x=0.5 gives an integer byte offset at width 2 but
+    // points into the middle of the first pixel, while y=0.5 gives an integer
+    // offset at this width and points to a different pixel.
     expect(at(data, -1, 0, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
     expect(at(data, 0, 1, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
     expect(at(data, 2, 0, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+    expect(at(data, 0.5, 0, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+    expect(at(data, 0, 0.5, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
     expect(at(data, 1.5, 0, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
     expect(at(data, Number.NaN, 0, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
   });
 
-  it('cannot tell a coordinate that wrapped onto a later row from a valid one, which is what isPointInSize is for', () => {
-    // `readRgba` gets a width but no height, so `(2, 0)` of a 2-wide buffer is
-    // indistinguishable from `(0, 1)`. The coordinate guard is the caller's job.
-    const data = solidBuffer(2, 2, { r: 1, g: 1, b: 1, a: 1 });
+  it('rejects malformed widths and coordinates that would wrap into another row', () => {
+    const data = solidBuffer(2, 2, { r: 9, g: 8, b: 7, a: 6 });
 
-    expect(at(data, 2, 0, 2)).toEqual(at(data, 0, 1, 2));
+    for (const width of [0, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(at(data, 0, 0, width)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+    }
+    expect(at(data, 2, 0, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+    expect(at(data, -1, 1, 2)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+  });
+
+  it('reads transparent from a zero-length buffer', () => {
+    // `pixelIndex(0, 0, 0)` is 0 and `0 + 3 >= 0` (data.length is 0), so the
+    // offset guard fires before any read — the caller gets transparent, not a
+    // crash on `data[0]`.
+    const data = createPixelBuffer({ width: 0, height: 0 });
+    expect(at(data, 0, 0, 0)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
   });
 });
 
@@ -153,6 +166,37 @@ describe('writeRgba', () => {
     writeRgba(data, -1, 0, 1, { r: 0, g: 0, b: 0, a: 0 });
 
     expect(Array.from(data)).toEqual([9, 9, 9, 9]);
+  });
+
+  it('discards fractional coordinates even when their byte offsets are in bounds', () => {
+    const data = solidBuffer(2, 2, { r: 9, g: 9, b: 9, a: 9 });
+    const before = Array.from(data);
+
+    writeRgba(data, 0.5, 0, 2, { r: 1, g: 2, b: 3, a: 4 });
+    writeRgba(data, 0, 0.5, 2, { r: 5, g: 6, b: 7, a: 8 });
+
+    expect(Array.from(data)).toEqual(before);
+  });
+
+  it('discards malformed widths and coordinates that would wrap into another row', () => {
+    const data = solidBuffer(2, 2, { r: 9, g: 9, b: 9, a: 9 });
+    const before = Array.from(data);
+
+    for (const width of [0, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      writeRgba(data, 0, 0, width, { r: 1, g: 2, b: 3, a: 4 });
+    }
+    writeRgba(data, 2, 0, 2, { r: 1, g: 2, b: 3, a: 4 });
+    writeRgba(data, -1, 1, 2, { r: 5, g: 6, b: 7, a: 8 });
+
+    expect(Array.from(data)).toEqual(before);
+  });
+
+  it('discards a write into a zero-length buffer rather than throwing', () => {
+    const data = createPixelBuffer({ width: 0, height: 0 });
+
+    writeRgba(data, 0, 0, 0, { r: 255, g: 0, b: 0, a: 255 });
+
+    expect(Array.from(data)).toEqual([]);
   });
 });
 
@@ -445,6 +489,17 @@ describe('multiplyChannel', () => {
     expect(multiplyChannel(1.5, -2)).toBe(0);
     expect(multiplyChannel(0, -1)).toBe(0);
   });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['+Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+  ])('clamps a non-finite factor to 0, matching clampChannel', (_label, factor) => {
+    // `value * NaN` and `value * Infinity` are both non-finite, and clampChannel
+    // maps any non-finite result to 0 — so a kernel cell that overflows or divides
+    // by zero drops to black rather than propagating corruption.
+    expect(multiplyChannel(100, factor)).toBe(0);
+  });
 });
 
 describe('blendPixel', () => {
@@ -577,14 +632,116 @@ describe('blendPixel', () => {
     expect(Array.from(data)).toEqual([0, 0, 0, 255, 255, 255, 255, 255]);
   });
 
-  it('discards an offset that addresses nothing', () => {
-    const data = solidBuffer(1, 1, { r: 7, g: 7, b: 7, a: 7 });
+  it('discards out-of-range and unaligned offsets', () => {
+    const data = new Uint8ClampedArray([7, 7, 7, 7, 8, 8, 8, 8]);
 
-    blendPixel(data, 4, { r: 0, g: 0, b: 0, a: 0 }, 1);
-    blendPixel(data, -4, { r: 0, g: 0, b: 0, a: 0 }, 1);
-    blendPixel(data, 1.5, { r: 0, g: 0, b: 0, a: 0 }, 1);
+    blendPixel(data, 8, { r: 0, g: 0, b: 0, a: 255 }, 1);
+    blendPixel(data, -4, { r: 0, g: 0, b: 0, a: 255 }, 1);
+    blendPixel(data, 1.5, { r: 0, g: 0, b: 0, a: 255 }, 1);
+    blendPixel(data, 1, { r: 0, g: 0, b: 0, a: 255 }, 1);
 
-    expect(Array.from(data)).toEqual([7, 7, 7, 7]);
+    expect(Array.from(data)).toEqual([7, 7, 7, 7, 8, 8, 8, 8]);
+  });
+
+  it('treats an opacity of Infinity as full coverage, the same as an opacity of one', () => {
+    // `Math.min(1, Infinity)` is 1, so the guard `!(opacity > 0)` lets it through
+    // and the effective alpha bottoms out at the source's own alpha — identical to
+    // an opacity of one, not a NaN-corruption path.
+    const data = solidBuffer(1, 1, { r: 1, g: 1, b: 1, a: 255 });
+
+    blendPixel(data, 0, { r: 9, g: 9, b: 9, a: 255 }, Number.POSITIVE_INFINITY);
+
+    expect(Array.from(data)).toEqual([9, 9, 9, 255]);
+  });
+
+  it('treats a NaN source alpha as transparent before blending', () => {
+    // Non-finite channels follow the shared channel policy and contribute no coverage.
+    const data = solidBuffer(1, 1, { r: 200, g: 100, b: 50, a: 255 });
+
+    blendPixel(data, 0, { r: 0, g: 0, b: 0, a: Number.NaN }, 1);
+
+    expect(Array.from(data)).toEqual([200, 100, 50, 255]);
+  });
+
+  it.each([
+    ['positive', Number.POSITIVE_INFINITY],
+    ['negative', Number.NEGATIVE_INFINITY],
+  ])('treats a %s infinite source alpha as transparent', (_label, alpha) => {
+    const data = solidBuffer(1, 1, { r: 200, g: 100, b: 50, a: 255 });
+
+    blendPixel(data, 0, { r: 0, g: 0, b: 0, a: alpha }, 1);
+
+    expect(Array.from(data)).toEqual([200, 100, 50, 255]);
+  });
+
+  it('saturates a finite source alpha above 255 before blending', () => {
+    // Bounded alpha prevents a negative destination weight in source-over.
+    const data = solidBuffer(1, 1, { r: 255, g: 0, b: 0, a: 255 });
+
+    blendPixel(data, 0, { r: 200, g: 100, b: 50, a: 300 }, 1);
+
+    expect(Array.from(data)).toEqual([200, 100, 50, 255]);
+  });
+
+  it.each(['r', 'g', 'b'] as const)('treats a non-finite source %s channel as 0 before blending', (channel) => {
+    // Each component is sanitized independently, so one invalid channel cannot
+    // poison the other output channels or erase the destination contribution.
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const data = solidBuffer(1, 1, { r: 255, g: 255, b: 255, a: 255 });
+      const source: Rgba = { r: 100, g: 50, b: 25, a: 128 };
+      source[channel] = value;
+
+      blendPixel(data, 0, source, 1);
+
+      const expectedPixel = [177, 152, 140];
+      expectedPixel[['r', 'g', 'b'].indexOf(channel)] = 127;
+      expect(Array.from(data), `${channel} = ${value}`).toEqual([...expectedPixel, 255]);
+    }
+  });
+
+  it.each([
+    ['below the byte range', -32, 255, 127],
+    ['above the byte range', 300, 0, 128],
+  ] as const)(
+    'clamps a finite source %s channel before blending',
+    (_label, channelValue, destinationChannel, expected) => {
+      for (const channel of ['r', 'g', 'b'] as const) {
+        const data = solidBuffer(1, 1, {
+          r: destinationChannel,
+          g: destinationChannel,
+          b: destinationChannel,
+          a: 255,
+        });
+        const source: Rgba = { r: 100, g: 50, b: 25, a: 128 };
+        source[channel] = channelValue;
+
+        blendPixel(data, 0, source, 1);
+
+        const expectedPixel = destinationChannel === 255 ? [177, 152, 140] : [50, 25, 13];
+        expectedPixel[['r', 'g', 'b'].indexOf(channel)] = expected;
+        expect(Array.from(data), `${channel} = ${channelValue}`).toEqual([...expectedPixel, 255]);
+      }
+    }
+  );
+
+  it('treats a negative source alpha as transparent and leaves the buffer untouched', () => {
+    // `src.a <= 0` catches the negative case before any arithmetic runs, which is
+    // the correct treatment: a source with no coverage contributes nothing, so the
+    // destination is left alone rather than fed a negative weight.
+    const data = solidBuffer(1, 1, { r: 200, g: 100, b: 50, a: 255 });
+
+    blendPixel(data, 0, { r: 0, g: 0, b: 0, a: -1 }, 1);
+
+    expect(Array.from(data)).toEqual([200, 100, 50, 255]);
+  });
+
+  it('is a no-op on a zero-length buffer regardless of the offset', () => {
+    const data = createPixelBuffer({ width: 0, height: 0 });
+
+    blendPixel(data, 0, { r: 255, g: 0, b: 0, a: 255 }, 1);
+    blendPixel(data, -4, { r: 0, g: 255, b: 0, a: 255 }, 1);
+
+    expect(Array.from(data)).toEqual([]);
   });
 });
 
@@ -675,6 +832,30 @@ describe('premultiplyRgba', () => {
       a: 0,
     });
   });
+
+  it.each([
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+    ['a negative value (-10)', -10],
+  ])('clamps a non-finite or negative alpha to 0', (_label, alpha) => {
+    // clampChannel maps any non-finite or below-range alpha to 0, so the
+    // source colour is blacked out and no NaN spreads into a downstream accumulator.
+    expect(premultiplyRgba({ r: 255, g: 128, b: 64, a: alpha })).toEqual({
+      r: 0,
+      g: 0,
+      b: 0,
+      a: 0,
+    });
+  });
+
+  it('clamps an alpha above 255 to 255', () => {
+    expect(premultiplyRgba({ r: 200, g: 100, b: 50, a: 300 })).toEqual({
+      r: 200,
+      g: 100,
+      b: 50,
+      a: 255,
+    });
+  });
 });
 
 describe('unpremultiplyRgba', () => {
@@ -718,5 +899,22 @@ describe('unpremultiplyRgba', () => {
       expect(premultiplyRgba({ r: 0, g: 0, b: 0, a: alpha }).a).toBe(alpha);
       expect(unpremultiplyRgba({ r: 0, g: 0, b: 0, a: alpha }).a).toBe(alpha);
     }
+  });
+
+  it('clamps a non-finite alpha to 0 and returns transparent black', () => {
+    // clampChannel turns NaN and Infinity into 0, which hits the `alpha === 0`
+    // guard and avoids a divide-by-NaN in the factor `255 / alpha`.
+    expect(unpremultiplyRgba({ r: 255, g: 255, b: 255, a: Number.NaN })).toEqual({
+      r: 0,
+      g: 0,
+      b: 0,
+      a: 0,
+    });
+    expect(unpremultiplyRgba({ r: 255, g: 255, b: 255, a: Number.POSITIVE_INFINITY })).toEqual({
+      r: 0,
+      g: 0,
+      b: 0,
+      a: 0,
+    });
   });
 });

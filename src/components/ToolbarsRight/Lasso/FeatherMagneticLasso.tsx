@@ -10,6 +10,7 @@ import {
 import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
 import { useSelectionHistory } from '../../../contexts/useSelectionHistory.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
+import { SelectionPixelBudgetNotice } from '../SelectionPixelBudgetNotice.tsx';
 
 const SLIDER_CLASS = 'h-1.5 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700';
 const INFO_TOOLTIP_ID = 'feather-magnetic-lasso-settings-tooltip';
@@ -365,9 +366,10 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
             Paste
           </button>
           <button className={SECONDARY_BUTTON} disabled={!hasActiveSelection} onClick={handleClear}>
-            Clear
+            Deselect
           </button>
         </div>
+        <SelectionPixelBudgetNotice />
       </div>
       {infoTooltip}
     </>

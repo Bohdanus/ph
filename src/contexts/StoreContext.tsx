@@ -1,4 +1,15 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useReducer,
+  useState,
+  type Dispatch,
+} from 'react';
 import { isEqual } from 'lodash-es';
 import {
   DEFAULT_TOOL,
@@ -6,7 +17,9 @@ import {
   NEW_LAYER_ACTION,
   REORDER_ACTION,
   REPLACE_LAYER_SOURCE_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
 } from '../util/constants.ts';
+import { readClientViewportRect } from '../util/client-viewport.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
@@ -19,15 +32,31 @@ import type {
   SelectionSourceTool,
   Size,
 } from './general-types.ts';
+import {
+  absoluteViewZoom,
+  clampAbsoluteViewZoom,
+  DEFAULT_VIEW_STATE,
+  minimumSliderZoomForDocumentSize,
+  preserveViewScaleCompensationAcrossDisplayScaleChange,
+  relativeViewZoomForMagnification,
+  viewStateRef,
+  type ViewState,
+} from './view-state.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
-import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import {
+  cloneDocumentFrame,
+  documentFrameEquals,
+  documentFrameFromSize,
+  documentFrameSize,
+  type DocumentFrame,
+} from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
   collectDurableAssetIds,
-  freezeDurableDocument,
+  refreezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
@@ -35,6 +64,7 @@ import {
 import {
   convertLegacyHistorySafely,
   deriveReplaceLayerSourceEntry,
+  durableSourceKindForTool,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
@@ -47,13 +77,18 @@ import {
   type SourceBackedEntryContext,
 } from './history-append.ts';
 import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
-import { composeDurableDocument } from './durable-compositor.ts';
+import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
+import { projectDurableRender, type DurableRenderProjection } from './durable-render-projection.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
+import { containFit } from '../util/contain-fit.ts';
+import { useResizeObserverRAF } from '../hooks/useResizeObserver.ts';
+import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 import {
   closePresentationBitmap,
   DocumentPresentationScope,
   isSamePresentationCanvas,
   layersDifferOnlyByPresentation,
+  layersDifferOnlyByPresentationAndIdentityAffine,
   materializePresentationBitmap,
   type LayerPresentationBatch,
   type LayerPresentationPromotion,
@@ -86,11 +121,12 @@ import {
  *    can therefore only enter the document through a `SELECTION_ACTION` history
  *    entry, and a layer operation only through a history entry. This holds
  *    whichever rule seeds the baseline, because both read the timeline.
- * 2. `stale` is sticky. Every action that writes one of the six inputs either
- *    marks `stale` or reconverts and writes the resulting status, so no
- *    non-reconverting transition can ever clear a `stale` that a durable input
- *    produced. A transition that stops marking `stale` therefore cannot unblock
- *    a publication that a genuine divergence had blocked.
+ * 2. Non-current statuses are sticky. Every action that writes one of the six
+ *    inputs either marks a current shadow `stale` or reconverts and writes the
+ *    resulting status, so no non-reconverting transition can clear a `stale`,
+ *    `partial`, or `unavailable` state. A transition that stops marking `stale`
+ *    therefore cannot unblock a publication that a genuine divergence or
+ *    conversion diagnostic had blocked.
  *
  * The append gate (`decideDurableAppend`, reached at the `base:` argument of the
  * `COMMIT_DOCUMENT_EDIT` dispatcher branch) additionally re-checks
@@ -108,16 +144,83 @@ type DurableProjection = {
   legacyCursorToDurableCursor?: readonly number[];
 };
 
+export type DurablePresentationStatus = 'unpublished' | 'durable' | 'legacy-fallback';
+export type DurablePresentationReason =
+  'unsupported-source' | 'materialization-refused' | 'layer-coverage' | 'renderer-incompatible' | 'stale';
+
+export type DurablePresentationRecord = Readonly<{
+  status: DurablePresentationStatus;
+  cursor: number | null;
+  reason: DurablePresentationReason | null;
+  detail?: string;
+}>;
+
+export type DurableNavigationPresentationOutcome =
+  | Readonly<{ status: 'durable'; layers: LayersRecord; frame: DocumentFrame; cursor: number }>
+  | Readonly<{ status: 'legacy-fallback'; reason: DurablePresentationReason; cursor: number }>
+  | Readonly<{ status: 'stale'; reason: 'stale'; cursor: number }>;
+
+/**
+ * Canvas navigation has exactly one complete presentation authority. `pending`
+ * deliberately writes nothing, preserving the prior canvas until publication
+ * accepts either the durable projection or the replayed legacy layers.
+ */
+export type RenderSelector = Readonly<{
+  source: 'legacy' | 'pending' | 'durable';
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  historyCursor: number;
+  frame: DocumentFrame;
+}>;
+
+const EMPTY_DURABLE_PRESENTATION: DurablePresentationRecord = Object.freeze({
+  status: 'unpublished',
+  cursor: null,
+  reason: null,
+});
+
+type DurablePresentationPublication = Readonly<{
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  historyIndex: number;
+  durableRevision: number;
+  /** Background append publication may accept the already-visible legacy selector. */
+  allowLegacySelector: boolean;
+  record: DurablePresentationRecord;
+}>;
+
+type HistoryReplayPresentationToken = Readonly<{
+  attemptId: number;
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  historyIndex: number;
+}>;
+
+export function durablePresentationMismatch(
+  replayLayer: DurableReplayLayer,
+  existing: Layer,
+  bounds: Layer['pos']
+): string | null {
+  const sourceSupported =
+    replayLayer.snapshot.source.kind === 'raster' ||
+    replayLayer.snapshot.source.kind === 'blank' ||
+    replayLayer.snapshot.source.kind === 'vector';
+  if (!sourceSupported) return `source kind ${replayLayer.snapshot.source.kind} is unsupported`;
+  if (replayLayer.operations.length > 0) {
+    return `durable layer operations are not pixel-parity approved (${replayLayer.operations.map(({ kind }) => kind).join(', ')})`;
+  }
+  return isEqual(bounds, existing.pos) ? null : 'materialized bounds differ from the untransformed layer position';
+}
+
 export function durablePresentationIsRendererIdentical(
   replayLayer: DurableReplayLayer,
   existing: Layer,
   bounds: Layer['pos']
 ): boolean {
-  return (
-    replayLayer.operations.length === 0 &&
-    isEqual(bounds, existing.pos) &&
-    (replayLayer.snapshot.source.kind === 'raster' || replayLayer.snapshot.source.kind === 'blank')
-  );
+  return durablePresentationMismatch(replayLayer, existing, bounds) === null;
 }
 
 export type StoreData = {
@@ -126,7 +229,6 @@ export type StoreData = {
   toolOverlayRef: RefObject<HTMLCanvasElement | null>;
   rectOverlayRef: RefObject<HTMLCanvasElement | null>;
   containerRef: RefObject<HTMLDivElement | null>;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
 
   currentArgs: React.RefObject<ToolArgs>;
   clearPreviewLayers: () => void;
@@ -141,6 +243,17 @@ export type StoreData = {
   publishRuntimePresentation: (layers: LayersRecord) => void;
   /** Internal adoption registration; the action is not part of public dispatch. */
   adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => void;
+  publishDurableNavigationPresentation: (attemptId?: number) => Promise<DurableNavigationPresentationOutcome>;
+  /** Starts a unique replay attempt scoped to a document generation. */
+  beginHistoryReplayPresentation: (documentId: string, documentRevision: number) => number;
+  /** True only while the supplied attempt is the current, unfinished replay. */
+  isHistoryReplayPresentationCurrent: (attemptId: number) => boolean;
+  /** Whether this document generation has replay work waiting for publication or finalization. */
+  hasPendingHistoryReplayPresentation: (documentId: string, documentRevision: number) => boolean;
+  /** Ends the current attempt without retiring caches when its publication became stale. */
+  cancelHistoryReplayPresentation: (attemptId: number) => void;
+  /** Retire replay-departed caches after accepted pixels or a completed rollback. */
+  finalizeHistoryReplayPresentation: (token: HistoryReplayPresentationToken) => boolean;
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
@@ -173,15 +286,31 @@ export type StoreData = {
   documentId: string;
   documentRevision: number;
   branchRevision: number;
-  /** Diagnostic shadow only; legacy history/runtime layers remain authoritative during cutover. */
+  /** Durable logical document used by successful navigation/export; legacy history remains the structural fallback. */
   durableDocument: DurableDocument | null;
   /** A non-current sidecar must never be used as a replay or export input. */
   durableStatus: DurableDocumentStatus;
   durableDiagnostics: readonly MigrationDiagnostic[];
+  /** Dev-only evidence of the last durable navigation publication decision. */
+  durablePresentation: DurablePresentationRecord;
+  /**
+   * A leased, runtime-shaped durable render snapshot. Canvas navigation may
+   * select it, but export and logical replay remain legacy-authoritative.
+   */
+  durableRenderProjection: DurableRenderProjection | null;
+  /** The complete authority selected for desktop/tablet canvas navigation. */
+  renderSelector: RenderSelector;
+  viewStateRef: { current: ViewState };
+  viewState: ViewState;
+  setViewState: (partial: Partial<ViewState>) => void;
 
   // colors
   color: string;
   backgroundColor: string;
+
+  // // misc
+  // zoomDataRef: React.MutableRefObject<ZoomData>;
+  // setZoomData: (d: ZoomData) => void;
 };
 
 type StoreUpdates = Partial<
@@ -195,9 +324,12 @@ type StoreUpdates = Partial<
     | 'durableDocument'
     | 'durableStatus'
     | 'durableDiagnostics'
+    | 'durableRenderProjection'
     | 'promoteLayerPresentation'
     | 'publishRuntimePresentation'
     | 'adoptLayerBitmaps'
+    | 'beginHistoryReplayPresentation'
+    | 'finalizeHistoryReplayPresentation'
   >
 >;
 
@@ -252,6 +384,8 @@ type ApplyHistoryReplayIntentPayload = {
   updates: StoreUpdates;
   timeline: HistoryTimeline;
   durableDiagnostics?: readonly MigrationDiagnostic[];
+  /** Compensation-only: restore the dirty state captured before a refused replay. */
+  preserveHasUnsavedChanges?: boolean;
   durableDocument?: never;
   durableStatus?: never;
 };
@@ -260,6 +394,8 @@ type ApplyHistoryReplayCommittedPayload = Omit<ApplyHistoryReplayIntentPayload, 
   durableDocument: DurableDocument | null;
   durableStatus: DurableDocumentStatus;
   durableDiagnostics: readonly MigrationDiagnostic[];
+  /** Dispatcher-owned: only navigation starts in a hold-before-paint state. */
+  renderSelector?: RenderSelector;
 };
 
 type ReplaceDocumentIntentPayload = {
@@ -328,12 +464,47 @@ export type Action =
 
 type InternalAction =
   | { type: 'PUBLISH_RUNTIME_PRESENTATION'; payload: { layers: LayersRecord } }
-  | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } };
+  | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
+  | {
+      type: 'SET_DURABLE_PRESENTATION';
+      payload: DurablePresentationPublication & { projection: DurableRenderProjection | null };
+    };
 
 type StoreAction = Action | InternalAction;
 
 export type PublicAction = Action;
 export type StoreDispatch = Dispatch<PublicAction>;
+
+/**
+ * The action kinds `dispatchAction` handles itself, in the order the chain below
+ * tests them.
+ *
+ * Each one either needs a side effect the reducer cannot perform — asset
+ * transactions, bitmap liveness, closing a superseded cache — or must publish a
+ * committed payload whose durable fields only the dispatcher can compute. A kind
+ * that needs neither belongs in the reducer, and this list is where saying so is
+ * checked: `dispatchAction`'s trailing assertion only compiles while the chain
+ * above covers exactly these names, so deleting a branch or adding one without
+ * adding the name here fails `npm run tsc` rather than quietly changing which
+ * transitions bypass the default.
+ *
+ * The exported name is the list a test pins, not a second place to register a
+ * kind: the assertion at the end of `dispatchAction` is what ties it to the
+ * branches.
+ */
+export const INTERCEPTED_STORE_ACTION_TYPES = [
+  'PROMOTE_LAYER_PRESENTATIONS',
+  'ADOPT_LAYER_BITMAPS',
+  'PUBLISH_RUNTIME_PRESENTATION',
+  'REORDER_LAYERS',
+  'COMMIT_DOCUMENT_EDIT',
+  'APPLY_HISTORY_REPLAY',
+  'REPLACE_DOCUMENT',
+] as const satisfies readonly StoreAction['type'][];
+
+const INTERCEPTED_STORE_ACTIONS: ReadonlySet<StoreAction['type']> = new Set(INTERCEPTED_STORE_ACTION_TYPES);
+
+type UninterceptedActionType = Exclude<StoreAction['type'], (typeof INTERCEPTED_STORE_ACTION_TYPES)[number]>;
 
 const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 
@@ -342,13 +513,21 @@ const initialState: StoreData = {
   toolOverlayRef: { current: null },
   rectOverlayRef: { current: null },
   containerRef: { current: null },
-  textareaRef: { current: null },
+  viewStateRef,
+  viewState: DEFAULT_VIEW_STATE,
+  setViewState: () => undefined,
 
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
   promoteLayerPresentation: () => undefined,
   publishRuntimePresentation: () => undefined,
   adoptLayerBitmaps: () => undefined,
+  publishDurableNavigationPresentation: async () => ({ status: 'legacy-fallback', reason: 'stale', cursor: -1 }),
+  beginHistoryReplayPresentation: () => 0,
+  isHistoryReplayPresentationCurrent: () => true,
+  hasPendingHistoryReplayPresentation: () => false,
+  cancelHistoryReplayPresentation: () => undefined,
+  finalizeHistoryReplayPresentation: () => false,
   previewLayers: { current: {} },
 
   hasImage: false,
@@ -377,12 +556,25 @@ const initialState: StoreData = {
   durableDocument: null,
   durableStatus: 'unavailable',
   durableDiagnostics: [],
+  durablePresentation: EMPTY_DURABLE_PRESENTATION,
+  durableRenderProjection: null,
+  renderSelector: {
+    source: 'legacy',
+    documentId: 'uninitialized',
+    documentRevision: 0,
+    branchRevision: 0,
+    historyCursor: 0,
+    frame: { x: 0, y: 0, width: 0, height: 0 },
+  },
 
   color: '#000000',
   backgroundColor: '#ffffff',
 };
 
 function normalizeDurableProjection(projection: DurableProjection): DurableProjection {
+  // Partial and unavailable projections are diagnostic states only. Keeping
+  // their document out of StoreData prevents navigation, export, reorder, and
+  // tool hydration from treating an inexact shadow as authoritative.
   return projection.status === 'current' ? projection : { ...projection, document: null };
 }
 
@@ -397,9 +589,91 @@ function appendBoundaryDiagnostics(
   // Boundary errors describe an append that the durable side cannot trust. A
   // warning is deliberately retained without changing a current document into
   // an unavailable one; severity is part of the diagnostic contract.
-  return diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-    ? { ...merged, document: null, status: 'unavailable' }
-    : normalizeDurableProjection(merged);
+  const hasError = diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+  if (!hasError) return normalizeDurableProjection(merged);
+
+  // Entry-level conversion failures describe an inexact history projection and
+  // use the diagnostic-only partial state. Append-contract mismatches and
+  // thrown conversion failures are stronger boundary/infrastructure failures
+  // and remain unavailable. Both paths withhold the document.
+  const hasInfrastructureFailure = diagnostics.some(
+    (diagnostic) => diagnostic.code === 'conversion-failed' || diagnostic.code === 'durable-append-mismatch'
+  );
+  return {
+    ...merged,
+    document: null,
+    status: hasInfrastructureFailure ? 'unavailable' : 'partial',
+  };
+}
+
+function projectionMatchesPresentation(
+  projection: DurableRenderProjection | null,
+  publication: DurablePresentationPublication
+): boolean {
+  if (publication.record.status !== 'durable') return projection === null;
+  return (
+    projection !== null &&
+    projection.status === 'durable' &&
+    projection.documentId === publication.documentId &&
+    projection.documentRevision === publication.documentRevision &&
+    projection.branchRevision === publication.branchRevision &&
+    projection.historyCursor === publication.record.cursor &&
+    projection.durableRevision === publication.durableRevision
+  );
+}
+
+function legacyRenderSelector(
+  documentId: string,
+  documentRevision: number,
+  branchRevision: number,
+  historyCursor: number,
+  frame: DocumentFrame
+): RenderSelector {
+  return {
+    source: 'legacy',
+    documentId,
+    documentRevision,
+    branchRevision,
+    historyCursor,
+    frame: cloneDocumentFrame(frame),
+  };
+}
+
+function pendingRenderSelector(state: StoreData): RenderSelector {
+  return {
+    ...legacyRenderSelector(
+      state.documentId,
+      state.documentRevision,
+      state.branchRevision,
+      state.historyIndex,
+      state.documentFrame
+    ),
+    source: 'pending',
+  };
+}
+
+function selectorMatchesPublication(
+  state: StoreData,
+  publication: DurablePresentationPublication,
+  projection: DurableRenderProjection | null
+): boolean {
+  const selector = state.renderSelector;
+  // Navigation must arm a pending selector first; only background append
+  // publication may accept the legacy selector that is already painting.
+  if (
+    (selector.source !== 'pending' && !(publication.allowLegacySelector && selector.source === 'legacy')) ||
+    selector.documentId !== publication.documentId ||
+    selector.documentRevision !== publication.documentRevision ||
+    selector.branchRevision !== publication.branchRevision ||
+    selector.historyCursor !== publication.historyIndex ||
+    !documentFrameEquals(selector.frame, state.documentFrame)
+  ) {
+    return false;
+  }
+  return (
+    publication.record.status !== 'durable' ||
+    (projection !== null && documentFrameEquals(projection.frame, selector.frame))
+  );
 }
 
 /**
@@ -422,10 +696,13 @@ function projectPublishedTimeline(
     durableDocument: DurableDocument | null;
     durableStatus: DurableDocumentStatus;
     durableDiagnostics: readonly MigrationDiagnostic[];
+    preserveHasUnsavedChanges?: boolean;
+    renderSelector?: RenderSelector;
   }
 ): StoreData {
   const updates = payload.updates ?? {};
   const nextFrame = updates.documentFrame;
+  const documentFrame = nextFrame ? cloneDocumentFrame(nextFrame) : state.documentFrame;
   const durable = normalizeDurableProjection({
     document: payload.durableDocument,
     status: payload.durableStatus,
@@ -434,14 +711,27 @@ function projectPublishedTimeline(
   return {
     ...state,
     ...updates,
-    ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
+    ...(nextFrame ? { documentFrame, totalSize: documentFrameSize(documentFrame) } : {}),
     history: [...payload.timeline.entries],
     historyIndex: payload.timeline.cursor,
     branchRevision: payload.timeline.branchRevision,
     durableDocument: durable.document,
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
-    hasUnsavedChanges: true,
+    durablePresentation: EMPTY_DURABLE_PRESENTATION,
+    durableRenderProjection: null,
+    renderSelector:
+      payload.renderSelector ??
+      legacyRenderSelector(
+        state.documentId,
+        state.documentRevision,
+        payload.timeline.branchRevision,
+        payload.timeline.cursor,
+        documentFrame
+      ),
+    hasUnsavedChanges: payload.preserveHasUnsavedChanges
+      ? (updates.hasUnsavedChanges ?? state.hasUnsavedChanges)
+      : true,
   };
 }
 
@@ -478,6 +768,15 @@ function projectReplacedDocument(
     durableDocument: durable.document,
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
+    durablePresentation: EMPTY_DURABLE_PRESENTATION,
+    durableRenderProjection: null,
+    renderSelector: legacyRenderSelector(
+      payload.documentId,
+      state.documentRevision + 1,
+      0,
+      payload.historyIndex ?? payload.history.length - 1,
+      nextFrame
+    ),
     history: payload.history,
     historyIndex: payload.historyIndex ?? payload.history.length - 1,
   };
@@ -494,7 +793,8 @@ function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
 /**
  * The live record's layer order, bottom first: index 0 is the bottom of the
  * stack, which is the same sequence `reorderLayers` mutates, `replayHistory`
- * replays, and the durable converter normalizes its own snapshots into.
+ * replays, and the durable converter processes in the same sequence. Numeric
+ * values stay sparse because older source-backed creates derive names from them.
  *
  * Read here, at the store, rather than in the hook: a drag dispatches 200 ms
  * after the row that started it was rendered, so a closure's copy of the layer
@@ -527,16 +827,9 @@ function sourceBackedEntryContext(
   }
   const candidate = historyItem.layerSource ?? historyItem.args;
   const candidateRecord = candidate as { kind?: unknown; args?: unknown } | undefined;
-  if (
-    candidateRecord &&
-    candidateRecord.kind === 'tool' &&
-    !['text', 'shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(
-      (candidateRecord.args as ToolArgs).toolName
-    )
-  ) {
-    // Raster creator tools have no durable source representation yet. They are
-    // intentionally conversion-only; do not enter the planner only to throw.
-    return null;
+  if (candidateRecord?.kind === 'tool') {
+    const toolName = (candidateRecord.args as { toolName?: unknown } | undefined)?.toolName;
+    if (typeof toolName !== 'string' || !durableSourceKindForTool(toolName)) return null;
   }
   return {
     documentId: state.documentId,
@@ -613,6 +906,12 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return { ...state, hasUnsavedChanges: action.payload };
     case 'SET_FILE_NAME':
       return { ...state, fileName: action.payload };
+    case 'SET_ORIGINAL_IMAGE':
+      // Typed no-op. No writer dispatches this and `StoreData` carries no
+      // original-image record, so the arm exists to keep the switch exhaustive;
+      // deleting the action kind is the change that removes it (see the arm's
+      // registration sites in `StoreContext.boundary-gates.test.ts`).
+      return state;
     case 'SET_SIZE':
       if (state.totalSize.width === action.payload.width && state.totalSize.height === action.payload.height) {
         return state;
@@ -623,7 +922,16 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         totalSize: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'SET_TOOL_NAME':
       return { ...state, toolName: action.payload };
@@ -637,7 +945,16 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         layers: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'SET_ACTIVE_LAYER':
       if (state.activeLayerId === action.payload) {
@@ -653,15 +970,53 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         ...state,
         layers: action.payload.layers,
         activeLayerId: action.payload.activeLayerId,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
         hasUnsavedChanges: true,
       };
     case 'PUBLISH_RUNTIME_PRESENTATION':
       // Presentation-only publication of already-known layer records. The
       // dispatcher proves the payload differs from the stored layers only by a
       // promoted cache, so this transition cannot move durable logical state,
-      // records no history, and does not invalidate the durable shadow.
+      // records no history, and does not invalidate the durable projection.
       return { ...state, layers: action.payload.layers };
+    case 'SET_DURABLE_PRESENTATION': {
+      const publication = action.payload;
+      if (
+        state.documentId !== publication.documentId ||
+        state.documentRevision !== publication.documentRevision ||
+        state.branchRevision !== publication.branchRevision ||
+        state.historyIndex !== publication.historyIndex ||
+        state.durableStatus !== 'current' ||
+        state.durableDocument?.durableRevision !== publication.durableRevision ||
+        !projectionMatchesPresentation(action.payload.projection, publication) ||
+        !selectorMatchesPublication(state, publication, action.payload.projection)
+      ) {
+        return state;
+      }
+      const renderSelector: RenderSelector = {
+        ...state.renderSelector,
+        source: publication.record.status === 'durable' ? 'durable' : 'legacy',
+        frame:
+          publication.record.status === 'durable'
+            ? cloneDocumentFrame(action.payload.projection!.frame)
+            : cloneDocumentFrame(state.documentFrame),
+      };
+      return {
+        ...state,
+        durablePresentation: Object.freeze({ ...publication.record }),
+        durableRenderProjection: action.payload.projection,
+        renderSelector,
+      };
+    }
     case 'PROMOTE_LAYER_PRESENTATIONS': {
       // One transition for every promotion a commit produced. The dispatcher
       // already filtered out superseded canvases; the identity re-check keeps the
@@ -676,6 +1031,12 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       }
       return published === state.layers ? state : { ...state, layers: published };
     }
+    case 'ADOPT_LAYER_BITMAPS':
+      // Ownership bookkeeping, not a transition: the dispatcher registers the
+      // rasters with the presentation scope and deliberately does not forward
+      // this action here. The arm is a no-op that keeps the switch exhaustive,
+      // so a new action kind cannot be added without a transition of its own.
+      return state;
     case 'BATCH_UPDATES':
       // Metadata-only in production (the sole writer passes `fileName` and
       // `hasUnsavedChanges`). The wider legacy payload type still admits
@@ -685,7 +1046,16 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         ...action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'REORDER_LAYERS': {
       if (!action.historyItem || !action.durableProjection) return state;
@@ -750,6 +1120,15 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         durableDocument: action.payload.status === 'current' ? state.durableDocument : null,
         durableStatus: action.payload.status,
         durableDiagnostics: action.payload.diagnostics,
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'SET_SELECTIONS':
       // Selection state only; no durable input moves.
@@ -812,8 +1191,19 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         selectionDraft: { status: 'idle' },
         selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
       };
-    default:
+    default: {
+      // Load-bearing, and the `never` is the point: `StoreAction` is a closed
+      // union, so a kind added to `Action` or `InternalAction` without an arm
+      // above fails `tsc` here rather than reaching the caller as a dispatch that
+      // quietly does nothing. `return state` is kept so a runtime untyped caller
+      // still gets the no-op the old `default` gave it, because `useReducer` must
+      // not throw inside a render. The two arms that exist only to be written down
+      // — `SET_ORIGINAL_IMAGE` and `ADOPT_LAYER_BITMAPS` — are named above in
+      // their alphabetical positions rather than here.
+      const _exhaustive: never = action;
+      void _exhaustive;
       return state;
+    }
   }
 }
 
@@ -832,13 +1222,21 @@ function buildDurableDocument(
       initialSize: state.totalSize,
       initialFrame: state.documentFrame,
     });
+    // A partial conversion may expose an exact prefix for diagnostics, but the
+    // store has no partial authority. Release that independent asset owner
+    // before returning the diagnostic-only projection.
+    converted.safePrefix?.release();
     const cursor =
       Number.isInteger(historyCursor) && historyCursor >= 0
         ? (converted.legacyCursorToDurableCursor[historyCursor] ?? -1)
         : -1;
     return {
       status: converted.status,
-      document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
+      // `converted.document` is already a deep-frozen copy this module froze, and the
+      // cursor is the only field that moves here, so the navigation write reuses the
+      // baseline and the whole timeline instead of deep-copying both to change a
+      // number. Any other base falls back to the full freeze.
+      document: converted.document ? refreezeDurableDocument(converted.document, { cursor }) : null,
       diagnostics: converted.diagnostics,
       legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
     };
@@ -879,7 +1277,11 @@ function imageSourceBitmap(value: unknown): BitmapSource | null {
   return candidate.kind === 'image' && candidate.bitmap ? candidate.bitmap : null;
 }
 
-function collectLivePresentationBitmaps(next: LayersRecord, history: readonly HistoryItem[]): Set<BitmapSource> {
+function collectLivePresentationBitmaps(
+  next: LayersRecord,
+  history: readonly HistoryItem[],
+  projection: DurableRenderProjection | null
+): Set<BitmapSource> {
   const live = new Set<BitmapSource>();
   const add = (bitmap: BitmapSource | null | undefined) => {
     if (bitmap) live.add(bitmap);
@@ -890,6 +1292,9 @@ function collectLivePresentationBitmaps(next: LayersRecord, history: readonly Hi
     add(imageSourceBitmap(layer.source));
   };
   for (const layer of Object.values(next)) addLayerAliases(layer);
+  if (projection) {
+    for (const layer of Object.values(projection.layers)) addLayerAliases(layer);
+  }
   for (const entry of history) {
     add(imageSourceBitmap(entry.layerSource));
     add(imageSourceBitmap(entry.args));
@@ -919,7 +1324,9 @@ function retireDepartedPresentationBitmaps(
   // record, and a document the scope has published nothing for has nothing to
   // retire, so walking the unbounded history to answer a question that cannot change
   // the outcome is the regression this defers behind the scope's ownership check.
-  presentationScope.retireUnreferenced(documentId, () => collectLivePresentationBitmaps(state.layers, state.history));
+  presentationScope.retireUnreferenced(documentId, () =>
+    collectLivePresentationBitmaps(state.layers, state.history, state.durableRenderProjection)
+  );
 }
 
 /** Ids whose candidate record is not the stored record, added or removed ids included. */
@@ -930,12 +1337,21 @@ function divergentLayerIds(current: LayersRecord, next: LayersRecord): string[] 
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
+  const devicePixelRatio = useDevicePixelRatio();
   // refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const toolOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const rectOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [, forceViewStateUpdate] = useState(0);
+  const setViewState = (partial: Partial<ViewState>) => {
+    const changesViewTransform = ['panX', 'panY', 'zoom', 'rotation'].some((key) => key in partial);
+    const fitToScreen = partial.fitToScreen ?? (changesViewTransform ? false : viewStateRef.current.fitToScreen);
+    const nextViewState = { ...viewStateRef.current, ...partial, fitToScreen };
+    if (fitToScreen) delete nextViewState.minimumZoomOverride;
+    viewStateRef.current = nextViewState;
+    forceViewStateUpdate((value) => value + 1);
+  };
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
   const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
@@ -945,7 +1361,135 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Keep live DOM refs out of the reducer initializer; expose them after state updates.
   const [storeState, rawDispatch] = useReducer(reducer, initialState);
+  const previousPresentedFrameRef = useRef({
+    documentId: storeState.documentId,
+    documentRevision: storeState.documentRevision,
+    frame: storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize),
+    viewport: null as Size | null,
+    devicePixelRatio,
+  });
+  const reconcileViewScaleForWorkspace = useCallback(() => {
+    const nextFrame = storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize);
+    const previous = previousPresentedFrameRef.current;
+    const rect = containerRef.current ? readClientViewportRect(containerRef.current) : null;
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+    const viewport = { width: rect.width, height: rect.height };
+    const sameDocument = previous.documentId === storeState.documentId;
+    const sameFrame = documentFrameEquals(previous.frame, nextFrame);
+    const viewportChanged =
+      previous.viewport !== null &&
+      (previous.viewport.width !== viewport.width || previous.viewport.height !== viewport.height);
+    const devicePixelRatioChanged = previous.devicePixelRatio !== devicePixelRatio;
+    const frameChanged = !sameFrame;
+    const shouldPreserveMagnification =
+      previous.viewport !== null &&
+      sameDocument &&
+      ((sameFrame && !viewStateRef.current.fitToScreen && (viewportChanged || devicePixelRatioChanged)) ||
+        (frameChanged && previous.documentRevision === storeState.documentRevision));
+
+    if (shouldPreserveMagnification) {
+      const previousFitScale = containFit(previous.viewport!, documentFrameSize(previous.frame)).scale;
+      const nextFitScale = containFit(viewport, documentFrameSize(nextFrame)).scale;
+      const nextCompensation = preserveViewScaleCompensationAcrossDisplayScaleChange(
+        viewStateRef.current.zoom,
+        viewStateRef.current.fitScaleCompensation,
+        previousFitScale,
+        nextFitScale,
+        previous.devicePixelRatio,
+        devicePixelRatio
+      );
+      const currentViewState = viewStateRef.current;
+      const nextFitToScreen = frameChanged ? false : currentViewState.fitToScreen;
+      const priorMagnification = absoluteViewZoom(currentViewState, previousFitScale, previous.devicePixelRatio);
+      const priorMinimumZoom = minimumSliderZoomForDocumentSize(previous.frame);
+      const preservesSubpixelScale =
+        currentViewState.fitToScreen ||
+        currentViewState.minimumZoomOverride !== undefined ||
+        priorMagnification < priorMinimumZoom * (1 - 1e-9);
+      const nextMagnification = absoluteViewZoom(
+        { ...currentViewState, fitScaleCompensation: nextCompensation },
+        nextFitScale,
+        devicePixelRatio
+      );
+      const nextMinimumZoom = minimumSliderZoomForDocumentSize(nextFrame);
+      const carriesMinimumZoomOverride = currentViewState.minimumZoomOverride !== undefined;
+      const startsMinimumZoomOverride =
+        !carriesMinimumZoomOverride &&
+        (priorMagnification < priorMinimumZoom * (1 - 1e-9) ||
+          (preservesSubpixelScale && nextMagnification < nextMinimumZoom));
+      const nextMinimumZoomOverride = frameChanged
+        ? carriesMinimumZoomOverride
+          ? currentViewState.minimumZoomOverride
+          : startsMinimumZoomOverride
+            ? priorMagnification
+            : undefined
+        : currentViewState.minimumZoomOverride;
+      const boundedMagnification =
+        frameChanged && !preservesSubpixelScale
+          ? clampAbsoluteViewZoom(nextMagnification, nextMinimumZoom)
+          : nextMagnification;
+      const nextZoom =
+        boundedMagnification === nextMagnification
+          ? currentViewState.zoom
+          : relativeViewZoomForMagnification(boundedMagnification, nextFitScale, nextCompensation, devicePixelRatio);
+      if (
+        nextCompensation !== currentViewState.fitScaleCompensation ||
+        nextZoom !== currentViewState.zoom ||
+        nextFitToScreen !== currentViewState.fitToScreen ||
+        nextMinimumZoomOverride !== currentViewState.minimumZoomOverride
+      ) {
+        const nextViewState = {
+          ...currentViewState,
+          zoom: nextZoom,
+          fitScaleCompensation: nextCompensation,
+          fitToScreen: nextFitToScreen,
+          minimumZoomOverride: nextMinimumZoomOverride,
+        };
+        if (nextMinimumZoomOverride === undefined) delete nextViewState.minimumZoomOverride;
+        viewStateRef.current = nextViewState;
+        forceViewStateUpdate((value) => value + 1);
+      }
+    }
+
+    previousPresentedFrameRef.current = {
+      documentId: storeState.documentId,
+      documentRevision: storeState.documentRevision,
+      frame: nextFrame,
+      viewport,
+      devicePixelRatio,
+    };
+  }, [
+    containerRef,
+    devicePixelRatio,
+    storeState.documentFrame,
+    storeState.documentId,
+    storeState.documentRevision,
+    storeState.totalSize,
+  ]);
+  useLayoutEffect(() => {
+    reconcileViewScaleForWorkspace();
+  }, [reconcileViewScaleForWorkspace]);
+  // ResizeObserver is a trigger; view-scale preservation must use the same client viewport as fit.
+  useResizeObserverRAF(containerRef, () => reconcileViewScaleForWorkspace());
   const latestStateRef = useRef(storeState);
+  const historyReplayAttemptRef = useRef(0);
+  const historyReplayAttemptPendingRef = useRef(false);
+  const historyReplayAttemptDocumentIdRef = useRef<string | null>(null);
+  const historyReplayAttemptDocumentRevisionRef = useRef<number | null>(null);
+  const isHistoryReplayPresentationCurrent = (attemptId: number) =>
+    historyReplayAttemptPendingRef.current && attemptId === historyReplayAttemptRef.current;
+  const hasPendingHistoryReplayPresentation = (documentId: string, documentRevision: number) =>
+    historyReplayAttemptPendingRef.current &&
+    historyReplayAttemptDocumentIdRef.current === documentId &&
+    historyReplayAttemptDocumentRevisionRef.current === documentRevision;
+  const cancelHistoryReplayPresentation = (attemptId: number) => {
+    if (attemptId === historyReplayAttemptRef.current) {
+      historyReplayAttemptPendingRef.current = false;
+      historyReplayAttemptDocumentIdRef.current = null;
+      historyReplayAttemptDocumentRevisionRef.current = null;
+    }
+  };
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before
   // it, so a per-document scope would dispose a bitmap the new document
@@ -961,19 +1505,76 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     latestStateRef.current = storeState;
   }, [storeState]);
 
-  const publishDurableNavigationPresentation = async (
+  const publishDurablePresentation = async (
     state: StoreData,
     document: DurableDocument,
-    durableCursor: number
-  ): Promise<void> => {
+    durableCursor: number,
+    allowLegacySelector: boolean,
+    historyReplayAttemptId?: number
+  ): Promise<DurableNavigationPresentationOutcome> => {
     const replay = replayDurableAtCursor(document, durableCursor);
+    const publishRecord = (
+      record: DurablePresentationRecord,
+      projection: DurableRenderProjection | null = null
+    ): boolean => {
+      const action: Extract<InternalAction, { type: 'SET_DURABLE_PRESENTATION' }> = {
+        type: 'SET_DURABLE_PRESENTATION',
+        payload: {
+          documentId: state.documentId,
+          documentRevision: document.documentRevision,
+          branchRevision: document.branchRevision,
+          historyIndex: state.historyIndex,
+          durableRevision: document.durableRevision,
+          allowLegacySelector,
+          record,
+          projection,
+        },
+      };
+      const latest = latestStateRef.current;
+      if (historyReplayAttemptId !== undefined && !isHistoryReplayPresentationCurrent(historyReplayAttemptId)) {
+        return false;
+      }
+      const next = reducer(latest, action);
+      if (next === latest) return false;
+      latestStateRef.current = next;
+      rawDispatch(action);
+      return true;
+    };
+
     // Legacy-tool sources remain an explicitly unsupported durable source. Keep
     // navigation on the legacy presentation until that source adapter exists.
-    if (Object.values(replay.layers).some(({ snapshot }) => snapshot.source.kind === 'legacy-tool')) return;
+    if (Object.values(replay.layers).some(({ snapshot }) => snapshot.source.kind === 'legacy-tool')) {
+      const accepted = publishRecord({
+        status: 'legacy-fallback',
+        cursor: durableCursor,
+        reason: 'unsupported-source',
+      });
+      return accepted
+        ? { status: 'legacy-fallback', reason: 'unsupported-source', cursor: durableCursor }
+        : { status: 'stale', reason: 'stale', cursor: durableCursor };
+    }
 
     const registry = getAssetRegistry();
     let composite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
     let detached: ReturnType<NonNullable<typeof composite>['takeLayers']> | undefined;
+    let failureReason: DurablePresentationReason = 'materialization-refused';
+    const assertFresh = () => {
+      const latest = latestStateRef.current;
+      if (
+        (historyReplayAttemptId !== undefined && !isHistoryReplayPresentationCurrent(historyReplayAttemptId)) ||
+        latest.documentId !== state.documentId ||
+        latest.historyIndex !== state.historyIndex ||
+        latest.documentRevision !== document.documentRevision ||
+        latest.branchRevision !== document.branchRevision ||
+        latest.durableStatus !== 'current' ||
+        latest.durableDocument?.durableRevision !== document.durableRevision ||
+        !documentFrameEquals(latest.documentFrame, replay.frame)
+      ) {
+        failureReason = 'stale';
+        throw new Error('Durable presentation became stale before publication');
+      }
+    };
+
     try {
       composite = await composeDurableDocument(replay, {
         documentId: state.documentId,
@@ -981,35 +1582,83 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         operationSetRevision: document.durableRevision,
         assetRegistry: registry,
       });
+      assertFresh();
       detached = composite.takeLayers();
       const latest = latestStateRef.current;
-      if (
-        latest.documentId !== state.documentId ||
-        latest.historyIndex !== state.historyIndex ||
-        latest.branchRevision !== state.branchRevision
-      ) {
-        throw new Error('Durable navigation presentation became stale before publication');
-      }
       const nextLayers = { ...latest.layers };
-      const declined: Record<string, Awaited<ReturnType<typeof composeDurableDocument>>['layers'][string]> = {};
-      for (const [layerId, materialized] of Object.entries(detached.layers)) {
-        const existing = nextLayers[layerId];
-        if (!existing) throw new Error(`Durable navigation layer ${layerId} is absent from legacy replay`);
-        const replayLayer = replay.layers[layerId];
-        const isRendererIdentical = durablePresentationIsRendererIdentical(replayLayer, existing, materialized.bounds);
-        if (!isRendererIdentical) {
-          declined[layerId] = materialized;
-          continue;
+      const visibleLayerIds = Object.values(replay.layers)
+        .filter(({ snapshot }) => snapshot.visible)
+        .sort((left, right) => left.snapshot.order - right.snapshot.order)
+        .map(({ snapshot }) => snapshot.id);
+      const replayLayerIds = Object.values(replay.layers)
+        .sort((left, right) => left.snapshot.order - right.snapshot.order)
+        .map(({ snapshot }) => snapshot.id);
+      const runtimeLayerIds = Object.values(latest.layers)
+        .sort((left, right) => left.order - right.order)
+        .map(({ id }) => id);
+      if (!isEqual(runtimeLayerIds, replayLayerIds)) {
+        failureReason = 'renderer-incompatible';
+        throw new DurableCompositionRefusal(
+          'renderer-incompatible',
+          'Durable presentation layer sequence or set differs from the runtime layer set'
+        );
+      }
+      const materializedLayerIds = Object.keys(detached.layers);
+      if (
+        materializedLayerIds.length !== visibleLayerIds.length ||
+        visibleLayerIds.some((layerId) => !detached?.layers[layerId])
+      ) {
+        failureReason = 'layer-coverage';
+        throw new DurableCompositionRefusal(
+          'layer-coverage',
+          'Durable presentation did not cover every visible replay layer'
+        );
+      }
+      for (const layerId of visibleLayerIds) {
+        const materialized = detached.layers[layerId];
+        if (!materialized || !materialized.bitmap) {
+          failureReason = 'layer-coverage';
+          throw new DurableCompositionRefusal('layer-coverage', `Durable presentation layer ${layerId} is missing`);
         }
-        nextLayers[layerId] = { ...existing, tmpCanvas: materialized.bitmap };
+        const existing = nextLayers[layerId];
+        if (!existing) {
+          failureReason = 'layer-coverage';
+          throw new DurableCompositionRefusal(
+            'layer-coverage',
+            `Durable presentation layer ${layerId} is absent from legacy replay`
+          );
+        }
+        const replayLayer = replay.layers[layerId];
+        const rendererMismatch = durablePresentationMismatch(replayLayer, existing, materialized.bounds);
+        if (rendererMismatch) {
+          failureReason = 'renderer-incompatible';
+          throw new DurableCompositionRefusal(
+            'renderer-incompatible',
+            `Durable presentation layer ${layerId} is not renderer-identical: ${rendererMismatch}`
+          );
+        }
+        nextLayers[layerId] = {
+          ...existing,
+          tmpCanvas: materialized.bitmap,
+          presentationBounds: materialized.bounds,
+        };
       }
+      assertFresh();
       if (!layersDifferOnlyByPresentation(latest.layers, nextLayers)) {
-        throw new Error('Durable navigation presentation became stale before publication');
+        failureReason = 'renderer-incompatible';
+        throw new DurableCompositionRefusal(
+          'renderer-incompatible',
+          'Durable presentation changed logical layer state'
+        );
       }
+      const projection = projectDurableRender(replay, {
+        status: 'durable',
+        materializedLayers: detached.layers,
+      });
 
-      for (const materialized of Object.values(declined)) materialized.lease.release();
-      for (const [layerId, materialized] of Object.entries(detached.layers)) {
-        if (declined[layerId]) continue;
+      for (const layerId of visibleLayerIds) {
+        const materialized = detached.layers[layerId];
+        if (!materialized.bitmap || !materialized.lease) continue;
         presentationScope.trackPublishedLease(state.documentId, materialized.bitmap, materialized.lease.release);
       }
       const action: Extract<InternalAction, { type: 'PUBLISH_RUNTIME_PRESENTATION' }> = {
@@ -1018,19 +1667,75 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       latestStateRef.current = reducer(latest, action);
       rawDispatch(action);
-      retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      const published = publishRecord(
+        {
+          status: 'durable',
+          cursor: durableCursor,
+          reason: null,
+        },
+        projection
+      );
+      if (!published) {
+        // The runtime cache may already be visible through the legacy layer
+        // record, but the durable authority gate rejected this publication.
+        // Keep the cache owned by that record and report the refusal so the
+        // caller can preserve or restore the complete legacy presentation.
+        failureReason = 'stale';
+        detached = undefined;
+        return { status: 'stale', reason: 'stale', cursor: durableCursor };
+      }
+      // Navigation has only published a candidate projection here. Its caller
+      // still has to draw that projection onto the visible canvas; a refusal
+      // must be able to roll back to the current layer caches without finding
+      // that their ImageBitmaps were already closed. The accepted append path
+      // remains safe to retire here because its legacy frame is already visible.
+      if (allowLegacySelector) {
+        retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      }
       detached = undefined;
-    } catch {
+      return { status: 'durable', layers: projection.layers, frame: projection.frame, cursor: durableCursor };
+    } catch (error) {
       detached?.release();
+      const reason: DurablePresentationReason = error instanceof DurableCompositionRefusal ? error.code : failureReason;
+      const detail = error instanceof Error ? error.message : String(error);
+      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, reason, detail });
+      if (!accepted || String(reason) === 'stale') return { status: 'stale', reason: 'stale', cursor: durableCursor };
+      return { status: 'legacy-fallback', reason, cursor: durableCursor };
     } finally {
       composite?.release();
     }
   };
 
+  const publishDurableNavigationPresentation = (
+    state: StoreData,
+    document: DurableDocument,
+    durableCursor: number,
+    attemptId?: number
+  ) => publishDurablePresentation(state, document, durableCursor, false, attemptId);
+
+  /**
+   * A committed append is already visible through the legacy layer records. Compose its
+   * durable projection in the background and accept it only if the legacy selector still
+   * names the same logical state. This keeps pointer previews paintable while the durable
+   * cache is in flight; navigation remains the only path that requires a pending selector.
+   */
+  const publishDurableAppendPresentation = (state: StoreData, document: DurableDocument) =>
+    publishDurablePresentation(state, document, document.cursor, true);
+
   const dispatchAction = (action: StoreAction) => {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
     const currentState = latestStateRef.current;
+    if (!INTERCEPTED_STORE_ACTIONS.has(action.type)) {
+      // The default transition, stated rather than fallen into. Every kind in
+      // INTERCEPTED_STORE_ACTION_TYPES returns from its own branch below, so this
+      // is what the rest of the union gets: one reducer call outside React, so a
+      // second dispatch in the same batch is decided against the state the first
+      // one produced, then one `rawDispatch`.
+      latestStateRef.current = reducer(currentState, action);
+      rawDispatch(action);
+      return;
+    }
     if (action.type === 'PROMOTE_LAYER_PRESENTATIONS') {
       // A promotion is accepted only while the layer still holds the requesting
       // canvas. A superseded bitmap can never reach a layer, so the dispatcher
@@ -1076,7 +1781,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (action.type === 'PUBLISH_RUNTIME_PRESENTATION') {
-      if (!layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)) {
+      const payloadLayers = action.payload.layers;
+      // First check: pure presentation-only difference (caches only).
+      const purePresentation = layersDifferOnlyByPresentation(currentState.layers, payloadLayers);
+      // Second check: presentation-only plus identity affine operations.
+      const presentationWithIdentityAffine = layersDifferOnlyByPresentationAndIdentityAffine(
+        currentState.layers,
+        payloadLayers
+      );
+      if (!purePresentation && !presentationWithIdentityAffine) {
         // A refused publication is a contained no-op: the layer keeps rendering
         // from its tmpCanvas and no logical state moves. Two refusals share that
         // outcome and mean different things, so only one of them is reported.
@@ -1092,12 +1805,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         console.error(
           'Refused a runtime presentation publication that also changes durable layer state ' +
             '(invariant: PUBLISH_RUNTIME_PRESENTATION carries presentation caches only, never logical layer state). ' +
-            `Offending layer ids: ${divergentLayerIds(currentState.layers, action.payload.layers).join(', ')}`
+            `Offending layer ids: ${divergentLayerIds(currentState.layers, payloadLayers).join(', ')}`
         );
         return;
       }
-      latestStateRef.current = reducer(currentState, action);
-      rawDispatch(action);
+      // If the only durable difference is identity affine operations, publish the
+      // stored record with the payload's presentation caches instead of the payload
+      // itself. This prevents identity affine operations from polluting the durable
+      // layer state while still allowing the presentation cache promotion to proceed.
+      let layersToPublish = payloadLayers;
+      if (presentationWithIdentityAffine && !purePresentation) {
+        layersToPublish = { ...currentState.layers };
+        for (const [id, payloadLayer] of Object.entries(payloadLayers)) {
+          const storedLayer = currentState.layers[id];
+          if (!storedLayer) continue;
+          layersToPublish[id] = {
+            ...storedLayer,
+            bitmap: payloadLayer.bitmap,
+            tmpCanvas: payloadLayer.tmpCanvas,
+            presentationBounds: payloadLayer.presentationBounds,
+          };
+        }
+      }
+      latestStateRef.current = reducer(currentState, {
+        ...action,
+        payload: { layers: layersToPublish },
+      });
+      rawDispatch({ ...action, payload: { layers: layersToPublish } });
       return;
     }
     if (action.type === 'REORDER_LAYERS') {
@@ -1112,16 +1846,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A reorder's durable operation names the resulting order of every layer,
       // so it is planned here, where the pre-append record is authoritative, and
       // it is checked against a second, independent copy of the rule. The
-      // shadow's OWN layer order is supplied too, and compared as a sequence: a
-      // published map is a fresh normalisation of the order, so publishing one
-      // while the two models already disagree about the order would overwrite
-      // that disagreement with a document no reconversion would reproduce.
+      // shadow's own sequence and exact numeric values are supplied too: its
+      // sparse values affect future source-backed layer naming, so matching only
+      // the visible sequence cannot prove a publication matches reconversion.
       const base = currentState.durableStatus === 'current' ? currentState.durableDocument : null;
       const preLayerOrder = layerOrderBottomFirst(currentState.layers);
-      const durableLayerOrder = base
-        ? Object.values(replayDurableDocument(base, base.cursor).layers)
+      const preLayerOrders = Object.fromEntries(
+        Object.values(currentState.layers).map((layer) => [layer.id, layer.order])
+      );
+      const durableLayers = base ? Object.values(replayDurableDocument(base, base.cursor).layers) : null;
+      const durableLayerOrder = durableLayers
+        ? [...durableLayers]
             .sort((left, right) => left.snapshot.order - right.snapshot.order)
             .map((layer) => layer.snapshot.id)
+        : null;
+      const durableLayerOrders = durableLayers
+        ? Object.fromEntries(durableLayers.map((layer) => [layer.snapshot.id, layer.snapshot.order]))
         : null;
       // The record is reordered by `intent` while the durable map is derived from
       // the history item's args, because that is what a replay reads. Production
@@ -1140,10 +1880,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         prior,
         next: timeline,
         entry: historyItem,
-        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
+        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder, preLayerOrders) : null,
         documentRevision: currentState.documentRevision,
         preLayerOrder,
+        preLayerOrders,
         durableLayerOrder,
+        durableLayerOrders,
       });
       const converted =
         decision.outcome === 'published'
@@ -1173,6 +1915,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       latestStateRef.current = nextState;
       rawDispatch(committedAction);
       retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
+      if (converted.status === 'current' && converted.document) {
+        void publishDurableAppendPresentation(nextState, converted.document);
+      }
       return;
     }
     if (action.type === 'COMMIT_DOCUMENT_EDIT') {
@@ -1187,6 +1932,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
       const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
+      // Source-backed appends and all frame-changing commits remain on the legacy
+      // selector until their ownership or frame-parity gates are explicit.
+      const allowBackgroundPresentation = ![
+        NEW_LAYER_ACTION,
+        MERGE_ACTION,
+        REPLACE_LAYER_SOURCE_ACTION,
+        SET_DOCUMENT_FRAME_ACTION,
+      ].includes(action.payload.historyItem.actionName);
       // One append, one durable entry: the boundary's plan is published when the
       // store's durable document still describes the timeline it was planned
       // against, and the whole timeline is reconverted otherwise.
@@ -1223,10 +1976,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         planned: plannedEntry,
         documentRevision: currentState.documentRevision,
         preLayers: sourceContext?.preLayers,
+        liveLayers: sourceContext?.liveLayers,
       });
       const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
       const publishPlanned = planned.outcome === 'published' && !boundaryHasError;
-      let publicationFailed = false;
 
       if (!publishPlanned) {
         plannerTransaction?.rollback();
@@ -1245,64 +1998,120 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A planned durable append can carry a newly registered asset-bearing
       // operation. Open the document transaction only after the pure decision
       // succeeds, publish the state, then commit and reconcile the exact set the
-      // published document names. If any step fails, rollback before rebuilding.
+      // published document names.
+      //
+      // The `try` covers the FALLIBLE work and nothing else, and its catch is
+      // therefore the one place the rebuild below may be reached from: the whole
+      // conversion rebuild and its dispatch run only when no state has moved
+      // yet, so the append is still un-published and rolling the transaction
+      // back is exactly right.
+      //
+      // Publication itself is deliberately OUTSIDE it. `latestStateRef.current`
+      // and `rawDispatch` are the point of no return — an exception from
+      // `transaction.commit`, `reconcileDocumentAssets` or the retirement walk
+      // used to land in the same catch, fall out of this `if`, and dispatch a
+      // SECOND `COMMIT_DOCUMENT_EDIT` for one append. The rebuild derives its
+      // projection from `currentState`, the pre-publication record, so the second
+      // dispatch both re-published a transition that had already happened and
+      // computed it from a state the store no longer held.
       if (publishPlanned) {
         let transaction: DocumentAssetTransaction | undefined = plannerTransaction;
+        let published:
+          | {
+              transaction: DocumentAssetTransaction;
+              converted: DurableProjection;
+              action: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload };
+              state: StoreData;
+            }
+          | undefined;
         try {
           transaction ??= registry.beginDocumentAssetTransaction(currentState.documentId);
           const converted = appendBoundaryDiagnostics(
             { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
             boundaryDiagnostics
           );
-          const committedAction: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
+          const committed: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
             type: 'COMMIT_DOCUMENT_EDIT',
             payload: commitPayload(converted),
           };
-          const nextState = projectPublishedTimeline(currentState, {
-            updates: committedAction.payload.updates,
-            timeline,
-            durableDocument: converted.document,
-            durableStatus: converted.status,
-            durableDiagnostics: converted.diagnostics,
-          });
-          latestStateRef.current = nextState;
-          rawDispatch(committedAction);
-          transaction.commit();
-          if (converted.document) {
-            registry.reconcileDocumentAssets(currentState.documentId, collectDurableAssetIds(converted.document));
-          }
-          // Retirement runs after the transition is published, and only against
-          // the record that transition actually produced.
-          retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
-          return;
+          published = {
+            transaction,
+            converted,
+            action: committed,
+            state: projectPublishedTimeline(currentState, {
+              updates: committed.payload.updates,
+              timeline,
+              durableDocument: converted.document,
+              durableStatus: converted.status,
+              durableDiagnostics: converted.diagnostics,
+            }),
+          };
         } catch (error) {
-          publicationFailed = true;
+          // The transaction is the local one, and nothing below reads
+          // `plannerTransaction`: a rollback here releases exactly what the plan
+          // registered and nothing has named it yet.
           transaction?.rollback();
-          console.error('Unable to publish a planned durable append; rebuilding the durable document', error);
+          console.error('Unable to plan a durable append publication; rebuilding the durable document', error);
+        }
+        if (published) {
+          latestStateRef.current = published.state;
+          rawDispatch(published.action);
+          // Past `rawDispatch` the append is published, so a failure here is
+          // contained: reported, and never re-entered through the rebuild. The
+          // rollback is dropped with the fall-through — `rollback()` on a settled
+          // transaction is a no-op anyway, and the publication has named the very
+          // assets it would have released. Retirement that does not run is
+          // deferred to the next transition that consults the scope, which is
+          // safe because the same walk would have closed nothing the store still
+          // reaches.
+          let durableAppendReady = false;
+          try {
+            published.transaction.commit();
+            if (published.converted.document) {
+              registry.reconcileDocumentAssets(
+                currentState.documentId,
+                collectDurableAssetIds(published.converted.document)
+              );
+            }
+            durableAppendReady = true;
+            // Retirement runs after the transition is published, and only against
+            // the record that transition actually produced.
+            retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, published.state);
+          } catch (error) {
+            console.error('Unable to finalize a published durable append; the append itself is committed', error);
+          }
+          if (
+            allowBackgroundPresentation &&
+            durableAppendReady &&
+            published.converted.status === 'current' &&
+            published.converted.document
+          ) {
+            void publishDurableAppendPresentation(published.state, published.converted.document);
+          }
+          return;
         }
       }
 
-      let converted: DurableProjection =
-        planned.outcome === 'published' && !boundaryHasError && !publicationFailed
-          ? appendBoundaryDiagnostics(
-              { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
-              boundaryDiagnostics
-            )
-          : appendBoundaryDiagnostics(
-              buildDurableDocument(
-                nextFrame
-                  ? {
-                      ...currentState,
-                      documentFrame: cloneDocumentFrame(nextFrame),
-                      totalSize: documentFrameSize(nextFrame),
-                    }
-                  : currentState,
-                [...timeline.entries],
-                timeline.cursor,
-                timeline.branchRevision
-              ),
-              boundaryDiagnostics
-            );
+      // Reached only when the fast path above did NOT publish: the plan was not
+      // publishable, or its publication could not be prepared. Nothing has moved
+      // in either case, so the whole-timeline conversion is both the correct and
+      // the only remaining route to an append — which is what makes this the sole
+      // fallback, rather than one of several.
+      let converted: DurableProjection = appendBoundaryDiagnostics(
+        buildDurableDocument(
+          nextFrame
+            ? {
+                ...currentState,
+                documentFrame: cloneDocumentFrame(nextFrame),
+                totalSize: documentFrameSize(nextFrame),
+              }
+            : currentState,
+          [...timeline.entries],
+          timeline.cursor,
+          timeline.branchRevision
+        ),
+        boundaryDiagnostics
+      );
       if (planned.outcome === 'mismatch') {
         converted = {
           ...converted,
@@ -1327,6 +2136,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // commit that swaps a layer's cache all leave a published bitmap behind
       // with no remaining reference.
       retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
+      if (allowBackgroundPresentation && converted.status === 'current' && converted.document) {
+        void publishDurableAppendPresentation(nextState, converted.document);
+      }
       return;
     }
     if (action.type === 'APPLY_HISTORY_REPLAY') {
@@ -1355,8 +2167,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         durableDocument: converted.document,
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
+        preserveHasUnsavedChanges: action.payload.preserveHasUnsavedChanges,
       });
-      latestStateRef.current = nextState;
+      const renderSelector =
+        converted.status === 'current' && converted.document
+          ? pendingRenderSelector(nextState)
+          : nextState.renderSelector;
+      const navigationState = { ...nextState, renderSelector };
+      latestStateRef.current = navigationState;
       rawDispatch({
         type: 'APPLY_HISTORY_REPLAY',
         payload: {
@@ -1365,18 +2183,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDocument: converted.document,
           durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
+          preserveHasUnsavedChanges: action.payload.preserveHasUnsavedChanges,
+          renderSelector,
         },
       });
-      if (converted.status === 'current' && converted.document) {
-        const durableCursor = converted.legacyCursorToDurableCursor?.[action.payload.timeline.cursor] ?? -1;
-        void publishDurableNavigationPresentation(nextState, converted.document, durableCursor);
-      }
-      // Replay is the other way a cache leaves the record, and the identity case
-      // is the common one: navigating back over a removal re-creates the layer
-      // under the same id with no cache at all, or with a different one. The
-      // replayed record is already painted, so retiring against it cannot blank
-      // a layer that is still on screen.
-      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
+      // The target record is not painted yet. `useHistory` finalizes retirement
+      // only after drawing succeeds; a refused draw must keep the previous
+      // caches alive until its rollback has restored the visible state.
       return;
     }
     if (action.type === 'REPLACE_DOCUMENT') {
@@ -1410,17 +2223,65 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
       };
+      viewStateRef.current = DEFAULT_VIEW_STATE;
       rawDispatch({
         type: 'REPLACE_DOCUMENT',
         payload: committedPayload,
       });
       return;
     }
-    latestStateRef.current = reducer(currentState, action);
-    rawDispatch(action);
+    // Unreachable at runtime: the chain above returns for every intercepted
+    // kind, and the default at the top of `dispatchAction` returns for the rest.
+    // It exists to be a compile-time assertion rather than a comment — if a
+    // branch is removed from the chain without removing its name from
+    // INTERCEPTED_STORE_ACTION_TYPES, the narrowed `action.type` no longer fits
+    // `UninterceptedActionType` and `npm run tsc` fails.
+    const _everyInterceptedKindReturns: UninterceptedActionType = action.type;
+    void _everyInterceptedKindReturns;
   };
   const dispatchInternalAction = (action: InternalAction) => dispatchAction(action);
   const dispatch: StoreDispatch = (action) => dispatchAction(action);
+  const publishDurableNavigation = (attemptId?: number): Promise<DurableNavigationPresentationOutcome> => {
+    const latest = latestStateRef.current;
+    if (attemptId !== undefined && !isHistoryReplayPresentationCurrent(attemptId)) {
+      return Promise.resolve({ status: 'stale', reason: 'stale', cursor: latest.historyIndex });
+    }
+    if (latest.durableStatus !== 'current' || !latest.durableDocument) {
+      return Promise.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: latest.historyIndex });
+    }
+    return publishDurableNavigationPresentation(
+      latest,
+      latest.durableDocument,
+      latest.durableDocument.cursor,
+      attemptId
+    );
+  };
+  const beginHistoryReplayPresentation = (documentId: string, documentRevision: number): number => {
+    historyReplayAttemptRef.current += 1;
+    historyReplayAttemptPendingRef.current = true;
+    historyReplayAttemptDocumentIdRef.current = documentId;
+    historyReplayAttemptDocumentRevisionRef.current = documentRevision;
+    return historyReplayAttemptRef.current;
+  };
+  const finalizeHistoryReplayPresentation = (token: HistoryReplayPresentationToken): boolean => {
+    const latest = latestStateRef.current;
+    if (token.attemptId !== historyReplayAttemptRef.current || !historyReplayAttemptPendingRef.current) return false;
+    if (
+      latest.documentId !== token.documentId ||
+      latest.documentRevision !== token.documentRevision ||
+      historyReplayAttemptDocumentIdRef.current !== token.documentId ||
+      historyReplayAttemptDocumentRevisionRef.current !== token.documentRevision ||
+      latest.branchRevision !== token.branchRevision ||
+      latest.historyIndex !== token.historyIndex
+    ) {
+      return false;
+    }
+    historyReplayAttemptPendingRef.current = false;
+    historyReplayAttemptDocumentIdRef.current = null;
+    historyReplayAttemptDocumentRevisionRef.current = null;
+    retireDepartedPresentationBitmaps(presentationScope, latest.documentId, latest);
+    return true;
+  };
   const publishRuntimePresentation = (layers: LayersRecord) =>
     dispatchInternalAction({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers } });
   const adoptLayerBitmaps = (bitmaps: readonly BitmapSource[]) =>
@@ -1470,21 +2331,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     toolOverlayRef,
     rectOverlayRef,
     containerRef,
-    textareaRef,
     currentArgs: currentArgsRef,
     clearPreviewLayers,
     promoteLayerPresentation,
     publishRuntimePresentation,
     adoptLayerBitmaps,
+    publishDurableNavigationPresentation: publishDurableNavigation,
+    beginHistoryReplayPresentation,
+    isHistoryReplayPresentationCurrent,
+    hasPendingHistoryReplayPresentation,
+    cancelHistoryReplayPresentation,
+    finalizeHistoryReplayPresentation,
     previewLayers: previewLayersRef,
+    viewStateRef,
+    viewState: viewStateRef.current,
+    setViewState,
   };
-  //
-  // function setSizeMemo(width: number, height: number) {
-  //   const { totalSize } = store;
-  //   if (width !== totalSize.width || height !== totalSize.height) {
-  //     dispatch({ type: 'SET_SIZE', payload: { width, height } });
-  //   }
-  // }
+
   return <StoreContext.Provider value={[store, dispatch]}>{children}</StoreContext.Provider>;
 }
 
@@ -1493,3 +2356,5 @@ export const useStore = (): [StoreData, StoreDispatch] => {
   if (!ctx) throw new Error('useStore must be used within StoreProvider');
   return ctx;
 };
+
+export const useOptionalStore = (): [StoreData, StoreDispatch] | null => useContext(StoreContext) ?? null;

@@ -112,7 +112,7 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 - **The app has no `Select` menu.** There is no `Select All`, `Deselect`, `Inverse`,
   `Color Range`, `Modify > Feather/Expand/Contract/Border/Smooth`, `Grow`, `Similar`,
   `Refine Edge`, `Select and Mask` or `Transform Selection` anywhere in the application. The
-  only deselect is the `Clear` button the rectangular, elliptical, freehand, magnetic, wand and
+  only deselect is the `Deselect` button the rectangular, elliptical, freehand, magnetic, wand and
   quick-selection bars render, bound to `clearSelections`. This removes Photoshop's two most
   important follow-ups for the wand and the quick selection outright.
 - **`Select and Mask` is on every bar, not just the wand's.** Adobe's 2022 Select-and-Mask tutorial
@@ -147,16 +147,20 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   `Anti-alias` row belongs to the **elliptical** tool alone, which the file already said, and it
   is why the Magic Wand's row carries no `Feather` and the rectangular marquee's carries no
   `Anti-alias`.
-- **The app has one active selection.** `committedSelectionUpdate()` in
+- **Only one committed selection is active.** `committedSelectionUpdate()` in
   `src/contexts/useSelectionHistory.ts` deactivates every existing selection on a
-  `create` commit, so there is no model in which a second selection can be unioned, subtracted
-  from or intersected with the first. Every combination mode in this family is therefore
-  `missing` for a structural reason, not an oversight in one bar.
-- **The selection is a single point path.** `Selection` in `src/contexts/general-types.ts`
-  carries a `points` polyline and no mask, and `SelectionSourceTool` in the same file
-  has no `elliptical-selection` or `quick-selection` member. The elliptical marquee and the
-  quick selection both commit under a borrowed `'magic-wand'` identifier so that their outlines
-  carry neither draggable anchors nor an anchor hit-test.
+  `create` commit. Quick Selection has an Add/Subtract mode that rasterizes the current
+  compound contour path into its base mask, but the other selection tools replace the active
+  selection and there is no general Intersect or cross-tool combination mode.
+- **The selection stores compound contours or a packed one-bit mask, not a persistent alpha
+  channel.** `Selection` in `src/contexts/general-types.ts` carries closed paths normalized to a
+  shared bounding box and can carry an authoritative packed mask when contour complexity exceeds
+  the safe vector boundary budget. Even-odd membership preserves disconnected areas and holes;
+  Magic Wand and Quick Selection preserve every traced contour, and clipboard and selected raster
+  operations derive coverage from that geometry or mask. `SelectionSourceTool` includes
+  `'quick-selection'`, so Quick Selection keeps its own source identity. Elliptical Marquee still
+  uses the `'magic-wand'` identity because the union has no dedicated `'elliptical-selection'`
+  member; that source remains excluded from draggable anchors and anchor hit-testing.
 
 ## Rectangular Marquee Tool — `rectangular-selection`
 
@@ -182,10 +186,9 @@ from the center.
 | Width and Height                              | decimal pair for Fixed Ratio, whole pixels for Fixed Size, units accepted | `missing`  | —       |
 | Select and Mask                               | on every selection tool's bar                                             | `missing`  | —       |
 
-**App fidelity: partial.** `RectangularSelectionToolArgs` is `{ rect?, toolName }` and
-`defaultSettings['rectangular-selection']` is `{ toolName: 'rectangular-selection' }` — the
-tool declares no settings at all, so there is nothing that could be `inert`. Its bar renders a
-sentence and three buttons.
+**App fidelity: partial.** `RectangularSelectionToolArgs` now carries the marquee `Style`, ratio,
+and fixed pixel dimensions, and its bar renders those controls alongside Copy / Paste / Deselect.
+Combination modes, Feather, Select and Mask, and document-unit input remain absent.
 
 **The modifier finding, and its correction.** This section previously read that the marquee's
 Shift/Alt were not implemented, on the strength of a whole-file grep for
@@ -271,7 +274,7 @@ gives that phrase an operational meaning twice, in its own text. The Quick Selec
 Photoshop's stops at an image _edge_ (see the Quick Selection section below); the magnetic lasso's
 inverted `Frequency` is the same kind of finding. Both compute a different thing from the one
 Photoshop documents, and both are `partial` on that basis. The elliptical marquee does not:
-`applyRatio()` in `src/tools/ellipticalSelection.ts` is the width-to-height ratio Adobe's
+`applyMarqueeRatio()` in `src/tools/ellipticalSelection.ts` is the width-to-height ratio Adobe's
 own worked example states, `resolveEllipseRect()` beside it makes `fixed-size` ignore the drag
 with the press point supplying only the centre, and `EllipticalSelectionToolArea.tsx` — the drag
 record `handlePointerDown()` starts — passes `event.shiftKey` and `event.altKey` as
@@ -317,7 +320,7 @@ segments between user-placed anchors _is_ what that tool draws, so `Selection.po
 representation and its geometry diverges from Photoshop's in no respect whatsoever. It is `partial`
 for four other reasons — no modifier is read (`PolygonClickToolArea` reads none), no feather exists
 on any path, the bar's one control is an app-invented Outline/Fill toggle, and there are no
-Copy/Paste/Clear buttons — which is what its own entry says when it calls the tool "the most
+Copy/Paste/Deselect buttons — which is what its own entry says when it calls the tool "the most
 _gesturally_ faithful tool in the family" and scores it `partial` anyway. The reviewer leaned on
 that same fact and it does not survive either: the one thing that earns the polygonal lasso its
 `partial` is a _gesture_ that does something else, a category the elliptical marquee does not have.
@@ -349,7 +352,7 @@ wrong on Adobe's own wording: Fixed Ratio "Sets a height-to-width ratio. Enter v
 values are valid) for the aspect ratio. For example, to draw a marquee twice as wide as it is
 high, enter **2 for the width and 1 for the height**"
 (`https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`) — which is a
-width-to-height ratio, which is exactly what `applyRatio()` in `src/tools/ellipticalSelection.ts`
+width-to-height ratio, which is exactly what `applyMarqueeRatio()` in `src/tools/ellipticalSelection.ts`
 computes and exactly what the bar's hint tells the user, `Drag at ${args.fixedRatio}:1` (the
 `hint` in `EllipticalSelection.tsx`). What the app loses is expressiveness
 in the field, not fidelity in the geometry: the ratio must be entered as one number with a floor of
@@ -429,7 +432,7 @@ three ways in" and enumerated three; it now says four and carries the modifier-c
 click-to-add-anchor, double-click close, right-click close, `Enter` close, `Delete` anchor
 removal and `Escape` abort are all registered in `PolygonClickToolArea` — against the
 least complete bar. The bar is forty lines: one Outline/Fill toggle and a hint. It is also the
-only bar in the family with no Copy, Paste or Clear buttons, which the freehand and magnetic
+only bar in the family with no Copy, Paste or Deselect buttons, which the freehand and magnetic
 lasso bars beside it both render.
 
 **Modifier gap, and it is larger than the combination modes.** `PolygonClickToolArea` reads no
@@ -650,8 +653,8 @@ the app behaves as though the box were always ticked while the bar shows no box.
 passed through as `smoothing` and consumed by `simplifyClosedPath`, which removes boundary
 vertices. Anti-aliasing blends coverage at the staircase; simplification deletes the staircase.
 The tool also reports a live selected-pixel count in its hint box, which Photoshop's bar does
-not, and which is worth knowing is the mask's count rather than the committed polygon's — the
-commit refuses a region with an enclosed hole, so the two can disagree.
+not. That count comes from the raw color-match mask; nonzero `Smooth` simplifies the committed
+contours, so the simplified path can differ from the original pixel count.
 
 **`Refine Edge`.** Documented on Adobe's own product page, reached from the options bar's
 `Select and Mask` and carrying `Radius`, `Smart Radius`, `Smooth`, `Feather`, `Contrast`,
@@ -959,9 +962,9 @@ in the `options` array; it is recorded here and in `appNotes`.
 start a fresh selection and no `Intersect`. `Sample All Layers` is absent and the stroke reads
 the merged composite canvas. `Select and Mask`, `Auto-Enhance` and the tool-preset picker
 are absent, and there is no route from a selection to a layer mask at all. The brush is flat — no hardness, spacing, angle or roundness — and `[`/`]`, the
-Alt-drag size gesture and the live size/opacity readout are not bound. The committed region is one
-traced contour, so a grown region containing an enclosed hole is refused outright rather than
-committed, and a `Selection` cannot express the hole.
+Alt-drag size gesture and the live size/opacity readout are not bound. Every traced contour is
+committed, including disconnected components and enclosed holes; the active selection remains a
+contour model with derived masks rather than a persistent Photoshop-style alpha channel.
 
 **Both modifier rows are unannotated false claims about the app.** `QuickSelectionToolArea` reads no
 modifier key either, so neither the `Alt`-subtracts-for-the-stroke row nor the

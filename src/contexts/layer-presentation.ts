@@ -2,6 +2,7 @@ import { isEqual } from 'lodash-es';
 
 import type { BitmapSource } from './general-types.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
+import { isIdentityAffineTransform } from './affine-transform.ts';
 
 /**
  * A request to promote a disposable presentation canvas into the published
@@ -64,13 +65,13 @@ export function materializePresentationBitmap(canvas: BitmapSource): Promise<Bit
 
 /**
  * The only fields a promotion may change. Naming them keeps every other layer
- * field in scope automatically, so a newly added durable field is compared
+ * field in scope automatically, so a newly added logical field is compared
  * instead of silently excluded from the guard.
  */
-const PRESENTATION_FIELDS: (keyof Layer)[] = ['bitmap', 'tmpCanvas'];
+const PRESENTATION_FIELDS: (keyof Layer)[] = ['bitmap', 'tmpCanvas', 'presentationBounds'];
 
 /**
- * Everything a layer owns except the two presentation caches. Reading the keys
+ * Everything a layer owns except the presentation cache fields. Reading the keys
  * rather than naming them keeps every current and future durable field in scope.
  */
 function logicalLayerState(layer: Layer): Record<string, unknown> {
@@ -108,6 +109,42 @@ export function layersDifferOnlyByPresentation(current: LayersRecord, next: Laye
       isEqual(logicalLayerState(previous), logicalLayerState(candidate)) &&
       isSameSource(previous.source, candidate.source)
     );
+  });
+}
+
+/**
+ * Proves that publishing `next` changes only disposable presentation state
+ * and/or identity affine-transform operations.
+ *
+ * This is a stricter check than `layersDifferOnlyByPresentation`: it allows
+ * `operations` to differ only by identity affine-transform entries (where
+ * `kind === 'affine-transform' && isIdentityAffineTransform(op.transform)`).
+ * Both sides are filtered to remove identity affine operations before comparison,
+ * since `createAffineLayerOperation` mints fresh UUIDs per preview.
+ *
+ * The comparison fails closed: an unexpected value shape is a difference, never a match.
+ */
+export function layersDifferOnlyByPresentationAndIdentityAffine(current: LayersRecord, next: LayersRecord): boolean {
+  const currentIds = Object.keys(current);
+  const nextIds = Object.keys(next);
+  if (currentIds.length !== nextIds.length) return false;
+  return nextIds.every((id) => {
+    const previous = current[id];
+    const candidate = next[id];
+    if (!previous || !candidate) return false;
+    // An untouched layer is the common case: one identity check replaces two
+    // record allocations plus a walk.
+    if (previous === candidate) return true;
+    // Filter identity affine operations from both sides before comparing.
+    const previousOps = (previous.operations ?? []).filter(
+      (op) => !(op.kind === 'affine-transform' && isIdentityAffineTransform(op.transform))
+    );
+    const candidateOps = (candidate.operations ?? []).filter(
+      (op) => !(op.kind === 'affine-transform' && isIdentityAffineTransform(op.transform))
+    );
+    const previousState = { ...logicalLayerState(previous), operations: previousOps };
+    const candidateState = { ...logicalLayerState(candidate), operations: candidateOps };
+    return isEqual(previousState, candidateState) && isSameSource(previous.source, candidate.source);
   });
 }
 

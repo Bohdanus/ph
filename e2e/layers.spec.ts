@@ -36,6 +36,20 @@ const HISTORY_ROW_TITLE = 'Click to go back to this state';
  * the `capitalize` class would turn this into a locator error rather than a product signal.
  */
 const REORDER_ENTRY = /reorder layers/i;
+/** The product's own spelling of a delete entry: `REMOVE_ACTION = 'remove layer'` (`src/util/constants.ts`). */
+const REMOVE_ENTRY = /remove layer/i;
+type PointerTraceEntry = {
+  type: string;
+  pointerId: number;
+  pointerType: string;
+  isPrimary: boolean;
+  time: number;
+  hitLayerId: string | null;
+};
+type TraceWindow = Window & {
+  __tabletLayerPointerTrace?: PointerTraceEntry[];
+  __clearTabletLayerPointerTrace?: () => void;
+};
 
 test.describe('Layers', () => {
   test.beforeEach(async ({ page }) => {
@@ -299,5 +313,413 @@ test.describe('Layers', () => {
 
     await setHidden('draw 3', true);
     await waitForOverlap(isBlack, 'hiding a layer after a reorder to write the flag to the wrong row');
+  });
+
+  /**
+   * The existing "layers change order and are deleted sequentially" test asserts on pixels
+   * after each removal but never checks that the removal landed a row on the timeline. A
+   * deletion that published no entry leaves the canvas correct and every pixel assertion green,
+   * while the layer is silently un-undoable — which is the regression this pins.
+   *
+   * `removeLayer` in the test above calls `handleConfirmRemove`, dispatched as `REMOVE_ACTION`
+   * (`src/util/constants.ts`), so the row title is the product's own lower-case spelling read
+   * through the same case-insensitive filter `REORDER_ENTRY` uses for reorders.
+   */
+  test('deleting a layer is a history entry of its own', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#ff0000', true);
+    await drawLine(page, box, 180, 180, 420, 340, { steps: 15 });
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    const drawnRow = layerRows.filter({ hasText: 'draw 2' });
+
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    await expect(historyRows, 'the document entry plus the stroke').toHaveCount(2);
+    const beforeDelete = await historyRows.count();
+
+    await drawnRow.getByRole('button', { name: 'Remove layer' }).click();
+    await expect(drawnRow).toHaveCount(0);
+
+    await expect(historyRows, 'deleting a layer is ONE entry of its own, not zero').toHaveCount(beforeDelete + 1);
+    await expect(
+      historyRows.filter({ hasText: REMOVE_ENTRY }),
+      'the entry is titled "remove layer" (REMOVE_ACTION)'
+    ).toHaveCount(1);
+  });
+
+  /**
+   * The panel has TWO drop targets: a row (insert above / below it) and the bottom drop zone
+   * (move to the very bottom). `moveToTop` in the first test exercises the row path only, so
+   * the bottom zone is a separate drop that must land its own reorder entry and its own order.
+   *
+   * The bottom zone is the `div.flex-1.min-h-[20px]` that follows `layers-list` in
+   * `LayersTab.tsx`. It is addressed by its `min-h-[20px]` class token, which no other
+   * element in the panel carries, rather than by position — position is fragile when the
+   * `isOverBottom` indicator appears mid-drag and shifts the sibling chain.
+   */
+  test('dropping a layer on the bottom drop zone sends it to the bottom', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, color, true);
+      await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
+    };
+
+    // draw 2 (bottom of stack), draw 3, draw 4 (top). Panel lists topmost first.
+    await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 });
+    await draw('#ff0000', { x: box.x + 420, y: box.y + 180 }, { x: box.x + 180, y: box.y + 340 });
+    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 });
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    expect(await layerRows.allTextContents(), 'expected bedrock plus three strokes').toHaveLength(4);
+
+    // Drag the top layer (draw 4) to the bottom drop zone.
+    const source = layerRows.first();
+    await expect(source).toContainText('draw 4');
+
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    // The bottom drop zone's `min-h-[20px]` class is unique in the panel.
+    const bottomZone = page.locator('[class*="min-h-\\[20px\\]"]');
+    await expect(bottomZone).toBeVisible();
+
+    await source.dispatchEvent('dragstart', { dataTransfer });
+    await bottomZone.dispatchEvent('dragover', { dataTransfer });
+    await bottomZone.dispatchEvent('drop', { dataTransfer });
+    await source.dispatchEvent('dragend', { dataTransfer });
+
+    // The animateMove call in LayersTab uses two 200ms timers, so the row list settles after
+    // the animation before the assertion races the DOM.
+    await expect(layerRows.last(), 'draw 4 moved to the bottom of the stack').toContainText('draw 4');
+
+    // One drag is one history entry, same rule as the reorder test above.
+    await expect(page.getByTitle(HISTORY_ROW_TITLE).filter({ hasText: REORDER_ENTRY })).toHaveCount(1);
+  });
+
+  /**
+   * Every row, without exception, renders the drag handle so the user can always start a
+   * reorder. A row that rendered its name but no handle would be draggable only by accident
+   * — through the row itself, which also fires `selectLayer` — and the handle is the only
+   * affordance a user can reach reliably.
+   *
+   * The handle is `DragHandleIcon`, an `aria-hidden` SVG (`DragHandleIcon.tsx:11`), so it is
+   * counted by tag rather than by role.
+   */
+  test('every layer row shows a drag handle', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#ff0000', true);
+    await drawLine(page, box, 180, 180, 420, 340, { steps: 15 });
+
+    const rows = page.getByTitle('Drag to reorder');
+    const rowCount = await rows.count();
+    expect(rowCount, 'a stroke plus the bedrock layer').toBe(2);
+
+    // Per-layer glyphs are also decorative SVGs, so identify the drag affordance explicitly.
+    const handleCount = await rows.evaluateAll((nodes) =>
+      nodes.reduce((count, row) => {
+        return count + row.querySelectorAll('[data-testid="drag-handle-icon"]').length;
+      }, 0)
+    );
+    expect(handleCount, 'every row renders exactly one drag handle').toBe(rowCount);
+  });
+});
+
+test.describe('Tablet touch layer reordering', () => {
+  test.use({ viewport: { width: 1024, height: 768 }, deviceScaleFactor: 2, hasTouch: true });
+
+  test('long-presses the thumbnail, previews insertion, and records one visible reorder', async ({ page }) => {
+    test.setTimeout(SEQUENTIAL_LAYER_TEST_TIMEOUT_MS);
+
+    let touch: Awaited<ReturnType<ReturnType<typeof page.context>['newCDPSession']>> | null = null;
+    let touchActive = false;
+
+    try {
+      await page.goto('/');
+      const canvas = getWorkspaceCanvas(page);
+      await expect(canvas).toBeVisible();
+      const canvasBox = await canvas.boundingBox();
+      if (!canvasBox) throw new Error('Canvas not found');
+
+      const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+        await clickToolButton(page, 'draw');
+        await setForegroundColor(page, color, true);
+        await drawLine(
+          page,
+          canvasBox,
+          start.x - canvasBox.x,
+          start.y - canvasBox.y,
+          end.x - canvasBox.x,
+          end.y - canvasBox.y,
+          { steps: 15 }
+        );
+      };
+
+      // Green initially covers red. A non-overlapping blue layer separates them; dragging red to
+      // green's insertion line is non-adjacent and makes red visible at their crossing.
+      await draw(
+        '#ff0000',
+        { x: canvasBox.x + 420, y: canvasBox.y + 180 },
+        { x: canvasBox.x + 180, y: canvasBox.y + 340 }
+      );
+      await draw(
+        '#0000ff',
+        { x: canvasBox.x + 80, y: canvasBox.y + 100 },
+        { x: canvasBox.x + 200, y: canvasBox.y + 100 }
+      );
+      await draw(
+        '#00aa00',
+        { x: canvasBox.x + 160, y: canvasBox.y + 260 },
+        { x: canvasBox.x + 440, y: canvasBox.y + 260 }
+      );
+
+      const overlapClip = {
+        x: canvasBox.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
+        y: canvasBox.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
+        width: OVERLAP_SAMPLE_RADIUS * 2,
+        height: OVERLAP_SAMPLE_RADIUS * 2,
+      };
+      const waitForOverlap = async (
+        matches: (color: { red: number; green: number; blue: number }) => boolean,
+        description: string
+      ) => {
+        const sample: { color: { red: number; green: number; blue: number } | null } = { color: null };
+        await waitForCanvasPixels(
+          page,
+          overlapClip,
+          async (screenshot) => {
+            const image = await loadImageData(screenshot);
+            sample.color = await getColorAtPoint(image, Math.round(image.width / 2), Math.round(image.height / 2));
+            return sample.color !== null && matches(sample.color);
+          },
+          { description }
+        );
+        if (!sample.color) throw new Error(`No pixel sample at overlap: ${description}`);
+        return sample.color;
+      };
+      const isGreen = (color: { red: number; green: number; blue: number }) =>
+        color.green > color.red * 1.5 && color.green > color.blue * 1.5;
+      const isRed = (color: { red: number; green: number; blue: number }) =>
+        color.red > color.green * 1.5 && color.red > color.blue * 1.5 && color.red > 100;
+
+      const initialPixel = await waitForOverlap(isGreen, 'green owns the overlap before touch reorder');
+      expect(isGreen(initialPixel), 'the before-pixel must be green').toBe(true);
+
+      const layerRows = page.getByTestId('layer-row');
+      const sourceRow = layerRows.filter({ hasText: 'draw 2' });
+      const targetRow = layerRows.filter({ hasText: 'draw 4' });
+      const thumbnail = sourceRow.getByTestId('layer-thumbnail');
+      const layersList = page.getByTestId('layers-list');
+      const holdMs = Number(await layersList.getAttribute('data-touch-reorder-hold-ms'));
+      if (!Number.isFinite(holdMs) || holdMs <= 0) throw new Error('Touch reorder hold duration is unavailable');
+      await layersList.evaluate((element) => {
+        element.style.maxHeight = '120px';
+        element.scrollTop = 0;
+      });
+      await expect.poll(() => layersList.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+      const initialPageScroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+      const sourceBox = await thumbnail.boundingBox();
+      const targetBox = await targetRow.boundingBox();
+      if (!sourceBox || !targetBox) throw new Error('Touch reorder rows are not visible');
+      const sourcePoint = {
+        x: Math.round(sourceBox.x + sourceBox.width / 2),
+        y: Math.round(sourceBox.y + sourceBox.height / 2),
+      };
+      const targetPoint = {
+        x: Math.round(targetBox.x + targetBox.width / 2),
+        y: Math.round(targetBox.y + targetBox.height / 2),
+      };
+      const targetId = await targetRow.getAttribute('data-layer-id');
+      if (!targetId) throw new Error('Touch reorder target has no layer identity');
+
+      const eventTypes = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'lostpointercapture'];
+
+      // Listener installation and CDP session creation are both inside the try/finally below.
+      await page.evaluate((types) => {
+        const target = window as TraceWindow;
+        target.__tabletLayerPointerTrace = [];
+        const listener = (event: Event) => {
+          if (!(event instanceof PointerEvent)) return;
+          const hitLayerId = document
+            .elementFromPoint(event.clientX, event.clientY)
+            ?.closest<HTMLElement>('[data-testid="layer-row"]')?.dataset.layerId;
+          target.__tabletLayerPointerTrace?.push({
+            type: event.type,
+            pointerId: event.pointerId,
+            pointerType: event.pointerType,
+            isPrimary: event.isPrimary,
+            time: performance.now(),
+            hitLayerId: hitLayerId ?? null,
+          });
+        };
+        target.__clearTabletLayerPointerTrace = () => {
+          for (const type of types) document.removeEventListener(type, listener, true);
+          delete target.__tabletLayerPointerTrace;
+          delete target.__clearTabletLayerPointerTrace;
+        };
+        for (const type of types) document.addEventListener(type, listener, true);
+      }, eventTypes);
+
+      touch = await page.context().newCDPSession(page);
+      const readPointerTrace = () => page.evaluate(() => (window as TraceWindow).__tabletLayerPointerTrace ?? []);
+      const sendTouch = async (type: 'touchStart' | 'touchMove' | 'touchEnd', point?: { x: number; y: number }) => {
+        if (type === 'touchStart') touchActive = true;
+        await touch!.send('Input.dispatchTouchEvent', {
+          type,
+          touchPoints: point ? [{ id: 1, x: point.x, y: point.y, radiusX: 1, radiusY: 1, force: 1 }] : [],
+        });
+        if (type === 'touchEnd') touchActive = false;
+      };
+      const dispatchEarlyStartAndMove = async () => {
+        touchActive = true;
+        const start = touch!.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ id: 1, x: sourcePoint.x, y: sourcePoint.y, radiusX: 1, radiusY: 1, force: 1 }],
+        });
+        const move = touch!.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ id: 1, x: targetPoint.x, y: targetPoint.y, radiusX: 1, radiusY: 1, force: 1 }],
+        });
+        await Promise.all([start, move]);
+      };
+
+      const initialOrder = await layerRows.allTextContents();
+      const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+      const reorderRows = historyRows.filter({ hasText: REORDER_ENTRY });
+      const reorderCountBefore = await reorderRows.count();
+
+      // Moving before the hold expires cancels the candidate gesture; it must not reorder or scroll.
+      // Send both CDP requests without waiting for the first acknowledgement, so a slow runner
+      // does not spend most of the hold window in the test harness between pointerdown and move.
+      await dispatchEarlyStartAndMove();
+      const earlyTrace = await readPointerTrace();
+      const earlyDown = earlyTrace.find((event) => event.type === 'pointerdown');
+      const earlyMove = earlyTrace.find((event) => event.type === 'pointermove');
+      expect(earlyDown?.pointerType).toBe('touch');
+      expect(earlyDown?.isPrimary).toBe(true);
+      expect(earlyMove?.hitLayerId).toBe(targetId);
+      expect(earlyMove!.time - earlyDown!.time).toBeLessThan(holdMs);
+      const earlyPointerId = earlyDown!.pointerId;
+      await sendTouch('touchEnd');
+      await expect
+        .poll(async () => {
+          const trace = await readPointerTrace();
+          return trace.some((event) => event.type === 'pointerup' && event.pointerId === earlyPointerId);
+        })
+        .toBe(true);
+      const earlyCompletedTrace = await readPointerTrace();
+      expect(
+        earlyCompletedTrace.some((event) => event.type === 'pointercancel' && event.pointerId === earlyPointerId)
+      ).toBe(false);
+      await expect
+        .poll(async () =>
+          (await readPointerTrace()).some(
+            (event) => event.type === 'lostpointercapture' && event.pointerId === earlyPointerId
+          )
+        )
+        .toBe(true);
+      await page.waitForTimeout(holdMs + 25);
+      expect(await layerRows.allTextContents()).toEqual(initialOrder);
+      expect(await reorderRows.count()).toBe(reorderCountBefore);
+      expect(await layersList.evaluate((element) => element.scrollTop)).toBe(0);
+      expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual(initialPageScroll);
+      expect(earlyTrace.some((event) => event.type === 'pointercancel')).toBe(false);
+      const historyCountBefore = await historyRows.count();
+      const successfulReorderCountBefore = await reorderRows.count();
+
+      // Hold on the thumbnail, then cross the existing movement threshold and inspect the target marker.
+      await page.evaluate(() => {
+        (window as TraceWindow).__tabletLayerPointerTrace = [];
+      });
+      await sendTouch('touchStart', sourcePoint);
+      await page.waitForTimeout(holdMs + 25);
+      await expect(targetRow.locator('div.bg-blue-500')).toHaveCount(0);
+      await sendTouch('touchMove', targetPoint);
+      await expect(targetRow.locator('div.bg-blue-500')).toBeVisible();
+
+      const activeTrace = await readPointerTrace();
+      const activeDown = activeTrace.find((event) => event.type === 'pointerdown');
+      const targetMove = activeTrace.find((event) => event.type === 'pointermove' && event.hitLayerId === targetId);
+      expect(activeDown?.pointerType).toBe('touch');
+      expect(activeDown?.isPrimary).toBe(true);
+      expect(targetMove).toBeDefined();
+      expect(targetMove!.time - activeDown!.time).toBeGreaterThanOrEqual(holdMs);
+      expect(activeTrace.some((event) => event.type === 'pointercancel')).toBe(false);
+
+      const activePointerId = activeDown!.pointerId;
+      await sendTouch('touchEnd');
+      await expect
+        .poll(async () =>
+          (await readPointerTrace()).some((event) => event.type === 'pointerup' && event.pointerId === activePointerId)
+        )
+        .toBe(true);
+      const completedActiveTrace = await readPointerTrace();
+      expect(
+        completedActiveTrace.some((event) => event.type === 'pointercancel' && event.pointerId === activePointerId)
+      ).toBe(false);
+      await expect
+        .poll(async () =>
+          (await readPointerTrace()).some(
+            (event) => event.type === 'lostpointercapture' && event.pointerId === activePointerId
+          )
+        )
+        .toBe(true);
+      await expect
+        .poll(async () => {
+          const order = await layerRows.allTextContents();
+          return (
+            order.findIndex((text) => text.includes('draw 2')) < order.findIndex((text) => text.includes('draw 4'))
+          );
+        })
+        .toBe(true);
+      await expect(reorderRows).toHaveCount(successfulReorderCountBefore + 1);
+      await expect(historyRows).toHaveCount(historyCountBefore + 1);
+      expect(await layerRows.getByTestId('layer-name').allTextContents()).toEqual([
+        'draw 2',
+        'draw 4',
+        'draw 3',
+        'Blank 1',
+      ]);
+      expect(await layersList.evaluate((element) => element.scrollTop)).toBe(0);
+      expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual(initialPageScroll);
+
+      const finalPixel = await waitForOverlap(isRed, 'red owns the overlap after touch reorder');
+      expect(isRed(finalPixel), 'the after-pixel must be red').toBe(true);
+    } finally {
+      try {
+        if (touch && touchActive) {
+          try {
+            await touch.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+          } catch {
+            // The page or CDP target may already have closed after a failed assertion.
+          }
+        }
+      } finally {
+        try {
+          await touch?.detach();
+        } finally {
+          try {
+            await page.evaluate(() => (window as TraceWindow).__clearTabletLayerPointerTrace?.());
+          } catch {
+            // A closed page has already released its document listeners.
+          }
+        }
+      }
+    }
   });
 });

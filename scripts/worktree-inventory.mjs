@@ -32,26 +32,40 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { collectWorktrees, findMissingWorktrees } from './lib/worktree-inventory/git.mjs';
+import {
+  baseRefName,
+  collectWorktrees,
+  findMissingWorktrees,
+  listBranchOnlyRefs,
+  listWorktrees,
+  resolveBaseRef,
+  sameWorktreeRoster,
+} from './lib/worktree-inventory/git.mjs';
 import { auditChats, resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { auditWrites } from './lib/worktree-inventory/writes.mjs';
+import {
+  MAX_SESSION_DB_WINDOW_HOURS,
+  MAX_SESSION_DB_WINDOW_MS,
+} from './lib/worktree-inventory/session-audit-limits.mjs';
+import { createSessionDbSnapshot } from './lib/worktree-inventory/session-db-snapshot.mjs';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { loadChatAudit } from './lib/worktree-inventory/chat-audit.mjs';
 import { buildInventory, serialise, formatCanonical } from './lib/worktree-inventory/assemble.mjs';
+import { resolveInventoryPath, resolveRepositoryRoot } from './lib/worktree-inventory/location.mjs';
 
 const USAGE = `worktree inventory — regenerate WORKTREES.json
 
   (no flags)          write WORKTREES.json
   --check             exit 1 if WORKTREES.json is missing or stale, write nothing
   --stdout            print the inventory instead of writing it
-  --base <branch>     compare against <branch> (default: main)
-  --window-hours <n>  chat window in hours (default: 24)
-  --now <ms>          pin the clock, for reproducible output
+  --base <ref>        compare against <ref> (default: local main, then origin/main)
+  --window-hours <n>  chat window in hours (default: 24, maximum: 72; the session database is never read older than 3 days)
+  --now <ms>          pin recency evaluation; must not be in the future; generatedAt stays on the wall clock
   --out <path>        write somewhere other than WORKTREES.json
   --no-live-writers   declare that NO chat is writing to any worktree right now,
                       and record WHY in the file. Overrides the recency
@@ -82,16 +96,27 @@ function takeValue(argv, i, inline) {
   return { value: next, next: i + 1 };
 }
 
-function parseArgs(argv) {
-  const opts = { base: 'main', windowHours: 24, now: null, out: null, noLiveWriters: null };
+export function validatePinnedNow(nowMs, wallNowMs = Date.now()) {
+  if (!Number.isFinite(nowMs)) throw new Error('--now must be a finite millisecond timestamp');
+  if (nowMs > wallNowMs) throw new Error('--now cannot be in the future');
+}
+
+export function parseArgs(argv) {
+  const opts = { base: undefined, windowHours: 24, now: null, out: null, noLiveWriters: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--check') opts.check = true;
     else if (arg === '--stdout') opts.stdout = true;
     else if (arg === '--quiet') opts.quiet = true;
     else if (arg === '--help' || arg === '-h') opts.help = true;
-    else if (arg === '--base') opts.base = argv[++i];
-    else if (arg === '--window-hours') opts.windowHours = Number(argv[++i]);
+    else if (arg === '--base') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--') || value.trim() === '') {
+        throw new Error('--base requires a non-empty ref');
+      }
+      opts.base = value;
+      i += 1;
+    } else if (arg === '--window-hours') opts.windowHours = Number(argv[++i]);
     else if (arg === '--now') opts.now = Number(argv[++i]);
     else if (arg === '--out') opts.out = argv[++i];
     else if (arg === '--no-live-writers' || arg.startsWith('--no-live-writers=')) {
@@ -109,41 +134,57 @@ function parseArgs(argv) {
   if (!Number.isFinite(opts.windowHours) || opts.windowHours <= 0) {
     throw new Error('--window-hours must be a positive number');
   }
+  if (opts.windowHours > MAX_SESSION_DB_WINDOW_HOURS) {
+    throw new Error(
+      `--window-hours cannot exceed ${MAX_SESSION_DB_WINDOW_HOURS} (the session database safety limit is 3 days)`
+    );
+  }
+  if (opts.out !== null && (typeof opts.out !== 'string' || opts.out.trim() === '')) {
+    throw new Error('--out requires a non-empty path');
+  }
+  if (opts.now !== null) validatePinnedNow(opts.now);
   return opts;
 }
 
-/**
- * The repository's MAIN checkout, so the script works from any worktree and
- * always inventories the whole repository rather than the one it was run from.
- *
- * `git rev-parse --show-toplevel` is the wrong answer here: inside a worktree
- * it returns that worktree, which would inventory one directory and report the
- * other 76 as missing. The main worktree is the first entry of
- * `git worktree list --porcelain`, and its checkout is where relative paths
- * like `.kilo/worktrees/…` resolve.
- */
-function repoRoot(cwd) {
-  const out = execFileSync('git', ['worktree', 'list', '--porcelain'], {
-    cwd,
-    encoding: 'utf8',
-  });
-  const first = out.split('\n').find((l) => l.startsWith('worktree '));
-  if (!first) throw new Error('git worktree list returned no worktrees');
-  return resolve(first.slice('worktree '.length).trim());
+/** Resolve the primary checkout root that owns repository-local storage. */
+export function repoRoot(cwd) {
+  const root = resolveRepositoryRoot(cwd);
+  if (!root) {
+    throw new Error(
+      `worktree-inventory: could not resolve the repository root from ${cwd}. ` +
+        'Git could not provide a usable primary worktree entry.'
+    );
+  }
+  return root;
+}
+
+/** Resolve where WORKTREES.json is written, shared with the disposer. */
+export function inventoryTarget(root, out, options = {}) {
+  if (out !== null && out !== undefined) return resolve(root, out);
+  const target = resolveInventoryPath(root, options);
+  if (!target) throw new Error(`worktree-inventory: could not resolve the canonical inventory path from ${root}`);
+  return target;
+}
+
+export function formatSummary(inventory) {
+  const t = inventory.totals;
+  return (
+    `${inventory.worktrees.length} worktrees · ` +
+    `${t.readyToLand} ready to land · ${t.disposalCandidates} to dispose · ` +
+    `${t.legacy} legacy · ${t.atRisk} at risk · ${t.inUse} in use · ${t.undecided} undecided · ` +
+    `${t.holdingUncommittedWork} holding uncommitted work · ${t.withoutSummary} without a summary\n` +
+    `+ ${t.branchOnlyRefs} branch-only ref(s): ` +
+    `${t.branchOnlyUnmatchedPatches} unmatched patches · ` +
+    `${t.branchOnlyZeroCherryPatches} zero cherry patches · ` +
+    `${t.branchOnlyAncestor} ancestor · ${t.branchOnlyUnknown} unknown\n`
+  );
 }
 
 function printSummary(inventory, quiet) {
   const t = inventory.totals;
   const byName = new Map(inventory.worktrees.map((w) => [w.name, w]));
   const line = (n) => `  ${n.padEnd(40)} ${byName.get(n)?.branch ?? ''}`;
-
-  process.stdout.write(
-    `${inventory.worktrees.length} worktrees · ` +
-      `${t.readyToLand} ready to land · ${t.disposalCandidates} to dispose · ` +
-      `${t.atRisk} at risk · ${t.inUse} in use · ` +
-      `${t.holdingUncommittedWork} holding uncommitted work · ` +
-      `${t.withoutSummary} without a summary\n`
-  );
+  process.stdout.write(formatSummary(inventory));
 
   // Ownership, before anything that acts on it. A reader who has just been told
   // "N ready for disposal" needs to know whether N is counting a worktree
@@ -254,6 +295,15 @@ function printSummary(inventory, quiet) {
     process.stdout.write(`\nREADY FOR DISPOSAL (on main, clean, nothing protected):\n`);
     for (const n of inventory.disposalCandidates) process.stdout.write(`${line(n)}\n`);
   }
+  // Printed beside the disposal list and not inside it, because the two answers
+  // are half the same instruction: `npm run dispose -- <name>` on a name from
+  // either list removes the worktree, and on one from THIS list it removes the
+  // worktree and keeps the branch. A reader who only saw `disposalCandidates`
+  // would delete the ref that is the entire point of the status.
+  if (inventory.legacy.length > 0) {
+    process.stdout.write(`\nLEGACY — worktree disposable, BRANCH KEPT (do not merge it either):\n`);
+    for (const n of inventory.legacy) process.stdout.write(`${line(n)}\n`);
+  }
   if (quiet) return;
 
   process.stdout.write('\nALL WORKTREES:\n');
@@ -270,6 +320,20 @@ function printSummary(inventory, quiet) {
         `ahead=${String(w.ahead).padStart(3)} behind=${String(w.behind).padStart(3)}` +
         `${dirty}${chats}${collided}\n`
     );
+  }
+
+  // Branch-only refs live outside the worktree roster, so they get their own
+  // section. These are Git observations for review, not ownership or disposition.
+  if (inventory.branchOnlyRefs.length > 0) {
+    process.stdout.write('\nBRANCH-ONLY REFS (no worktree; Git observations only):\n');
+    for (const r of inventory.branchOnlyRefs) {
+      const ahead = String(r.ahead ?? '?').padStart(3);
+      const behind = String(r.behind ?? '?').padStart(3);
+      const cherry = String(r.cherryPlusCount ?? '?').padStart(3);
+      process.stdout.write(
+        `  ${r.category.padEnd(16)} ${r.name.padEnd(46)} ` + `ahead=${ahead} behind=${behind} cherry+=${cherry}\n`
+      );
+    }
   }
 }
 
@@ -323,12 +387,54 @@ function main() {
     return;
   }
 
+  // Run the async main logic
+  runAsyncMain(opts).catch((err) => {
+    process.stderr.write(`worktree-inventory: ${err.message}\n`);
+    process.exitCode = 1;
+  });
+}
+
+async function runAsyncMain(opts) {
   const root = repoRoot(process.cwd());
   const nowMs = Number.isFinite(opts.now) ? opts.now : Date.now();
   const windowMs = opts.windowHours * 60 * 60 * 1000;
 
-  const worktrees = collectWorktrees(root, { base: opts.base });
-  const missing = findMissingWorktrees(root);
+  // Resolve base ref before collecting worktrees
+  const base = opts.base === undefined ? resolveBaseRef(root) : resolveBaseRef(root, [opts.base]);
+  if (base === null) {
+    const attemptedBase =
+      opts.base === undefined
+        ? 'Tried refs/heads/main and refs/remotes/origin/main.'
+        : `Could not resolve --base ${JSON.stringify(opts.base)} as a commit ref.`;
+    throw new Error(
+      `no base ref could be resolved in ${root}, so every ahead/behind and merged-into-base answer ` +
+        'would be null and the inventory would read as "nothing is at risk" for a reason that has nothing ' +
+        `to do with risk. ${attemptedBase} Pass --base <ref> to name one.`
+    );
+  }
+  opts.base = base;
+
+  // Pin every ancestry and merge-tree calculation to the exact commit recorded
+  // below. If the branch ref moved during collection, the disposer will compare
+  // this snapshot with current main and refuse the no-op proof.
+  const mainHead = execFileSync('git', ['rev-parse', '--verify', '--quiet', `${opts.base}^{commit}`], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim();
+
+  // Take one roster snapshot for every worktree-derived view. Re-reading it in
+  // separate collectors can hide a branch checked out between those reads.
+  const worktreeRoster = listWorktrees(root);
+  const worktrees = await collectWorktrees(root, {
+    base: mainHead,
+    baseName: baseRefName(root, opts.base),
+    worktreeRoster,
+  });
+  const missing = findMissingWorktrees(root, worktreeRoster);
+  // Branch-only refs are local branches that no worktree holds — structurally
+  // invisible to `collectWorktrees`. Enumeration fails closed because an empty
+  // list after a Git error would hide potentially valuable work.
+  const branchOnlyRefs = await listBranchOnlyRefs(root, { base: mainHead, worktreeRoster });
   // Compare PATHS, not records. `collectWorktrees` and `findMissingWorktrees`
   // each build their own objects, so `missing.includes(w)` is reference
   // equality across disjoint sets and matches nothing — deleted worktrees
@@ -336,25 +442,49 @@ function main() {
   const missingPaths = new Set(missing.map((w) => w.path));
   const existingPaths = new Set(worktrees.map((w) => w.path).filter((p) => !missingPaths.has(p)));
 
-  const mainHead = execFileSync('git', ['rev-parse', opts.base], {
-    cwd: root,
-    encoding: 'utf8',
-  }).trim();
-
-  const chatAudit = auditChats({ sinceMs: nowMs - windowMs, nowMs, existingPaths });
-  // The write audit is a SECOND pass over the same database and costs ~14s on
-  // this machine's 428k-row `part` table. It is not windowed, so it cannot be
-  // folded into `auditChats`' query, and it answers a different question: not
-  // who is here now but who ever was. Skipped entirely for `--check` is
-  // deliberately NOT done — a stale write history is exactly the drift
-  // `--check` exists to catch.
-  const writeAudit = auditWrites({
-    dbPath: resolveSessionDb(),
-    root,
-    worktreePaths: worktrees.map((w) => w.path),
+  // Never run the expensive JSON audits against the live Kilo database. The
+  // snapshot helper copies only the bounded recent session/part projection and
+  // yields between source batches, so a huge historical database is not copied
+  // before the inventory can produce a result.
+  // If the backup cannot be made, pass a null path so both audits fail closed;
+  // falling back to the live path would recreate the outage this guard prevents.
+  const liveSessionDbPath = resolveSessionDb();
+  const sessionDbSnapshot = await createSessionDbSnapshot(liveSessionDbPath, {
+    sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
     nowMs,
-    liveWindowMs: LIVE_WINDOW_MS,
   });
+  const sessionDbPath = sessionDbSnapshot?.dbPath ?? null;
+  let chatAudit;
+  let writeAudit;
+  try {
+    chatAudit = auditChats({ dbPath: sessionDbPath, sinceMs: nowMs - windowMs, nowMs, existingPaths });
+    // The write audit is a SECOND pass over the same snapshot. It is deliberately
+    // bounded to the same three-day safety window: no worktree can be live beyond
+    // that window, and scanning older calls only creates I/O pressure without
+    // changing a disposal decision.
+    writeAudit = auditWrites({
+      dbPath: sessionDbPath,
+      root,
+      worktreePaths: worktrees.map((w) => w.path),
+      nowMs,
+      liveWindowMs: LIVE_WINDOW_MS,
+      sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
+    });
+  } finally {
+    await sessionDbSnapshot?.cleanup();
+  }
+  if (sessionDbSnapshot) {
+    // Keep the source path in the generated report; the temporary snapshot path
+    // is intentionally gone by the time the inventory is written.
+    chatAudit.dbPath = sessionDbSnapshot.sourcePath;
+    chatAudit.snapshot = true;
+    writeAudit.dbPath = sessionDbSnapshot.sourcePath;
+    writeAudit.snapshot = true;
+  } else {
+    const reason = 'session database snapshot unavailable; the live database was not queried';
+    chatAudit.reason = reason;
+    writeAudit.reason = reason;
+  }
   const board = readBoard(root, { nowMs });
   // The read audit is a human pass over transcripts, so it is NOT filtered by
   // the window: it is a fixed record of what those sessions were found to be
@@ -364,7 +494,7 @@ function main() {
 
   // Resolved BEFORE the inventory is built, because the reader watermark is an
   // INPUT to it, not a post-hoc edit of the output.
-  const target = resolve(process.cwd(), opts.out ?? 'WORKTREES.json');
+  const target = inventoryTarget(root, opts.out);
   let readsReleasedBeforeMs;
   try {
     readsReleasedBeforeMs = resolveReadsReleasedBefore(target, opts.releaseReads, nowMs);
@@ -374,8 +504,10 @@ function main() {
     return;
   }
 
+  const generatedAtMs = Date.now();
   const inventory = buildInventory({
     worktrees,
+    branchOnlyRefs,
     root,
     base: opts.base,
     mainHead,
@@ -384,6 +516,7 @@ function main() {
     writeAudit,
     readAudit,
     nowMs,
+    generatedAtMs,
     chatWindowMs: windowMs,
     liveWindowMs: LIVE_WINDOW_MS,
     liveWritersSuppressed: opts.noLiveWriters,
@@ -392,6 +525,11 @@ function main() {
 
   if (missing.length > 0) {
     inventory.dataSources.git.missingWorktrees = missing.map((w) => w.name);
+  }
+  inventory.dataSources.git.branchOnlyRefCount = branchOnlyRefs.length;
+
+  if (!sameWorktreeRoster(worktreeRoster, listWorktrees(root))) {
+    throw new Error('the worktree roster changed during inventory generation; rerun to capture a consistent snapshot');
   }
 
   const next = formatCanonical(serialise(inventory));
@@ -432,25 +570,30 @@ function main() {
     process.exitCode = 1;
     return;
   }
+  const cwd = process.cwd();
   process.stdout.write(`worktree-inventory: wrote ${target}\n`);
+  if (!opts.out && resolve(cwd) !== resolve(dirname(target))) {
+    process.stdout.write(
+      `worktree-inventory: NOTE — inventory was written to the main checkout (${dirname(target)}), ` +
+        `not the invoking directory (${cwd}). Read it from ${target}.\n`
+    );
+  }
   printSummary(inventory, opts.quiet);
 }
 
 /**
- * Are two documents the same up to the moment they were generated?
+ * Are two documents the same apart from their generation and evaluation times?
  *
- * `generatedAt` is excluded, and it has to be. This file is a live snapshot of
- * a repository where agents are continuously messaging, so a byte comparison
- * fails on the timestamp alone and `--check` could never pass — a gate that
- * always fails is not a gate, it is noise that trains people to ignore it.
- * Everything else, including every per-worktree field and every chat state, is
- * compared.
+ * Both timestamps move on every ordinary run. The evaluation time is metadata
+ * for the recency decisions, while `generatedAt` is the freshness clock used by
+ * disposal. Every verdict and per-worktree field remains part of the comparison.
  */
 export function equivalent(aText, bText) {
   try {
     const strip = (text) => {
       const doc = JSON.parse(text);
       delete doc.generatedAt;
+      if (doc.ownership && typeof doc.ownership === 'object') delete doc.ownership.asOf;
       return JSON.stringify(doc);
     };
     return strip(aText) === strip(bText);
@@ -498,7 +641,14 @@ function describeDrift(currentText, nextText) {
     'untracked',
     'mergeConflict',
     'mergeConflictFiles',
+    'mergeResultMatchesBase',
     'mergeChecked',
+    'patchEquivalence',
+    'patchEquivalenceReason',
+    'statusError',
+    'locked',
+    'prunableReason',
+    'legacy',
     'writeHistory',
     // Ownership is watched because a suppressed-liveness file drifts on a
     // timer, not on a commit: the derived signals keep ageing and the operator

@@ -19,7 +19,7 @@ import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 7;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -37,9 +37,10 @@ function relativePathFor(root, absolute) {
   return absolute;
 }
 
-/** Build the inventory object. Pure with respect to every input except `nowMs`. */
+/** Build the inventory object from an evaluation clock and a generation clock. */
 export function buildInventory({
   worktrees,
+  branchOnlyRefs = [],
   root,
   base,
   mainHead,
@@ -48,6 +49,7 @@ export function buildInventory({
   writeAudit = null,
   readAudit = { available: false, byId: new Map(), records: [] },
   nowMs,
+  generatedAtMs = Date.now(),
   chatWindowMs = 24 * 60 * 60 * 1000,
   liveWindowMs = 30 * 60 * 1000,
   /**
@@ -66,13 +68,17 @@ export function buildInventory({
   // and a file that says a dead chat owns a worktree is worse than one that says
   // nothing — so the override wins, and everything it overrode is kept beside it.
   liveWritersSuppressed = null,
+  // The curated table is a MODULE, not a parameter, so an injected reader is the
+  // only way a test can place an entry against a worktree that does not exist in
+  // the real table. Without it, `legacy` — a hand-written flag — could only be
+  // exercised by editing `curated.mjs`, and the assertions about the `legacy`
+  // list would be unreachable for any branch this repository has not got.
+  // Every other source above is injected for the same reason.
+  curatedOf = curatedFor,
 }) {
-  // `nowMs` is clamped to the newest thing the data can know about, on BOTH
-  // sides. `chats.mjs` clamps internally for its own classification, but
-  // `classify` was still handed the raw value, so a `--now` pinned in the past
-  // made `nowMs - lastActivity` negative — which passes the liveness test — and
-  // flipped a dozen worktrees from `salvage` to `in-use`. A flag whose purpose
-  // is reproducibility must not change the answer.
+  // Keep the evaluation clock separate from the wall-clock generation time.
+  // `--now` may deliberately reproduce recency decisions at another time, but
+  // it must never make a fresh inventory appear future-dated to `dispose`.
   const newestKnown = chatAudit?.newestSessionAt ?? 0;
   const effectiveNow = Math.max(nowMs, newestKnown);
 
@@ -86,7 +92,7 @@ export function buildInventory({
   );
 
   const records = worktrees.map((wt) => {
-    const curated = curatedFor(wt.name) ?? null;
+    const curated = curatedOf(wt.name) ?? null;
     const chatSessions = chatAudit.byDirectory.get(wt.path) ?? [];
     const chatSummary = summariseChats(chatSessions);
     // Declared before `classify` reads it: the board's agent record is the
@@ -113,6 +119,7 @@ export function buildInventory({
       chatSessions,
       curated,
       nowMs: effectiveNow,
+      base,
       boardAgents,
       writeHistory,
       shellHistory,
@@ -163,6 +170,7 @@ export function buildInventory({
       prunable: verdict.prunable,
       mergeConflict: verdict.mergeConflict,
       mergeConflictFiles: verdict.mergeConflictFiles,
+      mergeResultMatchesBase: verdict.mergeResultMatchesBase,
       // "We have an answer", not "the check ran". It does NOT disambiguate the
       // two things `mergeConflict: null` can mean: `mergeVerdict` returns
       // 'unknown' for a skipped check (already on main, or detached) and for a
@@ -171,6 +179,8 @@ export function buildInventory({
       mergeChecked: verdict.mergeChecked,
       riskScore: riskScore(verdict),
       statusReasons: verdict.reasons,
+      patchEquivalence: verdict.patchEquivalence,
+      patchEquivalenceReason: verdict.patchEquivalenceReason,
 
       // The three facts that decide everything else, kept flat so a reader
       // scanning a diff can see a worktree's state change without opening it.
@@ -179,6 +189,9 @@ export function buildInventory({
       mergedIntoMain: wt.mergedIntoBase,
       dirty: wt.workingTree.modified,
       untracked: wt.workingTree.untracked,
+      statusError: wt.workingTree.statusError ?? null,
+      locked: Boolean(wt.locked),
+      prunableReason: wt.prunableReason ?? null,
       // The subset of `dirty` whose content main does NOT already hold, plus
       // every untracked path. Reported beside `dirty` and never instead of it:
       // `dirty` counts what differs from this worktree's own HEAD, so on a
@@ -196,6 +209,7 @@ export function buildInventory({
       // the two agree, so a stale `landed: true` fails the suite instead of
       // quietly contradicting `mergedIntoMain` in the same record.
       claimedLanded: curated?.landed ?? null,
+      legacy: Boolean(curated?.legacy),
 
       summary: curated?.summary ?? null,
       summarySource: curated?.summary ? 'curated' : 'none',
@@ -204,7 +218,6 @@ export function buildInventory({
       note: curated?.note ?? null,
       liveNote: curated?.liveNote ?? null,
       mustNotPrune: Boolean(curated?.mustNotPrune),
-
       // Merges on `main` whose subject already carried this branch's name.
       // Advisory and verdict-free — it exists so a reader about to read a name as
       // proof of landing sees, in the same record, that the name proves nothing.
@@ -329,10 +342,17 @@ export function buildInventory({
   const readyToLand = byActionNames(ACTION.LAND);
   const disposalCandidates = byActionNames(ACTION.DISPOSE);
   const atRisk = byActionNames(ACTION.AT_RISK);
+  // Named because it is the list that answers "what may I remove without losing
+  // anything", and it is a list of its own precisely because a legacy worktree
+  // also appears under no other action: it is disposable AND worth keeping, and
+  // one `action` field can only say one of those at a time. See `ACTION.LEGACY`.
+  const legacy = byActionNames(ACTION.LEGACY);
+  const inUse = byActionNames(ACTION.IN_USE);
+  const undecided = byActionNames(ACTION.UNDECIDED);
 
   return {
     schemaVersion: SCHEMA_VERSION,
-    generatedAt: new Date(effectiveNow).toISOString(),
+    generatedAt: new Date(generatedAtMs).toISOString(),
     generator: 'scripts/worktree-inventory.mjs',
     base,
     mainHead,
@@ -380,8 +400,13 @@ export function buildInventory({
     dataSources: {
       git: { ok: worktrees.length > 0, root, base },
       sessions: chatAudit.available
-        ? { ok: true, path: chatAudit.dbPath, sessions: chatAudit.total }
-        : { ok: false, reason: 'no Kilo session database at the expected path' },
+        ? {
+            ok: true,
+            path: chatAudit.dbPath,
+            sessions: chatAudit.total,
+            ...(chatAudit.snapshot ? { snapshot: true } : {}),
+          }
+        : { ok: false, reason: chatAudit.reason ?? 'no Kilo session database at the expected path' },
       board: board.available
         ? { ok: true, path: board.dbPath, issues: board.issues.length }
         : { ok: false, reason: 'no agent-board database at the expected path' },
@@ -422,6 +447,7 @@ export function buildInventory({
         ? {
             ok: true,
             path: writeAudit.dbPath,
+            ...(writeAudit.snapshot ? { snapshot: true } : {}),
             write: {
               total: writeAudit.totalWriteCalls,
               attributed: writeAudit.attributedWriteCalls,
@@ -431,12 +457,30 @@ export function buildInventory({
             shell: { total: writeAudit.totalShellCalls, unmapped: writeAudit.unmapped.shell },
             unmappedBuckets: writeAudit.unmappedBuckets,
           }
-        : { ok: false, reason: 'no Kilo session database at the expected path' },
+        : { ok: false, reason: writeAudit?.reason ?? 'no Kilo session database at the expected path' },
     },
     // Read these first. They are the answers; `worktrees` is the evidence.
     readyToLand,
     disposalCandidates,
     atRisk,
+    legacy,
+
+    /**
+     * Local branches that no worktree holds — invisible to `git worktree list`.
+     * Git-derived categories describe ancestry and `git cherry` observations;
+     * they do not establish ownership, provenance, tree equivalence, or intent.
+     * Keep this separate from `worktrees`: there is no checkout to inspect.
+     */
+    branchOnlyRefs: branchOnlyRefs.map((r) => ({
+      name: r.name,
+      category: r.category,
+      isAncestor: r.isAncestor,
+      cherryPlusCount: r.cherryPlusCount,
+      ahead: r.ahead,
+      behind: r.behind,
+      tip: r.tip,
+      reason: r.reason,
+    })),
 
     /**
      * Worktrees that were deleted, and who had written in them.
@@ -505,13 +549,23 @@ export function buildInventory({
       }))
       .sort((a, b) => RISK_ORDER[a.readRisk] - RISK_ORDER[b.readRisk] || a.id.localeCompare(b.id)),
     readLostWorktreeHighRisk: readAudit.records.filter((r) => r.worktreeGone && r.readRisk === 'high').length,
+    inUse,
+    undecided,
 
     totals: {
       worktrees: records.length,
+      branchOnlyRefs: branchOnlyRefs.length,
+      branchOnlyAncestor: branchOnlyRefs.filter((r) => r.category === 'ancestor').length,
+      branchOnlyUnmatchedPatches: branchOnlyRefs.filter((r) => r.category === 'unmatched-patches').length,
+      branchOnlyZeroCherryPatches: branchOnlyRefs.filter((r) => r.category === 'zero-cherry-patches').length,
+      branchOnlyUnknown: branchOnlyRefs.filter((r) => r.category === 'unknown').length,
       prunable: records.filter((r) => r.prunable).length,
       readyToLand: readyToLand.length,
       disposalCandidates: disposalCandidates.length,
       atRisk: atRisk.length,
+      legacy: legacy.length,
+      inUse: inUse.length,
+      undecided: undecided.length,
       salvage: records.filter((r) => r.recommendation === 'salvage').length,
       inUse: records.filter((r) => r.recommendation === 'in-use').length,
       holdingUncommittedWork: records.filter((r) => r.dirty + r.untracked > 0).length,

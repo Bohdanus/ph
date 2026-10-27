@@ -8,17 +8,22 @@ import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
 import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
 import {
+  assertProcessorStagingBudget,
   drawEvaluatedPresentation,
   evaluatePresentation,
+  getProcessorRasterSize,
+  scaleTextArgs,
   scaleVectorArgs,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
+import { toOwnedBitmap } from './materialization-bitmap.ts';
 
 export type MaterializationRequest = Readonly<{
   documentId: string;
   baselineAssetGeneration: number;
   operationSetRevision: number;
   frame?: DocumentFrame;
+  pixelGridFrame?: DocumentFrame;
   assetRegistry: AssetRegistry;
   signal?: AbortSignal;
 }>;
@@ -27,6 +32,9 @@ export type MaterializedLayer = Readonly<{
   layerId: string;
   bitmap: BitmapSource;
   bounds: Pos;
+  visible: boolean;
+  opacity: number;
+  blendMode: GlobalCompositeOperation;
   lease: MaterializationLease<Pos>;
 }>;
 
@@ -63,6 +71,19 @@ function createCanvas(width: number, height: number): OffscreenCanvas | HTMLCanv
   throw new Error('No canvas implementation is available for materialization');
 }
 
+function alignBoundsToFrame(bounds: Pos, frame: DocumentFrame): Pos {
+  const left = Math.floor(bounds.x - frame.x);
+  const top = Math.floor(bounds.y - frame.y);
+  const right = Math.ceil(bounds.x + bounds.width - frame.x);
+  const bottom = Math.ceil(bounds.y + bounds.height - frame.y);
+  return {
+    x: frame.x + left,
+    y: frame.y + top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
 function context2d(
   canvas: OffscreenCanvas | HTMLCanvasElement
 ): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D {
@@ -76,6 +97,23 @@ function layerSize(layer: DurableReplayLayer): Size {
     width: layer.snapshot.pos.width,
     height: layer.snapshot.pos.height,
   };
+}
+
+function assertDocumentGeneration(request: MaterializationRequest): void {
+  if (request.assetRegistry.getDocumentGeneration(request.documentId) !== request.baselineAssetGeneration) {
+    throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const nameGetter = Object.getOwnPropertyDescriptor(DOMException.prototype, 'name')?.get;
+  if (!nameGetter) return false;
+  try {
+    return Reflect.apply(nameGetter, error, []) === 'AbortError';
+  } catch {
+    return false;
+  }
 }
 
 function presentationOperations(operations: readonly DurableOperation[]): PresentationOperation[] {
@@ -103,14 +141,53 @@ function presentationOperations(operations: readonly DurableOperation[]): Presen
   return normalized;
 }
 
+function isNoOpColorReplacement(operation: DurableOperation): boolean {
+  if (operation.kind !== 'apply-raster-processor' || operation.processorId !== 'color-replacement') return false;
+  const opacity = operation.args.alpha;
+  return typeof opacity === 'number' && Number.isFinite(opacity) && opacity <= 0;
+}
+
+/** Refuse an over-budget first processor before resolving or creating its source raster. */
+function preflightFirstRasterProcessor(layer: DurableReplayLayer): void {
+  for (let processorIndex = 0; processorIndex < layer.operations.length; processorIndex++) {
+    const operation = layer.operations[processorIndex];
+    if (!operation || operation.kind !== 'apply-raster-processor') continue;
+
+    const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
+    if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
+    if (processor.replay.version !== operation.version) {
+      throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
+    }
+    if (isNoOpColorReplacement(operation)) continue;
+    if (processor.maxStagingPixelCount === undefined) return;
+
+    const evaluation = evaluatePresentation({
+      position: layer.snapshot.pos,
+      sourceSize: layerSize(layer),
+      operations: presentationOperations(layer.operations.slice(0, processorIndex)),
+      mode: 'layer-bounds',
+    });
+    const rasterSize = getProcessorRasterSize(evaluation.localBounds);
+    assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+    return;
+  }
+}
+
+/**
+ * Resolves the raster a layer starts from, and says whether the caller may
+ * publish it as this layer's own result. `borrowed` is true only for the
+ * registry's asset, whose bitmap the registry — or the legacy runtime layer
+ * behind a borrowed baseline — owns and may close. Every other source is created
+ * here, so nothing outside this call can reach it.
+ */
 async function sourceBitmap(
   layer: DurableReplayLayer,
   request: MaterializationRequest
-): Promise<{ bitmap: BitmapSource; release: () => void; size: Size }> {
+): Promise<{ bitmap: BitmapSource; release: () => void; size: Size; borrowed: boolean }> {
   const { source } = layer.snapshot;
   if (source.kind === 'raster') {
     const lease = await request.assetRegistry.resolve(source.assetId, request.signal);
-    return { bitmap: lease.bitmap, release: lease.release, size: layerSize(layer) };
+    return { bitmap: lease.bitmap, release: lease.release, size: layerSize(layer), borrowed: true };
   }
   if (source.kind === 'legacy-tool') throw new Error(`Legacy source ${source.toolName} requires an explicit adapter`);
   const renderSize = layerSize(layer);
@@ -120,12 +197,17 @@ async function sourceBitmap(
     ctx.fillStyle = source.color;
     ctx.globalAlpha = source.opacity;
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
-    return { bitmap: canvas, release: () => undefined, size: renderSize };
+    return {
+      bitmap: canvas,
+      release: () => undefined,
+      size: renderSize,
+      borrowed: false,
+    };
   } else {
     const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
     if (!processor?.creator) throw new Error(`Source tool ${toolName} is not a deterministic creator`);
-    const sourceRenderSize = source.kind === 'vector' ? renderSize : source.size;
+    const sourceRenderSize = source.kind === 'vector' || source.kind === 'text' ? renderSize : source.size;
     const args =
       source.kind === 'vector' && source.sourcePos.width > 0 && source.sourcePos.height > 0
         ? (scaleVectorArgs(source.args as unknown as Record<string, unknown>, source.sourcePos, {
@@ -133,16 +215,35 @@ async function sourceBitmap(
             y: 0,
             ...renderSize,
           }) as unknown as ToolArgs)
-        : (source.args as ToolArgs);
+        : source.kind === 'text' && source.sourcePos.width > 0 && source.sourcePos.height > 0
+          ? (scaleTextArgs(source.args as unknown as Record<string, unknown>, source.sourcePos, {
+              x: 0,
+              y: 0,
+              ...renderSize,
+            }) as unknown as ToolArgs)
+          : (source.args as ToolArgs);
     const [created] = processor.imageProcessor({ size: sourceRenderSize })(args);
     if (!created) throw new Error(`Source tool ${toolName} produced no raster`);
-    return { bitmap: created, release: () => undefined, size: { width: created.width, height: created.height } };
+    return {
+      bitmap: created,
+      release: () => undefined,
+      size: { width: created.width, height: created.height },
+      borrowed: false,
+    };
   }
 }
 
-async function toOwnedBitmap(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<BitmapSource> {
-  if (globalThis.createImageBitmap) return globalThis.createImageBitmap(canvas);
-  return canvas;
+/**
+ * An unevaluated copy of `bitmap` at `size`, owned by the caller.
+ *
+ * Deliberately a plain blit rather than a retained-segment render: it must not
+ * evaluate the presentation, because the one caller that needs it is the
+ * presentation whose extent the affine raster caps refuse.
+ */
+async function copyOwnedBitmap(bitmap: BitmapSource, size: Size): Promise<BitmapSource> {
+  const copy = createCanvas(size.width, size.height);
+  context2d(copy).drawImage(bitmap as CanvasImageSource, 0, 0, size.width, size.height);
+  return toOwnedBitmap(copy);
 }
 
 function closeOwnedBitmap(bitmap: BitmapSource) {
@@ -165,13 +266,11 @@ export function createMaterializationKey(layer: DurableReplayLayer, request: Mat
     operationSetRevision: request.operationSetRevision,
     operations,
     pos: layer.snapshot.pos,
-    opacity: layer.snapshot.opacity,
-    blendMode: layer.snapshot.blendMode,
-    visible: layer.snapshot.visible,
     affineRevision: operations.filter(
       (operation) => (operation as { kind?: string }).kind === 'apply-affine-transform'
     ),
     ...(request.frame ? { frame: request.frame } : {}),
+    ...(request.pixelGridFrame ? { pixelGridFrame: request.pixelGridFrame } : {}),
   });
 }
 
@@ -179,11 +278,16 @@ export async function materializeLayer(
   layer: DurableReplayLayer,
   request: MaterializationRequest
 ): Promise<MaterializedLayer> {
+  if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
   const key = createMaterializationKey(layer, request);
   const lease = await request.assetRegistry.materialize({
     key,
     documentId: request.documentId,
+    expectedDocumentGeneration: request.baselineAssetGeneration,
     producer: async () => {
+      // The first processor's presented extent can be computed from the immutable record alone.
+      // Check it before sourceBitmap creates a blank/creator raster or resolves a borrowed asset.
+      preflightFirstRasterProcessor(layer);
       const source = await sourceBitmap(layer, request);
       let bitmap = source.bitmap;
       // Layer.pos is the current logical presentation size. The source size
@@ -191,7 +295,7 @@ export async function materializeLayer(
       // current geometry, matching the runtime layer renderer.
       let size = layerSize(layer);
       let origin = { x: layer.snapshot.pos.x, y: layer.snapshot.pos.y };
-      let ownsBitmap = false;
+      let ownsBitmap = !source.borrowed;
 
       const replaceOwnedBitmap = (next: BitmapSource) => {
         const previous = bitmap;
@@ -203,7 +307,12 @@ export async function materializeLayer(
         ownsBitmap = previous === next ? previousWasOwned : true;
       };
 
-      const renderRetainedSegment = async (operations: readonly DurableOperation[], force = false) => {
+      const renderRetainedSegment = async (
+        operations: readonly DurableOperation[],
+        force = false,
+        pixelGridFrame?: MaterializationRequest['pixelGridFrame'],
+        maxPixelCount?: number
+      ) => {
         if (!force && operations.length === 0) return;
         const evaluation = evaluatePresentation({
           position: { x: origin.x, y: origin.y, width: size.width, height: size.height },
@@ -211,10 +320,19 @@ export async function materializeLayer(
           operations: presentationOperations(operations),
           mode: 'layer-bounds',
         });
-        const output = createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
+        const pixelGridBounds = pixelGridFrame ? alignBoundsToFrame(evaluation.bounds, pixelGridFrame) : undefined;
+        const outputWidth = Math.max(1, Math.ceil(pixelGridBounds?.width ?? evaluation.localBounds.width));
+        const outputHeight = Math.max(1, Math.ceil(pixelGridBounds?.height ?? evaluation.localBounds.height));
+        assertProcessorStagingBudget(outputWidth, outputHeight, maxPixelCount);
+        const output = pixelGridBounds
+          ? createCanvas(pixelGridBounds.width, pixelGridBounds.height)
+          : createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
         const ctx = context2d(output);
         ctx.save();
         try {
+          if (pixelGridBounds) {
+            ctx.translate(evaluation.bounds.x - pixelGridBounds.x, evaluation.bounds.y - pixelGridBounds.y);
+          }
           // The evaluator composes affine operations first, then applies the
           // joined filter string to that presentation.
           drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'bounds' });
@@ -222,8 +340,12 @@ export async function materializeLayer(
           ctx.restore();
         }
         replaceOwnedBitmap(await toOwnedBitmap(output));
-        origin = { x: evaluation.bounds.x, y: evaluation.bounds.y };
-        size = { width: evaluation.bounds.width, height: evaluation.bounds.height };
+        origin = pixelGridBounds
+          ? { x: pixelGridBounds.x, y: pixelGridBounds.y }
+          : { x: evaluation.bounds.x, y: evaluation.bounds.y };
+        size = pixelGridBounds
+          ? { width: pixelGridBounds.width, height: pixelGridBounds.height }
+          : { width: evaluation.bounds.width, height: evaluation.bounds.height };
       };
 
       try {
@@ -239,75 +361,130 @@ export async function materializeLayer(
 
           // A raster processor consumes the exact presentation produced by all
           // preceding retained operations. It cannot be moved before them.
-          // Always draw into a private surface before a pixel processor. Some
-          // processors mutate their input canvas, while registry assets and
-          // source-local rasters are borrowed for this operation.
-          await renderRetainedSegment(retainedOperations, true);
-          retainedOperations = [];
           const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
           if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
           if (processor.replay.version !== operation.version) {
             throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
           }
-          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
+          // A zero-opacity Color Replacement is an identity operation. Validate
+          // its durable processor/version first, then skip full-frame staging.
+          if (isNoOpColorReplacement(operation)) continue;
+          const logicalRasterSize = getProcessorRasterSize(size);
+          const bitmapMatchesLogicalRaster =
+            bitmap.width === logicalRasterSize.width && bitmap.height === logicalRasterSize.height;
+          // A borrowed source can be reused without resampling only when its pixel
+          // grid already matches the logical layer bounds. Copy it first so a
+          // processor that mutates its input cannot change the registry asset.
+          if (retainedOperations.length === 0 && !ownsBitmap && source.borrowed && bitmapMatchesLogicalRaster) {
+            const rasterSize = { width: bitmap.width, height: bitmap.height };
+            assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+            replaceOwnedBitmap(await copyOwnedBitmap(bitmap, rasterSize));
+          } else if (retainedOperations.length > 0 || !bitmapMatchesLogicalRaster || !ownsBitmap) {
+            // Bake retained operations and align resized sources or prior processor
+            // outputs to the current logical pixel grid before this processor.
+            await renderRetainedSegment(retainedOperations, true, undefined, processor.maxStagingPixelCount);
+          } else {
+            // A matching owned raster can be reused without allocation, but every
+            // processor still gets its own staging-budget check below.
+          }
+          retainedOperations = [];
+          const rasterSize = { width: bitmap.width, height: bitmap.height };
+          // Check every processor against the raster it actually receives. An
+          // empty retained segment can reuse an owned bitmap without allocating,
+          // so the pre-allocation check above alone cannot cover that path.
+          assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+          const [processed, patch] = processor.imageProcessor({ bitmap, size: rasterSize })(operation.args as ToolArgs);
           if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
           replaceOwnedBitmap(processed);
           origin = {
             x: patch?.x ?? origin.x,
             y: patch?.y ?? origin.y,
           };
-          size = { width: processed.width, height: processed.height };
+          // Keep logical document bounds fractional while the processor works on
+          // the integer-sized bitmap. A processor can explicitly return new
+          // document bounds through its patch.
+          size = {
+            width: patch?.width ?? size.width,
+            height: patch?.height ?? size.height,
+          };
         }
         const area = size.width * size.height;
         const requiresSurface =
           retainedOperations.length > 0 ||
-          request.frame !== undefined ||
           !Number.isFinite(area) ||
           size.width <= 0 ||
           size.height <= 0 ||
-          area <= MAX_AFFINE_PIXELS;
-        await renderRetainedSegment(retainedOperations, requiresSurface);
-        const presentation = bitmap;
-        const presentationIsOwned = ownsBitmap;
-        ownsBitmap = false;
+          (!ownsBitmap && area <= MAX_AFFINE_PIXELS);
+        const hasRetainedAffine = retainedOperations.some((operation) => operation.kind === 'apply-affine-transform');
+        await renderRetainedSegment(
+          retainedOperations,
+          requiresSurface,
+          hasRetainedAffine ? request.pixelGridFrame : undefined
+        );
         const bounds: Pos = { x: origin.x, y: origin.y, width: size.width, height: size.height };
+        // The materialization cache owns every bitmap it publishes, and it
+        // outlives this producer's lease on the source. Skipping the final
+        // surface — which a presentation too large for the affine budget MUST
+        // skip, because evaluating it would refuse the layer — otherwise leaves
+        // the registry's borrowed bitmap as the result, and either the registry
+        // or the legacy runtime layer behind a borrowed baseline may close that
+        // bitmap while this entry is still live. So an unrendered borrowed
+        // source is copied into one the cache owns; a bitmap created here (a
+        // blank or creator source) and anything an operation already replaced
+        // are published as they are.
+        const publishesBorrowedSource = !ownsBitmap && source.borrowed;
+        const presentation = publishesBorrowedSource
+          ? await copyOwnedBitmap(bitmap, { width: bitmap.width, height: bitmap.height })
+          : bitmap;
+        const presentationIsOwned = ownsBitmap || publishesBorrowedSource;
+        ownsBitmap = false;
         if (!request.frame) {
           return { bitmap: presentation, metadata: bounds };
         }
 
-        const frameSurface = createCanvas(request.frame.width, request.frame.height);
-        const frameContext = context2d(frameSurface);
-        const frameEvaluation = evaluatePresentation({
-          position: bounds,
-          sourceSize: { width: bounds.width, height: bounds.height },
-          operations: [],
-          frame: request.frame,
-          mode: 'frame-bounds',
-        });
-        drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
-          kind: 'document',
-          frame: request.frame,
-        });
-        if (presentationIsOwned) closeOwnedBitmap(presentation);
-        return {
-          bitmap: await toOwnedBitmap(frameSurface),
-          metadata: {
-            x: request.frame.x,
-            y: request.frame.y,
-            width: request.frame.width,
-            height: request.frame.height,
-          },
-        };
+        try {
+          const frameSurface = createCanvas(request.frame.width, request.frame.height);
+          const frameContext = context2d(frameSurface);
+          const frameEvaluation = evaluatePresentation({
+            position: bounds,
+            sourceSize: { width: bounds.width, height: bounds.height },
+            operations: [],
+            frame: request.frame,
+            mode: 'frame-bounds',
+          });
+          drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
+            kind: 'document',
+            frame: request.frame,
+          });
+          return {
+            bitmap: await toOwnedBitmap(frameSurface),
+            metadata: {
+              x: request.frame.x,
+              y: request.frame.y,
+              width: request.frame.width,
+              height: request.frame.height,
+            },
+          };
+        } finally {
+          if (presentationIsOwned) closeOwnedBitmap(presentation);
+        }
       } finally {
         source.release();
         if (ownsBitmap) closeOwnedBitmap(bitmap);
       }
     },
   });
+  if (request.signal?.aborted) {
+    lease.release();
+    throw new DOMException('Materialization aborted', 'AbortError');
+  }
   return {
     layerId: layer.snapshot.id,
     bitmap: lease.bitmap,
     bounds: lease.metadata,
+    visible: layer.snapshot.visible,
+    opacity: layer.snapshot.opacity,
+    blendMode: layer.snapshot.blendMode,
     lease,
   };
 }
@@ -318,6 +495,8 @@ export async function materializeDocument(
 ): Promise<MaterializedDocument> {
   const materialized: Record<string, MaterializedLayer> = {};
   try {
+    if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+    assertDocumentGeneration(request);
     for (const layer of Object.values(replay.layers)) {
       if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
       if (!layer.snapshot.visible) continue;
@@ -328,13 +507,15 @@ export async function materializeDocument(
         // the visible document look successful while durable replay cannot
         // reproduce its pixels. Keep the failure local, report it, and let the
         // compositor continue with the layers that did materialize.
-        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        if (isAbortError(error)) throw error;
         console.error(`Unable to materialize durable layer ${layer.snapshot.id}; skipping layer`, error);
       }
       // Keep replay cooperative even when every operation is synchronous.
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 0);
       });
+      if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+      assertDocumentGeneration(request);
     }
   } catch (error) {
     for (const layer of Object.values(materialized)) layer.lease.release();

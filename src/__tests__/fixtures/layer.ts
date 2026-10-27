@@ -11,6 +11,7 @@ export const createMockLayer = (overrides: Partial<Layer> = {}): Layer => ({
   order: 0,
   isBedrock: false,
   pos: { x: 0, y: 0, width: 100, height: 100 },
+  presentationBounds: null,
   bitmap: null,
   tmpCanvas: null,
   operations: [],

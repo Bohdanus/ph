@@ -28,6 +28,7 @@ function makeLayer(operations: Layer['operations'] = []): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { ...pos },
+    presentationBounds: null,
     bitmap: null,
     tmpCanvas: null,
     operations,

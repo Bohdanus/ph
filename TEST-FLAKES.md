@@ -529,7 +529,7 @@ the CODE THAT RAN. That is the same discipline as section 10, one level down, an
 compose: pinning the port stops the run testing the wrong tree, and verifying the served
 module stops it testing the wrong code in the right tree.
 
-## 12. `viewport-drawing.spec.ts` fails roughly one run in four, and not because of anything it asserts
+## 12. `viewport-drawing.spec.ts` has intermittent capture drift, not because of anything it asserts
 
 **Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision). Reproduced more than once, and the failing window moves between `wide` and `narrow` between runs. Not fixed. Not a known-failing test; it is intermittent.**
 
@@ -572,7 +572,7 @@ lives 40 lines above the assertions in that file. `captureCanvasScreenshot` inte
 returns a page 87 CSS px SHORTER than the one that was measured, which re-projects the contain
 fit and makes a correctly committed stroke look like it missed the cursor by ~31px. The
 `expect` before the stroke assertion is a hard guard for exactly that, it is a filed defect
-(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+(`e2e/OPEN_PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
 A red run _without_ that message is therefore evidence of a **second** cause, and the three
 remaining candidates are `waitForCanvasRedraw` (polls a CDP screenshot for ink),
 `getDarkPixelBounds` (thresholds that screenshot), and the derived `toleranceFor(box)` — 6.7-8.4px
@@ -675,8 +675,9 @@ default it is guarding. Two properties were checked rather than assumed and are
 worth keeping: the budget is scoped to the file that declares it (a body several
 times the default in an undeclared sibling still died at the 5s default in the same
 run), and a per-test `it(name, fn, timeout)` argument still wins over the file
-budget, which is how the two tests that read git in every worktree keep their
-declared `60_000`.
+budget. The worktree-inventory suite no longer overrides its timeout for
+fleet-wide git reads: its protection assertions use a small synthetic worktree
+fixture, so their cost does not grow with the operator's live worktree count.
 
 **Remaining verification:** the code review this change was merged without. Every
 review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model

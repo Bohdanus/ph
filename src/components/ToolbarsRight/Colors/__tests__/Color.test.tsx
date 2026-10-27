@@ -195,30 +195,33 @@ describe('Color toolbar', () => {
 
     flushRaf();
 
-    // Only the last pending payload is published. Each handler spreads the args captured by
-    // its own render closure, so edits made within the same animation frame are lost: this
-    // documents the current lost-update behaviour (see FINDINGS) rather than a merge.
+    // One frame, one write — and every field the burst touched survives. Each handler
+    // merges onto the pending payload rather than the render-time `args`, so a change
+    // made before the frame runs inherits the one before it instead of overwriting it.
+    const merged = { grayscale: 10, sepia: 20, saturation: 30, toolName: 'color' as const };
     expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
-    expect(mockSetToolArgs).toHaveBeenCalledWith({
-      grayscale: 0,
-      sepia: 0,
-      saturation: 30,
-      toolName: 'color',
-    });
+    expect(mockSetToolArgs).toHaveBeenCalledWith(merged);
+    // The preview write carries the same merged payload: merging only the store write
+    // would leave the two disagreeing about the adjustment the frame is publishing.
+    expect(mockTempUpdateLayer).toHaveBeenCalledWith({ toolArgs: merged });
   });
 
-  it('drops the earlier in-frame edit when two different sliders move before the frame runs', () => {
+  it('keeps the earlier in-frame edit when two different sliders move before the frame runs', () => {
     render(<Color />);
 
     changeSlider(/Grayscale/, '10');
     changeSlider(/Sepia/, '20');
     flushRaf();
 
-    // The grayscale edit never reaches the store: the pending payload was replaced wholesale.
+    // Both edits reach the store in one write. The pending payload was the base of the
+    // second change, so the grayscale value is carried rather than replaced wholesale.
     expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
-    expect(mockSetToolArgs).toHaveBeenCalledWith(
-      expect.objectContaining({ grayscale: 0, sepia: 20, toolName: 'color' })
-    );
+    expect(mockSetToolArgs).toHaveBeenCalledWith({
+      grayscale: 10,
+      sepia: 20,
+      saturation: 100,
+      toolName: 'color',
+    });
   });
 
   it('accepts the range boundaries for every slider', () => {

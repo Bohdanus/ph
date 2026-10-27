@@ -21,9 +21,11 @@ function makeSelection(id: string, overrides: Partial<Selection> = {}): Selectio
   return {
     id,
     points: [
-      { x: 0, y: 0 },
-      { x: 8, y: 0 },
-      { x: 8, y: 6 },
+      [
+        { x: 0, y: 0 },
+        { x: 8, y: 0 },
+        { x: 8, y: 6 },
+      ],
     ],
     isActive: true,
     pos: { x: 0, y: 0, width: 8, height: 6 },
@@ -107,7 +109,7 @@ describe('committedSelectionUpdate against the reducer arms', () => {
   it('matches the reducer commitSelection post-state for a create', () => {
     const existing = makeSelection('existing');
     const drawn = makeGesturePayload('drawn', {
-      points: [{ x: 1, y: 2 }],
+      points: [[{ x: 1, y: 2 }]],
       pos: { x: 1, y: 2, width: 10, height: 12 },
       metadata: { featherRadius: 7, movedAtVersion: 1 },
     });
@@ -131,7 +133,7 @@ describe('committedSelectionUpdate against the reducer arms', () => {
     const active = makeSelection('active');
     const moved = makeGesturePayload('dragged', {
       pos: { x: 20, y: 24, width: 8, height: 6 },
-      points: [{ x: 20, y: 24 }],
+      points: [[{ x: 20, y: 24 }]],
       metadata: { featherRadius: 5, movedAtVersion: 2 },
     });
     // The moved selection is not the active one, so the active-pointer rule is

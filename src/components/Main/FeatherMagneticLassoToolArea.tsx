@@ -449,7 +449,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   }
 
   function startDraft(coords: Point, event: PointerEvent<HTMLDivElement>) {
-    edgeMapRef.current = createEdgeMapFromCanvas(canvasRef.current);
+    edgeMapRef.current = createEdgeMapFromCanvas(canvasRef.current, totalSize);
 
     const segment = createMagneticSegment({
       cursor: coords,

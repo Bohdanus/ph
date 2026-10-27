@@ -3,7 +3,12 @@ import React from 'react';
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Brush from '../components/ToolbarsRight/Brush/Brush.tsx';
 import CloneStamp from '../components/ToolbarsRight/CloneStamp/CloneStamp.tsx';
+import RedEye from '../components/ToolbarsRight/RedEye/RedEye.tsx';
+import SpotHealing from '../components/ToolbarsRight/SpotHealing/SpotHealing.tsx';
+import HealingBrush from '../components/ToolbarsRight/HealingBrush/HealingBrush.tsx';
+import Patch from '../components/ToolbarsRight/Patch/Patch.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
+import ColorSampler from '../components/ToolbarsRight/ColorSampler/ColorSampler.tsx';
 import ColorReplacement from '../components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
@@ -12,8 +17,6 @@ import Eraser from '../components/ToolbarsRight/Eraser/Eraser.tsx';
 import Eyedropper from '../components/ToolbarsRight/Eyedropper/Eyedropper.tsx';
 import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
 import Gradient from '../components/ToolbarsRight/Gradient/Gradient.tsx';
-import Hand from '../components/ToolbarsRight/Hand/Hand.tsx';
-import RotateView from '../components/ToolbarsRight/RotateView/RotateView.tsx';
 import FeatherMagneticLasso from '../components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
@@ -22,6 +25,7 @@ import MagicEraser from '../components/ToolbarsRight/MagicEraser/MagicEraser.tsx
 import PaintBucket from '../components/ToolbarsRight/MagicEraser/PaintBucket.tsx';
 import MagicWand from '../components/ToolbarsRight/MagicWand/MagicWand.tsx';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
+import Ruler from '../components/ToolbarsRight/Ruler/Ruler.tsx';
 import Pencil from '../components/ToolbarsRight/Pencil/Pencil.tsx';
 import QuickSelection from '../components/ToolbarsRight/QuickSelection/QuickSelection.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
@@ -34,6 +38,7 @@ import Tonal from '../components/ToolbarsRight/Tonal/Tonal.tsx';
 import { PlaceholderTool } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
 import { placeholderToolGroups } from '../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import Transform from '../components/ToolbarsRight/Transform/Transform.tsx';
+import { Hand, RotateView, Zoom } from '../components/ToolbarsRight/View/View.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import type { ToolName } from '../contexts/tool-types.ts';
 import { toolProcessors, type ToolProcessorDefinition } from './toolProcessors.ts';
@@ -58,6 +63,9 @@ type ToolsMap = Record<
 
 export const toolsMap: ToolsMap = {
   reposition: { ...toolProcessors.reposition, icon: 'reposition', toolboxComponent: Reposition },
+  hand: { icon: 'hand', toolboxComponent: Hand },
+  zoom: { icon: 'zoom', toolboxComponent: Zoom },
+  'rotate-view': { icon: 'rotate-view', toolboxComponent: RotateView },
   blur: { ...toolProcessors.blur, icon: 'blur', toolboxComponent: Blur },
   color: { ...toolProcessors.color, icon: 'color', toolboxComponent: Color },
   levels: { ...toolProcessors.levels, icon: 'levels', toolboxComponent: Levels },
@@ -111,6 +119,10 @@ export const toolsMap: ToolsMap = {
     toolboxComponent: QuickSelection,
   },
   'clone-stamp': { ...toolProcessors['clone-stamp'], icon: 'clone-stamp', toolboxComponent: CloneStamp },
+  'red-eye': { ...toolProcessors['red-eye'], icon: 'red-eye', toolboxComponent: RedEye },
+  'spot-healing': { ...toolProcessors['spot-healing'], icon: 'spot-healing', toolboxComponent: SpotHealing },
+  'healing-brush': { ...toolProcessors['healing-brush'], icon: 'healing-brush', toolboxComponent: HealingBrush },
+  patch: { ...toolProcessors.patch, icon: 'patch', toolboxComponent: Patch },
   gradient: { ...toolProcessors.gradient, icon: 'gradient', toolboxComponent: Gradient },
   sharpen: { ...toolProcessors.sharpen, icon: 'sharpen', toolboxComponent: Sharpen },
   smudge: { ...toolProcessors.smudge, icon: 'smudge', toolboxComponent: Smudge },
@@ -148,25 +160,24 @@ export const toolsMap: ToolsMap = {
   // No processor: the eyedropper rasterizes nothing (see `PIXEL_FREE_TOOLS` in toolProcessors.ts),
   // so this entry carries only the icon and the options bar.
   eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper },
-  // No processor for the same reason: the Hand moves the VIEW, not the document, so it
-  // rasterizes nothing and records no history state. See `PIXEL_FREE_TOOLS` in
-  // toolProcessors.ts. It is a working tool rather than a dead button, which is what
-  // `commit: 'unimplemented'` would have said.
-  hand: { icon: 'hand', toolboxComponent: Hand },
-  // No processor, and the same reasoning as the two entries above it: Rotate View "changes the
-  // angle at which you view the canvas, but it does not rotate or transform the actual image", so
-  // it is in `PIXEL_FREE_TOOLS` and writes no pixel, no history state and nothing to export.
-  'rotate-view': { icon: 'rotate-view', toolboxComponent: RotateView },
+  // No processor for the third time in a row, and the reason is Adobe's rather than the previous
+  // entries': "Displays color values for up to four areas" is a readout, so placing a sampler changes
+  // no pixel and has nothing to replay. See `PIXEL_FREE_TOOLS` in toolProcessors.ts.
+  'color-sampler': { icon: 'color-sampler', toolboxComponent: ColorSampler },
+  // No processor, for the same reason as the eyedropper above and not by affinity with it: a
+  // measuring line is a nonprinting overlay, so it commits no pixels and has no durable operation
+  // to replay. The bar is readouts rather than controls, which is what Adobe's Ruler page describes.
+  ruler: { icon: 'ruler', toolboxComponent: Ruler },
   pen: { ...toolProcessors.pen, icon: 'pen', toolboxComponent: placeholderTool('Pen Tool', 'pen') },
   'freeform-pen': {
     ...toolProcessors['freeform-pen'],
     icon: 'freeform-pen',
-    toolboxComponent: placeholderTool('Freeform Pen Tool', 'pen'),
+    toolboxComponent: placeholderTool('Freeform Pen Tool', 'freeform-pen'),
   },
   'curvature-pen': {
     ...toolProcessors['curvature-pen'],
     icon: 'curvature-pen',
-    toolboxComponent: placeholderTool('Curvature Pen Tool', 'pen'),
+    toolboxComponent: placeholderTool('Curvature Pen Tool', 'curvature-pen'),
   },
   'add-anchor-point': {
     ...toolProcessors['add-anchor-point'],

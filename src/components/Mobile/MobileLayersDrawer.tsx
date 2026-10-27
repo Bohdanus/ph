@@ -2,14 +2,16 @@ import React, { useMemo, useRef, useState } from 'react';
 
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
 import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
-import type { LayerId } from '../../contexts/layer-types.ts';
+import type { Layer, LayerId } from '../../contexts/layer-types.ts';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
-import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 import { useModalA11y } from './useModalA11y.ts';
+import { LayerBlendModeSelect, LayerLockToggle } from '../SidebarRight/LayersTab.tsx';
 
 export interface MobileLayersDrawerProps {
   isOpen: boolean;
@@ -18,12 +20,34 @@ export interface MobileLayersDrawerProps {
 
 export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, onClose }) => {
   const [{ layers, activeLayerId, history, historyIndex, totalSize, documentFrame }] = useStore();
-  const { createBlankLayer, toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer } = useLayers();
-  const { resetHistoryTo, toggleDisabled } = useHistory();
+  const {
+    createBlankLayer,
+    toggleVisibility,
+    removeLayer,
+    moveLayerAfter,
+    setActiveLayer,
+    updateLayer,
+    commitDirtyTool,
+  } = useLayers();
+  const { toolArgs } = useCurrentTool();
+  const textEditActive = toolArgs.toolName === 'text' && Boolean(toolArgs.rect);
+  const textEditingLayerId = textEditActive && toolArgs.toolName === 'text' ? (toolArgs.editingLayerId ?? null) : null;
+  const { resetHistoryTo, toggleDisabled, historyPanelProjection: storedProjection } = useHistory();
+  const historyPanelProjection = storedProjection ?? {
+    source: 'legacy' as const,
+    rows: history.map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      title: getHistoryItemTitle(item),
+      isActive: originalIndex <= historyIndex,
+      isCurrent: originalIndex === historyIndex,
+    })),
+  };
 
   const [activeTab, setActiveTab] = useState<'layers' | 'history'>('layers');
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [draftOpacity, setDraftOpacity] = useState<{ layerId: LayerId; percent: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useModalA11y(isOpen, onClose, panelRef);
@@ -31,7 +55,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   // Index 0 is the TOP layer: `getSortedLayersArray` is ascending, and the drawer
   // shows the stack the way Photoshop does.
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
-  const sortedHistory = useMemo(() => [...history].reverse(), [history]);
+  const sortedHistory = useMemo(() => [...historyPanelProjection.rows].reverse(), [historyPanelProjection.rows]);
 
   if (!isOpen) return null;
 
@@ -41,6 +65,24 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
       updateLayer(layerId, { name: trimmed }, RENAME_LAYER_ACTION);
     }
     setEditingLayerId(null);
+  };
+
+  const finishOpacityGesture = (layer: Layer) => {
+    const percent = draftOpacity?.layerId === layer.id ? draftOpacity.percent : null;
+    setDraftOpacity(null);
+    if (layer.locked || layer.isBedrock || percent === null) return;
+    const opacity = percent / 100;
+    if (layer.opacity !== opacity) {
+      updateLayer(layer.id, { opacity }, SET_LAYER_OPACITY_ACTION);
+    }
+  };
+
+  const selectLayer = (id: LayerId) => {
+    if (textEditActive && toolArgs.toolName === 'text') {
+      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
+      if (commitDirtyTool() === null) return;
+    }
+    setActiveLayer(id);
   };
 
   /**
@@ -59,18 +101,22 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
    */
   const handleMoveUp = (index: number) => {
     if (index <= 0 || index >= sortedLayers.length) return;
+    const layerToMove = sortedLayers[index];
+    if (!layerToMove || layerToMove.isBedrock || layerToMove.locked) return;
     const prevTarget = sortedLayers[index - 1];
     if (!prevTarget) return;
-    moveLayerAfter(sortedLayers[index].id, prevTarget.id);
+    moveLayerAfter(layerToMove.id, prevTarget.id);
   };
 
   const handleMoveDown = (index: number) => {
     // The last two rows have no row two places below them, and passing `undefined`
     // would instead bury the layer at the bottom of the stack.
     if (index < 0 || index >= sortedLayers.length - 2) return;
+    const layerToMove = sortedLayers[index];
+    if (!layerToMove || layerToMove.isBedrock || layerToMove.locked) return;
     const targetLayer = sortedLayers[index + 2];
     if (!targetLayer) return;
-    moveLayerAfter(sortedLayers[index].id, targetLayer.id);
+    moveLayerAfter(layerToMove.id, targetLayer.id);
   };
 
   // The history tab's three entry points — a tap on a step, Enter or Space on that
@@ -174,7 +220,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                 onClick={() =>
                   createBlankLayer({
                     color: '#ffffff',
-                    opacity: 1,
+                    opacity: 0,
                     pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
                   })
                 }
@@ -190,24 +236,27 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                   type="button"
                   onClick={() => removeLayer(activeLayerId)}
                   data-testid="mobile-delete-layer-button"
+                  disabled={textEditingLayerId === activeLayerId}
                   className="flex min-h-11 min-w-11 items-center justify-center text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 rounded-lg"
                   aria-label="Delete active layer"
+                  title={
+                    textEditingLayerId === activeLayerId
+                      ? 'Finish text editing before removing this layer'
+                      : 'Delete active layer'
+                  }
                 >
                   <TrashIcon />
                 </button>
               )}
             </div>
 
-            {/* There is deliberately no layer-opacity control here. It dispatched
-                `updateLayer(id, { opacity }, TOOL_ACTION)`, and `TOOL_ACTION`
-                history entries carry no `toolName` in their args, so
-                `history-replay.ts` skips them and `getHistoryItemTitle` returns
-                `undefined`: every drag step became an untitled, unreplayable
-                entry. Desktop has no equivalent control either. */}
             <ul className="flex-1 overflow-y-auto p-3 space-y-1.5 max-h-[45vh]" aria-label="Layers">
               {sortedLayers.map((layer, index) => {
                 const isActive = activeLayerId === layer.id;
+                const isMovable = !layer.isBedrock && !layer.locked;
                 const isEditing = editingLayerId === layer.id;
+                const opacityPercent =
+                  draftOpacity?.layerId === layer.id ? draftOpacity.percent : Math.round((layer.opacity ?? 1) * 100);
 
                 return (
                   <li key={layer.id}>
@@ -228,8 +277,8 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                       acting on a layer does not also select it.
                     */}
                     <div
-                      onClick={() => setActiveLayer(layer.id)}
-                      className={`flex items-center justify-between gap-0.5 p-2 rounded-xl border transition-all cursor-pointer ${
+                      onClick={() => selectLayer(layer.id)}
+                      className={`flex flex-wrap items-center justify-between gap-0.5 p-2 rounded-xl border transition-all cursor-pointer ${
                         isActive
                           ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 shadow-sm'
                           : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
@@ -274,7 +323,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                             aria-pressed={isActive}
                             onClick={(event) => {
                               event.stopPropagation();
-                              setActiveLayer(layer.id);
+                              selectLayer(layer.id);
                             }}
                             className="flex min-h-11 min-w-0 flex-1 items-center truncate rounded px-1 text-left"
                           >
@@ -292,7 +341,13 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                         )}
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-0.5">
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <LayerLockToggle
+                          layer={layer}
+                          updateLayer={updateLayer}
+                          textEditActive={textEditActive}
+                          className="min-h-11 min-w-11 rounded-lg"
+                        />
                         <button
                           type="button"
                           onClick={(event) => {
@@ -311,7 +366,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                             event.stopPropagation();
                             handleMoveUp(index);
                           }}
-                          disabled={index === 0}
+                          disabled={index === 0 || !isMovable}
                           aria-label={`Move ${layer.name} up`}
                           className="flex min-h-11 min-w-11 items-center justify-center text-xs rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-20 text-gray-600 dark:text-gray-400"
                         >
@@ -323,13 +378,49 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                             event.stopPropagation();
                             handleMoveDown(index);
                           }}
-                          disabled={index >= sortedLayers.length - 2}
+                          disabled={index >= sortedLayers.length - 2 || !isMovable}
                           aria-label={`Move ${layer.name} down`}
                           className="flex min-h-11 min-w-11 items-center justify-center text-xs rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-20 text-gray-600 dark:text-gray-400"
                         >
                           ▼
                         </button>
                       </div>
+
+                      <label className="flex basis-full items-center gap-2 px-2 pb-1 text-xs text-gray-600 dark:text-gray-300">
+                        <span>Opacity</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={opacityPercent}
+                          disabled={layer.locked || layer.isBedrock}
+                          aria-label={`Opacity for ${layer.name}`}
+                          aria-valuetext={`${opacityPercent}%`}
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onChange={(event) => {
+                            event.stopPropagation();
+                            if (!layer.locked && !layer.isBedrock) {
+                              setDraftOpacity({ layerId: layer.id, percent: Number(event.currentTarget.value) });
+                            }
+                          }}
+                          onPointerUp={() => finishOpacityGesture(layer)}
+                          onPointerCancel={() => setDraftOpacity(null)}
+                          onKeyUp={() => finishOpacityGesture(layer)}
+                          onBlur={() => finishOpacityGesture(layer)}
+                          className="min-w-0 flex-1 accent-blue-600"
+                        />
+                        <output aria-live="polite" className="min-w-9 text-right font-medium">
+                          {opacityPercent}%
+                        </output>
+                      </label>
+                      {isActive && (
+                        <label className="flex basis-full items-center gap-2 px-2 pb-1 text-xs text-gray-600 dark:text-gray-300">
+                          <span>Blend mode</span>
+                          <LayerBlendModeSelect layer={layer} updateLayer={updateLayer} className="min-h-11 flex-1" />
+                        </label>
+                      )}
                     </div>
                   </li>
                 );
@@ -340,12 +431,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
 
         {activeTab === 'history' && (
           <ul className="flex-1 overflow-y-auto p-3 space-y-1 max-h-[50vh]" aria-label="History">
-            {sortedHistory.map((item) => {
-              const originalIndex = history.indexOf(item);
-              const isCurrent = originalIndex === historyIndex;
-              const isPast = originalIndex <= historyIndex;
-              const title = getHistoryItemTitle(item);
-
+            {sortedHistory.map(({ item, originalIndex, isCurrent, isActive: isPast, title }) => {
               return (
                 <li key={item.id}>
                   {/* A plain `div`, NOT `role="button"` — the same call as the layer row

@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useRect, type UseRectProps } from '../useRect.ts';
+import { drawCropOverlay, useRect, type UseRectProps } from '../useRect.ts';
 import { createPointerEvent } from '@/__tests__/fixtures/pointer.ts';
 import { createMockCanvas, createMockCanvasContext } from '@/__tests__/fixtures/canvas.ts';
 import { refitRectWidthToAspect } from '@/util/rect-aspect.ts';
@@ -18,6 +18,7 @@ const usePointerPositionMock = vi.hoisted(() => {
     isPointerMoveValid: vi.fn(() => true),
     isPointerUpValid: vi.fn((event: PointerEvent) => event.button === 0),
     getLocalCoords: vi.fn((event: PointerEvent) => ({ x: event.clientX, y: event.clientY })),
+    getLocalCoordsFromClientPoint: vi.fn((x: number, y: number) => ({ x, y })),
     isMouseDown: { current: false },
     dimensionsRef: { current: { scale: 1, offset: { x: 0, y: 0 } } },
     onResize: vi.fn(),
@@ -39,20 +40,11 @@ const rectUtilsMock = vi.hoisted(() => ({
 }));
 
 // The path resolves: `useRect.ts` imports `'../util/rect.ts'` from `src/hooks/`, which is
-// the same `src/util/rect.ts` this resolves to, so the mock IS live. `getCanvasSize` is a
-// MEASUREMENT, not geometry — it is the one thing here that would otherwise be read off a
-// real canvas — and it is the only export left stubbed.
-//
-// Every other export delegates to the real implementation, and each one that did not was
-// the same hazard the aspect-ratio stubs were: a stub that agrees with production today
-// makes every assertion about the result invariant to whether the real code ran, so a
-// regression in the real code ships green. `sortRect` and `trimRect` were identity stubs
-// and made the whole aspect-ratio block blind to whether sorting ran at all, which is the
-// one thing that block exists to pin; `trimRect` internally calls `sortRect`, so an
-// identity stub there neutralised both the commit path and the paint path. `posToSortedRect`
-// was a byte-equivalent hand-copy of `util/rect.ts:95-104`, which is the strongest version
-// of the same defect: it is guaranteed to agree with production, so it can never fail and
-// can never catch anything.
+// the same `src/util/rect.ts` this resolves to, so the mock IS live. `getCanvasSize` was
+// a MEASUREMENT, not geometry — it read the backing-store dimensions off a real canvas.
+// With DPR scaling, the backing store is larger than the frame, so clamping now uses the
+// frame size (`imageSize` prop) directly instead of `getCanvasSize`. The mock is kept for
+// any other callers but is no longer invoked by the paint path.
 vi.mock('../../util/rect.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../util/rect.ts')>();
   return {
@@ -76,6 +68,7 @@ function createMockLayer(pos = { x: 100, y: 100, width: 200, height: 150 }) {
     order: 0,
     bitmap: null,
     tmpCanvas: null,
+    presentationBounds: null,
     operations: [],
   };
 }
@@ -94,6 +87,184 @@ const createTestContext = () => {
 };
 
 describe('useRect', () => {
+  it.each([
+    ['ruleOfThirds', 4],
+    ['grid', 18],
+    ['diagonal', 2],
+    ['triangle', 3],
+    ['goldenRatio', 4],
+  ] as const)('draws the %s crop overlay guide', (overlayType, lineCount) => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, { x: 10, y: 20, width: 300, height: 200 }, overlayType);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(lineCount);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(lineCount);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws distinct triangle orientations around a golden-ratio anchor', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 10, y: 20, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle');
+    expect(ctx.moveTo.mock.calls).toEqual([
+      [10, 20],
+      [310, 20],
+      [10, 220],
+    ]);
+    expect(ctx.lineTo.mock.calls).toEqual([
+      [310, 220],
+      [195.4, 143.6],
+      [195.4, 143.6],
+    ]);
+
+    vi.clearAllMocks();
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 'flipped');
+    expect(ctx.moveTo.mock.calls).toEqual([
+      [310, 20],
+      [10, 20],
+      [310, 220],
+    ]);
+    expect(ctx.lineTo.mock.calls[0]).toEqual([10, 220]);
+    expect(ctx.lineTo.mock.calls[1][0]).toBeCloseTo(124.6);
+    expect(ctx.lineTo.mock.calls[1][1]).toBeCloseTo(143.6);
+    expect(ctx.lineTo.mock.calls[2][0]).toBeCloseTo(124.6);
+    expect(ctx.lineTo.mock.calls[2][1]).toBeCloseTo(143.6);
+  });
+
+  it('draws all 4 numeric triangle orientations', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 10, y: 20, width: 300, height: 200 };
+
+    // Orientation 0 (normal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 0);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 1 (flipped)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 1);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 2 (rotated 180)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 2);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 3 (flipped + rotated 180)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 3);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws both orientations of the golden spiral', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      { x: 0, y: 0, width: 300, height: 200 },
+      'goldenSpiral'
+    );
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      { x: 0, y: 0, width: 300, height: 200 },
+      'goldenSpiral',
+      'flipped'
+    );
+    expect(ctx.arc).toHaveBeenCalledTimes(6);
+    expect(ctx.stroke).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws all 8 numeric golden spiral orientations', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    for (let i = 0; i < 8; i++) {
+      vi.clearAllMocks();
+      drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'goldenSpiral', i);
+      expect(ctx.arc).toHaveBeenCalledTimes(3);
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('respects gridDivisions parameter for grid overlay', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    // Default 10 divisions = 18 lines (9 vertical + 9 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 10);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(18);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(18);
+
+    vi.clearAllMocks();
+    // 5 divisions = 8 lines (4 vertical + 4 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 5);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(8);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(8);
+
+    vi.clearAllMocks();
+    // 2 divisions = 2 lines (1 vertical + 1 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 2);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('respects overlayVisibility: never', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'ruleOfThirds', 'normal', 1, null, 'never');
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.lineTo).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('respects overlayVisibility: always', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'ruleOfThirds', 'normal', 1, null, 'always');
+    expect(ctx.moveTo).toHaveBeenCalledTimes(4);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(4);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows auto overlays only while dragging', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      rect,
+      'ruleOfThirds',
+      'normal',
+      1,
+      null,
+      'auto',
+      10,
+      false
+    );
+    expect(ctx.stroke).not.toHaveBeenCalled();
+
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      rect,
+      'ruleOfThirds',
+      'normal',
+      1,
+      null,
+      'auto',
+      10,
+      true
+    );
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
   let testContext: ReturnType<typeof createTestContext>;
 
   beforeEach(() => {
@@ -117,6 +288,10 @@ describe('useRect', () => {
       initialRect?: { x1: number; y1: number; x2: number; y2: number } | null;
       isMoveTool?: boolean;
       hideBlend?: boolean;
+      incrementalOverlay?: boolean;
+      rotationEnabled?: boolean;
+      rotation?: number;
+      onRotationChange?: UseRectProps['onRotationChange'];
       onRepaint?: UseRectProps['onRepaint'];
       onChange?: UseRectProps['onChange'];
       onChangeEnd?: UseRectProps['onChangeEnd'];
@@ -128,29 +303,110 @@ describe('useRect', () => {
       imageSize: { width: 800, height: 600 },
       initialRect: options.initialRect ?? null,
       hideBlend: options.hideBlend ?? false,
+      incrementalOverlay: options.incrementalOverlay ?? false,
       isMoveTool: options.isMoveTool ?? false,
+      rotationEnabled: options.rotationEnabled ?? false,
+      rotation: options.rotation ?? 0,
+      onRotationChange: options.onRotationChange,
       containerRef: { current: containerElement },
       overlayRef: { current: overlayCanvas },
       onRepaint: options.onRepaint ?? vi.fn(),
       onChange: options.onChange ?? vi.fn(),
       onChangeEnd: options.onChangeEnd ?? vi.fn(),
     };
-    return renderHook(() => useRect(props));
+    // The refs are handed back by identity, so a mocked rect util can be asserted against the
+    // very object the hook measures through rather than against a re-derived `{ current: canvas }`.
+    return { ...renderHook(() => useRect(props)), containerRef: props.containerRef, overlayRef: props.overlayRef };
   }
 
   it('initializes without initial rect', () => {
-    const { result } = renderUseRect();
-    expect(result.current.pointerHandlers.onPointerDown).toBeDefined();
-    expect(result.current.pointerHandlers.onPointerMove).toBeDefined();
-    expect(result.current.pointerHandlers.onPointerUp).toBeDefined();
-    expect(result.current.rectHandles.redraw).toBeDefined();
-    expect(result.current.rectHandles.clearSelection).toBeDefined();
+    const onRepaint = vi.fn();
+    const onChangeEnd = vi.fn();
+    const { result } = renderUseRect({ onRepaint, onChangeEnd });
+    const target = createMockTarget();
+
+    // Nothing to initialise FROM: with no rect the mount effect finds its two refs already equal
+    // and paints nothing, so there is no selection to report either.
+    expect(onRepaint).not.toHaveBeenCalled();
+
+    // A press with no box under it finds no edge, so the gesture is a fresh drag and the press is
+    // recorded as having landed on nothing — `currentEdgeRef` is `null` for exactly this reason.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 150, clientY: 150, target })
+        )
+      ).toBe(false);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
+
+    // The release is the whole gesture: it commits a fresh drag anchored at the press point,
+    // which is the only rect this hook ever had.
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(createPointerEvent({ button: 0, clientX: 300, clientY: 250, target }));
+    });
+    expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 150, y1: 150, x2: 300, y2: 250 });
+
+    // A hover reports the edge it found to its CALLER and records none: `currentEdgeRef` is a
+    // fact about the press, and this hook's only press was erased by its own release. A hover
+    // that stored its edge would hand the next `TextToolArea` placement a stale one, and the
+    // boolean above already shows the hover found the interior of the rect the release committed.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 200, target }))
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
   });
 
   it('initializes with initial rect', () => {
     const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
     const { result } = renderUseRect({ initialRect });
-    expect(result.current.pointerHandlers.onPointerDown).toBeDefined();
+    const target = createMockTarget();
+
+    // The incoming rect IS the box, so a press names the edge it landed on rather than reporting
+    // only that it found one. `TextToolArea` decides a fresh placement from
+    // `pointerState.currentEdgeRef.current === null`, so the NAME is the contract and the boolean
+    // every other suite already reads is not enough to pin it.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+        )
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('top-left');
+
+    // Interior press on the same box: a move, not a resize, and a different name for it.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 175, target })
+        )
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('inside');
+  });
+
+  it('cuts the current rotated crop out of the dimmed frame on each incremental repaint', () => {
+    const initialRect = { x1: 100, y1: 120, x2: 200, y2: 200 };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { result } = renderUseRect({
+      initialRect,
+      incrementalOverlay: true,
+      rotationEnabled: true,
+      rotation: 30,
+    });
+
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
+
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
+    act(() => result.current.rectHandles.redraw());
+
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
   });
 
   it('returns false for pointer down on non-left button', () => {
@@ -239,8 +495,13 @@ describe('useRect', () => {
       // runs — so this asserts the conversion END TO END instead of that a hand-copy mock was
       // called. The old form (`expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(...)`)
       // could only ever prove the mock was live, never that the conversion was right.
-      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalled();
       expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
+
+      // The paint is clamped by the frame size (imageSize), not the backing store.
+      // With DPR scaling, the canvas backing store is larger than the frame, so the
+      // clamp uses imageSize (document pixels) instead of getCanvasSize (device pixels).
+      // The getCanvasSize mock is no longer invoked by this code path.
+      expect(rectUtilsMock.getCanvasSize).not.toHaveBeenCalled();
     });
 
     it('respects aspect ratio modifier keys on drag start', () => {
@@ -276,6 +537,85 @@ describe('useRect', () => {
   });
 
   describe('handlePointerMove', () => {
+    it('shows a rotation cursor and rotates the rect from a corner hotspot', () => {
+      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+      const onRotationChange = vi.fn();
+      const { result } = renderUseRect({ initialRect, rotationEnabled: true, onRotationChange });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 90, clientY: 90, target }))
+        ).toBe(true);
+      });
+      expect(target.style.cursor).toMatch(/url\(.*rotate.*\) 16 16, ew-resize/);
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 90, clientY: 90, target })
+        );
+        usePointerPositionMock.mockData.isMouseDown.current = true;
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 285, clientY: 65, target }));
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(onRotationChange).toHaveBeenCalled();
+      expect(onRotationChange.mock.lastCall?.[0]).toBeCloseTo(90, 0);
+    });
+
+    it('keeps a fractional top-edge drag out of the rotation hotzone', () => {
+      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+      const onChangeEnd = vi.fn();
+      const onRotationChange = vi.fn();
+      const { result } = renderUseRect({ initialRect, rotationEnabled: true, onChangeEnd, onRotationChange });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 99.5, target }))
+        ).toBe(true);
+      });
+      expect(target.style.cursor).toBe(CURSOR_MAP.top);
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 200, clientY: 99.5, target })
+          )
+        ).toBe(true);
+      });
+      expect(result.current.pointerState.currentEdgeRef.current).toBe('top');
+
+      act(() => {
+        usePointerPositionMock.mockData.isMouseDown.current = true;
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 80, target }));
+        vi.advanceTimersByTime(20);
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 80, target })
+        );
+      });
+
+      expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 80, x2: 300, y2: 250 });
+      expect(onRotationChange).not.toHaveBeenCalled();
+    });
+
+    it('keeps the painted handles hit-testable after the rect rotates', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+        rotation: 90,
+      });
+
+      // The local top-left corner (100,100) rotates to (275,75) around (200,175).
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: 275, clientY: 75, target: createMockTarget() })
+          )
+        ).toBe(true);
+      });
+    });
+
     it('reports a hit for every handle and edge of the rect, and a miss off it', () => {
       // `isMouseDown` is owned by the (mocked) pointer-position hook and is false here, so a move is
       // a HOVER: it reports whether an edge is under the pointer and resizes nothing. The drag
@@ -793,6 +1133,148 @@ describe('useRect', () => {
       expectSorted(committed, 'right-edge resize');
       expect(width(committed)).toBe(350);
       expect(height(committed)).toBe(350);
+    });
+  });
+
+  describe('edge cases: non-finite coordinates and zero-area drags', () => {
+    it('reports a NaN-coordinate hover as a miss without throwing', () => {
+      const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: Number.NaN, clientY: Number.NaN, target })
+          )
+        ).toBe(false);
+      });
+    });
+
+    it('reports an Infinity-coordinate hover as a miss without throwing', () => {
+      const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: Infinity, clientY: Infinity, target })
+          )
+        ).toBe(false);
+      });
+    });
+
+    it('survives a fresh drag driven through NaN coordinates', () => {
+      const { result } = renderUseRect();
+      const target = createMockTarget();
+
+      expect(() => {
+        act(() => {
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: Number.NaN, clientY: Number.NaN, target })
+          );
+        });
+        act(() => {
+          result.current.pointerHandlers.onPointerUp(
+            createPointerEvent({ button: 0, clientX: Number.NaN, clientY: Number.NaN, target })
+          );
+        });
+      }).not.toThrow();
+
+      expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
+    });
+
+    it('survives a zero-area drag (pointer down and up at the same point)', () => {
+      const { result } = renderUseRect();
+      const target = createMockTarget();
+
+      expect(() => {
+        act(() => {
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+        act(() => {
+          result.current.pointerHandlers.onPointerUp(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+      }).not.toThrow();
+    });
+
+    it('survives a zero-area drag under a 1:1 aspect ratio', () => {
+      const { result } = renderUseRect({ aspectRatio: 1 });
+      const target = createMockTarget();
+
+      expect(() => {
+        act(() => {
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+        act(() => {
+          result.current.pointerHandlers.onPointerUp(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+      }).not.toThrow();
+    });
+  });
+
+  describe('tripwires (it.fails: desired guards not yet implemented)', () => {
+    /**
+     * `getLocalCoords` is a passthrough of `clientX`/`clientY`, so a drag driven
+     * through `Infinity` commits an `Infinity` rect. The reported `onChangeEnd`
+     * rect is never clamped: `trimRect` only sanitises the PAINT. It should clamp
+     * non-finite input to the frame bounds instead.
+     */
+    it.fails('clamps non-finite (Infinity) pointer coordinates to the frame', () => {
+      const onChangeEnd = vi.fn();
+      const { result } = renderUseRect({ onChangeEnd });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: Infinity, clientY: Infinity, target })
+        );
+      });
+      act(() => {
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: Infinity, clientY: Infinity, target })
+        );
+      });
+
+      const committed = onChangeEnd.mock.lastCall?.[0];
+      expect(committed).toBeDefined();
+      expect(Number.isFinite(committed!.x1)).toBe(true);
+      expect(Number.isFinite(committed!.y1)).toBe(true);
+      expect(Number.isFinite(committed!.x2)).toBe(true);
+      expect(Number.isFinite(committed!.y2)).toBe(true);
+    });
+
+    /**
+     * A click with zero pointer travel still commits a zero-extent rect: the hook
+     * never bails on a degenerate drag, so `onChangeEnd` fires with `width === 0`
+     * and `height === 0` — which is what later throws in `layer-utils` for the
+     * marquee/text tools ("width and height must be greater than 0"). It should
+     * either not commit or collapse the gesture when the drag delta is empty.
+     */
+    it.fails('does not commit a zero-extent rect for a click with no pointer travel', () => {
+      const onChangeEnd = vi.fn();
+      const { result } = renderUseRect({ onChangeEnd });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+        );
+      });
+      act(() => {
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+        );
+      });
+
+      expect(onChangeEnd).not.toHaveBeenCalled();
     });
   });
 });

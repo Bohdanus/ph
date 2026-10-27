@@ -25,7 +25,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * "the scale is 1".
  */
 
-/** Read the view transform off `.zoom-container`, the element `useViewTransform` writes to. */
+/** Read the transient view transform off the rendered `.zoom-container`. */
 async function viewTransform(page: Page): Promise<string> {
   return page.locator('.zoom-container').evaluate((node) => (node as HTMLElement).style.transform);
 }
@@ -161,11 +161,11 @@ test.describe('the Hand tool', () => {
     await page.keyboard.press('Control+=');
 
     const zoomed = await viewTransform(page);
-    await ensureOwnRailTile(page, 'draw');
-    await page.getByTestId('tool-button-draw').dblclick();
+    await ensureOwnRailTile(page, 'reposition');
+    await page.getByTestId('tool-button-reposition').dblclick();
 
     // The command is defined over a view only the Hand navigates, so it is named rather than
-    // general: double-clicking the Brush must not silently reset the user's zoom.
+    // general: double-clicking the Move tool must not silently reset the user's zoom.
     expect(await viewTransform(page)).toBe(zoomed);
   });
 });

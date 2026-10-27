@@ -46,7 +46,6 @@ const fillArgs = (toolName: FillToolName, overrides: Partial<FillToolArgs> = {})
     alpha: 0.6,
     color: '#ff8800',
     pos: { x: 41, y: 17 },
-    size: { width: 800, height: 600 },
     ...overrides,
   }) as unknown as ToolArgs;
 
@@ -111,7 +110,7 @@ describe('saveLastSettings for the four new tools', () => {
     });
   });
 
-  it('keeps the Magic Eraser settings and drops the click geometry', () => {
+  it('keeps the Magic Eraser settings and drops the click position', () => {
     saveLastSettings(fillArgs('magic-eraser'));
     const saved = lastSavedSettings['magic-eraser'] as unknown as FillToolArgs;
 
@@ -119,12 +118,13 @@ describe('saveLastSettings for the four new tools', () => {
     expect(saved.contiguous).toBe(false);
     expect(saved.alpha).toBe(0.6);
     expect(saved.color).toBe('#ff8800');
-    // `pos`/`size` belong to the click, not to the tool, exactly as `points` does for the brush.
+    // `pos` is the click, not a setting, exactly as `points` is for the brush. It is the ONLY thing
+    // the arm omits: `FillToolArgs` declares no `size` for it to drop, so a second omission key
+    // here would be asserting a field the type no longer has.
     expect(Object.hasOwn(saved, 'pos')).toBe(false);
-    expect(Object.hasOwn(saved, 'size')).toBe(false);
   });
 
-  it('keeps the Paint Bucket settings and drops the click geometry', () => {
+  it('keeps the Paint Bucket settings and drops the click position', () => {
     saveLastSettings(fillArgs('paint-bucket'));
     const saved = lastSavedSettings['paint-bucket'] as unknown as FillToolArgs;
 
@@ -133,7 +133,6 @@ describe('saveLastSettings for the four new tools', () => {
     expect(saved.alpha).toBe(0.6);
     expect(saved.color).toBe('#ff8800');
     expect(Object.hasOwn(saved, 'pos')).toBe(false);
-    expect(Object.hasOwn(saved, 'size')).toBe(false);
   });
 
   it('keeps the Eyedropper Sample Size', () => {

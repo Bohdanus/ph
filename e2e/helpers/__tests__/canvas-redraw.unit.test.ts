@@ -147,7 +147,7 @@ describe('waitForCanvasPixels', () => {
         pollIntervalMs: 100,
         description: 'red pixels',
       })
-    ).rejects.toThrow('Canvas did not render red pixels within 1000ms');
+    ).rejects.toThrow('Canvas did not render red pixels within 1000ms after 11 polls');
 
     expect(predicate).toHaveBeenCalledTimes(11);
     expect(harness.waitForTimeout).toHaveBeenCalledTimes(10);
@@ -158,7 +158,7 @@ describe('waitForCanvasPixels', () => {
 
     await expect(
       waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(false), { timeoutMs: 300, pollIntervalMs: 100 })
-    ).rejects.toThrow('Canvas did not render the expected pixels within 300ms');
+    ).rejects.toThrow('Canvas did not render the expected pixels within 300ms after 4 polls');
   });
 
   it('defaults to the shared 10000ms timeout and 100ms poll interval', async () => {
@@ -166,7 +166,7 @@ describe('waitForCanvasPixels', () => {
     const predicate = always(false);
 
     await expect(waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate)).rejects.toThrow(
-      `Canvas did not render the expected pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms`
+      `Canvas did not render the expected pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms after ${READS_PER_DEFAULT_TIMEOUT} polls`
     );
 
     expect(CANVAS_REDRAW_TIMEOUT_MS).toBe(10_000);
@@ -292,6 +292,115 @@ describe('waitForCanvasPixels', () => {
 
     expect(harness.waitForTimeout).not.toHaveBeenCalled();
   });
+
+  it('uses the singular "poll" in the error when exactly one attempt is made', async () => {
+    const harness = createPollingPage();
+    const predicate = always(false);
+
+    await expect(waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, { timeoutMs: 0 })).rejects.toThrow(
+      'Canvas did not render the expected pixels within 0ms after 1 poll'
+    );
+
+    expect(predicate).toHaveBeenCalledTimes(1);
+    expect(harness.waitForTimeout).not.toHaveBeenCalled();
+  });
+
+  it('polls at most twice when the poll interval exceeds a short timeout', async () => {
+    const harness = createPollingPage();
+    const predicate = always(false);
+
+    await expect(
+      waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, { timeoutMs: 100, pollIntervalMs: 500 })
+    ).rejects.toThrow('Canvas did not render the expected pixels within 100ms after 2 polls');
+
+    expect(predicate).toHaveBeenCalledTimes(2);
+    expect(harness.waitForTimeout.mock.calls).toEqual([[500]]);
+  });
+
+  it('counts polls correctly when the timeout is not a multiple of the poll interval', async () => {
+    const harness = createPollingPage();
+    const predicate = always(false);
+
+    await expect(
+      waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, { timeoutMs: 100, pollIntervalMs: 30 })
+    ).rejects.toThrow('Canvas did not render the expected pixels within 100ms after 5 polls');
+
+    expect(predicate).toHaveBeenCalledTimes(5);
+    expect(harness.waitForTimeout.mock.calls).toEqual([[30], [30], [30], [30]]);
+  });
+
+  it('survives a one-millisecond timeout and poll interval', async () => {
+    const harness = createPollingPage();
+    const predicate = always(false);
+
+    await expect(
+      waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, { timeoutMs: 1, pollIntervalMs: 1 })
+    ).rejects.toThrow('Canvas did not render the expected pixels within 1ms after 2 polls');
+
+    expect(predicate).toHaveBeenCalledTimes(2);
+    expect(harness.waitForTimeout.mock.calls).toEqual([[1]]);
+    expect(harness.elapsed()).toBe(1);
+  });
+
+  it('accepts a canvas that updates to dark pixels mid-poll', async () => {
+    const harness = createPollingPage();
+    harness.screenshot
+      .mockResolvedValueOnce(await createTestImage(WHITE))
+      .mockResolvedValueOnce(await createTestImage(WHITE))
+      .mockResolvedValueOnce(await createTestImage(BLACK));
+
+    await expect(
+      waitForCanvasPixels(harness.page, STANDALONE_CLIP, hasDarkPixels, { timeoutMs: 5_000 })
+    ).resolves.toBeUndefined();
+
+    expect(harness.screenshot).toHaveBeenCalledTimes(3);
+    expect(harness.waitForTimeout.mock.calls).toEqual([
+      [CANVAS_REDRAW_POLL_INTERVAL_MS],
+      [CANVAS_REDRAW_POLL_INTERVAL_MS],
+    ]);
+  });
+
+  it('tolerates a zero-size clip and defers to the predicate', async () => {
+    const harness = createPollingPage();
+    const zeroClip: Required<ClipOptions> = { x: 0, y: 0, width: 0, height: 0 };
+
+    await expect(waitForCanvasPixels(harness.page, zeroClip, always(true))).resolves.toBeUndefined();
+
+    expect(harness.screenshot).toHaveBeenCalledWith({ clip: zeroClip });
+    expect(harness.screenshot).toHaveBeenCalledTimes(1);
+    expect(harness.waitForTimeout).not.toHaveBeenCalled();
+  });
+
+  it('does not carry poll state between two sequential calls', async () => {
+    const harness = createPollingPage();
+    const first = sequence(false, true);
+    const second = sequence(false, true);
+
+    await waitForCanvasPixels(harness.page, STANDALONE_CLIP, first, {
+      timeoutMs: 5_000,
+      pollIntervalMs: 50,
+    });
+    await waitForCanvasPixels(harness.page, STANDALONE_CLIP, second, {
+      timeoutMs: 5_000,
+      pollIntervalMs: 50,
+    });
+
+    expect(harness.screenshot).toHaveBeenCalledTimes(4);
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(second).toHaveBeenCalledTimes(2);
+    expect(harness.waitForTimeout.mock.calls).toEqual([[50], [50]]);
+  });
+
+  it('reports the full timeout and poll count in the error for a clean multiple', async () => {
+    const harness = createPollingPage();
+
+    await expect(
+      waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(false), { timeoutMs: 500, pollIntervalMs: 100 })
+    ).rejects.toThrow('Canvas did not render the expected pixels within 500ms after 6 polls');
+
+    expect(harness.screenshot).toHaveBeenCalledTimes(6);
+    expect(harness.waitForTimeout).toHaveBeenCalledTimes(5);
+  });
 });
 
 /**
@@ -300,16 +409,16 @@ describe('waitForCanvasPixels', () => {
  * throws `Clipped area is either empty or outside the resulting image`. These pin what the
  * wait does about that — and, just as load-bearing, what it does when nothing is wrong.
  *
- * The geometry is the app's, measured: 1177px of page in a 720px window, and
- * `paint-options.spec.ts` reads its 60px stroke from 0.7 of the canvas box height, which
- * lands at page y=748 — 28px below the fold.
+ * These dimensions belong to this test's scrollable-page harness, not the app: its
+ * document is 1177px tall and viewport 720px. `BELOW_THE_FOLD` starts at y=748, 28px
+ * below the initial viewport; the harness scrolls by at most 457px, bringing the clip
+ * to viewport y=291..451.
  */
 describe('waitForCanvasPixels on a region that is not in view', () => {
   const VIEWPORT_HEIGHT = 720;
   const DOCUMENT_HEIGHT = 1177;
-  const MAX_SCROLL_Y = DOCUMENT_HEIGHT - VIEWPORT_HEIGHT;
 
-  /** The measured wide stroke: page y 748..908, inside a 720px window. */
+  /** The clip fixture: page y 748..908, initially below the 720px viewport. */
   const BELOW_THE_FOLD: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
 
   function scrolledPage(overrides: Parameters<typeof createScrollablePage>[0] = {}) {
@@ -438,18 +547,23 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
     expect(harness.clips()[0].y + straddling.height).toBeLessThanOrEqual(VIEWPORT_HEIGHT);
   });
 
-  it('does not ask the page for a scroll it cannot perform', async () => {
-    // A region taller than the window can never be fully in view; the request must still
-    // land on the page's real scroll extent rather than somewhere unreachable.
+  it('refuses a clip taller than the viewport rather than scrolling or photographing it', async () => {
+    // A region taller than the window can never be fully in view, and the old behaviour
+    // scrolled to the nearest reachable position and photographed whatever the viewport
+    // trimmed down to — a short image at exit 0. See `HANDOFF.md` §242. The guard runs
+    // before the visibility check and before any scroll, so the refusal names both numbers
+    // and no scroll request is made.
     const harness = scrolledPage();
     const tallerThanTheWindow: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
 
-    await waitForCanvasPixels(harness.page, tallerThanTheWindow, always(true), { timeoutMs: 1_000 });
+    await expect(
+      waitForCanvasPixels(harness.page, tallerThanTheWindow, always(true), { timeoutMs: 1_000 })
+    ).rejects.toThrow(
+      `onScreenClip: a screenshot clip cannot be taller than the viewport: requested 900px in a ${VIEWPORT_HEIGHT}px window`
+    );
 
-    for (const request of harness.scroll.scrollRequests()) {
-      expect(request.y).toBeGreaterThanOrEqual(0);
-      expect(request.y).toBeLessThanOrEqual(MAX_SCROLL_Y);
-    }
+    expect(harness.screenshot).not.toHaveBeenCalled();
+    expect(harness.scroll.scrollRequests()).toEqual([]);
   });
 });
 
@@ -513,6 +627,53 @@ describe('canvasRedrawClip', () => {
 
     expect(canvasRedrawClip(BOX)).toEqual(BOX_CLIP);
     expect(CANVAS_REDRAW_CLIP).toEqual({ x: 100, y: 100, width: 300, height: 100 });
+  });
+
+  it('offsets the clip by a large box origin', () => {
+    // At 974x583 the letterbox offsets (98.33x, 0y) are both below the constant, so the origin
+    // is the box origin plus the constant — no clamp, but the box origin is non-trivial.
+    expect(canvasRedrawClip({ x: 500, y: 300, width: 974, height: 583 })).toEqual({
+      x: 600,
+      y: 400,
+      width: 300,
+      height: 100,
+    });
+  });
+
+  it('engages the clamp for a wide box at the origin', () => {
+    // 2000x500: scale = 5/6, offsetX = 666.67 — the horizontal letterbox exceeds the constant,
+    // so the clamp moves the origin to the letterbox edge instead of the constant.
+    const clip = canvasRedrawClip({ x: 0, y: 0, width: 2000, height: 500 });
+
+    expect(clip.x).toBeCloseTo(666.667, 2);
+    expect(clip.x).toBeGreaterThan(CANVAS_REDRAW_CLIP.x);
+    expect(clip.y).toBe(100);
+    expect(clip.width).toBe(300);
+    expect(clip.height).toBe(100);
+  });
+
+  it('clamps the origin to the letterbox for a viewport-sized box at (0,0)', () => {
+    // 1280x720: scale = 1.2, horizontal letterbox = 160px > constant 100, so the x origin
+    // clamps up to 160 while the y origin stays at the constant (no vertical letterbox).
+    expect(canvasRedrawClip({ x: 0, y: 0, width: 1280, height: 720 })).toEqual({
+      x: 160,
+      y: 100,
+      width: 300,
+      height: 100,
+    });
+  });
+
+  it('handles a very large box without overflow or NaN', () => {
+    const clip = canvasRedrawClip({ x: 1_000, y: 2_000, width: 5_000, height: 4_000 });
+
+    expect(Number.isFinite(clip.x)).toBe(true);
+    expect(Number.isFinite(clip.y)).toBe(true);
+    expect(clip).toEqual({
+      x: 1_100,
+      y: 2_125,
+      width: 300,
+      height: 100,
+    });
   });
 });
 
@@ -604,9 +765,9 @@ describe('canvasRedrawClip containment in the letterboxed document', () => {
     // `history-panel`, `paint-tool-pixels`, `layers-panel` — plus every caller of
     // `waitForCanvasRedraw(page, box)`, which reaches the same default through the wrapper.
     //
-    // The four that are NOT subject to it, and were wrongly named as its users, are
-    // `adjustments`, `levels`, `filter-tools` and `color`: each deliberately waits on its own
-    // contain-fit-derived `documentClipInBox(box)` instead. Derive the set with
+    // `adjustments`, `levels` and `filter-tools` also call `canvasRedrawClip`, so they are
+    // subject to this clamp. `color` is the exception: it waits on its own contain-fit-derived
+    // `documentClipInBox(box)` instead. Derive the set with
     //   grep -rn "canvasRedrawClip(" e2e/ --include="*.ts"
     //   grep -rn "waitForCanvasRedraw(page, box" e2e/ --include="*.ts"
     // and read it rather than trusting a list in a comment, which is the whole reason this
@@ -772,7 +933,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(await createTestImage(WHITE, 1, 1));
 
     await expect(waitForCanvasRedraw(harness.page, BOX)).rejects.toThrow(
-      `Canvas did not render dark pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms`
+      `Canvas did not render dark pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms after ${READS_PER_DEFAULT_TIMEOUT} polls`
     );
 
     expect(harness.waitForTimeout).toHaveBeenCalledTimes(CANVAS_REDRAW_TIMEOUT_MS / CANVAS_REDRAW_POLL_INTERVAL_MS);
@@ -783,7 +944,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(await createTestImage(WHITE, 1, 1));
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 200, pollIntervalMs: 50 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 200ms'
+      'Canvas did not render dark pixels within 200ms after 5 polls'
     );
 
     expect(harness.screenshot).toHaveBeenCalledTimes(5);
@@ -796,7 +957,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(spray);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 0ms'
+      'Canvas did not render dark pixels within 0ms after 1 poll'
     );
 
     expect(harness.screenshot).toHaveBeenCalledTimes(1);
@@ -809,7 +970,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(transparent);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 0ms'
+      'Canvas did not render dark pixels within 0ms after 1 poll'
     );
   });
 
@@ -829,5 +990,27 @@ describe('waitForCanvasRedraw', () => {
     await expect(waitForCanvasRedraw(harness.page, BOX)).rejects.toBe(failure);
 
     expect(harness.waitForTimeout).not.toHaveBeenCalled();
+  });
+
+  it('matches waitForCanvasPixels poll behaviour one-for-one on the same parameters', async () => {
+    const redrawHarness = createPollingPage(await createTestImage(WHITE, 1, 1));
+
+    await expect(waitForCanvasRedraw(redrawHarness.page, BOX, { timeoutMs: 300, pollIntervalMs: 100 })).rejects.toThrow(
+      'Canvas did not render dark pixels within 300ms after 4 polls'
+    );
+
+    expect(redrawHarness.screenshot).toHaveBeenCalledTimes(4);
+    expect(redrawHarness.waitForTimeout.mock.calls).toEqual([[100], [100], [100]]);
+
+    const pixelsHarness = createPollingPage();
+    await expect(
+      waitForCanvasPixels(pixelsHarness.page, STANDALONE_CLIP, always(false), {
+        timeoutMs: 300,
+        pollIntervalMs: 100,
+      })
+    ).rejects.toThrow('Canvas did not render the expected pixels within 300ms after 4 polls');
+
+    expect(pixelsHarness.screenshot).toHaveBeenCalledTimes(4);
+    expect(pixelsHarness.waitForTimeout.mock.calls).toEqual([[100], [100], [100]]);
   });
 });

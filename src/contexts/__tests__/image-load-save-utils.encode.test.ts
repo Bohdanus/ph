@@ -23,7 +23,7 @@ vi.mock('../bmp-utils.ts', () => ({ encodeBmp }));
 vi.mock('../gif-utils.ts', () => ({ encodeGif }));
 vi.mock('../avif-utils.ts', () => ({ encodeAvif }));
 vi.mock('../ico-utils.ts', () => ({ encodeIco }));
-vi.mock('../svg-utils.ts', () => ({ encodeSvg }));
+vi.mock('../svg-utils.ts', async (importOriginal) => ({ ...(await importOriginal()), encodeSvg }));
 
 describe('saveImageToDisk failure paths', () => {
   const createObjectURL = vi.fn(() => 'blob:export');

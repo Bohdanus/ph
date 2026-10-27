@@ -76,6 +76,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
       flushSync(() => {
         exportLayers = commitDirtyTool();
       });
+      if (exportLayers === null) return;
       const data = await openSaveImageDialog({
         fileName,
         layers: exportLayers,

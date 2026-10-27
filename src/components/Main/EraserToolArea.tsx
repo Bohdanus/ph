@@ -1,4 +1,4 @@
-import { type PointerEvent, useEffect, useRef } from 'react';
+import { type PointerEvent, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { type EraserToolArgs } from '../../tools/eraser.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
@@ -8,6 +8,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point } from '../../contexts/general-types.ts';
 import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { getActiveSelection, getSelectionProcessorSnapshot } from '../../util/selection.ts';
 
 type EraserToolAreaProps = {
   className?: string;
@@ -32,9 +33,11 @@ type EraserToolAreaProps = {
  * why they cannot drift.
  */
 export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
-  const [{ containerRef, layers, activeLayerId, totalSize, documentFrame: currentFrame }] = useStore();
+  const [
+    { containerRef, layers, activeLayerId, totalSize, documentFrame: currentFrame, selections, activeSelectionId },
+  ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { updateLayerByTool, tempUpdateLayer } = useLayers();
+  const { updateLayerByTool, tempUpdateLayer, cancelLayerPreview } = useLayers();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as EraserToolArgs;
@@ -56,17 +59,26 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
    * and a release that then pushed a point back in would erase the end of the line a second time.
    */
   const lineCommittedRef = useRef(false);
+  const selectionSnapshotRef = useRef<EraserToolArgs['selection']>(undefined);
   /**
    * The pointer id this component's own claim was taken with. The cancel handler and the unmount
    * cleanup never see a pointer event, so the id is kept here for every release route to name the
    * claim it is releasing.
    */
   const claimedPointerIdRef = useRef<number | null>(null);
+  const anchorBeforeGestureRef = useRef<Point | null>(null);
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
+  const gestureLayerIdRef = useRef<typeof activeLayerId>(null);
+  const cancelLayerPreviewRef = useRef(cancelLayerPreview);
+  useLayoutEffect(() => {
+    cancelLayerPreviewRef.current = cancelLayerPreview;
+  }, [cancelLayerPreview]);
 
-  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
-    ref: containerRef,
-    imageSize: totalSize,
-  });
+  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, releasePointer } =
+    usePointerPosition({
+      ref: containerRef,
+      imageSize: totalSize,
+    });
 
   const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
 
@@ -96,6 +108,23 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
       return { x: document.x - rasterBounds.x, y: document.y - rasterBounds.y };
     });
 
+  const snapshotSelection = (): EraserToolArgs['selection'] => {
+    const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
+    if (!activeSelection) return undefined;
+
+    return {
+      ...getSelectionProcessorSnapshot(activeSelection, rasterBounds),
+      featherRadius: activeSelection.metadata?.featherRadius ?? 0,
+      antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
+    };
+  };
+
+  const argsWithSelection = (points: Point[]) => ({
+    ...args,
+    points: toLayerPoints(points),
+    ...(selectionSnapshotRef.current ? { selection: selectionSnapshotRef.current } : {}),
+  });
+
   /**
    * One stroke, one write, coalesced into a single animation frame, so a fast drag does not run the
    * flood-and-write pipeline once per pointer event.
@@ -110,14 +139,14 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
 
     tempUpdateLayer({
       id: activeLayerId!,
-      toolArgs: { ...args, points: toLayerPoints(pointsRef.current) },
+      toolArgs: argsWithSelection(pointsRef.current),
     });
   };
 
-  function releaseDocumentClaim() {
+  const releaseDocumentClaim = useCallback(() => {
     releaseDocumentGesture('eraser-stroke', claimedPointerIdRef.current);
     claimedPointerIdRef.current = null;
-  }
+  }, []);
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (args.toolName !== 'eraser') return;
@@ -130,14 +159,21 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // `entries.slice(0, cursor + 1)` truncates the redo tail with no other symptom.
     // Claimed after `isPointerDownValid`, so a refused press claims nothing, and only
     // when the claim succeeded, so a loser never records an id it does not own.
-    if (claimDocumentGesture('eraser-stroke', event.pointerId)) {
-      claimedPointerIdRef.current = event.pointerId;
+    if (!claimDocumentGesture('eraser-stroke', event.pointerId)) {
+      releasePointer();
+      return;
     }
+    claimedPointerIdRef.current = event.pointerId;
+    gestureLayerIdRef.current = activeLayerId;
+    anchorBeforeGestureRef.current = anchorRef.current ? { ...anchorRef.current } : null;
+    previewLayerIdRef.current = null;
 
     // After the claim, deliberately. A press with no editable layer can still commit nothing, and
     // the release has to run its first statement on every path out of this handler — including
     // this one — or the claim taken above would be held until some unrelated gesture released it.
     if (!isEnabled) return;
+
+    selectionSnapshotRef.current = snapshotSelection();
 
     const coords = getLocalCoords(event);
 
@@ -150,11 +186,12 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
       anchorRef.current = null;
       lineCommittedRef.current = true;
       pointsRef.current = [];
-      updateLayerByTool({ toolArgs: { ...args, points: toLayerPoints(line) } });
+      updateLayerByTool({ toolArgs: argsWithSelection(line) });
       return;
     }
 
     anchorRef.current = coords;
+    previewLayerIdRef.current = activeLayerId;
     pointsRef.current = [coords];
 
     // Synchronous, deliberately: this is the only paint a single-point stroke gets, and waiting for
@@ -182,7 +219,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // in the commit path below, the missing-active-layer one among them.
     releaseDocumentClaim();
 
-    // Cancel AND null, as `useDrag`/`useRect` do. Nulling alone would leave `frameRequested`
+    // Cancel AND null, as `useRect` does. Nulling alone would leave `frameRequested`
     // permanently non-null and every later stroke's preview silently dropped; cancelling alone would
     // drop the last preview, because the frame that would have painted the final point is the one
     // being cancelled.
@@ -196,7 +233,11 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // second history entry.
     if (lineCommittedRef.current) {
       lineCommittedRef.current = false;
+      anchorBeforeGestureRef.current = null;
+      previewLayerIdRef.current = null;
       pointsRef.current = [];
+      selectionSnapshotRef.current = undefined;
+      gestureLayerIdRef.current = null;
       return;
     }
 
@@ -213,16 +254,60 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     if (isEnabled && pointsRef.current.length > 0) {
       // `id` is deliberately left to the hook's `= activeLayerId` default: the layer whose `pos`
       // the conversion above used is the one that must receive the edit.
-      updateLayerByTool({ toolArgs: { ...args, points: toLayerPoints(pointsRef.current) } });
+      updateLayerByTool({ toolArgs: argsWithSelection(pointsRef.current) });
     }
 
     pointsRef.current = [];
+    selectionSnapshotRef.current = undefined;
+    anchorBeforeGestureRef.current = null;
+    previewLayerIdRef.current = null;
+    gestureLayerIdRef.current = null;
   };
 
-  const handlePointerCancel = () => {
-    // Paired with the abort the hook already performs: a cancel is a gesture that will never commit,
-    // so a claim left open here would gate every later keystroke for a stroke that does not exist.
+  const cancelActiveGesture = useCallback(() => {
+    if (claimedPointerIdRef.current === null) return;
+    releasePointer();
     releaseDocumentClaim();
+    if (frameRequested.current !== null) {
+      cancelAnimationFrame(frameRequested.current);
+      frameRequested.current = null;
+    }
+
+    const wasAlreadyCommitted = lineCommittedRef.current;
+    lineCommittedRef.current = false;
+    if (!wasAlreadyCommitted) {
+      anchorRef.current = anchorBeforeGestureRef.current ? { ...anchorBeforeGestureRef.current } : null;
+      const previewLayerId = previewLayerIdRef.current;
+      if (previewLayerId) cancelLayerPreview(previewLayerId);
+    }
+
+    pointsRef.current = [];
+    selectionSnapshotRef.current = undefined;
+    anchorBeforeGestureRef.current = null;
+    previewLayerIdRef.current = null;
+    gestureLayerIdRef.current = null;
+  }, [releaseDocumentClaim, releasePointer]);
+
+  useLayoutEffect(() => {
+    // Every preview and the eventual raster replacement must address the same
+    // active layer. If a second interaction changes that identity mid-stroke,
+    // release the captured stream and roll its preview back before another move
+    // or release can target the newly active layer.
+    if (
+      claimedPointerIdRef.current === null ||
+      lineCommittedRef.current ||
+      gestureLayerIdRef.current === activeLayerId
+    ) {
+      return;
+    }
+    cancelActiveGesture();
+  }, [activeLayerId, cancelActiveGesture]);
+
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    // Cancellation belongs to one pointer stream. A foreign pointer must not release the claim,
+    // erase the live layer preview, or roll back the last committed Shift-click anchor.
+    if (claimedPointerIdRef.current !== event.pointerId) return;
+    cancelActiveGesture();
   };
 
   useEffect(() => {
@@ -230,15 +315,23 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
     return () => {
       releaseDocumentClaim();
+      selectionSnapshotRef.current = undefined;
 
       // A frame left pending across an unmount would write to a layer this component no longer
-      // owns, so it is cancelled rather than left to run.
+      // owns, so it is cancelled before the preview is rolled back.
       if (frameRequested.current !== null) {
         cancelAnimationFrame(frameRequested.current);
         frameRequested.current = null;
       }
+      const previewLayerId = previewLayerIdRef.current;
+      if (previewLayerId) cancelLayerPreviewRef.current(previewLayerId);
+      previewLayerIdRef.current = null;
+      anchorBeforeGestureRef.current = null;
+      pointsRef.current = [];
+      lineCommittedRef.current = false;
+      gestureLayerIdRef.current = null;
     };
-  }, []);
+  }, [releaseDocumentClaim]);
 
   return (
     <div

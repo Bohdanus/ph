@@ -122,7 +122,7 @@ describe('FileProvider PSD integration', () => {
     });
     expect(downloadBlob).not.toHaveBeenCalled();
     expect(resolved).toHaveBeenCalledWith(null);
-    expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Encoding failed'));
+    expect(console.error).toHaveBeenCalledWith('Failed to save file:', new Error('Encoding failed'));
   });
 
   /**
@@ -510,7 +510,7 @@ describe('FileProvider save dialog edge cases', () => {
     });
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Disk full'));
+    expect(console.error).toHaveBeenCalledWith('Failed to save file:', new Error('Disk full'));
   });
 
   it('handles PSD save failure with a logged error and null resolution', async () => {
@@ -546,7 +546,7 @@ describe('FileProvider save dialog edge cases', () => {
     });
     expect(downloadBlob).not.toHaveBeenCalled();
     expect(resolved).toHaveBeenCalledWith(null);
-    expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('PSD encoding failed'));
+    expect(console.error).toHaveBeenCalledWith('Failed to save file:', new Error('PSD encoding failed'));
   });
 
   it('handles multiple sequential saves', async () => {
@@ -623,12 +623,13 @@ describe('FileProvider save dialog after a failed export', () => {
     });
 
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
-    await waitFor(() => expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Disk full')));
+    await waitFor(() => expect(console.error).toHaveBeenCalledWith('Failed to save file:', new Error('Disk full')));
 
     // The failure is still reported in band, so the caller's `if (data)` guard holds and
     // the document is never marked saved.
     expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to save the file: Disk full');
     // `saving` is reset by SaveDialog's own `finally`, so the dialog is not a shell.
     expect(submit().disabled).toBe(false);
     expect(cancel().disabled).toBe(false);
@@ -672,7 +673,7 @@ describe('FileProvider save dialog after a failed export', () => {
     fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'image/jpeg' } });
     fireEvent.change(screen.getByTestId('save-dialog-jpeg-quality'), { target: { value: '0.35' } });
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
-    await waitFor(() => expect(console.error).toHaveBeenCalledWith('Failed to save image:', expect.any(Error)));
+    await waitFor(() => expect(console.error).toHaveBeenCalledWith('Failed to save file:', expect.any(Error)));
 
     expect((screen.getByTestId('save-dialog-filename-input') as HTMLInputElement).value).toBe('poster');
     expect((screen.getByTestId('save-dialog-format-select') as HTMLSelectElement).value).toBe('image/jpeg');
@@ -978,7 +979,7 @@ describe('FileProvider document frame and non-Error failures', () => {
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(console.error).toHaveBeenCalledWith('Failed to save image:', 'encoder exploded');
+    expect(console.error).toHaveBeenCalledWith('Failed to save file:', 'encoder exploded');
   });
 
   it('renders the export surface from the staged documentFrame, not from size alone', async () => {

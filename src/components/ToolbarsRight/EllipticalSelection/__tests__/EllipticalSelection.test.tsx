@@ -30,7 +30,7 @@ const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 const clearSelectionsMock = vi.hoisted(() => vi.fn());
 
-/** The three selection-state fields the Copy/Paste/Clear row reads. */
+/** The three selection-state fields the Copy/Paste/Deselect row reads. */
 const selectionState = vi.hoisted((): { activeSelection: Selection | null; hasSelectionClipboard: boolean } => ({
   activeSelection: null,
   hasSelectionClipboard: false,
@@ -84,9 +84,11 @@ const ELLIPSE_SELECTION: Selection = {
   isActive: true,
   pos: { x: 8, y: 12, width: 24, height: 32 },
   points: [
-    { x: 8, y: 12 },
-    { x: 32, y: 12 },
-    { x: 32, y: 44 },
+    [
+      { x: 8, y: 12 },
+      { x: 32, y: 12 },
+      { x: 32, y: 44 },
+    ],
   ],
 };
 
@@ -96,7 +98,7 @@ const getWidth = () => screen.getByLabelText('Width') as HTMLInputElement;
 const getHeight = () => screen.getByLabelText('Height') as HTMLInputElement;
 const getCopy = () => screen.getByRole('button', { name: 'Copy' });
 const getPaste = () => screen.getByRole('button', { name: 'Paste' });
-const getClear = () => screen.getByRole('button', { name: 'Clear' });
+const getClear = () => screen.getByRole('button', { name: 'Deselect' });
 
 /**
  * The label text of every numeric field currently on screen, in DOM order.
@@ -365,7 +367,7 @@ describe('EllipticalSelection toolbar', () => {
   });
 
   describe('selection actions', () => {
-    it('disables Copy and Clear until there is an active selection', () => {
+    it('disables Copy and Deselect until there is an active selection', () => {
       render(<EllipticalSelection />);
 
       expect(getCopy()).toBeDisabled();
@@ -377,7 +379,7 @@ describe('EllipticalSelection toolbar', () => {
       resetSelectionState({ hasSelectionClipboard: true });
       render(<EllipticalSelection />);
 
-      // Copy and Clear are about the CURRENT selection; Paste is about the clipboard. They are
+      // Copy and Deselect are about the CURRENT selection; Paste is about the clipboard. They are
       // gated on different state and must not be gated on the same thing.
       expect(getPaste()).toBeEnabled();
       expect(getCopy()).toBeDisabled();

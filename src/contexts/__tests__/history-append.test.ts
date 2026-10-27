@@ -6,11 +6,13 @@ import {
   createSelectionHistoryItem,
 } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
+import { rotationAffineAroundPoint } from '../affine-transform.ts';
 import {
   decideDurableAppend,
   deriveReorderLayersEntry,
   durableAppendDiagnostic,
   planHistoryAppend,
+  validatePlannedDurableEntry,
   type AppendBoundaryResult,
   type DurableAppendInput,
 } from '../history-append.ts';
@@ -18,10 +20,12 @@ import {
   deriveSetDocumentFrameEntry,
   deriveSetLayerPropertiesEntry,
   legacyHistoryToDurable,
+  sourceToRuntimeLayer,
   toggleDurableEntry,
 } from '../history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
+  freezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerPropertyPatch,
@@ -29,19 +33,24 @@ import {
 } from '../history-model.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
   type ActionType,
 } from '../../util/constants.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
+import { replayHistory } from '../history-replay.ts';
 import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
 import type { Selection } from '../general-types.ts';
-import type { LayerId } from '../layer-types.ts';
+import type { LayerId, LayerSource } from '../layer-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from '../history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from '../history-types.ts';
 
@@ -53,7 +62,13 @@ function selectionState(id: string): SelectionSnapshot {
     selections: [
       {
         id,
-        points: [{ x: 1, y: 2 }],
+        points: [
+          [
+            { x: 1, y: 2 },
+            { x: 4, y: 2 },
+            { x: 4, y: 6 },
+          ],
+        ],
         isActive: true,
         pos: { x: 1, y: 2, width: 3, height: 4 },
       } satisfies Selection,
@@ -86,11 +101,87 @@ function cropItem(nextFrame: DocumentFrame = croppedFrame): NewHistoryItem {
   };
 }
 
+function rotatedCropItem(): NewHistoryItem {
+  return {
+    ...cropItem(),
+    args: {
+      previousFrame: baselineFrame,
+      nextFrame: croppedFrame,
+      transform: rotationAffineAroundPoint(-Math.PI / 4, {
+        x: croppedFrame.x + croppedFrame.width / 2,
+        y: croppedFrame.y + croppedFrame.height / 2,
+      }),
+    },
+  };
+}
+
 function propertyItem(actionName: ActionType, args?: unknown, layerId = 'layer-1'): NewHistoryItem {
   // `unknown` because the malformed shapes under test include a primitive, which
   // the writer's typed signature excludes but a live caller can still produce.
   return { layerId, actionName, ...(args === undefined ? {} : { args: args as object }) };
 }
+
+function filterValidationPair(legacyArgs: Record<string, unknown>, plannedArgs = legacyArgs) {
+  const entry = createMockHistoryItem({
+    id: 'json-validation',
+    actionName: TOOL_ACTION,
+    layerId: 'layer-1',
+    args: legacyArgs,
+  });
+  const planned = {
+    id: entry.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled: true,
+    operation: {
+      kind: 'apply-filter',
+      layerId: 'layer-1',
+      filter: { toolName: 'blur', version: 1, args: plannedArgs },
+    },
+  } as unknown as DurableHistoryEntry;
+  return { entry, planned };
+}
+
+describe('retained filter JSON validation', () => {
+  it('accepts structurally equal dense JSON arguments', () => {
+    const { entry, planned } = filterValidationPair(
+      { toolName: 'blur', radius: 4, samples: [1, { amount: 2 }] },
+      { toolName: 'blur', radius: 4, samples: [1, { amount: 2 }] }
+    );
+    expect(validatePlannedDurableEntry(entry, planned)).toBeNull();
+  });
+
+  it.each([
+    ['a Date', () => new Date(0)],
+    ['a function', () => () => undefined],
+    ['NaN', () => Number.NaN],
+  ] as const)('rejects identical %s values as non-JSON', (label, makeValue) => {
+    const { entry, planned } = filterValidationPair({ toolName: 'blur', value: makeValue() });
+    expect(validatePlannedDurableEntry(entry, planned)).toBe(
+      label === 'a Date'
+        ? 'the legacy history entry is malformed'
+        : 'the durable filter arguments do not match the legacy entry'
+    );
+  });
+
+  it('rejects cyclic values even when both plans carry the same object', () => {
+    const legacyArgs: Record<string, unknown> = { toolName: 'blur' };
+    legacyArgs.self = legacyArgs;
+    const { entry, planned } = filterValidationPair(legacyArgs);
+    expect(validatePlannedDurableEntry(entry, planned)).toBe(
+      'the durable filter arguments do not match the legacy entry'
+    );
+  });
+
+  it('does not match an own toString key against an inherited key', () => {
+    const { entry, planned } = filterValidationPair(
+      { toolName: 'blur', toString: Object.prototype.toString },
+      { toolName: 'blur', radius: Object.prototype.toString }
+    );
+    expect(validatePlannedDurableEntry(entry, planned)).toBe(
+      'the durable filter arguments do not match the legacy entry'
+    );
+  });
+});
 
 /**
  * The conversion the plan must agree with. The baseline carries no layer, so a
@@ -121,6 +212,70 @@ function convertedEntryFor(item: HistoryItem): DurableHistoryEntry | undefined {
   }
 }
 
+describe('legacy document-source projection parity', () => {
+  it('skips a later source-bearing action exactly as legacy replay does', () => {
+    const registry = new AssetRegistry();
+    try {
+      const layerSource: LayerSource = {
+        kind: 'blank',
+        color: '#ffffff',
+        opacity: 1,
+        isBedrock: false,
+        pos: { x: 10, y: 20, width: 100, height: 80 },
+      };
+      const openingLayer = sourceToRuntimeLayer('layer-1', layerSource, new Map());
+      const openingEntry: HistoryItem = {
+        id: 'opening',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId: 'document',
+        documentSource: {
+          layers: { [openingLayer.id]: openingLayer },
+          size: { width: 800, height: 600 },
+          frame: baselineFrame,
+        },
+      };
+      const laterEntry: HistoryItem = {
+        id: 'later-document-source',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: 'layer-1',
+        args: { name: 'Mutated' },
+        documentSource: { layers: {}, size: { width: 400, height: 300 }, frame: croppedFrame },
+      };
+      const history = [openingEntry, laterEntry];
+      const replay = (items: readonly HistoryItem[]) =>
+        replayHistory(
+          items,
+          1,
+          { width: 800, height: 600 },
+          {
+            createLayer: () => {
+              throw new Error('unexpected layer creation');
+            },
+            applyRasterTool: (layer) => layer,
+          },
+          baselineFrame
+        );
+      const legacyReplay = replay(history);
+      expect(replay([openingEntry, { ...laterEntry, documentSource: undefined }]).layers['layer-1']?.name).toBe(
+        'Mutated'
+      );
+
+      const converted = legacyHistoryToDurable(history, { documentId: 'source-parity', registry });
+
+      expect(legacyReplay.layers['layer-1']?.name).toBe(openingLayer.name);
+      expect(converted.document.baseline.layers[0]?.name).toBe(openingLayer.name);
+      expect(converted.document.baseline.frame).toEqual(baselineFrame);
+      expect(converted.document.history).toEqual([]);
+      expect(converted.legacyCursorToDurableCursor).toEqual([-1, -1]);
+      expect(converted.diagnostics).toContainEqual(
+        expect.objectContaining({ historyId: laterEntry.id, severity: 'warning', code: 'document-replacement' })
+      );
+    } finally {
+      registry.shutdown();
+    }
+  });
+});
+
 describe('planHistoryAppend: one entry per append', () => {
   it('mints a single entry with a fresh id and the caller args', () => {
     const before = createMockHistory(2).map((entry) => entry.id);
@@ -147,6 +302,34 @@ describe('planHistoryAppend: one entry per append', () => {
 
     expect(result.entry.id).toBe('stable-id');
     expect(result.durableEntry?.id).toBe('stable-id');
+  });
+
+  it('refuses a document source on appended entries in planning and supplied-plan validation', () => {
+    const item = propertyItem(RENAME_LAYER_ACTION, { name: 'Renamed' });
+    const timelineBefore = timeline(createMockHistory(1));
+    const canonical = planHistoryAppend({
+      item,
+      timeline: timelineBefore,
+      currentFrame: baselineFrame,
+      id: 'document-source-append',
+    });
+    if (!canonical.durableEntry) throw new Error('expected the source-free property entry to be translated');
+
+    const sourceBearing = planHistoryAppend({
+      item: {
+        ...item,
+        documentSource: { layers: {}, size: { width: 800, height: 600 }, frame: baselineFrame },
+      },
+      timeline: timelineBefore,
+      currentFrame: baselineFrame,
+      id: 'document-source-append',
+    });
+
+    expect(sourceBearing.durableEntry).toBeNull();
+    expect(sourceBearing.diagnostics[0]).toMatchObject({ code: 'document-replacement' });
+    expect(validatePlannedDurableEntry(sourceBearing.entry, canonical.durableEntry)).toBe(
+      'an appended history entry cannot carry a document replacement'
+    );
   });
 
   it('never mutates the legacy arguments it is given', () => {
@@ -180,6 +363,23 @@ describe('planHistoryAppend: durable translation', () => {
       previous: baselineFrame,
       next: croppedFrame,
     });
+  });
+
+  it('plans a rotated crop as one transform-document history operation', () => {
+    const result = planHistoryAppend({
+      item: rotatedCropItem(),
+      timeline: timeline(createMockHistory(1)),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.durableEntry?.operation).toEqual({
+      kind: 'transform-document',
+      previous: baselineFrame,
+      next: croppedFrame,
+      transform: (result.entry.args as { transform: unknown }).transform,
+    });
+    expect(result.durableEntry?.id).toBe(result.entry.id);
+    expect(result.diagnostics).toEqual([]);
   });
 
   it('falls back to the current durable frame when the writer observed none', () => {
@@ -257,8 +457,60 @@ describe('planHistoryAppend: selection translation', () => {
       id: result.entry.id,
       schemaVersion: DURABLE_SCHEMA_VERSION,
       enabled: true,
+      provenance: { actionName: SELECTION_ACTION },
       operation: { kind: 'set-selection', before: previousSelectionState, after: nextSelectionState },
     });
+  });
+
+  it('preserves a canonical non-drawable legacy before snapshot when clearing selection', () => {
+    const legacyBefore: SelectionSnapshot = {
+      selections: [
+        {
+          id: 'legacy-selection',
+          points: [],
+          isActive: true,
+          pos: { x: 1, y: 2, width: 10, height: 12 },
+        } as Selection,
+      ],
+      activeSelectionId: 'legacy-selection',
+    };
+    const result = plan(
+      createSelectionHistoryItem(legacyBefore, { selections: [], activeSelectionId: null }),
+      legacyBefore
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry?.operation).toMatchObject({
+      kind: 'set-selection',
+      before: legacyBefore,
+      after: { selections: [], activeSelectionId: null },
+    });
+  });
+
+  it.each([
+    ['no contours', [] as Selection['points']],
+    [
+      'only a short contour',
+      [
+        [
+          { x: 1, y: 2 },
+          { x: 4, y: 2 },
+        ],
+      ] as Selection['points'],
+    ],
+  ])('does not persist a vector selection with %s', (_label, points) => {
+    const current = nextSelectionState.selections[0]!;
+    const invalidNextState: SelectionSnapshot = {
+      ...nextSelectionState,
+      selections: [{ ...current, points }],
+    };
+
+    const result = plan(createSelectionHistoryItem(previousSelectionState, invalidNextState), previousSelectionState);
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics).toMatchObject([
+      { code: 'unsupported-history-feature', severity: 'warning', actionName: SELECTION_ACTION },
+    ]);
   });
 
   it('falls back to the tracked current selections when the writer observed no previous state', () => {
@@ -317,6 +569,36 @@ describe('planHistoryAppend: layer-property translation', () => {
     { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
     { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+    {
+      label: 'an opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.42 },
+      patch: { opacity: 0.42 },
+    },
+    {
+      label: 'a lower opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.25 },
+      patch: { opacity: 0.25 },
+    },
+    {
+      label: 'a blend-mode update',
+      actionName: SET_LAYER_BLEND_MODE_ACTION,
+      args: { blendMode: 'multiply' },
+      patch: { blendMode: 'multiply' },
+    },
+    {
+      label: 'a full lock',
+      actionName: LOCK_LAYER_ACTION,
+      args: { locked: true },
+      patch: { locked: true },
+    },
+    {
+      label: 'a full unlock',
+      actionName: UNLOCK_LAYER_ACTION,
+      args: { locked: false },
+      patch: { locked: false },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -331,6 +613,7 @@ describe('planHistoryAppend: layer-property translation', () => {
       id: result.entry.id,
       schemaVersion: DURABLE_SCHEMA_VERSION,
       enabled: true,
+      provenance: { actionName },
       operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch },
     });
     const operation = result.durableEntry?.operation;
@@ -533,6 +816,17 @@ describe('planHistoryAppend: append-point validation', () => {
     expect(result.entry.actionName).toBe(SET_DOCUMENT_FRAME_ACTION);
   });
 
+  it('accepts cursor zero as the append point for an empty timeline', () => {
+    const result = planHistoryAppend({
+      item: cropItem(),
+      timeline: timeline([], 0),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry?.operation).toMatchObject({ kind: 'set-document-frame', next: croppedFrame });
+  });
+
   it('accumulates a translation diagnostic and a timeline diagnostic', () => {
     const item: NewHistoryItem = { layerId: 'layer-1', actionName: TOOL_ACTION, args: { toolName: 'blur', radius: 4 } };
     const result = planHistoryAppend({
@@ -663,7 +957,10 @@ describe('decideDurableAppend', () => {
     expect(decision.outcome).toBe('published');
     if (decision.outcome !== 'published') return;
     expect(decision.document.history).toHaveLength(2);
-    // The model clones and freezes every entry, so identity is not preserved.
+    // The base above is hand-built rather than frozen, so this decision takes
+    // the full deep clone and identity is not preserved. `adopts the frozen
+    // baseline on the publication path` below drives the same decision over a
+    // document the store really holds, which is the shape that adopts.
     expect(decision.document.history[1]).toEqual(planned);
     expect(decision.document.history[0]).toEqual(base.history[0]);
     expect(decision.document.cursor).toBe(1);
@@ -671,6 +968,52 @@ describe('decideDurableAppend', () => {
     expect(decision.document.documentRevision).toBe(4);
     expect(decision.document.branchRevision).toBe(0);
     expect(decision.document.baseline.frame).toEqual(baselineFrame);
+  });
+
+  it('refuses a planned append whose id already exists in the durable document', () => {
+    // prior legacy entries do not contain the appended id, but the durable base
+    // history does: a collision the legacy duplicate guard cannot see.
+    const collidingBase = {
+      ...base,
+      history: [...base.history, createFrameEntry('crop-1')],
+      cursor: 1,
+      durableRevision: 8,
+    } as unknown as DurableDocument;
+    const decision = decide({ base: collidingBase });
+
+    expect(decision.outcome).toBe('preconditions');
+    if (decision.outcome !== 'preconditions') return;
+    expect(decision.reason).toBe('the appended history entry id already exists in the durable document');
+    // The existing publication case is preserved when there is no collision.
+    expect(decide().outcome).toBe('published');
+  });
+
+  it('adopts the frozen baseline on the publication path', () => {
+    // The base the store really holds is the converter's own output, deep-frozen
+    // end to end, and the append changes one position and adds one entry. So the
+    // publication moves the positions and keeps the content: the inherited entry
+    // and the baseline are adopted rather than re-copied, and only the planned
+    // entry — which arrives at the boundary shallow-frozen — is copied. Every
+    // assertion here fails if the publication goes back to copying the document.
+    const frozenBase = freezeDurableDocument(base);
+    const decision = decide({ base: frozenBase });
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.baseline).toBe(frozenBase.baseline);
+    expect(decision.document.history[0]).toBe(frozenBase.history[0]);
+    expect(decision.document.history[1]).not.toBe(planned);
+    expect(decision.document.history[1]).toEqual(planned);
+    // The one thing that had to be copied: `deriveSetDocumentFrameEntry` freezes
+    // the operation and leaves `previous` and `next` as plain copies.
+    const published = decision.document.history[1].operation;
+    if (published.kind !== 'set-document-frame') throw new Error(`unexpected operation ${published.kind}`);
+    expect(Object.isFrozen(published.next)).toBe(true);
+    expect(Object.isFrozen(published.previous)).toBe(true);
+    expect(published.next).not.toBe(croppedFrame);
+    expect(published.next).toEqual(croppedFrame);
+    expect(decision.document.cursor).toBe(1);
+    expect(decision.document.durableRevision).toBe(8);
   });
 
   it.each([
@@ -702,6 +1045,11 @@ describe('decideDurableAppend', () => {
       { ...planned, id: 'elsewhere' },
       'durable entry id elsewhere does not match the legacy entry id crop-1',
     ],
+    [
+      'a provenance recording a different action than the legacy entry',
+      { ...planned, provenance: { actionName: RENAME_LAYER_ACTION } },
+      'the durable history provenance does not match the legacy entry',
+    ],
     ['a different schema version', { ...planned, schemaVersion: 99 }, 'durable schema version 99'],
     [
       'a flipped enabled state',
@@ -710,7 +1058,14 @@ describe('decideDurableAppend', () => {
     ],
     [
       'a different operation kind',
-      { ...planned, operation: { kind: 'set-selection' } as never },
+      {
+        ...planned,
+        operation: {
+          kind: 'set-selection',
+          before: { selections: [], activeSelectionId: null },
+          after: { selections: [], activeSelectionId: null },
+        },
+      },
       'a document frame change produced a "set-selection" operation',
     ],
     [
@@ -810,6 +1165,262 @@ describe('decideDurableAppend', () => {
     });
   });
 
+  it('accepts a key-absent legacy active selection as the append before-state', () => {
+    const keylessPrevious = { selections: previousSelectionState.selections } as unknown as SelectionSnapshot;
+    const item = createSelectionHistoryItem(keylessPrevious, nextSelectionState);
+    const plan = planHistoryAppend({
+      item,
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!plan.durableEntry) throw new Error('expected a planned selection append');
+    const baseWithActiveSelection = {
+      ...base,
+      baseline: { ...base.baseline, selections: previousSelectionState },
+    } as DurableDocument;
+
+    const decision = decide({
+      base: baseWithActiveSelection,
+      entry: plan.entry,
+      next: { entries: [...priorEntries, plan.entry], cursor: 1, branchRevision: 0 },
+      planned: plan.durableEntry,
+    });
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history[1]?.operation).toMatchObject({
+      kind: 'set-selection',
+      before: previousSelectionState,
+      after: nextSelectionState,
+    });
+  });
+
+  it('refuses a sparse planned selection list against the dense legacy selection', () => {
+    if (plannedSelection.operation.kind !== 'set-selection') throw new Error('expected a selection operation');
+    const candidate: DurableHistoryEntry = {
+      ...plannedSelection,
+      operation: {
+        ...plannedSelection.operation,
+        after: { ...nextSelectionState, selections: new Array<Selection>(1) },
+      },
+    };
+
+    const decision = decideSelection(candidate);
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable next selection state does not match the legacy entry');
+    }
+  });
+
+  it('refuses a sparse selection snapshot shared by the legacy entry and supplied plan', () => {
+    const sparseNext = { ...nextSelectionState, selections: new Array<Selection>(1) };
+    const sparsePlan = planHistoryAppend({
+      item: createSelectionHistoryItem(previousSelectionState, sparseNext),
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    const legacyArgs = sparsePlan.entry.args as { nextSelectionState?: SelectionSnapshot };
+    const sharedSnapshot = legacyArgs.nextSelectionState;
+    if (!sharedSnapshot) throw new Error('expected the legacy entry to retain its next selection snapshot');
+    const candidate: DurableHistoryEntry = {
+      ...plannedSelection,
+      id: sparsePlan.entry.id,
+      operation: {
+        kind: 'set-selection',
+        before: previousSelectionState,
+        after: sharedSnapshot,
+      },
+    };
+    if (candidate.operation.kind !== 'set-selection') throw new Error('expected a selection operation');
+    expect(candidate.operation.after).toBe(sharedSnapshot);
+
+    const decision = decide({
+      entry: sparsePlan.entry,
+      next: { entries: [...priorEntries, sparsePlan.entry], cursor: 1, branchRevision: 0 },
+      planned: candidate,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable next selection state does not match the legacy entry');
+    }
+  });
+
+  it('refuses a selection with an executable extra property', () => {
+    if (plannedSelection.operation.kind !== 'set-selection') throw new Error('expected a selection operation');
+    const selection = { ...nextSelectionState.selections[0], execute: () => undefined };
+    const candidate: DurableHistoryEntry = {
+      ...plannedSelection,
+      operation: {
+        ...plannedSelection.operation,
+        after: { ...nextSelectionState, selections: [selection] },
+      },
+    };
+
+    const decision = decideSelection(candidate);
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable next selection state does not match the legacy entry');
+    }
+  });
+
+  it('refuses matching array-shaped selection metadata on both sides', () => {
+    const legacyNextState = {
+      ...nextSelectionState,
+      selections: [{ ...nextSelectionState.selections[0], metadata: [] as never }],
+    };
+    const item: HistoryItem = {
+      ...selectionPlan.entry,
+      args: { ...(selectionPlan.entry.args as Record<string, unknown>), nextSelectionState: legacyNextState },
+    };
+    if (plannedSelection.operation.kind !== 'set-selection') throw new Error('expected a selection plan');
+    const candidate: DurableHistoryEntry = {
+      ...plannedSelection,
+      operation: { ...plannedSelection.operation, after: legacyNextState },
+    };
+
+    expect(validatePlannedDurableEntry(item, candidate)).toBe(
+      'the durable next selection state does not match the legacy entry'
+    );
+  });
+
+  it('accepts committed selections with an own undefined metadata field', () => {
+    const legacyNextState = {
+      ...nextSelectionState,
+      selections: [{ ...nextSelectionState.selections[0], metadata: undefined }],
+    };
+    expect(Object.hasOwn(legacyNextState.selections[0], 'metadata')).toBe(true);
+    const item = createSelectionHistoryItem(previousSelectionState, legacyNextState);
+    const plan = planHistoryAppend({
+      item,
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!plan.durableEntry) throw new Error('expected a planned selection operation');
+
+    const decision = decide({
+      entry: plan.entry,
+      next: { entries: [...priorEntries, plan.entry], cursor: 1, branchRevision: 0 },
+      planned: plan.durableEntry,
+    });
+
+    expect(decision.outcome).toBe('published');
+  });
+
+  it('accepts the legacy Magic Wand boundaryPointCount in a durable selection append', () => {
+    const current = nextSelectionState.selections[0]!;
+    const legacyNextState: SelectionSnapshot = {
+      ...nextSelectionState,
+      selections: [
+        {
+          ...current,
+          metadata: {
+            magicWand: {
+              tolerance: 12,
+              smoothing: 1,
+              selectedPixelCount: 9,
+              boundaryPointCount: 12,
+              seed: { x: 2, y: 3 },
+              sampleColor: { r: 4, g: 5, b: 6, a: 255 },
+            },
+          },
+        },
+      ],
+    };
+    const item = createSelectionHistoryItem(previousSelectionState, legacyNextState);
+    const plan = planHistoryAppend({
+      item,
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!plan.durableEntry) throw new Error('expected a planned legacy selection entry');
+
+    const decision = decide({
+      entry: plan.entry,
+      next: { entries: [...priorEntries, plan.entry], cursor: 1, branchRevision: 0 },
+      planned: plan.durableEntry,
+    });
+
+    expect(decision.outcome).toBe('published');
+  });
+
+  it.each([
+    ['rectangle geometry', { geometry: 'rectangle' }],
+    ['polygonal-lasso source', { sourceTool: 'polygonal-lasso' }],
+  ] as const)('rejects a packed raster mask paired with %s', (_label, mismatch) => {
+    const packedSelection = {
+      ...nextSelectionState.selections[0]!,
+      points: [],
+      geometry: 'polygon' as const,
+      sourceTool: 'quick-selection' as const,
+      pos: { x: 1, y: 2, width: 2, height: 2 },
+      rasterMask: { width: 2, height: 2, data: 'AQ==' },
+    } satisfies Selection;
+    const validNextState: SelectionSnapshot = {
+      ...nextSelectionState,
+      selections: [packedSelection],
+    };
+    const validPlan = planHistoryAppend({
+      item: createSelectionHistoryItem(previousSelectionState, validNextState),
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!validPlan.durableEntry) throw new Error('expected a valid packed selection plan');
+
+    const malformedNextState: SelectionSnapshot = {
+      ...validNextState,
+      selections: [{ ...packedSelection, ...mismatch } as Selection],
+    };
+    const malformedItem = {
+      ...validPlan.entry,
+      args: {
+        ...(validPlan.entry.args as Record<string, unknown>),
+        nextSelectionState: malformedNextState,
+      },
+    };
+
+    expect(validatePlannedDurableEntry(malformedItem, validPlan.durableEntry)).toBe(
+      'the durable next selection state does not match the legacy entry'
+    );
+  });
+
+  it('rejects an accessor-backed legacy selection array without invoking it', () => {
+    const item = createSelectionHistoryItem(previousSelectionState, nextSelectionState);
+    const plan = planHistoryAppend({
+      item,
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    if (!plan.durableEntry) throw new Error('expected a planned selection operation');
+    const selectionGetter = vi.fn(() => nextSelectionState.selections[0]);
+    const selections = new Array(1);
+    Object.defineProperty(selections, '0', { configurable: true, enumerable: true, get: selectionGetter });
+    const malformedItem = {
+      ...plan.entry,
+      args: {
+        ...(plan.entry.args as Record<string, unknown>),
+        nextSelectionState: { ...nextSelectionState, selections },
+      },
+    };
+
+    const decision = decide({
+      entry: malformedItem,
+      next: { entries: [...priorEntries, malformedItem], cursor: 1, branchRevision: 0 },
+      planned: plan.durableEntry,
+    });
+
+    expect(decision).toMatchObject({ outcome: 'mismatch', reason: 'the legacy history entry is malformed' });
+    expect(selectionGetter).not.toHaveBeenCalled();
+  });
+
   it('accepts the defaulted before of a selection item that supplies no previous state', () => {
     const bare = planHistoryAppend({
       item: createSelectionHistoryItem(undefined, nextSelectionState),
@@ -882,13 +1493,9 @@ describe('decideDurableAppend', () => {
   });
 
   describe('a duplicate-id append, end to end', () => {
-    // Every precondition below holds. The ONE thing standing between this append
-    // and a published duplicate is the plan the append boundary is supposed to
-    // withhold, and it does not withhold it today — which is the branch
-    // `HANDOFF.md` §17 prescribes. These cases therefore PASS against the current
-    // boundary and exist to make the prescribed fix's teeth visible: each one goes
-    // red the moment the fix lands, and none of them asserts the fixed behaviour
-    // before the fix does.
+    // Duplicate ids are refused both while planning the timeline and at the
+    // publication boundary. These cases pin the precondition refusal and ensure
+    // conversion retains only the first legacy occurrence.
     const registry = new AssetRegistry();
     const existing = createMockHistoryItem({
       id: 'duplicate-id',
@@ -939,7 +1546,7 @@ describe('decideDurableAppend', () => {
 
       const converted = legacyHistoryToDurable(duplicateNext.entries, { documentId: 'doc-1', registry });
       expect(converted.diagnostics).toContainEqual(
-        expect.objectContaining({ historyId: 'duplicate-id', severity: 'warning' })
+        expect.objectContaining({ historyId: 'duplicate-id', severity: 'error' })
       );
       expect(converted.document.history.map((entry) => entry.id)).toEqual(['duplicate-id']);
       const toggled = toggleDurableEntry(converted.document, 'duplicate-id');
@@ -1002,6 +1609,30 @@ describe('decideDurableAppend: layer-property entries', () => {
     { label: 'a show', actionName: SHOW_LAYER_ACTION, args: undefined, patch: { visible: true } },
     { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
+    {
+      label: 'an opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.42 },
+      patch: { opacity: 0.42 },
+    },
+    {
+      label: 'a blend-mode update',
+      actionName: SET_LAYER_BLEND_MODE_ACTION,
+      args: { blendMode: 'multiply' },
+      patch: { blendMode: 'multiply' },
+    },
+    {
+      label: 'a lock',
+      actionName: LOCK_LAYER_ACTION,
+      args: { locked: true },
+      patch: { locked: true },
+    },
+    {
+      label: 'an unlock',
+      actionName: UNLOCK_LAYER_ACTION,
+      args: { locked: false },
+      patch: { locked: false },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -1027,6 +1658,57 @@ describe('decideDurableAppend: layer-property entries', () => {
     });
     expect(decision.document.cursor).toBe(1);
     expect(decision.document.durableRevision).toBe(8);
+  });
+
+  it('reports a mismatch when the planned opacity differs from the legacy entry', () => {
+    const opacityPlan = planHistoryAppend({
+      item: propertyItem(SET_LAYER_OPACITY_ACTION, { opacity: 0.42 }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    const decision = decidePlan(opacityPlan, {
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { opacity: 0.25 } },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable layer opacity does not match the legacy entry');
+    }
+  });
+
+  it('reports a mismatch when the planned blend mode differs from the legacy entry', () => {
+    const blendModePlan = planHistoryAppend({
+      item: propertyItem(SET_LAYER_BLEND_MODE_ACTION, { blendMode: 'multiply' }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    const decision = decidePlan(blendModePlan, {
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { blendMode: 'screen' } },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable layer blend mode does not match the legacy entry');
+    }
+  });
+
+  it('reports a mismatch when the planned lock state contradicts its action', () => {
+    const lockPlan = planHistoryAppend({
+      item: propertyItem(LOCK_LAYER_ACTION, { locked: true }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    const decision = decidePlan(lockPlan, {
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { locked: false } },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable layer lock state does not match the legacy entry');
+    }
   });
 
   it('publishes a disabled planned entry for a disabled legacy rename', () => {
@@ -1115,6 +1797,84 @@ describe('decideDurableAppend: layer-property entries', () => {
 
     expect(decidePlan(plan).outcome).toBe('preconditions');
   });
+
+  it.each([
+    ['null', null, 'the planned durable history operation is missing or malformed'],
+    ['undefined', undefined, 'the planned durable history operation is missing or malformed'],
+    [
+      'a set-layer-properties operation without a patch',
+      { kind: 'set-layer-properties', layerId: 'layer-1' },
+      'the durable layer-property operation does not have the canonical shape',
+    ],
+  ] as const)('fails closed for %s', (_label, operation, expectedReason) => {
+    const malformed = {
+      ...(renamePlan.durableEntry as DurableHistoryEntry),
+      operation,
+    } as unknown as DurableHistoryEntry;
+    const decision = decide(renamePlan.entry, malformed);
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome !== 'mismatch') return;
+    expect(decision.reason).toBe(expectedReason);
+  });
+
+  it('rejects an accessor-backed operation kind without invoking it', () => {
+    const kindGetter = vi.fn(() => 'set-layer-properties');
+    const operation = { ...(renamePlan.durableEntry as DurableHistoryEntry).operation };
+    Object.defineProperty(operation, 'kind', { configurable: true, enumerable: true, get: kindGetter });
+    const malformed = {
+      ...(renamePlan.durableEntry as DurableHistoryEntry),
+      operation,
+    } as unknown as DurableHistoryEntry;
+
+    expect(validatePlannedDurableEntry(renamePlan.entry, malformed)).toBe(
+      'the planned durable history operation is missing or malformed'
+    );
+    const decision = decide(renamePlan.entry, malformed);
+    expect(decision).toMatchObject({
+      outcome: 'mismatch',
+      reason: 'the planned durable history operation is missing or malformed',
+    });
+    expect(kindGetter).not.toHaveBeenCalled();
+  });
+
+  it('rejects extra executable properties on a durable operation', () => {
+    const base = renamePlan.durableEntry as DurableHistoryEntry;
+    const malformed = {
+      ...base,
+      operation: { ...base.operation, execute: () => undefined },
+    } as unknown as DurableHistoryEntry;
+
+    expect(validatePlannedDurableEntry(renamePlan.entry, malformed)).toBe(
+      'the durable layer-property operation does not have the canonical shape'
+    );
+    expect(decide(renamePlan.entry, malformed)).toMatchObject({
+      outcome: 'mismatch',
+      reason: 'the durable layer-property operation does not have the canonical shape',
+    });
+  });
+
+  it('rejects inherited provenance accessors without invoking them', () => {
+    const base = renamePlan.durableEntry as DurableHistoryEntry;
+    const provenanceGetter = vi.fn(() => ({ actionName: renamePlan.entry.actionName }));
+    const prototype = Object.create(Object.prototype) as object;
+    Object.defineProperty(prototype, 'provenance', { configurable: true, get: provenanceGetter });
+    const malformed = Object.create(prototype) as Record<string, unknown>;
+    Object.defineProperties(malformed, {
+      id: { enumerable: true, value: base.id },
+      schemaVersion: { enumerable: true, value: base.schemaVersion },
+      enabled: { enumerable: true, value: base.enabled },
+      operation: { enumerable: true, value: base.operation },
+    });
+
+    expect(validatePlannedDurableEntry(renamePlan.entry, malformed as unknown as DurableHistoryEntry)).toBe(
+      'the planned durable history operation is missing or malformed'
+    );
+    expect(decide(renamePlan.entry, malformed as unknown as DurableHistoryEntry)).toMatchObject({
+      outcome: 'mismatch',
+      reason: 'the planned durable history operation is missing or malformed',
+    });
+    expect(provenanceGetter).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -1164,10 +1924,12 @@ describe('decideDurableAppend: reorder entries', () => {
       prior: { entries: priorEntries, cursor: 0, branchRevision: 0 },
       next,
       entry,
-      planned: deriveReorderLayersEntry(entry, preOrder),
+      planned: deriveReorderLayersEntry(entry, preOrder, { bottom: 0, middle: 1, top: 2 }),
       documentRevision: 4,
       preLayerOrder: preOrder,
+      preLayerOrders: { bottom: 0, middle: 1, top: 2 },
       durableLayerOrder: [...preOrder],
+      durableLayerOrders: { bottom: 0, middle: 1, top: 2 },
       ...overrides,
     });
   };
@@ -1181,7 +1943,7 @@ describe('decideDurableAppend: reorder entries', () => {
     expect(decision.document.history).toHaveLength(2);
     expect(decision.document.history[1]!.operation).toEqual({
       kind: 'reorder-layers',
-      orderByLayerId: { middle: 0, top: 1, bottom: 2 },
+      orderByLayerId: { middle: 1, top: 2, bottom: 3 },
     });
     expect(decision.document.history[1]!.id).toBe(entry.id);
     expect(decision.document.durableRevision).toBe(8);
@@ -1189,15 +1951,14 @@ describe('decideDurableAppend: reorder entries', () => {
 
   it.each([
     ['no store order at all', { preLayerOrder: null }],
+    ['runtime order values are absent', { preLayerOrders: null }],
+    ['durable order values do not match', { durableLayerOrders: { bottom: 0, middle: 1, top: 4 } }],
     ['a durable order that is not supplied', { durableLayerOrder: null }],
     ['a durable order of the wrong length', { durableLayerOrder: ['bottom', 'middle'] }],
     ['a durable order with a layer the store does not hold', { durableLayerOrder: [...preOrder, 'ghost'] }],
     ['a durable order missing a layer the store holds', { durableLayerOrder: ['bottom', 'top'] }],
-    // Same length, same members, different sequence. This is the case a
-    // membership check cannot see, and it is the one that matters: a published
-    // map is a fresh normalisation of the order, so publishing while the models
-    // disagree about the order launders the disagreement into a document no
-    // reconversion will reproduce.
+    // Same length and members but a different sequence: membership alone is
+    // insufficient to prove the store and durable pre-states agree.
     [
       'a durable order that is the same set in a different sequence',
       { durableLayerOrder: ['top', 'middle', 'bottom'] },
@@ -1227,8 +1988,8 @@ describe('decideDurableAppend: reorder entries', () => {
   });
 
   it.each([
-    ['no anchor', undefined, { bottom: 0, middle: 1, top: 2 }],
-    ['an explicit null anchor', null, { bottom: 0, middle: 1, top: 2 }],
+    ['no anchor', undefined, { bottom: -1, middle: 1, top: 2 }],
+    ['an explicit null anchor', null, { bottom: -1, middle: 1, top: 2 }],
   ] as const)('plans a move to the bottom for %s', (_label, afterWhichLayerId, expected) => {
     const entry = reorderEntry({ afterWhichLayerId });
     const decision = decide(entry);
@@ -1240,16 +2001,15 @@ describe('decideDurableAppend: reorder entries', () => {
 });
 
 /**
- * Three known gaps in the publication preconditions, pinned exactly as the
- * boundary behaves today.
+ * Three guards on what the boundary publishes, each asserted as a REFUSAL.
  *
- * Each test asserts what the code DOES and names, in its own comment, the
- * precondition it does not have. They are tripwires, not endorsements: a fix
- * adds the named precondition, and the pin is deleted rather than relaxed. A
- * green run here is not evidence the boundary is safe — it is evidence the
- * defect has not been fixed yet.
+ * The first two were KNOWN-GAP pins — tests that asserted the boundary's defect on
+ * purpose, so a green run was evidence the defect was still there — and the two
+ * guards they named are now enforced, so each asserts the refusal and the absence
+ * of a publication instead. The third is not a gap: entry-id uniqueness is closed
+ * at the plan boundary, so a repeated id reaches this decision as a withheld plan.
  */
-describe('decideDurableAppend: known gaps in the publication preconditions', () => {
+describe('decideDurableAppend: publication preconditions at the base boundary', () => {
   const undoneFrame: DocumentFrame = { x: 0, y: 0, width: 640, height: 480 };
   const appendedFrame: DocumentFrame = { x: 0, y: 0, width: 200, height: 150 };
   const zeroFrame: DocumentFrame = { x: 0, y: 0, width: 0, height: 0 };
@@ -1316,24 +2076,10 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
     }
   };
 
-  // KNOWN GAP 1 — missing precondition: the base's own cursor. The guard list
-  // (`history-append.ts:590-610`) proves `documentId`, both revisions, the legacy
-  // tip, the length delta, the legacy cursor and the entry identity; it never
-  // proves that `base.cursor === base.history.length - 1`. The only cursor guard
-  // runs the wrong way for it — `cursor > next.cursor` (`history-append.ts:647`)
-  // catches a base that has too MANY entries, and a base that has too few slips
-  // through, because the published cursor is `base.history.length`
-  // (`history-append.ts:644`), not `base.cursor + 1`.
-  //
-  // User-visible failure: an entry the durable document had not reached (its own
-  // cursor sat below it — an undone edit) is inside the published cursor, so the
-  // published shadow replays an edit the user undid, and the redo-only state the
-  // base described is gone. Latent in the store today, because a mid-timeline
-  // base is only produced by a rebuild that maps the legacy cursor
-  // (`StoreContext.tsx:659-696`) and therefore arrives with a legacy prior that
-  // is not at its tip, which `history-append.ts:599` refuses first. Nothing in
-  // the boundary enforces the invariant; only that accident does.
-  it('publishes onto a base that is not at its own tip, turning a redo-only entry into an applied one', () => {
+  // The base's OWN cursor. `decideDurableAppend` proves `documentId`, both
+  // revisions, the legacy tip, the length delta, the legacy cursor and the entry
+  // identity — and the legacy cursor cannot speak for `base.cursor` at all.
+  it('refuses to publish onto a base that is not at its own tip, which would apply an undone entry', () => {
     const entry = cropEntryWith('crop-1', appendedFrame);
     const base = durableBase(
       [
@@ -1343,36 +2089,45 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
       0
     );
 
-    // Precondition for the pin: for this base, the crop at index 1 is redo-only.
+    // The precondition the guard reads: the base's own cursor sits below its own
+    // history, so the crop at index 1 is redo-only and the base replays the frame
+    // it started with.
     expect(base.cursor).toBe(0);
+    expect(base.history).toHaveLength(2);
     expect(replayDurableDocument(base).frame).toEqual(baselineFrame);
 
     const decision = decideCrop(base, entry, deriveSetDocumentFrameEntry(entry, baselineFrame));
 
-    expect(decision.outcome).toBe('published');
-    if (decision.outcome !== 'published') return;
-    expect(decision.document.history.map((candidate) => candidate.id)).toEqual(['baseline-0', 'undone-crop', 'crop-1']);
-    // The cursor advanced by TWO, from a base that was one behind its own history,
-    // and the entry the base had not reached is now below that cursor.
-    expect(decision.document.cursor).toBe(2);
-    expect(replayDurableDocument(decision.document, 1).frame).toEqual(undoneFrame);
+    expect(decision.outcome).toBe('preconditions');
+    if (decision.outcome === 'published') return;
+    expect(decision.reason).toBe('the durable document is not at the tip of its own history');
+    // No document at all: the refusal is the whole outcome, so nothing here can be
+    // replayed into a shadow describing a crop the user undid.
+    expect(decision).not.toHaveProperty('document');
+
+    // The legacy edit stands and the base is untouched — the boundary never rewrites
+    // what it was handed.
+    expect(entry.actionName).toBe(SET_DOCUMENT_FRAME_ACTION);
+    expect(base.history.map((candidate) => candidate.id)).toEqual(['baseline-0', 'undone-crop']);
+    expect(base.cursor).toBe(0);
+
+    // The control: the same plan onto the same history with the cursor moved to its
+    // tip publishes, so what the refusal above read is the base's cursor and nothing
+    // about the plan.
+    const atTip = durableBase(base.history, 1);
+    const control = decideCrop(atTip, entry, deriveSetDocumentFrameEntry(entry, baselineFrame));
+    expect(control.outcome).toBe('published');
+    if (control.outcome !== 'published') return;
+    // One step, from the base's own tip: `base.cursor + 1`, which is also
+    // `base.history.length`.
+    expect(control.document.cursor).toBe(2);
   });
 
-  // KNOWN GAP 2 — missing precondition: `isValidDocumentFrame` on the planned
-  // `next`. The frame branch of `validatePlannedDurableEntry`
-  // (`history-append.ts:486-498`) proves only that `planned.operation.next` equals
-  // `args.nextFrame` structurally (`sameFrame`, `history-append.ts:492`); it never
-  // asks whether either is a document frame. Every derivation that BUILDS such an
-  // entry refuses one (`history-adapter.ts:260`, which the plan calls at
-  // `history-append.ts:133`), so only a supplied entry reaches the gap.
-  //
-  // User-visible failure: durable replay applies `next` unvalidated
-  // (`durable-replay.ts:129-131`) and `documentFrameSize` clamps to a 1x1 minimum
-  // (`document-frame.ts:9-14`), so a published 0x0 crop makes the shadow describe
-  // a 1x1 document. The conversion route for the same item publishes nothing and
-  // reports the loss as a warning (`history-adapter.ts:662`), so the two routes
-  // now disagree about one legacy item and only one of them says so.
-  it('publishes a planned frame whose next frame is not a document frame, and the shadow replays it anyway', () => {
+  // The planned `next` re-validated as a DOCUMENT FRAME. The frame branch of
+  // `validatePlannedDurableEntry` proves only that `planned.operation.next` equals
+  // `args.nextFrame` structurally, so a 0x0 next frame matched a 0x0 legacy arg
+  // perfectly well; `isValidDocumentFrame` is now asked as well.
+  it('reports a mismatch for a planned frame whose next frame is not a document frame', () => {
     const entry = cropEntryWith('crop-zero', zeroFrame);
     const planned: DurableHistoryEntry = {
       id: entry.id,
@@ -1384,14 +2139,20 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
 
     const decision = decideCrop(base, entry, planned);
 
-    expect(decision.outcome).toBe('published');
-    if (decision.outcome !== 'published') return;
-    expect(replayDurableDocument(decision.document).frame).toEqual(zeroFrame);
-    // Every size the application reads off that frame is clamped, so the loss is
-    // not visible as a zero — it is visible as a document one pixel square.
-    expect(documentFrameSize(replayDurableDocument(decision.document).frame)).toEqual({ width: 1, height: 1 });
+    // A `mismatch` rather than a refusal, so the store records it, and the reason
+    // names the invalid frame itself: the planned next and the legacy arg are
+    // EQUAL here, which is precisely why the structural comparison could not see it.
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome !== 'mismatch') return;
+    expect(decision.reason).toBe('the durable next frame is not a document frame');
+    // No publication, so no frame is ever replayed and no size is clamped into
+    // existence. What the guard removes is that every size the application reads
+    // off this frame would be a one-pixel square rather than a degenerate zero.
+    expect(decision).not.toHaveProperty('document');
+    expect(documentFrameSize(zeroFrame)).toEqual({ width: 1, height: 1 });
 
-    // The same item on the other two routes, which is what makes this a divergence.
+    // The same item on the other two routes, so all three now agree. The derivation
+    // and the plan boundary already refused it; only the decision used to publish.
     expect(deriveSetDocumentFrameEntry(entry, baselineFrame)).toBeNull();
     const plan = planHistoryAppend({
       item: {

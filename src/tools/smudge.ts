@@ -52,8 +52,8 @@ const extent = (value: number): number => (Number.isFinite(value) ? Math.max(0, 
  *
  * A disc's bounding box is the cheaper filter — one `tipAlphaAt` per covered pixel rather
  * than one per pixel in the square. This is the same span as the private `dabSpan` in
- * `src/tools/eraser.ts:38-45` and the private `stampClampedDab` span in
- * `src/util/brush-engine.ts:252-256`; it is spelled out again rather than imported because
+ * `src/tools/eraser.ts` and the private `stampClampedDab` span in
+ * `src/util/brush-engine.ts`; it is spelled out again rather than imported because
  * all three are private, and a shared home for it is a change to `pixels.ts` that this file
  * does not own.
  */
@@ -111,7 +111,7 @@ const toTipOpacity = (strength: number): number =>
  * fractional byte offset rather than rounding — which would make every dab read a hole and
  * erase instead of smearing. Rounding matches the engine's own distance convention, which
  * measures to the pixel's integer coordinate so a tip centred on `(2, 2)` covers `(2, 2)` at
- * full weight (`src/util/brush-engine.ts:285-292`); reading the texel one step behind along
+ * full weight (`stampClampedDab()`); reading the texel one step behind along
  * the same integer grid is the consistent choice. The clamp then keeps the read inside the
  * raster, so a dab whose footprint hangs over an edge samples the nearest real texel rather
  * than reading out of range.
@@ -156,7 +156,7 @@ const smudgeDab = (
  * Smudge a whole stroke onto a copy of the source raster.
  *
  * WHY THIS CANNOT BE THE RESAMPLER'S ROW-AT-A-TIME SHAPE.
- * `resampleThroughHomographyRowByRow` (`src/util/homography-resample.ts:128-141`) streams
+ * `resampleThroughHomographyRowByRow()` streams
  * because its output row `n` is a function of source row `n` and nothing else — the strip is
  * allocated once and every pixel of it is final the moment it is written. A smudge dab has no
  * such locality. Dab `k` reads the source texel behind each of its own pixels, so the pixels
@@ -228,7 +228,7 @@ const smudgeStroke = (
  * name the same per-dab coverage.
  *
  * The returned canvas is always FULL DOCUMENT SIZE and always freshly allocated, even for an
- * empty path. `tempUpdateLayer` (`src/contexts/useLayer.ts:560`) assigns the result straight to
+ * empty path. `tempUpdateLayer()` assigns the result straight to
  * `layer.tmpCanvas`, so handing back the source bitmap instead would leave the layer's
  * `tmpCanvas` holding the very object it already had, and the preview would show no edit at
  * all.
@@ -244,7 +244,7 @@ export const smudge =
     if (points.length === 0) return [canvas];
 
     // The reduced-canvas guard the raster processors already use
-    // (`src/tools/gradient.ts:126`): with no read-back there is no raster to drag pixels
+    // (the readback-capability guard in `gradient`): with no read-back there is no raster to drag pixels
     // through, and the source already drawn above is the honest answer rather than a throw.
     if (typeof ctx.getImageData !== 'function' || typeof ctx.putImageData !== 'function') return [canvas];
 

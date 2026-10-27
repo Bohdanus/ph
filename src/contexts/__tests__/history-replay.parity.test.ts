@@ -1,18 +1,22 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 
 import { replayDurableDocument } from '../durable-replay.ts';
+import { rotationAffineAroundPoint } from '../affine-transform.ts';
 import { durableSourceKindForTool, legacyHistoryToDurable } from '../history-adapter.ts';
 import type { DurableOperation } from '../history-model.ts';
 import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
+import { createLayerSource } from '../layer-utils.ts';
 import type { Layer, LayerOperation, LayerSource, LayersRecord } from '../layer-types.ts';
 import type { DurableReplayResult } from '../durable-replay.ts';
 import type { Selection, Size } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
+import type { ShapeToolArgs } from '../../tools/shape.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -21,8 +25,11 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 
@@ -51,6 +58,7 @@ function runtimeLayer(id: string, order: number, pos = { x: 20, y: 30, width: 12
     blendMode: 'source-over',
     order,
     pos,
+    presentationBounds: null,
     source,
     operations: [],
   };
@@ -73,9 +81,11 @@ function selection(id: string, x: number, y: number, active = true): Selection {
   return {
     id,
     points: [
-      { x, y },
-      { x: x + 20, y },
-      { x: x + 20, y: y + 20 },
+      [
+        { x, y },
+        { x: x + 20, y },
+        { x: x + 20, y: y + 20 },
+      ],
     ],
     isActive: active,
     pos: { x, y, width: 20, height: 20 },
@@ -97,6 +107,18 @@ const textArgs: TextToolArgs = {
   lineHeight: 1.2,
   text: 'Parity',
   rect: { x1: 10, y1: 15, x2: 140, y2: 55 },
+};
+
+const vectorArgs: ShapeToolArgs = {
+  toolName: 'shape',
+  alpha: 1,
+  color: '#0000ff',
+  backgroundColor: '#ffffff',
+  hasFill: true,
+  figure: 'oval',
+  lineWidth: 2,
+  start: { x: 20, y: 20 },
+  end: { x: 100, y: 80 },
 };
 
 const transformArgs: TransformToolArgs = {
@@ -124,6 +146,10 @@ const cases: ReadonlyArray<{
       item('hide', HIDE_LAYER_ACTION, layerA),
       item('show', SHOW_LAYER_ACTION, layerA),
       item('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
+      item('opacity', SET_LAYER_OPACITY_ACTION, layerA, { opacity: 0.5 }),
+      item('blend-mode', SET_LAYER_BLEND_MODE_ACTION, layerA, { blendMode: 'multiply' }),
+      item('lock', LOCK_LAYER_ACTION, layerA, { locked: true }),
+      item('unlock', UNLOCK_LAYER_ACTION, layerA, { locked: false }),
     ],
   },
   {
@@ -172,6 +198,21 @@ const cases: ReadonlyArray<{
         nextFrame: { x: 10, y: 20, width: 200, height: 150 },
       }),
     ],
+  },
+  {
+    name: 'rotated document crop',
+    history: [
+      baseline({
+        [layerA]: runtimeLayer(layerA, 0),
+        [layerB]: runtimeLayer(layerB, 1, { x: 150, y: 100, width: 90, height: 70 }),
+      }),
+      item('rotated-crop', SET_DOCUMENT_FRAME_ACTION, 'document', {
+        previousFrame: frame,
+        nextFrame: { x: 30, y: 25, width: 220, height: 170 },
+        transform: rotationAffineAroundPoint(-Math.PI / 5, { x: 140, y: 110 }),
+      }),
+    ],
+    expectedTipFrame: { x: 30, y: 25, width: 220, height: 170 },
   },
   {
     name: 'document frame grow',
@@ -236,6 +277,23 @@ const cases: ReadonlyArray<{
     ],
   },
   {
+    name: 'vector source',
+    history: [
+      baseline(),
+      {
+        id: 'shape',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'shape-layer',
+        layerSource: {
+          kind: 'tool',
+          args: vectorArgs,
+          isBedrock: false,
+          pos: { x: 20, y: 20, width: 80, height: 60 },
+        },
+      },
+    ],
+  },
+  {
     name: 'selection',
     history: [
       baseline(),
@@ -247,24 +305,25 @@ const cases: ReadonlyArray<{
   },
 ];
 
+/**
+ * The legacy side of the parity oracle, wired to the production rule rather than
+ * to a copy of it.
+ *
+ * `replayHistory` builds a created layer through its `createLayer` dependency, and
+ * `useHistory.ts` wires that to `createLayerSource`. This stub used to re-derive the
+ * layer instead — the bare kind as `name`, `Object.values(layers).length` as `order`
+ * — which is the same second rule the durable converter used to carry, so the oracle
+ * agreed with a divergence instead of catching it: three cases here read a name no
+ * production path produces. Delegating is what makes the comparison a parity test.
+ *
+ * `createLayerSource` does rasterise the layer, which is why this was ever stubbed;
+ * `beforeAll` enables canvas filter support and the jsdom setup provides
+ * `OffscreenCanvas`, so the real factory runs here. `createLayer` is synchronous and
+ * `createLayerSource` is too, so the dependency contract is unchanged.
+ */
 function replayDependencies(): HistoryReplayDependencies {
   return {
-    createLayer: ({ layerId, layers, source }) => ({
-      id: layerId,
-      name:
-        source.kind === 'tool' ? source.args.toolName : source.kind === 'image' ? (source.name ?? layerId) : 'Blank',
-      isBedrock: Boolean(source.isBedrock),
-      tmpCanvas: null,
-      bitmap: source.kind === 'image' ? source.bitmap : null,
-      visible: true,
-      opacity: 1,
-      locked: false,
-      blendMode: 'source-over',
-      order: Object.values(layers).length,
-      pos: 'pos' in source ? { ...source.pos } : { x: 0, y: 0, width: source.size.width, height: source.size.height },
-      source,
-      operations: [],
-    }),
+    createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
     applyRasterTool: (layer) => layer,
   };
 }
@@ -307,7 +366,11 @@ function normalizeLegacy(result: HistoryReplayResult) {
         blendMode: layer.blendMode,
         pos: layer.pos,
         sourceKind: sourceKind(layer.source),
-        operationKinds: layer.operations.map((operation) => operationKind(operation.kind, operation)),
+        operations: layer.operations.map((operation) =>
+          operation.kind === 'affine-transform'
+            ? { kind: operationKind(operation.kind, operation), transform: operation.transform }
+            : { kind: operationKind(operation.kind, operation) }
+        ),
       })),
     selections: result.selections,
     activeSelectionId: result.activeSelectionId,
@@ -330,7 +393,11 @@ function normalizeDurable(result: DurableReplayResult) {
         blendMode: snapshot.blendMode,
         pos: snapshot.pos,
         sourceKind: durableSourceKind(snapshot.source),
-        operationKinds: operations.map((operation) => operation.kind),
+        operations: operations.map((operation) =>
+          operation.kind === 'apply-affine-transform'
+            ? { kind: operation.kind, transform: operation.transform }
+            : { kind: operation.kind }
+        ),
       })),
     selections: result.selections.selections,
     activeSelectionId: result.selections.activeSelectionId,

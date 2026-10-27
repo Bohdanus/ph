@@ -40,6 +40,7 @@ function blankLayer(id: string, order = 0): Layer {
     blendMode: 'source-over',
     order,
     pos,
+    presentationBounds: null,
     source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
     operations: [],
   };
@@ -144,10 +145,13 @@ describe('remove-layer append boundary', () => {
       // Hand-written expected shape. The parity assertion above can only prove the
       // two implementations agree; these values are what "agree" has to mean, so a
       // wrong rule on both sides still fails here.
+      // provenance carries the legacy actionName so the history panel can label
+      // the removal without re-opening the legacy entry.
       expect(derived).toEqual({
         id: 'remove-layer-1',
         schemaVersion: DURABLE_SCHEMA_VERSION,
         enabled: true,
+        provenance: { actionName: REMOVE_ACTION },
         operation: { kind: 'remove-layer', layerId: 'layer-1' },
       });
     });
@@ -256,12 +260,12 @@ describe('remove-layer append boundary', () => {
       expect(legacyReplayedLayerIds([removal], pairLayers).sort()).toEqual(['layer-1', 'layer-2']);
     });
 
-    it('derives a disabled entry from args that carry enabled: false', () => {
+    it('ignores nested args.enabled because the legacy gate is item.disabled', () => {
       const removal = removeItem('layer-1', { id: 'remove-disabled', args: { enabled: false } });
 
       const derived = deriveRemoveLayerEntry(removal);
       expect(derived).not.toBeNull();
-      expect(derived!.enabled).toBe(false);
+      expect(derived!.enabled).toBe(true);
       expect(derived!.operation).toEqual({ kind: 'remove-layer', layerId: 'layer-1' });
       expect(derived).toEqual(convertedEntryFor(removal, pairLayers));
 
@@ -269,8 +273,8 @@ describe('remove-layer append boundary', () => {
         const converted = convert(registry, [removal], pairLayers);
 
         expect(converted.diagnostics).toEqual([]);
-        expect(converted.document.history[0]).toMatchObject({ id: removal.id, enabled: false });
-        expect(replayedLayerIds(converted).sort()).toEqual(['layer-1', 'layer-2']);
+        expect(converted.document.history[0]).toMatchObject({ id: removal.id, enabled: true });
+        expect(replayedLayerIds(converted).sort()).toEqual(['layer-2']);
       });
     });
 
@@ -360,6 +364,7 @@ describe('remove-layer append boundary', () => {
         id: 'remove-layer-1',
         schemaVersion: DURABLE_SCHEMA_VERSION,
         enabled: true,
+        provenance: { actionName: REMOVE_ACTION },
         operation: { kind: 'remove-layer', layerId: 'layer-1' },
       });
       expect(Object.isFrozen(result.durableEntry!.operation)).toBe(true);
@@ -375,15 +380,12 @@ describe('remove-layer append boundary', () => {
       expect(result.durableEntry!.operation).toEqual({ kind: 'remove-layer', layerId: 'ghost' });
     });
 
-    it('carries a disabled removal into the plan as disabled', () => {
-      // `NewHistoryItem` has no `disabled` field and `createHistoryItem` drops it,
-      // so the only way a live writer's plan can be disabled is args, which
-      // `isEntryEnabled` reads.
+    it('carries nested args.enabled as payload data, not a history disable gate', () => {
       const result = planRemoval(removeItem('layer-1', { id: 'remove-disabled', args: { enabled: false } }));
 
       expect(result.diagnostics).toEqual([]);
       expect(result.durableEntry).not.toBeNull();
-      expect(result.durableEntry!.enabled).toBe(false);
+      expect(result.durableEntry!.enabled).toBe(true);
       expect(result.durableEntry).toEqual(convertedEntryFor(result.entry));
     });
   });

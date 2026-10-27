@@ -454,3 +454,169 @@ describe('coverage sampler', () => {
     }
   });
 });
+
+describe('non-finite coordinates', () => {
+  it('leaves the buffer untouched for NaN and +/- Infinity x/y without a footprint', () => {
+    const points: number[][] = [
+      [Number.NaN, Number.NaN],
+      [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY],
+      [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY],
+      [Number.NaN, 0],
+      [0, Number.POSITIVE_INFINITY],
+    ];
+    for (const [x, y] of points) {
+      const buffer = createStrokeBuffer(RECT, WHITE);
+      buffer.stampDab(x, y, 1, 1);
+      expect(Array.from(buffer.data).every((v) => v === 0)).toBe(true);
+      expect(buffer.dirtyRect()).toBeNull();
+      expect(buffer.flush(null, 1)).toBeNull();
+    }
+  });
+
+  it('does not poison the buffer when x/y are non-finite but a finite footprint pins the region', () => {
+    const buffer = createStrokeBuffer(RECT, WHITE);
+    buffer.stampDab(Number.NaN, Number.NaN, (dx) => Math.max(0, 1 - Math.abs(dx) / 3), 0.5, undefined, {
+      footprint: { x: 0, y: 0, width: 8, height: 8 },
+    });
+    expect(buffer.dirtyRect()).toBeNull();
+    expect(Array.from(buffer.data).every((v) => v === 0)).toBe(true);
+    expect(buffer.flush(null, 1)).toBeNull();
+  });
+});
+
+describe('empty strokes', () => {
+  it('flushes to null and stays inert across repeated flushes before any dab lands', () => {
+    const buffer = createStrokeBuffer(RECT, WHITE);
+    for (let i = 0; i < 3; i++) {
+      expect(buffer.flush(null, 1)).toBeNull();
+      expect(buffer.dirtyRect()).toBeNull();
+    }
+    expect(Array.from(buffer.data).every((v) => v === 0)).toBe(true);
+  });
+
+  it('never dirties the buffer for a run of zero-coverage, zero-flow and zero-opacity dabs', () => {
+    const buffer = createStrokeBuffer(RECT, WHITE);
+    buffer.stampDab(3, 3, 0, 1);
+    buffer.stampDab(3, 3, 1, 0);
+    buffer.stampDab(3, 3, () => 0, 0.5);
+    buffer.stampDab(Number.NaN, Number.NaN, 1, 1);
+    buffer.stampDab(Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1, 1);
+    expect(buffer.dirtyRect()).toBeNull();
+    expect(buffer.flush(null, 1)).toBeNull();
+    expect(buffer.flush(null, 0)).toBeNull();
+    expect(Array.from(buffer.data).every((v) => v === 0)).toBe(true);
+  });
+});
+
+describe('single-point strokes', () => {
+  it('records a 1x1 dirty rect and a matching 1x1 flush rect for an interior point', () => {
+    const buffer = createStrokeBuffer({ x: 0, y: 0, width: 16, height: 16 }, WHITE);
+    buffer.stampDab(7, 9, 1, 1);
+    expect(buffer.dirtyRect()).toEqual({ x: 7, y: 9, width: 1, height: 1 });
+    const result = buffer.flush(null, 1)!;
+    expect(result.rect).toEqual({ x: 7, y: 9, width: 1, height: 1 });
+    expect(result.alpha[0]).toBe(1);
+    expect(result.data[0]).toBe(255);
+    expect(result.data[3]).toBe(255);
+  });
+
+  it.each<[number, number]>([
+    [0, 0],
+    [0, 7],
+    [7, 0],
+    [7, 7],
+  ])('stamps a single point at corner (%i, %i) in bounds', (x, y) => {
+    const buffer = createStrokeBuffer({ x: 0, y: 0, width: 8, height: 8 }, WHITE);
+    buffer.stampDab(x, y, 1, 1);
+    expect(buffer.dirtyRect()).toEqual({ x, y, width: 1, height: 1 });
+    const result = buffer.flush(null, 1)!;
+    expect(result.rect).toEqual({ x, y, width: 1, height: 1 });
+    expect(result.alpha[0]).toBe(1);
+  });
+
+  it('accumulates a single point with coverage and flow like a one-dab stroke', () => {
+    const buffer = createStrokeBuffer(RECT, WHITE);
+    buffer.stampDab(3, 3, 0.6, 0.5);
+    const result = buffer.flush(null, 1)!;
+    expect(result.alpha[0]).toBeCloseTo(0.6 * 0.5, 6);
+    expect(result.data[3]).toBe(Math.round(0.6 * 0.5 * 255));
+    expect(result.data[0]).toBe(255);
+    expect(Array.from(result.data).every(Number.isFinite)).toBe(true);
+  });
+});
+
+describe('NaN/Infinity sanitisation', () => {
+  it('clamps non-finite coverage to 0 and deposits nothing', () => {
+    for (const c of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const buffer = createStrokeBuffer(RECT, WHITE);
+      buffer.stampDab(3, 3, c, 1);
+      expect(buffer.dirtyRect()).toBeNull();
+      expect(buffer.flush(null, 1)).toBeNull();
+      expect(Array.from(buffer.data).every(Number.isFinite)).toBe(true);
+    }
+  });
+
+  it('clamps non-finite flow to 0 and deposits nothing', () => {
+    for (const f of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const buffer = createStrokeBuffer(RECT, WHITE);
+      buffer.stampDab(3, 3, 1, f);
+      expect(buffer.dirtyRect()).toBeNull();
+      expect(buffer.flush(null, 1)).toBeNull();
+      expect(Array.from(buffer.data).every(Number.isFinite)).toBe(true);
+    }
+  });
+
+  it('clamps non-finite opacity to 0 and emits a finite, zero-stroke result', () => {
+    const buffer = createStrokeBuffer(RECT, WHITE);
+    buffer.stampDab(3, 3, 1, 1);
+    for (const op of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const result = buffer.flush(null, op)!;
+      expect(result.alpha[0]).toBe(0);
+      expect(Array.from(result.data).every((v) => v === 0)).toBe(true);
+      expect(Array.from(result.alpha).every(Number.isFinite)).toBe(true);
+    }
+  });
+
+  it('clamps a sampler that steps outside [0,1] into range without leaking non-finite values', () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, -0.5]) {
+      const buffer = createStrokeBuffer(RECT, WHITE);
+      buffer.stampDab(3, 3, () => value, 0.5);
+      expect(Array.from(buffer.data).every(Number.isFinite)).toBe(true);
+      const result = buffer.flush(null, 1);
+      if (result) {
+        expect(Array.from(result.data).every(Number.isFinite)).toBe(true);
+        expect(Array.from(result.alpha).every(Number.isFinite)).toBe(true);
+      }
+    }
+  });
+});
+
+describe('fail-closed tripwires (known gaps this hardens)', () => {
+  // Each block below asserts the behaviour we WANT from a missing input guard.
+  // It is wrapped in `it.fails` so it stays green while the gap is open; the
+  // moment the guard lands and the assertion starts passing, `it.fails` flips
+  // and the tripwire reports an unexpected pass, which is the signal to delete it.
+
+  it.fails('rejects a non-finite rect origin as an empty buffer instead of leaking a NaN width', () => {
+    // originX becomes NaN, so width resolves to Math.max(0, NaN) = NaN rather
+    // than 0. A guard that treats a non-finite origin as an empty buffer must
+    // make this 0 and keep data.length at 0.
+    const buffer = createStrokeBuffer({ x: Number.NaN, y: 0, width: 8, height: 8 }, WHITE);
+    expect(buffer.width).toBe(0);
+    expect(buffer.data.length).toBe(0);
+  });
+
+  it.fails('rejects a non-finite footprint dimension instead of stamping the whole buffer', () => {
+    // Math.round(Infinity) is Infinity, so Math.max(1, Infinity) extends the
+    // stamp to the entire buffer. A guard on footprint dimensions should leave
+    // the buffer untouched, as the canvas and layer-space guards do for the
+    // analogous non-finite geometry.
+    const buffer = createStrokeBuffer({ x: 0, y: 0, width: 8, height: 8 }, WHITE);
+    buffer.stampDab(3, 3, 1, 1, undefined, {
+      footprint: { x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY },
+    });
+    expect(Array.from(buffer.data).every((v) => v === 0)).toBe(true);
+    expect(buffer.dirtyRect()).toBeNull();
+    expect(buffer.flush(null, 1)).toBeNull();
+  });
+});

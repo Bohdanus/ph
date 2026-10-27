@@ -2,10 +2,10 @@ import type { BlendMode, Layer as PsdLayer } from 'ag-psd';
 import { v4 as uuidv4 } from 'uuid';
 
 import type { Size } from './general-types.ts';
-import type { LayersRecord } from './layer-types.ts';
+import { LAYER_BLEND_MODES, type LayersRecord } from './layer-types.ts';
 import { drawLayerSource } from './layer-renderer.ts';
 import { getLayerPresentationBounds } from './affine-transform.ts';
-import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
+import { documentFrameSize, resolveDocumentFrame, type DocumentFrame } from './document-frame.ts';
 
 export interface PsdDocument {
   size: Size;
@@ -13,24 +13,9 @@ export interface PsdDocument {
   warnings: string[];
 }
 
-const blendModes: Partial<Record<BlendMode, GlobalCompositeOperation>> = {
-  normal: 'source-over',
-  multiply: 'multiply',
-  screen: 'screen',
-  overlay: 'overlay',
-  darken: 'darken',
-  lighten: 'lighten',
-  'color dodge': 'color-dodge',
-  'color burn': 'color-burn',
-  'hard light': 'hard-light',
-  'soft light': 'soft-light',
-  difference: 'difference',
-  exclusion: 'exclusion',
-  hue: 'hue',
-  saturation: 'saturation',
-  color: 'color',
-  luminosity: 'luminosity',
-};
+const blendModes = Object.fromEntries(LAYER_BLEND_MODES.map(({ value, psd }) => [psd, value])) as Partial<
+  Record<BlendMode, GlobalCompositeOperation>
+>;
 
 // Bound both individual allocations and the total retained raster data.
 const maxPixels = 64 * 1024 * 1024;
@@ -165,6 +150,7 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         blendMode: blendMode ?? 'source-over',
         order: Object.keys(layers).length,
         pos: { x: source.left ?? 0, y: source.top ?? 0, width: canvas.width, height: canvas.height },
+        presentationBounds: null,
         source: {
           kind: 'image',
           bitmap: canvas,
@@ -197,6 +183,7 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         blendMode: 'source-over',
         order: 0,
         pos: { x: 0, y: 0, ...size },
+        presentationBounds: null,
         source: { kind: 'image', bitmap: canvas, name: 'Composite', isBedrock: true, size: { ...size } },
         operations: [],
       };
@@ -206,15 +193,14 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
   return { size, layers, warnings };
 }
 
-export async function savePsd(
-  layers: LayersRecord,
-  size: Size,
-  documentFrame: DocumentFrame = documentFrameFromSize(size)
-): Promise<ArrayBuffer> {
+export async function savePsd(layers: LayersRecord, size: Size, frame?: DocumentFrame): Promise<ArrayBuffer> {
   validateSize(size);
+  const documentFrame = resolveDocumentFrame(size, frame);
+  const exportSize = documentFrameSize(documentFrame);
+  validateSize(exportSize);
   const sorted = Object.values(layers).sort((a, b) => a.order - b.order);
   if (sorted.length > 2000) throw new Error('PSD has too many layers (maximum 2000)');
-  let pixels = size.width * size.height;
+  let pixels = exportSize.width * exportSize.height;
   const prepared = sorted.map((layer) => {
     if (![layer.pos.x, layer.pos.y].every((n) => Number.isFinite(n) && Math.abs(n) <= 0x7fffffff - 30000)) {
       throw new Error(`Invalid PSD layer offset: ${layer.name}`);
@@ -233,24 +219,24 @@ export async function savePsd(
     if (!Number.isFinite(layer.order) || !Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 1) {
       throw new Error(`Invalid PSD layer order or opacity: ${layer.name}`);
     }
-    const blendMode = (Object.keys(blendModes) as BlendMode[]).find((key) => blendModes[key] === layer.blendMode);
+    const blendMode = LAYER_BLEND_MODES.find(({ value }) => value === layer.blendMode)?.psd as BlendMode | undefined;
     if (!blendMode) throw new Error(`Unsupported PSD export blend mode: ${layer.blendMode}`);
     pixels += width * height;
     if (pixels > maxPixels) throw new Error('PSD exceeds the 64 megapixel total raster budget');
     return { layer, blendMode, left, top, width, height };
   });
   const { writePsd } = await import('ag-psd');
-  const { canvas, ctx } = canvas2d(size.width, size.height);
+  const { canvas, ctx } = canvas2d(exportSize.width, exportSize.height);
   const children = prepared.map(({ layer, blendMode, left, top, width, height }): PsdLayer => {
     const source = layer.tmpCanvas ?? layer.bitmap;
     const raster = canvas2d(source ? width : 1, source ? height : 1);
     // Rasterize fractional editor geometry inside enclosing integer PSD bounds.
     if (source) {
-      drawLayerSource(raster.ctx, layer, {
-        x: layer.pos.x - documentFrame.x - left,
-        y: layer.pos.y - documentFrame.y - top,
-        width: layer.pos.width,
-        height: layer.pos.height,
+      drawLayerSource(raster.ctx, layer, layer.pos, {
+        x: documentFrame.x + left,
+        y: documentFrame.y + top,
+        width,
+        height,
       });
     }
     // PSD stores opacity in one byte; composite uses the same quantized value.
@@ -272,5 +258,5 @@ export async function savePsd(
       protected: { transparency: false, composite: layer.locked, position: layer.locked },
     };
   });
-  return writePsd({ ...size, canvas, children }, { trimImageData: false, noBackground: true });
+  return writePsd({ ...exportSize, canvas, children }, { trimImageData: false, noBackground: true });
 }

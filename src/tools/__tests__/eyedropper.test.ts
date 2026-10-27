@@ -39,24 +39,27 @@ describe('eyedropper args', () => {
 
 describe('eyedropper registry absence', () => {
   it('has no processor, because it rasterizes nothing and records no history', () => {
+    expect(PIXEL_FREE_TOOLS).toContain('eyedropper');
     expect(findToolProcessor('eyedropper')).toBeUndefined();
     expect(Object.hasOwn(toolProcessors, 'eyedropper')).toBe(false);
   });
 
-  it('is a member of the pixel-free set alongside the two others', () => {
-    // This used to pin `toHaveLength(1)`, on the reasoning that "every other tool rasterizes, so
-    // a second entry would be a claim that has to be earned". The Hand and Rotate View each
-    // earned it, and for the same reason the eyedropper's own membership rests on: they move the
-    // VIEW rather than the document. So the pin is replaced rather than deleted — the set's exact
-    // membership is still asserted, and now a FOURTH member still cannot appear without this
-    // failing.
-    expect(PIXEL_FREE_TOOLS).toEqual(['eyedropper', 'hand', 'rotate-view']);
-  });
-
-  it('leaves every pixel-free member without a processor, so the set cannot gain a dead entry', () => {
-    for (const toolName of PIXEL_FREE_TOOLS) {
-      expect(findToolProcessor(toolName)).toBeUndefined();
-      expect(Object.hasOwn(toolProcessors, toolName)).toBe(false);
+  it('shares the pixel-free set only with tools that earn it, so the set cannot grow unnoticed', () => {
+    // Every other tool rasterizes. The set's other members are the Ruler, which measures a
+    // nonprinting line and commits no pixels either, and the Color Sampler, which "displays color
+    // values for up to four areas" and therefore edits nothing — so this pins the whole set rather
+    // than the eyedropper's place in it, and a fourth entry has to be earned the same way.
+    expect([...PIXEL_FREE_TOOLS].sort()).toEqual([
+      'color-sampler',
+      'eyedropper',
+      'hand',
+      'rotate-view',
+      'ruler',
+      'zoom',
+    ]);
+    for (const name of PIXEL_FREE_TOOLS) {
+      expect(Object.hasOwn(toolProcessors, name)).toBe(false);
+      expect(findToolProcessor(name)).toBeUndefined();
     }
   });
 });

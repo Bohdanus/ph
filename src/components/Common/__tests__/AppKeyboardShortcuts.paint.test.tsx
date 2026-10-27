@@ -23,6 +23,7 @@ const patchToolArgs = vi.hoisted(() => vi.fn());
 const copyActiveSelection = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboard = vi.hoisted(() => vi.fn());
 const layerViaCopy = vi.hoisted(() => vi.fn());
+const arrangeLayer = vi.hoisted(() => vi.fn());
 const undo = vi.hoisted(() => vi.fn());
 const redo = vi.hoisted(() => vi.fn());
 const canUndo = vi.hoisted(() => vi.fn(() => false));
@@ -44,7 +45,15 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => ({ canUndo, undo, canRedo, redo }) }));
 
-vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool }) }));
+vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool, handleImageSave: vi.fn() }) }));
+vi.mock('../../../hooks/useWorkspaceFitScale.ts', () => ({ useWorkspaceFitScale: () => 1 }));
+vi.mock('../../../hooks/useDevicePixelRatio.ts', () => ({ useDevicePixelRatio: () => 1 }));
+
+vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => ({ openSaveImageDialog: vi.fn() }) }));
+
+vi.mock('../../../contexts/useLayer.ts', () => ({
+  useLayers: () => ({ arrangeLayer, commitDirtyTool: vi.fn(() => ({})) }),
+}));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
@@ -87,6 +96,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   canUndo.mockReturnValue(false);
   canRedo.mockReturnValue(false);
+  arrangeLayer.mockReset();
   storeState.hasImage = true;
   selectTool('eraser', { lineWidth: 40, alpha: 1, hardness: 50, spacing: 25, mode: 'brush' });
 });
@@ -161,14 +171,16 @@ describe("Photoshop's bracket tip-size keys", () => {
     expect(patchToolArgs).not.toHaveBeenCalled();
   });
 
-  it('is the UNSHIFTED brackets: Shift+[ is a different key, and mod+[ stays a chord', () => {
+  it('keeps modified brackets out of paint tip stepping', () => {
     renderShortcuts();
 
-    // `{` is what Shift+[ produces, and `mod: false` is what keeps Ctrl+[ from being a step.
+    // Shift+[ is a different key. Modified brackets belong to layer Arrange, not paint sizing.
     expect(press('{', { shiftKey: true })).toBe(false);
-    expect(press(']', { metaKey: true })).toBe(false);
-    expect(press('[', { ctrlKey: true })).toBe(false);
+    expect(press(']', { metaKey: true })).toBe(true);
+    expect(press('[', { ctrlKey: true })).toBe(true);
     expect(patchToolArgs).not.toHaveBeenCalled();
+    expect(arrangeLayer).toHaveBeenNthCalledWith(1, 'bring-forward');
+    expect(arrangeLayer).toHaveBeenNthCalledWith(2, 'send-backward');
   });
 
   it('steps while the key is held, which is what makes a large tip reachable', () => {

@@ -1,130 +1,18 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  advanceThroughLongPress,
+  goToTool,
+  toolbarButtonByName,
+  longPress,
+  useSidebarLeftHarness,
+} from './harness.tsx';
 import SidebarLeft, { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
-
-const goToTool = vi.fn();
-const patchToolArgsMock = vi.fn();
-
-const storeStateRef = vi.hoisted(() => ({
-  toolName: 'draw',
-  color: '#000000',
-  backgroundColor: '#ffffff',
-  hasImage: true,
-  dispatch: vi.fn(),
-}));
-
-const toolArgsRef = vi.hoisted(() => ({
-  toolName: 'draw' as string,
-  figure: undefined as string | undefined,
-}));
-
-vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeStateRef, storeStateRef.dispatch],
-}));
-
-vi.mock('../../../hooks/useApp.ts', () => ({
-  useApp: () => ({ goToTool }),
-}));
-
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
-  useCurrentTool: () => ({
-    toolArgs: toolArgsRef,
-    patchToolArgs: patchToolArgsMock,
-  }),
-}));
-
-vi.mock('../toolIcons.tsx', () => {
-  const Icon = ({ title }: { title: string }) => <svg aria-hidden="true">{title}</svg>;
-
-  return {
-    toolIcons: {
-      reposition: Icon,
-      'rectangular-selection': Icon,
-      'elliptical-selection': Icon,
-      'freehand-lasso': Icon,
-      'polygonal-lasso': Icon,
-      'feather-magnetic-lasso': Icon,
-      'magic-wand': Icon,
-      'quick-selection': Icon,
-      eyedropper: Icon,
-      eraser: Icon,
-      'clone-stamp': Icon,
-      'paint-bucket': Icon,
-      gradient: Icon,
-      sharpen: Icon,
-      smudge: Icon,
-      dodge: Icon,
-      burn: Icon,
-      crop: Icon,
-      draw: Icon,
-      shape: Icon,
-      text: Icon,
-      color: Icon,
-      blur: Icon,
-      levels: Icon,
-      transform: Icon,
-      brush: Icon,
-      pencil: Icon,
-      'color-replacement': Icon,
-      'magic-eraser': Icon,
-      pen: Icon,
-      'freeform-pen': Icon,
-      'curvature-pen': Icon,
-      'add-anchor-point': Icon,
-      'delete-anchor-point': Icon,
-      'convert-point': Icon,
-      rectangle: Icon,
-      ellipse: Icon,
-      triangle: Icon,
-      polygon: Icon,
-      line: Icon,
-      'custom-shape': Icon,
-      'rotate-view': Icon,
-      hand: Icon,
-    },
-  };
-});
 
 const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
 
-const longPress = (button: HTMLElement) => {
-  fireEvent.pointerDown(button, { button: 0 });
-  act(() => {
-    vi.advanceTimersByTime(LONG_PRESS_DELAY);
-  });
-  fireEvent.pointerUp(button, { button: 0 });
-  fireEvent.click(button);
-};
-
-const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
-
-const resetMocks = () => {
-  goToTool.mockReset();
-  Object.assign(toolArgsRef, { toolName: 'draw', figure: undefined });
-  Object.assign(storeStateRef, {
-    hasImage: true,
-    toolName: 'draw',
-    color: '#000000',
-    backgroundColor: '#ffffff',
-  });
-  storeStateRef.dispatch.mockClear();
-  patchToolArgsMock.mockClear();
-};
-
-const cleanupTimers = () => {
-  vi.clearAllTimers();
-  vi.useRealTimers();
-};
-
 describe('SidebarLeft flyout closing', () => {
-  beforeEach(() => {
-    resetMocks();
-  });
-
-  afterEach(() => {
-    cleanupTimers();
-  });
-
+  useSidebarLeftHarness();
   it.each([
     ['outside click', () => act(() => fireEvent.click(document.body))],
     ['Escape', () => act(() => fireEvent.keyDown(window, { key: 'Escape' }))],
@@ -172,10 +60,10 @@ describe('SidebarLeft flyout closing', () => {
 
     const brushButton = toolbarButtonByName('brush');
     act(() => {
-      fireEvent.pointerDown(brushButton, { button: 0 });
+      fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
     });
     act(() => {
-      fireEvent.pointerLeave(brushButton);
+      fireEvent.pointerLeave(brushButton, { pointerId: 1 });
     });
 
     act(() => {
@@ -183,5 +71,161 @@ describe('SidebarLeft flyout closing', () => {
     });
 
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('ignores foreign pointer endings while a long-press is pending', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    act(() => {
+      fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
+      fireEvent.pointerLeave(brushButton, { pointerId: 2 });
+      fireEvent.pointerUp(brushButton, { pointerId: 2 });
+      fireEvent.pointerCancel(brushButton, { pointerId: 2 });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+    fireEvent.pointerUp(brushButton, { pointerId: 1 });
+  });
+
+  it('keeps the original tile as owner when a different tile gets a simultaneous pointer', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    const shapeButton = toolbarButtonByName('shape');
+    fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
+    fireEvent.pointerDown(shapeButton, { button: 0, pointerId: 2 });
+    fireEvent.pointerCancel(shapeButton, { pointerId: 2 });
+
+    advanceThroughLongPress();
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+    expect(screen.queryByRole('menu', { name: 'Shape tools' })).toBeNull();
+
+    fireEvent.pointerCancel(document.body, { pointerId: 1 });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+
+    fireEvent.pointerDown(shapeButton, { button: 0, pointerId: 3 });
+    advanceThroughLongPress();
+    expect(screen.getByRole('menu', { name: 'Shape tools' })).toBeInTheDocument();
+  });
+
+  it('ignores an unowned click while another pointer owns the long-press', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    act(() => {
+      fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
+      fireEvent.pointerDown(brushButton, { button: 0, pointerId: 2 });
+      fireEvent.pointerUp(brushButton, { pointerId: 2 });
+      fireEvent.click(brushButton, { detail: 1 });
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+
+    fireEvent.pointerUp(brushButton, { pointerId: 1 });
+    fireEvent.click(brushButton, { detail: 1 });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+  });
+
+  it('keeps a pressless activation open when its active pointer later releases', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
+    fireEvent.pointerLeave(brushButton, { pointerId: 1 });
+    fireEvent.pointerEnter(brushButton, { pointerId: 1 });
+    fireEvent.click(brushButton, { detail: 0 });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+
+    fireEvent.pointerUp(brushButton, { pointerId: 1 });
+    fireEvent.click(brushButton, { detail: 1 });
+
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+  });
+
+  it('suppresses the owner click after leaving and returning to an opened flyout', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+
+    fireEvent.pointerLeave(brushButton, { pointerId: 1 });
+    fireEvent.pointerEnter(brushButton, { pointerId: 1 });
+    fireEvent.pointerUp(brushButton, { pointerId: 1 });
+    fireEvent.click(brushButton, { detail: 1 });
+
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+    expect(goToTool).not.toHaveBeenCalled();
+  });
+
+  it('releases a long-press owner when it ends outside the tile', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+
+    fireEvent.pointerLeave(brushButton, { pointerId: 1 });
+    fireEvent.pointerUp(document.body, { pointerId: 1 });
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.pointerDown(brushButton, { button: 0, pointerId: 2 });
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+    fireEvent.pointerUp(brushButton, { pointerId: 2 });
+    fireEvent.click(brushButton, { detail: 1 });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+  });
+
+  it('releases a flyout owner cancelled outside the tile', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    fireEvent.pointerDown(brushButton, { button: 0, pointerId: 1 });
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+
+    fireEvent.pointerLeave(brushButton, { pointerId: 1 });
+    fireEvent.pointerCancel(document.body, { pointerId: 1 });
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.pointerDown(brushButton, { button: 0, pointerId: 2 });
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
+    fireEvent.pointerUp(brushButton, { pointerId: 2 });
+    fireEvent.click(brushButton, { detail: 1 });
+    expect(screen.getByRole('menu', { name: 'Brush Tool tools' })).toBeInTheDocument();
   });
 });

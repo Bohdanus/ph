@@ -117,6 +117,13 @@ were 1–2 _document_ px: sub-pixel and smeared below 1:1, proportionally heavy 
 crawl speed (`SPEED`, document px per frame) varied with zoom too. **This was observable before
 the fix, at DPR 1, with no retina involved.**
 
+**Two rows above are now historical only.** `selection.ts`'s `drawSelectionOutline` — the `lineWidth=2`,
+`dash [6,4]` painter — has been deleted, along with `drawClosedSelectionPath`; the ants are the
+committed selection's border for every selection tool, and no tool area paints a committed outline
+on the tool overlay. And `SPEED` is 0.4, not 1, so a 12px dash cycle takes 30 frames rather than 12.
+The scaling half of the table is unchanged and still current. See `HANDOFF.md` for the open half of
+the border work, which is the `useRect` frame for the Move tool, Crop and Text.
+
 `useSelectionAnts.ts` is the one the original audit missed, and it is the more visible of the two:
 it owns the animated border around every committed polygon selection, and it was added to `main`
 after the original report was written. The original defect list named three painters; there were
@@ -179,17 +186,17 @@ divide-by-zero.
 
 ## Blast radius
 
-| Area                                  | Files                                                                   | Verdict                         |
-| ------------------------------------- | ----------------------------------------------------------------------- | ------------------------------- |
-| Paint algorithms                      | 10 tool files + `util/draw.ts`                                          | **CLEAR — do not touch**        |
-| Export / persistence / clipboard      | 8 files + `export-canvas.ts`                                            | **CLEAR — decoupled at source** |
-| Pointer mapping                       | `usePointerPosition.ts`                                                 | CLEAR and correct; keep pinned  |
-| Unit conversion (text/shape/gradient) | 5 files                                                                 | CLEAR; no pt/px bug             |
-| Overlay chrome                        | `useAnts.ts`, `useSelectionAnts.ts`, `selection.ts`                     | **D3 — fixed**                  |
-| Option-bar thumbnails                 | 3 files                                                                 | **D2a — fixed**                 |
-| Display surfaces                      | `Main.tsx`, `layer-renderer.ts`, `useApp.ts`, `util/canvas.ts`          | **D2c — Phase 4, unblocked**    |
-| Export coupling                       | `DesktopHeader.tsx`, `MobileHeader.tsx`, `MobileMenuDrawer.tsx`         | **D2b — fixed, decoupled**      |
-| e2e export gates                      | `visual-regression.spec.ts`, `export/helpers.ts`, `image-comparison.ts` | **Must not weaken**             |
+| Area                                  | Files                                                                   | Verdict                                                |
+| ------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
+| Paint algorithms                      | 10 tool files + `util/draw.ts`                                          | **CLEAR for DPR changes; integer bounds are separate** |
+| Export / persistence / clipboard      | 8 files + `export-canvas.ts`                                            | **CLEAR — decoupled at source**                        |
+| Pointer mapping                       | `usePointerPosition.ts`                                                 | CLEAR and correct; keep pinned                         |
+| Unit conversion (text/shape/gradient) | 5 files                                                                 | CLEAR; no pt/px bug                                    |
+| Overlay chrome                        | `useAnts.ts`, `useSelectionAnts.ts`, `selection.ts`                     | **D3 — fixed**                                         |
+| Option-bar thumbnails                 | 3 files                                                                 | **D2a — fixed**                                        |
+| Display surfaces                      | `Main.tsx`, `layer-renderer.ts`, `useApp.ts`, `util/canvas.ts`          | **D2c — Phase 4, unblocked**                           |
+| Export coupling                       | `DesktopHeader.tsx`, `MobileHeader.tsx`, `MobileMenuDrawer.tsx`         | **D2b — fixed, decoupled**                             |
+| e2e export gates                      | `visual-regression.spec.ts`, `export/helpers.ts`, `image-comparison.ts` | **Must not weaken**                                    |
 
 ## Adjacent findings from the original audit that this document does NOT carry
 

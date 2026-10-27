@@ -7,15 +7,16 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Read this first
 
-|                                                |                                                                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`DOCUMENTATION.md`](DOCUMENTATION.md)         | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
-| [`OVERRIDES.md`](OVERRIDES.md)                 | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
-| [`FEATURES.md`](FEATURES.md)                   | What the app can and cannot do, system-wide, against Photoshop                             |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)           | What the code is and how it fits together                                                  |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | Durable-history requirements, sequencing, and operator gates                               |
-| [`../AGENTS.md`](../AGENTS.md)                 | The rules an agent reads first: delegation, worktrees, gates, no browser windows           |
-| [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)           | The product requirement for the Tools rail, and its open violations                        |
+|                                                          |                                                                                            |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`DOCUMENTATION.md`](DOCUMENTATION.md)                   | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
+| [`OVERRIDES.md`](OVERRIDES.md)                           | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
+| [`FEATURES.md`](FEATURES.md)                             | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)                 | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                     | What the code is and how it fits together                                                  |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)           | Durable-history requirements, sequencing, and operator gates                               |
+| [`HISTORY-MIGRATION-NEXT.md`](HISTORY-MIGRATION-NEXT.md) | Restart guide: current status contract, loose ends, and next migration sequence            |
+| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md)     | Fetched Adobe evidence and processed Layers/History panel summary                          |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -29,15 +30,16 @@ deliberately carries none of it.
 | [`TOOLS.md`](TOOLS.md)                     | The per-tool specification. **Generated** — do not edit; run `npm run docs:tools`                                |
 | [`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md) | The Adobe Tools-panel tools the rail does **not** have — the complement of `TOOLS.md`, keyed to Adobe's identity |
 | [`LAYERS-PANEL.md`](LAYERS-PANEL.md)       | The Layers panel's requirements and status                                                                       |
+| [`CROP-UX.md`](CROP-UX.md)                 | Crop behavior against Photoshop and the app's retained-pixel recovery contract                                   |
 | [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md)   | Capabilities deliberately not built, so nobody re-audits them                                                    |
 
-The per-family research notes live outside this directory, one per tool family:
+The ten per-family research notes live outside this directory, one per tool family:
 `src/tools/descriptions/selection.notes.md`, `src/tools/descriptions/paint.notes.md`,
 `src/tools/descriptions/focus.notes.md`, `src/tools/descriptions/shape.notes.md`,
 `src/tools/descriptions/pen.notes.md`, `src/tools/descriptions/type-crop.notes.md`,
-`src/tools/descriptions/transform.notes.md`, `src/tools/descriptions/eyedropper-draw.notes.md`
-and `src/tools/descriptions/navigation.notes.md`.
-They carry the per-family research notes and the claims `TOOLS.md` deliberately could not source.
+`src/tools/descriptions/transform.notes.md`, `src/tools/descriptions/eyedropper-draw.notes.md`,
+`src/tools/descriptions/patch.notes.md`, and `src/tools/descriptions/view.notes.md`. They carry
+the per-family research notes and the claims `TOOLS.md` deliberately could not source.
 
 And one requirements document outside this directory:
 `src/components/ToolbarsRight/Text/TEXT_TOOL_REQUIREMENTS.md`, the Type tool's requirements, in the
@@ -53,24 +55,65 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## Working practice
 
-| Document                                               | Its one job                                                             |
-| ------------------------------------------------------ | ----------------------------------------------------------------------- |
-| [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                           |
-| [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery             |
-| [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds |
-| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent              |
-| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under               |
-| [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails              |
-| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)             | The dependency licence policy, and the fact that nothing enforces it    |
-| [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                   |
-| [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec       |
-| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words    |
+| Document                                                                                               | Its one job                                                                                          |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                                        |
+| [`../MODELS.md`](../MODELS.md)                                                                         | Everyday model/provider policy, safe routing, budget checks, and token-saving research               |
+| [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                          |
+| [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md)                                                     | Codex subagent tools, context, model routing, cost, and shared-worktree rules                        |
+| [`INCOMING_COMMITS.md`](INCOMING_COMMITS.md)                                                           | Records incoming commits from `git pull`/`git fetch` on the main worktree                            |
+| [`CHAT-ID.md`](CHAT-ID.md)                                                                             | Resolving the host-native chat ID used in commit trailers                                            |
+| [`KILO.md`](KILO.md)                                                                                   | The agent-facing Kilo config, including the parts no tracked file holds                              |
+| [`CODE-REVIEW.md`](CODE-REVIEW.md)                                                                     | The verbatim prompt and rules for the code review subagent                                           |
+| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)                                                   | The protocol a per-tool-family research agent works under                                            |
+| [`TESTING.md`](TESTING.md)                                                                             | Every gate, what it proves, and what to read when it fails                                           |
+| [`E2E-MIRROR.md`](E2E-MIRROR.md)                                                                       | The `mirror` workflow: broad headless E2E runs and Linux baseline capture                            |
+| [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md)                                                     | Targeted Linux/ARM64 checks on the project's remote EC2 host                                         |
+| [`FREE-COMPUTE-OPERATIONS.md`](FREE-COMPUTE-OPERATIONS.md)                                             | Current free-runner setup, safe credential discovery, and provider-specific checks                   |
+| [`../.kilo/plans/durable-replay-authority.md`](../.kilo/plans/durable-replay-authority.md)             | The problem-focused implementation plan for the durable replay authority cutover                     |
+| [`../.kilo/skills/parallel-test-hardening/SKILL.md`](../.kilo/skills/parallel-test-hardening/SKILL.md) | The wave-based workflow for hardening tests with small parallel agents                               |
+| [`../.kilo/skills/kilo-chat-history/SKILL.md`](../.kilo/skills/kilo-chat-history/SKILL.md)             | Kilo-local mirror of the chat-history workflow used by Kilo agents; keep identical to the repo skill |
+| [`../README.md`](../README.md)                                                                         | Install, run, test, and the CI jobs — for a new clone                                                |
+| [`../e2e/README.md`](../e2e/README.md)                                                                 | The Playwright suite: helpers, conventions, and how to add a spec                                    |
+| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md)                                                 | What the history migration left undone, in the e2e suite's own words                                 |
+| [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)                                                       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again          |
 
-The agent procedures live outside this directory, under `.skills/`:
-`.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,
-`.skills/worktree-merge-harvest.md` and `.skills/broad-test-improvement.md`. `AGENTS.md` states the
-rules; a skill states the procedure for one of them. `e2e/fixtures/README.md` is the Playwright
-fixture conventions note.
+### Skills
+
+This is the entrypoint for repository procedures. Codex must open the selected `.skills/*.md`
+playbook explicitly; Kilo runtime copies live under `.kilo/skills/*/SKILL.md`. Tool permission
+profiles live under `.kilo/agent/`.
+
+The agent procedures live outside this directory, under `.skills/`, one file per
+procedure. `AGENTS.md` states the rules, a skill states a procedure, and an agent profile defines
+its tool permissions.
+
+| Skill                                                                                | Its one job                                                                                                                                                  |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`../.skills/broad-test-improvement.md`](../.skills/broad-test-improvement.md)       | Fix broken tests, raise coverage, and strengthen assertions without touching source code                                                                     |
+| [`../.skills/ci-failure-mitigation.md`](../.skills/ci-failure-mitigation.md)         | Fix non-browser CI failures via subagents, ignoring OS-bound e2e rendering issues                                                                            |
+| [`../.skills/e2e-hardening-overnight.md`](../.skills/e2e-hardening-overnight.md)     | Triage flaky Playwright CI runs and harden reproduced cross-platform E2E defects                                                                             |
+| [`../.skills/chat-history-query.md`](../.skills/chat-history-query.md)               | Locate and query old Kilo and GitHub Copilot Chat sessions from local SQLite, JSONL, and legacy JSON stores                                                  |
+| [`../.skills/chat-loose-end-scan.md`](../.skills/chat-loose-end-scan.md)             | Find loose ends in recent top-level Kilo chats — chats that died on a network loss, a token wall or a tool error, and reviews whose findings nobody answered |
+| [`../.skills/codex-chat-history.md`](../.skills/codex-chat-history.md)               | Locate and query OpenAI Codex CLI session history from local SQLite state database and JSONL rollout files. Read-only, local-first                           |
+| [`../.skills/copilot-chat-history.md`](../.skills/copilot-chat-history.md)           | Locate and query GitHub Copilot Chat panel and Agent sessions from Chronicle, agent-host, and JSONL stores. Read-only, local-first                           |
+| [`../.skills/free-model-agent-rotation.md`](../.skills/free-model-agent-rotation.md) | Route bounded research, text-sweep, and simple review subtasks through currently free model providers without paid fallback                                  |
+| [`../.skills/free-model-chat-sweep.md`](../.skills/free-model-chat-sweep.md)         | Review Kilo and Codex history for free-model failure patterns, then apply evidence-backed expiring quarantine actions                                        |
+| [`../.skills/hard-merge.md`](../.skills/hard-merge.md)                               | Merge two branches with overlapping features, recovering requirements from chat history and arbitrating conflicts against Photoshop                          |
+| [`../.skills/kilo-chat-history.md`](../.skills/kilo-chat-history.md)                 | Locate and query Kilo chat sessions from local SQLite database and legacy JSON stores. Read-only, local-first                                                |
+| [`../.skills/overnight-sweep.md`](../.skills/overnight-sweep.md)                     | An autonomous, token-conscious pass over documented defects and unfinished work                                                                              |
+| [`../.skills/parallel-test-hardening.md`](../.skills/parallel-test-hardening.md)     | The wave-based workflow for hardening tests with small parallel agents                                                                                       |
+| [`../.skills/photoshop-tool-creation.md`](../.skills/photoshop-tool-creation.md)     | Build a new Photoshop-faithful tool end to end: research, options bar, implementation, tests, e2e                                                            |
+| [`../.skills/stale-worktree-reclaim.md`](../.skills/stale-worktree-reclaim.md)       | Find abandoned worktrees, prove the owning session dead, triage into delete/land/defer                                                                       |
+| [`../.skills/worktree-merge-harvest.md`](../.skills/worktree-merge-harvest.md)       | Land work from free worktrees onto `main`, with reviews and gates                                                                                            |
+
+## Agent profiles
+
+| Profile                                                                        | Its one job                                                                        |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`../.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) | Deny file writes, patches, shell, and task delegation to free Kilo research agents |
+
+`e2e/fixtures/README.md` is the Playwright fixture conventions note.
 
 ## Open problems
 
@@ -88,20 +131,23 @@ Three homes for an open defect, split by what broke. A defect goes in one of the
 
 Six root-level files are point-in-time reports: an investigation of one tree on
 one date, or a disposition record for documents that were stashed and recovered.
-Two more recovered from that same stash sit in this directory. They are **not
-current**, nothing in the live set depends on them, and they are not part of this
-hierarchy.
+The hardening harvest handoff is another dated report. Two more files recovered
+from a stash sit in this directory. These documents are **not current**, nothing
+in the live set depends on them, and they are not part of this hierarchy.
 
-| File                                     | What it is                                                                                                 |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete |
-| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                  |
-| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them             |
-| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                   |
-| `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                |
-| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                           |
-| `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                |
-| `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it          |
+| File                                     | What it is                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `../RECOVERY.md`                         | Preserves recovery instructions for an unreviewed inventory patch; do not apply wholesale                    |
+| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete   |
+| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                    |
+| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
+| `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
+| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
+| `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                  |
+| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
+| `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
+| `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                  |
+| `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it            |
 
 They are still where they are because `scripts/lib/worktree-inventory/curated.mjs`
 keys on four of the root paths as `ref:` values, and the two `docs/*.md` rows

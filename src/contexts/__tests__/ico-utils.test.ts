@@ -2,6 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeIco, loadIcoFile } from '../ico-utils.ts';
 
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/**
+ * A PNG whose IHDR chunk carries a real geometry, so `loadIcoFile`'s pre-decode check has something
+ * to read: 8 signature bytes, a 4-byte chunk length, the `IHDR` type, then the two 4-byte
+ * big-endian dimensions. The rest of the payload is filler — nothing decodes these bytes in jsdom,
+ * and the point of the check is that it never gets that far.
+ */
+function pngOf(width: number, height: number) {
+  const bytes = new Uint8Array(32);
+  bytes.set(PNG_SIGNATURE, 0);
+  new DataView(bytes.buffer).setUint32(8, 13);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12); // 'IHDR'
+  new DataView(bytes.buffer).setUint32(16, width);
+  new DataView(bytes.buffer).setUint32(20, height);
+  return bytes;
+}
 const ICO_HEADER_SIZE = 6;
 const ICO_DIRECTORY_ENTRY_SIZE = 16;
 
@@ -18,6 +34,14 @@ class ImageStub {
   onload: HTMLImageElement['onload'] = null;
   onerror: HTMLImageElement['onerror'] = null;
   src = '';
+  /**
+   * A real decode always reports a positive natural size, and the ICO fixtures below are declared
+   * as 4×4 entries, so that is the default. A stub that left these `undefined` would be refused by
+   * `assertWithinMaxEdge`'s integer test — which is the point: the PNG branch reads its geometry
+   * from here, so the stub has to answer with one.
+   */
+  naturalWidth = 4;
+  naturalHeight = 4;
   constructor() {
     recordImage(this as unknown as HTMLImageElement);
   }
@@ -50,6 +74,23 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+/**
+ * Drives a PNG entry all the way through the browser: `loadIcoFile` cannot settle until `onload`
+ * fires, and the geometry it then reports has to be in place *before* that, because the ceiling is
+ * read off the element rather than off the container.
+ */
+async function resolvePngIco(
+  ico: Uint8Array<ArrayBuffer>,
+  naturalWidth: number | undefined,
+  naturalHeight: number | undefined
+): Promise<HTMLImageElement> {
+  const pending = loadIcoFile(new Blob([ico]));
+  await vi.waitFor(() => expect(imageStub).not.toBeNull());
+  Object.assign(imageStub!, { naturalWidth, naturalHeight });
+  imageStub!.onload!.call(imageStub!, new Event('load'));
+  return pending;
+}
 
 async function resolveIco(ico: Uint8Array<ArrayBuffer>): Promise<HTMLImageElement> {
   const pending = loadIcoFile(new Blob([ico]));
@@ -246,7 +287,31 @@ describe('ICO encoding', () => {
     { width: 0, height: 1 },
     { width: 1, height: 0 },
   ])('rejects a degenerate $width x $height canvas', async ({ width, height }) => {
-    await expect(encodeIco(canvasOf(width, height))).rejects.toThrow('ICO dimensions cannot exceed 256 pixels');
+    // A zero axis is not an over-large one, so it gets its own message: "cannot exceed 256
+    // pixels" is false of a 0-pixel-wide canvas and tells the reader nothing about which half of
+    // the guard fired.
+    await expect(encodeIco(canvasOf(width, height))).rejects.toThrow(
+      `ICO image has invalid dimensions to save (${width}×${height})`
+    );
+  });
+
+  it.each([
+    { width: 257, height: 1 },
+    { width: 1, height: 257 },
+    { width: 10000, height: 10000 },
+  ])('refuses a $width x $height canvas without PNG-encoding it first', async ({ width, height }) => {
+    // `canvasToPngBlob` rasterises the whole canvas through `toBlob`, so a guard that runs after
+    // it has already paid for — and allocated — the encode of a raster it is about to refuse. On
+    // the 10000×10000 case that is a full PNG encode of 400 MP before the throw.
+    const png = new Blob(['png'], { type: 'image/png' });
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const toBlob = vi.fn().mockImplementation((callback: BlobCallback) => callback(png));
+    vi.spyOn(canvas, 'toBlob').mockImplementation(toBlob);
+
+    await expect(encodeIco(canvas)).rejects.toThrow('ICO dimensions cannot exceed 256 pixels');
+    expect(toBlob).not.toHaveBeenCalled();
   });
 });
 
@@ -546,6 +611,78 @@ describe('ICO PNG-compressed entries', () => {
     await expect(pending).rejects.toThrow('Failed to decode ICO image');
     expect(vi.mocked(URL.revokeObjectURL)).toHaveBeenCalledExactlyOnceWith('blob:mock-url');
   });
+
+  it('refuses a PNG entry the encoder would then reject, closing the same asymmetry on this branch', async () => {
+    // A DIB declares its geometry in a header this module parses, so it can be checked before the
+    // decode. A PNG entry does not: the only geometry is what the browser reports after it has
+    // already decoded. Leaving that unchecked is how a 512×512 PNG icon — what most tools emit at
+    // and above 256 — opens here and is then refused by `Save as ICO`.
+    installImageHarness();
+    const png = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
+    const pending = resolvePngIco(icon(png, 4, 4), 512, 512);
+
+    await expect(pending).rejects.toThrow('ICO image is too large to open (512×512)');
+    expect(vi.mocked(URL.revokeObjectURL)).toHaveBeenCalledExactlyOnceWith('blob:mock-url');
+  });
+
+  it('refuses an over-large PNG entry before the browser decodes it', async () => {
+    // The post-`onload` check is the authority but it is too late to bound anything: the raster is
+    // already allocated by the time `naturalWidth` exists. A 4096×4096 entry is a ~2-6 MB file and
+    // 67 MB of RGBA, so the geometry has to be read out of the entry's own bytes — which is what
+    // IHDR is — before the blob URL is created at all.
+    installImageHarness();
+    const pending = loadIcoFile(new Blob([icon(pngOf(4096, 4096), 4, 4)]));
+
+    await expect(pending).rejects.toThrow('ICO image is too large to open (4096×4096)');
+    expect(imageStub).toBeNull();
+    expect(vi.mocked(URL.createObjectURL)).not.toHaveBeenCalled();
+  });
+
+  it('accepts a PNG entry on its declared IHDR geometry, without reaching the browser', async () => {
+    installImageHarness();
+    const pending = resolvePngIco(icon(pngOf(64, 48), 64, 48), 64, 48);
+
+    await expect(pending).resolves.toBeInstanceOf(ImageStub);
+  });
+
+  it('falls back on the browser-reported geometry when the IHDR is unreadable', async () => {
+    // A PNG whose first chunk is not IHDR is malformed, and refusing to guess is the decoder's job:
+    // the guard declines to read it and the post-`onload` check still applies. Here the stub reports
+    // 512×512, so the post-`onload` check is what refuses — the pre-check never spoke.
+    installImageHarness();
+    const notIhdr = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
+    const pending = resolvePngIco(icon(notIhdr, 4, 4), 512, 512);
+
+    await expect(pending).rejects.toThrow('ICO image is too large to open (512×512)');
+  });
+
+  it.each([
+    { label: 'both axes', naturalWidth: undefined, naturalHeight: undefined },
+    { label: 'the width alone', naturalWidth: undefined, naturalHeight: 4 },
+    { label: 'the height alone', naturalWidth: 4, naturalHeight: undefined },
+  ])(
+    'refuses a PNG entry with $label unreadable, rather than assuming it is small',
+    async ({ naturalWidth, naturalHeight }) => {
+      // `undefined < 1` and `undefined > 256` are both false, so a range-only guard waves an
+      // unreadable geometry through and the document reaches the Save dialog unchecked. Each axis
+      // has to be caught on its own, or dropping one of the two comparisons is invisible.
+      installImageHarness();
+      const pending = resolvePngIco(
+        icon(new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]), 4, 4),
+        naturalWidth,
+        naturalHeight
+      );
+
+      await expect(pending).rejects.toThrow('ICO image has invalid dimensions to open');
+    }
+  );
+
+  it('accepts a PNG entry sitting exactly on the ICO maximum', async () => {
+    installImageHarness();
+    const png = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
+
+    await expect(resolvePngIco(icon(png, 256, 256), 256, 256)).resolves.toBeInstanceOf(ImageStub);
+  });
 });
 
 describe('ICO malformed container input', () => {
@@ -627,6 +764,43 @@ describe('ICO malformed DIB entries', () => {
     corrupt(dib);
 
     await expect(loadIcoFile(new Blob([icon(dib, 1, 1)]))).rejects.toThrow('Invalid ICO bitmap dimensions');
+  });
+
+  it.each([
+    {
+      axis: 'width',
+      dib: () => buildDib({ width: 300, height: 1, rows: [{ rgba: new Array(1200).fill(255) }] }),
+      entry: [300, 1],
+    },
+    {
+      axis: 'height',
+      dib: () =>
+        buildDib({ width: 1, height: 300, rows: Array.from({ length: 300 }, () => ({ rgba: [1, 2, 3, 255] })) }),
+      entry: [1, 300],
+    },
+  ])(
+    'rejects a DIB whose $axis exceeds the ICO maximum, which Save as ICO would then refuse',
+    async ({ dib, entry }) => {
+      // A file that opens and then cannot be saved back is the round-trip asymmetry: `encodeIco`
+      // enforces the 256 ceiling on the way out, and nothing on the way in enforced it here, so the
+      // document reached the Save dialog already larger than the format it was about to be written
+      // in. The two halves have to read the same number.
+      await expect(loadIcoFile(new Blob([icon(dib(), entry[0], entry[1])]))).rejects.toThrow(
+        'ICO image is too large to open'
+      );
+    }
+  );
+
+  it('still opens a DIB sitting exactly on the ICO maximum', async () => {
+    // The ceiling is `> 256`, not `>= 256`: an ICO directory entry stores 256 as a zero byte, so
+    // 256 is the format's own largest geometry and `encodeIco` writes it (its `width === 256 ? 0`
+    // branch). A guard that refused it would make the largest legal icon unsavable.
+    installImageHarness();
+    const dib = buildDib({ width: 256, height: 1, rows: [{ rgba: new Array(1024).fill(255) }] });
+
+    const image = await resolveIco(icon(dib, 256, 1));
+
+    expect(image).toBe(imageStub);
   });
 
   it('rejects a DIB colour depth the BMP decoder behind it cannot read', async () => {

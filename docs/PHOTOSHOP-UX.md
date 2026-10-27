@@ -29,21 +29,19 @@ violations on `main`.
 
 ## Open violations
 
-- **No invented tools.** `draw` ("Draw Tool") is the clearest case, and it is **one
-  of two** tool ids the app declares that Photoshop has no counterpart for:
-  `draw` and `shape`, which are the two bullets that follow. Do not scope the
-  work to `draw` and declare the requirement met.
-  `draw` itself is a freehand-annotation layer tool; Photoshop's nearest is the
-  Brush, and the app already has a Brush. **It is to be deleted**, not relabelled —
-  except that `draw` is the one tool this requirement does not reach, under the
-  operator's override recorded below.
+- **No invented tools without an explicit override.** `draw` ("Draw Tool") is the
+  app-only freehand-annotation tool; Photoshop's nearest is Brush. **OVR-2 explicitly
+  preserves this tile**, so keep it separate from the Adobe roster count and do not
+  remove it or describe its dashed/spray behaviors as Photoshop behavior. The registry
+  name `shape` is also not itself an Adobe label; its six mapped flyout entries must be
+  counted by their rendered names, not by that shared implementation identifier.
 
 - **The operator has decided: the three come out of the rail.** 2026-10-01, in
   their words, "I decide to remove them." The **rail entries** go — Photoshop's
   Tools panel has no such entries, and they have **no replacement tool** because
   Photoshop puts nothing in their place. The **processors are not deleted**; the
   capability is to be restructured, not dropped. **DONE** — the flyout is gone from
-  `toolbar-mapping.ts`, the rail is fifteen groups, and `extraTools` is the list of
+  `toolbar-mapping.ts`, the rail has **four** top-level bands, and `extraTools` is the list of
   registered tool ids that carry no rail entry.
   - **The destination already existed, mislabelled, and two surfaces had to change
     together.** The app's menus were File, Tools, **Edit**, Window. `Edit` already
@@ -61,13 +59,17 @@ violations on `main`.
     TRUE rather than false; it is not a dodge. It is still an `Image ▸ Adjustments`
     command either way, so the rail verdict does not change; the label was the second
     defect.
-  - **`color` has no honest Adobe name today, and this is the half that is still
-    open.** Its three controls are grayscale, sepia and saturation. `Photo Filter` is
-    the closest single Adobe command and it is a **partial match**: sepia IS its
-    Warming preset and saturation is nearest its Density slider, but grayscale is a
-    control Photo Filter does not have. `Black and White` is not an option at all —
-    it needs per-hue sextant weighting and there is no hue decomposition anywhere in
-    `src`. See `HANDOFF.md` §170, which is an open question with a recorded default.
+  - **`color` is hosted by `Desaturate`, and `Photo Filter` is disabled.** Its three
+    controls are grayscale, sepia and saturation. Adobe's Desaturate "assigns equal red,
+    green, and blue values to each pixel in an RGB image" and "has the same effect as
+    setting Saturation to minus (-)100 in the Hue/Saturation adjustment"
+    (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>), so the leading two controls are the command it is named for and `sepia`
+    is the bounded divergence — Adobe's Desaturate is a one-shot command with no dialog.
+    `Photo Filter` is not a partial match at all: Adobe's is a lens filter with a
+    Density slider and a Preserve Luminosity option, and the bar reproduces none of
+    the three, so it is an unbuilt command and carries the `disabled` item every
+    unbuilt command carries. `Black and White` is not an option either — it needs
+    per-hue sextant weighting and there is no hue decomposition anywhere in `src`.
   - **The capability is coming back, as real commands, and the requirements do not
     exist yet.** 2026-10-01, after the decision above: Levels, Colors and the other
     `Image ▸ Adjustments` commands "will be implemented". This **does not reopen the
@@ -82,11 +84,12 @@ violations on `main`.
 
 - **"No adjustment is a tool" is too strong, and a rail audit will catch it.** Adobe
   ships a real Tools-panel entry whose output is an adjustment: the **Adjustment Brush
-  Tool**, beta in 25.9 (Feb 2024), GA in **25.11 (July 2024)**, in its own toolbar slot
-  in the Retouching & Painting Tools group, with no single-letter shortcut (the
-  widely-quoted `K` is the CS3-era Targeted Adjustment Tool, a different and removed
-  tool). Adobe: it is "non-destructive, as they generate a new adjustment layer with a
-  layer mask". The **Selection Brush Tool** is also real, GA in the same 25.11, in the
+  Tool**, beta in 25.9 (Feb 2024), GA in **25.11 (July 2024)**. Its Adobe page confirms
+  toolbar membership but does not name a group or default-visible status, and does not
+  publish a single-letter shortcut (the widely-quoted `K` is the CS3-era Targeted Adjustment Tool,
+  a different and removed tool). Adobe says it is "non-destructive, as they generate a new
+  adjustment layer with a layer mask". The **Selection Brush Tool** is also real, GA in the same
+  25.11, in the
   **Lasso group**, reached by cycling `L` then `Shift`+`L`.
   **The narrow claim is the one that survives, and it is the one the rail rests on:** the
   `Image ▸ Adjustments` commands are not Tools-panel entries **as commands**, and the two
@@ -101,14 +104,13 @@ violations on `main`.
   never displays" points at the wrong target. `shape` is the only id the flyout
   routes every figure through. Photoshop's shapes are Rectangle, Ellipse, Triangle,
   Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**;
-  the flyout has **six** today (the shape flyout in `toolbarMap`) and `Star` is the
-  missing one.
+  the flyout has **seven** today (the shape flyout in `toolbarMap`), all present.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
   for the Move tool is acceptable — but the **rendered label** is not and must end
-  in `" Tool"`. Scanning all **40** `label:` entries in `toolbarMap` (the five
+  in `" Tool"`. Scanning all **50** `label:` entries in `toolbarMap` (the seven
   `shape` figures and the six Pen-family entries each carry their own label, so the
-  entry count is 40 and not the tile count): **none lack the suffix**. It used to be
+  entry count is 50 and not the tile count): **none lack the suffix**. It used to be
   exactly three — `Colors`, `Levels` and `Transform` — and those three left the rail
   entirely, because they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands
   rather than tools; `extraTools` (`toolbar-mapping.ts`) is the list that now records
@@ -148,15 +150,10 @@ violations on `main`.
     to `draw`, and `HANDOFF.md` §119 records both halves. Three assertions in
     `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` pin it, the
     load-bearing one being
-    `it('gives the Draw tool no shortcut, because no key selects it')`. It is also the
-    suite's default way to make a mark, which is
-    why `HANDOFF.md` §74 sequences it last: `clickToolButton(page, 'draw')` occurs in
-    every `e2e/*.spec.ts` that makes a mark — count them with
-    `grep -rc "clickToolButton([^)]*'draw'" e2e --include="*.spec.ts"`, which excludes
-    the non-spec files that also call it — and `e2e/pen-types.spec.ts` exists
-    specifically to test it and dies with the tool. Re-derive that number rather than
-    quoting one: `HANDOFF.md` §74's own figure for this ("25 call sites across 14 e2e
-    specs") does not reproduce against this counting rule and must not be copied forward.
+    `it('gives the Draw tool no shortcut, because no key selects it')`. Draw remains a
+    visible tile under OVR-2, but is not keyboard-reachable. Its position and overflow state
+    are determined by the current toolbar mapping and viewport; do not justify preserving it
+    with historical click-site counts or stale §74 ordering claims.
 
 ## What is not a tool
 
@@ -217,29 +214,29 @@ the `.notes.md` files carry the per-tool sources; a description without a source
 a rumour.
 
 The navigation-and-measuring overview is Adobe's least complete: only one line
-was retrievable ("Ruler tool Measures distances, locations, and angles").
+was retrievable ("Ruler tool Measures distances, locations, and angles"). Hand,
 Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection
 and Direct Selection are therefore **not Adobe-table-confirmed** and are listed
 from the shortcut PDF and individual tool pages. That list lives here; nothing
 else in the repository carries it.
 
-**Hand has left that list, and not by being re-researched.** Its Adobe page was
-opened — the _"Pan across the canvas with the Hand tool"_ page — and what it
-establishes is what makes the tool's own precondition: the Hand moves the image
-_"while you're zoomed in to more than 100% and part of the image is out of view"_,
-so it presupposes a zoom and is defined over the zoomed case. That is also why
-`docs/FEATURES.md` scores View / navigation `partial` rather than `have` even
-though the transform exists. The research lives with the code, in
-`src/tools/descriptions/navigation.ts` and the `navigation.notes.md` beside it.
+The view-tool implementation follows the individual Adobe pages rather than
+pretending the overview table is complete. `ViewToolArea` owns Hand, Zoom and
+Rotate View gestures; `ViewState` is presentation-only; and the inverse in
+`usePointerPosition` keeps existing document gestures in image coordinates. The
+implementation deliberately does not claim Photoshop's momentum, wheel,
+compass, snapping or multi-window preferences; those gaps are recorded in the
+view-tool description notes and generated `docs/TOOLS.md`.
 
 Two 2026 candidates are **not** Adobe-confirmed and must not ship as tools: Clone
 Source (a gap in one diagram's icon numbering, name never printed) and Generate
 Image (a real feature, unconfirmed panel placement).
 
-Selection Brush (Lasso group) and Adjustment Brush (Brush flyout sibling, a large
-feature involving an adjustment layer plus a painted mask) are desktop Photoshop
-and Adobe-confirmed. `HANDOFF.md` §74 records the corrections that brought them
-into the list.
+Selection Brush (Lasso group) and Adjustment Brush are desktop Photoshop tools and
+Adobe-confirmed. Adobe places Selection Brush in the Lasso group; the Adjustment Brush page confirms
+toolbar membership but does not identify its group or default visibility. Its adjustment-layer plus
+painted-mask behavior makes it a substantial feature, not merely a new icon. `HANDOFF.md` §74 records
+the research correction and keeps the unresolved placement visible.
 
 **Naming traps in the source material, so nobody "fixes" them later:** Adobe's
 tables say "Elliptical Marquee tool" and "Ellipse tool" — two different words for
@@ -253,18 +250,20 @@ Adding a tool means updating every hand-written registry list, including
 `dispatchTable`, `icons`, and `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`.
 The hand-copied lists in the tests are the expensive part.
 `toolIconNames` in `src/components/SidebarLeft/__tests__/toolIcons.test.tsx` carries a
-**49-name** union by hand (49 = the 44 `ToolName`s plus 5 `shape-*` figure icons),
-byte-identical and in the same order to `ToolIconName` in
-`src/components/SidebarLeft/types.ts`; **keep it that way**.
+**59-name** union by hand, byte-identical to `ToolIconName` in
+`src/components/SidebarLeft/types.ts`; **keep it that way**. These are icon factories, not rail
+entries: the current `toolbarMap` has 50 rendered entries (49 Adobe-named tools plus the explicit
+Draw override), while `availableTools` has 53 registry IDs including shape aliases and menu-command
+IDs. Do not conflate those counts.
 
-**`HANDOFF.md` §74 is the rail-clone target and the file-by-file blast
-radius** — it enumerates the hand-copied lists and the tests that pin tool names
+**`HANDOFF.md` §74 records the rail-clone requirement and the remaining source-backed roster gap** —
+it enumerates the hand-copied lists and the tests that pin tool names
 (`src/util/__tests__/constants.test.ts`, `toolIcons.test.tsx`, the four rosters in
 `src/tools/__tests__/tool-processors.test.ts`,
 `src/components/SidebarLeft/__tests__/SidebarLeft.rendering.test.tsx`,
 `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` and
-`src/components/Common/AppKeyboardShortcuts.tsx`). **`HANDOFF.md` §68
-is not this**: it is about a committed shape being painted twice, and
-its pointer here was wrong. Count the lists yourself before estimating an edit rather
-than trusting a number written anywhere — including the 49 and the 44 above, which are
-cheap to re-derive with `grep -c` and a line count.
+`src/components/Common/AppKeyboardShortcuts.tsx`). **The former shape-preview duplication was fixed
+by `29b4ec31` and is unrelated to the toolbar roster.** The former 41/70/36/34 counts are
+historical and are not an authoritative Photoshop default-roster total; Adobe's public documentation
+does not enumerate the complete default panel. See `docs/TOOLS-INVENTORY.md` for the current
+implementation count, missing candidates, and unresolved default placements.

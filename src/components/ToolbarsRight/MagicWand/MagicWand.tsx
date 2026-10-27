@@ -3,6 +3,7 @@ import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
 import { useSelectionHistory } from '../../../contexts/useSelectionHistory.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
+import { SelectionPixelBudgetNotice } from '../SelectionPixelBudgetNotice.tsx';
 
 const SLIDER_CLASS = 'h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700';
 
@@ -17,7 +18,7 @@ const MagicWand: React.FC<{}> = () => {
   if (!args) return null;
 
   const hasActivePolygonSelection = !!activeSelection && activeSelection.geometry !== 'rectangle';
-  const selectedPixelCount = activeSelection?.metadata?.magicWand?.selectedPixelCount;
+  const matchingPixelCount = activeSelection?.metadata?.magicWand?.selectedPixelCount;
 
   const handleToleranceChange = (event: ChangeEvent<HTMLInputElement>) => {
     patchToolArgs('magic-wand', { tolerance: Number(event.target.value) });
@@ -107,18 +108,23 @@ const MagicWand: React.FC<{}> = () => {
           Paste
         </button>
         <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleClear}>
-          Clear
+          Deselect
         </button>
       </div>
 
       <div className="min-w-60 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-        <div>Click a color area to select connected similar pixels.</div>
+        {args.contiguous ? (
+          <div>Click a color area to select connected similar pixels.</div>
+        ) : (
+          <div role="status">Selects matching colors across the image, including disconnected regions.</div>
+        )}
         <div className="mt-1 text-[9px] opacity-75">
-          {selectedPixelCount
-            ? `${selectedPixelCount.toLocaleString()} pixels selected`
+          {matchingPixelCount
+            ? `${matchingPixelCount.toLocaleString()} matching pixels`
             : 'Increase tolerance for broader regions.'}
         </div>
       </div>
+      <SelectionPixelBudgetNotice />
     </div>
   );
 };

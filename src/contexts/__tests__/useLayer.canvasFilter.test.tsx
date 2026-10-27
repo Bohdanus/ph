@@ -25,6 +25,7 @@ const BEDROCK_LAYER = {
   blendMode: 'source-over' as GlobalCompositeOperation,
   order: 0,
   pos: { x: 0, y: 0, width: 800, height: 600 },
+  presentationBounds: null,
   operations: [],
   source: undefined,
 } as const;

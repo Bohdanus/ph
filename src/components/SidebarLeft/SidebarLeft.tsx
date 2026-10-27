@@ -15,20 +15,91 @@ import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import type { ToolName } from '../../contexts/tool-types.ts';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
+import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
-import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
-import { useDockDrag } from '../../hooks/useDockDrag.ts';
+import { useFirstUse } from '../../hooks/useFirstUse.ts';
+import { useFirstUseContext } from '../../contexts/FirstUseContext.tsx';
+import { DEFAULT_VIEW_STATE } from '../../contexts/view-state.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
-import { fitToScreen } from '../../hooks/document-view.ts';
-import { claimKeyCapture, releaseKeyCapture } from '../../hooks/input-capture.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
+
+import './SidebarLeft.scss';
+
+/**
+ * THE RULE: a tool is unimplemented exactly when its entry in `toolProcessors`
+ * (`src/tools/toolProcessors.ts`) carries `commit: 'unimplemented'`. That registry is the
+ * source of truth, so the set is DERIVED from it here rather than written out, and that is
+ * the whole point: a hand-maintained list is a second answer to a question the registry
+ * already answers, and it goes stale the moment a tool is implemented and nobody edits this
+ * file. A tile greyed out on the strength of a list, over a tool that now commits pixels, is
+ * a lie the rail cannot take back — and nothing in the app would report it, because the dim
+ * is a CSS class.
+ *
+ * There is a second, INDEPENDENT signal for the same fact: `implementation: 'placeholder'`
+ * in the description records under `src/tools/descriptions/`, which `ToolTooltip` already
+ * reads and prints as its status line. The registry is the one used here because it is the
+ * narrower claim — dimming a tile is a statement about BEHAVIOUR, where `placeholder` is a
+ * documentation status a tool could carry while committing pixels. Today both sets are the
+ * same seven names, the Pen family and Custom Shape, and they come from different files, so
+ * neither can quietly become the only one.
+ *
+ * `Object.keys` over the registry rather than a typed union, and `findToolProcessor` for the
+ * lookup, because it is the registry's own single lookup point: the pixel-free `eyedropper`
+ * is then absent from the set because no entry exists for it, rather than because an
+ * exception here has to name it.
+ */
+const UNIMPLEMENTED_TOOL_NAMES: ReadonlySet<ToolName> = new Set(
+  (Object.keys(toolProcessors) as ToolName[]).filter(
+    (toolName) => findToolProcessor(toolName)?.commit === 'unimplemented'
+  )
+);
+
+/** Whether the rail dims this tool. The rule and its source are {@link UNIMPLEMENTED_TOOL_NAMES}. */
+const isUnimplementedTool = (toolName: ToolName): boolean => UNIMPLEMENTED_TOOL_NAMES.has(toolName);
+
+/**
+ * The class a tile and a flyout item wear for a tool that does not work yet.
+ *
+ * The treatment itself — the `filter` and the two numbers in it — lives in
+ * `SidebarLeft.scss`, because a filter that long does not belong in a `className`
+ * expression, and because a theme decision belongs in the stylesheet where the theme is.
+ *
+ * VISUAL ONLY, and that is load-bearing rather than cautious. There is no `disabled`, no
+ * `aria-disabled`, no `pointer-events: none` and no early return anywhere near this class,
+ * because selecting a placeholder tool is what opens its placeholder options bar — the
+ * existing documented behaviour of the roster — and a dim that stopped responding would take
+ * that away while looking like a more polite version of the same button. The tooltip stays
+ * undimmed as well: it is portalled to `document.body` by `AnchoredOverlay`, so the reason
+ * the tile is dimmed is the one thing about it still drawn at full strength.
+ */
+const UNIMPLEMENTED_TOOL_CLASS = 'tool-unimplemented';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
 
 const TOOL_BUTTON_ACTIVE_CLASS =
   'border-blue-500 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.45)] text-blue-700 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100';
+
+function focusFlyoutItemAfterOpen(groupIndex: string, key: string, isCurrentRequest: () => boolean, attempt = 0) {
+  requestAnimationFrame(() => {
+    if (!isCurrentRequest()) return;
+
+    const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
+    const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
+    const menuVisible = menu && getComputedStyle(menu).visibility !== 'hidden';
+    if (!menuVisible || items.length === 0) {
+      if (attempt < 3) focusFlyoutItemAfterOpen(groupIndex, key, isCurrentRequest, attempt + 1);
+      return;
+    }
+
+    if (!isCurrentRequest()) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
+    items[nextIndex]?.focus();
+  });
+}
 
 const TOOL_BUTTON_INACTIVE_CLASS =
   'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
@@ -125,14 +196,6 @@ const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
  */
 export const FLYOUT_LONG_PRESS_MS = 250;
 
-/**
- * This rail's identity in the key-capture slot.
- *
- * A `symbol` rather than a string, because `releaseKeyCapture` only honours its own owner and
- * needs a value no other claimant can produce by accident.
- */
-const FLYOUT_KEY_CAPTURE = Symbol('sidebar-left-flyout');
-
 /** The group key in the one-column rail, which is the one the toolbar map's order reads as. */
 const oneColumnGroupKey = (sectionIndex: number, groupIndex: number): string => `${sectionIndex}-${groupIndex}`;
 
@@ -151,38 +214,6 @@ const OVERFLOW_GROUP_KEY = 'overflow';
  * render that has no reason to touch either.
  */
 const OVERFLOW_IDENTITY: ToolGroupIdentity = { label: MORE_TOOLS_LABEL, Icon: MoreToolsIcon };
-
-/** How far toward the opposite edge the rail has to travel before the dock will swap with it. */
-const RE_DOCK_ZONE = 0.25;
-
-/**
- * The grip that drags the rail to the other edge.
- *
- * Adobe's Photoshop training material describes exactly this control: "the Tool bar can be
- * relocated and even 'docked' to the panels on the right side of the screen. Simply drag it by
- * the grabber handle — when you see the solid blue line next to your panels on the right,
- * release the cursor to 'dock' the panel." (Adobe, Photoshop training: re-locating the tool
- * bar.) So the grip is not an invention, and an earlier version of this comment saying
- * Photoshop has no such control was simply wrong.
- *
- * What the app lacks is the TITLE BAR the gesture starts from — a rail of forty tool tiles with
- * no panel header to drag. Inventing one would put a row of chrome above the tools, which is a
- * different rail from Photoshop's. So the grip goes in the row that already exists for the
- * one/two-column toggle: that is where a user already goes to change the rail's shape, the row
- * keeps its height either way, and the blue drop line is the one the quote describes.
- */
-const RailGripIcon = () => (
-  <span aria-hidden="true" className="flex flex-col gap-[2px]">
-    <span className="flex gap-[2px]">
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-    </span>
-    <span className="flex gap-[2px]">
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-    </span>
-  </span>
-);
 
 const toolbarGroups = toolbarMap.flat();
 
@@ -214,12 +245,14 @@ type ToolGroupIdentity = {
 type ToolbarEntry = { kind: 'group'; group: ToolbarToolGroup; key: string } | { kind: 'overflow' };
 
 const SidebarLeft = () => {
-  const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
+  const [{ hasImage, toolName, color, backgroundColor, setViewState }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { dockOnLeft, setDockOnLeft } = usePanelLayout();
+  const { isToolNew, markToolAsSeen } = useFirstUse();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const flyoutFocusRequestRef = useRef(0);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
+  const { highlightedTools } = useFirstUseContext();
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
   // single column" — the double-chevron at the top of the Tools panel switches to two columns
   // to save vertical room, which is only coherent if one column is where you start. It is also
@@ -241,6 +274,7 @@ const SidebarLeft = () => {
   const isTablet = useIsTabletViewport();
   const isMobile = useIsMobileViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressPointerIdRef = useRef<number | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
   const ignoreNextClickRef = useRef(false);
@@ -395,7 +429,10 @@ const SidebarLeft = () => {
   // reopening itself with nothing the user did to open it. The same defect the `lg`
   // crossing above has, reached a third way, and fixed the same way: derived from the state
   // that changed, adjusted during render.
-  if (openGroup !== null && collapsedGroups.has(openGroup)) {
+  if (
+    (openGroup !== null && collapsedGroups.has(openGroup)) ||
+    (openGroup === OVERFLOW_GROUP_KEY && !overflowPlan.showOverflowTile)
+  ) {
     setOpenGroup(null);
     setFlyoutAnchor(null);
   }
@@ -432,10 +469,15 @@ const SidebarLeft = () => {
     }
   };
 
-  const openFlyout = (groupIndex: string) => {
-    clearLongPressFlyout();
-    suppressLongPressRef.current = false;
-    longPressOpenedRef.current = true;
+  const openFlyout = (groupIndex: string, preservePointerGesture = false) => {
+    // Any earlier deferred keyboard focus belongs to the open it came from. A pointer or
+    // another key can supersede that open before its visibility retries have drained.
+    flyoutFocusRequestRef.current += 1;
+    if (!preservePointerGesture) {
+      clearLongPressFlyout();
+      suppressLongPressRef.current = false;
+      longPressOpenedRef.current = true;
+    }
     setOpenGroup(groupIndex);
   };
 
@@ -463,6 +505,7 @@ const SidebarLeft = () => {
    */
   const closeFlyout = useCallback(
     (restoreFocus = false) => {
+      flyoutFocusRequestRef.current += 1;
       if (restoreFocus) {
         flyoutAnchor?.element.querySelector<HTMLButtonElement>('button')?.focus();
       }
@@ -472,99 +515,8 @@ const SidebarLeft = () => {
     [flyoutAnchor]
   );
 
-  /**
-   * An open flyout owns the keyboard.
-   *
-   * Keyed on `openGroup` rather than sprinkled into `openFlyout` and `closeFlyout`, because
-   * there are FOUR ways a flyout closes and only two of them go through `closeFlyout`: the two
-   * render-phase adjustments — the `lg` crossing and a collapse swallowing the open tile — call
-   * `setOpenGroup(null)` directly. An effect over the state covers all four by construction, and
-   * cannot be defeated by a fifth route added later.
-   *
-   * What it prevents: `Space` is claimed by the spring-loaded Hand, and both this rail's flyout
-   * and `PanelGroup` read `event.key === ' '` in their own local handlers. A keyup listener on
-   * `document` sees the keypress regardless of which surface has focus, so without this a Space
-   * over an open flyout would both activate the highlighted menu item and start a pan.
-   */
-  useEffect(() => {
-    if (openGroup === null) return;
-    claimKeyCapture(FLYOUT_KEY_CAPTURE);
-    return () => releaseKeyCapture(FLYOUT_KEY_CAPTURE);
-  }, [openGroup]);
-
-  // Re-docking the rail. "You can dock the Tools panel to either the right or left sides of
-  // the application window" (teachucomp; the CC-era Adobe book says the same by its title bar).
-  // The drop target is a blue line at the edge being thrown at, drawn before the release, which
-  // is the affordance Adobe documents for every panel move.
-  //
-  // `overlaySide` is the same fact as `dockOnLeft` seen from the rail: a rail on the right edge
-  // opens its flyout to the left, because "the anchor's trailing edge" is off-screen there.
-  const overlaySide: 'left' | 'right' = dockOnLeft ? 'left' : 'right';
-  const [reDockTarget, setReDockTarget] = useState<'left' | 'right' | null>(null);
-  const reDockOriginXRef = useRef(0);
-  const reDockTargetRef = useRef<'left' | 'right' | null>(null);
-  /** Whether the last press turned into a drag, so its synthesised click is not also a swap. */
-  const railDragMovedRef = useRef(false);
-
-  const onRailDragStart = useCallback(
-    (event: React.PointerEvent<HTMLElement>) => {
-      reDockOriginXRef.current = event.clientX;
-      railDragMovedRef.current = false;
-      reDockTargetRef.current = null;
-      setReDockTarget(null);
-      // A rail that moves with a flyout open takes the portal's anchor with it, and the
-      // overlay re-measures against a tile that is no longer where the user aimed.
-      closeFlyout();
-    },
-    [closeFlyout]
-  );
-
-  // The current target is ALSO held in a ref, because the commit below reads it. A
-  // `setReDockTarget` updater is the wrong place to put a side effect: React may call it more
-  // than once for the same update, and a `setDockOnLeft` inside one commits the workspace move
-  // an unpredictable number of times — or, in the case that was actually observed, not at all,
-  // because the updater's return value is the only thing React is guaranteed to use.
-  const onRailDrag = useCallback(
-    ({ dx }: { dx: number }) => {
-      // 3px, the same threshold `PanelGroup` uses for its own drag. Below it the press is a
-      // click, and a click here is a swap, so the flag has to be set before the drop target is
-      // or a twitch at the origin reads as a completed re-dock.
-      if (Math.abs(dx) > 3) railDragMovedRef.current = true;
-      const viewportWidth = document.documentElement.clientWidth;
-      const pointerX = reDockOriginXRef.current + dx;
-      // Toward the edge the rail is NOT on. A rail in the left column swaps by going RIGHT,
-      // which is the mirror of the dock's own test in `SidebarRight` — that one is a dock in
-      // the right column swapping by going LEFT. Reading either as "the low edge" is how this
-      // shipped inverted once and passed a unit test written to match it: a rail dragged left
-      // would have reported a drop target for the edge it was already against.
-      const wantsSwap = dockOnLeft
-        ? pointerX < viewportWidth * RE_DOCK_ZONE
-        : pointerX > viewportWidth * (1 - RE_DOCK_ZONE);
-      const target = wantsSwap ? (dockOnLeft ? 'left' : 'right') : null;
-      reDockTargetRef.current = target;
-      setReDockTarget(target);
-    },
-    [dockOnLeft]
-  );
-
-  // Honouring the cancel is the point of having one: the rail moves to the OPPOSITE edge, and a
-  // user who presses Escape has said something. Committing anyway is the one result Escape must
-  // never produce.
-  const onRailDragEnd = useCallback(
-    (cancelled: boolean) => {
-      const target = reDockTargetRef.current;
-      reDockTargetRef.current = null;
-      setReDockTarget(null);
-      // The rail and the dock SWAP, so the flag is the rail's destination INVERTED: a rail
-      // going right puts the dock on the left, which is what `dockOnLeft` means. Mapping it
-      // straight through (`target === 'left'`) sends the rail to the edge it was thrown away
-      // from, and two inversions cancelling each other is exactly how this was wrong once.
-      if (target !== null && !cancelled) setDockOnLeft(target === 'right');
-    },
-    [setDockOnLeft]
-  );
-
-  const railDrag = useDockDrag({ onStart: onRailDragStart, onMove: onRailDrag, onEnd: onRailDragEnd });
+  // The rail is permanently pinned to the left edge. Its flyouts always open toward the canvas.
+  const overlaySide: 'left' | 'right' = 'right';
 
   const scheduleFlyoutOpen = (groupIndex: string) => {
     clearLongPressFlyout();
@@ -578,6 +530,31 @@ const SidebarLeft = () => {
   useEffect(() => {
     return () => {
       if (longPressFlyoutTimeoutRef.current !== null) clearTimeout(longPressFlyoutTimeoutRef.current);
+      flyoutFocusRequestRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    // A grouped tile does not capture its pointer: an owner may release outside
+    // it after leaving. Observe that terminal event so the owner cannot remain
+    // stuck, while keeping ownership if the pointer leaves and returns first.
+    const finishOutsidePointer = (event: PointerEvent) => {
+      if (longPressPointerIdRef.current !== event.pointerId) return;
+      longPressPointerIdRef.current = null;
+      suppressLongPressRef.current = false;
+      longPressOpenedRef.current = false;
+      ignoreNextClickRef.current = false;
+      if (longPressFlyoutTimeoutRef.current !== null) {
+        clearTimeout(longPressFlyoutTimeoutRef.current);
+        longPressFlyoutTimeoutRef.current = null;
+      }
+    };
+
+    window.addEventListener('pointerup', finishOutsidePointer);
+    window.addEventListener('pointercancel', finishOutsidePointer);
+    return () => {
+      window.removeEventListener('pointerup', finishOutsidePointer);
+      window.removeEventListener('pointercancel', finishOutsidePointer);
     };
   }, []);
 
@@ -620,7 +597,8 @@ const SidebarLeft = () => {
     if (tool.figure) {
       const shapeIcon =
         toolIcons[
-          `shape-${tool.figure}` as 'shape-rectangle' | 'shape-oval' | 'shape-line' | 'shape-triangle' | 'shape-polygon'
+          `shape-${tool.figure}` as
+            'shape-rectangle' | 'shape-oval' | 'shape-line' | 'shape-triangle' | 'shape-polygon' | 'shape-star'
         ];
       if (shapeIcon) return shapeIcon;
     }
@@ -631,8 +609,8 @@ const SidebarLeft = () => {
     tool.name === toolName && (!tool.figure || (toolArgs.toolName === 'shape' && toolArgs.figure === tool.figure));
 
   const selectTool = (tool: ToolbarTool) => {
+    if (goToTool(tool.name) === false) return;
     if (tool.figure) patchToolArgs('shape', { figure: tool.figure });
-    goToTool(tool.name);
   };
 
   const renderToolGroup = (group: ToolbarToolGroup, groupIndex: string, identity?: ToolGroupIdentity) => {
@@ -656,6 +634,32 @@ const SidebarLeft = () => {
     const Icon = identity?.Icon ?? getToolIcon(primaryTool);
     const tileLabel = identity?.label ?? primaryTool.label;
     const isOpen = openGroup === groupIndex;
+
+    /**
+     * The tool whose state decides whether this tile is dimmed, which is `group[0]` and NOT
+     * the promoted `primaryTool` above.
+     *
+     * A flyout group's tile wears the identity of its FIRST entry — that is the contract the
+     * comment above this function states, and the reason the Pen tile's icon is the Pen's — so
+     * that is the tool a user reads the tile as. Promotion changes which nested tool the tile
+     * currently selects, and the tile must not take its greyed-out state from a pick: the
+     * three-dots tile's whole `group` is an arbitrary set of whichever tools did not fit, so a
+     * dim there would flip as the window resized and would claim the More Tools button itself
+     * does not work. Which is also why `identity` is the signal to leave the tile alone
+     * entirely — that tile stands for no tool at all.
+     *
+     * The `figure` is resolved through `descriptionKeyFor` because the five shape entries all
+     * carry the name `shape` and differ only by figure, and this is the SAME resolution
+     * `ToolTooltip` applies one line below — so a tile is judged by the tool its tooltip
+     * describes, and cannot be dimmed for one tool while describing another. The Shape tile's
+     * first entry is the Rectangle, which commits pixels, so it is not dimmed even though its
+     * flyout carries the unimplemented Custom Shape.
+     */
+    const tileTool = identity === undefined ? group[0] : null;
+    const tileToolName = tileTool !== null ? descriptionKeyFor(tileTool.name, tileTool.figure) : null;
+    const isTileUnimplemented = tileToolName !== null && isUnimplementedTool(tileToolName);
+    const isTileNew = tileToolName !== null && isUnimplementedTool(tileToolName) && isToolNew(tileToolName);
+    const isTileHighlighted = tileToolName !== null && highlightedTools.includes(tileToolName);
 
     return (
       <li
@@ -686,11 +690,29 @@ const SidebarLeft = () => {
             // (both above) and must not also claim to be a pressed toggle for a tool the user
             // cannot see.
             aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
-            className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
-            onClick={() => {
+            className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}${
+              isTileUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''
+            }${isTileHighlighted ? ' tool-highlight-pulse' : ''}`}
+            onClick={(event) => {
+              // A native click does not carry the pointer id that produced it. While a
+              // pointer owns the pending long-press, another pointer's click must not
+              // clear that owner's timer or toggle the flyout. A detail-zero click is
+              // pressless assistive activation; honor it without altering pointer state.
+              if (hasFlyout && longPressPointerIdRef.current !== null) {
+                if (event.detail === 0) {
+                  // The active pointer will still synthesize a click when it is released.
+                  // Treat the menu change as belonging to that gesture so the later click
+                  // cannot immediately reverse the independent assistive activation.
+                  longPressOpenedRef.current = true;
+                  if (isOpen) closeFlyout();
+                  else openFlyout(groupIndex, true);
+                }
+                return;
+              }
+
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
-                return;
+                if (event.detail !== 0) return;
               }
 
               suppressLongPressRef.current = true;
@@ -719,32 +741,13 @@ const SidebarLeft = () => {
 
               selectTool(primaryTool);
             }}
+            onDoubleClick={() => {
+              if (primaryTool.name === 'hand') setViewState(DEFAULT_VIEW_STATE);
+            }}
             onContextMenu={(event) => {
               if (!hasFlyout) return;
               event.preventDefault();
               openFlyout(groupIndex);
-            }}
-            /**
-             * Fit On Screen — Adobe binds this to "Double-click on Hand tool".
-             *
-             * Named rather than made general: only the Hand tile carries it, because the command
-             * is defined over a view that only the Hand navigates. Adding it to every tile would
-             * make double-clicking the Brush silently throw away the user's zoom, which is not a
-             * command anyone asked for.
-             *
-             * The `railDragMovedRef` guard is the same one `onClick` on the re-dock grip uses and
-             * for the same reason: a `<button>` synthesises a click from any pointerdown+pointerup
-             * on it, including one that travelled to the opposite edge of the screen, so a
-             * completed re-dock ends with a click on some tile. Resetting the flag and returning
-             * keeps a drag from also fitting the view.
-             */
-            onDoubleClick={() => {
-              if (railDragMovedRef.current) {
-                railDragMovedRef.current = false;
-                return;
-              }
-              if (primaryTool.name !== 'hand') return;
-              fitToScreen();
             }}
             onKeyDown={(event) => {
               if (!hasFlyout) return;
@@ -758,18 +761,15 @@ const SidebarLeft = () => {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 openFlyout(groupIndex);
-                requestAnimationFrame(() => {
-                  const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
-                  const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
-                  if (items.length === 0) return;
-                  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-                  const nextIndex = event.key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
-                  items[nextIndex]?.focus();
-                });
+                const request = ++flyoutFocusRequestRef.current;
+                focusFlyoutItemAfterOpen(groupIndex, event.key, () => flyoutFocusRequestRef.current === request);
               }
             }}
             onPointerDown={(event) => {
               if (!hasFlyout || event.button !== 0) return;
+              const pointerOwner = longPressPointerIdRef.current;
+              if (pointerOwner !== null && pointerOwner !== event.pointerId) return;
+              longPressPointerIdRef.current = event.pointerId;
               suppressLongPressRef.current = false;
               ignoreNextClickRef.current = false;
               longPressOpenedRef.current = false;
@@ -795,22 +795,17 @@ const SidebarLeft = () => {
               }
               scheduleFlyoutOpen(groupIndex);
             }}
-            onPointerLeave={() => {
+            onPointerLeave={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              // Leaving cancels a pending hold, not the pointer's ownership. If
+              // it returns after opening the menu, its release-generated click
+              // must still be suppressed. A release outside is cleared globally.
               suppressLongPressRef.current = false;
-              longPressOpenedRef.current = false;
-              // `ignoreNextClickRef` too, and this is load-bearing rather than tidiness. The
-              // three-dots press sets it, and its only clearer is that button's own `onClick` —
-              // so a press that leaves the button before releasing (a drag, or a pointer capture
-              // stolen by a scroll) never produces that click, and the flag survives. The
-              // casualty is the NEXT activation: for a mouse the next press on any grouped tile
-              // clears it first, but an assistive technology's click on this tile has no press,
-              // so a stranded flag swallows the one activation AT has for reaching a menu.
-              // Cheap, and it cannot lose anything — the press it cancels is one that never
-              // resolved into a click anyway.
-              ignoreNextClickRef.current = false;
               clearLongPressFlyout();
             }}
-            onPointerUp={() => {
+            onPointerUp={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              longPressPointerIdRef.current = null;
               suppressLongPressRef.current = false;
               if (hasFlyout && longPressOpenedRef.current) {
                 ignoreNextClickRef.current = true;
@@ -818,7 +813,9 @@ const SidebarLeft = () => {
               longPressOpenedRef.current = false;
               clearLongPressFlyout();
             }}
-            onPointerCancel={() => {
+            onPointerCancel={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              longPressPointerIdRef.current = null;
               suppressLongPressRef.current = false;
               longPressOpenedRef.current = false;
               // A cancelled pointer never produces a click, so the flag it would have set is
@@ -832,12 +829,26 @@ const SidebarLeft = () => {
             // the tool tiles: a rail whose first section has collapsed away must still be
             // able to report a tile height, and the three-dots tile is then the only one left.
             data-toolbar-tile=""
+            onMouseEnter={() => {
+              if (isTileNew) {
+                markToolAsSeen(tileToolName);
+              }
+            }}
+            onFocus={() => {
+              if (isTileNew) {
+                markToolAsSeen(tileToolName);
+              }
+            }}
           >
             <Icon title={tileLabel} />
+            {isTileNew && (
+              <span className="tool-new-badge" data-testid={`tool-new-badge-${tileToolName}`} aria-hidden="true" />
+            )}
             {hasFlyout && (
               <span
                 aria-hidden="true"
                 className="absolute bottom-0.5 right-0.5 h-0 w-0 border-b-[5px] border-l-[5px] border-b-current border-l-transparent opacity-70"
+                data-testid="tool-flyout-indicator"
               />
             )}
           </button>
@@ -963,6 +974,18 @@ const SidebarLeft = () => {
               {group.map((tool: ToolbarTool) => {
                 const FlyoutIcon = getToolIcon(tool);
                 const isSelected = isToolSelected(tool);
+                /**
+                 * The dim is per ITEM, not per group: a flyout is the one place a user
+                 * compares tools side by side, so this is where "which of these work" has to be
+                 * answerable without opening anything. The five shape figures and the Custom
+                 * Shape share one group and one tile, and they do not share an answer — the
+                 * figure is resolved exactly as a tile's is, so the Rectangle Tool row is
+                 * undimmed and the Custom Shape Tool row beside it is not.
+                 */
+                const toolDescriptionKey = descriptionKeyFor(tool.name, tool.figure);
+                const isUnimplemented = isUnimplementedTool(toolDescriptionKey);
+                const isFlyoutItemNew = isUnimplemented && isToolNew(toolDescriptionKey);
+                const isFlyoutItemHighlighted = highlightedTools.includes(toolDescriptionKey);
 
                 return (
                   <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
@@ -998,11 +1021,17 @@ const SidebarLeft = () => {
                       // `getToolIcon(tool)`), so it is untouched today, and it is the one thing
                       // that would render at 24px inside a 24.5px row if a row ever rendered an
                       // `identity.Icon`.
-                      className={`flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition-colors [&_svg]:!h-4 [&_svg]:!w-4 ${
+                      className={`relative flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition-colors [&_svg]:!h-4 [&_svg]:!w-4 ${
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                           : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
-                      }`}
+                      }${isUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''}${isFlyoutItemHighlighted ? ' tool-highlight-pulse' : ''}`}
+                      onMouseEnter={() => {
+                        if (isFlyoutItemNew) markToolAsSeen(toolDescriptionKey);
+                      }}
+                      onFocus={() => {
+                        if (isFlyoutItemNew) markToolAsSeen(toolDescriptionKey);
+                      }}
                       onClick={() => {
                         // The three-dots tile is excluded: its identity is the tile's, so a
                         // pick must not promote anything to be its icon. Every other tile
@@ -1011,6 +1040,9 @@ const SidebarLeft = () => {
                         if (identity === undefined) {
                           setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
                         }
+                        if (isFlyoutItemNew) {
+                          markToolAsSeen(toolDescriptionKey);
+                        }
                         selectTool(tool);
                         // No focus restore: a click here may be a mouse pick, which has
                         // already put focus where the user aimed. The keyboard's Enter path
@@ -1018,11 +1050,33 @@ const SidebarLeft = () => {
                         closeFlyout();
                       }}
                       role="menuitemradio"
+                      /**
+                       * The reason, on the one control that has no tooltip to carry it. A
+                       * rail tile gets the line out of `ToolTooltip`, which reads the
+                       * description record; a flyout row is a bare `<button>` with no overlay
+                       * at all, so a native `title` is the whole of the component's existing
+                       * convention for saying something about a control — the colour swatches
+                       * and both rail-header buttons use it — and it costs one attribute.
+                       *
+                       * `aria-label` is left as the bare tool name, deliberately. The
+                       * accessible name is the tool's name in both cases, and lengthening it
+                       * would change what every `getByRole('menuitemradio', { name })` locator
+                       * in the suite and in `e2e/` matches; a `title` is an addition to the
+                       * description, not a rewrite of the name.
+                       */
+                      title={isUnimplemented ? `${tool.label} — not implemented yet` : undefined}
                       type="button"
                       data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
                     >
                       <FlyoutIcon title={tool.label} />
                       <span className="flex-1 whitespace-nowrap">{tool.label}</span>
+                      {isFlyoutItemNew && (
+                        <span
+                          className="tool-new-badge"
+                          data-testid={`tool-new-badge-${toolDescriptionKey}`}
+                          aria-hidden="true"
+                        />
+                      )}
                       {tool.shortcut && <kbd className="text-[9px] opacity-65">{tool.shortcut}</kbd>}
                     </button>
                   </li>
@@ -1102,11 +1156,7 @@ const SidebarLeft = () => {
       // on either edge: `overflow-y: auto` computes `overflow-x` to `auto` and the border
       // always sits outside the content box, so the border belongs on whichever side faces the
       // canvas — and the grid area follows from the same fact.
-      className={`scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
-        dockOnLeft
-          ? 'border-l border-gray-300 dark:border-gray-700 [grid-area:right]'
-          : 'border-r border-gray-300 dark:border-gray-700 [grid-area:left]'
-      }`}
+      className="scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
       data-testid="left-sidebar"
       ref={setRailElement}
       style={{ width: toolbarWidth }}
@@ -1116,13 +1166,6 @@ const SidebarLeft = () => {
           it — the same reason the flyout has to be portalled but this does not, and the
           difference is absolute vs fixed. Rendered as a second child of the `<aside>` rather
           than a sibling in the grid, so the shell's region list stays what it has always been. */}
-      {reDockTarget !== null && (
-        <div
-          aria-hidden="true"
-          className={`pointer-events-none fixed inset-y-0 z-[60] w-1 bg-blue-500 ${reDockTarget === 'left' ? 'left-0' : 'right-0'}`}
-          data-testid="rail-drop-line"
-        />
-      )}
       {/* `h-full`, and that is the change that makes the fit possible. A flex column sized by
           its CONTENT has no height for `flex-1` to divide: the tools slot would be handed
           whatever the tools happened to need, so the fit would measure its own output and
@@ -1167,36 +1210,6 @@ const SidebarLeft = () => {
           the fit subtracts separately, and this change takes 14px off THAT one as well. */}
       <div className="flex h-full flex-col items-center py-2">
         <div className="mb-1 flex w-full shrink-0 items-center justify-between">
-          {!isTablet && (
-            <button
-              {...railDrag.handleProps}
-              aria-label="Move the toolbar to the other side"
-              className="cursor-grab rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
-              // The keyboard path, and the reason this is a `<button>` at all rather than a
-              // decorative `<div>`. Dragging needs a pointer; this control is announced, sits in
-              // the tab order, and is next to a sibling that works on click — so a button with no
-              // activation is a promise it does not keep. It was dead for a MOUSE user too, not
-              // only a keyboard one: `onRailDragEnd` only commits once the pointer has moved, so a
-              // plain click on the grip did nothing.
-              //
-              // `railDragMovedRef` keeps a drag from also counting as a click. A `<button>`
-              // synthesises a click from any pointerdown+pointerup on it, including one that
-              // travelled to the opposite edge, so without this a completed drag swapped on the
-              // release and then swapped again on the click — landing the rail where it started.
-              onClick={() => {
-                if (railDragMovedRef.current) {
-                  railDragMovedRef.current = false;
-                  return;
-                }
-                setDockOnLeft(!dockOnLeft);
-              }}
-              title="Drag to the other side, or press Enter"
-              type="button"
-              data-testid="rail-re-dock-handle"
-            >
-              <RailGripIcon />
-            </button>
-          )}
           {!isTablet && (
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
@@ -1296,11 +1309,9 @@ const SidebarLeft = () => {
         </div>
         {/* One rule, not two, and 8px of margin instead of 12. The rail carries a single
             divider: it separates the tools from the colour cluster, which is the only
-            boundary in the rail that is a boundary. The second `<hr>` this replaces stood
-            between the colour cluster and NOTHING — the commented-out Zoom control that
-            followed it was deleted with it, so nothing renders below the cluster at all — so
-            it spent 24px of margin (`my-3` is 12px a side) and a 1px hairline painting a rule
-            across the bottom of the panel for no division at all. */}
+            boundary in the rail that is a boundary. The obsolete bottom Zoom control was
+            a separate view shortcut, not the Zoom tool in `toolbarMap`; after the colour
+            cluster there is no second panel section to divide. */}
         <hr className="my-2 shrink-0 border-gray-300 dark:border-gray-700" />
 
         <div className="flex shrink-0 flex-col items-center">

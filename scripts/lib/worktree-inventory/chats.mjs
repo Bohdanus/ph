@@ -44,6 +44,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { LIVE_WINDOW_MS } from './classify.mjs';
+import { boundSessionSinceMs } from './session-audit-limits.mjs';
 
 /**
  * Every chat state that means an agent has NOT finished, in one place.
@@ -89,9 +90,17 @@ export function resolveSessionDb(home = process.env.HOME) {
  * `dataSources` entry saying why.
  */
 function openDb(dbPath) {
+  let db;
   try {
-    return new DatabaseSync(dbPath, { readOnly: true });
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    db.exec('PRAGMA query_only = 1;');
+    return db;
   } catch {
+    if (db) {
+      try {
+        db.close();
+      } catch {}
+    }
     return null;
   }
 }
@@ -144,111 +153,66 @@ function readSubagentCounts(db, sinceMs) {
  * `length` means the model's output was cut off. A session whose last turn was
  * `tool-calls` never got to summarise, which is the machine-readable form of
  * "stopped with work unfinished".
+ *
+ * Combined into one query over only the relevant top-level parts. The scalar
+ * lookups retain the latest event in the requested window.
  */
 function readOutcomes(db, sinceMs) {
-  const finishes = db
+  // Read outcome counts in one pass. The two scalar lookups preserve the
+  // previous "latest event in the window" behavior without a separate scan.
+  const rows = db
     .prepare(
-      `SELECT session_id, json_extract(data, '$.reason') AS reason, time_created
-         FROM part
-        WHERE json_extract(data, '$.type') = 'step-finish' AND time_created >= ?`
-    )
-    .all(sinceMs);
-
-  // Keep the LAST step-finish per session. The column is `time_created`; an
-  // earlier draft compared against `row.time`, which is always undefined, so
-  // `>` was false for every row after the first and each session kept whatever
-  // happened to be its first turn's reason. That made every multi-turn
-  // session look abandoned.
-  const last = new Map();
-  for (const row of finishes) {
-    const prior = last.get(row.session_id);
-    if (!prior || row.time_created > prior.time_created) last.set(row.session_id, row);
-  }
-
-  const errors = db
-    .prepare(
-      `SELECT p.session_id AS session_id, COUNT(*) AS n
+      `SELECT
+         p.session_id AS session_id,
+         (SELECT json_extract(p2.data, '$.reason')
+            FROM part p2
+           WHERE p2.session_id = p.session_id
+             AND json_extract(p2.data, '$.type') = 'step-finish'
+             AND p2.time_created >= ?
+           ORDER BY p2.time_created DESC
+           LIMIT 1) AS last_reason,
+         COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
+                    AND json_extract(p.data, '$.state.status') = 'error' THEN 1 END) AS tool_errors,
+         COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
+                    AND p.data LIKE '%Add credits%' THEN 1 END) AS credits_failures,
+         COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
+                    AND json_extract(p.data, '$.state.status') = 'error'
+                    AND p.data LIKE '%is waiting for input%' THEN 1 END) AS blocked_count,
+         (SELECT p2.data
+            FROM part p2
+           WHERE p2.session_id = p.session_id
+             AND json_extract(p2.data, '$.type') = 'tool'
+             AND json_extract(p2.data, '$.state.status') = 'error'
+             AND p2.data LIKE '%is waiting for input%'
+             AND p2.time_created >= ?
+           ORDER BY p2.time_created DESC
+           LIMIT 1) AS blocked_data
          FROM part p
          JOIN session s ON s.id = p.session_id
-        WHERE json_extract(p.data, '$.type') = 'tool'
-          AND json_extract(p.data, '$.state.status') = 'error'
-          AND s.parent_id IS NULL
+        WHERE s.parent_id IS NULL
           AND p.time_created >= ?
+          AND json_extract(p.data, '$.type') IN ('tool', 'step-finish')
         GROUP BY p.session_id`
     )
-    .all(sinceMs);
-
-  const credits = db
-    .prepare(
-      `SELECT p.session_id AS session_id, COUNT(*) AS n
-         FROM part p
-         JOIN session s ON s.id = p.session_id
-        WHERE p.data LIKE '%Add credits%'
-          AND s.parent_id IS NULL
-          AND p.time_created >= ?
-        GROUP BY p.session_id`
-    )
-    .all(sinceMs);
+    .all(sinceMs, sinceMs, sinceMs);
 
   const out = new Map();
-  for (const row of errors) out.set(row.session_id, { toolErrors: row.n });
-  for (const row of credits) {
-    const e = out.get(row.session_id) || {};
-    e.creditsFailures = row.n;
+  for (const row of rows) {
+    const e = {};
+    if (row.tool_errors > 0) e.toolErrors = row.tool_errors;
+    if (row.credits_failures > 0) e.creditsFailures = row.credits_failures;
+    if (row.last_reason) e.lastReason = row.last_reason;
+    if (row.blocked_count > 0 && row.blocked_data) {
+      const m = /questionID\s+\\?"([^"\\]+)\\?"/.exec(row.blocked_data);
+      e.blockedOn = m ? m[1] : null;
+    }
     out.set(row.session_id, e);
-  }
-  for (const [id, row] of last) {
-    const e = out.get(id) || {};
-    e.lastReason = row.reason;
-    out.set(id, e);
   }
   return out;
 }
 
 /**
- * Sessions blocked on a human answer.
- *
- * Detected from the tool-error channel because that is where the runtime
- * reports it: an `agent_manager` call against a session that is waiting on a
- * question fails with "is waiting for input. Pending question requests". It is
- * a weak signal — the message names any managed session, not necessarily this
- * one — so the classification is recorded with the evidence attached rather
- * than asserted flatly.
- */
-function readBlocked(db, sinceMs) {
-  const rows = db
-    .prepare(
-      `SELECT p.session_id AS session_id, p.data AS data
-         FROM part p
-         JOIN session s ON s.id = p.session_id
-        WHERE json_extract(p.data, '$.type') = 'tool'
-          AND json_extract(p.data, '$.state.status') = 'error'
-          AND p.data LIKE '%is waiting for input%'
-          AND s.parent_id IS NULL
-          AND p.time_created >= ?`
-    )
-    .all(sinceMs);
-
-  return rows.map((r) => {
-    // The message lives inside a JSON string, so its quotes are escaped:
-    // `questionID \"que_0e49…\"`. A regex written for bare quotes matched
-    // nothing, and every `blocked` record shipped `blockedOn: null` while
-    // AGENTS.md claimed the field carried the id.
-    //
-    // The whitespace requirement is what skips the other occurrence of
-    // `questionID` in the same row — a JSON key, `"questionID":"/"`, which is
-    // followed by a quote rather than a space and would otherwise win the
-    // match and yield "/" as the answer.
-    const m = /questionID\s+\\?"([^"\\]+)\\?"/.exec(r.data);
-    return { sessionId: r.session_id, questionId: m ? m[1] : null };
-  });
-}
-
-/**
  * Classify one session.
- *
- * `nowMs` is injected rather than read from the clock so the whole document is
- * a pure function of (git, database, `nowMs`) and a test can pin it.
  */
 export function classifySession(session, outcome, { nowMs, exists }) {
   const idleMs = nowMs - session.timeUpdated;
@@ -325,7 +289,8 @@ export function auditChats({
   }
 
   try {
-    const sessions = readSessions(db, sinceMs);
+    const boundedSinceMs = boundSessionSinceMs(sinceMs, nowMs);
+    const sessions = readSessions(db, boundedSinceMs);
 
     // A `--now` earlier than the newest session makes `idleMs` negative, and a
     // negative idle time satisfies the liveness test — so pinning the clock
@@ -335,11 +300,8 @@ export function auditChats({
     const newest = sessions.reduce((n, s) => (s.timeUpdated > n ? s.timeUpdated : n), 0);
     const effectiveNow = Math.max(nowMs, newest);
 
-    const outcomes = readOutcomes(db, sinceMs);
-    const subagents = new Map(readSubagentCounts(db, sinceMs).map((row) => [row.parent_id, row.n]));
-    const blocked = readBlocked(db, sinceMs);
-    const blockedBySession = new Map();
-    for (const b of blocked) blockedBySession.set(b.sessionId, b);
+    const outcomes = readOutcomes(db, boundedSinceMs);
+    const subagents = new Map(readSubagentCounts(db, boundedSinceMs).map((row) => [row.parent_id, row.n]));
 
     const byDirectory = new Map();
     for (const s of sessions) {
@@ -348,9 +310,9 @@ export function auditChats({
         exists: existingPaths.has(s.directory),
       });
       classified.subagentCount = subagents.get(s.id) ?? 0;
-      const b = blockedBySession.get(s.id);
-      if (b) {
-        classified.blockedOn = b.questionId;
+      const outcome = outcomes.get(s.id);
+      if (outcome?.blockedOn) {
+        classified.blockedOn = outcome.blockedOn;
         // Promote from whatever state it is actually in. An earlier draft
         // promoted only from `idle`, which `classifySession` no longer returns,
         // so `blocked` was unreachable — and the branch still ran its body,
@@ -380,7 +342,7 @@ export function auditChats({
       // not just here. Clamping in one place only left `classify` reading the
       // raw value and produced exactly the drift the clamp exists to prevent.
       newestSessionAt: newest,
-      windowMs: nowMs - sinceMs,
+      windowMs: nowMs - boundedSinceMs,
     };
   } finally {
     db.close();

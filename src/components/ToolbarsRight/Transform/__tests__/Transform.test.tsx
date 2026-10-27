@@ -105,6 +105,12 @@ describe('Transform toolbar', () => {
     expect(screen.queryByText('Reset All')).not.toBeInTheDocument();
   });
 
+  it('names the rotation slider for assistive technology', () => {
+    render(<Transform />);
+
+    expect(screen.getByRole('slider', { name: 'Rotation angle' })).toBeInTheDocument();
+  });
+
   // These three used to live here as 'rotate buttons are clickable without error', 'mirror
   // buttons are clickable without error' and 'Reset All button is clickable without error'.
   // They contained no assertions at all, so they only re-proved that the component renders,

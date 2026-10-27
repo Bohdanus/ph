@@ -6,10 +6,17 @@ import { DASH_LENGTH, GAP_LENGTH, SPEED } from '../useAnts.ts';
 import {
   ANT_GAP_COLOR,
   ANT_STROKE_COLOR,
+  createSelectionRasterOutlineCanvas,
   type SelectionMarchingAntsProps,
   useSelectionMarchingAnts,
 } from '../useSelectionAnts.ts';
-import { createMockCanvasContext } from '../../test/setup.ts';
+import {
+  clearSelectionDragPreview,
+  publishSelectionDragPreview,
+  readSelectionDragPreview,
+} from '../selection-drag-preview.ts';
+import { createMockCanvasContext, createPixelCanvasContext } from '../../test/setup.ts';
+import { encodeRasterSelectionMask } from '../../util/selection-mask.ts';
 
 const FRAME: DocumentFrame = { x: 0, y: 0, width: 200, height: 120 };
 const CANVAS_SIZE = { width: 200, height: 120 };
@@ -27,9 +34,11 @@ function polygon(overrides: Partial<Selection> = {}): Selection {
     sourceTool: 'polygonal-lasso',
     pos: { x: 10, y: 20, width: 30, height: 40 },
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+      ],
     ],
     ...overrides,
   };
@@ -37,7 +46,7 @@ function polygon(overrides: Partial<Selection> = {}): Selection {
 
 function createRafMocks() {
   const frames: Map<number, FrameRequestCallback> = new Map();
-  let nextId = 0;
+  let nextId = 1;
 
   const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
     const id = nextId++;
@@ -64,11 +73,16 @@ describe('useSelectionMarchingAnts', () => {
     rafMocks = createRafMocks();
     globalThis.requestAnimationFrame = rafMocks.requestAnimationFrame;
     globalThis.cancelAnimationFrame = rafMocks.cancelAnimationFrame;
+    // The drag channel is a module-level slot on purpose, so it outlives this hook exactly as it
+    // outlives a tool area. Nothing resets it for us between cases, and a leaked entry freezes the
+    // ants for every test that follows — which reads as a mysteriously wrong speed, not as a leak.
+    clearSelectionDragPreview();
   });
 
   afterEach(() => {
     globalThis.requestAnimationFrame = origRaf;
     globalThis.cancelAnimationFrame = origCancel;
+    clearSelectionDragPreview();
     vi.restoreAllMocks();
   });
 
@@ -138,6 +152,132 @@ describe('useSelectionMarchingAnts', () => {
 
     expect(offsets).toEqual([0, DASH_LENGTH, -SPEED, DASH_LENGTH - SPEED]);
     expect(rafMocks.frames.size).toBe(1);
+  });
+
+  it('clears logical frame bounds instead of the DPR-scaled backing store', () => {
+    const { ctx, overlayRef } = setup();
+    overlayRef.current!.width = CANVAS_SIZE.width * 2;
+    overlayRef.current!.height = CANVAS_SIZE.height * 2;
+
+    frame();
+
+    expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, FRAME.width, FRAME.height);
+  });
+
+  describe('a selection drag', () => {
+    /**
+     * The whole of the drag-freeze rule in one assertion set: the offset is HELD, the border is
+     * still STROKED, the loop is still ALIVE, and the phase is picked up again unchanged on
+     * release.
+     *
+     * Each of those four is load-bearing and each fails differently. Holding the offset in a
+     * cancelled frame would park the ants mid-drag; holding it by clearing the canvas would
+     * satisfy "stop animating" by hiding the border, which is the opposite of the requirement;
+     * and a loop that stopped instead of being fed a held offset would need a re-render to
+     * restart, which a drag never produces — the tool area keeps the drag in a ref precisely so
+     * the store does not change.
+     */
+    it('freezes the crawl, keeps painting the border, and resumes on the phase it left', () => {
+      const { ctx } = setup();
+      const { offsets } = recordStrokes(ctx);
+      publishSelectionDragPreview({ kind: 'follow', selection: polygon() });
+
+      frame();
+      frame();
+      frame();
+
+      // Three frames, six strokes, and every offset identical: still dashed, no longer crawling.
+      expect(offsets).toEqual([0, DASH_LENGTH, 0, DASH_LENGTH, 0, DASH_LENGTH]);
+      // A live loop behind the hold. A cancelled frame leaves nothing scheduled, and the ants
+      // would not come back until a re-render.
+      expect(rafMocks.frames.size).toBe(1);
+
+      clearSelectionDragPreview();
+      frame();
+
+      // Still 0 rather than a jump: nothing advanced the offset while the drag held it.
+      expect(offsets).toEqual([0, DASH_LENGTH, 0, DASH_LENGTH, 0, DASH_LENGTH, 0, DASH_LENGTH]);
+      expect(rafMocks.frames.size).toBe(1);
+    });
+
+    it('paints the dragged contour where the pointer put it, in place of the committed one', () => {
+      const { ctx } = setup();
+      publishSelectionDragPreview({
+        kind: 'follow',
+        selection: polygon({ pos: { x: 100, y: 200, width: 30, height: 40 } }),
+      });
+
+      frame();
+
+      // Two strokes — the black/white pair — and one path. The committed contour is filtered out
+      // by id, because painting it too would outline the same selection twice: once where the
+      // pointer left it and once where it went.
+      expect(ctx.stroke).toHaveBeenCalledTimes(2);
+      const path = vi.mocked(ctx.stroke).mock.calls[0][0] as Path2D;
+      expect(path.moveTo).toHaveBeenCalledWith(100, 200);
+      expect(path.lineTo).toHaveBeenCalledWith(130, 200);
+    });
+
+    it('leaves every other selection crawling, because only the dragged one is frozen', () => {
+      const other = polygon({ id: 'sel-2', pos: { x: 80, y: 90, width: 10, height: 10 } });
+      const { ctx } = setup({ selections: [polygon(), other] });
+      publishSelectionDragPreview({ kind: 'follow', selection: polygon() });
+
+      frame();
+
+      // Three contours' worth of strokes for two selections — the dragged pair plus the
+      // untouched one — is the proof the filter is by id and not "replace the whole list".
+      expect(ctx.stroke).toHaveBeenCalledTimes(4);
+    });
+
+    /**
+     * A marquee being drawn is already on the tool overlay, one canvas ABOVE this one, and it is
+     * the same rectangle the ants would otherwise outline. So the ants stand down rather than
+     * draw a second, stale border beside it — which is what Adobe's `Select > Transform
+     * Selection` does, swapping the ants for the transform box and restoring them on commit.
+     *
+     * The dash offset is deliberately left alone here too, so the restored ants pick up on the
+     * phase they left instead of snapping to the top of the cycle.
+     */
+    it('stands down for a marquee on the tool overlay, then comes back on release', () => {
+      const { ctx } = setup();
+      frame();
+      vi.mocked(ctx.stroke).mockClear();
+
+      publishSelectionDragPreview({ kind: 'marquee' });
+      frame();
+
+      expect(ctx.stroke).not.toHaveBeenCalled();
+      expect(ctx.clearRect).toHaveBeenLastCalledWith(0, 0, CANVAS_SIZE.width, CANVAS_SIZE.height);
+      // Alive, so the release below repaints without needing a re-render to wake the loop.
+      expect(rafMocks.frames.size).toBe(1);
+
+      clearSelectionDragPreview();
+      frame();
+
+      expect(vi.mocked(ctx.stroke).mock.calls.length).toBeGreaterThan(0);
+      const path = vi.mocked(ctx.stroke).mock.calls[0][0] as Path2D;
+      expect(path.moveTo).toHaveBeenCalledWith(10, 20);
+      // `-SPEED + DASH_LENGTH`, not `DASH_LENGTH`: the offset the stand-down left in place is `0`
+      // and only the frame after the release advanced it. A discarded phase would restart at 0
+      // and read here as exactly `DASH_LENGTH`, which is what makes this a pin.
+      expect(ctx.lineDashOffset).toBeCloseTo(DASH_LENGTH - SPEED, 6);
+    });
+
+    it('reads the slot rather than a value closed over at render', () => {
+      const { ctx } = setup();
+      frame();
+      vi.mocked(ctx.stroke).mockClear();
+
+      // Published after the hook rendered, with no re-render in between. This is exactly how a
+      // drag reaches the loop: `publishSelectionDragPreview` is called from a pointermove inside
+      // a ref, so nothing about the hook's props ever changes.
+      publishSelectionDragPreview({ kind: 'marquee' });
+      frame();
+
+      expect(ctx.stroke).not.toHaveBeenCalled();
+      expect(readSelectionDragPreview()).toEqual({ kind: 'marquee' });
+    });
   });
 
   describe('the contain fit divisor', () => {
@@ -243,6 +383,182 @@ describe('useSelectionMarchingAnts', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
+  it('builds and reuses a raster outline canvas for a packed selection', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const mask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
+
+    const outline = createSelectionRasterOutlineCanvas(mask);
+
+    expect(outline).not.toBeNull();
+    expect(outline?.canvas.width).toBe(3);
+    expect(outline?.canvas.height).toBe(3);
+    expect(outline?.width).toBe(3);
+    expect(outline?.height).toBe(3);
+    expect(createSelectionRasterOutlineCanvas(mask)).toBe(outline);
+    expect(createdCanvases).toHaveLength(1);
+    const imageData = vi.mocked(createdCanvases[0]!.getContext('2d')!.putImageData).mock.calls[0]![0];
+    expect([imageData.data[7], imageData.data[15], imageData.data[19], imageData.data[23], imageData.data[31]]).toEqual(
+      [255, 255, 255, 255, 255]
+    );
+  });
+
+  it('reuses an outline for a new mask object with identical dimensions and packed contents', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const mask = encodeRasterSelectionMask(Uint8Array.of(1, 1, 0, 1), 2, 2, {
+      x: 0,
+      y: 0,
+      width: 2,
+      height: 2,
+    })!;
+    const previewOutline = createSelectionRasterOutlineCanvas(mask);
+    const committedMask = { ...mask };
+
+    const committedOutline = createSelectionRasterOutlineCanvas(committedMask);
+
+    expect(committedMask).not.toBe(mask);
+    expect(committedOutline).toBe(previewOutline);
+    expect(createdCanvases).toHaveLength(1);
+  });
+
+  it('retries a refused full-resolution outline with a smaller bounded display mask', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createdCanvases.length === 0 ? null : createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const mask = encodeRasterSelectionMask(new Uint8Array(8 * 8).fill(1), 8, 8, {
+      x: 0,
+      y: 0,
+      width: 8,
+      height: 8,
+    })!;
+
+    const outline = createSelectionRasterOutlineCanvas(mask);
+
+    expect(createdCanvases).toHaveLength(2);
+    expect(outline?.scaleFactor).toBe(2);
+    expect(outline?.canvas.width).toBe(6);
+    expect(outline?.canvas.height).toBe(6);
+    expect(outline?.width).toBe(10);
+    expect(outline?.height).toBe(10);
+  });
+
+  it('keeps a valid elongated selection outline when the browser rejects tall canvases', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      let height = element.height;
+      Object.defineProperty(element, 'height', {
+        configurable: true,
+        get: () => height,
+        set: (nextHeight: number) => {
+          if (nextHeight > 4_096) throw new Error('canvas dimension limit');
+          height = nextHeight;
+        },
+      });
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const source = new Uint8Array(262_144);
+    source[0] = 1;
+    const mask = encodeRasterSelectionMask(source, 1, source.length, {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: source.length,
+    })!;
+
+    const outline = createSelectionRasterOutlineCanvas(mask);
+
+    expect(outline).not.toBeNull();
+    expect(outline?.scaleFactor).toBe(128);
+    expect(outline?.width).toBe(3);
+    expect(outline?.height).toBe(source.length + 2);
+    expect(createdCanvases.some((canvas) => canvas.height <= 4_096)).toBe(true);
+  });
+
+  it('downsamples outlines whose bordered canvas would exceed the pixel-area budget', () => {
+    const createElement = document.createElement.bind(document);
+    const attemptedDimensions: Array<[number, number]> = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      element.getContext = vi.fn(() => {
+        attemptedDimensions.push([element.width, element.height]);
+        return null;
+      }) as unknown as HTMLCanvasElement['getContext'];
+      return element;
+    }) as typeof document.createElement);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const width = 4_096;
+    const height = 4_096;
+    const encodedLength = Math.ceil(Math.ceil((width * height) / 8) / 3) * 4;
+    const mask = { width, height, data: `QAAA${'A'.repeat(encodedLength - 5)}=` };
+
+    createSelectionRasterOutlineCanvas(mask);
+
+    expect(attemptedDimensions.length).toBeGreaterThan(0);
+    expect(attemptedDimensions[0]).toEqual([2_050, 2_050]);
+    expect(attemptedDimensions.every(([canvasWidth, canvasHeight]) => canvasWidth * canvasHeight <= 16_777_216)).toBe(
+      true
+    );
+  });
+
+  it('marches raster-backed selections without constructing a vector path', () => {
+    const createElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      return element;
+    }) as typeof document.createElement);
+    const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    })!;
+    const rasterSelection: Selection = {
+      ...polygon({ id: 'raster-ants', pos: { x: 10, y: 20, width: 1, height: 1 }, points: [] }),
+      rasterMask,
+    };
+    const { ctx } = setup({ selections: [rasterSelection] });
+
+    frame();
+
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 9, 19, 3, 3);
+    expect(rafMocks.frames.size).toBe(1);
+  });
+
   it('converts document points to canvas coordinates through the frame', () => {
     const { ctx } = setup({ documentFrame: { x: 100, y: 50, width: 300, height: 300 } });
     frame();
@@ -265,9 +581,11 @@ describe('useSelectionMarchingAnts', () => {
           id: 'sel-2',
           pos: { x: 60, y: 0, width: 10, height: 10 },
           points: [
-            { x: 0, y: 0 },
-            { x: 10, y: 0 },
-            { x: 10, y: 10 },
+            [
+              { x: 0, y: 0 },
+              { x: 10, y: 0 },
+              { x: 10, y: 10 },
+            ],
           ],
         }),
       ],
@@ -309,14 +627,87 @@ describe('useSelectionMarchingAnts', () => {
 
   it.each([
     ['an inactive selection', { isActive: false }],
-    ['a degenerate selection', { points: [{ x: 0, y: 0 }] }],
-    // A rectangle keeps the border `useRect` gives it, with its own handles.
-    ['a rectangle selection', { geometry: 'rectangle' as const, sourceTool: 'rectangular-selection' as const }],
+    ['a degenerate selection', { points: [[{ x: 0, y: 0 }]] }],
   ])('ignores %s', (_label, overrides) => {
     const { ctx } = setup({ selections: [polygon(overrides)] });
 
     expect(rafMocks.frames.size).toBe(0);
     expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The rectangle case used to sit in the table above as a third row, asserting the ants
+   * skipped `geometry: 'rectangle'` on the stated ground that `useRect` strokes that border on
+   * the tool overlay. It is a pin on behaviour that has deliberately changed, so it is removed
+   * here rather than weakened, and this is the test that took its place: the rectangle marches
+   * like everything else.
+   *
+   * It matters that the CONTOUR is checked and not merely that something was stroked. A
+   * rectangle's normalized `points` are its four corners, so a path through them at
+   * `pos + point` is the rectangle, and reading those coordinates back off the recorded calls
+   * is what proves the border is in the right place rather than merely present.
+   */
+  it('marches a rectangle selection, the way it marches a polygon', () => {
+    const { ctx } = setup({
+      selections: [
+        polygon({
+          geometry: 'rectangle',
+          sourceTool: 'rectangular-selection',
+          // The four corners, normalized into `pos`, which is the shape
+          // `createCommittedRectangleSelection` commits and the only thing that makes this a
+          // rectangle rather than the triangle the fixture above describes.
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 30, y: 0 },
+              { x: 30, y: 40 },
+              { x: 0, y: 40 },
+            ],
+          ],
+        }),
+      ],
+    });
+
+    expect(rafMocks.frames.size).toBe(1);
+    frame();
+
+    const path = vi.mocked(ctx.stroke).mock.calls[0][0] as Path2D;
+    expect(path.moveTo).toHaveBeenCalledWith(10, 20);
+    expect(path.lineTo).toHaveBeenCalledWith(40, 20);
+    expect(path.lineTo).toHaveBeenCalledWith(40, 60);
+    expect(path.lineTo).toHaveBeenCalledWith(10, 60);
+    expect(path.closePath).toHaveBeenCalledOnce();
+  });
+
+  it('marches every contour of a multi-contour selection, even a nested hole', () => {
+    const { ctx } = setup({
+      selections: [
+        polygon({
+          id: 'sel-hole',
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 30, y: 0 },
+              { x: 30, y: 40 },
+              { x: 0, y: 40 },
+            ],
+            [
+              { x: 10, y: 10 },
+              { x: 20, y: 10 },
+              { x: 20, y: 20 },
+              { x: 10, y: 20 },
+            ],
+          ],
+        }),
+      ],
+    });
+    frame();
+
+    const path = vi.mocked(ctx.stroke).mock.calls.at(-1)![0] as Path2D;
+    expect(path.moveTo).toHaveBeenCalledTimes(2);
+    expect(path.closePath).toHaveBeenCalledTimes(2);
+    expect(path.moveTo).toHaveBeenNthCalledWith(1, 10, 20);
+    expect(path.moveTo).toHaveBeenNthCalledWith(2, 20, 30);
   });
 
   it('cancels the pending frame and clears the canvas on unmount', () => {

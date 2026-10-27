@@ -15,7 +15,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -84,6 +84,7 @@ const PACKAGE_JSON = resolve(import.meta.dirname ?? process.cwd(), '..', '..', '
 let dir;
 const agents = {};
 let clock = Date.parse('2026-09-28T12:00:00.000Z');
+const openBoards = [];
 
 const identityFor = (agentId) =>
   (agents[agentId] ??= {
@@ -97,12 +98,15 @@ const identityFor = (agentId) =>
   });
 
 /** A clock the test moves by hand, so lease expiry is tested, not waited for. */
-const boardFor = (agentId) =>
-  new Board({
+const boardFor = (agentId) => {
+  const board = new Board({
     dir,
     identity: identityFor(agentId),
     now: () => clock,
   }).open();
+  openBoards.push(board);
+  return board;
+};
 
 /**
  * A board on the real clock, for the tests that are about two processes seeing
@@ -110,7 +114,11 @@ const boardFor = (agentId) =>
  * on an injected clock and read by another on the real one expires at a moment
  * neither party chose, which is a test artefact and not a defect.
  */
-const liveBoardFor = (agentId) => new Board({ dir, identity: identityFor(agentId) }).open();
+const liveBoardFor = (agentId) => {
+  const board = new Board({ dir, identity: identityFor(agentId) }).open();
+  openBoards.push(board);
+  return board;
+};
 
 const advance = (ms) => {
   clock += ms;
@@ -123,7 +131,15 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  while (openBoards.length > 0) {
+    const board = openBoards.pop();
+    try {
+      board?.close();
+    } catch {
+      /* best-effort close before directory removal */
+    }
+  }
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('the board is testable where it is going to run', () => {
@@ -151,9 +167,8 @@ describe('schema', () => {
   it('creates itself on first open and is idempotent', () => {
     const board = boardFor('a');
     const version = board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-    // 3, not 2: v3 is `issue_files`, the table that makes a file an open issue
-    // names something other than free.
-    expect(Number(version.value)).toBe(3);
+    // v3 is `issue_files`; v4 was the GPT token-budget poll, now a no-op step.
+    expect(Number(version.value)).toBe(4);
     board.close();
     board.open();
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issues').get().n).toBe(0);
@@ -334,9 +349,8 @@ describe('a file an open issue names is not a free file', () => {
     a.close();
 
     const b = new Board({ dir, identity: identityFor('b'), now: () => clock }).open();
-    // A v1 board now walks BOTH steps, so it lands on 3 rather than 2: step 1
-    // moves the lock attribution and step 2 indexes the event log.
-    expect(Number(b.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value)).toBe(3);
+    // A v1 board walks the full migration chain and lands on v4.
+    expect(Number(b.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value)).toBe(4);
     expect(b.issuesForPath('src/legacy.ts').map((issue) => issue.id)).toEqual([id]);
     b.close();
   });
@@ -515,6 +529,8 @@ describe('file locks make one-file-one-agent real', () => {
     const sibling = join(dir, 'sibling');
     mkdirSync(repo);
     execFileSync('git', ['init', '--quiet'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Test Agent'], { cwd: repo });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
     execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: repo });
     execFileSync('git', ['worktree', 'add', '--quiet', sibling, '-b', 'sibling'], { cwd: repo });
 
@@ -547,6 +563,23 @@ describe('file locks make one-file-one-agent real', () => {
     expect(b.checkPath('src/util/draw.ts').holders.map((holder) => holder.agent_id)).toEqual(['a']);
     expect(b.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/util/draw.ts']);
     b.close();
+  });
+
+  it('uses actual path casing on case-insensitive volumes', () => {
+    const a = boardFor('a');
+    const root = a.identity.worktree;
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'Draw.ts'), '');
+    const caseInsensitive = existsSync(join(root, 'src', 'draw.ts'));
+    a.touchAgent();
+    a.holdFiles(['src/draw.ts']);
+    expect(a.locksHeldBy('a').map((lock) => lock.path)).toEqual([caseInsensitive ? 'src/Draw.ts' : 'src/draw.ts']);
+
+    const b = boardFor('b');
+    b.touchAgent();
+    expect(b.checkPath('src/Draw.ts').free).toBe(!caseInsensitive);
+    // This absolute path names the exact lowercase entry that agent a locked.
+    expect(b.checkPath(`${root}/src/draw.ts`).free).toBe(false);
   });
 
   it('reports your own lease as heldByYou, so your lock is not indistinguishable from a free file', () => {
@@ -925,6 +958,35 @@ describe('dependencies decide what is ready', () => {
   });
 });
 
+describe('deferrals decide what is ready', () => {
+  it('keeps indefinite and future deferrals out until the deadline arrives', () => {
+    const board = boardFor('a');
+    const indefinite = board.createIssue({ title: 'waiting indefinitely' });
+    const scheduled = board.createIssue({ title: 'waiting until later' });
+
+    board.deferIssue(indefinite.id, { reason: 'superseded by a document' });
+    board.deferIssue(scheduled.id, {
+      reason: 'waiting for the deadline',
+      until: new Date(clock + 60_000).toISOString(),
+    });
+
+    expect(board.readyIssues().map((issue) => issue.id)).toEqual([]);
+    advance(59_999);
+    expect(board.readyIssues().map((issue) => issue.id)).toEqual([]);
+    advance(1);
+    expect(board.readyIssues().map((issue) => issue.id)).toEqual([scheduled.id]);
+  });
+
+  it('rejects an invalid deferral deadline', () => {
+    const board = boardFor('a');
+    const { id } = board.createIssue({ title: 'invalid deadline' });
+
+    expect(() => board.deferIssue(id, { reason: 'waiting', until: 'not-a-date' })).toThrow(
+      /deadline must be a valid date/
+    );
+  });
+});
+
 describe('doctor reclaims what dead agents left', () => {
   it('releases a claim held from a worktree that no longer exists', () => {
     const a = boardFor('a');
@@ -957,6 +1019,20 @@ describe('doctor reclaims what dead agents left', () => {
     expect(b.getIssue(id).status).toBe('claimed');
     b.doctor();
     expect(b.getIssue(id).status).toBe('open');
+    b.close();
+  });
+
+  it('does not record a doctor event for a dry run', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'dry-run only' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+    advance(60_001);
+
+    const b = boardFor('b');
+    expect(b.doctor({ dryRun: true })).toHaveLength(1);
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(0);
+    expect(b.health().sweeps).toBe(0);
     b.close();
   });
 
@@ -1327,8 +1403,8 @@ describe('the schema this script writes', () => {
   it('migrates a v1 board once, advances the version, and survives a dangling id', () => {
     buildV1Board(dir);
     const first = boardFor('a');
-    // Two steps, so the whole chain runs and the board lands on 3.
-    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    // The full chain runs and the board lands on v4.
+    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('4');
     // The attribution v1 DID know about is carried forward, and the dangling one
     // is named in the log rather than silently dropped or fatally re-attempted.
     expect(first.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
@@ -1380,7 +1456,7 @@ describe('the schema this script writes', () => {
     const liveId = buildV2BoardWithADanglingEvent(dir);
     // The whole point: opening must not raise.
     const board = boardFor('a');
-    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('4');
     // The issue that exists is indexed, and the one that does not is named in the
     // log rather than silently dropped or fatally re-attempted — the same
     // treatment `migrateFileLockAttribution` gives its own dangling ids.
@@ -1512,7 +1588,7 @@ describe('the schema this script writes', () => {
     const board = new Board({ dir, identity: identityFor('a') });
     // Step 1 declines, step 2 succeeds: the shape an OR gets wrong and an AND
     // does not. Nothing is thrown, so the refusal has to be the silent one.
-    board.migrationSteps = () => ({ 1: () => false, 2: () => true });
+    board.migrationSteps = () => ({ 1: () => false, 2: () => true, 3: () => true });
     expect(() => board.open()).not.toThrow();
     const after = new DatabaseSync(join(dir, 'board.db'));
     expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
@@ -1524,7 +1600,7 @@ describe('the schema this script writes', () => {
     // genuinely knows how to move, and refusing it would strand every v1 board.
     buildV1Board(dir);
     const board = boardFor('a');
-    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('4');
     board.close();
   });
 
@@ -1546,7 +1622,7 @@ describe('the schema this script writes', () => {
     delete board.migrationSteps;
     const reopened = board.open();
     expect(reopened.db).not.toBeNull();
-    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('4');
     reopened.close();
   });
 
@@ -2546,12 +2622,15 @@ describe('the command line', () => {
  * released it in the same invocation.
  */
 describe('lease renewal when two agents share a branch', () => {
-  const openAs = (agentId, worktree) =>
-    new Board({
+  const openAs = (agentId, worktree) => {
+    const board = new Board({
       dir,
       identity: { agentId, kind: 'kilo', worktree, branch: agentId, sessionId: null, pid: 1, meta: {} },
       now: () => clock,
     }).open();
+    openBoards.push(board);
+    return board;
+  };
 
   it("renews only the claims made from the caller's own worktree", () => {
     const mine = join(dir, 'wt-shared-mine');

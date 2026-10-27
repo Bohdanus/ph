@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { setViewportWidth } from './test/setup.ts';
+import { TOUR_SEEN_KEY } from './components/Common/FirstUseTour.tsx';
 
 const setBlankImage = vi.hoisted(() => vi.fn());
 const dispatch = vi.hoisted(() => vi.fn());
@@ -268,18 +269,9 @@ describe('App shell layout', () => {
     step(500, true);
     step(1600, true);
 
-    // Also through the tablet band, in both directions. 900 is deliberately INERT, but
-    // not because nothing happens there: `RightPanelVisibilityProvider` is not mocked
-    // and subscribes to `TABLET_MEDIA_QUERY`, so crossing into the band re-renders it.
-    // What costs nothing is the canvas tree — `<AppContainer />` is the SAME element
-    // reference across the crossing (App.tsx:145), so React reconciles the provider's
-    // children without rendering them, and `useStore` is not reached again.
-    //
-    // Asserted, because it is what makes the four steps above mean "the boundary was
-    // crossed" rather than "the helper re-renders", and because a provider that stopped
-    // bailing out — or a context consumer added below it — would add a render to every
-    // width change, which is the cost the unconditional mount exists to avoid.
-    step(900, false);
+    // Crossing the tablet band changes RightPanelVisibilityProvider context, so
+    // AppContainer re-renders. The canvas must remain the same node regardless.
+    step(900, true);
     step(500, true);
     step(1280, true);
   });
@@ -308,7 +300,7 @@ describe('App shell layout', () => {
  * work — but `display: none` hides without unmounting. A surface left open on a phone
  * therefore stayed mounted on desktop, and `MobileToolSheet` held a second live instance of
  * the active tool's options panel next to the one `ToolbarHorizontal` owns: duplicate
- * `id="text-input"`, duplicate `id="font-family-select"`, duplicate window Escape listeners.
+ * `id="font-size-input"`, duplicate `id="font-family-select"`, duplicate window Escape listeners.
  *
  * `MobileShell` is mocked here, so the assertions are on the flags this component owns.
  */
@@ -357,5 +349,83 @@ describe('App mobile surface reset', () => {
     const shell = screen.getByTestId('mobile-shell-props');
     expect(shell).toHaveAttribute('data-tool-sheet', 'false');
     expect(shell).toHaveAttribute('data-layers', 'false');
+  });
+});
+
+describe('App first-use tour lifecycle', () => {
+  beforeEach(() => {
+    setViewportWidth(1280, 800);
+    storeState.hasImage = false;
+    useStoreMock.mockImplementation(() => [storeState, dispatch]);
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    setViewportWidth(1280, 800);
+  });
+
+  it('waits for the blank document before opening the tour', () => {
+    const view = render(<App />);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    storeState.hasImage = true;
+    view.rerender(<App />);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(view.container.firstElementChild).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('restores focus to the app shell control that was focused before the modal opened', () => {
+    const view = render(<App />);
+    const appShell = view.container.firstElementChild as HTMLElement;
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    appShell.appendChild(trigger);
+    trigger.focus();
+
+    storeState.hasImage = true;
+    view.rerender(<App />);
+    expect(document.activeElement).toBe(screen.getByLabelText('Close tour'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+
+  it('does not show the tour to a returning user', () => {
+    storeState.hasImage = true;
+    localStorage.setItem(TOUR_SEEN_KEY, 'true');
+
+    render(<App />);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('defers the tour on mobile and shows it after moving into the tablet/desktop band', () => {
+    setViewportWidth(500, 800);
+    const view = render(<App />);
+    storeState.hasImage = true;
+    view.rerender(<App />);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    act(() => setViewportWidth(1280, 800));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('hides the tour across the mobile band without marking it seen', () => {
+    const view = render(<App />);
+    storeState.hasImage = true;
+    view.rerender(<App />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    act(() => setViewportWidth(500, 800));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(localStorage.getItem(TOUR_SEEN_KEY)).toBeNull();
+
+    act(() => setViewportWidth(1280, 800));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

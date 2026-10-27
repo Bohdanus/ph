@@ -21,9 +21,10 @@ import type { ToolArgs } from '../tool-types.ts';
  * It already happened once, and it cost the operator a bug report they filed three times. A bedrock
  * source that `history-replay.ts` honoured at ANY index let a commit resize the document on the next
  * replay. The merged repair gates that branch on `index === 0`
- * (`history-replay.ts:90,104`), which stops the replay symptom but is a positional guard: the two
- * defects the plan records alongside it are open, and a payload that carried a frame at all would
- * bypass the question. This test is the cheap half of keeping that closed — it asserts the property
+ * in `replayHistory`'s initial-entry bedrock-source guard. This stops the replay
+ * symptom but remains a positional guard: the two defects the plan records
+ * alongside it are open, and a payload that carried a frame at all would bypass
+ * the question. This test is the cheap half of keeping that closed — it asserts the property
  * at the state the operator sees, where a new tool author will actually meet it.
  *
  * **What this file deliberately does NOT assert, and why that is a decision.** It says nothing about

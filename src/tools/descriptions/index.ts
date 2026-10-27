@@ -3,13 +3,16 @@ import type { ToolName } from '../../contexts/tool-types.ts';
 import type { ToolDescription } from './types.ts';
 import { eyedropperDrawDescriptions } from './eyedropper-draw.ts';
 import { focusDescriptions } from './focus.ts';
-import { navigationDescriptions } from './navigation.ts';
 import { paintDescriptions } from './paint.ts';
 import { penDescriptions } from './pen.ts';
 import { selectionDescriptions } from './selection.ts';
 import { shapeDescriptions } from './shape.ts';
 import { transformDescriptions } from './transform.ts';
 import { typeCropDescriptions } from './type-crop.ts';
+import { viewDescriptions } from './view.ts';
+import { patchDescriptions } from './patch.ts';
+
+const { star: _starDescription, ...registeredShapeDescriptions } = shapeDescriptions;
 
 export type {
   ToolControl,
@@ -39,12 +42,13 @@ export const toolDescriptions: Record<ToolName, ToolDescription> = {
   ...selectionDescriptions,
   ...paintDescriptions,
   ...focusDescriptions,
-  ...shapeDescriptions,
+  ...registeredShapeDescriptions,
   ...penDescriptions,
   ...typeCropDescriptions,
   ...transformDescriptions,
   ...eyedropperDrawDescriptions,
-  ...navigationDescriptions,
+  ...viewDescriptions,
+  ...patchDescriptions,
 };
 
 export const getToolDescription = (name: ToolName): ToolDescription => toolDescriptions[name];

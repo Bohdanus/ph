@@ -8,7 +8,11 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { MagicWandToolArgs } from '../../tools/magicWand.ts';
 import { createMagicWandSelectionFromCanvas } from '../../util/magicWand.ts';
-import { createCommittedPolygonSelection, drawSelectionAnchors } from '../../util/selection.ts';
+import {
+  createCommittedPolygonSelectionFromContours,
+  createCommittedRasterSelection,
+  drawSelectionAnchors,
+} from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type MagicWandToolAreaProps = {
@@ -55,7 +59,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
 
     dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'magic-wand' } });
 
-    const result = createMagicWandSelectionFromCanvas(canvasRef.current, seed, {
+    const result = createMagicWandSelectionFromCanvas(canvasRef.current, seed, totalSize, {
       smoothing: args.smoothing,
       tolerance: args.tolerance,
       contiguous: args.contiguous,
@@ -67,21 +71,35 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
       return;
     }
 
-    const selection = createCommittedPolygonSelection({
-      id: uuidv4(),
-      metadata: {
-        magicWand: {
-          boundaryPointCount: result.points.length,
-          sampleColor: result.sampleColor,
-          seed: { x: Math.floor(seed.x + documentFrame.x), y: Math.floor(seed.y + documentFrame.y) },
-          selectedPixelCount: result.selectedPixelCount,
-          smoothing: args.smoothing,
-          tolerance: args.tolerance,
-        },
+    const metadata = {
+      magicWand: {
+        boundaryEdgeCount: result.boundaryEdgeCount,
+        sampleColor: result.sampleColor,
+        seed: { x: Math.floor(seed.x + documentFrame.x), y: Math.floor(seed.y + documentFrame.y) },
+        selectedPixelCount: result.selectedPixelCount,
+        smoothing: args.smoothing,
+        tolerance: args.tolerance,
       },
-      points: result.points.map((point) => canvasToDocumentPoint(point, documentFrame)),
-      sourceTool: 'magic-wand',
-    });
+    };
+    const selection = result.rasterMask
+      ? createCommittedRasterSelection({
+          id: uuidv4(),
+          metadata,
+          rasterMask: result.rasterMask,
+          pos: {
+            x: result.bounds.x + documentFrame.x,
+            y: result.bounds.y + documentFrame.y,
+            width: result.bounds.width,
+            height: result.bounds.height,
+          },
+          sourceTool: 'magic-wand',
+        })
+      : createCommittedPolygonSelectionFromContours({
+          id: uuidv4(),
+          metadata,
+          points: result.points.map((contour) => contour.map((point) => canvasToDocumentPoint(point, documentFrame))),
+          sourceTool: 'magic-wand',
+        });
 
     if (!selection) {
       dispatch({ type: 'CANCEL_SELECTION_DRAFT' });

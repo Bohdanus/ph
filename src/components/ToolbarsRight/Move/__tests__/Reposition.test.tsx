@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import Reposition from '../Reposition.tsx';
@@ -112,5 +112,47 @@ describe('Reposition toolbar', () => {
     render(<Reposition />);
 
     expect(screen.getByTestId('reposition-hint-text')).toHaveTextContent('Drag or resize on canvas');
+  });
+
+  /**
+   * `mergeAllLayers` is async and every call runs `commitDirtyTool()` and dispatches its own
+   * `COMMIT_DOCUMENT_EDIT`, so two calls are two history entries and two dirty-tool commits —
+   * the button cannot be made idempotent by the callee. The guard is the whole of the fix, and
+   * these two cases are what make it falsifiable: the mock above returns `undefined`, which
+   * settles in a microtask, so an unguarded `onClick` passes every other case in this file.
+   */
+  it('does not start a second merge while the first is in flight', async () => {
+    let release: (() => void) | undefined;
+    mockMergeAllLayers.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(null);
+        })
+    );
+    render(<Reposition />);
+    const mergeButton = screen.getByRole('button', { name: 'Merge all' });
+
+    fireEvent.click(mergeButton);
+    fireEvent.click(mergeButton);
+    expect(mockMergeAllLayers, 'the second press is refused while the first is pending').toHaveBeenCalledTimes(1);
+
+    // And the guard is released, not latched: settling the first merge re-arms the button.
+    release?.();
+    await act(async () => {
+      /* flush the .finally that clears the guard */
+    });
+    fireEvent.click(mergeButton);
+    await waitFor(() => expect(mockMergeAllLayers).toHaveBeenCalledTimes(2));
+  });
+
+  it('logs a rejected merge instead of leaving the rejection unhandled', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockMergeAllLayers.mockRejectedValue(new Error('no canvas'));
+    render(<Reposition />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Merge all' }));
+
+    await waitFor(() => expect(error).toHaveBeenCalledWith('Failed to merge all layers', expect.any(Error)));
+    error.mockRestore();
   });
 });

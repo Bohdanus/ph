@@ -30,13 +30,18 @@ export const slugifyToolLabel = (label: string): string => label.toLowerCase().r
 /**
  * Photoshop-inspired toolbar map in the canonical one-column order.
  *
- * Each nested array is one flyout menu. Unsupported Photoshop tools are
- * intentionally omitted rather than represented by placeholder values.
+ * Each nested array is one flyout menu. Unsupported Photoshop tools are omitted rather than
+ * represented by placeholder values; the app-only Draw entry is the explicit OVR-2 exception.
  * The two-column layout is derived from this order by SidebarLeft.
  */
 export const toolbarMap = [
   [
     [{ label: 'Move Tool', name: 'reposition', shortcut: 'V' }],
+    [
+      { label: 'Hand Tool', name: 'hand', shortcut: 'H' },
+      { label: 'Rotate View Tool', name: 'rotate-view' },
+    ],
+    [{ label: 'Zoom Tool', name: 'zoom', shortcut: 'Z' }],
     [
       { label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' },
       { label: 'Elliptical Marquee Tool', name: 'elliptical-selection' },
@@ -64,37 +69,56 @@ export const toolbarMap = [
       { label: 'Magic Wand Tool', name: 'magic-wand', shortcut: 'W' },
       { label: 'Quick Selection Tool', name: 'quick-selection' },
     ],
-    // Its own single-tool tile, so it gets no flyout of its own and stays directly after the
-    // Magic Wand it reads its Sample Size from in Photoshop.
-    [{ label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' }],
+    // The `I` family, which Photoshop cycles with `Shift+I`: "Eyedropper, Color Sampler, Ruler, Note,
+    // and Count Tool I". Only the tile's FIRST entry declares `shortcut`, exactly as the tonal and
+    // marquee groups above do, so the letter belongs to the tile and the Ruler is reached by the
+    // cycle rather than by a second binding on the same key.
+    //
+    // Note and Count are not implemented, so only the three available members appear here. Adobe
+    // places Note in the Eyedropper group and Count beneath the Eyedropper; it does not publish the
+    // cycle order. Eyedropper stays first because it is the tile identity, and Color Sampler sits
+    // between it and Ruler because it reads a pixel rather than measuring the document.
+    [
+      { label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' },
+      { label: 'Color Sampler Tool', name: 'color-sampler' },
+      { label: 'Ruler Tool', name: 'ruler' },
+    ],
   ],
   [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
   [
-    // The Brush stays the tile's default tool, so the eraser-family tools are appended
-    // rather than inserted: `renderToolGroup` derives the tile's default identity from the
-    // first entry (`SidebarLeft.tsx:578`). Six entries is the same length as the Pen family
-    // flyout below, so this is not an outlier.
+    // Brush group — `B` selects Brush; `Shift+B` cycles Pencil and Color Replacement.
+    // Adobe binds `B` to the Brush tool only; the other two are reached by cycling.
     [
       { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
       { label: 'Pencil Tool', name: 'pencil' },
       { label: 'Color Replacement Tool', name: 'color-replacement' },
-      { label: 'Eraser Tool', name: 'eraser', shortcut: 'E' },
-      // Photoshop binds the Magic Eraser to nothing, so it is declared without a shortcut rather
-      // than given one that would collide with the Paint Bucket's `G`.
-      { label: 'Magic Eraser Tool', name: 'magic-eraser' },
-      { label: 'Paint Bucket Tool', name: 'paint-bucket', shortcut: 'G' },
     ],
+    // Eraser group — `E` selects Eraser; `Shift+E` cycles Magic Eraser.
+    // Adobe binds `E` to the Eraser tool; Magic Eraser has no shortcut of its own.
+    [
+      { label: 'Eraser Tool', name: 'eraser', shortcut: 'E' },
+      { label: 'Magic Eraser Tool', name: 'magic-eraser' },
+    ],
+    // Healing group — no shortcut; Photoshop binds `J` to the Healing Brush family.
+    // This app selects Healing Brush directly via `J` and exposes the rest from its flyout.
+    [
+      { label: 'Spot Healing Brush Tool', name: 'spot-healing' },
+      { label: 'Healing Brush Tool', name: 'healing-brush' },
+      { label: 'Patch Tool', name: 'patch' },
+    ],
+    // Paint Bucket group — `G` selects Paint Bucket; `Shift+G` cycles Gradient.
+    // Adobe binds `G` to Paint Bucket; Gradient is the cycling partner.
+    [{ label: 'Paint Bucket Tool', name: 'paint-bucket', shortcut: 'G' }],
+    [{ label: 'Gradient Tool', name: 'gradient' }],
     // Photoshop's Stamp flyout is its own tile immediately after the Brush group; the
     // pattern and patch stamps behind it are not implemented and stay out of the map.
     [{ label: 'Clone Stamp Tool', name: 'clone-stamp', shortcut: 'S' }],
+    [{ label: 'Red Eye Tool', name: 'red-eye' }],
     [
       { label: 'Blur Tool', name: 'blur' },
       { label: 'Sharpen Tool', name: 'sharpen' },
       { label: 'Smudge Tool', name: 'smudge' },
     ],
-    // The Gradient gets its own tile rather than joining the erase-and-bucket flyout above,
-    // so the existing six-entry group keeps the identity and order the e2e helpers drive it by.
-    [{ label: 'Gradient Tool', name: 'gradient' }],
     [
       { label: 'Dodge Tool', name: 'dodge', shortcut: 'O' },
       { label: 'Burn Tool', name: 'burn' },
@@ -137,41 +161,22 @@ export const toolbarMap = [
       { label: 'Line Tool', name: 'shape', figure: 'line' },
       { label: 'Triangle Tool', name: 'shape', figure: 'triangle' },
       { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
+      { label: 'Star Tool', name: 'shape', figure: 'star' },
       { label: 'Custom Shape Tool', name: 'custom-shape' },
-    ],
-    // The last tool tile, where Adobe puts the Hand/Zoom group — above the colour swatches,
-    // and after Slice/Slice Select, which this rail does not carry.
-    //
-    // A FLYOUT of two, which is what this tile was a singleton *waiting* to become. It was one
-    // because a flyout entry needs a second tool to open and Rotate View did not exist yet;
-    // that reasoning expires here and this comment with it. Adobe's own arrangement is one tile
-    // holding the Hand and Rotate View, so this is that.
-    //
-    // NOT the Hand/Zoom pair, because the Zoom tool still does not exist: this app reaches
-    // magnification through Ctrl+0 / Ctrl+1 / Ctrl++ / Ctrl+-, a wheel gesture and the Hand's
-    // own options bar. A Zoom entry here would put a tile on screen for a tool that cannot be
-    // selected, which is the invented entry docs/TOOLS-INVENTORY.md's policy refuses — the same
-    // reason it files Star as a missing ENTRY rather than a hardcoded shape.
-    //
-    // One tile rather than two, which is also what keeps this cheap: a flyout is ONE group, so
-    // the rail stays at sixteen groups and the measured fold edge (H=1087, pinned in
-    // `e2e/toolbar-fit.spec.ts`) does not move. A separate Rotate View tile would have made it
-    // seventeen and moved that edge.
-    //
-    // `shortcut` is on the PRIMARY member only, as everywhere in this map: `H` selects the Hand,
-    // `R` selects Rotate View, and `Shift+H` cycles the group. The cost of a flyout is that a
-    // plain click opens the menu instead of selecting the Hand.
-    [
-      { label: 'Hand Tool', name: 'hand', shortcut: 'H' },
-      { label: 'Rotate View Tool', name: 'rotate-view', shortcut: 'R' },
     ],
   ],
 ] as const satisfies readonly (readonly ToolbarToolGroup[])[];
 
 export const availableTools: readonly ToolName[] = [
+  'hand',
+  'zoom',
+  'rotate-view',
   'brush',
   'pencil',
   'color-replacement',
+  'spot-healing',
+  'healing-brush',
+  'patch',
   'pen',
   'freeform-pen',
   'curvature-pen',
@@ -203,9 +208,12 @@ export const availableTools: readonly ToolName[] = [
   'magic-wand',
   'quick-selection',
   'eyedropper',
+  'color-sampler',
+  'ruler',
   'eraser',
   'magic-eraser',
   'clone-stamp',
+  'red-eye',
   'paint-bucket',
   'gradient',
   'sharpen',
@@ -213,8 +221,6 @@ export const availableTools: readonly ToolName[] = [
   'dodge',
   'burn',
   'sponge',
-  'hand',
-  'rotate-view',
 ];
 
 /**

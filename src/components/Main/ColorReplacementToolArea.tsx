@@ -7,6 +7,7 @@ import {
   createColorReplacementPlan,
   readLayerImageData,
   samplePixelAt,
+  COLOR_REPLACEMENT_MAX_STAGING_PIXELS,
   type ColorReplacementToolArgs,
 } from '../../tools/colorReplacement.ts';
 import type { Point } from '../../contexts/general-types.ts';
@@ -24,7 +25,7 @@ type ColorReplacementToolAreaProps = {
 
 /**
  * Refusal reasons, named and exported so a test pins the exact string rather than "some console
- * error", on the same contract as `FillToolArea`'s two (`FillToolArea.tsx:21-32`): a tool that
+ * error", on the same contract as `FillToolArea`'s two readback checks: a tool that
  * cannot read its own destination must fail LOUDLY and write NO history, because a commit that
  * silently changed nothing is a tool that looks alive and is not.
  */
@@ -36,9 +37,9 @@ export const COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE = 'color-replacement-pre
  * The Color Replacement Tool: CLICK to choose the colour to replace, then DRAG to paint the
  * replacement over the pixels close to it.
  *
- * Two gestures in one area, and which one a click means is decided entirely by whether a sample
- * exists yet. Photoshop's cursor is an eyedropper until the sample is taken and a brush after it,
- * and `sampleColor === null` is that state. There is no mode flag to keep in sync with it.
+ * Two gestures in one area: a press with no sample picks a colour, and a later press starts a
+ * replacement stroke. The per-gesture mode keeps a sample-triggered React rerender from turning
+ * the still-active eyedropper gesture into a stroke.
  *
  * It edits the ACTIVE layer and never creates one, so it commits through `updateLayerByTool` and
  * not `createLayerFromTool` — the same distinction `EraserToolArea` draws, and for the same
@@ -47,7 +48,7 @@ export const COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE = 'color-replacement-pre
  * layer's own local coordinates and no bounding-box crop happens, exactly as in the eraser.
  *
  * The replacement colour is read off the live store at the pointer-up, never mirrored into the
- * args by a bar or a context write. `FillToolArea.tsx:132-148` is the precedent and the reason is
+ * args by a bar or a context write. `FillToolArea` is the precedent and the reason is
  * specific: the user can change the foreground while this tool stays selected, and a value
  * captured when the bar mounted would replace with the colour that was current at the time.
  */
@@ -62,6 +63,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
 
   const args = toolArgs as ColorReplacementToolArgs;
   const pointsRef = useRef<Point[]>([]);
+  const gestureModeRef = useRef<'idle' | 'sample' | 'replace'>('idle');
 
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
@@ -69,7 +71,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
   });
 
   // `isMouseDown` is READ, never written: `isPointerDownValid` sets it and `isPointerUpValid`
-  // clears it (`src/hooks/usePointerPosition.ts:128,154`), and the React compiler lint rules reject
+  // clears it in `usePointerPosition`, and the React compiler lint rules reject
   // writing through a destructured hook return. `EraserToolArea` and `DrawToolArea` only read it
   // for the same reason.
 
@@ -93,7 +95,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
    */
   const stageLayerPresentation = (layer: Layer, bitmap: NonNullable<Layer['bitmap']>): ProcessorStaging | null => {
     try {
-      return stageProcessorInput(layer, bitmap);
+      return stageProcessorInput(layer, bitmap, { maxPixelCount: COLOR_REPLACEMENT_MAX_STAGING_PIXELS });
     } catch (error) {
       console.error(
         COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE,
@@ -114,6 +116,8 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (args.toolName !== 'color-replacement') return;
     if (!isPointerDownValid(event)) return;
+    gestureModeRef.current = 'idle';
+    pointsRef.current = [];
     if (!activeLayer) return;
 
     event.preventDefault();
@@ -122,12 +126,14 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
 
     // Sampled already: this press opens a drag, and the points accumulate on pointer-move.
     if (args.sampleColor) {
+      gestureModeRef.current = 'replace';
       pointsRef.current = [layerPoint];
       return;
     }
 
-    // Not sampled: this press IS the eyedropper. It must not also lay down a stroke, so the drag
-    // list stays empty and the pointer-up below has nothing to commit.
+    // Keep the gesture mode stable across the patchToolArgs update below: React rerenders the
+    // area as soon as the sample is set, but that pointer gesture is still only an eyedropper.
+    gestureModeRef.current = 'sample';
     const bitmap = activeLayer.tmpCanvas ?? activeLayer.bitmap;
     if (!bitmap) {
       console.error(COLOR_REPLACEMENT_NO_LAYER_PIXELS, `the active layer ${activeLayer.id} has no bitmap to sample`);
@@ -137,7 +143,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
     const staged = stageLayerPresentation(activeLayer, bitmap);
     if (!staged) return;
 
-    const imageData = readLayerImageData(staged.bitmap, { width: staged.bounds.width, height: staged.bounds.height });
+    const imageData = readLayerImageData(staged.bitmap, staged.rasterSize);
     if (!imageData) {
       console.error(COLOR_REPLACEMENT_READBACK_UNAVAILABLE, `${args.toolName} cannot read the active layer's pixels`);
       return;
@@ -156,7 +162,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (args.toolName !== 'color-replacement') return;
-    if (!args.sampleColor) return;
+    if (gestureModeRef.current !== 'replace' || !args.sampleColor) return;
     if (!isMouseDown.current || !isPointerMoveValid(event)) return;
     if (!activeLayer) return;
 
@@ -167,9 +173,12 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
     if (args.toolName !== 'color-replacement') return;
     if (!isPointerUpValid(event)) return;
 
+    const gestureMode = gestureModeRef.current;
+    gestureModeRef.current = 'idle';
     const points = pointsRef.current;
     pointsRef.current = [];
-    if (!args.sampleColor || points.length === 0) return;
+    if (gestureMode !== 'replace' || !args.sampleColor || points.length === 0) return;
+    if (Number.isFinite(args.alpha) && args.alpha <= 0) return;
     if (!activeLayer) return;
 
     const coords = toLayerPoint(getLocalCoords(event), rasterBounds);
@@ -191,18 +200,19 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
       return;
     }
 
-    const staged = stageLayerPresentation(activeLayer, bitmap);
-    if (!staged) return;
+    const hasReplacementPlan = (): boolean => {
+      const staged = stageLayerPresentation(activeLayer, bitmap);
+      if (!staged) return false;
 
-    const size = { width: staged.bounds.width, height: staged.bounds.height };
-    const imageData = readLayerImageData(staged.bitmap, size);
-    if (!imageData) {
-      console.error(COLOR_REPLACEMENT_READBACK_UNAVAILABLE, `${args.toolName} cannot read the active layer's pixels`);
-      return;
-    }
+      const imageData = readLayerImageData(staged.bitmap, staged.rasterSize);
+      if (!imageData) {
+        console.error(COLOR_REPLACEMENT_READBACK_UNAVAILABLE, `${args.toolName} cannot read the active layer's pixels`);
+        return false;
+      }
 
-    const plan = createColorReplacementPlan(imageData, commitArgs);
-    if (!plan) return;
+      return createColorReplacementPlan(imageData, commitArgs) !== null;
+    };
+    if (!hasReplacementPlan()) return;
 
     updateLayerByTool({ toolArgs: commitArgs });
   };

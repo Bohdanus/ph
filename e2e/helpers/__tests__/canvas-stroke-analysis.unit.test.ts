@@ -193,6 +193,19 @@ describe('getStrokeAnalysis', () => {
     });
   });
 
+  it('includes mid-tone ink when the captured tool is Spray', async () => {
+    const image = await createTestImageData(gray(128), 100, 40);
+    const region = captureRegionOf(image);
+
+    expect(await getStrokeAnalysis(image, region)).toBeNull();
+    expect(await getStrokeAnalysis(image, region, { tool: 'spray' })).toEqual({
+      type: 'spray',
+      segments: 1,
+      verticalSpread: 40,
+      pixelCount: 4000,
+    });
+  });
+
   it('counts only the dark pixels of a mixed row', async () => {
     const image = createImageData(50, 1);
     for (let x = 0; x < 25; x++) setPixel(image, x, 0, black);
@@ -336,6 +349,7 @@ describe('getStrokeAnalysis on the workspace backdrop', () => {
 
   it('returns null for a capture that is nothing but the light letterbox cell', async () => {
     expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_LIGHT_CELL), REGION)).toBeNull();
+    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_LIGHT_CELL), REGION, { tool: 'spray' })).toBeNull();
   });
 
   it('returns null for a capture that is nothing but the dark letterbox cell', async () => {
@@ -343,6 +357,7 @@ describe('getStrokeAnalysis on the workspace backdrop', () => {
     // as dark ink rather than as spray — two different wrong answers from one background.
     expect(LETTERBOX_DARK_CELL.red).toBeLessThan(STROKE_ANALYSIS.DARK_THRESHOLD);
     expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_DARK_CELL), REGION)).toBeNull();
+    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_DARK_CELL), REGION, { tool: 'spray' })).toBeNull();
   });
 
   it('returns null for the light checkerboard itself, cells and #fff gaps alike', async () => {
@@ -357,6 +372,7 @@ describe('getStrokeAnalysis on the workspace backdrop', () => {
     }
 
     expect(await getStrokeAnalysis(image, REGION)).toBeNull();
+    expect(await getStrokeAnalysis(image, REGION, { tool: 'spray' })).toBeNull();
   });
 
   it('still reads the app spray peak as spray, which is the margin the exclusion must leave', async () => {
@@ -820,5 +836,228 @@ describe('magnetic lasso preview path discrimination', () => {
     setPixel(mixed, 20, 20, MAGNET_COMPOSITE_ORANGE);
     expect(await hasMagnetSnapPixels(mixed)).toBe(false);
     expect(await hasManualSnapPixels(mixed)).toBe(true);
+  });
+});
+
+/**
+ * P2 — dark workspace backdrop pixels are indistinguishable from ink to these color-only
+ * helpers. `getStrokeAnalysis` excludes two exact cell colours, but `hasDarkPixels` and
+ * `getDarkPixelBounds` do not. Under the dark theme, both `#121212` cells and `#000` gaps
+ * satisfy their dark-pixel thresholds. Normal fresh app contexts are seeded light by the
+ * shared `extended-test` fixture; that is an app-theme pin, unlike Playwright's
+ * `colorScheme` media preference. These raw-image cases document the helper limitation if
+ * a dark-theme capture reaches a color-only assertion.
+ */
+describe('hasDarkPixels on the workspace backdrop (theme-dependent)', () => {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+
+  it('returns true for the DARK cell, which is below DARK_PIXEL_THRESHOLD', async () => {
+    // `18 < 60`, so the dark theme's checkerboard cell satisfies `hasDarkPixels` exactly
+    // as a `#000` gap does. The light cell (`243`) does not. This is the asymmetry that
+    // explains why a dark-theme backdrop must not be passed to this color-only predicate.
+    expect(LETTERBOX_DARK_CELL.red).toBeLessThan(STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD);
+
+    const darkBackdrop = await createTestImageData(LETTERBOX_DARK_CELL, 50, 50);
+    expect(await hasDarkPixels(darkBackdrop)).toBe(true);
+  });
+
+  it('returns false for the LIGHT cell, which is above DARK_PIXEL_THRESHOLD', async () => {
+    expect(LETTERBOX_LIGHT_CELL.red).toBeGreaterThanOrEqual(STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD);
+
+    const lightBackdrop = await createTestImageData(LETTERBOX_LIGHT_CELL, 50, 50);
+    expect(await hasDarkPixels(lightBackdrop)).toBe(false);
+  });
+
+  it('would return true for a dark-theme #000 gap, so a dark-theme spec must not use hasDarkPixels without exclusion', async () => {
+    // The `#000` gaps between dark theme cells are not the cell colour itself, they are
+    // the canvas behind it — indistinguishable from a black stroke at the pixel level.
+    // `hasDarkPixels` cannot tell them apart, which is why `getStrokeAnalysis` checks
+    // `isLetterboxCell` before its dark arm and `hasDarkPixels` checks nothing.
+    const blackGaps = await createTestImageData({ red: 0, green: 0, blue: 0 }, 30, 30);
+    expect(await hasDarkPixels(blackGaps)).toBe(true);
+  });
+
+  it('getDarkPixelBounds reports the entire capture for a dark letterbox fill, not "no stroke"', async () => {
+    // Under light theme this would return `null` — the light cell is above the dark
+    // threshold. Under dark it returns the full clip bounds, which is why a dark-theme
+    // wait `forDarkPixels` would be satisfied by backdrop alone.
+    const darkBackdrop = await createTestImageData(LETTERBOX_DARK_CELL, 100, 100);
+    const bounds = await getDarkPixelBounds(darkBackdrop);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.left).toBe(0);
+    expect(bounds!.right).toBe(99);
+    expect(bounds!.top).toBe(0);
+    expect(bounds!.bottom).toBe(99);
+  });
+
+  it('detects black ink while the light checkerboard cell remains above the dark threshold', async () => {
+    // This is the inverse of the `#000` pin in `reads a pure #000 capture as ink`. Under
+    // light theme the cell colour is `0xf3f3f3` — above `NEAR_WHITE_THRESHOLD` for the
+    // stroke classifier's backdrop check, but `hasDarkPixels` does not exclude it either.
+    // So a `hasDarkPixels` wait under light is satisfied by any dark ink, period — the
+    // backdrop does not interfere because it is not dark. This test pins that fact:
+    // the predicate does not mistake the light workspace cell for dark ink.
+    const lightBackdrop = await createTestImageData(LETTERBOX_LIGHT_CELL, 50, 50);
+    expect(await hasDarkPixels(lightBackdrop)).toBe(false);
+
+    const blackStroke = await createTestImageData({ red: 0, green: 0, blue: 0 }, 50, 5);
+    expect(await hasDarkPixels(blackStroke)).toBe(true);
+  });
+});
+
+/**
+ * P3 — transparent pixels weighted as fully opaque (low confidence). `dominantRed` and
+ * `getColorAtPoint` skip only `alpha === 0`, so a pixel at `alpha === 1` but with RGB
+ * values that would be invisible when composited is counted at full weight. The
+ * `hasDarkPixels` / `hasRedPixels` pair answer yes/no, so a single nearly-transparent
+ * pixel can satisfy them just as an opaque one would — but `getDarkPixelBounds` and
+ * `getSelectionBounds` use `a !== 0`, the other half of the byte, so they disagree on
+ * the exact boundary. These tests pin all four edges of the divergence.
+ */
+describe('transparent pixel weighting divergence', () => {
+  it('hasDarkPixels answers true for an alpha-1 dark pixel even if it would be invisible over white', async () => {
+    // A (0,0,0,1) pixel is black at full alpha — but at 1/255 coverage it composites to
+    // ~(254,254,254) over `#fff`, which is paper. The predicate still reports it as dark
+    // because it never composites. This is the wrong-pass in miniature: a single antialias
+    // fringe row at alpha 1 can satisfy a dark-pixel wait even though the eye sees none.
+    const image = createImageData(10, 10);
+    fillAll(image, WHITE);
+    setPixel(image, 5, 5, black, 1);
+    expect(await hasDarkPixels(image)).toBe(true);
+  });
+
+  it('getColorAtPoint averages an alpha-1 pixel at full weight, not composited', async () => {
+    // The function reads `(r,g,b,a)` directly and skips only `a === 0`. A pixel with `a: 1`
+    // but RGB `(0,0,0)` is averaged as pure black, never composited against a background.
+    // This is pinned because `getColorAtPoint` is the only helper that RETURNS a colour
+    // to its caller — the other predicates answer yes/no.
+    //
+    // Radius 0 selects only the target pixel, so the average IS the pixel. If the function
+    // composited a-alpha-1 black against white instead, the result would be ~(255,255,255),
+    // not (0,0,0).
+    const image = createImageData(10, 10);
+    fillAll(image, WHITE);
+    setPixel(image, 5, 5, black, 1);
+
+    const color = await getColorAtPoint(image, 5, 5, 0, undefined);
+    expect(color).toEqual({ red: 0, green: 0, blue: 0 });
+  });
+
+  it('getDarkPixelBounds and hasDarkPixels agree on a-equals-0 but diverge at a-equals-1', async () => {
+    // `hasDarkPixels` skips `alpha === 0`; `getDarkPixelBounds` skips `a !== 0`. Both
+    // skip the same pixels (alpha 0), but the boundary is stated differently: one tests
+    // `=== 0`, the other tests `!== 0`. For any alpha EXCEPT 0, both proceed. The
+    // divergence is purely in the negation style — but a refactor to `< 0.5` or `> 0`
+    // would silently break one without the other.
+    const zeroAlpha = createImageData(5, 5);
+    fillAll(zeroAlpha, WHITE, TRANSPARENT);
+
+    // Both skip alpha-0 pixels: a fully-transparent dark pixel is invisible to neither.
+    expect(await hasDarkPixels(zeroAlpha)).toBe(false);
+    expect(await getDarkPixelBounds(zeroAlpha)).toBeNull();
+
+    // Both see alpha-1 dark pixels: a (0,0,0,1) pixel is dark to both.
+    setPixel(zeroAlpha, 2, 2, black, 1);
+    expect(await hasDarkPixels(zeroAlpha)).toBe(true);
+    const bounds = await getDarkPixelBounds(zeroAlpha);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.left).toBe(2);
+    expect(bounds!.right).toBe(2);
+  });
+
+  it('dominantRed weights an alpha-1 pixel as fully opaque, never compositing it', async () => {
+    // Like `getColorAtPoint`, `dominantRed` skips only `alpha === 0`. A (255,0,0,1) pixel
+    // is dominant red at full alpha even though it composites to ~(255,254,254) over white
+    // — which is no longer red-dominant at all. The function never composites, so the
+    // weighting divergence is by design, and this test pins it as an intentional limitation.
+    const image = await createTestImageData(WHITE, 20, 20);
+    setPixel(image, 10, 10, RED, 1);
+
+    const result = await dominantRed(image);
+    expect(result).not.toBeNull();
+    // If the pixel had been composited against white, red=255 would not dominate.
+    expect(result!.red).toBe(255);
+    expect(result!.green).toBe(0);
+    expect(result!.blue).toBe(0);
+  });
+});
+
+describe('screenshotBoundsToCss letterbox edge cases', () => {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+
+  /**
+   * OPEN_PROBLEMS.md P2 — the letterbox is still read as ink by predicates.
+   * `hasDarkPixels` skips only `alpha === 0`; `#121212` (18,18,18) is below
+   * `DARK_PIXEL_THRESHOLD` (60), so it is admitted as "dark" and a canvas
+   * that is nothing but the dark-theme checkerboard cell reports ink where
+   * there is none. This is a characterization test of the known gap, not a fix.
+   */
+  it('hasDarkPixels reads the dark-theme letterbox cell as ink (P2 known gap)', async () => {
+    const image = await createTestImageData({ red: 255, green: 255, blue: 255 }, 10, 10);
+    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
+    expect(await hasDarkPixels(image)).toBe(true);
+  });
+
+  it('getDarkPixelBounds returns false bounds for the dark-theme letterbox cell (P2 known gap)', async () => {
+    const image = await createTestImageData({ red: 255, green: 255, blue: 255 }, 10, 10);
+    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
+    const bounds = await getDarkPixelBounds(image);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.left).toBe(0);
+    expect(bounds!.top).toBe(0);
+    expect(bounds!.right).toBe(9);
+    expect(bounds!.bottom).toBe(9);
+  });
+
+  it('hasDarkPixels correctly ignores the light-theme letterbox cell', async () => {
+    const image = await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10);
+    fillAll(image, LETTERBOX_LIGHT_CELL as Color, 255);
+    // `#f3f3f3` (243) is above DARK_PIXEL_THRESHOLD (60), so it is not dark.
+    expect(await hasDarkPixels(image)).toBe(false);
+  });
+
+  it('getDarkPixelBounds returns null for the light-theme letterbox cell', async () => {
+    const image = await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10);
+    fillAll(image, LETTERBOX_LIGHT_CELL as Color, 255);
+    expect(await getDarkPixelBounds(image)).toBeNull();
+  });
+
+  it('getDarkPixelBounds isolates ink from a surrounding letterbox cell border', async () => {
+    // A 10x10 image with a `#121212` border and a single `DARK_GRAY` (10,10,10) pixel at
+    // centre. Both are below DARK_PIXEL_THRESHOLD, but the bounds should still report the
+    // full extent — this pins that the letterbox exclusion (or lack thereof) does not
+    // shrink the ink bounds, only whether ink is detected at all.
+    const image = await createTestImageData(WHITE, 10, 10);
+    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
+    setPixel(image, 5, 5, DARK_GRAY, 255);
+    const bounds = await getDarkPixelBounds(image);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.left).toBe(0);
+    expect(bounds!.top).toBe(0);
+    expect(bounds!.right).toBe(9);
+    expect(bounds!.bottom).toBe(9);
+  });
+
+  /**
+   * OPEN_PROBLEMS.md P3 — transparent pixels weighted as fully opaque.
+   * `dominantRed` skips only `alpha === 0`; an alpha-1 pixel with RGB (0,0,0)
+   * is averaged as pure black at full weight, never composited against a background.
+   */
+  it('dominantRed ignores fully-transparent pixels and returns null on an all-transparent image', async () => {
+    const image = await createTestImageData(WHITE, 10, 10);
+    fillAll(image, black, 0);
+    expect(await dominantRed(image)).toBeNull();
+  });
+
+  it('dominantRed skips alpha-0 pixels but counts alpha-1 pixels in the same colour group', async () => {
+    // RGB (255,0,0) at alpha 1 should be dominant; alpha-0 pixels of the same RGB are skipped.
+    const image = await createTestImageData(WHITE, 10, 10);
+    setPixel(image, 5, 5, RED, 1);
+    const result = await dominantRed(image);
+    expect(result).not.toBeNull();
+    expect(result!.red).toBe(255);
+    expect(result!.green).toBe(0);
+    expect(result!.blue).toBe(0);
+    expect(result!.count).toBe(1);
   });
 });

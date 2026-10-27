@@ -4,8 +4,12 @@ import {
   AUTO_LEADING,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  MAX_LINE_HEIGHT,
+  PLACEHOLDER_TEXT,
   TRACKING_MAX,
   TRACKING_MIN,
+  domOverlayStyle,
+  drawOverflowIndicator,
   fontShorthand,
   getTextLineCount,
   getTextWidth,
@@ -14,6 +18,7 @@ import {
   requiredHeightForLines,
   resolveTextKind,
   resolveTextStyle,
+  clearTextRasterCache,
   text,
   textWrapWidth,
   trackingPx,
@@ -92,7 +97,12 @@ const appliedDuring = new WeakMap<CanvasRenderingContext2D, Record<string, unkno
 const makeTextCtx = ({
   measure = widthOnlyMeasure,
   modern = false,
-}: { measure?: (value: string) => TextMetrics; modern?: boolean } = {}): CanvasRenderingContext2D => {
+  nativeFontVariantCaps = true,
+}: {
+  measure?: (value: string) => TextMetrics;
+  modern?: boolean;
+  nativeFontVariantCaps?: boolean;
+} = {}): CanvasRenderingContext2D => {
   const ctx = makeMockCtx({
     measureText: vi.fn(measure),
     ...(modern ? { letterSpacing: '0px', fontVariantCaps: 'normal' } : {}),
@@ -131,7 +141,11 @@ const makeTextCtx = ({
   appliedDuring.set(ctx, log);
   vi.mocked(ctx.measureText).mockImplementation((value: string) => {
     log.push(Object.fromEntries(RESTORED_BY_SAVE.map((key) => [key, target[key]])) as Record<string, unknown>);
-    return measure(value);
+    const result = measure(value);
+    const variant = target.fontVariantCaps;
+    const smallCaps =
+      variant === 'small-caps' && value === value.toLowerCase() && value.toUpperCase() !== value.toLowerCase();
+    return modern && nativeFontVariantCaps && smallCaps ? { ...result, width: result.width * 0.703125 } : result;
   });
 
   // Seeded so the restore assertions compare against a known value rather than against `undefined`,
@@ -141,6 +155,35 @@ const makeTextCtx = ({
 
   return ctx;
 };
+
+function attachCapsRasterProbe(ctx: CanvasRenderingContext2D, pixelsDiffer: boolean): void {
+  let variant: 'normal' | 'small-caps' = 'normal';
+  const probe = {
+    font: '20px Arial',
+    textBaseline: 'alphabetic',
+    fontVariantCaps: 'normal' as 'normal' | 'small-caps',
+    clearRect: vi.fn(),
+    fillText: vi.fn(),
+    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([pixelsDiffer && variant === 'small-caps' ? 1 : 0]) })),
+  } as unknown as CanvasRenderingContext2D;
+  Object.defineProperty(probe, 'fontVariantCaps', {
+    configurable: true,
+    get: () => variant,
+    set: (next: 'normal' | 'small-caps') => {
+      variant = next;
+    },
+  });
+
+  const scratch = {
+    width: 160,
+    height: 160,
+    getContext: vi.fn(() => probe),
+  };
+  Object.defineProperty(ctx, 'canvas', {
+    configurable: true,
+    value: { width: 100, height: 100, ownerDocument: { createElement: vi.fn(() => scratch) } },
+  });
+}
 
 /**
  * The context state as it stood during the LAST measurement the renderer made.
@@ -259,6 +302,9 @@ describe('fontShorthand', () => {
     expect(fontShorthand({ fontFamily: 'Arial', fontSize: 64, bold: false, italic: true })).toBe('italic 64px Arial');
     expect(fontShorthand({ fontFamily: 'Arial', fontSize: 64, bold: true, italic: true })).toBe(
       'italic bold 64px Arial'
+    );
+    expect(fontShorthand({ fontFamily: 'Arial', fontSize: 64, bold: true, italic: true }, 'small-caps')).toBe(
+      'italic small-caps bold 64px Arial'
     );
   });
 
@@ -699,11 +745,47 @@ describe('layoutText', () => {
     // about — and it is the collapsible space's behaviour that is the control.
     expect(layoutText(ctx, style, 'ab\u00A0', 2 * CH).overflow).toBe(true);
     expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(false);
-    expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(true);
+  });
+
+  it('treats an empty body as one empty line, whatever the wrap width', () => {
+    // `text.split('\n')` on `''` yields `['']` — one line, not zero — and that line measures nothing.
+    // The empty line must never be read as a WIDTH overflow: a box with no usable interior used to raise
+    // Adobe's icon for a body with no ink in it at all.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    expect(layoutText(ctx, style, '', 5 * CH).lines).toEqual(['']);
+    expect(layoutText(ctx, style, '', 5 * CH).overflow).toBe(false);
+    // A zero-height box overflows because the required line step (size * leading + padding) exceeds 0,
+    // even though the empty line carries no ink horizontally.
+    expect(layoutText(ctx, style, '', 5 * CH, 0).overflow).toBe(true);
+    // A box tall enough to hold one line does not overflow an empty body.
+    expect(layoutText(ctx, style, '', 5 * CH, 100).overflow).toBe(false);
+  });
+
+  it('splits a body of only newlines into that many empty lines, never merging them', () => {
+    // Each `\n` is a hard break and the canvas has no hard break of its own: a body of bare newlines
+    // is the degenerate case where a splitter that collapsed them would report one line instead of
+    // three, and a renderer that drew them would ink a single line with spaces where the breaks are.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    expect(layoutText(ctx, style, '\n\n\n', Infinity).lines).toEqual(['', '', '', '']);
+    expect(layoutText(ctx, style, '\n\n\n', 5 * CH).lines).toEqual(['', '', '', '']);
   });
 });
 
 describe('renderText', () => {
+  it('rotates text around the centre of its box', () => {
+    const ctx = makeTextCtx();
+
+    renderText(ctx, { ...baseArgs, angle: 30 });
+
+    expect(ctx.translate).toHaveBeenNthCalledWith(1, 100, 60);
+    expect(ctx.rotate).toHaveBeenCalledWith((30 * Math.PI) / 180);
+    expect(ctx.translate).toHaveBeenNthCalledWith(2, -100, -60);
+  });
+
   describe('the guard on a draft with nothing to draw', () => {
     it('draws nothing at all for an empty string', () => {
       // The guard is `!text`, so an empty draft returns before `resetOverlayAlpha` and before any
@@ -762,7 +844,7 @@ describe('renderText', () => {
   describe('the shared overlay alpha', () => {
     it('fills at full opacity when the shared overlay was left at another tool alpha', () => {
       // The overlay canvas is shared by every overlay tool, and the pen deliberately leaves its own
-      // Opacity written on it rather than bracketing it back (`src/tools/draw.ts:91`), so
+      // Opacity written on it rather than bracketing it back (`src/tools/draw.ts:90`), so
       // `globalAlpha` arrives here as whatever that tool's slider says. Captured INSIDE `fillText`,
       // because reading `ctx.globalAlpha` afterwards would pass even if the reset happened after the
       // draw — which is the order that matters for what the user sees.
@@ -846,6 +928,10 @@ describe('renderText', () => {
       // — so `ctx.fontVariantCaps` was `undefined`, and `expect(undefined).not.toBe('normal')` passes
       // against a renderer that never applies caps at all. Two assertions that cannot fail.
       const ctx = makeTextCtx({ modern: true });
+      const letterSpacingAtDraw: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        letterSpacingAtDraw.push(ctx.letterSpacing);
+      });
       ctx.font = '10px sans-serif';
 
       renderText(ctx, { ...baseArgs, tracking: 250, allCaps: true });
@@ -856,9 +942,9 @@ describe('renderText', () => {
       expect(ctx.letterSpacing).toBe('0px');
       // And each value really was written while the type was drawn, so the restore above restores
       // something rather than confirming that nothing was ever applied.
-      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('all-small-caps');
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
       // tracking 250 of 1000 em at the base 20px is 5px.
-      expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('5px');
+      expect(letterSpacingAtDraw).toEqual(['5px']);
     });
 
     it("restores the caller's alpha after rendering a draft", () => {
@@ -1181,17 +1267,36 @@ describe('renderText', () => {
       expect('letterSpacing' in ctx).toBe(false);
     });
 
-    it('anchors and underlines to the INK width, not to the advance the shaper reports', () => {
-      // Chrome's `letterSpacing` adds the gap to the LAST character's advance too, so the advance
-      // over-reports by exactly one spacing: 90 measured, 88 of ink. Every coordinate derived from
-      // the line has to use the ink, or a tracked line grows a gap at its right edge that no glyph
-      // ever fills — and the underline would be drawn a gap longer than the text above it.
+    it('aligns and underlines to the DOM line advance, including the final tracking gap', () => {
+      // The live editor's text-decoration and text-align span the full CSS advance. Canvas measured
+      // width includes the same final gap when letterSpacing is supported; its fallback adds that
+      // gap to the manually tracked ink width.
       const ctx = makeTextCtx({ modern: true });
 
       renderText(ctx, { ...baseArgs, tracking: 100, underline: true });
 
       expect(ctx.fillText).toHaveBeenCalledWith('Photoshop', TEXT_PADDING, 21);
-      expect(ctx.fillRect).toHaveBeenCalledWith(TEXT_PADDING, 23, 88, 1);
+      expect(ctx.fillRect).toHaveBeenCalledWith(TEXT_PADDING, 23, 90, 1);
+    });
+
+    it.each([
+      ['center', 55],
+      ['right', 105],
+    ] as const)('uses the full tracked advance for %s alignment', (align, x) => {
+      const ctx = makeTextCtx({ modern: true });
+
+      renderText(ctx, { ...baseArgs, tracking: 100, align, underline: true });
+
+      expect(ctx.fillText).toHaveBeenCalledWith('Photoshop', x, 21);
+      expect(ctx.fillRect).toHaveBeenCalledWith(x, 23, 90, 1);
+    });
+
+    it('includes the final tracking gap when letterSpacing is unavailable', () => {
+      const ctx = makeTextCtx();
+
+      renderText(ctx, { ...baseArgs, tracking: 100, underline: true });
+
+      expect(ctx.fillRect).toHaveBeenCalledWith(TEXT_PADDING, 23, 108, 1);
     });
 
     it('places each grapheme cluster itself when the platform has no letterSpacing', () => {
@@ -1226,28 +1331,119 @@ describe('renderText', () => {
   });
 
   describe('caps', () => {
-    // Read DURING the draw, not after it: `renderText` restores the context before returning, so
-    // the property afterwards is the seed and every case here would have read `'normal'`. `applied`
-    // is the value in effect while the glyphs were drawn, which is what the caps question is about.
-    const capsFor = (overrides: Partial<TextToolArgs>): unknown => {
+    it('renders All Caps as full-size uppercase text', () => {
       const ctx = makeTextCtx({ modern: true });
-      renderText(ctx, { ...baseArgs, ...overrides });
-      return styledDuringDraw(ctx, 'fontVariantCaps');
-    };
+      const fonts: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => fonts.push(ctx.font));
 
-    it('caps the whole line for All Caps, only the lowercase for Small Caps, and nothing otherwise', () => {
-      // `'all-small-caps'` covers Adobe's All Caps, which renders every character as a capital;
-      // `'small-caps'` leaves characters already typed as capitals alone and synthesises only the
-      // lowercase, which is Adobe's documented rule ("if the font does not include small caps,
-      // Photoshop generates faux small caps",
-      // https://helpx.adobe.com/photoshop/using/formatting-characters.html). The last case is the
-      // one that matters for a migrated record: a settings object carrying neither toggle must
-      // render un-capsed, and not small-capsed — which is what using `'small-caps'` as the
-      // fallback for "neither" would do.
-      expect(capsFor({ allCaps: true })).toBe('all-small-caps');
-      expect(capsFor({ allCaps: true, smallCaps: true })).toBe('all-small-caps');
-      expect(capsFor({ smallCaps: true })).toBe('small-caps');
-      expect(capsFor({})).toBe('normal');
+      renderText(ctx, { ...baseArgs, text: 'Wave', allCaps: true });
+
+      expect(ctx.fillText).toHaveBeenCalledWith('WAVE', TEXT_PADDING, 21);
+      expect(fonts).toEqual(['20px Arial']);
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
+    });
+
+    it('uses native small caps when a raster probe shows the variant changes pixels', () => {
+      const ctx = makeTextCtx({ modern: true });
+      attachCapsRasterProbe(ctx, true);
+      let capsDuringDraw: string | undefined;
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        capsDuringDraw = ctx.fontVariantCaps;
+      });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect(capsDuringDraw).toBe('small-caps');
+      expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
+    });
+
+    it('uses faux small caps when the raster probe finds no pixel difference', () => {
+      const ctx = makeTextCtx({ modern: true });
+      attachCapsRasterProbe(ctx, false);
+      const capsDuringDraw: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        capsDuringDraw.push(ctx.fontVariantCaps);
+      });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect(capsDuringDraw).toEqual(['normal', 'normal']);
+      expect(ctx.fillText).toHaveBeenNthCalledWith(1, 'W', TEXT_PADDING, 21);
+      expect(ctx.fillText).toHaveBeenNthCalledWith(2, 'AVE', 0, 0);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+    });
+
+    it('synthesizes grapheme-safe small caps when Canvas lacks fontVariantCaps', () => {
+      const ctx = makeTextCtx();
+      const fonts: string[] = [];
+      const glyphs: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation((value: string) => {
+        fonts.push(ctx.font);
+        glyphs.push(value);
+      });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect('fontVariantCaps' in ctx).toBe(false);
+      expect(glyphs).toEqual(['W', 'AVE']);
+      expect(fonts).toEqual(['20px Arial', '20px Arial']);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+    });
+
+    it('uses grapheme-safe faux small caps when Canvas exposes but ignores the variant', () => {
+      const ctx = makeTextCtx({ modern: true, nativeFontVariantCaps: false });
+      const fonts: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => fonts.push(ctx.font));
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect(vi.mocked(ctx.fillText).mock.calls.map(([value]) => value)).toEqual(['W', 'AVE']);
+      expect(fonts).toEqual(['20px Arial', '20px Arial']);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
+    });
+
+    it('applies tracking between graphemes in faux small caps', () => {
+      const ctx = makeTextCtx({
+        modern: true,
+        nativeFontVariantCaps: false,
+        measure: (value) => metrics(value.length * CH - (value.startsWith('AVE') ? 5 : 0)),
+      });
+      const args = { ...baseArgs, text: 'Wave', smallCaps: true, tracking: 100 };
+
+      expect(getTextWidth(ctx, args)).toBeCloseTo(33.578125, 5);
+      renderText(ctx, args);
+
+      expect(vi.mocked(ctx.fillText).mock.calls.map(([glyph, x]) => [glyph, x])).toEqual([
+        ['W', TEXT_PADDING],
+        ['AVE', 0],
+      ]);
+      expect(ctx.translate).toHaveBeenCalledWith(TEXT_PADDING + 12, 21);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+    });
+
+    it('measures the unshaped fallback advances when Canvas lacks letterSpacing', () => {
+      const ctx = makeTextCtx({
+        measure: (value) => metrics(value.length * CH - (value.startsWith('AVE') ? 5 : 0)),
+      });
+      const args = { ...baseArgs, text: 'Wave', smallCaps: true, tracking: 100 };
+
+      expect('letterSpacing' in ctx).toBe(false);
+      expect(getTextWidth(ctx, args)).toBeCloseTo(37.09375, 5);
+      renderText(ctx, args);
+
+      expect(ctx.translate).toHaveBeenNthCalledWith(1, TEXT_PADDING + 12, 21);
+      expect(ctx.translate).toHaveBeenNthCalledWith(2, TEXT_PADDING + 21.03125, 21);
+      expect(ctx.translate).toHaveBeenNthCalledWith(3, TEXT_PADDING + 30.0625, 21);
+    });
+
+    it('keeps All Caps and Small Caps independent of contexts with neither toggle', () => {
+      const ctx = makeTextCtx({ modern: true });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave' });
+
+      expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
     });
 
     it('assigns fontVariantCaps AFTER ctx.font, because assigning the font resets it', () => {
@@ -1275,9 +1471,9 @@ describe('renderText', () => {
       //
       // The order is the point the whole caps feature hangs on: EVERY write of the caps value must
       // see the styled font, or a caps assignment made before the font would be reset by it.
-      const applied = assignments.filter((entry) => entry.value === 'all-small-caps');
+      const applied = assignments.filter((entry) => entry.value === 'normal');
       expect(applied.length).toBeGreaterThan(0);
-      expect(applied.every((entry) => entry.fontAtAssignment === 'italic bold 20px Arial')).toBe(true);
+      expect(applied.some((entry) => entry.fontAtAssignment === 'italic bold 20px Arial')).toBe(true);
       // And the last write restores the context, with the seed font already back in place — which
       // is the other half of the bracket, and the reason the overlay is not left wearing the draft's
       // caps variant after the user leaves the tool.
@@ -1506,6 +1702,7 @@ describe('getTextWidth', () => {
 
 describe('text processor', () => {
   beforeEach(() => {
+    clearTextRasterCache();
     RecordingOffscreenCanvas.instances = [];
     vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
   });
@@ -1556,32 +1753,461 @@ describe('text processor', () => {
     expect(result).toBeTruthy();
   });
 
-  it('documents the current cost: a fresh full-document canvas and a fresh fillText pass on every replay (src/tools/text.ts:334-339)', () => {
-    const params = { size: { width: 40, height: 20 } };
-    const processor = text(params);
+  it('returns a blank canvas when the platform provides no 2D context', () => {
+    const getContext = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockReturnValue(null as never);
+    try {
+      const [result] = text({ size: { width: 300, height: 150 } })(baseArgs);
 
-    const first = processor(baseArgs);
-    const second = processor(baseArgs);
-
-    // Each replay allocates a fresh canvas and re-runs the font rasterization, so an
-    // N-step undo history re-renders the same glyphs N times. There is no vector-durable
-    // source to re-materialize from, so this cost is structural, not a caching oversight.
-    expect(RecordingOffscreenCanvas.instances).toHaveLength(2);
-    expect(first[0]).not.toBe(second[0]);
-    expect((first[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
-    expect((second[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
+      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
+      expect(canvas.ctx.fillText).not.toHaveBeenCalled();
+    } finally {
+      getContext.mockRestore();
+    }
   });
 
-  it.fails('replays text from a durable vector source without re-rasterizing (src/tools/text.ts:331-340)', () => {
+  it('reuses a cached raster for an identical replay instead of re-rasterizing', () => {
     const params = { size: { width: 40, height: 20 } };
     const processor = text(params);
 
     const first = processor(baseArgs);
     const second = processor(baseArgs);
 
-    // Desired: an identical replay reuses the already-rasterized source instead of
-    // allocating a second full-document OffscreenCanvas and re-running renderText.
+    // An identical replay reuses the already-rasterized canvas from the module-level
+    // cache: no second allocation, no second renderText pass.
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(first[0]).toBe(second[0]);
+    expect((first[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
+  });
+
+  it('rasterizes with no rect at all, because renderText guards on it and the canvas is still built', () => {
+    // A text layer outlives the drag that made it, and `rect` is optional on the args. The creator
+    // must still allocate and return a canvas — the guard in `renderText` draws nothing, but the
+    // layer has to be constructible from a record that never carried a box.
+    const [result] = text({ size: { width: 200, height: 120 } })({ ...baseArgs, rect: null });
+
+    const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+    expect(canvas.width).toBe(200);
+    expect(canvas.ctx.fillText).not.toHaveBeenCalled();
+    expect(result).toBeTruthy();
+  });
+
+  it('does not reuse an unrotated raster for a rotated replay', () => {
+    const params = { size: { width: 40, height: 20 } };
+    const processor = text(params);
+
+    processor(baseArgs);
+    const [rotated] = processor({ ...baseArgs, angle: 90 });
+
+    expect(RecordingOffscreenCanvas.instances).toHaveLength(2);
+    expect((rotated as unknown as RecordingOffscreenCanvas).ctx.rotate).toHaveBeenCalledWith(Math.PI / 2);
+  });
+});
+
+/**
+ * The in-place editor's own exports: the string a new type layer is born holding, and the CSS the
+ * DOM overlay has to carry to be indistinguishable from what {@link renderText} rasterises.
+ *
+ * `domOverlayStyle` is the load-bearing one, because it is the ONE place the two renderers meet: the
+ * canvas path and the DOM path read the same `ResolvedTextStyle` and the same `measureText`, and
+ * nothing compares the two sets of numbers. So every assertion below is about a value that has to
+ * agree with a `fillText` coordinate rather than merely look right.
+ */
+describe('PLACEHOLDER_TEXT and domOverlayStyle', () => {
+  describe('PLACEHOLDER_TEXT', () => {
+    it("is exactly 'Lorem ipsum' — the one string Adobe documents for both of its uses", () => {
+      // Adobe documents the placeholder for Photoshop *Elements* — "After clicking with the T tool,
+      // placeholder text (Lorem Ipsum) will appear. This will disappear as soon as you start typing
+      // your text. Placeholder text can be disabled in Preferences > Type"
+      // (https://helpx.adobe.com/photoshop-elements/desktop/adding-shapes-and-text/add-text.html) —
+      // and documents the same phrase as a menu command you paste into an EXISTING text layer,
+      // `Type > Paste Lorem Ipsum` (https://helpx.adobe.com/photoshop/using/creating-type.html).
+      //
+      // What no Adobe page states is the half this tool depends on: that the placeholder arrives
+      // PRE-SELECTED, so the first keystroke replaces it instead of appending to it. And a near-miss
+      // — 'Lorem Ipsum', a trailing full stop, an ellipsis — would not read as wrong to a user, would
+      // not throw, and would ship, which is why the whole string is asserted rather than a prefix.
+      expect(PLACEHOLDER_TEXT).toBe('Lorem ipsum');
+    });
+  });
+
+  describe('domOverlayStyle', () => {
+    /**
+     * The measurer the one computed value in this file is READ from: `measureText('')` reporting a
+     * real font bounding box.
+     *
+     * The shared `widthOnlyMeasure` deliberately reports `{ width }` and nothing else, which routes
+     * the overlay's correction through `finiteMetric`'s 0.8em and 0.2em FALLBACKS — so an assertion
+     * written against it would pin the fallbacks rather than the measurement, and would pass for a
+     * `domOverlayStyle` that never measured anything at all.
+     *
+     * The two numbers are the point rather than a font model, on the same terms as `metricMeasure`
+     * above: 18 and 4 are 1.125em and 0.25em of the 16px face below, so they are deliberately NEITHER
+     * `0.8 * 16` nor `0.2 * 16` and no case below can pass on a fallback that should not have run.
+     */
+    const INK_ASCENT = 18;
+    const INK_DESCENT = 4;
+
+    const inkMeasure = (value: string): TextMetrics =>
+      metrics(value.length * CH, { fontBoundingBoxAscent: INK_ASCENT, fontBoundingBoxDescent: INK_DESCENT });
+
+    /** A `modern` context, so `letterSpacing` and `fontVariantCaps` both exist to be written. */
+    const inkCtx = (measure: (value: string) => TextMetrics = inkMeasure): CanvasRenderingContext2D =>
+      makeTextCtx({ measure, modern: true });
+
+    /**
+     * The fixture every case below shares: 16px Arial at a 1.5 leading, whose line step is
+     * `16 * 1.5 = 24` against `18 + 4 = 22` of ink. That is `1` of half-leading — POSITIVE, and
+     * therefore a `paddingTop` below `TEXT_PADDING` — which is why the leading is 1.5 rather than the
+     * 1.1 in `baseArgs`: the correction has to be a number a test can read, not a value that rounds
+     * into the padding.
+     */
+    const overlayStyle = (overrides: Partial<TextToolArgs> = {}) =>
+      resolveTextStyle({ ...baseArgs, fontSize: 16, lineHeight: 1.5, ...overrides });
+
+    it('carries the type colour onto the text AND the caret', () => {
+      // One source for both: the caret is the app's own, not the document background's, so a caret in
+      // the layer's colour is the only one that stays visible while the text being edited is not yet
+      // inked. A caret carrying a second colour would need a second source, and there is none.
+      const css = domOverlayStyle(inkCtx(), overlayStyle({ color: '#3366cc' }));
+
+      expect(css.color).toBe('#3366cc');
+      expect(css.caretColor).toBe('#3366cc');
+    });
+
+    it('passes the family through verbatim, spaces and all', () => {
+      // A quoted multi-word family is the shape that catches a family name assembled by joining two
+      // halves or trimmed of its spaces, and it is legal in both `ctx.font` and a CSS `font-family`
+      // — so nothing normalises it on the way through and nothing else in this file would notice.
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ fontFamily: 'Times New Roman' })).fontFamily).toBe(
+        'Times New Roman'
+      );
+    });
+
+    it("reads a numeric font weight — '700' for bold and '400' for not", () => {
+      // Numbers rather than the `'bold'`/`'normal'` keywords, because the canvas writes NO weight at
+      // all: `fontShorthand` may only carry a keyword before the size, so the overlay is the only
+      // place a numeric weight exists, and `'400'` is the explicit form of the unbolded case —
+      // `'normal'` would leave a stylesheet's inherited weight able to win.
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ bold: true })).fontWeight).toBe('700');
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ bold: false })).fontWeight).toBe('400');
+    });
+
+    it("resolves the slant to 'italic' or 'normal'", () => {
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ italic: true })).fontStyle).toBe('italic');
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ italic: false })).fontStyle).toBe('normal');
+    });
+
+    it('uses uppercase text-transform for All Caps and font variants only for Small Caps', () => {
+      const allCaps = domOverlayStyle(inkCtx(), overlayStyle({ allCaps: true }));
+      const both = domOverlayStyle(inkCtx(), overlayStyle({ allCaps: true, smallCaps: true }));
+      const smallCaps = domOverlayStyle(inkCtx(), overlayStyle({ smallCaps: true }));
+      const plain = domOverlayStyle(inkCtx(), overlayStyle());
+
+      expect(allCaps.textTransform).toBe('uppercase');
+      expect(allCaps.fontVariantCaps).toBe('normal');
+      expect(both.textTransform).toBe('uppercase');
+      expect(both.fontVariantCaps).toBe('normal');
+      expect(smallCaps.textTransform).toBe('none');
+      expect(smallCaps.fontVariantCaps).toBe('small-caps');
+      expect(plain.textTransform).toBe('none');
+      expect(plain.fontVariantCaps).toBe('normal');
+    });
+
+    it('passes the paragraph alignment through as left, center or right — not the anchor the canvas sets', () => {
+      // The canvas never lets the browser place a glyph: `applyTextStyle` writes `textAlign: 'start'`
+      // and computes the anchor from the measured ink width, so the box and the ink cannot disagree.
+      // The overlay has no such measurement to do, so it is given the ALIGNMENT itself and the
+      // browser does it. Asserting `'start'` here would be the canvas's answer to the overlay's
+      // question, and would left-align a centred paragraph on screen.
+      for (const align of ['left', 'center', 'right'] as const) {
+        expect(domOverlayStyle(inkCtx(), overlayStyle({ align })).textAlign).toBe(align);
+      }
+    });
+
+    it("names the decoration lines in the canvas's own order, so both is 'underline line-through'", () => {
+      // The joined string is asserted EXACTLY and in order, because `renderTextInto` draws the
+      // underline first and `overlayPaddingTop`'s sibling rule claims it is drawing the SAME thing:
+      // the overlay's underline is under the glyphs where the canvas puts its rule, and reversing the
+      // join would put the strike-through first — a claim no pixel comparison in the app would catch,
+      // since both are the same two rules in the same colour.
+      expect(domOverlayStyle(inkCtx(), overlayStyle()).textDecorationLine).toBe('none');
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ underline: true })).textDecorationLine).toBe('underline');
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ strikethrough: true })).textDecorationLine).toBe('line-through');
+      expect(domOverlayStyle(inkCtx(), overlayStyle({ underline: true, strikethrough: true })).textDecorationLine).toBe(
+        'underline line-through'
+      );
+    });
+
+    it('paints the decoration in the type colour in every one of those four cases', () => {
+      // Adobe's underline has no style, weight, offset or colour of its own — its `Underline` enum is
+      // `NONE / LEFTINVERTICAL / RIGHTINVERTICAL`
+      // (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants) — so the rule
+      // takes the type colour, exactly as `renderTextInto`'s `fillRect` does. `'none'` is in the four
+      // cases because a decoration colour that only appears WITH a decoration is a second place for
+      // the colour to disagree with itself.
+      for (const overrides of [
+        {},
+        { underline: true },
+        { strikethrough: true },
+        { underline: true, strikethrough: true },
+      ]) {
+        expect(domOverlayStyle(inkCtx(), overlayStyle(overrides)).textDecorationColor).toBe('#ff0000');
+      }
+    });
+
+    it("carries 'pre-line' with normal wrapping for EVERY style — the declarations the whole overlay hangs on", () => {
+      // THE load-bearing pair, and the reason this is not a `<textarea>`. The canvas breaks a
+      // paragraph at whitespace RUNS and collapses each run to one space, keeps `\n` as a hard break,
+      // and never breaks at NBSP. `pre-line` is the one `white-space` value with exactly that
+      // behaviour — `pre-wrap` preserves the runs and `normal` folds the newlines — and it is a
+      // CONSTANT rather than a derivation, so no style can reach it.
+      //
+      // Every style is walked rather than one: each of the toggles is an independent branch in the
+      // record, so a `pre-wrap` reached under exactly one combination is a branch nobody exercised.
+      // The declarations the JSDoc measured against a headless browser, so they are pinned by name.
+      const styles: Partial<TextToolArgs>[] = [
+        {},
+        { bold: true, italic: true },
+        { allCaps: true, smallCaps: true },
+        { underline: true, strikethrough: true },
+        { tracking: -100, align: 'center' },
+        { lineHeight: 0.5, align: 'right' },
+        { lineHeight: MAX_LINE_HEIGHT, fontSize: FONT_SIZE_MIN },
+      ];
+
+      for (const overrides of styles) {
+        const css = domOverlayStyle(inkCtx(), overlayStyle(overrides));
+
+        expect(css.whiteSpace).toBe('pre-line');
+        expect(css.overflowWrap).toBe('normal');
+        expect(css.wordBreak).toBe('normal');
+      }
+    });
+
+    it('multiplies every LENGTH by the workspace scale, and leaves everything else alone', () => {
+      // `scale` is the workspace's contain fit — CSS px per document px — and `style` and `rect` are in
+      // document px while the overlay is displayed in client px, so every length has to be scaled and
+      // nothing else may be. Tracking is NON-ZERO here because it is the one length whose document-px
+      // value is not a round number, so a scale applied to it only or not at all is visible.
+      const ctx = inkCtx();
+      const style = overlayStyle({ tracking: 100 });
+      const atOne = domOverlayStyle(ctx, style, 1);
+      const atTwo = domOverlayStyle(ctx, style, 2);
+
+      // 16px and a 24px step, 100/1000em of 16px = 1.6px of tracking, and the fixture's own
+      // `4px` correction — each exactly twice at scale 2.
+      expect(atOne.fontSize).toBe('16px');
+      expect(atOne.lineHeight).toBe('24px');
+      expect(atOne.letterSpacing).toBe('1.6px');
+      expect(atOne.paddingTop).toBe('4px');
+      expect(atOne.paddingLeft).toBe('5px');
+      expect(atOne.paddingRight).toBe('5px');
+      expect(atOne.paddingBottom).toBe('5px');
+
+      expect(atTwo.fontSize).toBe('32px');
+      expect(atTwo.lineHeight).toBe('48px');
+      expect(atTwo.letterSpacing).toBe('3.2px');
+      expect(atTwo.paddingTop).toBe('8px');
+      expect(atTwo.paddingLeft).toBe('10px');
+      expect(atTwo.paddingRight).toBe('10px');
+      expect(atTwo.paddingBottom).toBe('10px');
+
+      // And the scale touches NOTHING that is not a length: a scale applied to the colour, the
+      // weight or the decoration string is not a bug that looks like a bug anywhere on screen.
+      expect(atTwo.color).toBe(atOne.color);
+      expect(atTwo.caretColor).toBe(atOne.caretColor);
+      expect(atTwo.fontWeight).toBe(atOne.fontWeight);
+      expect(atTwo.fontStyle).toBe(atOne.fontStyle);
+      expect(atTwo.fontVariantCaps).toBe(atOne.fontVariantCaps);
+      expect(atTwo.textDecorationLine).toBe(atOne.textDecorationLine);
+      expect(atOne.textDecorationThickness).toBe('1px');
+      expect(atTwo.textDecorationThickness).toBe('2px');
+      expect(atOne.textUnderlineOffset).toBe('1.6px');
+      expect(atTwo.textUnderlineOffset).toBe('3.2px');
+      expect(atTwo.whiteSpace).toBe(atOne.whiteSpace);
+    });
+
+    it('pads left, right and bottom by exactly TEXT_PADDING at whatever scale it is given', () => {
+      // The three sides carry no correction at all: only the TOP has to move, because only the top is
+      // where a DOM line box's half-leading lives. A half-leading term leaking into a side would shift
+      // the text box sideways as the leading slider moved, which is the one symptom the overlay has no
+      // other defence against.
+      const ctx = inkCtx();
+      const style = overlayStyle();
+
+      expect(domOverlayStyle(ctx, style, 1).paddingLeft).toBe(`${TEXT_PADDING}px`);
+      expect(domOverlayStyle(ctx, style, 1).paddingRight).toBe(`${TEXT_PADDING}px`);
+      expect(domOverlayStyle(ctx, style, 1).paddingBottom).toBe(`${TEXT_PADDING}px`);
+      // A non-integer scale, because the contain fit is a ratio of two image dimensions and is
+      // rarely a whole number: `5 * 0.5 = 2.5`, and `2.5px` is the string that has to come out.
+      expect(domOverlayStyle(ctx, style, 0.5).paddingLeft).toBe('2.5px');
+      expect(domOverlayStyle(ctx, style, 0.5).paddingRight).toBe('2.5px');
+      expect(domOverlayStyle(ctx, style, 0.5).paddingBottom).toBe('2.5px');
+    });
+
+    it('subtracts the half-leading when the line step is TALLER than the ink, so paddingTop falls BELOW TEXT_PADDING', () => {
+      // The canvas puts its first baseline at `TEXT_PADDING + ascent` below the box's top edge, and a
+      // DOM line box puts its own at `(lineStep - (ascent + descent)) / 2 + ascent` below its CONTENT
+      // box, so the content box has to sit at `TEXT_PADDING - halfLeading` for the two to agree.
+      //
+      // The arithmetic from this fixture's OWN measured metrics, written out: step `16 * 1.5 = 24`,
+      // ink `18 + 4 = 22`, half-leading `(24 - 22) / 2 = 1`, and `5 - 1 = 4`. Four px, under the five
+      // every other side carries — the correction is the difference between the two renderers' baselines
+      // and nothing else, so a `paddingTop` of exactly `TEXT_PADDING` here would mean the correction
+      // did not run.
+      const css = domOverlayStyle(inkCtx(), overlayStyle());
+
+      expect(css.paddingTop).toBe('4px');
+      expect(Number.parseFloat(css.paddingTop)).toBeLessThan(TEXT_PADDING);
+    });
+
+    it('ADDS the half-leading when the leading is SHORTER than the ink, so paddingTop rises ABOVE TEXT_PADDING', () => {
+      // The correction is SIGNED, and this is the case that makes it so. A leading whose step is under
+      // the font's own ink gives a NEGATIVE half-leading — `(16 - 22) / 2 = -3` at `16 * 1 = 16` against
+      // the same 22 of ink — so the content box moves DOWN rather than up, `5 - (-3) = 8`, and the
+      // first line's ink reaches above the box's own top edge. That is precisely the case the box
+      // height policy in `requiredHeightForLines` exists to contain and precisely why the overlay must
+      // not be `overflow: hidden`, and it is the bottom of the leading slider rather than an exotic
+      // record. An unsigned correction — `|halfLeading|` — would report 2px and put the first baseline
+      // 6px above where the canvas draws it.
+      const css = domOverlayStyle(inkCtx(), overlayStyle({ lineHeight: 1 }));
+
+      expect(css.paddingTop).toBe('8px');
+      expect(Number.parseFloat(css.paddingTop)).toBeGreaterThan(TEXT_PADDING);
+    });
+
+    it('reads the ascent and the descent off measureText rather than off the style record', () => {
+      // The same 16px/1.5 style, on two contexts whose fonts report different ink. A correction derived
+      // from the style alone — the leading, a fixed fraction of the size, a constant — returns the same
+      // number for both, and 4px against -1px is the difference between that and a measurement:
+      // `18 + 4 = 22` gives `(24 - 22) / 2 = 1` and `5 - 1 = 4`, while `10 + 2 = 12` gives
+      // `(24 - 12) / 2 = 6` and `5 - 6 = -1`. The second is negative, which is not a mistake: a
+      // correction is a distance and a distance can be signed.
+      const tightInk = (value: string): TextMetrics =>
+        metrics(value.length * CH, { fontBoundingBoxAscent: 10, fontBoundingBoxDescent: 2 });
+
+      expect(domOverlayStyle(inkCtx(), overlayStyle()).paddingTop).toBe('4px');
+      expect(domOverlayStyle(inkCtx(tightInk), overlayStyle()).paddingTop).toBe('-1px');
+    });
+
+    it('falls back to 0.8em and 0.2em of ink on a measurer that reports no font metrics, rather than emitting NaN', () => {
+      // A context reporting `{ width }` alone is the shape every bare canvas mock has, and it is what
+      // a caller whose ref has not resolved yet gets. `16 * 0.8 + 16 * 0.2 = 16` of ink against a
+      // 24px step gives `(24 - 16) / 2 = 4` and `5 - 4 = 1`. The assertion that matters is the FINITE
+      // one: `'NaNpx'` is a string no browser accepts, so a correction that reached the DOM without a
+      // metric would drop the whole declaration and silently misalign the type.
+      const css = domOverlayStyle(makeTextCtx(), overlayStyle());
+
+      expect(css.paddingTop).toBe('1px');
+      expect(css.paddingTop).not.toContain('NaN');
+      expect(Number.isFinite(Number.parseFloat(css.paddingTop))).toBe(true);
+    });
+
+    it('yields the bare TEXT_PADDING when there is no context to measure, and changes nothing else', () => {
+      // A MISSING context yields a ZERO correction rather than a guessed one, and that is the decision
+      // rather than a fallback: the correction is derived from the font's own ascent and descent, and
+      // with no context to ask there is nothing to derive it from. Every caller that has no context is
+      // a test, and in a test there is no rendered baseline to align to — so a plausible-looking
+      // fraction here would be a number nobody checked. Both spellings of "no context" are asserted,
+      // because the type allows either.
+      const ctx = inkCtx();
+      const style = overlayStyle({ tracking: 100, underline: true });
+      const fromContext = domOverlayStyle(ctx, style);
+      const unmeasured = domOverlayStyle(null, style);
+
+      expect(unmeasured.paddingTop).toBe(`${TEXT_PADDING}px`);
+      expect(domOverlayStyle(undefined, style).paddingTop).toBe(`${TEXT_PADDING}px`);
+      // Which is NOT what the context would have said — the same style on a measurable context gives
+      // 4px, so this is a correction of zero and not a measurement that happened to land on five.
+      expect(fromContext.paddingTop).toBe('4px');
+      // And every OTHER declaration is identical, with `paddingTop` blanked on both sides rather than
+      // destructured away: a null-context branch that dropped, renamed or re-derived any second field
+      // would show up here as a diff.
+      expect({ ...unmeasured, paddingTop: '' }).toEqual({ ...fromContext, paddingTop: '' });
+    });
+
+    it("leaves the caller's context exactly as it found it, having styled it only inside the measurement", () => {
+      // `applyTextStyle` is not a measurement — it WRITES `font`, `textBaseline`, `textAlign`,
+      // `letterSpacing` and `fontVariantCaps` — and `domOverlayStyle` is handed the live overlay's own
+      // context, the one that lives for the whole session. Unbracketed, every re-render on every
+      // keystroke would leave the shared overlay wearing this draft's typeface, tracking and caps
+      // variant for whichever later overlay painter inherited it, which is the same leak
+      // `resetOverlayAlpha` exists for.
+      //
+      // The seed is deliberately a value `applyTextStyle` would never write — a 12px serif, a middle
+      // baseline, a centred anchor, real tracking, small-caps — so a bracket that restored the wrong
+      // thing, or a restore that ran before the writes, fails on the value rather than on a count.
+      const ctx = inkCtx();
+      const seed = {
+        font: '12px Georgia',
+        textBaseline: 'middle',
+        textAlign: 'center',
+        letterSpacing: '3px',
+        fontVariantCaps: 'small-caps',
+      };
+      Object.assign(ctx, seed);
+
+      domOverlayStyle(ctx, overlayStyle({ bold: true, italic: true, tracking: 100, allCaps: true }));
+
+      expect({
+        font: ctx.font,
+        textBaseline: ctx.textBaseline,
+        textAlign: ctx.textAlign,
+        letterSpacing: ctx.letterSpacing,
+        fontVariantCaps: ctx.fontVariantCaps,
+      }).toEqual(seed);
+      // And the state it wrote was in effect WHILE it measured, which is what makes the restore above
+      // a restore rather than a no-op that never styled anything. Read through `applied`, because the
+      // value in effect at the `measureText('')` is the only moment guaranteed to be inside the bracket.
+      expect(styledDuringDraw(ctx, 'font')).toBe('italic bold 16px Arial');
+      expect(styledDuringDraw(ctx, 'textBaseline')).toBe('alphabetic');
+      expect(styledDuringDraw(ctx, 'textAlign')).toBe('start');
+      expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('1.6px');
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
+    });
+  });
+});
+
+describe('drawOverflowIndicator', () => {
+  it('strokes at the arithmetic corner of a zero-width box rather than clamping or skipping', () => {
+    // A zero-width box has no bottom-right corner to sit in: the icon still strokes, at coordinates
+    // derived from `x2 - TEXT_PADDING - size`, which is the honest arithmetic rather than a clamp.
+    // What this pins is the bracket: the icon writes `strokeStyle` and `lineWidth`, and both must be
+    // restored to the seed so the shared overlay is not left wearing them.
+    const ctx = makeTextCtx();
+    const zeroRect: RectXYSorted = { x1: 0, y1: 0, x2: 0, y2: 0 };
+
+    drawOverflowIndicator(ctx, zeroRect, '#ff0000');
+
+    expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
+    expect(ctx.strokeStyle).toBe(SEED_STROKE_STYLE);
+    expect(ctx.lineWidth).toBe(1);
+  });
+
+  it('strokes with an empty colour string, because the colour is assigned unconditionally', () => {
+    // The icon takes whatever colour it is handed — the draft's type colour, always — and assigns it
+    // to `strokeStyle` without a guard. An empty string is a transparent stroke, which is the honest
+    // outcome; a branch that skipped the draw on a falsy colour would be a second place for the
+    // colour to disagree with the ink.
+    const ctx = makeTextCtx();
+
+    drawOverflowIndicator(ctx, rect, '');
+
+    expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the caller stroke state even when the box is degenerate', () => {
+    // The icon's own bracket is the assertion, not a particular coordinate: `strokeStyle` and
+    // `lineWidth` are written only by this function, so a restored seed is that bracket closing.
+    // Without it the stroke colour outlived the call on the shared overlay.
+    const ctx = makeTextCtx();
+    const degenerate: RectXYSorted = { x1: 100, y1: 100, x2: 101, y2: 101 };
+
+    drawOverflowIndicator(ctx, degenerate, '#00ff00');
+
+    expect(ctx.strokeStyle).toBe(SEED_STROKE_STYLE);
+    expect(ctx.lineWidth).toBe(1);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 });

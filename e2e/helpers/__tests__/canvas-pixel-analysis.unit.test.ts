@@ -13,8 +13,12 @@ import {
   inkWidth,
   loadImageData,
   measureInk,
+  scanPixelsForBounds,
+  screenshotBoundsToCss,
+  type BoundingBox,
   type ImageDataResult,
 } from '../canvas-helpers';
+import { cssPointToImage } from '../screenshot-scale';
 import {
   BLACK,
   CYAN,
@@ -24,6 +28,7 @@ import {
   RED,
   TRANSPARENT,
   WHITE,
+  captureAtScale,
   createImageData,
   createTestImage,
   createTestImageData,
@@ -311,6 +316,175 @@ describe('getDarkPixelBounds', () => {
     const image = createImageData(8, 8);
     setPixel(image, 2, 2, { red: 0, green: 0, blue: 0 }, TRANSPARENT);
     expect(await getDarkPixelBounds(image)).toBeNull();
+  });
+
+  it('bounds two disconnected dark rectangles as a single span', async () => {
+    const image = createImageData(100, 100);
+    fillAll(image, WHITE);
+    fillRect(image, { left: 10, top: 10, right: 19, bottom: 19 }, DARK_GRAY);
+    fillRect(image, { left: 60, top: 60, right: 69, bottom: 69 }, DARK_GRAY);
+
+    expect(await getDarkPixelBounds(image)).toEqual({
+      left: 10,
+      top: 10,
+      right: 69,
+      bottom: 69,
+      width: 60,
+      height: 60,
+      imageWidth: 100,
+      imageHeight: 100,
+    });
+  });
+
+  it('returns null for a zero-by-zero image', async () => {
+    expect(await getDarkPixelBounds(createImageData(0, 0))).toBeNull();
+  });
+
+  it('returns null for a zero-width image', async () => {
+    expect(await getDarkPixelBounds(createImageData(0, 10))).toBeNull();
+  });
+
+  it('returns a one-pixel box for a single dark pixel at the center', async () => {
+    const image = createImageData(11, 11);
+    fillAll(image, WHITE);
+    setPixel(image, 5, 5, { red: 0, green: 0, blue: 0 });
+
+    expect(await getDarkPixelBounds(image)).toEqual({
+      left: 5,
+      top: 5,
+      right: 5,
+      bottom: 5,
+      width: 1,
+      height: 1,
+      imageWidth: 11,
+      imageHeight: 11,
+    });
+  });
+
+  it('returns full image bounds when every pixel is dark', async () => {
+    const image = createImageData(50, 50);
+    fillAll(image, DARK_GRAY);
+
+    expect(await getDarkPixelBounds(image)).toEqual({
+      left: 0,
+      top: 0,
+      right: 49,
+      bottom: 49,
+      width: 50,
+      height: 50,
+      imageWidth: 50,
+      imageHeight: 50,
+    });
+  });
+});
+
+describe('scanPixelsForBounds', () => {
+  const isDark = (red: number, green: number, blue: number, alpha: number): boolean =>
+    alpha !== 0 && red < DARK_THRESHOLD && green < DARK_THRESHOLD && blue < DARK_THRESHOLD;
+
+  it('bounds scattered dark pixels that do not form a clean rectangle', async () => {
+    const image = createImageData(8, 8);
+    fillRect(image, { left: 2, top: 2, right: 5, bottom: 4 }, DARK_GRAY);
+    setPixel(image, 2, 5, DARK_GRAY);
+
+    const bounds = await scanPixelsForBounds(image, isDark);
+
+    expect(bounds).toEqual({
+      left: 2,
+      top: 2,
+      right: 5,
+      bottom: 5,
+      found: true,
+    });
+  });
+
+  it('bounds a diagonal line of dark pixels', async () => {
+    const image = createImageData(5, 5);
+    fillAll(image, WHITE);
+    for (let i = 0; i < 5; i++) setPixel(image, i, i, DARK_GRAY);
+
+    const bounds = await scanPixelsForBounds(image, isDark);
+
+    expect(bounds).toEqual({
+      left: 0,
+      top: 0,
+      right: 4,
+      bottom: 4,
+      found: true,
+    });
+  });
+
+  it('returns the not-found sentinel for an empty 0x0 image', async () => {
+    const bounds = await scanPixelsForBounds(createImageData(0, 0), () => true);
+
+    expect(bounds).toEqual({
+      left: 0,
+      top: 0,
+      right: -1,
+      bottom: -1,
+      found: false,
+    });
+  });
+});
+
+describe('screenshotBoundsToCss round-trip', () => {
+  const darkBlock = { left: 20, top: 20, right: 79, bottom: 79 };
+
+  it('converts pixel bounds to CSS and back to the same pixels at 1:1', async () => {
+    const image = createImageData(100, 100);
+    fillAll(image, WHITE);
+    fillRect(image, darkBlock, DARK_GRAY);
+
+    const bounds = (await getDarkPixelBounds(image))!;
+    const box: BoundingBox = { x: 0, y: 0, width: 100, height: 100 };
+    const cssBounds = screenshotBoundsToCss(bounds, box);
+
+    const topLeft = cssPointToImage({ width: bounds.imageWidth, height: bounds.imageHeight }, box, {
+      x: cssBounds.left,
+      y: cssBounds.top,
+    });
+    const bottomRight = cssPointToImage({ width: bounds.imageWidth, height: bounds.imageHeight }, box, {
+      x: cssBounds.right,
+      y: cssBounds.bottom,
+    });
+
+    expect(cssBounds).toEqual({ left: 20, top: 20, right: 79, bottom: 79 });
+    expect(topLeft).toEqual({ x: 20, y: 20 });
+    expect(bottomRight).toEqual({ x: 79, y: 79 });
+  });
+
+  it('converts pixel bounds through a 2x capture and back', async () => {
+    const image = createImageData(100, 100);
+    fillAll(image, WHITE);
+    fillRect(image, darkBlock, DARK_GRAY);
+    const scaled = captureAtScale(image, 2);
+
+    const bounds = (await getDarkPixelBounds(scaled))!;
+    const box: BoundingBox = { x: 0, y: 0, width: 100, height: 100 };
+    const cssBounds = screenshotBoundsToCss(bounds, box);
+
+    const topLeft = cssPointToImage({ width: bounds.imageWidth, height: bounds.imageHeight }, box, {
+      x: cssBounds.left,
+      y: cssBounds.top,
+    });
+    const bottomRight = cssPointToImage({ width: bounds.imageWidth, height: bounds.imageHeight }, box, {
+      x: cssBounds.right,
+      y: cssBounds.bottom,
+    });
+
+    expect(bounds).toEqual({
+      left: 40,
+      top: 40,
+      right: 159,
+      bottom: 159,
+      width: 120,
+      height: 120,
+      imageWidth: 200,
+      imageHeight: 200,
+    });
+    expect(cssBounds).toEqual({ left: 20, top: 20, right: 79.5, bottom: 79.5 });
+    expect(topLeft).toEqual({ x: 40, y: 40 });
+    expect(bottomRight).toEqual({ x: 159, y: 159 });
   });
 });
 

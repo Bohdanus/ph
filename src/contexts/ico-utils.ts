@@ -3,6 +3,55 @@ import { canvasToPngBlob, imageDataToImage } from './raster-utils.ts';
 
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+/**
+ * The largest edge an ICO can express. A directory entry stores each axis in one byte, where a
+ * stored `0` means 256 rather than 0, so 256 is the format's own maximum and not a round number
+ * this app chose. It is declared once because both halves of the format have to agree on it: an
+ * entry that opens at 512×512 and then cannot be saved back is a file the app accepts and then
+ * refuses to write.
+ */
+const MAX_EDGE = 256;
+
+/**
+ * One ceiling for every geometry an ICO can present, on the way in and on the way out. The two
+ * halves of `loadIcoFile` reach their geometry differently — a DIB declares it in a header, a PNG
+ * entry only in the stream the browser decodes — so the shared helper is what makes "opens, and can
+ * be saved back" one property rather than two coincidental ones.
+ */
+function assertWithinMaxEdge(width: number, height: number, action: 'open' | 'save') {
+  // The integer test is not decoration. A PNG entry's geometry arrives from the browser rather
+  // than from a header this module parses, and `undefined < 1` and `undefined > 256` are both
+  // false — so a shape guard written only with the range comparisons waves an unreadable geometry
+  // straight through, which is the same defect the AVIF budget had.
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`ICO image has invalid dimensions to ${action} (${width}×${height}).`);
+  }
+  if (width > MAX_EDGE || height > MAX_EDGE) {
+    if (action === 'save') {
+      throw new Error('ICO dimensions cannot exceed 256 pixels');
+    }
+    throw new Error(`ICO image is too large to open (${width}×${height}). Maximum is ${MAX_EDGE} pixels per axis.`);
+  }
+}
+
+/**
+ * Width and height from a PNG's IHDR chunk, which the format requires to be the first chunk after
+ * the signature: 8 signature bytes, a 4-byte length, a 4-byte type, then the two 4-byte big-endian
+ * values. Reading them here is a pure byte decode — it is how the ceiling on this branch can be
+ * enforced before the browser allocates the raster rather than after.
+ *
+ * Returns `null` when the header is not the shape described, which leaves the caller to fall back
+ * on the browser-reported geometry: a malformed IHDR is the decoder's error to report, not this
+ * guard's to invent.
+ */
+function pngDimensions(data: Uint8Array): [number, number] | null {
+  if (data.length < 24) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const chunkType = String.fromCharCode(data[12], data[13], data[14], data[15]);
+  if (chunkType !== 'IHDR') return null;
+  return [view.getUint32(16), view.getUint32(20)];
+}
+
 function isPng(data: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => data[index] === byte);
 }
@@ -23,9 +72,14 @@ function decodeBmpIcon(data: Uint8Array): ReturnType<typeof decodeBmp> {
   if (dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0) {
     throw new Error('Invalid ICO bitmap dimensions');
   }
+  // The geometry a BMP-shaped DIB decodes to, against the same ceiling `encodeIco` enforces on
+  // the way out. Checked on the declared axes rather than on the directory entry, because the
+  // entry's zero-byte-means-256 convention is a property of the *directory* — a DIB declares real
+  // dimensions, and it is those that reach `decodeBmp`.
+  assertWithinMaxEdge(width, rawHeight / 2, 'open');
+  const height = rawHeight / 2;
 
   const paletteCount = bitsPerPixel <= 8 ? colorsUsed || 1 << bitsPerPixel : 0;
-  const height = rawHeight / 2;
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
   const xorSize = rowStride * height;
   const maskStride = Math.ceil(width / 8) * 4;
@@ -96,26 +150,40 @@ export async function loadIcoFile(file: Blob): Promise<HTMLImageElement> {
   const image = new Uint8Array(buffer, imageOffset, imageSize);
   if (!isPng(image)) return imageDataToImage(decodeBmpIcon(image), 'Failed to decode ICO image');
 
+  // Before the blob URL, so before the browser's decode. A 4096×4096 PNG entry is a ~2-6 MB file
+  // that rasterises to 67 MB, and the ceiling has to be able to see that without paying for it.
+  const declared = pngDimensions(image);
+  if (declared) {
+    assertWithinMaxEdge(declared[0], declared[1], 'open');
+  }
+
   const png = new Blob([image], { type: 'image/png' });
   const url = URL.createObjectURL(png);
   try {
-    return await new Promise((resolve, reject) => {
+    const decoded = await new Promise<HTMLImageElement>((resolve, reject) => {
       const imageElement = new Image();
       imageElement.onload = () => resolve(imageElement);
       imageElement.onerror = () => reject(new Error('Failed to decode ICO image'));
       imageElement.src = url;
     });
+    // The authority, and the only one that can see a PNG whose IHDR was unreadable. It cannot be
+    // the only one: the check above is what stops the raster being allocated at all.
+    assertWithinMaxEdge(decoded.naturalWidth, decoded.naturalHeight, 'open');
+    return decoded;
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
 export async function encodeIco(canvas: HTMLCanvasElement): Promise<Blob> {
-  const png = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer());
+  // Before the encode, not after it: `canvasToPngBlob` rasterises the whole canvas through
+  // `toBlob`, so `Save as ICO` on a 10000×10000 document would pay a full PNG encode of 400 MB of
+  // RGBA — and allocate it — only to be refused by the geometry check below. The canvas carries its
+  // own geometry, so the guard costs two comparisons.
+  assertWithinMaxEdge(canvas.width, canvas.height, 'save');
   const { width, height } = canvas;
-  if (width < 1 || height < 1 || width > 256 || height > 256) {
-    throw new Error('ICO dimensions cannot exceed 256 pixels');
-  }
+
+  const png = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer());
 
   const headerSize = 6;
   const directorySize = 16;

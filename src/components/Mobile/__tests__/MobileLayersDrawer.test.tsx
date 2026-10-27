@@ -4,8 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileLayersDrawer } from '../MobileLayersDrawer.tsx';
 import { reorderLayers } from '../../../contexts/layer-utils.ts';
-import { RENAME_LAYER_ACTION } from '../../../util/constants.ts';
+import {
+  LOCK_LAYER_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  UNLOCK_LAYER_ACTION,
+} from '../../../util/constants.ts';
 import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import { getHistoryItemTitle } from '../../../contexts/useHistory.ts';
+import type { HistoryPanelProjection } from '../../../contexts/useHistory.ts';
+import type { HistoryItem } from '../../../contexts/history-types.ts';
 
 const createBlankLayerMock = vi.hoisted(() => vi.fn());
 const removeLayerMock = vi.hoisted(() => vi.fn());
@@ -16,6 +25,14 @@ const moveLayerAfterMock = vi.hoisted(() => vi.fn());
 const resetHistoryToMock = vi.hoisted(() => vi.fn());
 const toggleDisabledMock = vi.hoisted(() => vi.fn());
 const dispatchMock = vi.hoisted(() => vi.fn());
+const commitDirtyToolMock = vi.hoisted(() => vi.fn());
+const currentToolState = vi.hoisted(() => ({
+  toolArgs: { toolName: 'move' } as {
+    toolName: string;
+    rect?: { x1: number; y1: number; x2: number; y2: number } | null;
+    editingLayerId?: string;
+  },
+}));
 
 /**
  * Four layers with DISTINCT `order` values. The old fixture omitted `order`
@@ -45,7 +62,12 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
     setActiveLayer: setActiveLayerMock,
     updateLayer: updateLayerMock,
     moveLayerAfter: moveLayerAfterMock,
+    commitDirtyTool: commitDirtyToolMock,
   }),
+}));
+
+vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
 }));
 
 // `getHistoryItemTitle` is spread through from the real module. The old test
@@ -60,6 +82,7 @@ vi.mock('../../../contexts/useHistory.ts', async (importOriginal) => {
     useHistory: () => ({
       resetHistoryTo: resetHistoryToMock,
       toggleDisabled: toggleDisabledMock,
+      historyPanelProjection: buildLegacyProjection(),
       canUndo: () => true,
       canRedo: () => false,
       undo: vi.fn(),
@@ -67,6 +90,20 @@ vi.mock('../../../contexts/useHistory.ts', async (importOriginal) => {
     }),
   };
 });
+
+function buildLegacyProjection(): HistoryPanelProjection {
+  const history = storeStateMock.history as unknown as HistoryItem[];
+  return {
+    source: 'legacy',
+    rows: history.map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      title: getHistoryItemTitle(item),
+      isActive: originalIndex <= storeStateMock.historyIndex,
+      isCurrent: originalIndex === storeStateMock.historyIndex,
+    })),
+  };
+}
 
 const makeLayer = (id: string, name: string, order: number) => ({
   id,
@@ -140,6 +177,7 @@ afterEach(() => {
 describe('MobileLayersDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentToolState.toolArgs = { toolName: 'move' };
     storeStateMock.layers = freshLayers();
     storeStateMock.activeLayerId = 'upper';
     storeStateMock.history = [];
@@ -163,6 +201,86 @@ describe('MobileLayersDrawer', () => {
     expect(screen.getByRole('dialog', { name: 'Layers & History Drawer' })).toBeInTheDocument();
     expect(screen.getByText('Layers (4)')).toBeInTheDocument();
     expect(renderedLayerNames()).toEqual(['Top', 'Upper', 'Lower', 'Bottom']);
+  });
+
+  it('exposes a 44px full-lock toggle for each non-background layer', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const lockButton = screen.getByRole('button', { name: 'Lock Upper' });
+    expect(lockButton).toHaveClass('min-h-11', 'min-w-11');
+    fireEvent.click(lockButton);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { locked: true }, LOCK_LAYER_ACTION);
+    expect(screen.getByRole('button', { name: 'Lock Bottom' })).toBeDisabled();
+  });
+
+  it('disables Lock All across the layer stack while text editing is active', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+    };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const lockButton = screen.getByRole('button', { name: 'Lock Upper' });
+    expect(lockButton).toBeDisabled();
+    fireEvent.click(lockButton);
+    expect(updateLayerMock).not.toHaveBeenCalled();
+  });
+
+  it('does not delete the text layer while that layer is being edited', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+      editingLayerId: 'upper',
+    };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const deleteButton = screen.getByRole('button', { name: 'Delete active layer' });
+    expect(deleteButton).toBeDisabled();
+    fireEvent.click(deleteButton);
+    expect(removeLayerMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected layer when a text commit fails on touch selection', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+      editingLayerId: 'upper',
+    };
+    commitDirtyToolMock.mockReturnValueOnce(null);
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    fireEvent.click(layerRow('Top'));
+
+    expect(commitDirtyToolMock).toHaveBeenCalledOnce();
+    expect(setActiveLayerMock).not.toHaveBeenCalled();
+  });
+
+  it('provides an inverse history action to unlock a full-locked layer', () => {
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock Upper' }));
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { locked: false }, UNLOCK_LAYER_ACTION);
+  });
+
+  it('writes a supported blend mode for the active layer', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Blend mode for Upper' }), {
+      target: { value: 'multiply' },
+    });
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { blendMode: 'multiply' }, SET_LAYER_BLEND_MODE_ACTION);
+  });
+
+  it('does not expose blend edits for locked or background layers', () => {
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByRole('combobox', { name: 'Blend mode for Upper' })).toBeDisabled();
+
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: false };
+    storeStateMock.activeLayerId = 'bottom';
+    rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByRole('combobox', { name: 'Blend mode for Bottom' })).toBeDisabled();
   });
 
   it('moves a layer up exactly one position', async () => {
@@ -191,13 +309,25 @@ describe('MobileLayersDrawer', () => {
     expect(renderedLayerNames()).toEqual(['Top', 'Lower', 'Upper', 'Bottom']);
   });
 
-  it('disables "move up" on the topmost row only', () => {
+  it('disables "move up" on the topmost row and bedrock row', async () => {
+    const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
     expect(screen.getByRole('button', { name: 'Move Top up' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Move Upper up' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Move Lower up' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Move Bottom up' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Move Bottom up' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Move Bottom up' }));
+    expect(moveLayerAfterMock).not.toHaveBeenCalled();
+  });
+
+  it('disables both reorder controls for a locked layer', () => {
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Move Upper up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Upper down' })).toBeDisabled();
   });
 
   it('disables "move down" on the last two rows, not just the last', async () => {
@@ -266,11 +396,48 @@ describe('MobileLayersDrawer', () => {
     expect(updateLayerMock).not.toHaveBeenCalled();
   });
 
-  it('has no layer-opacity control, because the old one produced untitled unreplayable history entries', () => {
+  it('commits one durable opacity action when a slider gesture ends', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '50' } });
+    fireEvent.change(slider, { target: { value: '25' } });
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '25%');
+
+    fireEvent.pointerUp(slider);
+
+    expect(updateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('commits an opacity change on keyboard gesture completion', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '33' } });
+    fireEvent.keyUp(slider, { key: 'ArrowRight' });
+
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.33 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('discards an opacity draft when the slider gesture is cancelled', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '33' } });
+    fireEvent.pointerCancel(slider);
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '100%');
+  });
+
+  it('disables opacity changes for a locked layer', () => {
+    storeStateMock.layers.upper = { ...freshLayers().upper, locked: true };
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
-    expect(screen.queryByRole('slider')).toBeNull();
-    expect(screen.queryByText(/opacity/i)).toBeNull();
+    expect(screen.getByRole('slider', { name: 'Opacity for Upper' })).toBeDisabled();
+    expect(updateLayerMock).not.toHaveBeenCalled();
   });
 
   it('selects a layer by clicking the row, for pointer users', () => {
@@ -367,7 +534,7 @@ describe('MobileLayersDrawer', () => {
     expect(setActiveLayerMock).not.toHaveBeenCalled();
   });
 
-  it('creates an ordinary blank layer covering the document frame', async () => {
+  it('creates a transparent blank layer covering the document frame', async () => {
     const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
@@ -375,7 +542,7 @@ describe('MobileLayersDrawer', () => {
 
     expect(createBlankLayerMock).toHaveBeenCalledWith({
       color: '#ffffff',
-      opacity: 1,
+      opacity: 0,
       pos: { x: 120, y: 90, width: 800, height: 600 },
     });
   });

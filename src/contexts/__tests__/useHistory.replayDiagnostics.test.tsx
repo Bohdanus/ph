@@ -27,6 +27,7 @@
  * against a refusal `replayHistory` actually made.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
 
 import { NEW_LAYER_ACTION, RENAME_LAYER_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import { useHistory } from '../useHistory.ts';
@@ -36,6 +37,12 @@ import type { LayersRecord } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import { updateHistoryTimeline } from '../history-timeline.ts';
 import { CanvasFilterUnsupportedError, overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
+
+vi.mock('../../hooks/useDevicePixelRatio.ts', () => ({
+  useDevicePixelRatio: vi.fn(() => 1),
+}));
+
+const historyReplayAttemptCounter = vi.hoisted(() => ({ value: 0 }));
 
 const storeStateMock = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
@@ -50,6 +57,7 @@ const storeStateMock = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   branchRevision: 0,
   hasUnsavedChanges: false,
+  beginHistoryReplayPresentation: vi.fn(() => ++historyReplayAttemptCounter.value),
   clearPreviewLayers: vi.fn(),
 }));
 
@@ -127,6 +135,7 @@ function toolEntry(id: string, args: object): HistoryItem {
 const blurEntry = (id = 'tool-blur'): HistoryItem => toolEntry(id, { toolName: 'blur', radius: 3 });
 
 function resetStoreState(history: HistoryItem[]) {
+  historyReplayAttemptCounter.value = 0;
   Object.assign(storeStateMock, {
     canvasRef: { current: document.createElement('canvas') },
     history,
@@ -203,7 +212,7 @@ describe('useHistory reports the history entries a replay refused', () => {
   it('reports nothing for a replay that refused nothing', () => {
     const { state, errorSpy } = setup([...createHistory(), blurEntry()]);
 
-    useHistory().resetHistoryTo(2);
+    renderHook(() => useHistory()).result.current.resetHistoryTo(2);
 
     // The blur really was replayed, so silence here means "nothing was refused"
     // rather than "nothing was replayed". This replay also PUBLISHED to a mounted
@@ -224,7 +233,7 @@ describe('useHistory reports the history entries a replay refused', () => {
     ];
     const { errorSpy } = setup();
 
-    useHistory().undo();
+    renderHook(() => useHistory()).result.current.undo();
 
     // The timeline really replayed cleanly, so each line below is attributable to
     // one diagnostic rather than to a second refusal discovered on the way.
@@ -250,7 +259,7 @@ describe('useHistory reports the history entries a replay refused', () => {
     ];
     const { state, errorSpy } = setup();
 
-    useHistory().resetHistoryTo(1);
+    renderHook(() => useHistory()).result.current.resetHistoryTo(1);
 
     // Reporting is downstream of a successful dispatch, never its precondition: a
     // loop placed before it, or one that replaced it, leaves this non-zero or the
@@ -268,7 +277,7 @@ describe('useHistory reports the history entries a replay refused', () => {
     overrideCanvasFilterSupport(false);
     const { state, errorSpy } = setup([...createHistory(), blurEntry()]);
 
-    useHistory().resetHistoryTo(2);
+    renderHook(() => useHistory()).result.current.resetHistoryTo(2);
 
     // Nothing was overridden on this path: the engine reports no canvas filter, so
     // `replayHistory` refused the blur itself. Without this the two tests above
@@ -295,17 +304,17 @@ describe('useHistory reports the history entries a replay refused', () => {
     ];
     const { errorSpy } = setup();
 
-    useHistory().undo();
+    renderHook(() => useHistory()).result.current.undo();
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(errorSpy.mock.calls[0]![1]).toBe(refused);
 
     errorSpy.mockClear();
-    useHistory().redo();
+    renderHook(() => useHistory()).result.current.redo();
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(errorSpy.mock.calls[0]![1]).toBe(refused);
 
     errorSpy.mockClear();
-    useHistory().toggleDisabled('h-1');
+    renderHook(() => useHistory()).result.current.toggleDisabled('h-1');
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(errorSpy.mock.calls[0]![1]).toBe(refused);
 

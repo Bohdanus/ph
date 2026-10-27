@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import { documentAffineToLayerLocal, rotationAffineAroundPoint } from '../affine-transform.ts';
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import { freezeDurableDocument, type DurableDocument, type DurableOperation } from '../history-model.ts';
@@ -17,6 +18,7 @@ import {
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   REMOVE_ACTION,
+  MERGE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SELECTION_ACTION,
 } from '../../util/constants.ts';
@@ -26,6 +28,7 @@ import type { TransformToolArgs } from '../../tools/transform.ts';
 const layerId = 'layer-1';
 const layer2Id = 'layer-2';
 const layer3Id = 'layer-3';
+const mergedLayerId = 'layer-merged';
 const initialSize = { width: 400, height: 300 };
 const baselineFrame = { x: 0, y: 0, width: 400, height: 300 };
 const layerPos = { x: 20, y: 30, width: 120, height: 80 };
@@ -48,6 +51,7 @@ function createBaselineLayer(id = layerId, pos = { ...layerPos }): Layer {
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     source: {
       kind: 'blank',
       color: '#ffffff',
@@ -110,7 +114,13 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
 
     const atTip = replayDurableDocument(document);
     expect(atTip.layers[layer2Id]).toBeDefined();
-    expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank');
+    // The runtime rule's name and order, as one derivation: `createLayerSource`
+    // numbers a new layer at `maxLayerOrder(layers) + 1` and puts that same number
+    // in its name suffix, and the baseline's only layer sits at order 0. The
+    // converter used to bind the bare kind at `Math.max(-1, ...orders) + 1`, so
+    // this read `'Blank'` at order 0 for the very first layer of a document.
+    expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank 1');
+    expect(atTip.layers[layer2Id]?.snapshot.order).toBe(1);
     expect(atTip.layers[layer2Id]?.operations).toHaveLength(0);
     expect(atTip.activeLayerId).toBe(layer2Id);
 
@@ -392,7 +402,7 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     const registry = new AssetRegistry();
     const selection = {
       id: 'sel-1',
-      points: [{ x: 1, y: 2 }],
+      points: [[{ x: 1, y: 2 }]],
       isActive: true,
       pos: { x: 1, y: 2, width: 10, height: 12 },
     };
@@ -469,6 +479,63 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     void registry;
   });
 
+  it('transform-document applies one crop transform to every extant layer and the new frame', () => {
+    const registry = new AssetRegistry();
+    const secondPos = { x: 180, y: 90, width: 75, height: 45 };
+    const nextFrame = { x: 30, y: 40, width: 160, height: 90 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 3, {
+      x: nextFrame.x + nextFrame.width / 2,
+      y: nextFrame.y + nextFrame.height / 2,
+    });
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer(), [layer2Id]: createBaselineLayer(layer2Id, secondPos) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'rotated-crop',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame, transform },
+        },
+      ],
+      { documentId: 'rotated-frame-test', registry }
+    ).document;
+
+    const atBaseline = replayDurableDocument(document, -1);
+    expect(atBaseline.frame).toEqual(baselineFrame);
+    expect(atBaseline.layers[layerId]?.operations).toEqual([]);
+    expect(atBaseline.layers[layer2Id]?.operations).toEqual([]);
+
+    const replay = replayDurableDocument(document);
+    expect(replay.frame).toEqual(nextFrame);
+    expect(replay.layers[layerId]?.snapshot.pos).toEqual(layerPos);
+    expect(replay.layers[layer2Id]?.snapshot.pos).toEqual(secondPos);
+    expect(replay.layers[layerId]?.operations).toEqual([
+      {
+        kind: 'apply-affine-transform',
+        layerId,
+        transform: documentAffineToLayerLocal(transform, layerPos),
+      },
+    ]);
+    expect(replay.layers[layer2Id]?.operations).toEqual([
+      {
+        kind: 'apply-affine-transform',
+        layerId: layer2Id,
+        transform: documentAffineToLayerLocal(transform, secondPos),
+      },
+    ]);
+
+    registry.shutdown();
+  });
+
   it('merge-document replaces multiple layers with one at the tip', () => {
     const registry = new AssetRegistry();
     const document = legacyHistoryToDurable(
@@ -510,6 +577,99 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     expect(replay.activeLayerId).toBe(layerId);
 
     registry.shutdown();
+  });
+
+  it('create-layer numbers the first layer of an empty document at 1, not 0', () => {
+    // The `order` half only diverges on an EMPTY fold. Over a non-empty stack
+    // both rules read `max + 1` — `Math.max(-1, ...orders) + 1` and
+    // `maxLayerOrder(layers) + 1` cannot tell each other apart when there is an
+    // order to fold — so the create-layer test above pins the number in the name
+    // while leaving `order` itself unproved. This baseline carries no layers,
+    // which is the case that separates them, and it is the first layer of every
+    // document opened empty.
+    const registry = new AssetRegistry();
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: { layers: {}, size: initialSize, frame: baselineFrame },
+        },
+        { id: 'new-layer', actionName: NEW_LAYER_ACTION, layerId: layer2Id, layerSource: blankLayerSource(layerPos) },
+      ],
+      { documentId: 'empty-baseline-test', registry }
+    ).document;
+
+    const atTip = replayDurableDocument(document, 0);
+    expect(atTip.layers[layer2Id]?.snapshot.order).toBe(1);
+    expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank 1');
+
+    registry.shutdown();
+  });
+
+  it('merge-document names and places its result by the runtime rule, against the pre-merge stack', () => {
+    // The merge arm derives the result layer from the layer set that is about to
+    // be collapsed away, which is what `replayHistory`'s merge arm hands
+    // `createLayer` — so a result folded against an empty set would number itself
+    // off the wrong stack. Order 1 is the pre-merge maximum here, so the runtime
+    // rule yields 2: an empty fold would have yielded 1, and the bare-kind
+    // converter yielded the order but not the number in the name.
+    const registry = new AssetRegistry();
+    const top = createBaselineLayer(layer3Id);
+    top.order = 1;
+
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer(), [layer2Id]: createBaselineLayer(layer2Id), [layer3Id]: top },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        { id: 'merge', actionName: MERGE_ACTION, layerId: mergedLayerId, layerSource: blankLayerSource(layerPos) },
+      ],
+      { documentId: 'merge-name-test', registry }
+    ).document;
+
+    const atMerge = replayDurableDocument(document, 0);
+    expect(atMerge.layers[mergedLayerId]?.snapshot.name).toBe('Blank 2');
+    expect(atMerge.layers[mergedLayerId]?.snapshot.order).toBe(2);
+    // Only the result survives, and the removal set is every layer it replaced.
+    expect(Object.keys(atMerge.layers)).toEqual([mergedLayerId]);
+
+    registry.shutdown();
+  });
+
+  it('create-layer truncates a long image name through the runtime rule', () => {
+    // `getNameFromSource` ellipsifies an image name before the order suffix is
+    // appended. The converter used to bind the untruncated `source.name`, so the
+    // shadow named a layer the document could never have named.
+    const registry = new AssetRegistry();
+    const { bitmap, close } = createOwnedBitmap(12, 8);
+    const longName = 'x'.repeat(40);
+
+    const document = convert(registry, {
+      id: 'image-layer',
+      actionName: NEW_LAYER_ACTION,
+      layerId: layer2Id,
+      layerSource: {
+        kind: 'image',
+        bitmap,
+        name: longName,
+        pos: { ...layerPos },
+      },
+    });
+
+    const atTip = replayDurableDocument(document);
+    expect(atTip.layers[layer2Id]?.snapshot.name).toBe(`${'x'.repeat(17)}... 1`);
+
+    registry.shutdown();
+    close();
   });
 });
 
@@ -572,7 +732,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
       await expect(
         materializeLayer(layer, {
           documentId: 'document-a',
-          baselineAssetGeneration: 0,
+          baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
           operationSetRevision: 0,
           assetRegistry: registry,
         })
@@ -637,7 +797,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
     await expect(
       materializeLayer(layer, {
         documentId: 'document-a',
-        baselineAssetGeneration: 0,
+        baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
         operationSetRevision: 0,
         assetRegistry: registry,
       })

@@ -2067,4 +2067,118 @@ describe('Toolbar Helpers', () => {
       await expect(navigateAndSelectInFlyout(dom.page, 'levels', 'Levels')).rejects.toThrow(/toBeHidden\(\)/);
     });
   });
+
+  // Each it.fails tripwire asserts the behaviour we WANT but the helper does NOT yet deliver.
+  // It stays green while the gap is open; the moment the guard lands and the assertion
+  // starts passing, `it.fails` flips and reports an unexpected pass, which is the signal
+  // to promote it to a plain `it`.
+  describe('Edge Cases and Tripwires', () => {
+    describe('Empty and whitespace-only tool names', () => {
+      it('resolveToolName("") normalizes to an empty string', () => {
+        expect(resolveToolName('')).toBe('');
+      });
+
+      it.each(['   ', '-', '--'])(
+        'resolveToolName(%j) normalizes whitespace or separator-only names to an empty string',
+        (name) => {
+          expect(resolveToolName(name)).toBe('');
+        }
+      );
+
+      it('getToolButton returns a zero-count locator for an empty tool name', async () => {
+        const dom = createFakeDom();
+        dom.add({ testId: 'tool-button-brush' });
+
+        const locator = getToolButton(dom.page, '');
+
+        expect(dom.mocks.getByTestId).toHaveBeenCalledWith('tool-button-');
+        expect(await locator.count()).toBe(0);
+      });
+
+      it.fails('clickToolButton rejects an empty tool name instead of matching the first button', async () => {
+        // An empty tool name normalizes to the test id `tool-button-`, which no element
+        // carries, so the lookup correctly falls through to the role fallback. There the
+        // name is still "" and escapeRegExp("") is "", so patternsFor builds RegExp("") —
+        // an empty pattern that matches EVERY accessible name. The helper should reject
+        // "" outright rather than silently clicking whatever tile happens to be first.
+        const dom = createFakeDom();
+        dom.add({ testId: 'tool-button-brush' });
+        dom.add({ name: 'Legacy Button' });
+
+        await expect(clickToolButton(dom.page, '')).rejects.toThrow(/no clickable button found for tool ""/);
+      });
+
+      it.fails('clickToolButton rejects a whitespace-only tool name for the same reason', async () => {
+        const dom = createFakeDom();
+        dom.add({ testId: 'tool-button-brush' });
+        dom.add({ name: 'Legacy Button' });
+
+        await expect(clickToolButton(dom.page, '   ')).rejects.toThrow(/no clickable button found for tool " {3}"/);
+      });
+
+      it.fails('openToolFlyout rejects an empty tool name instead of timing out on toBeVisible', async () => {
+        // Unlike clickToolButton, openToolFlyout has no role fallback — it asserts
+        // visibility directly. With "" it looks for `tool-button-` and times out, which
+        // is a genuine failure but a poor one: the error names no tool, so the caller
+        // cannot tell which name was wrong. A dedicated guard would name it.
+        const dom = createFakeDom();
+        dom.add({ testId: 'tool-button-brush' });
+
+        await expect(openToolFlyout(dom.page, '')).rejects.toThrow(/no tile|empty tool name|not found/);
+      });
+    });
+
+    describe('Invalid tool IDs with regex metacharacters', () => {
+      it.each(['.*', '()', '^$', '{}', '+?', '[]'])(
+        'resolveToolName(%j) normalizes a metacharacter-only name to an empty string',
+        (name) => {
+          expect(resolveToolName(name)).toBe('');
+        }
+      );
+
+      it.each([
+        { name: 'tool-button-brush', toolName: 'brush' },
+        { name: 'tool-button-reposition', toolName: 'Select & Move' },
+      ])('getToolButton queries by exact test id, not by prefix match ($name)', async ({ name, toolName }) => {
+        const dom = createFakeDom();
+        dom.add({ testId: name });
+        dom.add({ testId: `${name}-extra` });
+
+        const locator = getToolButton(dom.page, toolName);
+
+        expect(await locator.count()).toBe(1);
+      });
+    });
+
+    describe('Non-finite scroll coordinates', () => {
+      it.fails('clamps NaN scroll coordinates before restoring the window', async () => {
+        // preservingScroll reads the page scroll, runs the action, then writes the
+        // captured position back with window.scrollTo. If the captured value is NaN —
+        // which a real browser can return from window.scrollX/Y in edge cases — the
+        // restore writes NaN and the window is left broken. The helper should clamp
+        // non-finite values to 0 before writing them back.
+        const dom = createFakeDom();
+        dom.add({ testId: 'tool-button-brush' });
+        await dom.page.evaluate(() => window.scrollTo(Number.NaN, Number.NaN));
+
+        await clickToolButton(dom.page, 'brush');
+
+        const { x, y } = dom.windowScroll();
+        expect(Number.isFinite(x)).toBe(true);
+        expect(Number.isFinite(y)).toBe(true);
+      });
+
+      it.fails('clamps Infinity scroll coordinates before restoring the window', async () => {
+        const dom = createFakeDom();
+        dom.add({ testId: 'tool-button-brush' });
+        await dom.page.evaluate(() => window.scrollTo(Infinity, -Infinity));
+
+        await clickToolButton(dom.page, 'brush');
+
+        const { x, y } = dom.windowScroll();
+        expect(Number.isFinite(x)).toBe(true);
+        expect(Number.isFinite(y)).toBe(true);
+      });
+    });
+  });
 });

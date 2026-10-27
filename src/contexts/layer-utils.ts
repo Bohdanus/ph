@@ -36,7 +36,7 @@ export const minLayerOrder = (layers: LayersRecord) => {
   return values.reduce((min, layer) => Math.min(min, layer.order), Infinity);
 };
 
-export const maxLayerOrder = (layers: LayersRecord) => {
+export const maxLayerOrder = (layers: LayerOrderRecord) => {
   const values = Object.values(layers);
   if (values.length === 0) return 0;
   return values.reduce((max, layer) => Math.max(max, layer.order), -Infinity);
@@ -120,9 +120,21 @@ export function createAffineLayerOperation(transform: AffineTransform, id = uuid
   });
 }
 
+/**
+ * The only part of a layer set that naming and placement read.
+ *
+ * One number — `maxLayerOrder(layers)` — decides both, and nothing else in
+ * `createLayerSource` looks at the layers it was given. Typing the parameter by that
+ * one field rather than by `LayersRecord` is what lets a caller holding durable
+ * snapshots instead of runtime `Layer` objects reach the rule at all, which is the
+ * whole point: the durable converter has no runtime `Layer` to hand, and a rule it
+ * could not call is a rule it re-derives.
+ */
+export type LayerOrderRecord = Record<LayerId, { order: number }>;
+
 type LayerSourceParams = {
   layerId?: LayerId;
-  layers: LayersRecord;
+  layers: LayerOrderRecord;
   source: LayerSource;
 };
 
@@ -131,10 +143,10 @@ type LayerSourceParams = {
  *
  * The layer is created before the stroke is rasterized, so the options bar's `Mode`
  * has to be resolved here rather than while drawing. Replay re-enters this function
- * with the same history entry's args (`src/contexts/useHistory.ts:97`), which is
+ * with the same history entry's args during `resetHistoryTo()`, which is
  * what keeps undo, redo and the durable shadow in agreement: the mode rides in
  * `layerSource.args`, so it is already carried by both
- * (`src/contexts/history-adapter.ts:181-187`).
+ * through `history-adapter`'s recursive plain-value conversion.
  *
  * Gated on the paint tool names on purpose. `kind: 'tool'` covers every creator
  * tool, and no other one of them exposes a `Mode` control, so an unrecognised value
@@ -163,10 +175,31 @@ function getNameFromSource(source: LayerSource) {
   }
 }
 
+/**
+ * The one derivation of a created layer's `name` and `order`.
+ *
+ * Both come from a single number — `maxLayerOrder(layers) + 1` — so they cannot be
+ * derived separately without becoming a third rule: a caller that takes `name` from
+ * here and folds `order` itself re-introduces the disagreement this exists to end.
+ * An empty layer set yields `1`, which is what makes the first layer of a document
+ * `'<name> 1'` rather than `'<name>'` at order `0`.
+ *
+ * It is exported, and separate from {@link createLayerSource}, because the durable
+ * converter must derive the same pair from a set of durable snapshots and has no
+ * runtime layer to build. Reaching the rule through the factory would drag its
+ * rasterisation with it — an `OffscreenCanvas` per blank source, a creator tool's
+ * `imageProcessor` per tool source — and a conversion that wants two fields would
+ * start failing on args no conversion ever needed.
+ */
+export function deriveLayerNameAndOrder(layers: LayerOrderRecord, source: LayerSource) {
+  const order = maxLayerOrder(layers) + 1;
+  return { name: `${getNameFromSource(source)} ${order}`, order };
+}
+
 export function createLayerSource({ layerId: idFromHistory, layers, source }: LayerSourceParams): Layer {
   const { kind, isBedrock } = source;
   const id = idFromHistory ?? uuidv4(); // when layer is re-created from history it should get the saved id
-  const maxOrder = maxLayerOrder(layers) + 1;
+  const { name, order } = deriveLayerNameAndOrder(layers, source);
 
   let pos: Pos;
   if (isBedrock) {
@@ -178,8 +211,6 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     throw new Error('Layer width and height must be greater than 0');
   }
 
-  const name = `${getNameFromSource(source)} ${maxOrder}`;
-
   const layer: Layer = {
     id,
     name,
@@ -187,10 +218,11 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     blendMode: 'source-over',
     locked: false,
     opacity: 1,
-    order: maxOrder,
+    order,
     pos,
     source,
     operations: [],
+    presentationBounds: null,
     visible: true,
     isBedrock: isBedrock ?? false,
 
@@ -204,9 +236,11 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     layer.bitmap = source.bitmap;
   } else if (kind === 'blank') {
     const canvas = new OffscreenCanvas(width, height);
+    // Initialize even a transparent source so the browser can materialize its presentation bitmap.
+    const ctx = canvas.getContext('2d');
 
     if (source.opacity > 0) {
-      const ctx = canvas.getContext('2d')!;
+      if (!ctx) throw new Error('Unable to initialize blank layer canvas');
       ctx.fillStyle = source.color;
       if (source.opacity !== 1) {
         ctx.globalAlpha = source.opacity;
@@ -251,6 +285,34 @@ export function getLayerIdByPoint(layers: LayersRecord, { x, y }: Point): LayerI
   return null;
 }
 
+/** Apply the historical layer-order arithmetic used by replayHistory. */
+export function reorderLayerOrderValues({
+  orderByLayerId,
+  layerToMoveId,
+  afterWhichLayerId,
+}: {
+  orderByLayerId: Record<LayerId, number>;
+  layerToMoveId: LayerId;
+  afterWhichLayerId?: LayerId | null;
+}): Record<LayerId, number> | null {
+  if (!Object.hasOwn(orderByLayerId, layerToMoveId)) return null;
+  if (afterWhichLayerId && !Object.hasOwn(orderByLayerId, afterWhichLayerId)) return null;
+
+  const next = { ...orderByLayerId };
+  if (!afterWhichLayerId) {
+    const minOrder = Object.values(next).reduce((minimum, order) => Math.min(minimum, order), Infinity);
+    next[layerToMoveId] = minOrder - 1;
+    return next;
+  }
+
+  const targetOrder = next[afterWhichLayerId]!;
+  for (const id in next) {
+    if (next[id]! > targetOrder) next[id] += 2;
+  }
+  next[layerToMoveId] = targetOrder + 1;
+  return next;
+}
+
 export function reorderLayers({
   layers,
   layerToMoveId,
@@ -260,32 +322,21 @@ export function reorderLayers({
   layerToMoveId: LayerId;
   afterWhichLayerId?: LayerId | null;
 }) {
-  const layer = layers[layerToMoveId];
-  if (!layer) {
+  if (!layers[layerToMoveId]) {
     console.error('Layer not found');
     return;
   }
 
-  if (!afterWhichLayerId) {
-    // Move to the bottom (beginning)
-    const minOrder = minLayerOrder(layers);
-    layer.order = minOrder - 1;
-  } else {
-    // Place after the specified layer
-    const moveAfterLayer = layers[afterWhichLayerId];
-    if (!moveAfterLayer) {
-      console.error('Target layer not found');
-      return;
-    }
-
-    const targetOrder = moveAfterLayer.order;
-
-    for (const id in layers) {
-      if (layers[id].order > targetOrder) {
-        layers[id].order += 2; // shift up layers starting from targetOrder
-      }
-    }
-
-    layer.order = targetOrder + 1;
+  if (afterWhichLayerId && !layers[afterWhichLayerId]) {
+    console.error('Target layer not found');
+    return;
   }
+
+  const orderByLayerId = reorderLayerOrderValues({
+    orderByLayerId: Object.fromEntries(Object.values(layers).map((layer) => [layer.id, layer.order])),
+    layerToMoveId,
+    afterWhichLayerId,
+  });
+  if (!orderByLayerId) return;
+  for (const [id, order] of Object.entries(orderByLayerId)) layers[id]!.order = order;
 }

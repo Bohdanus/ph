@@ -9,6 +9,7 @@ import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { useDoubleClick } from '../../hooks/useDoubleClick.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
+import { clearSelectionDragPreview, publishSelectionDragPreview } from '../../hooks/selection-drag-preview.ts';
 import {
   createCommittedPolygonSelection,
   distanceBetweenPoints,
@@ -270,6 +271,12 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    * explain it. `releaseSelectionPointer` is idempotent and ignores a release it
    * does not own, so the abort routes can call it unconditionally.
    *
+   * The ants preview is dropped here too, and UNCONDITIONALLY, for the reason
+   * `releaseDocumentGesture` is: a conditional clear is a site a later route can forget,
+   * and a leaked entry has no local symptom to point at it — the ants loop reads the
+   * slot fresh every frame, so a stale one keeps painting a frozen border for the rest of
+   * the session. Every route that ENDS a drag arrives here, so this is the whole teardown.
+   *
    * Memoized, and so is the release it calls, so the identity below is stable for the
    * component's lifetime: the unmount cleanup can name this function as a dependency
    * and therefore still run ONCE, while a plain component-body function could only be
@@ -279,6 +286,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   const takeSelectionDrag = useCallback(
     (event?: PointerEvent<HTMLDivElement>): SelectionDragState | null => {
       releaseSelectionPointer(event);
+      clearSelectionDragPreview();
 
       const drag = selectionDragRef.current;
       selectionDragRef.current = null;
@@ -359,7 +367,8 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    *
    * THE CLAIM IS TAKEN FIRST, AND THE REF ONLY WHEN IT SUCCEEDS. Every other claim
    * site in the app — `DrawToolArea`, `ShapeToolArea`, `EraserToolArea`,
-   * `RectangularSelectionToolArea`, and the drag-handle half of `MoveToolArea` —
+   * `RectangularSelectionToolArea`, the drag-handle half of `MoveToolArea`, and
+   * the selection-drag pair below —
    * writes its ref under `if (claim(...))`; this one wrote it before the call and
    * threw the answer away, and the ref is what every release route names. A press
    * that lost the race therefore left the ref on a pointer that owns nothing: the
@@ -370,10 +379,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    * page reload. `handlePointerDown` refuses a second press while a stroke is
    * running, so the race is unreachable here — but a discarded return value is a
    * defect on its own, and the guard that closes it belongs to the call, not to the
-   * caller. (The selection-drag pair below writes its ref the same unsafe way and is
-   * left alone: `handlePointerDown` displaces a running drag on every press before it
-   * reaches there, so its claim is always closed first, and there is no second
-   * claimant for this kind.)
+   * caller. The selection-drag pair below follows the same ordering now, so a
+   * refused claim cannot leave a release route naming a pointer this component does
+   * not own.
    *
    * The capture is not conditional on the pointer id being real, because the two
    * answer different questions: capture needs a real pointer id to ask the browser
@@ -444,9 +452,12 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    */
   function captureSelectionPointer(event: PointerEvent<HTMLDivElement>) {
     const pointerId = getPointerId(event);
-    selectionPointerIdRef.current = pointerId;
 
-    claimDocumentGesture('polygon-selection', pointerId);
+    // A losing press owns neither the document nor the surface capture. Keep the
+    // ref untouched so its release route cannot release a foreign pointer.
+    if (!claimDocumentGesture('polygon-selection', pointerId)) return;
+
+    selectionPointerIdRef.current = pointerId;
 
     if (pointerId === null) return;
 
@@ -595,8 +606,11 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    * the drag never reached the store, so the overlay must show the un-moved
    * selection, which is the snap-back an abandoned drag now gets.
    */
-  function abortSelectionDrag(): SelectionDragState | null {
-    const drag = takeSelectionDrag();
+  function abortSelectionDrag(event?: PointerEvent<HTMLDivElement>): SelectionDragState | null {
+    const currentDrag = selectionDragRef.current;
+    if (event && (!currentDrag || currentDrag.pointerId !== getPointerId(event))) return null;
+
+    const drag = takeSelectionDrag(event);
     if (!drag) return null;
 
     redrawOverlay();
@@ -789,12 +803,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   };
 
   const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
-    // UNCHANGED by the capture, deliberately. A cancel is genuinely terminal
-    // even for a captured pointer — the browser has decided this gesture will
-    // never complete, which is the one case where a leave and a release really
-    // are the same thing — and `takeSelectionDrag` inside the abort gives up the
-    // document claim on the way out.
-    if (abortSelectionDrag()) return;
+    // Cancellation ends only the gesture whose pointerId matches this event. A second pointer may
+    // receive its own cancel while the captured selection drag is still in progress.
+    if (abortSelectionDrag(event)) return;
 
     if (isFreehand) {
       cancelFreehandSelection(event);
@@ -815,9 +826,24 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       // of N pointer events writes N previews and no history. The overlay is
       // repainted on every move from the ref's geometry; the store repaint below
       // cannot do it, because nothing about the store changed.
+      //
+      // Both arms below also publish the geometry to the ants loop, which is the only
+      // way the border can follow this drag at all: `useSelectionMarchingAnts` reads
+      // `selection-drag-preview.ts` every frame, so it has to be handed geometry the
+      // store has never seen. It cannot be handed it by the overlay instead, because
+      // `drawPolygonOverlay` above paints anchors and the draft path and never a dashed
+      // contour, and the ants paint onto a canvas of their own that this component
+      // holds no reference to.
+      //
+      // ONLY these two arms. The arms further down are building a new path, which is
+      // not the committed selection moved but a different shape, so a `follow` there
+      // would drag a border the user never touched — the distinction
+      // `SelectionDragPreview`'s docblock spells out, and the reason they publish
+      // nothing rather than publishing a second kind.
       if (selectionDrag.type === 'anchor') {
         const nextSelection = moveSelectionAnchor(selectionDrag.selection, selectionDrag.anchorIndex, documentCoords);
         selectionDragRef.current = { ...selectionDrag, selection: nextSelection };
+        publishSelectionDragPreview({ kind: 'follow', selection: nextSelection });
         redrawOverlay({ selectionOverride: withDraggedSelection(nextSelection) });
         return;
       }
@@ -825,6 +851,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       const delta = { x: documentCoords.x - selectionDrag.origin.x, y: documentCoords.y - selectionDrag.origin.y };
       const nextSelection = moveSelectionByDelta(selectionDrag.selection, delta);
       selectionDragRef.current = { ...selectionDrag, origin: documentCoords, selection: nextSelection };
+      publishSelectionDragPreview({ kind: 'follow', selection: nextSelection });
       redrawOverlay({ selectionOverride: withDraggedSelection(nextSelection) });
       return;
     }
@@ -980,6 +1007,13 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       // and a `useEffect` that re-ran would run the code above on every render:
       // ending a live drag and releasing its claim mid-gesture.
       takeSelectionDrag();
+      // Module state that outlives this mount gets its own reset here, the same shape
+      // as `resetDocumentGestures` on `KeyboardEventsProvider`'s cleanup. `takeSelectionDrag`
+      // above already drops it for every route that ends a drag; naming it again keeps this
+      // effect's guarantee — nothing this component published survives its mount — resting
+      // on no other function's internals, which is the whole job of a teardown that can run
+      // mid-gesture.
+      clearSelectionDragPreview();
       pointsRef.current = [];
       previewRef.current = null;
       releaseFreehandPointer();

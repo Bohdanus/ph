@@ -36,10 +36,29 @@ export default defineConfig({
     include: ['e2e/**/__tests__/**/*.unit.test.ts'],
     exclude: [...configDefaults.exclude],
     coverage: {
-      provider: 'v8',
+      provider: 'istanbul',
+      include: ['e2e/**/*.ts'],
+      exclude: ['e2e/**/*.spec.ts', 'e2e/**/*.test.ts', 'e2e/**/__tests__/**'],
       reporter: ['text', 'json', 'html'],
+      thresholds: {
+        perFile: true,
+        statements: 50,
+        branches: 50,
+        functions: 35,
+        lines: 50,
+      },
       // Separate from the app's ./coverage so the two runs cannot clobber each other.
       reportsDirectory: './coverage-e2e',
+      // This include/exclude matches the source-module universe in
+      // `helper-coverage.unit.test.ts`: e2e TypeScript modules and fixtures, but no specs,
+      // unit tests or test-support files under __tests__.
+      // On a complete run, `include` adds matching files that tests did not load, so per-file
+      // thresholds can catch an unexecuted module at zero. The independent reachability gate
+      // still checks the on-disk TypeScript graph, including type-only imports. Per-file floors
+      // sit below the measured minimum (40% functions, 54.55% statements, 55.56% lines and
+      // 57.14% branches) but catch a module regressing to zero.
+      // `canvas-redraw.ts` is a pure re-export with no executable statements; its presence
+      // is enforced by the independent reachability test, not an invented percentage.
     },
   },
 });

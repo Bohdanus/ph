@@ -1,5 +1,8 @@
 export const AIRBRUSH_INTERVAL_MS = 8.3;
 export const AIRBRUSH_MAX_DABS_PER_FRAME = 8;
+export const PAINT_FLOW_MIN = 1;
+export const PAINT_FLOW_MAX = 100;
+export const PAINT_FLOW_DEFAULT = 50;
 
 export type AirbrushEmitterOptions = {
   intervalMs?: number;

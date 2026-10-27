@@ -67,11 +67,59 @@ export function multiplyAffineTransforms(left: AffineTransform, right: AffineTra
   });
 }
 
+/** Converts a document-space transform to the local coordinates of a layer. */
+export function documentAffineToLayerLocal(transform: AffineTransform, position: Pos): AffineTransform {
+  const toDocument: AffineTransform = { a: 1, b: 0, c: 0, d: 1, e: position.x, f: position.y };
+  const toLayer: AffineTransform = { a: 1, b: 0, c: 0, d: 1, e: -position.x, f: -position.y };
+  return multiplyAffineTransforms(toLayer, multiplyAffineTransforms(transform, toDocument));
+}
+
 export function applyAffineTransform(transform: AffineTransform, point: Point): Point {
   return {
     x: transform.a * point.x + transform.c * point.y + transform.e,
     y: transform.b * point.x + transform.d * point.y + transform.f,
   };
+}
+
+function rotationComponents(angleRadians: number): Readonly<{ cosine: number; sine: number }> {
+  let cosine = Math.cos(angleRadians);
+  let sine = Math.sin(angleRadians);
+  const halfPi = Math.PI / 2;
+  const quarterTurns = Math.round(angleRadians / halfPi);
+  if (Number.isSafeInteger(quarterTurns) && angleRadians === quarterTurns * halfPi) {
+    // Keep exact quarter-turn bounds on the pixel grid; cos(pi / 2)'s residue can add a phantom pixel.
+    switch (((quarterTurns % 4) + 4) % 4) {
+      case 0:
+        cosine = 1;
+        sine = 0;
+        break;
+      case 1:
+        cosine = 0;
+        sine = 1;
+        break;
+      case 2:
+        cosine = -1;
+        sine = 0;
+        break;
+      case 3:
+        cosine = 0;
+        sine = -1;
+        break;
+    }
+  }
+  return { cosine, sine };
+}
+
+export function rotationAffineAroundPoint(angleRadians: number, center: Point): AffineTransform {
+  const { cosine, sine } = rotationComponents(angleRadians);
+  return validateAffineTransform({
+    a: cosine,
+    b: sine,
+    c: sine === 0 ? 0 : -sine,
+    d: cosine,
+    e: center.x - cosine * center.x + sine * center.y,
+    f: center.y - sine * center.x - cosine * center.y,
+  });
 }
 
 export function invertAffineTransform(transform: AffineTransform): AffineTransform | null {
@@ -200,11 +248,12 @@ export function transformToolArgsToAffine(args: TransformToolArgs, size: Size): 
     e: 0,
     f: 0,
   };
+  const { cosine, sine } = rotationComponents(angle);
   const rotation: AffineTransform = {
-    a: Math.cos(angle),
-    b: Math.sin(angle),
-    c: -Math.sin(angle),
-    d: Math.cos(angle),
+    a: cosine,
+    b: sine,
+    c: sine === 0 ? 0 : -sine,
+    d: cosine,
     e: 0,
     f: 0,
   };

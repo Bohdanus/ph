@@ -64,6 +64,8 @@ const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right', xAnc
 
   const description = toolName === null ? null : toolTooltips[toolName];
   const implementationNote = description === null ? undefined : IMPLEMENTATION_NOTE[description.implementation];
+  // The tile's declared shortcut is authoritative: description records also document
+  // family-cycling keys and menu commands that do not select this toolbar entry.
 
   useEffect(() => {
     return () => {

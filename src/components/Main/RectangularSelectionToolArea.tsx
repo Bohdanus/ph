@@ -4,6 +4,7 @@ import { useRect } from '../../hooks/useRect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
+import { clearSelectionDragPreview } from '../../hooks/selection-drag-preview.ts';
 import type { RectXYSorted } from '../../contexts/general-types.ts';
 import {
   createCommittedRectangleSelection,
@@ -11,6 +12,8 @@ import {
   getSelectionRect,
 } from '../../util/selection.ts';
 import { documentFrameFromSize, documentToCanvasPos } from '../../contexts/document-frame.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import type { RectangularSelectionToolArgs } from '../../tools/rectangularSelection.ts';
 
 type rectangularSelectionToolAreaProps = {
   className?: string;
@@ -23,6 +26,12 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     dispatch,
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
+  const { getToolArgs } = useCurrentTool();
+  const args = getToolArgs('rectangular-selection') as RectangularSelectionToolArgs | null;
+  const style = args?.style ?? 'normal';
+  const fixedRatio = args?.fixedRatio ?? 1;
+  const fixedWidth = args?.fixedWidth ?? 100;
+  const fixedHeight = args?.fixedHeight ?? 100;
   const isEditingCommittedSelectionRef = useRef(false);
   /**
    * The pointer id this component's own claim was taken with, so the release
@@ -65,6 +74,8 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   const { pointerHandlers, pointerState } = useRect({
     imageSize: totalSize,
     initialRect: activeRectangleRect,
+    aspectRatio: style === 'fixed-ratio' ? fixedRatio : null,
+    fixedSize: style === 'fixed-size' ? { width: fixedWidth, height: fixedHeight } : null,
     containerRef,
     overlayRef: toolOverlayRef,
     // Adobe's marquee modifiers. They are asked for here rather than defaulted on in the hook
@@ -73,6 +84,12 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     // square centred on it.
     constrainToSquare: true,
     fromCentre: true,
+    // The ants are this selection's border (`Main.tsx:63`), so `useRect`'s own stroke is the same
+    // rectangle one canvas below it. It is kept for the drag only, and the hook is the only thing
+    // that knows when the drag starts and ends, so it is also the only thing that can tell the ants
+    // loop to stand down for it — hence one prop rather than two separate wirings that could
+    // disagree about the same gesture.
+    borderMode: 'while-dragging',
     onChangeEnd: (rect: RectXYSorted) => {
       // FIRST, before anything can return. `onChangeEnd` is the single function
       // whose body covers BOTH exits — the early return below and the commit at
@@ -119,9 +136,17 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
       // load-bearing reason this cannot be moved up into the move handler.
       commitSelection(selection, existingSelection ? 'move' : 'create');
     },
+    onCancel: () => {
+      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+    },
   });
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    // `useRect` refuses a second pointer, but its return value cannot distinguish
+    // that refusal from an accepted press that is not a committed-selection drag.
+    // Return before changing the selection mode or dispatching a new draft.
+    if (pointerState.isMouseDown.current) return;
+
     // Whether this press will start a gesture at all, read BEFORE the delegation.
     // `useRect` refuses a non-primary button and a second pointer, and a press it
     // refused starts nothing, so the claim is taken under the same rule rather
@@ -151,12 +176,20 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   };
 
   /**
-   * A cancel is genuinely terminal even under `useRect`'s capture: `useRect` does
-   * not surface its internal `onPointerCancel`, so no `onChangeEnd` follows and
-   * the claim has to be dropped here or it would outlive the gesture.
+   * A cancel is terminal even under `useRect`'s capture. Its pointer-scoped handler resets its
+   * rectangle state and overlay; this wrapper then releases the document claim and shared selection
+   * drag preview owned by the same pointer. A foreign cancel reaches neither cleanup route.
    */
-  const handlePointerCancel = () => {
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    const ownsDocumentGesture = claimedPointerIdRef.current === event.pointerId;
+
+    // useRect owns the pointer-scoped drag state and must see the cancellation it owns. Its handler
+    // rejects foreign pointer IDs before touching the rect, frame request, or overlay.
+    pointerHandlers.onPointerCancel?.(event);
+    if (!ownsDocumentGesture) return;
+
     releaseDocumentClaim();
+    clearSelectionDragPreview();
   };
 
   useEffect(() => {
@@ -165,6 +198,10 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
       // with the provider-level `resetDocumentGestures`, this is what bounds a
       // leaked claim to the mount that leaked it.
       releaseDocumentClaim();
+      // Same reasoning for the preview entry, and the same bound: the slot is a
+      // module-level variable that outlives this mount. `useRect`'s own teardown
+      // clears it too, and on this tool the two run in the same commit.
+      clearSelectionDragPreview();
     };
   }, []);
 

@@ -73,7 +73,11 @@ function publicationMismatch(result: DurableReplayResult, document: DurableDocum
   const expectedFrame = document.history
     .slice(0, result.cursor + 1)
     .reduce<DocumentFrame>(
-      (frame, entry) => (entry.enabled && entry.operation.kind === 'set-document-frame' ? entry.operation.next : frame),
+      (frame, entry) =>
+        entry.enabled &&
+        (entry.operation.kind === 'set-document-frame' || entry.operation.kind === 'transform-document')
+          ? entry.operation.next
+          : frame,
       document.baseline.frame
     );
   if (
@@ -245,15 +249,22 @@ describe('durable replay active layer fallback', () => {
     expect(result.activeLayerId).toBe('layer-1');
   });
 
-  it('keeps the tracked active layer when a different layer is removed', () => {
+  it('keeps a lower-order tracked active layer when a different layer is removed', () => {
     const document = durableDocument(
-      [layer('layer-1', 0), layer('layer-2', 1)],
-      [{ kind: 'remove-layer', layerId: 'layer-1' }]
+      [layer('layer-1', 0), layer('layer-2', 1), layer('layer-3', 2)],
+      [{ kind: 'remove-layer', layerId: 'layer-2' }],
+      { activeLayerId: 'layer-1' }
     );
+
+    const beforeRemoval = replayDurableDocument(document, -1);
+    expect(beforeRemoval.cursor).toBe(-1);
+    expect(Object.keys(beforeRemoval.layers).sort()).toEqual(['layer-1', 'layer-2', 'layer-3']);
+    expect(beforeRemoval.activeLayerId).toBe('layer-1');
 
     const result = replayDurableDocument(document);
 
-    expect(result.activeLayerId).toBe('layer-2');
+    expect(Object.keys(result.layers).sort()).toEqual(['layer-1', 'layer-3']);
+    expect(result.activeLayerId).toBe('layer-1');
   });
 
   it('reports no active layer when every layer has been removed', () => {

@@ -13,8 +13,12 @@ import { EllipseShapeIcon } from './icons/EllipseShapeIcon';
 import { EllipticalSelectionIcon } from './icons/EllipticalSelectionIcon';
 import { EraserIcon } from './icons/EraserIcon';
 import { EyedropperIcon } from './icons/EyedropperIcon';
-import { HandIcon } from './icons/HandIcon';
-import { RotateViewIcon } from './icons/RotateViewIcon';
+import { ColorSamplerIcon } from './icons/ColorSamplerIcon';
+import { RulerIcon } from './icons/RulerIcon';
+import { RedEyeIcon } from './icons/RedEyeIcon';
+import { SpotHealingIcon } from './icons/SpotHealingIcon';
+import { HealingBrushIcon } from './icons/HealingBrushIcon';
+import { PatchIcon } from './icons/PatchIcon';
 import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
 import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
@@ -24,6 +28,9 @@ import { LineShapeIcon } from './icons/LineShapeIcon';
 import { MagicEraserIcon } from './icons/MagicEraserIcon';
 import { MagicWandIcon } from './icons/MagicWandIcon';
 import { MoveIcon } from './icons/MoveIcon';
+import { HandIcon } from './icons/HandIcon';
+import { ZoomIcon } from './icons/ZoomIcon';
+import { RotateViewIcon } from './icons/RotateViewIcon';
 import { PaintBucketIcon } from './icons/PaintBucketIcon';
 import { PenToolIcon } from './icons/PenToolIcon';
 import { PolygonalLassoIcon } from './icons/PolygonalLassoIcon';
@@ -31,6 +38,7 @@ import { QuickSelectionIcon } from './icons/QuickSelectionIcon';
 import { RectangularSelectionIcon } from './icons/RectangularSelectionIcon';
 import { RectangleShapeIcon } from './icons/RectangleShapeIcon';
 import { ShapeIcon } from './icons/ShapeIcon';
+import { StarIcon } from './icons/StarIcon';
 import { SharpenIcon } from './icons/SharpenIcon';
 import { SingleColumnMarqueeIcon } from './icons/SingleColumnMarqueeIcon';
 import { SingleRowMarqueeIcon } from './icons/SingleRowMarqueeIcon';
@@ -39,8 +47,11 @@ import { SpongeIcon } from './icons/SpongeIcon';
 import { TextIcon } from './icons/TextIcon';
 import { TransformIcon } from './icons/TransformIcon';
 
-export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
+export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-star', SvgIconFactory> = {
   reposition: MoveIcon,
+  hand: HandIcon,
+  zoom: ZoomIcon,
+  'rotate-view': RotateViewIcon,
   color: ColorIcon,
   blur: BlurIcon,
   levels: LevelsIcon,
@@ -53,6 +64,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'shape-line': LineShapeIcon,
   'shape-triangle': ShapeIcon,
   'shape-polygon': ShapeIcon,
+  'shape-star': StarIcon,
   text: TextIcon,
   'freehand-lasso': FreehandLassoIcon,
   'polygonal-lasso': PolygonalLassoIcon,
@@ -64,6 +76,10 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'single-column-marquee': SingleColumnMarqueeIcon,
   'quick-selection': QuickSelectionIcon,
   'clone-stamp': CloneStampIcon,
+  'red-eye': RedEyeIcon,
+  'spot-healing': SpotHealingIcon,
+  'healing-brush': HealingBrushIcon,
+  patch: PatchIcon,
   gradient: GradientIcon,
   sharpen: SharpenIcon,
   smudge: SmudgeIcon,
@@ -79,8 +95,8 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'magic-eraser': MagicEraserIcon,
   'paint-bucket': PaintBucketIcon,
   eyedropper: EyedropperIcon,
-  hand: HandIcon,
-  'rotate-view': RotateViewIcon,
+  'color-sampler': ColorSamplerIcon,
+  ruler: RulerIcon,
   pen: PenToolIcon,
   'freeform-pen': FreeformPenIcon,
   'curvature-pen': PenToolIcon,

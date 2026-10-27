@@ -25,6 +25,10 @@ export function isValidDocumentFrame(frame: unknown): frame is DocumentFrame {
   );
 }
 
+export function resolveDocumentFrame(size: Size, frame?: DocumentFrame): DocumentFrame {
+  return frame && isValidDocumentFrame(frame) ? frame : documentFrameFromSize(size);
+}
+
 export function cloneDocumentFrame(frame: DocumentFrame): DocumentFrame {
   return { x: frame.x, y: frame.y, width: frame.width, height: frame.height };
 }

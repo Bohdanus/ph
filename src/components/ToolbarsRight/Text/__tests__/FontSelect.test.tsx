@@ -2,9 +2,10 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KeyboardEventsProvider } from '../../../../hooks/useKeyboardEvents.tsx';
+import { FONT_FAMILIES } from '../../../../tools/text.ts';
 import FontSelect from '../FontSelect.tsx';
 
-const FONTS = [
+const EXPECTED_FONT_FAMILIES = [
   'Arial',
   'Helvetica',
   'Times New Roman',
@@ -19,6 +20,31 @@ const FONTS = [
   'Trebuchet MS',
   'Tahoma',
   'Brush Script MT',
+  'Inter',
+  'Poppins',
+  'Montserrat',
+  'Open Sans',
+  'Lato',
+  'Source Sans Pro',
+  'Nunito',
+  'Merriweather',
+  'Playfair Display',
+  'Raleway',
+  'Oswald',
+  'Roboto Slab',
+  'Ubuntu',
+  'PT Sans',
+  'Work Sans',
+  'Muli',
+  'Quicksand',
+  'DM Sans',
+  'Space Grotesk',
+  'Outfit',
+  'Plus Jakarta Sans',
+  'Manrope',
+  'Instrument Sans',
+  'Syne',
+  'Clash Display',
 ];
 
 afterEach(cleanup);
@@ -63,6 +89,8 @@ const option = (font: string) => {
   return found;
 };
 
+const searchInput = () => document.querySelector<HTMLInputElement>('#font-family-list input[type="text"]');
+
 const triggerText = () => trigger().textContent ?? '';
 
 function press(key: string) {
@@ -75,7 +103,7 @@ describe('FontSelect closed state', () => {
 
     expect(triggerText()).toBe('Georgia');
     expect(options()).toHaveLength(0);
-    for (const font of FONTS) {
+    for (const font of FONT_FAMILIES) {
       expect(hasOption(font)).toBe(false);
     }
   });
@@ -124,7 +152,8 @@ describe('FontSelect popup rendering', () => {
 
     fireEvent.click(trigger());
 
-    expect(options().map((el) => el.textContent)).toEqual(FONTS);
+    expect(FONT_FAMILIES).toEqual(EXPECTED_FONT_FAMILIES);
+    expect(options().map((el) => el.textContent)).toEqual(FONT_FAMILIES);
   });
 
   it('highlights the active font with a selected background class', () => {
@@ -188,6 +217,99 @@ describe('FontSelect open/close toggling', () => {
     fireEvent.click(trigger());
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('FontSelect search functionality', () => {
+  it('shows search input when dropdown opens', () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const input = searchInput();
+    expect(input).not.toBeNull();
+    expect(input?.placeholder).toBe('Search fonts...');
+  });
+
+  it('focuses search input when dropdown opens', async () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    // The focus effect runs after render, so we need to wait for it
+    await vi.waitFor(() => {
+      const input = searchInput();
+      expect(document.activeElement).toBe(input);
+    });
+  });
+
+  it('filters fonts as user types', () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const input = searchInput()!;
+    fireEvent.change(input, { target: { value: 'rob' } });
+
+    expect(hasOption('Roboto')).toBe(true);
+    expect(hasOption('Roboto Slab')).toBe(true);
+    expect(hasOption('Arial')).toBe(false);
+    expect(hasOption('Helvetica')).toBe(false);
+  });
+
+  it('shows all fonts when search is cleared', () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const input = searchInput()!;
+    fireEvent.change(input, { target: { value: 'rob' } });
+    expect(hasOption('Roboto')).toBe(true);
+    expect(hasOption('Arial')).toBe(false);
+
+    fireEvent.change(input, { target: { value: '' } });
+    expect(hasOption('Arial')).toBe(true);
+    expect(hasOption('Helvetica')).toBe(true);
+    expect(hasOption('Roboto')).toBe(true);
+  });
+
+  it('is case-insensitive when filtering', () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const input = searchInput()!;
+    fireEvent.change(input, { target: { value: 'INTER' } });
+
+    expect(hasOption('Inter')).toBe(true);
+    expect(hasOption('Arial')).toBe(false);
+  });
+
+  it('filters with partial matches', () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const input = searchInput()!;
+    fireEvent.change(input, { target: { value: 'sans' } });
+
+    expect(hasOption('Open Sans')).toBe(true);
+    expect(hasOption('Source Sans Pro')).toBe(true);
+    expect(hasOption('Work Sans')).toBe(true);
+    expect(hasOption('DM Sans')).toBe(true);
+    expect(hasOption('Arial')).toBe(false);
+  });
+
+  it('clears search when Escape is pressed', () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const input = searchInput()!;
+    fireEvent.change(input, { target: { value: 'rob' } });
+    expect(input.value).toBe('rob');
+
+    press('Escape');
+
+    // Popup closes on Escape; re-open and verify search was cleared
+    fireEvent.click(trigger());
+    const reopenedInput = searchInput()!;
+    expect(reopenedInput.value).toBe('');
+    expect(hasOption('Arial')).toBe(true);
+    expect(hasOption('Roboto')).toBe(true);
   });
 });
 
@@ -326,11 +448,10 @@ describe('FontSelect keyboard interaction', () => {
     const { onChange } = renderFontSelect('Arial');
     fireEvent.click(trigger());
 
-    fireEvent.keyDown(trigger(), { key: 'ArrowDown' });
+    fireEvent.keyDown(searchInput()!, { key: 'ArrowDown' });
     press('ArrowDown');
 
     expect(onChange).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(document.body);
   });
 
   it('keeps the popup open for unrelated keys', () => {

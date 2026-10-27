@@ -26,8 +26,9 @@ const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 const clearSelectionsMock = vi.hoisted(() => vi.fn());
+const storeSize = vi.hoisted(() => ({ totalSize: { width: 800, height: 600 } }));
 
-/** The three selection-state fields the Copy/Paste/Clear row reads. */
+/** The three selection-state fields the Copy/Paste/Deselect row reads. */
 const selectionState = vi.hoisted((): { activeSelection: Selection | null; hasSelectionClipboard: boolean } => ({
   activeSelection: null,
   hasSelectionClipboard: false,
@@ -73,6 +74,10 @@ vi.mock('../../../../contexts/useSelectionHistory.ts', () => ({
   useSelectionHistory: () => ({ clearSelections: clearSelectionsMock }),
 }));
 
+vi.mock('../../../../contexts/StoreContext.tsx', () => ({
+  useStore: () => [storeSize, vi.fn()],
+}));
+
 const REGION_SELECTION: Selection = {
   id: 'selection-region-1',
   geometry: 'polygon',
@@ -81,9 +86,11 @@ const REGION_SELECTION: Selection = {
   isActive: true,
   pos: { x: 5, y: 9, width: 40, height: 30 },
   points: [
-    { x: 5, y: 9 },
-    { x: 45, y: 9 },
-    { x: 45, y: 39 },
+    [
+      { x: 5, y: 9 },
+      { x: 45, y: 9 },
+      { x: 45, y: 39 },
+    ],
   ],
 };
 
@@ -101,7 +108,7 @@ const getTolerance = () => screen.getByLabelText('Tolerance') as HTMLInputElemen
 const getMode = () => screen.getByLabelText('Mode') as HTMLSelectElement;
 const getCopy = () => screen.getByRole('button', { name: 'Copy' });
 const getPaste = () => screen.getByRole('button', { name: 'Paste' });
-const getClear = () => screen.getByRole('button', { name: 'Clear' });
+const getClear = () => screen.getByRole('button', { name: 'Deselect' });
 
 /** The visible caption of the control, label text plus live readout. */
 const caption = (slider: HTMLElement) => slider.parentElement?.textContent ?? '';
@@ -137,6 +144,7 @@ describe('QuickSelection toolbar', () => {
     copyActiveSelectionMock.mockReturnValue(true);
     pasteSelectionClipboardMock.mockClear();
     clearSelectionsMock.mockClear();
+    storeSize.totalSize = { width: 800, height: 600 };
     rafCallbacks.length = 0;
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       rafCallbacks.push(callback);
@@ -173,6 +181,17 @@ describe('QuickSelection toolbar', () => {
     expect(getMode()).toHaveValue('add');
     expect(caption(getSize())).toBe('Size40px');
     expect(caption(getTolerance())).toBe('Tolerance30%');
+  });
+
+  it('explains the pixel budget when a loaded document exceeds it', () => {
+    storeSize.totalSize = { width: 5_000, height: 4_000 };
+
+    render(<QuickSelection />);
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Color-based selection is unavailable above 16,777,216 pixels. This document has 20,000,000 pixels.'
+    );
+    storeSize.totalSize = { width: 800, height: 600 };
   });
 
   it('exposes exactly the two region modes the args union can hold, in DOM order', () => {
@@ -366,7 +385,7 @@ describe('QuickSelection toolbar', () => {
   });
 
   describe('selection actions', () => {
-    it('disables Copy and Clear until there is an active selection', () => {
+    it('disables Copy and Deselect until there is an active selection', () => {
       render(<QuickSelection />);
 
       expect(getCopy()).toBeDisabled();
@@ -378,7 +397,7 @@ describe('QuickSelection toolbar', () => {
       resetSelectionState({ hasSelectionClipboard: true });
       render(<QuickSelection />);
 
-      // Copy and Clear are about the CURRENT selection; Paste is about the clipboard. They are
+      // Copy and Deselect are about the CURRENT selection; Paste is about the clipboard. They are
       // gated on different state and must not be gated on the same thing.
       expect(getPaste()).toBeEnabled();
       expect(getCopy()).toBeDisabled();

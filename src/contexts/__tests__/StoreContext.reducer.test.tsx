@@ -8,6 +8,8 @@ import { deriveSetDocumentFrameEntry, deriveSetLayerPropertiesEntry } from '../h
 import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
+import { absoluteViewZoom, minimumSliderZoomForDocumentSize, relativeViewZoomForMagnification } from '../view-state.ts';
+import { containFit } from '../../util/contain-fit.ts';
 import {
   OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
@@ -34,6 +36,7 @@ function makeLayer(id = layerId): Layer {
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: true, size: { width: 100, height: 80 } },
     operations: [],
   } satisfies Layer;
@@ -57,9 +60,11 @@ function makeSelection(id: string, overrides: Partial<Selection> = {}): Selectio
     id,
     isActive: true,
     points: [
-      { x: 0, y: 0 },
-      { x: 4, y: 0 },
-      { x: 4, y: 4 },
+      [
+        { x: 0, y: 0 },
+        { x: 4, y: 0 },
+        { x: 4, y: 4 },
+      ],
     ],
     pos: { x: 0, y: 0, width: 4, height: 4 },
     geometry: 'polygon',
@@ -102,6 +107,27 @@ function renderWithProbe() {
     </StoreProvider>
   );
   return { getProbe, unmount, store: () => getProbe().store, dispatch: () => getProbe().dispatch };
+}
+
+function setClientViewport(
+  element: HTMLDivElement,
+  {
+    left = 0,
+    top = 0,
+    width = 800,
+    height = 600,
+    offsetWidth = 800,
+    offsetHeight = 600,
+  }: { left?: number; top?: number; width?: number; height?: number; offsetWidth?: number; offsetHeight?: number } = {}
+) {
+  Object.defineProperties(element, {
+    clientLeft: { configurable: true, value: left },
+    clientTop: { configurable: true, value: top },
+    clientWidth: { configurable: true, value: width },
+    clientHeight: { configurable: true, value: height },
+    offsetWidth: { configurable: true, value: offsetWidth },
+    offsetHeight: { configurable: true, value: offsetHeight },
+  });
 }
 
 describe('StoreContext scalar and tool actions', () => {
@@ -320,19 +346,19 @@ describe('StoreContext layer action table', () => {
     expect(store().durableStatus).toBe('stale');
   });
 
-  it('keeps the sidecar unavailable instead of downgrading to stale when an edit follows a failure', () => {
+  it('keeps the sidecar partial instead of downgrading to stale after a conversion diagnostic', () => {
     const { store, dispatch } = renderWithProbe();
 
     act(() => {
       dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('pen-edit', 'pen') } });
     });
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
 
     act(() => {
       dispatch()({ type: 'BATCH_UPDATES', payload: { fileName: 'still-broken.psd' } });
     });
 
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
   });
 });
 
@@ -683,6 +709,506 @@ describe('StoreContext durable staleness matrix', () => {
 });
 
 describe('StoreContext document frame derivation', () => {
+  it.each([
+    { mode: 'Fit On Screen', initialZoom: null, expectedZoom: 1 },
+    { mode: 'manual zoom', initialZoom: 1.25, expectedZoom: 1.25 },
+  ])(
+    'preserves displayed pixel scale from $mode when a crop changes the document frame',
+    ({ initialZoom, expectedZoom }) => {
+      const { store, dispatch } = renderWithProbe();
+      const viewport = document.createElement('div');
+      viewport.getBoundingClientRect = () =>
+        ({
+          width: 800,
+          height: 600,
+          top: 0,
+          left: 0,
+          right: 800,
+          bottom: 600,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }) as DOMRect;
+      setClientViewport(viewport);
+      (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-crop-zoom', history: [baselineItem()], updates: { totalSize: initialSize } },
+        });
+      });
+      if (initialZoom !== null) act(() => store().setViewState({ zoom: initialZoom }));
+      act(() => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: { documentFrame: { x: 100, y: 75, width: 200, height: 150 } },
+            historyItem: toolItem('crop-frame', SET_DOCUMENT_FRAME_ACTION, {
+              previousFrame: defaultFrame,
+              nextFrame: { x: 100, y: 75, width: 200, height: 150 },
+            }),
+          },
+        });
+      });
+
+      expect(store().viewState.zoom).toBe(expectedZoom);
+      expect(store().viewState.fitScaleCompensation).toBe(0.5);
+      expect(store().viewState.fitToScreen).toBe(false);
+      expect(2 * expectedZoom).toBe(4 * store().viewState.zoom * store().viewState.fitScaleCompensation);
+
+      const cropTimeline = store().history;
+      const branchRevision = store().branchRevision;
+      act(() => {
+        dispatch()({
+          type: 'APPLY_HISTORY_REPLAY',
+          payload: {
+            updates: { documentFrame: defaultFrame, totalSize: initialSize },
+            timeline: { entries: cropTimeline, cursor: cropTimeline.length - 2, branchRevision },
+          },
+        });
+      });
+      expect(store().viewState.zoom).toBe(expectedZoom);
+      expect(store().viewState.fitScaleCompensation).toBe(1);
+      expect(store().viewState.fitToScreen).toBe(false);
+
+      act(() => {
+        dispatch()({
+          type: 'APPLY_HISTORY_REPLAY',
+          payload: {
+            updates: {
+              documentFrame: { x: 100, y: 75, width: 200, height: 150 },
+              totalSize: { width: 200, height: 150 },
+            },
+            timeline: { entries: cropTimeline, cursor: cropTimeline.length - 1, branchRevision },
+          },
+        });
+      });
+      expect(store().viewState.zoom).toBe(expectedZoom);
+      expect(store().viewState.fitScaleCompensation).toBe(0.5);
+      expect(store().viewState.fitToScreen).toBe(false);
+    }
+  );
+
+  it('preserves displayed scale when a scrollbar changes client width without changing the border box', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    setClientViewport(viewport);
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-client-resize', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    act(() => store().setViewState({ zoom: 1.25 }));
+
+    const dpr = window.devicePixelRatio || 1;
+    const previousFitScale = containFit({ width: 800, height: 600 }, initialSize).scale;
+    const previousMagnification = absoluteViewZoom(store().viewState, previousFitScale, dpr);
+    setClientViewport(viewport, { width: 785, height: 600, offsetWidth: 800, offsetHeight: 600 });
+    act(() => {
+      dispatch()({ type: 'BATCH_UPDATES', payload: { totalSize: { ...initialSize } } });
+    });
+
+    const nextFitScale = containFit({ width: 785, height: 600 }, initialSize).scale;
+    expect(store().viewState.fitScaleCompensation).toBeGreaterThan(1);
+    expect(absoluteViewZoom(store().viewState, nextFitScale, dpr)).toBeCloseTo(previousMagnification, 8);
+  });
+
+  it('clamps a preserved manual zoom to the new one-pixel floor after a crop and keeps replay coherent', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    setClientViewport(viewport);
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-crop-zoom-floor', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    const originalMinimum = minimumSliderZoomForDocumentSize(defaultFrame);
+    act(() => store().setViewState({ zoom: relativeViewZoomForMagnification(originalMinimum, 2) }));
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(originalMinimum);
+
+    const historyLengthBeforeCrop = store().history.length;
+    const croppedFrame = { x: 0, y: 0, width: 400, height: 200 };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: croppedFrame },
+          historyItem: toolItem('crop-frame-zoom-floor', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: defaultFrame,
+            nextFrame: croppedFrame,
+          }),
+        },
+      });
+    });
+
+    const croppedMinimum = minimumSliderZoomForDocumentSize(croppedFrame);
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(croppedMinimum);
+    expect(store().viewState.fitToScreen).toBe(false);
+    expect(store().viewState.minimumZoomOverride).toBeUndefined();
+    expect(store().history).toHaveLength(historyLengthBeforeCrop + 1);
+
+    const cropTimeline = store().history;
+    const branchRevision = store().branchRevision;
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: defaultFrame, totalSize: initialSize },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 2, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(croppedMinimum);
+    expect(store().viewState.fitToScreen).toBe(false);
+
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: croppedFrame, totalSize: { width: 400, height: 200 } },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 1, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 2)).toBeCloseTo(croppedMinimum);
+    expect(store().viewState.fitToScreen).toBe(false);
+    expect(store().history).toHaveLength(historyLengthBeforeCrop + 1);
+  });
+
+  it('preserves a subpixel Fit On Screen view when a narrow crop raises the slider floor', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    setClientViewport(viewport);
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    const openingFrame = { x: 0, y: 0, width: 200_000, height: 1_000 };
+    const openingSize = { width: openingFrame.width, height: openingFrame.height };
+    const openingBaseline = baselineItem('aspect-ratio-baseline');
+    const croppedFrame = { x: 0, y: 0, width: 100_000, height: 1 };
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-aspect-ratio-zoom-floor',
+          history: [
+            {
+              ...openingBaseline,
+              documentSource: {
+                ...openingBaseline.documentSource!,
+                size: openingSize,
+                frame: openingFrame,
+              },
+            },
+          ],
+          updates: { totalSize: openingSize, documentFrame: openingFrame },
+        },
+      });
+    });
+
+    expect(store().viewState.fitToScreen).toBe(true);
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(minimumSliderZoomForDocumentSize(croppedFrame)).toBe(1);
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: croppedFrame },
+          historyItem: toolItem('crop-frame-aspect-ratio', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: openingFrame,
+            nextFrame: croppedFrame,
+          }),
+        },
+      });
+    });
+
+    expect(absoluteViewZoom(store().viewState, 0.008)).toBeCloseTo(0.004);
+    expect(store().viewState.fitToScreen).toBe(false);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    const cropTimeline = store().history;
+    const branchRevision = store().branchRevision;
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: openingFrame, totalSize: openingSize },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 2, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: {
+            documentFrame: croppedFrame,
+            totalSize: { width: croppedFrame.width, height: croppedFrame.height },
+          },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 1, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.008)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+    expect(store().history).toHaveLength(cropTimeline.length);
+  });
+
+  it('keeps a subpixel Fit anchor through an expanding crop and its undo/redo', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    setClientViewport(viewport);
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    const openingFrame = { x: 0, y: 0, width: 200_000, height: 100 };
+    const openingSize = { width: openingFrame.width, height: openingFrame.height };
+    const openingBaseline = baselineItem('expanding-fit-baseline');
+    const expandedFrame = { x: 0, y: 0, width: 200_000, height: 1_000 };
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-expanding-fit-zoom-floor',
+          history: [
+            {
+              ...openingBaseline,
+              documentSource: {
+                ...openingBaseline.documentSource!,
+                size: openingSize,
+                frame: openingFrame,
+              },
+            },
+          ],
+          updates: { totalSize: openingSize, documentFrame: openingFrame },
+        },
+      });
+    });
+
+    expect(store().viewState.fitToScreen).toBe(true);
+    expect(minimumSliderZoomForDocumentSize(openingFrame)).toBeCloseTo(0.01);
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: expandedFrame },
+          historyItem: toolItem('expand-frame-fit-zoom-floor', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: openingFrame,
+            nextFrame: expandedFrame,
+          }),
+        },
+      });
+    });
+
+    expect(minimumSliderZoomForDocumentSize(expandedFrame)).toBeCloseTo(0.001);
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    const cropTimeline = store().history;
+    const branchRevision = store().branchRevision;
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { documentFrame: openingFrame, totalSize: openingSize },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 2, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+
+    act(() => {
+      dispatch()({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: {
+            documentFrame: expandedFrame,
+            totalSize: { width: expandedFrame.width, height: expandedFrame.height },
+          },
+          timeline: { entries: cropTimeline, cursor: cropTimeline.length - 1, branchRevision },
+        },
+      });
+    });
+    expect(absoluteViewZoom(store().viewState, 0.004)).toBeCloseTo(0.004);
+    expect(store().viewState.minimumZoomOverride).toBeCloseTo(0.004);
+    expect(store().history).toHaveLength(cropTimeline.length);
+  });
+
+  it('does not carry a one-pixel floor override from an ordinary Fit crop', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    setClientViewport(viewport);
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    const openingFrame = { x: 0, y: 0, width: 2_000, height: 1_000 };
+    const openingSize = { width: openingFrame.width, height: openingFrame.height };
+    const openingBaseline = baselineItem('ordinary-fit-baseline');
+    const firstCrop = { x: 0, y: 0, width: 1_000, height: 500 };
+    const narrowCrop = { x: 0, y: 0, width: 1_000, height: 1 };
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-ordinary-fit-zoom-floor',
+          history: [
+            {
+              ...openingBaseline,
+              documentSource: {
+                ...openingBaseline.documentSource!,
+                size: openingSize,
+                frame: openingFrame,
+              },
+            },
+          ],
+          updates: { totalSize: openingSize, documentFrame: openingFrame },
+        },
+      });
+    });
+    expect(store().viewState.fitToScreen).toBe(true);
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: firstCrop },
+          historyItem: toolItem('ordinary-fit-crop', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: openingFrame,
+            nextFrame: firstCrop,
+          }),
+        },
+      });
+    });
+    expect(store().viewState.minimumZoomOverride).toBeUndefined();
+    expect(absoluteViewZoom(store().viewState, 0.8)).toBeGreaterThan(minimumSliderZoomForDocumentSize(firstCrop));
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: narrowCrop },
+          historyItem: toolItem('ordinary-fit-narrow-crop', SET_DOCUMENT_FRAME_ACTION, {
+            previousFrame: firstCrop,
+            nextFrame: narrowCrop,
+          }),
+        },
+      });
+    });
+    expect(store().viewState.minimumZoomOverride).toBeUndefined();
+    expect(absoluteViewZoom(store().viewState, 0.8)).toBeCloseTo(1);
+  });
+
+  it('does not treat a same-id document replacement as a crop', () => {
+    const { store, dispatch } = renderWithProbe();
+    const viewport = document.createElement('div');
+    viewport.getBoundingClientRect = () =>
+      ({
+        width: 800,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    setClientViewport(viewport);
+    (store().containerRef as { current: HTMLDivElement | null }).current = viewport;
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'same-document-id', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    act(() => store().setViewState({ fitScaleCompensation: 0.5 }));
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'same-document-id',
+          history: [baselineItem('replacement-baseline')],
+          updates: { documentFrame: { x: 100, y: 75, width: 200, height: 150 } },
+        },
+      });
+    });
+
+    expect(store().viewState.zoom).toBe(1);
+    expect(store().viewState.fitScaleCompensation).toBe(1);
+  });
+
   it('COMMIT_DOCUMENT_EDIT derives totalSize from a committed document frame', () => {
     const { store, dispatch } = renderWithProbe();
 
@@ -803,6 +1329,217 @@ describe('StoreContext document frame derivation', () => {
 
     expect(store().documentFrame).toEqual(keptFrame);
     expect(store().totalSize).toEqual({ width: 400, height: 300 });
+  });
+
+  describe('REPLACE_DOCUMENT fast-path seven-field identity', () => {
+    const freshHistory = [baselineItem('base-1'), baselineItem('base-2')];
+
+    it('sets documentId to the payload documentId', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-identity', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().documentId).toBe('doc-identity');
+    });
+
+    it('increments documentRevision by one from current state', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-rev-1', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      const firstRev = store().documentRevision;
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-rev-2', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().documentRevision).toBe(firstRev + 1);
+    });
+
+    it('resets branchRevision to zero', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-branch', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      act(() => {
+        dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('edit-1', 'blur') } });
+      });
+      expect(store().branchRevision).toBeGreaterThan(0);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-branch-2', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().branchRevision).toBe(0);
+    });
+
+    it('replaces history with the payload history array', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-hist-1', history: [baselineItem('h1')], updates: { totalSize: initialSize } },
+        });
+      });
+      act(() => {
+        dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('edit-1', 'blur') } });
+      });
+      expect(store().history).toHaveLength(2);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-hist-2', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().history).toEqual(freshHistory);
+    });
+
+    it('sets historyIndex to the payload historyIndex or last index', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: {
+            documentId: 'doc-idx-explicit',
+            history: freshHistory,
+            historyIndex: 0,
+            updates: { totalSize: initialSize },
+          },
+        });
+      });
+      expect(store().historyIndex).toBe(0);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-idx-implicit', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().historyIndex).toBe(freshHistory.length - 1);
+    });
+
+    it('sets documentFrame from updates.documentFrame or replacementFrame fallback', () => {
+      const { store, dispatch } = renderWithProbe();
+      const customFrame = { x: 10, y: 20, width: 100, height: 80 };
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: {
+            documentId: 'doc-frame-explicit',
+            history: freshHistory,
+            updates: { documentFrame: customFrame, totalSize: { width: 100, height: 80 } },
+          },
+        });
+      });
+      expect(store().documentFrame).toEqual(customFrame);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-frame-fallback', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().documentFrame).toEqual(defaultFrame);
+    });
+
+    it('sets totalSize from documentFrame size', () => {
+      const { store, dispatch } = renderWithProbe();
+      const customFrame = { x: 0, y: 0, width: 123, height: 456 };
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-size', history: freshHistory, updates: { documentFrame: customFrame } },
+        });
+      });
+      expect(store().totalSize).toEqual({ width: 123, height: 456 });
+    });
+  });
+
+  describe('REPLACE_DOCUMENT disposal guard', () => {
+    it('disposes the previous document id when documentId changes', () => {
+      const dispose = vi.spyOn(getAssetRegistry(), 'disposeDocument');
+      try {
+        const { dispatch } = renderWithProbe();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-dispose-a', history: [baselineItem()], updates: { totalSize: initialSize } },
+          });
+        });
+        dispose.mockClear();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: {
+              documentId: 'doc-dispose-b',
+              history: [baselineItem('b2')],
+              updates: { totalSize: initialSize },
+            },
+          });
+        });
+        expect(dispose).toHaveBeenCalledWith('doc-dispose-a');
+        expect(dispose).not.toHaveBeenCalledWith('doc-dispose-b');
+      } finally {
+        dispose.mockRestore();
+      }
+    });
+
+    it('does not dispose when documentId stays the same', () => {
+      const dispose = vi.spyOn(getAssetRegistry(), 'disposeDocument');
+      try {
+        const { dispatch } = renderWithProbe();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-same', history: [baselineItem()], updates: { totalSize: initialSize } },
+          });
+        });
+        dispose.mockClear();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-same', history: [baselineItem('b2')], updates: { totalSize: initialSize } },
+          });
+        });
+        expect(dispose).not.toHaveBeenCalled();
+      } finally {
+        dispose.mockRestore();
+      }
+    });
+
+    it('uses currentState.documentId for disposal decision not the outgoing documentId', () => {
+      const dispose = vi.spyOn(getAssetRegistry(), 'disposeDocument');
+      try {
+        const { store, dispatch } = renderWithProbe();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-first', history: [baselineItem()], updates: { totalSize: initialSize } },
+          });
+        });
+        const firstId = store().documentId;
+        dispose.mockClear();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-second', history: [baselineItem('b2')], updates: { totalSize: initialSize } },
+          });
+        });
+        expect(dispose).toHaveBeenCalledWith(firstId);
+        expect(dispose).not.toHaveBeenCalledWith('doc-second');
+      } finally {
+        dispose.mockRestore();
+      }
+    });
   });
 });
 
@@ -1021,7 +1758,6 @@ describe('StoreContext provider-owned transient surface', () => {
     expect(second.toolOverlayRef).toBe(first.toolOverlayRef);
     expect(second.rectOverlayRef).toBe(first.rectOverlayRef);
     expect(second.containerRef).toBe(first.containerRef);
-    expect(second.textareaRef).toBe(first.textareaRef);
     expect(second.currentArgs).toBe(first.currentArgs);
     expect(second.previewLayers).toBe(first.previewLayers);
   });

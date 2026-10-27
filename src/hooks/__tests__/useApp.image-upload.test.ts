@@ -145,15 +145,15 @@ describe('useApp setImageFromUpload', () => {
     vi.restoreAllMocks();
   });
 
-  it('sizes the canvas, creates the bedrock layer, and renames the document only afterwards', async () => {
+  it('creates the bedrock layer, sizes the canvas, and renames the document afterwards', async () => {
     const image = createImage(80, 40);
 
     await useApp().setImageFromUpload({ fileName: 'photo.png', image });
 
     expect(harness.events).toEqual([
+      'createLayerFromBitmap',
       'resizeCanvas:80x480',
       'resizeCanvas:80x40',
-      'createLayerFromBitmap',
       'SET_FILE_NAME',
     ]);
     expect(layerMocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith(
@@ -169,7 +169,7 @@ describe('useApp setImageFromUpload', () => {
     expect(harness.canvasSize).toEqual({ width: 80, height: 40 });
   });
 
-  it('has already resized the canvas to the image size when the layer creation starts', async () => {
+  it('keeps the current canvas size until the new layer has been created', async () => {
     layerMocks.createLayerFromBitmap.mockImplementation(async () => {
       harness.events.push(`createLayerFromBitmap(canvas=${harness.canvasSize.width}x${harness.canvasSize.height})`);
     });
@@ -177,9 +177,9 @@ describe('useApp setImageFromUpload', () => {
     await useApp().setImageFromUpload({ fileName: 'sized.png', image: createImage(120, 90) });
 
     expect(harness.events).toEqual([
+      'createLayerFromBitmap(canvas=640x480)',
       'resizeCanvas:120x480',
       'resizeCanvas:120x90',
-      'createLayerFromBitmap(canvas=120x90)',
       'SET_FILE_NAME',
     ]);
   });
@@ -208,7 +208,7 @@ describe('useApp setImageFromUpload', () => {
       await expect(upload).rejects.toBe(failure);
     });
 
-    expect(harness.events).toEqual(['resizeCanvas:80x480', 'resizeCanvas:80x40', 'createLayerFromBitmap']);
+    expect(harness.events).toEqual(['createLayerFromBitmap']);
     expect(layerMocks.createLayerFromBitmap).toHaveBeenCalledOnce();
     expect(harness.dispatch).not.toHaveBeenCalled();
     expect(screen.getByTestId('document-name')).toHaveTextContent('untitled.png');

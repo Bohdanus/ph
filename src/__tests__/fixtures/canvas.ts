@@ -33,6 +33,7 @@ export const createMockCanvasContext = (overrides: Record<string, unknown> = {})
   createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   createConicGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  createPattern: vi.fn(() => null),
   translate: vi.fn(),
   rotate: vi.fn(),
   scale: vi.fn(),
@@ -56,12 +57,21 @@ export const createMockCanvasContext = (overrides: Record<string, unknown> = {})
   shadowOffsetY: 0,
   globalAlpha: 1,
   globalCompositeOperation: 'source-over',
+  filter: '',
   ...overrides,
 });
 
 export const createMockCanvas = (overrides: Record<string, unknown> = {}) => {
+  const attributes = new Map<string, string>();
   const canvas = {
     getContext: vi.fn(),
+    getAttribute: vi.fn((name: string) => attributes.get(name) ?? null),
+    setAttribute: vi.fn((name: string, value: string) => {
+      attributes.set(name, value);
+    }),
+    removeAttribute: vi.fn((name: string) => {
+      attributes.delete(name);
+    }),
     width: 128,
     height: 64,
     ...overrides,

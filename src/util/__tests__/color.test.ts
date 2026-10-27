@@ -12,6 +12,26 @@ describe('normalizeHex', () => {
     expect(normalizeHex('#ff0000')).toBe('ff0000');
     expect(normalizeHex('ff0000')).toBe('ff0000');
   });
+
+  it('returns an empty string for empty or hash-only input', () => {
+    expect(normalizeHex('')).toBe('');
+    expect(normalizeHex('#')).toBe('');
+  });
+
+  it('expands non-hex segments of length 3 instead of validating them', () => {
+    expect(normalizeHex('#ggg')).toBe('gggggg');
+    expect(normalizeHex('zzz')).toBe('zzzzzz');
+  });
+
+  it('leaves longer invalid strings untouched', () => {
+    expect(normalizeHex('#zzzz')).toBe('zzzz');
+    expect(normalizeHex('####')).toBe('######');
+  });
+
+  it('throws on null and undefined instead of coercing', () => {
+    expect(() => normalizeHex(null as unknown as string)).toThrow();
+    expect(() => normalizeHex(undefined as unknown as string)).toThrow();
+  });
 });
 
 describe('isLightColor', () => {
@@ -54,5 +74,33 @@ describe('isLightColor', () => {
   it('classifies 3-digit hex identically to its 6-digit equivalent', () => {
     expect(isLightColor('#f00')).toBe(isLightColor('#ff0000'));
     expect(isLightColor('#fff')).toBe(isLightColor('#ffffff'));
+  });
+
+  it('returns false for invalid hex containing non-hex characters', () => {
+    expect(isLightColor('#ggg')).toBe(false);
+    expect(isLightColor('#zzz')).toBe(false);
+    expect(isLightColor('#zzzz')).toBe(false);
+    expect(isLightColor('#')).toBe(false);
+    expect(isLightColor('   ')).toBe(false);
+    expect(isLightColor('not-a-color')).toBe(false);
+  });
+
+  it('returns true for null and undefined through the falsy guard', () => {
+    expect(isLightColor(null as unknown as string)).toBe(true);
+    expect(isLightColor(undefined as unknown as string)).toBe(true);
+  });
+});
+
+describe('tripwires: invalid input is not yet rejected', () => {
+  it.fails('throws when given a hex with non-hex characters (isLightColor)', () => {
+    expect(() => isLightColor('#ggg')).toThrow();
+  });
+
+  it.fails('throws when given a hex with non-hex characters (normalizeHex)', () => {
+    expect(() => normalizeHex('#zzz')).toThrow();
+  });
+
+  it.fails('throws when given a non-hex word (isLightColor)', () => {
+    expect(() => isLightColor('not-a-color')).toThrow();
   });
 });

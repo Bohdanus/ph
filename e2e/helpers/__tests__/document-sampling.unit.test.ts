@@ -165,6 +165,42 @@ describe('sampleCentreInImage', () => {
     expect(Number.isNaN(noCssSize.x)).toBe(true);
     expect(Number.isNaN(noCssSize.y)).toBe(true);
   });
+
+  it('returns the decoded image centre, not the cssSize centre, on both axes', () => {
+    // The JSDoc states the result is "the IMAGE address of a capture's own centre", so the
+    // answer is image/2 on each axis and the cssSize — the box the point was fitted into — is
+    // irrelevant to a centred sample. That is what makes the unconverted-centre mistake
+    // wrong: at 2x the cssSize centre (4) is a DIFFERENT pixel from the image centre (8), and
+    // pinning both proves the conversion is doing real work instead of being the identity.
+    const image = { width: 100, height: 40 };
+    for (const cssSize of [
+      { width: 8, height: 8 },
+      { width: 16, height: 16 },
+      { width: 5, height: 15 },
+    ]) {
+      const centre = sampleCentreInImage(image, cssSize);
+      expect(centre.x).toBeCloseTo(50, 9);
+      expect(centre.y).toBeCloseTo(20, 9);
+      // The honest centre is the IMAGE's, not the cssSize's — they diverge at anything past 1x.
+      expect(Math.round(centre.x)).not.toBe(cssSize.width / 2);
+      expect(Math.round(centre.y)).not.toBe(cssSize.height / 2);
+    }
+  });
+
+  it('puts the unconverted-address error on a captured-pixel scale that grows with the device ratio', () => {
+    // At 1x the cssSize centre and the image centre are the same pixel, so the mistake is
+    // invisible on the host the test was written on; at 2x and 4x the address the mistake
+    // lands on is 4 and 12 device pixels from the true centre (8*4 / 2 = 16 vs 4). A
+    // scale-invariant oracle cannot lean on the identity case, and this is why every centred
+    // sample must round-trip against its own decoded size.
+    const windowCss = sampleWindowCss(SAMPLE_RADIUS);
+    for (const scale of [1, 2, 4]) {
+      const image = decoded(windowCss, scale);
+      const centre = sampleCentreInImage(image, { width: windowCss, height: windowCss });
+      const errorPx = Math.abs(Math.round(centre.x) - windowCss / 2);
+      expect(errorPx).toBe((scale - 1) * (windowCss / 2));
+    }
+  });
 });
 
 describe('documentSampleRegion', () => {
@@ -242,6 +278,35 @@ describe('documentSampleRegion', () => {
     expect(fit.scale).toBeCloseTo(583 / 300, 9);
     expect(fit.offsetX).toBeCloseTo((974 - 400 * (583 / 300)) / 2, 9);
   });
+
+  it('derives the capture window from an explicit radius, not only a fixed width', () => {
+    // `windowCss` defaults to `sampleWindowCss(radius)`; passing `radius: 5` asks for a
+    // 12-CSS-px capture (an 11x11 window at that radius) instead of the default 8-CSS-px/7x7
+    // one, and the clip has to grow with it — a window pinned to the default size would sample
+    // a 5px border past the stroke the wider radius was meant to average.
+    const region = documentSampleRegion(BOX, 400, 300, { radius: 5 });
+    const expectedWindow = sampleWindowCss(5);
+    expect(expectedWindow).toBe(12);
+    expect(region.size).toEqual({ width: expectedWindow, height: expectedWindow });
+    expect(region.clip.width).toBe(expectedWindow);
+    expect(region.clip.height).toBe(expectedWindow);
+    // ...and the larger window stays centred on the mapped document point.
+    const offset = documentToCanvasOffset(BOX, 400, 300);
+    expect(region.clip.x + expectedWindow / 2).toBeCloseTo(BOX.x + offset.x, 9);
+    expect(region.clip.y + expectedWindow / 2).toBeCloseTo(BOX.y + offset.y, 9);
+  });
+
+  it('maps the document centre onto the box centre on both axes', () => {
+    // The contain fit centres the document in the box, so the document centre (400, 300) must
+    // map to the centre of every box the suite uses — not just the one a point happened to be
+    // sampled in. That is the property a spec relies on when it samples "the middle of the
+    // canvas" and means the middle of the artwork regardless of letterboxing.
+    for (const box of [BOX, WIDE_BOX, TALL_BOX]) {
+      const region = documentSampleRegion(box, 400, 300);
+      expect(region.clip.x + region.size.width / 2).toBeCloseTo(box.x + box.width / 2, 9);
+      expect(region.clip.y + region.size.height / 2).toBeCloseTo(box.y + box.height / 2, 9);
+    }
+  });
 });
 
 /**
@@ -296,5 +361,53 @@ describe('documentClipInBox', () => {
     const cropped = documentClipInBox(BOX, { width: 400, height: 300 });
     expect(cropped.width).toBeCloseTo(400 * (583 / 300), 9);
     expect(cropped.height).toBeCloseTo(583, 9);
+  });
+
+  it('is flush on the fitted axis and letterboxed on the slack axis at every contain-fit branch', () => {
+    // Height-governed (WIDE_BOX): the fitted axis is vertical, so the clip height fills the
+    // box and the width is letterboxed; width-governed (TALL_BOX): the reverse. An exact
+    // aspect match leaves no slack at all and the clip is the box itself. The `subset` test
+    // proves containment; this one pins WHICH axis does the containing, which is what a spec
+    // needs to know when it waits on the document and not on the letterbox.
+    const wide = documentClipInBox(WIDE_BOX);
+    expect(wide.height).toBeCloseTo(WIDE_BOX.height, 9);
+    expect(wide.width).toBeLessThan(WIDE_BOX.width);
+
+    const tall = documentClipInBox(TALL_BOX);
+    expect(tall.width).toBeCloseTo(TALL_BOX.width, 9);
+    expect(tall.height).toBeLessThan(TALL_BOX.height);
+
+    const matchBox = { x: 0, y: 0, width: DEFAULT_DOCUMENT_SIZE.width, height: DEFAULT_DOCUMENT_SIZE.height };
+    const match = documentClipInBox(matchBox);
+    expect(match).toEqual({
+      x: 0,
+      y: 0,
+      width: DEFAULT_DOCUMENT_SIZE.width,
+      height: DEFAULT_DOCUMENT_SIZE.height,
+    });
+  });
+
+  it('translates the fitted document rect by a non-zero box origin on both axes', () => {
+    // `documentClipInBox` is BOX-relative, so a box that starts at (56, 100) shifts the whole
+    // fitted rect by that origin — the clip's origin is exactly `box.x + offsetX` and
+    // `box.y + offsetY`, and its dimensions are the document scaled by the contain fit. This
+    // is the arithmetic a spec depends on when it builds a clip from a measured
+    // `boundingBox()` that is not at the viewport origin, which the `subset` test only
+    // checks containment for.
+    const { offsetX, offsetY, scale } = containFit(BOX);
+    const clip = documentClipInBox(BOX);
+
+    expect(clip.x).toBeCloseTo(BOX.x + offsetX, 9);
+    expect(clip.y).toBeCloseTo(BOX.y + offsetY, 9);
+    expect(clip.width).toBeCloseTo(DEFAULT_DOCUMENT_SIZE.width * scale, 9);
+    expect(clip.height).toBeCloseTo(DEFAULT_DOCUMENT_SIZE.height * scale, 9);
+
+    // A box shifted in origin shifts the clip by exactly that delta on each axis, with no
+    // change to size — the fit is over width/height only.
+    const shifted = documentClipInBox({ x: BOX.x + 24, y: BOX.y + 18, width: BOX.width, height: BOX.height });
+    expect(shifted.x - clip.x).toBeCloseTo(24, 9);
+    expect(shifted.y - clip.y).toBeCloseTo(18, 9);
+    expect(shifted.width).toBeCloseTo(clip.width, 9);
+    expect(shifted.height).toBeCloseTo(clip.height, 9);
   });
 });

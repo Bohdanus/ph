@@ -3,10 +3,10 @@
  *
  * WHY NO REPOSITORY, A BOOTSTRAP, OR A SESSION DATABASE
  * -----------------------------------------------------
- * Every effect in `dispose-worktree.mjs` is injected: the command runner, the
- * filesystem, the inventory document, the board rows and the session rows. So
- * the whole decision surface — which is where the incident lived — is testable
- * in-process, and this suite never spawns `git`.
+ * Most effects in `dispose-worktree.mjs` are injected: the command runner, the
+ * filesystem, the inventory document, the board rows and the session rows. The
+ * unregistered-directory CLI refusal also gets an isolated Git-repository test
+ * so both ordinary and dry-run command paths are covered end to end.
  *
  * That is not a stylistic preference. `scripts/__tests__/suite-budgets.test.mjs`
  * derives its list of process-spawning suites from a scan of this directory and
@@ -22,10 +22,20 @@
  * case with every other arm green.
  */
 
-import { describe, expect, it, afterEach, beforeEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { describe, expect, it, afterAll, afterEach, beforeEach, vi } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { sep, join } from 'node:path';
 import {
   KEEP_REF_PREFIX,
   MAX_INVENTORY_AGE_MS,
@@ -33,28 +43,44 @@ import {
   dispose,
   isRegenerableIgnored,
   locateInventory,
+  inspectOrphanContent,
+  orphanPreflight,
+  orphanRemovalRefusal,
   preflight,
   protectedContentOnDisk,
+  readInventory,
+  REFUSALS,
   readGitState,
+  readOperationState,
   rebuildCommand,
+  resolveOrphanDirectory,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
+import { SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 // Imported from its own module, not re-exported: the test asserts against the
 // same constant objects the generator writes into WORKTREES.json, so a rename of
 // an action value breaks these cases rather than silently agreeing with them.
-import { ACTION } from '../lib/worktree-inventory/classify.mjs';
+import { ACTION, LIVE_WINDOW_MS } from '../lib/worktree-inventory/classify.mjs';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const NOW = 1_800_000_000_000;
 
+/** Normalize a Unix-style path to the platform's native separator. */
+const np = (p) => p.split('/').join(sep);
+
 // Real files for the availability rule, which is about whether a path EXISTS —
 // something no injected stub can express. Under the OS temp dir, never the repo.
-const TMP = join(tmpdir(), 'dispose-worktree-availability');
-mkdirSync(TMP, { recursive: true });
+const TMP = mkdtempSync(join(tmpdir(), 'dispose-worktree-availability-'));
 const writeFixture = (name, body) => {
   const p = join(TMP, name);
   writeFileSync(p, body);
   return p;
 };
+
+afterAll(() => {
+  rmSync(TMP, { recursive: true, force: true });
+});
 
 /** A target that every gate is happy about. One gate is broken per test. */
 function greenState(overrides = {}) {
@@ -68,6 +94,7 @@ function greenState(overrides = {}) {
     locked: false,
     prunableReason: null,
     tip: 'abc1234',
+    mainHead: 'base-sha',
     isPrimary: false,
     commonDir: '/repo/.git',
     modified: 0,
@@ -86,7 +113,20 @@ function greenInventory(overrides = {}) {
     reason: null,
     generatedAt: new Date(NOW - 60_000).toISOString(),
     generatedAtMs: NOW - 60_000,
-    record: { action: ACTION.DISPOSE, mustNotPrune: false, derivedLive: false, writeHistory: { derivedChatIds: [] } },
+    evaluationAt: new Date(NOW - 60_000).toISOString(),
+    evaluationAtMs: NOW - 60_000,
+    base: 'main',
+    mainHead: 'base-sha',
+    record: {
+      action: ACTION.DISPOSE,
+      prunable: true,
+      mergedIntoMain: true,
+      mergeResultMatchesBase: false,
+      patchEquivalence: 'not-applicable',
+      mustNotPrune: false,
+      derivedLive: false,
+      writeHistory: { derivedChatIds: [] },
+    },
     ...overrides,
   };
 }
@@ -101,11 +141,24 @@ const greenBoard = {
 };
 const greenSessions = { available: true, dbPath: '/home/x/kilo.db', error: null, live: [] };
 
+/**
+ * A worktree git is not doing anything to.
+ *
+ * Supplied by `green()` rather than defaulted inside `preflight`, because the refusal
+ * for an ABSENT signal is itself a case below: a helper that filled this in would
+ * make that case unreachable, and the check it guards is the one whose absence is
+ * unrecoverable if it is ever wrong.
+ */
+function greenOperationState(overrides = {}) {
+  return { gitDir: '/repo/.git/worktrees/task', operations: [], unmerged: [], readError: null, ...overrides };
+}
+
 function green(overrides = {}) {
   return preflight({
     target: 'task',
     nowMs: NOW,
     gitState: greenState(),
+    operationState: greenOperationState(),
     inventory: greenInventory(),
     board: greenBoard,
     sessions: greenSessions,
@@ -123,13 +176,196 @@ describe('dispose preflight', () => {
     expect(verdict.ok).toBe(true);
   });
 
+  it('permits a net-no-op non-ancestor only with a matching main snapshot and recovery deletion proof', () => {
+    const inventory = greenInventory({
+      record: {
+        action: ACTION.DISPOSE,
+        prunable: true,
+        mergedIntoMain: false,
+        mergeResultMatchesBase: true,
+        patchEquivalence: 'unmerged',
+        mustNotPrune: false,
+        derivedLive: false,
+        writeHistory: { derivedChatIds: [] },
+      },
+    });
+    const verdict = green({ inventory });
+    expect(verdict.ok).toBe(true);
+    expect(verdict.deleteUnmergedBranch).toBe(true);
+    expect(verdict.deleteReason).toBe('merge-tree-no-op');
+    expect(verdict.expectedBaseHead).toBe('base-sha');
+  });
+
+  it('refuses a net-no-op deletion when main advanced since the inventory snapshot', () => {
+    const inventory = greenInventory({
+      record: {
+        action: ACTION.DISPOSE,
+        prunable: true,
+        mergedIntoMain: false,
+        mergeResultMatchesBase: true,
+        patchEquivalence: 'unmerged',
+        mustNotPrune: false,
+        derivedLive: false,
+        writeHistory: { derivedChatIds: [] },
+      },
+    });
+    const verdict = green({ inventory, gitState: greenState({ mainHead: 'advanced-main-sha' }) });
+    expect(codes(verdict)).toContain('inventory-base-moved');
+    expect(verdict.deleteUnmergedBranch).toBe(false);
+  });
+
+  it('keeps patch-absorbed deletion independent of the no-op merge snapshot', () => {
+    const inventory = greenInventory({
+      mainHead: 'old-main-sha',
+      record: {
+        action: ACTION.DISPOSE,
+        prunable: true,
+        mergedIntoMain: false,
+        mergeResultMatchesBase: true,
+        patchEquivalence: 'absorbed',
+        mustNotPrune: false,
+        derivedLive: false,
+        writeHistory: { derivedChatIds: [] },
+      },
+    });
+    const verdict = green({ inventory, gitState: greenState({ mainHead: 'advanced-main-sha' }) });
+    expect(codes(verdict)).not.toContain('inventory-base-moved');
+    expect(verdict.deleteUnmergedBranch).toBe(true);
+    expect(verdict.deleteReason).toBe('patch-absorbed');
+  });
+
+  it('permits an explicitly selected at-risk worktree while preserving its branch and dirty edits for salvage', () => {
+    const verdict = green({
+      preserveBranch: true,
+      gitState: greenState({ modified: 1, untracked: 1, dirtyPaths: ['src/edit.ts', 'notes.txt'] }),
+      inventory: greenInventory({
+        record: {
+          action: ACTION.AT_RISK,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: {},
+        },
+      }),
+    });
+
+    expect(verdict.failures).toEqual([]);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.keepBranch).toBe(true);
+  });
+
+  it('refuses --keep-branch for a land worktree: landing must delete the branch, not preserve it', () => {
+    const verdict = green({
+      preserveBranch: true,
+      gitState: greenState({ modified: 0, untracked: 0 }),
+      inventory: greenInventory({
+        record: {
+          action: ACTION.LAND,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: {},
+        },
+      }),
+    });
+
+    expect(codes(verdict)).toContain('action-not-dispose');
+    expect(verdict.ok).toBe(false);
+  });
+
+  it('does not let branch-preserving removal decide an undecided worktree', () => {
+    const verdict = green({
+      preserveBranch: true,
+      inventory: greenInventory({
+        record: {
+          action: ACTION.UNDECIDED,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: {},
+        },
+      }),
+    });
+
+    expect(codes(verdict)).toContain('action-not-dispose');
+    expect(verdict.ok).toBe(false);
+  });
+
+  it.each([
+    [
+      'a curated mustNotPrune claim',
+      {
+        inventory: greenInventory({
+          record: { ...greenInventory().record, action: ACTION.AT_RISK, mustNotPrune: true },
+        }),
+      },
+      'must-not-prune',
+    ],
+    ['ignored content', { gitState: greenState({ ignoredWork: ['.env.local'] }) }, 'ignored-content'],
+    ['a live board claim', { board: { ...greenBoard, claims: [{ agentId: 'writer' }] } }, 'board-claim'],
+    [
+      'an operation in progress',
+      { operationState: greenOperationState({ operations: [{ operation: 'merge', marker: 'MERGE_HEAD' }] }) },
+      'operation-in-progress',
+    ],
+  ])('still refuses branch-preserving removal for %s', (_label, overrides, expected) => {
+    const verdict = green({ preserveBranch: true, ...overrides });
+    expect(codes(verdict)).toContain(expected);
+    expect(verdict.ok).toBe(false);
+  });
+
   describe('each signal refuses on its own, with every other signal green', () => {
     const cases = [
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
       ['it is the main checkout', { gitState: greenState({ isPrimary: true }) }, 'main-worktree'],
+      [
+        'it is the base branch in a linked worktree of a bare repository',
+        { gitState: greenState({ branch: 'main' }) },
+        'main-worktree',
+      ],
+      [
+        'a merge is in progress in it',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+          }),
+        },
+        'operation-in-progress',
+      ],
+      [
+        'a rebase is in progress in it',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'rebase', marker: 'rebase-merge', value: null }],
+          }),
+        },
+        'operation-in-progress',
+      ],
+      [
+        'its index holds unmerged paths and no operation marker',
+        { operationState: greenOperationState({ unmerged: ['f.txt', 'g.ts'] }) },
+        'operation-in-progress',
+      ],
+      [
+        'its git state could not be read at all',
+        { operationState: greenOperationState({ readError: 'exit 128' }) },
+        'operation-state-unreadable',
+      ],
+      ['no git state was supplied for it', { operationState: undefined }, 'operation-state-absent'],
+      [
+        'a squash is in progress, which has no abandon command at all',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
+          }),
+        },
+        'operation-in-progress',
+      ],
       ['HEAD is detached', { gitState: greenState({ detached: true, branch: '(detached)' }) }, 'detached'],
       ['there is no branch to delete', { gitState: greenState({ branch: '(unknown)' }) }, 'no-branch'],
       ['the inventory is absent', { inventory: { ok: false, reason: 'missing' } }, 'inventory-missing'],
+      [
+        'the inventory schema is from another disposer',
+        { inventory: { ok: false, reason: 'version', version: 3 } },
+        'inventory-version',
+      ],
       ['the inventory has no entry for it', { inventory: greenInventory({ record: null }) }, 'not-in-inventory'],
       [
         'the inventory is older than the limit',
@@ -260,6 +496,7 @@ describe('dispose preflight', () => {
     const verdict = preflight({
       target: 'stale-citations',
       nowMs: NOW,
+      operationState: greenOperationState(),
       gitState: greenState({
         name: 'stale-citations',
         branch: 'fix/stale-citations',
@@ -268,7 +505,7 @@ describe('dispose preflight', () => {
         modified: 0,
         untracked: 0,
       }),
-      inventory: greenInventory({ record: { action: ACTION.DISPOSE, mustNotPrune: false } }),
+      inventory: greenInventory({ record: { action: ACTION.DISPOSE, prunable: true, mustNotPrune: false } }),
       board: {
         available: true,
         claims: [],
@@ -294,6 +531,7 @@ describe('dispose preflight', () => {
       target: 'task',
       nowMs: NOW,
       gitState: greenState({ isPrimary: true, modified: 2, dirtyPaths: ['a', 'b'] }),
+      operationState: greenOperationState(),
       inventory: { ok: false, reason: 'missing' },
       board: { ...greenBoard, claims: [{ agentId: 'x' }] },
       sessions: { available: true, live: [{ id: 's' }] },
@@ -349,14 +587,69 @@ describe('dispose preflight', () => {
     expect(codes(verdict)).toEqual(['board-unavailable', 'dirty-tree', 'sessions-unavailable']);
   });
 
-  it('accepts an inventory exactly at the age limit and refuses one millisecond past it', () => {
+  it('accepts a past inventory at the age limit but refuses any future timestamp', () => {
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS }) }).ok).toBe(true);
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS - 1 }) }).ok).toBe(false);
+    expect(green({ inventory: greenInventory({ generatedAtMs: NOW + 1 }) }).ok).toBe(false);
+  });
+
+  it('refuses any future pinned evaluation clock even when generation is current', () => {
+    const verdict = green({
+      inventory: greenInventory({ evaluationAtMs: NOW + 1 }),
+    });
+
+    expect(codes(verdict)).toContain('inventory-evaluation-stale');
+    expect(verdict.failures.find((failure) => failure.code === 'inventory-evaluation-stale').message).toContain(
+      'without `--now`'
+    );
+  });
+
+  it('refuses a future-dated inventory beyond the freshness limit', () => {
+    const verdict = green({
+      inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS + 1 }),
+    });
+    expect(codes(verdict)).toContain('inventory-stale');
+    expect(verdict.failures[0].message).toContain('generated in 15 min');
   });
 
   it('refuses an inventory whose generatedAt is unparseable rather than treating it as fresh', () => {
     const verdict = green({ inventory: greenInventory({ generatedAt: 'not-a-date', generatedAtMs: NaN }) });
     expect(codes(verdict)).toContain('inventory-stale');
+  });
+});
+
+describe('inventory schema', () => {
+  it.each([
+    ['missing', { generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
+    ['unsupported', { schemaVersion: SCHEMA_VERSION - 1, generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
+  ])('refuses an inventory with a %s schema', (label, doc) => {
+    const path = writeFixture(`schema-${label}.json`, JSON.stringify(doc));
+    const inventory = readInventory('/repo', greenState(), { nowMs: NOW, path });
+    expect(inventory).toMatchObject({ ok: false, reason: 'version', path });
+
+    expect(codes(green({ inventory }))).toContain('inventory-version');
+  });
+
+  it('reads the current inventory schema', () => {
+    const path = writeFixture(
+      'schema-current.json',
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        generatedAt: new Date(NOW).toISOString(),
+        base: 'main',
+        mainHead: 'main-sha',
+        ownership: { asOf: new Date(NOW).toISOString() },
+        worktrees: [],
+      })
+    );
+    expect(readInventory('/repo', greenState(), { nowMs: NOW, path })).toMatchObject({
+      ok: true,
+      reason: null,
+      base: 'main',
+      mainHead: 'main-sha',
+      evaluationAtMs: NOW,
+      record: null,
+    });
   });
 });
 
@@ -412,9 +705,15 @@ describe('dispose execution', () => {
   function harness(answers = {}) {
     const calls = [];
     const writes = [];
+    const answerCounts = new Map();
     const run = (cwd, args, opts = {}) => {
       calls.push(args);
-      const answer = answers[args.join(' ')] ?? answers[`${args[0]} ${args[1]}`];
+      const key = args.join(' ');
+      const answerKey = answers[key] === undefined ? `${args[0]} ${args[1]}` : key;
+      const configured = answers[answerKey];
+      const count = answerCounts.get(answerKey) ?? 0;
+      answerCounts.set(answerKey, count + 1);
+      const answer = Array.isArray(configured) ? configured[Math.min(count, configured.length - 1)] : configured;
       if (answer instanceof Error) throw answer;
       return { stdout: typeof answer === 'string' ? answer : '' };
     };
@@ -462,8 +761,11 @@ describe('dispose execution', () => {
 
   it('writes no anchor when even the slugged ref is invalid', () => {
     const { run, fs, calls } = harness({ 'check-ref-format refs/keep/disposed/weird': new Error('bad name') });
-    dispose('/repo', greenState({ branch: '(weird)', name: '(weird)' }), { run, fs });
+    const result = dispose('/repo', greenState({ branch: '(weird)', name: '(weird)' }), { run, fs });
     expect(calls.some((c) => c[0] === 'update-ref')).toBe(false);
+    expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
   });
 
   it('never passes --force or -f to worktree remove', () => {
@@ -473,6 +775,177 @@ describe('dispose execution', () => {
       expect(call).not.toContain('--force');
       expect(call).not.toContain('-f');
     }
+  });
+
+  describe('a legacy worktree: the directory goes, the branch stays', () => {
+    const legacyInventory = (record = {}) =>
+      greenInventory({
+        record: {
+          action: ACTION.LEGACY,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: { derivedChatIds: [] },
+          ...record,
+        },
+      });
+
+    it('permits it, because a legacy worktree IS a disposal candidate', () => {
+      // The asymmetry is the status: `dispose` means "remove this", and for a
+      // legacy worktree what is removed is the directory. Refusing on `legacy`
+      // would leave every such worktree exactly where a sweep found it.
+      const verdict = green({ inventory: legacyInventory() });
+      expect(verdict.failures).toEqual([]);
+      expect(verdict.ok).toBe(true);
+    });
+
+    it('reports keepBranch, because that is what separates it from a disposal', () => {
+      // Read from ONE place and handed to `dispose()`. Derived twice, the
+      // inventory could be regenerated between the two reads and the branch
+      // would go with the directory on a verdict that no longer applied.
+      expect(green({ inventory: legacyInventory() }).keepBranch).toBe(true);
+      expect(green().keepBranch).toBe(false);
+      expect(green({ inventory: greenInventory({ record: null }) }).keepBranch).toBe(false);
+    });
+
+    it('still refuses every signal that protects a live, dirty or in-flight worktree', () => {
+      // `legacy` must not become the soft `--force` this program does not have.
+      // Each of these is the reason a sweep once destroyed live work, and a
+      // status whose only effect is to skip `git branch -d` changes none of them.
+      const cases = [
+        ['dirty-tree', { gitState: greenState({ modified: 1, untracked: 0, dirtyPaths: ['a.ts'] }) }],
+        ['dirty-tree', { gitState: greenState({ modified: 0, untracked: 2, dirtyPaths: ['b.ts'] }) }],
+        ['live-session', { sessions: { available: true, live: [{ id: 's1' }] } }],
+        ['board-claim', { board: { ...greenBoard, claims: [{ agentId: 'a1' }] } }],
+        ['board-lock', { board: { ...greenBoard, fileLocks: [{ path: 'a.ts' }] } }],
+        ['board-agent-live', { board: { ...greenBoard, liveAgents: [{ agentId: 'a1' }] } }],
+        [
+          'derived-live-writer',
+          { inventory: legacyInventory({ derivedLive: true, writeHistory: { derivedChatIds: ['ses_abc'] } }) },
+        ],
+        [
+          'operation-in-progress',
+          {
+            operationState: greenOperationState({
+              operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'd' }],
+            }),
+          },
+        ],
+        ['ignored-content', { gitState: greenState({ ignoredWork: ['notes.log'] }) }],
+      ];
+      for (const [expected, overrides] of cases) {
+        // The legacy inventory goes LAST so a case that supplies its own record —
+        // `derived-live-writer` — is not overwritten by the default one. Written
+        // the other way round the case would pass for the wrong reason: a green
+        // default record refuses nothing, so the assertion would be vacuous.
+        const verdict = green({ ...overrides, inventory: overrides.inventory ?? legacyInventory() });
+        expect(codes(verdict), expected).toContain(expected);
+        expect(verdict.ok).toBe(false);
+      }
+    });
+
+    it('never lets a legacy claim override mustNotPrune, which protects content instead of a ref', () => {
+      // One is a claim that the work is not accounted for; the other is a claim
+      // that it is accounted for and will never be worked on. They are opposite
+      // statements about the same tree, and the one about losing content wins.
+      const verdict = green({
+        inventory: greenInventory({
+          record: {
+            action: ACTION.LEGACY,
+            mustNotPrune: true,
+            derivedLive: false,
+            writeHistory: {},
+          },
+        }),
+      });
+      expect(codes(verdict)).toContain('must-not-prune');
+      expect(verdict.ok).toBe(false);
+    });
+
+    it('removes the worktree and skips git branch -d', () => {
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.branchKept).toBe(true);
+      expect(result.branchDeleted).toBe(false);
+      expect(result.worktreeRemoved).toBe(true);
+      expect(calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
+      // The whole status in one assertion: the command that deletes the ref is
+      // not run at all, so no `-D` fallback can reach it either.
+      expect(calls.some((c) => c[0] === 'branch')).toBe(false);
+    });
+
+    it('writes no anchor ref, because the surviving branch IS the copy', () => {
+      // An anchor under `refs/keep/disposed/` records "this was removed and this
+      // is the only copy". For a kept branch both halves are false, and the ref
+      // would sit beside a branch that was never disposed, implying the opposite.
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState({ tip: 'deadbeef' }), { run, fs, keepBranch: true });
+      expect(calls.some((c) => c[0] === 'update-ref')).toBe(false);
+      expect(result.anchorRef).toBeNull();
+      expect(result.steps.join('\n')).toContain(`KEPT branch fix/task`);
+    });
+
+    it('names the status in the step report, so a reader knows the branch was deliberate', () => {
+      const { run, fs } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.steps.join('\n')).toContain('branch-preserving disposal mode');
+    });
+
+    it('still salvages before removing the directory', () => {
+      // Ordering, not coverage: the salvage is the only thing standing between a
+      // tree that turned out to hold something and its loss, and skipping it for
+      // legacy would make the status a way to delete a worktree unexamined.
+      const { run, fs, calls } = harness({
+        'diff HEAD --binary': 'diff --git a/x.png b/x.png\n',
+        'ls-files --others --exclude-standard -z': 'notes.md\0',
+      });
+      const tars = [];
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true, tar: (...a) => tars.push(a) });
+      const salvageAt = calls.findIndex((c) => c[0] === 'diff');
+      const removeAt = calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
+      expect(salvageAt).toBeGreaterThanOrEqual(0);
+      expect(removeAt).toBeGreaterThan(salvageAt);
+      expect(result.salvage.written.sort()).toEqual(['tracked.patch', 'untracked.tar']);
+      expect(tars).toHaveLength(1);
+    });
+
+    it('clears dirty files only after archiving them, then verifies cleanliness before removal', () => {
+      const h = harness({
+        'diff HEAD --binary': 'diff --git a/x.png b/x.png\n',
+        'ls-files --others --exclude-standard -z': 'notes.md\0',
+      });
+      const tars = [];
+      const result = dispose('/repo', greenState({ modified: 1, untracked: 1, dirtyPaths: ['x.png', 'notes.md'] }), {
+        run: h.run,
+        fs: h.fs,
+        keepBranch: true,
+        tar: (...args) => tars.push(args),
+      });
+
+      const archiveAt = h.calls.findIndex((call) => call[0] === 'diff');
+      const resetAt = h.calls.findIndex((call) => call[0] === 'reset');
+      const cleanAt = h.calls.findIndex((call) => call[0] === 'clean');
+      const verifyAt = h.calls.findIndex((call) => call.join(' ') === 'status --porcelain');
+      const removeAt = h.calls.findIndex((call) => call[0] === 'worktree' && call[1] === 'remove');
+      expect(tars).toHaveLength(1);
+      expect(archiveAt).toBeLessThan(resetAt);
+      expect(resetAt).toBeLessThan(cleanAt);
+      expect(cleanAt).toBeLessThan(verifyAt);
+      expect(verifyAt).toBeLessThan(removeAt);
+      expect(result.worktreeRemoved).toBe(true);
+      expect(result.branchKept).toBe(true);
+      expect(h.calls.some((call) => call[0] === 'branch')).toBe(false);
+    });
+
+    it('keeps the branch even when git would have refused to delete it anyway', () => {
+      // `git branch -d` refusing an unmerged branch is the guard on the last step
+      // of an ordinary disposal. Legacy does not consult it, because the command
+      // is not run — so the two halves of the program cannot be confused for each
+      // other in the step report.
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(calls.some((c) => c[0] === 'branch')).toBe(false);
+      expect(result.steps.join('\n')).toContain('branch-preserving disposal mode');
+    });
   });
 
   it('deletes the branch with -d, and keeps it when git refuses', () => {
@@ -491,6 +964,74 @@ describe('dispose execution', () => {
     expect(refused.steps.join('\n')).toContain(KEEP_REF_PREFIX);
   });
 
+  it('uses guarded -D only for a verified absorbed branch after anchoring it', () => {
+    const h = harness();
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'patch-absorbed',
+    });
+    const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
+    expect(anchorAt).toBeGreaterThanOrEqual(0);
+    expect(deleteAt).toBeGreaterThan(anchorAt);
+    expect(result.branchDeleted).toBe(true);
+    expect(result.steps.join('\n')).toContain('after anchoring its recovery ref');
+  });
+
+  it('deletes a net-no-op merge branch with guarded -D after checking main and anchoring it', () => {
+    const h = harness({ 'rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'base-sha'] });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'merge-tree-no-op',
+      expectedBaseHead: 'base-sha',
+    });
+    const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
+    const removeAt = h.calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
+    expect(anchorAt).toBeGreaterThanOrEqual(0);
+    expect(removeAt).toBeGreaterThan(anchorAt);
+    expect(deleteAt).toBeGreaterThan(removeAt);
+    expect(result.branchDeleted).toBe(true);
+    expect(h.calls.filter((c) => c.join(' ') === 'rev-parse --verify main^{commit}')).toHaveLength(3);
+    expect(result.steps.join('\n')).toContain('deleted net-no-op merge branch fix/task');
+  });
+
+  it('keeps the worktree when main advances before net-no-op disposal', () => {
+    const h = harness({ 'rev-parse --verify main^{commit}': 'new-main-sha' });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'merge-tree-no-op',
+      expectedBaseHead: 'base-sha',
+    });
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
+    expect(h.calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
+    expect(result.steps.join('\n')).toContain('main moved or became unreadable');
+  });
+
+  it('keeps the branch anchored if main advances during net-no-op disposal', () => {
+    const h = harness({ 'rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'new-main-sha'] });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'merge-tree-no-op',
+      expectedBaseHead: 'base-sha',
+    });
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    expect(result.branchKept).toBe(true);
+    expect(h.calls.some((c) => c.join(' ') === 'branch -D fix/task')).toBe(false);
+    expect(result.steps.join('\n')).toContain('main moved or became unreadable after worktree removal');
+    expect(result.anchorRef).toContain(KEEP_REF_PREFIX);
+  });
+
   it('salvages a binary-safe patch and an untracked archive, and lists what it wrote', () => {
     const h = harness({
       'diff HEAD --binary': 'diff --git a/x.png b/x.png\n',
@@ -504,13 +1045,13 @@ describe('dispose execution', () => {
     // Keyed by the SLUGGED FULL PATH plus the name, not by the bare basename:
     // two worktrees can share a basename here, and `mkdirSync(recursive: true)`
     // had the second overwrite the first's archive.
-    const SALVAGE_DIR = '/repo/.git/worktree-salvage/repo-.kilo-worktrees-task-task';
+    const SALVAGE_DIR = np('/repo/.git/worktree-salvage/repo-.kilo-worktrees-task-task');
     expect(result.salvage.dir).toBe(SALVAGE_DIR);
-    expect(h.writes.map((w) => w.p)).toEqual([`${SALVAGE_DIR}/tracked.patch`]);
+    expect(h.writes.map((w) => w.p)).toEqual([`${SALVAGE_DIR}${sep}tracked.patch`]);
     // `tar`, never `git tar` — verified `git: 'tar' is not a git command`. The
     // swallowed failure made a partial salvage report itself as a success.
     expect(tars).toHaveLength(1);
-    expect(tars[0][1]).toBe(`${SALVAGE_DIR}/untracked.tar`);
+    expect(tars[0][1]).toBe(`${SALVAGE_DIR}${sep}untracked.tar`);
     expect(h.calls.some((c) => c.includes('tar'))).toBe(false);
   });
 
@@ -531,6 +1072,8 @@ describe('dispose execution', () => {
     expect(result.salvage.failed[0]).toContain('untracked.tar');
     // And the caller says so out loud rather than returning quietly.
     expect(result.steps.join('\n')).toContain('SALVAGE INCOMPLETE');
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
   });
 
   it('salvages nothing, and says so, when there is nothing uncommitted', () => {
@@ -602,6 +1145,110 @@ describe('a signal that could not be read is not an empty signal', () => {
     expect(codes(green({ gitState: greenState({ statusError: null }) }))).toEqual([]);
   });
 
+  it('names no command to run when git has none, rather than naming a wrong one', () => {
+    // Measured: `git merge --abort` answers "fatal: There is no merge to abort
+    // (MERGE_HEAD missing)" during a squash, and `git squash` is not a command. An
+    // earlier version substituted `git status` — a report, not a remedy — so the
+    // refusal read "Finish or abandon it deliberately — git status".
+    const squash = green({
+      operationState: greenOperationState({ operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }] }),
+    });
+    const message = squash.failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toMatch(/no command that abandons a squash|No operation marker is set/);
+    expect(message).not.toMatch(/git status/);
+    expect(message).not.toMatch(/git squash --abort/);
+  });
+
+  it('names `git am --abort` for a rebase-apply, which `git rebase --abort` cannot do', () => {
+    // Both rebase rows are operation `rebase`, and taking the operation NAME produced
+    // `git rebase --abort` for `git am` — which fatals with "It looks like 'git am' is
+    // in progress".
+    const am = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'rebase', marker: 'rebase-apply', value: null }],
+      }),
+    });
+    expect(am.failures.find((f) => f.code === 'operation-in-progress').message).toContain('git am --abort');
+  });
+
+  it('tells the operator who else is in the worktree before they read an abort command', () => {
+    // The refusal names a command that DISCARDS work, and `preflight` already holds
+    // the ownership facts. It used to run ahead of every ownership check and drop
+    // them, so the advice to consider `git merge --abort` arrived with no hint that a
+    // live session was mid-merge in it.
+    const message = green({
+      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress')?.message;
+    // With no operation there is no refusal at all, which is the first thing to check.
+    expect(message).toBeUndefined();
+
+    const withMerge = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(withMerge).toContain('1 board claim(s)');
+    expect(withMerge).toContain('1 live session(s)');
+    expect(withMerge).toMatch(/before you abort anything/);
+  });
+
+  it('adds no ownership sentence when nothing is live, because that is absence of evidence', () => {
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).not.toContain('Others are recorded');
+    expect(message).toContain('deadbee');
+  });
+
+  it('reads an operation state as no-operation rather than as no-answer', () => {
+    // The reader's whole contract with `preflight`: a worktree git is not touching
+    // reads as an empty ANSWER, and only a read that actually failed reads as a
+    // question. Conflating them would put the new refusal on every clean worktree,
+    // which is how a guard gets switched off.
+    const dir = join(TMP, 'op-state-clean');
+    mkdirSync(dir, { recursive: true });
+    expect(readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: () => [] })).toMatchObject({
+      gitDir: dir,
+      operations: [],
+      unmerged: [],
+      readError: null,
+      unmergedError: null,
+    });
+  });
+
+  it('records a failed read as readError instead of throwing, so the refusal can name it', () => {
+    // `git diff` exiting non-zero has to arrive at `preflight` as a FIELD. A throw
+    // here would escape `preflight`, which is a pure decision function with no
+    // try/catch of its own, and the operator would see a stack trace instead of the
+    // refusal that says which command failed.
+    const dir = join(TMP, 'op-state-failed');
+    mkdirSync(dir, { recursive: true });
+    const boom = () => {
+      throw new Error('Command failed: git diff');
+    };
+    const state = readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: boom });
+    expect(state.readError).toMatch(/git diff/);
+    expect(state.unmerged).toEqual([]);
+
+    const verdict = green({ operationState: state });
+    expect(codes(verdict)).toEqual(['operation-state-unreadable']);
+    expect(verdict.failures[0].message).toMatch(/UNKNOWN rather than no/);
+  });
+
+  it('treats a worktree whose git directory cannot be resolved as unreadable, not clean', () => {
+    // The shape that would otherwise pass every check: `gitDirOf` returns null, which
+    // a `?? []` would read as "no operations". A disposal on that answer removes
+    // `.git/worktrees/<name>/` and with it the only record of a merge.
+    const state = readOperationState('/nowhere', { gitDirOf: () => null });
+    expect(state.readError).toMatch(/absolute-git-dir/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
   it('refuses on gitignored content that no command rebuilds', () => {
     // `git status --porcelain` honours .gitignore, and `ls-files --others
     // --exclude-standard` — which is what salvage() reads — honours it too. So a
@@ -665,6 +1312,10 @@ describe('the regenerable-ignored rule', () => {
     expect(isRegenerableIgnored('.serena/memories/plan.md')).toBe(false);
     expect(rebuildCommand('.serena/memories/plan.md')).toBeNull();
   });
+
+  it('does not treat nested worktrees as regenerable just because their parent is .kilo', () => {
+    expect(isRegenerableIgnored('.kilo/worktrees/active/main.ts')).toBe(false);
+  });
 });
 
 /**
@@ -716,6 +1367,196 @@ describe('a protected subtree inside a collapsed allowlisted directory', () => {
   });
 });
 
+describe('unregistered worktree directories', () => {
+  let root;
+  let worktreesRoot;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dispose-orphan-'));
+    worktreesRoot = join(root, '.kilo', 'worktrees');
+    mkdirSync(worktreesRoot, { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const resolveOrphan = (cwd, target) =>
+    resolveOrphanDirectory(cwd, target, {
+      run: () => ({ stdout: `worktree ${root}\nbranch refs/heads/main\n` }),
+      realpath: (p) => {
+        try {
+          return realpathSync(p);
+        } catch {
+          return p;
+        }
+      },
+    });
+
+  it('resolves a bare name and an explicit path to one real direct child', () => {
+    const target = join(worktreesRoot, 'stale-citations');
+    mkdirSync(target);
+
+    expect(resolveOrphan(root, 'stale-citations')).toMatchObject({ found: true, name: 'stale-citations' });
+    expect(resolveOrphan(root, 'stale-citations').absolutePath).toBe(realpathSync(target));
+    expect(resolveOrphan(root, target)).toMatchObject({ found: true, absolutePath: realpathSync(target) });
+  });
+
+  it('refuses missing, non-directory, outside, nested and symlink targets distinctly', () => {
+    const file = join(worktreesRoot, 'not-a-directory');
+    const outside = join(root, 'outside');
+    const nested = join(worktreesRoot, 'parent', 'nested');
+    const link = join(worktreesRoot, 'directory-link');
+    writeFileSync(file, 'not a directory');
+    mkdirSync(outside);
+    mkdirSync(nested, { recursive: true });
+    symlinkSync(outside, link);
+
+    expect(resolveOrphan(root, 'missing')).toMatchObject({ found: false, reason: 'missing' });
+    expect(resolveOrphan(root, file)).toMatchObject({ found: false, reason: 'not-directory' });
+    expect(resolveOrphan(root, outside)).toMatchObject({ found: false, reason: 'outside-worktrees' });
+    expect(resolveOrphan(root, nested)).toMatchObject({ found: false, reason: 'not-direct-child' });
+    expect(resolveOrphan(root, link)).toMatchObject({ found: false, reason: 'not-directory' });
+  });
+
+  it('reports regenerable output and refuses source, protected notes, or nested worktrees', () => {
+    const orphan = join(worktreesRoot, 'stale-citations');
+    mkdirSync(join(orphan, '.vite', 'vitest'), { recursive: true });
+    mkdirSync(join(orphan, '.kilo', 'worktrees', 'nested'), { recursive: true });
+    mkdirSync(join(orphan, '.serena', 'memories'), { recursive: true });
+    mkdirSync(join(orphan, 'src'), { recursive: true });
+    writeFileSync(join(orphan, '.kilo', 'e2e-last-run.json'), '{}\n');
+    writeFileSync(join(orphan, '.serena', 'memories', 'plan.md'), 'keep\n');
+    writeFileSync(join(orphan, 'src', 'keep.ts'), 'keep\n');
+
+    const content = inspectOrphanContent(orphan);
+    expect(content.regenerablePaths).toEqual(['.kilo/', '.serena/', '.vite/']);
+    expect(content.protectedPaths).toEqual(['.kilo/worktrees/', '.serena/memories/', 'src/']);
+    expect(
+      orphanPreflight({
+        ownership: {
+          board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+          sessions: { available: true, live: [] },
+        },
+        content,
+      }).ok
+    ).toBe(false);
+  });
+
+  it('refuses unreadable ownership sources and live owners even when contents are regenerable', () => {
+    const content = { errors: [], protectedPaths: [], regenerablePaths: ['.vite/'] };
+    const unreadable = orphanPreflight({
+      ownership: {
+        board: { available: false, error: 'board read failed' },
+        sessions: { available: false, error: 'session read failed' },
+      },
+      content,
+    });
+    expect(unreadable.failures.map((failure) => failure.code)).toEqual(['board-unavailable', 'sessions-unavailable']);
+
+    const live = orphanPreflight({
+      ownership: {
+        board: { available: true, claims: [], fileLocks: [], liveAgents: [{ agentId: 'active' }] },
+        sessions: { available: true, live: [] },
+      },
+      content,
+    });
+    expect(live.failures.map((failure) => failure.code)).toEqual(['board-agent-live']);
+  });
+
+  it('refuses path-based removal after the repository root is swapped for a symlink', () => {
+    const victim = join(worktreesRoot, 'victim');
+    const outsideKilo = join(root, 'outside-kilo');
+    const outsideVictim = join(outsideKilo, 'worktrees', 'victim');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    mkdirSync(outsideVictim, { recursive: true });
+    writeFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'validated victim\n');
+    writeFileSync(join(outsideVictim, 'keep.txt'), 'outside data\n');
+
+    const orphan = resolveOrphan(root, 'victim');
+    const ownership = {
+      board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+      sessions: { available: true, live: [] },
+    };
+    expect(orphan.found).toBe(true);
+    expect(orphanPreflight({ ownership, content: inspectOrphanContent(victim) }).ok).toBe(true);
+
+    const validatedKilo = join(root, '.kilo-validated');
+    renameSync(join(root, '.kilo'), validatedKilo);
+    symlinkSync(outsideKilo, join(root, '.kilo'), 'dir');
+
+    expect(orphanRemovalRefusal(orphan)).toMatchObject({ removed: false, code: 'orphan-removal-unsupported' });
+    expect(readFileSync(join(outsideVictim, 'keep.txt'), 'utf8')).toBe('outside data\n');
+    expect(readFileSync(join(validatedKilo, 'worktrees', 'victim', '.vite', 'vitest', 'cache.bin'), 'utf8')).toBe(
+      'validated victim\n'
+    );
+  });
+
+  it('refuses path-based removal after the target name is replaced', () => {
+    const victim = join(worktreesRoot, 'victim');
+    const validatedVictim = join(worktreesRoot, 'victim-validated');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    writeFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'validated victim\n');
+
+    const orphan = resolveOrphan(root, 'victim');
+    const ownership = {
+      board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+      sessions: { available: true, live: [] },
+    };
+    expect(orphan.found).toBe(true);
+    expect(orphanPreflight({ ownership, content: inspectOrphanContent(victim) }).ok).toBe(true);
+
+    renameSync(victim, validatedVictim);
+    mkdirSync(victim);
+    writeFileSync(join(victim, 'replacement.txt'), 'replacement data\n');
+
+    expect(orphanRemovalRefusal(orphan)).toMatchObject({ removed: false, code: 'orphan-removal-unsupported' });
+    expect(readFileSync(join(victim, 'replacement.txt'), 'utf8')).toBe('replacement data\n');
+    expect(readFileSync(join(validatedVictim, '.vite', 'vitest', 'cache.bin'), 'utf8')).toBe('validated victim\n');
+  });
+
+  it('refuses path-based removal when Git registers the target after preflight', () => {
+    const victim = join(worktreesRoot, 'victim');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    writeFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'registered later\n');
+
+    const orphan = resolveOrphan(root, 'victim');
+    const ownership = {
+      board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+      sessions: { available: true, live: [] },
+    };
+    expect(orphanPreflight({ ownership, content: inspectOrphanContent(victim) }).ok).toBe(true);
+
+    expect(
+      readGitState(root, 'victim', {
+        list: () => [{ path: victim, branch: 'fix/registered-after-preflight' }],
+        run: () => ({ stdout: 'abc1234' }),
+      }).found
+    ).toBe(true);
+    expect(orphanRemovalRefusal(orphan)).toMatchObject({ removed: false, code: 'orphan-removal-unsupported' });
+    expect(readFileSync(join(victim, '.vite', 'vitest', 'cache.bin'), 'utf8')).toBe('registered later\n');
+  });
+
+  it.each([
+    ['ordinary mode', []],
+    ['dry-run mode', ['--dry-run']],
+  ])('CLI %s refuses an unregistered directory and preserves it', (_label, flags) => {
+    execFileSync('git', ['init', '--quiet', '--initial-branch=main', root], { stdio: 'ignore' });
+    const victim = join(worktreesRoot, 'victim');
+    mkdirSync(join(victim, '.vite', 'vitest'), { recursive: true });
+    const cache = join(victim, '.vite', 'vitest', 'cache.bin');
+    writeFileSync(cache, 'keep until supported safe removal exists\n');
+
+    const cli = join(import.meta.dirname, '../dispose-worktree.mjs');
+    const result = spawnSync(process.execPath, [cli, victim, ...flags], { cwd: root, encoding: 'utf8' });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('refusing unregistered directory');
+    expect(result.stderr).toContain('Unregistered directory removal is disabled');
+    expect(result.stderr).toContain('Nothing was changed.');
+    expect(readFileSync(cache, 'utf8')).toBe('keep until supported safe removal exists\n');
+  });
+});
+
 describe('a bare name that identifies two worktrees identifies neither', () => {
   it('refuses rather than disposing the first match', () => {
     // Git refuses two worktrees at the same PATH, so a path is unique; it says
@@ -743,6 +1584,19 @@ describe('a bare name that identifies two worktrees identifies neither', () => {
     });
     expect(state.found).toBe(true);
     expect(state.absolutePath).toBe('/repo/.kilo/worktrees/task');
+  });
+
+  it('does not treat a failed worktree listing as proof that a directory is orphaned', () => {
+    const state = readGitState('/repo', 'orphan', {
+      list: () => {
+        throw new Error('git worktree list failed');
+      },
+    });
+    expect(state).toMatchObject({ found: false, listError: 'git worktree list failed' });
+    expect(readGitState('/repo', 'orphan', { list: () => [] })).toMatchObject({
+      found: false,
+      listError: 'git worktree list returned no worktrees',
+    });
   });
 });
 
@@ -848,6 +1702,7 @@ describe('readGitState reads the ignored content it is supposed to refuse on', (
       target: 'task',
       nowMs: NOW,
       gitState: state,
+      operationState: greenOperationState(),
       inventory: greenInventory(),
       board: greenBoard,
       sessions: greenSessions,
@@ -1035,67 +1890,246 @@ describe('salvage archives the ignored content a rebuild cannot replace', () => 
 /**
  * The inventory is read from the MAIN checkout, not from wherever this ran.
  *
- * This is the difference between a guard that works and a guard nobody runs.
- * `.gitignore` anchors the rule to `/WORKTREES.json` precisely so that each
- * worktree does not accumulate its own stale copy of a repository-wide document
- * — so reading `join(cwd, 'WORKTREES.json')` found nothing in every worktree
- * this repository actually uses. Measured: from a task worktree, with a valid
- * 66-worktree inventory in the main checkout and a target that inventory calls
- * `action: "dispose"`, every disposal refused `WORKTREES.json is absent` — and
- * the refusal's own advice is to run the generator, which writes the second copy
- * the ignore rule exists to prevent.
+ * There is exactly one canonical location: the checkout that has `main`
+ * registered, resolved through the shared `location.mjs` module. A stale
+ * task-local `WORKTREES.json` is the most dangerous state — it authorises a
+ * disposal against a snapshot the generator has never seen — so the canonical
+ * path is always returned, even when the file does not yet exist there.
+ * `readInventory` then refuses `missing` rather than falling back.
  */
 describe('locating the inventory', () => {
-  const gitSays = (commonDir) => (cwd, args) => ({ stdout: `${commonDir}\n` });
+  const identityRealpath = (p) => p;
+  const mainWorktreeRun = (cwd, args) => {
+    if (args[0] === 'worktree') return { stdout: 'worktree /repo\nbranch refs/heads/main\n' };
+    return { stdout: `${cwd}/.git\n` };
+  };
+  const bareRepoRun = (_cwd, args) => {
+    if (args[0] === 'worktree') {
+      return {
+        stdout: 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n',
+      };
+    }
+    return { stdout: '/repo/.git\n' };
+  };
 
   it('resolves it in the main checkout, from a worktree', () => {
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: gitSays('/repo/.git'),
-      exists: (p) => p === '/repo/WORKTREES.json',
+      run: mainWorktreeRun,
+      realpath: identityRealpath,
     });
-    expect(resolved).toBe('/repo/WORKTREES.json');
+    expect(resolved).toBe(np('/repo/WORKTREES.json'));
   });
 
-  it('does not fall back to the worktree copy when the main one is there', () => {
-    // The failure is silent: a path that exists but is not the authoritative one
-    // reads as a stale or absent inventory, and either way the disposal refuses.
+  it('resolves the linked main worktree, not the bare checkout that owns it', () => {
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: gitSays('/repo/.git'),
-      exists: (p) => p === '/repo/WORKTREES.json' || p === '/repo/.kilo/worktrees/task/WORKTREES.json',
+      run: bareRepoRun,
+      realpath: identityRealpath,
     });
-    expect(resolved).not.toContain('.kilo');
+    expect(resolved).toBe(np('/repo/.kilo/worktrees/main/WORKTREES.json'));
   });
 
-  it('falls back to cwd outside a repository, so the injected suite still resolves', () => {
+  it('returns the canonical path even when the file does not yet exist', () => {
+    // A fresh clone, or a machine that has never run the generator. The canonical
+    // path is still returned — readInventory refuses `missing` rather than
+    // falling back to a stale task-local copy.
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: mainWorktreeRun,
+      realpath: identityRealpath,
+    });
+    expect(resolved).toBe(np('/repo/WORKTREES.json'));
+  });
+
+  it('refuses a stale task-local inventory instead of reading it', () => {
+    const repositoryRoot = mkdtempSync(join(tmpdir(), 'dispose-inventory-root-'));
+    const cwd = join(repositoryRoot, '.kilo', 'worktrees', 'task');
+    const canonicalPath = join(realpathSync(repositoryRoot), 'WORKTREES.json');
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(
+      join(cwd, 'WORKTREES.json'),
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        generatedAt: new Date(NOW).toISOString(),
+        ownership: { asOf: new Date(NOW).toISOString() },
+        worktrees: [],
+      })
+    );
+
+    try {
+      const inventory = readInventory(cwd, greenState(), {
+        nowMs: NOW,
+        run: (_cwd, args) => ({
+          stdout: args[0] === 'worktree' ? `worktree ${repositoryRoot}\nbranch refs/heads/main\n` : '',
+        }),
+      });
+      expect(inventory).toEqual({ ok: false, reason: 'missing', path: canonicalPath });
+    } finally {
+      rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns no path outside a repository rather than using a cwd-local copy', () => {
     const resolved = locateInventory('/somewhere', {
       run: () => {
         throw new Error('not a git repository');
       },
-      exists: () => false,
     });
-    expect(resolved).toBe('/somewhere/WORKTREES.json');
+    expect(resolved).toBeNull();
   });
 
-  it('falls back to cwd when the main checkout has no inventory yet', () => {
-    // A fresh clone, or a machine that has never run the generator. The refusal
-    // is then `inventory-missing`, which is the honest answer.
-    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
-      run: gitSays('/repo/.git'),
-      exists: () => false,
-    });
-    expect(resolved).toBe('/repo/.kilo/worktrees/task/WORKTREES.json');
-  });
-
-  it('asks git for the COMMON dir, which is the one answer available from anywhere', () => {
+  it('prefers registered main and reads the primary roster only for inventory fallback', () => {
     const asked = [];
-    locateInventory('/repo/.kilo/worktrees/task', {
-      run: (cwd, args) => {
-        asked.push(args);
-        return { stdout: '/repo/.git\n' };
-      },
-      exists: () => true,
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: mainWorktreeRun,
+      realpath: identityRealpath,
     });
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toContain('--git-common-dir');
+    // With a registered main worktree, no repository-root fallback is needed.
+    expect(resolved).toBe(np('/repo/WORKTREES.json'));
+
+    // A bare primary entry supplies the fallback when no non-bare main exists.
+    asked.length = 0;
+    const fallbackRun = (cwd, args) => {
+      asked.push(args);
+      return { stdout: args[0] === 'worktree' ? 'worktree /repo\nbare\n' : '/repo/.git\n' };
+    };
+    const resolvedFallback = locateInventory('/repo/.kilo/worktrees/task', {
+      run: fallbackRun,
+      realpath: identityRealpath,
+    });
+    expect(resolvedFallback).toBe(np('/repo/WORKTREES.json'));
+    expect(asked).toEqual([['worktree', 'list', '--porcelain']]);
+  });
+
+  it('does not fall back to the primary checkout when a registered main path is invalid', () => {
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: (_cwd, args) => ({
+        stdout: args[0] === 'worktree' ? 'worktree /missing/main\nbranch refs/heads/main\n' : '/repo/.git\n',
+      }),
+      realpath: (p) => {
+        if (p === '/repo/.git') return p;
+        throw new Error('missing linked main checkout');
+      },
+    });
+    expect(resolved).toBeNull();
+  });
+});
+
+describe("the third review's findings, pinned on the disposal side", () => {
+  it('reads the operation state of a worktree whose own directory is gone', () => {
+    // The largest hole the third review found. `resolveGitDir` runs git INSIDE the
+    // worktree, so for a worktree that has been removed by hand it answers null — and
+    // the state was never read, while the `prunable` refusal told the operator there was
+    // "nothing to salvage and no state to verify. Run `git worktree prune`". That is
+    // precisely the state `prune` deletes, with no reflog entry and nothing for
+    // `git fsck` to recover. So the git directory is matched by content when the
+    // directory cannot be asked.
+    const dir = join(TMP, 'gone-worktree');
+    mkdirSync(dir, { recursive: true });
+    const state = readOperationState('/nowhere', {
+      gitDirOf: () => null,
+      fallbackGitDir: '/repo/.git/worktrees/gone',
+      readOps: (gitDir) => [{ operation: 'merge', marker: 'MERGE_HEAD', value: `sha-of-${gitDir}` }],
+      unmergedOf: () => [],
+    });
+    expect(state.readError).toBeNull();
+    expect(state.operations).toEqual([
+      { operation: 'merge', marker: 'MERGE_HEAD', value: 'sha-of-/repo/.git/worktrees/gone' },
+    ]);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-in-progress']);
+  });
+
+  it('still refuses when there is no fallback either, rather than reporting clean', () => {
+    const state = readOperationState('/nowhere', { gitDirOf: () => null, fallbackGitDir: null });
+    expect(state.readError).toMatch(/no administrative directory/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
+  it('reports an unmerged read that failed only when the operations were empty', () => {
+    // A merge whose index cannot be diffed because its directory is gone is still a
+    // merge in progress. Reporting only the read failure would hide the finding.
+    const boom = () => {
+      throw new Error('spawnSync git ENOENT');
+    };
+    expect(
+      readOperationState('/w', {
+        gitDirOf: () => '/d',
+        readOps: () => [{ operation: 'merge', marker: 'MERGE_HEAD' }],
+        unmergedOf: boom,
+      })
+    ).toMatchObject({
+      readError: null,
+      unmergedError: expect.stringMatching(/ENOENT/),
+    });
+    expect(readOperationState('/w', { gitDirOf: () => '/d', readOps: () => [], unmergedOf: boom }).readError).toMatch(
+      /ENOENT/
+    );
+  });
+
+  it('guards the operations reader too, because preflight has no try/catch of its own', () => {
+    const boom = () => {
+      throw new Error('EACCES');
+    };
+    const state = readOperationState('/w', { gitDirOf: () => '/d', readOps: boom, unmergedOf: () => [] });
+    expect(state.readError).toMatch(/EACCES/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
+  it('leaves no empty slot where a command would be, when one operation has no remedy', () => {
+    // `.filter(Boolean)` on the remedy list was unpinned: removing it failed zero tests
+    // and printed "Finish or abandon it deliberately —  / git merge --abort". A squash
+    // beside a merge is what produces the null, so that is the shape asserted here.
+    const message = green({
+      operationState: greenOperationState({
+        operations: [
+          { operation: 'squash', marker: 'SQUASH_MSG', value: null },
+          { operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' },
+        ],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toMatch(/— git merge --abort —/);
+    expect(message).not.toMatch(/—\s+\/|—\s+—|\/\s+\//);
+  });
+
+  it('names the operation git cannot abandon, instead of claiming no marker is set', () => {
+    // The self-contradicting sentence: a refusal whose own detail read
+    // "squash (SQUASH_MSG)" and which then said "No operation marker is set".
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
+        unmerged: ['f.txt'],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toContain('SQUASH_MSG');
+    expect(message).toMatch(/no command that abandons a squash/);
+    expect(message).not.toContain('No operation marker is set');
+  });
+
+  it('still says no marker is set when there is genuinely no marker', () => {
+    const message = green({
+      operationState: greenOperationState({ unmerged: ['f.txt'] }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toContain('No operation marker is set');
+  });
+
+  it('states the recency window instead of claiming the sessions are there right now', () => {
+    // Every one of these sources is a window, so "RIGHT NOW" asserted a strength the
+    // data does not have, and the refusal printed beside it stated the same fact
+    // correctly.
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+      board: { ...greenBoard, liveAgents: [{ id: 'a' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).not.toContain('RIGHT NOW');
+    expect(message).toContain(`inside the last ${LIVE_WINDOW_MS / 60000} min`);
+  });
+
+  it('no longer tells the operator to prune a worktree whose state may still exist', () => {
+    // `git worktree prune` deletes `.git/worktrees/<name>/`, which is where a merge's
+    // state lives. The refusal recommended it unconditionally, in the same run that
+    // could not rule out a merge being there.
+    expect(REFUSALS.prunable('')).toMatch(/repo:state/);
+    expect(REFUSALS.prunable('')).toMatch(/DELETES it with no reflog entry/);
   });
 });

@@ -7,10 +7,12 @@ import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
+import { assertWithinDocumentPixelBudget } from '../contexts/raster-utils.ts';
 import { setRefValue } from '../util/ref.ts';
 import { createHistoryItem } from '../contexts/history-utils.ts';
 import { documentFrameFromSize } from '../contexts/document-frame.ts';
 import { appendSelectionClear } from '../contexts/useSelectionHistory.ts';
+import { isDocumentGestureOpen } from './document-gesture.ts';
 
 export interface UseAppType {
   setBlankImage: (data: NewDocumentBlankParams) => void;
@@ -18,7 +20,7 @@ export interface UseAppType {
 
   handleImageSave: (data: ImageSaveResponse) => void;
 
-  goToTool: (toolName: ToolName) => void;
+  goToTool: (toolName: ToolName) => boolean;
 }
 
 async function immutableRaster(bitmap: BitmapSource): Promise<BitmapSource> {
@@ -76,6 +78,7 @@ export const useApp = (): UseAppType => {
   }
 
   function setBlankImage(params: NewDocumentBlankParams) {
+    assertWithinDocumentPixelBudget(params.size, 'Document');
     handleImageCreate(params.size);
     createBlankLayer({ ...params }, true);
   }
@@ -157,16 +160,23 @@ export const useApp = (): UseAppType => {
     }
     const { image } = data;
     const size = { width: image.width, height: image.height };
-    handleImageCreate(size);
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
+    handleImageCreate(size);
     _setFileName(fileName);
   }
 
   function goToTool(nextToolName: ToolName) {
-    // commit any dirty tool changes before switching
-    commitDirtyTool();
+    const hasOpenDocumentGesture = isDocumentGestureOpen();
+    // A live document gesture can have only a transient preview: its owner owns
+    // whether that preview commits or rolls back. Committing here runs before
+    // the outgoing tool unmounts and would turn a partial stroke into history.
+    // Let the owner unmount and cancel it; ordinary dirty edits still commit
+    // before the switch.
+    if (!hasOpenDocumentGesture && commitDirtyTool() === null) return false;
 
-    if (nextToolName !== toolName && activeSelectionId) {
+    // Clearing a selection is itself a document edit, so do not interleave it
+    // with a gesture that has not yet been cancelled by its owning tool.
+    if (!hasOpenDocumentGesture && nextToolName !== toolName && nextToolName !== 'patch' && activeSelectionId) {
       // The same single writer the Clear/Deselect controls use, so this deselect
       // gains the durable `set-selection` plan and the shadow-failure fallback
       // instead of appending a hand-built entry with no `durableEntry` — which
@@ -192,6 +202,7 @@ export const useApp = (): UseAppType => {
     }
 
     dispatch({ type: 'SET_TOOL_NAME', payload: nextToolName });
+    return true;
   }
 
   return {

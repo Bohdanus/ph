@@ -2,11 +2,33 @@ import type { BitmapSource } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import type { DurableReplayResult } from './durable-replay.ts';
 import { materializeDocument, type MaterializationRequest, type MaterializedLayer } from './materialization.ts';
+import { toOwnedBitmap } from './materialization-bitmap.ts';
 
 export type DurableCompositorRequest = Omit<MaterializationRequest, 'frame'> &
   Readonly<{
     frame?: DocumentFrame;
   }>;
+
+export type DurableCompositionRefusalCode = 'materialization-refused' | 'layer-coverage' | 'renderer-incompatible';
+
+export class DurableCompositionRefusal extends Error {
+  readonly code: DurableCompositionRefusalCode;
+  readonly missingLayerIds: readonly string[];
+  readonly unexpectedLayerIds: readonly string[];
+
+  constructor(
+    code: DurableCompositionRefusalCode,
+    message: string,
+    missingLayerIds: readonly string[] = [],
+    unexpectedLayerIds: readonly string[] = []
+  ) {
+    super(message);
+    this.name = 'DurableCompositionRefusal';
+    this.code = code;
+    this.missingLayerIds = Object.freeze([...missingLayerIds]);
+    this.unexpectedLayerIds = Object.freeze([...unexpectedLayerIds]);
+  }
+}
 
 export type DurableComposite = Readonly<{
   bitmap: BitmapSource;
@@ -40,11 +62,6 @@ function context2d(
   return context as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 }
 
-async function toOwnedBitmap(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<BitmapSource> {
-  if (globalThis.createImageBitmap) return globalThis.createImageBitmap(canvas);
-  return canvas;
-}
-
 function closeOwnedBitmap(bitmap: BitmapSource): void {
   if (typeof (bitmap as { close?: unknown }).close === 'function') {
     (bitmap as ImageBitmap).close();
@@ -58,6 +75,34 @@ function orderedLayers(replay: DurableReplayResult): readonly string[] {
 }
 
 /**
+ * A durable presentation is publishable only when every visible replay layer
+ * materialized. Callers that adapt a composite into runtime records reuse this
+ * check so a partial document can never be staged as durable.
+ */
+export function requireVisibleLayerCoverage(
+  replay: DurableReplayResult,
+  materialized: Readonly<Record<string, MaterializedLayer>>
+): void {
+  const expected = orderedLayers(replay).filter((layerId) => replay.layers[layerId]?.snapshot.visible);
+  const actual = Object.keys(materialized);
+  const missing = expected.filter((layerId) => !materialized[layerId]);
+  const unexpected = actual.filter((layerId) => !replay.layers[layerId]?.snapshot.visible);
+  if (missing.length === 0 && unexpected.length === 0 && actual.length === expected.length) return;
+
+  const parts = [
+    'Durable composition refused because visible materialization coverage is incomplete',
+    missing.length > 0 ? `missing: ${missing.join(', ')}` : '',
+    unexpected.length > 0 ? `unexpected: ${unexpected.join(', ')}` : '',
+  ].filter(Boolean);
+  throw new DurableCompositionRefusal(
+    missing.length > 0 ? 'materialization-refused' : 'layer-coverage',
+    parts.join('; '),
+    missing,
+    unexpected
+  );
+}
+
+/**
  * Composes successful per-layer materializations into one document-frame bitmap.
  * `materializeDocument` deliberately returns only layers that could be rendered;
  * this compositor never substitutes an unfiltered source for a refused layer.
@@ -67,12 +112,19 @@ export async function composeDurableDocument(
   request: DurableCompositorRequest
 ): Promise<DurableComposite> {
   const { frame = replay.frame, ...materializationRequest } = request;
-  const materialized = await materializeDocument(replay, materializationRequest);
+  const materialized = await materializeDocument(replay, {
+    ...materializationRequest,
+    pixelGridFrame: frame,
+  });
   let bitmap: BitmapSource;
 
   try {
+    requireVisibleLayerCoverage(replay, materialized.layers);
     const canvas = createCanvas(frame.width, frame.height);
     const context = context2d(canvas);
+    // Match the runtime and retained-presentation draws: fractional layer bounds
+    // must not introduce a second filtered resampling pass during composition.
+    context.imageSmoothingEnabled = false;
     for (const layerId of orderedLayers(replay)) {
       const replayLayer = replay.layers[layerId];
       const layer = materialized.layers[layerId];
@@ -80,11 +132,12 @@ export async function composeDurableDocument(
       if (!layer) {
         throw new Error(`Unable to compose durable layer ${layerId}: materialization was refused`);
       }
+      if (!layer.visible) continue;
 
       context.save();
       try {
-        context.globalAlpha = replayLayer.snapshot.opacity;
-        context.globalCompositeOperation = replayLayer.snapshot.blendMode;
+        context.globalAlpha = layer.opacity;
+        context.globalCompositeOperation = layer.blendMode;
         context.drawImage(
           layer.bitmap as CanvasImageSource,
           layer.bounds.x - frame.x,

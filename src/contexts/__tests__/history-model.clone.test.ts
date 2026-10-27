@@ -4,14 +4,19 @@ import {
   DURABLE_SCHEMA_VERSION,
   cloneDurableDocument,
   freezeDurableDocument,
+  refreezeDurableDocument,
   type DurableDocument,
+  type DurableEntryProvenance,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
   type DurableLayerSource,
   type PlainObject,
 } from '../history-model.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
+import { rotationAffineAroundPoint } from '../affine-transform.ts';
 import type { Selection } from '../general-types.ts';
+import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
+import type { ActionType } from '../../util/constants.ts';
 
 const blankSource: DurableLayerSource = {
   kind: 'blank',
@@ -36,14 +41,29 @@ function layer(id: string, overrides: Partial<DurableLayerSnapshot> = {}): Durab
   };
 }
 
-function entry(id: string, operation: DurableHistoryEntry['operation'], enabled = true): DurableHistoryEntry {
-  return { id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation };
+function entry(
+  id: string,
+  operation: DurableHistoryEntry['operation'],
+  enabled = true,
+  provenance?: DurableEntryProvenance
+): DurableHistoryEntry {
+  return {
+    id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled,
+    ...(provenance ? { provenance } : {}),
+    operation,
+  };
+}
+
+function provenance(actionName: ActionType, toolName?: string): DurableEntryProvenance {
+  return toolName ? { actionName, toolName } : { actionName };
 }
 
 function selection(overrides: Partial<Selection> = {}): Selection {
   return {
     id: 'selection-1',
-    points: [{ x: 1, y: 2 }],
+    points: [[{ x: 1, y: 2 }]],
     isActive: true,
     pos: { x: 0, y: 0, width: 8, height: 6 },
     ...overrides,
@@ -252,6 +272,23 @@ describe('cloneDurableDocument operation cloning', () => {
     expect(reorderOperation.orderByLayerId).not.toBe(orderByLayerId);
     expect(replayDurableDocument(frozen).frame).toEqual({ x: 10, y: 20, width: 50, height: 40 });
   });
+
+  it('deep-clones the transform matrix and frames of a document-transform operation', () => {
+    const previous = { x: 0, y: 0, width: 100, height: 80 };
+    const next = { x: 10, y: 12, width: 80, height: 60 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 6, { x: 50, y: 42 });
+    const frozen = cloneDurableDocument(
+      document([entry('transform', { kind: 'transform-document', previous, next, transform })])
+    );
+    const operation = frozen.history[0].operation;
+    if (operation.kind !== 'transform-document') throw new Error('unexpected operation kind');
+
+    expect(operation.transform).not.toBe(transform);
+    expect(Object.isFrozen(operation.transform)).toBe(true);
+    expect(operation.previous).not.toBe(previous);
+    expect(operation.next).not.toBe(next);
+    expect(replayDurableDocument(frozen).frame).toEqual(next);
+  });
 });
 
 /**
@@ -385,5 +422,135 @@ describe('freezeDurableDocument cursor clamping', () => {
     const frozen = freezeDurableDocument(document([], [], null, 0));
 
     expect(frozen.cursor).toBe(-1);
+  });
+});
+
+describe('freezeDurableDocument provenance', () => {
+  it('deep-freezes the provenance object of an entry', () => {
+    const prov = provenance(RENAME_LAYER_ACTION, 'text');
+
+    const frozen = freezeDurableDocument(
+      document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)])
+    );
+
+    expect(Object.isFrozen(frozen.history[0].provenance)).toBe(true);
+    expect(frozen.history[0].provenance).not.toBe(prov);
+    expect(frozen.history[0].provenance).toStrictEqual(prov);
+  });
+
+  it('deep-freezes provenance without an optional toolName', () => {
+    const prov = provenance(RENAME_LAYER_ACTION);
+
+    const frozen = freezeDurableDocument(
+      document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)])
+    );
+
+    expect(Object.isFrozen(frozen.history[0].provenance)).toBe(true);
+    expect(frozen.history[0].provenance).not.toBe(prov);
+    expect(frozen.history[0].provenance).toStrictEqual(prov);
+    expect(frozen.history[0].provenance).not.toHaveProperty('toolName');
+  });
+
+  it('preserves provenance values on the frozen entry', () => {
+    const prov = provenance(RENAME_LAYER_ACTION, 'text');
+
+    const frozen = freezeDurableDocument(
+      document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)])
+    );
+
+    expect(frozen.history[0].provenance?.actionName).toBe(RENAME_LAYER_ACTION);
+    expect(frozen.history[0].provenance?.toolName).toBe('text');
+  });
+});
+
+describe('cloneDurableDocument provenance', () => {
+  it('deep-freezes and copies provenance', () => {
+    const prov = provenance(RENAME_LAYER_ACTION, 'text');
+
+    const cloned = cloneDurableDocument(
+      document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)])
+    );
+
+    expect(Object.isFrozen(cloned.history[0].provenance)).toBe(true);
+    expect(cloned.history[0].provenance).not.toBe(prov);
+    expect(cloned.history[0].provenance).toStrictEqual(prov);
+  });
+
+  it('preserves provenance values through the clone', () => {
+    const prov = provenance(RENAME_LAYER_ACTION);
+
+    const cloned = cloneDurableDocument(
+      document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)])
+    );
+
+    expect(cloned.history[0].provenance?.actionName).toBe(RENAME_LAYER_ACTION);
+    expect(cloned.history[0].provenance).not.toHaveProperty('toolName');
+  });
+});
+
+describe('refreezeDurableDocument provenance', () => {
+  it('preserves provenance by identity when reusing own-frozen entries on a cursor move', () => {
+    const prov = provenance(RENAME_LAYER_ACTION, 'text');
+
+    const frozen = freezeDurableDocument(
+      document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)])
+    );
+    const frozenProvenance = frozen.history[0].provenance;
+
+    const refrozen = refreezeDurableDocument(frozen, { cursor: 0 });
+
+    expect(refrozen.history[0].provenance).toBe(frozenProvenance);
+    expect(Object.isFrozen(refrozen.history[0].provenance)).toBe(true);
+  });
+
+  it('copies new entries and preserves provenance by identity on retained ones', () => {
+    const prov = provenance(RENAME_LAYER_ACTION, 'text');
+
+    const frozen = freezeDurableDocument(
+      document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)])
+    );
+    const retainedProvenance = frozen.history[0].provenance;
+
+    const newProv = provenance(RENAME_LAYER_ACTION, 'brush');
+    const newEntry = entry('e2', { kind: 'remove-layer', layerId: 'layer-1' }, true, newProv);
+    const refrozen = refreezeDurableDocument(frozen, { history: [frozen.history[0], newEntry] });
+
+    expect(refrozen.history[0].provenance).toBe(retainedProvenance);
+    expect(Object.isFrozen(refrozen.history[0].provenance)).toBe(true);
+    expect(refrozen.history[1].provenance).not.toBe(newProv);
+    expect(Object.isFrozen(refrozen.history[1].provenance)).toBe(true);
+    expect(refrozen.history[1].provenance).toStrictEqual(newProv);
+  });
+
+  it('falls back to a deep freeze when the base is not an own frozen copy', () => {
+    const prov = provenance(RENAME_LAYER_ACTION, 'text');
+    const unfrozen = document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' }, true, prov)]);
+
+    const refrozen = refreezeDurableDocument(unfrozen, { cursor: 0 });
+
+    expect(Object.isFrozen(refrozen.history[0].provenance)).toBe(true);
+    expect(refrozen.history[0].provenance).not.toBe(prov);
+    expect(refrozen.history[0].provenance).toStrictEqual(prov);
+  });
+});
+
+describe('provenance optionality', () => {
+  it('freezes an entry without provenance to an object that carries no provenance key', () => {
+    const frozen = freezeDurableDocument(document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' })]));
+
+    expect(frozen.history[0]).not.toHaveProperty('provenance');
+  });
+
+  it('clones an entry without provenance to an object that carries no provenance key', () => {
+    const cloned = cloneDurableDocument(document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' })]));
+
+    expect(cloned.history[0]).not.toHaveProperty('provenance');
+  });
+
+  it('refreezes an entry without provenance with no provenance key', () => {
+    const frozen = freezeDurableDocument(document([entry('e1', { kind: 'remove-layer', layerId: 'ghost' })]));
+    const refrozen = refreezeDurableDocument(frozen, { cursor: 0 });
+
+    expect(refrozen.history[0]).not.toHaveProperty('provenance');
   });
 });

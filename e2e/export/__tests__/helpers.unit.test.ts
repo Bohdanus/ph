@@ -4,7 +4,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import path from 'node:path';
 import { initializeCanvas, writePsd } from 'ag-psd';
 import sharp from 'sharp';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import {
   CHANGED_CHANNEL_THRESHOLD_GENERAL,
@@ -28,6 +28,7 @@ import {
   prepareExportDownloadDirectory,
   setupExportTest,
   setupIcoTest,
+  submitSaveDialogForDownload,
   verifyExportContainer,
   verifyPsdInPhotopea,
   type ExportFormat,
@@ -35,6 +36,7 @@ import {
   GEOMETRY_TOLERANCE_HORIZONTAL,
   GEOMETRY_TOLERANCE_SPAN,
   GEOMETRY_TOLERANCE_VERTICAL,
+  readExportGeometry,
 } from '../helpers';
 import {
   CANVAS_REDRAW_CLIP,
@@ -358,6 +360,12 @@ interface PsdOptions {
   layers?: Array<{ name: string } & Partial<PsdLayerSpec>>;
   /** Write the records with no channel data at all. */
   skipLayerImageData?: boolean;
+  /**
+   * Pixel value for the flat composite. Omit it and `writePsd` synthesises one from the
+   * children, which is not what the exporter does — `src/contexts/psd-utils.ts` hands
+   * `writePsd` the flattened document canvas — so a test about the composite states it.
+   */
+  compositeFill?: number;
 }
 
 interface PsdLayerSpec {
@@ -387,6 +395,7 @@ function containerPsd(options: PsdOptions = {}): Buffer {
     layerCount,
     layers,
     skipLayerImageData = false,
+    compositeFill,
   } = options;
 
   const specs = layers ?? [{ name: 'Blank 1' }, { name: 'draw 2', fill: 0 }];
@@ -397,6 +406,7 @@ function containerPsd(options: PsdOptions = {}): Buffer {
       {
         width,
         height,
+        ...(compositeFill === undefined ? {} : { imageData: solidRaster(width, height, compositeFill) }),
         children: specs.map((spec) => ({
           name: spec.name,
           left: spec.left ?? 0,
@@ -643,6 +653,7 @@ function formatByLabel(label: string): ExportFormat {
 
 const PNG_FORMAT = formatByLabel('PNG');
 const TIFF_FORMAT = formatByLabel('TIFF');
+const AVIF_FORMAT = formatByLabel('AVIF');
 
 interface Box {
   x: number;
@@ -1150,6 +1161,35 @@ describe('Export Helpers', () => {
       // would let a mark twice as wrong through on the axis meant to be tightest.
       expect(GEOMETRY_TOLERANCE_SPAN).toBeGreaterThan(GEOMETRY_TOLERANCE_HORIZONTAL);
       expect(GEOMETRY_TOLERANCE_HORIZONTAL).toBeGreaterThan(GEOMETRY_TOLERANCE_VERTICAL);
+    });
+  });
+
+  describe('readExportGeometry', () => {
+    it('does not let low-contrast codec ringing widen the measured ink span', async () => {
+      const width = DEFAULT_DOCUMENT_WIDTH;
+      const height = DEFAULT_DOCUMENT_HEIGHT;
+      const pixels = Buffer.alloc(width * height * 4, 255);
+      const setPixel = (x: number, y: number, value: number) => {
+        const index = (y * width + x) * 4;
+        pixels[index] = value;
+        pixels[index + 1] = value;
+        pixels[index + 2] = value;
+        pixels[index + 3] = 255;
+      };
+
+      for (let y = 73; y <= 82; y++) {
+        for (let x = 118; x <= 292; x++) setPixel(x, y, 0);
+        for (const x of [116, 117, 293, 294]) setPixel(x, y, 245);
+      }
+
+      const image = await sharp(pixels, {
+        raw: { width, height, channels: 4 },
+      })
+        .png()
+        .toBuffer();
+
+      const geometry = await readExportGeometry(image);
+      expect(geometry.inkWidth).toBe(175);
     });
   });
 
@@ -1764,6 +1804,63 @@ describe('Export Helpers', () => {
         body: mocks.exportedFile,
         contentType: 'image/png',
       });
+    });
+  });
+
+  /**
+   * P3 — AVIF is a slower encoder than PNG but uses the same 30s download timeout
+   * as every other format. `submitSaveDialogForDownload` accepts a `timeoutMs`
+   * override, but `exportAndVerify` never passes one — so AVIF gets no headroom
+   * even though its encoder can take longer than the 1px-wide black line the
+   * fixture produces. This test pins the current behaviour: the default timeout
+   * is `DOWNLOAD_TIMEOUT_MS` for every format, and a caller can override it through
+   * the dedicated parameter.
+   */
+  describe('submitSaveDialogForDownload', () => {
+    function createSubmitPage(format = PNG_FORMAT): { surface: PageSurface; page: Page; download: DownloadSurface } {
+      const submitButton = createLocatorMock();
+      const download = createDownloadMock(`${EXPORT_FILENAME}${format.extension}`);
+      const { surface, page } = createPageMock({
+        getByTestId: byKey({ 'save-dialog-submit-button': submitButton }, submitButton),
+        waitForEvent: vi.fn().mockResolvedValue(download),
+      });
+      return { surface, page, download };
+    }
+
+    it('waits for the download with the default DOWNLOAD_TIMEOUT_MS for AVIF', async () => {
+      // AVIF is listed as `browser-pixels` in the format table, so it goes through
+      // the same `submitSaveDialogForDownload` path as PNG. Its encoder is
+      // measurably slower (libavif vs libpng), but the helper gives it the same
+      // 30s budget — a potential flakiness source on a loaded CI runner.
+      const { surface, page, download } = createSubmitPage(AVIF_FORMAT);
+
+      await submitSaveDialogForDownload(page, AVIF_FORMAT);
+
+      expect(surface.waitForEvent).toHaveBeenCalledWith('download', { timeout: DOWNLOAD_TIMEOUT_MS });
+      expect(download.failure).toHaveBeenCalled();
+      expect(download.suggestedFilename).toHaveBeenCalled();
+      expect(download.saveAs).not.toHaveBeenCalled();
+    });
+
+    it('accepts a custom timeoutMs override for slower formats', async () => {
+      // The parameter exists and is forwarded; a caller could pass 60_000 for AVIF
+      // if the default ever proves too tight in practice. This pins that the
+      // override reaches `waitForEvent` and not just the default.
+      const customTimeout = 60_000;
+      const { surface, page, download } = createSubmitPage(AVIF_FORMAT);
+
+      await submitSaveDialogForDownload(page, AVIF_FORMAT, { timeoutMs: customTimeout });
+
+      expect(surface.waitForEvent).toHaveBeenCalledWith('download', { timeout: customTimeout });
+      expect(download.failure).toHaveBeenCalled();
+      expect(download.suggestedFilename).toHaveBeenCalled();
+    });
+
+    it('propagates a download timeout as a rejected promise', async () => {
+      const { surface, page } = createSubmitPage(AVIF_FORMAT);
+      surface.waitForEvent.mockRejectedValueOnce(new Error('download event timed out'));
+
+      await expect(submitSaveDialogForDownload(page, AVIF_FORMAT)).rejects.toThrow('download event timed out');
     });
   });
 
@@ -2529,14 +2626,15 @@ describe('Export Helpers', () => {
    * describes a file that PASSED under that rule.
    */
   describe('exportByteVerifiers', () => {
-    const TIFF_FORMAT: ExportFormat = { label: 'TIFF', extension: '.tiff', verification: 'container' };
+    const CONTAINER_TIFF_FORMAT: ExportFormat = { label: 'TIFF', extension: '.tiff', verification: 'container' };
     const PSD_FORMAT: ExportFormat = {
       label: 'Photoshop PSD (layers)',
       extension: '.psd',
       verification: 'container',
     };
 
-    const verifyTiff = (file: Buffer, sourceDataUrl: string) => verifyExportContainer(TIFF_FORMAT, file, sourceDataUrl);
+    const verifyTiff = (file: Buffer, sourceDataUrl: string) =>
+      verifyExportContainer(CONTAINER_TIFF_FORMAT, file, sourceDataUrl);
     const verifyPsd = (file: Buffer, sourceDataUrl: string) => verifyExportContainer(PSD_FORMAT, file, sourceDataUrl);
 
     it('rejects a container format with no registered verifier rather than skipping it', async () => {
@@ -2815,6 +2913,83 @@ describe('Export Helpers', () => {
       );
     });
 
+    /**
+     * The COMPOSITE, which is the document and was the one raster nothing looked at.
+     *
+     * The layer rasters and the flat composite are separate claims about the same bytes, and
+     * the exporter writes both itself — `src/contexts/psd-utils.ts` hands `writePsd` the
+     * flattened document canvas alongside the children. So a PSD can pass every layer check
+     * above and still open as an empty image, because the composite every reader renders first
+     * is blank. That is a false green of exactly the kind the raster pass was added to stop,
+     * one level down.
+     */
+    it('rejects a PSD whose layers carry the drawing and whose flat composite does not', async () => {
+      // Structurally perfect, and the drawing layer is solid black across the document, so the
+      // whole layer oracle passes. The composite is paper-white: the file's layers are right and
+      // its picture of the document is empty.
+      const file = containerPsd({
+        layerCount: 2,
+        layers: [
+          { name: 'Blank 1', fill: 255 },
+          { name: 'draw 2', fill: 0 },
+        ],
+        compositeFill: 255,
+      });
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): its flat composite carries 0 inked pixels against the source'
+      );
+    });
+
+    it('accepts a PSD whose layers and flat composite both carry the drawing', async () => {
+      // The other half, because an oracle nothing can satisfy is not an oracle. `containerPsd`'s
+      // default leaves `writePsd` to synthesise a composite, so the inked one is stated.
+      const file = containerPsd({
+        layerCount: 2,
+        layers: [
+          { name: 'Blank 1', fill: 255 },
+          { name: 'draw 2', fill: 0 },
+        ],
+        compositeFill: 0,
+      });
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).resolves.toBeUndefined();
+    });
+
+    /**
+     * P2 — a PSD whose draw layer is marked HIDDEN still passes verification.
+     *
+     * `verifyPsdExport` checks that the layer named "draw 2" exists, has channel
+     * data, and carries ink — but it never reads the layer's visibility flag. In
+     * the PSD spec that flag lives in the layer record's `flags` byte (bit 1,
+     * 0x02). When set, Photoshop hides the layer; the pixels are still there on
+     * disk but a reader respecting the flag renders them invisible.
+     *
+     * The verifier does not respect it either way, so a file whose draw layer is
+     * hidden still passes. This is a latent wrong-pass: the composite may carry
+     * the drawing (because ag-psd flattens before honouring visibility) while a
+     * layer-level read shows nothing. This test pins the current behaviour —
+     * the hidden flag is not checked — so a future fix must update this
+     * assertion rather than silently accepting another class of defect.
+     */
+    it('accepts a PSD whose draw layer is flagged hidden, because visibility is not checked', async () => {
+      const file = containerPsd();
+      // The draw layer is the second record (index 1). Its flags byte sits at
+      // recordTop + 18 + channelCount * 6 + 10, following the four int32 rect
+      // fields, the uint16 channel count, the channel info array, the 4-byte
+      // blend-mode signature, the 4-byte blend-mode key, 1 byte opacity and 1
+      // byte clipping — so the flags byte is 10 bytes into the post-channel tail.
+      const drawRecordTop = psdRecordTops(file)[1];
+      const channelCount = file.readUInt16BE(drawRecordTop + 16);
+      const flagsOffset = drawRecordTop + 18 + channelCount * 6 + 10;
+      const currentFlags = file.readUInt8(flagsOffset);
+      file.writeUInt8(currentFlags | 0x02, flagsOffset);
+      expect(file.readUInt8(flagsOffset) & 0x02).toBe(0x02);
+
+      // The file still passes: name, channel data, dimensions and rasters are all intact.
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).resolves.toBeUndefined();
+    });
+
     it('rejects a PSD whose layer rasters cannot be decoded at all', async () => {
       // The channel data declares a compression word ag-psd does not accept. Every
       // structural check passes, so this is the only thing left that can reject it — which
@@ -2847,6 +3022,24 @@ describe('Export Helpers', () => {
       await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
         'Photoshop PSD (layers): declares 0 layers, fewer than the 2 the drawn document has'
       );
+    });
+
+    /**
+     * P3 — the byte-length gate is one-sided: `file.byteLength > 100` is checked,
+     * but there is no upper bound. `ag-psd`'s reader honours the offset fields in
+     * the header and stops decoding where the declared structure ends, so trailing
+     * bytes are silently ignored. This pins that a PSD padded to an absurd size
+     * still passes every check — a latent correctness and resource issue if a
+     * corrupt or malicious exporter ever produced a file with a bogusly small
+     * header and megabytes of padding.
+     */
+    it('accepts a PSD padded to an absurd byte length, because the ceiling is not checked', async () => {
+      const valid = containerPsd();
+      const pad = Buffer.alloc(1024 * 1024, 0);
+      const padded = Buffer.concat([valid, pad]);
+      expect(padded.byteLength).toBe(valid.byteLength + 1024 * 1024);
+
+      await expect(verifyPsd(padded, await drawnSourceDataUrl())).resolves.toBeUndefined();
     });
 
     it('rejects a PSD too short to hold a header', async () => {
@@ -2887,5 +3080,68 @@ describe('Export Helpers', () => {
       expect(mkdir).toHaveBeenCalledWith(DOWNLOAD_DIRECTORY, { recursive: true });
       expect(result).toBe(DOWNLOAD_DIRECTORY);
     });
+  });
+});
+
+/**
+ * P3 — 10 orphaned committed baselines. `visual-regression.spec.ts` reads exactly one
+ * baseline per browser-verified format through `baselineFile()` — `drawing<ext>.png` in a
+ * platform subdirectory — and nothing else under `export-baselines/` is referenced by any
+ * code. The 10 orphaned files (8 raw exports, `drawing-icon.ico.png`, and
+ * `source-baseline.png`) were deleted, and this guard reads the directory live so a
+ * `git checkout` or a future stray write cannot bring them back silently.
+ *
+ * The 2.1 MB was `drawing.bmp` alone, whose 1.9 MB was most of the waste — but any orphan
+ * is a maintenance hazard because a reader cannot tell committed-baseline from stray file
+ * without the same directory scan this test does.
+ */
+describe('committed export baselines have no orphans', () => {
+  const BASELINE_ROOT = path.resolve(
+    import.meta.dirname,
+    '..',
+    'visual-regression.spec.ts-snapshots',
+    'export-baselines'
+  );
+
+  /** The files `visual-regression.spec.ts` actually reads: `drawing<ext>.png` per OS subdir. */
+  const EXPECTED_BASELINE_NAMES = browserVerifiedFormats.map((format) => `drawing${format.extension}.png`);
+
+  it('the baseline directory contains only platform subdirectories, no stray files', () => {
+    if (!existsSync(BASELINE_ROOT)) {
+      throw new Error(
+        `the export-baselines directory is missing at ${BASELINE_ROOT} — the committed baselines were deleted or moved`
+      );
+    }
+    const entries = readdirSync(BASELINE_ROOT, { withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile() && !entry.name.startsWith('.'));
+
+    expect(files, 'stray files at the baseline root would be orphans again').toEqual([]);
+  });
+
+  it('every platform subdir contains exactly the browser-verified baselines', () => {
+    if (!existsSync(BASELINE_ROOT)) {
+      throw new Error(
+        `the export-baselines directory is missing at ${BASELINE_ROOT} — the committed baselines were deleted or moved`
+      );
+    }
+    const platforms = readdirSync(BASELINE_ROOT, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    expect(platforms, 'the baseline directory has no platform subdirectories').not.toHaveLength(0);
+    for (const platform of platforms) {
+      const dir = path.join(BASELINE_ROOT, platform.name);
+      if (!existsSync(dir)) {
+        throw new Error(
+          `${platform.name}/ disappeared between readdirSync and readdirSync — a TOCTOU race that should not pass silently`
+        );
+      }
+
+      const files = readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+        .map((entry) => entry.name);
+
+      expect(files, `${platform.name}/ contains files not read by the spec`).toEqual(
+        expect.arrayContaining(EXPECTED_BASELINE_NAMES)
+      );
+      expect(files.length).toBe(EXPECTED_BASELINE_NAMES.length);
+    }
   });
 });

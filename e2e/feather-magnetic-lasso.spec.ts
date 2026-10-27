@@ -69,7 +69,7 @@ const DISC_RADIUS_FRACTION = 0.18;
 /**
  * The hovers, in degrees around the disc, and what each is for.
  *
- * All four sit within 30 degrees of the one anchor, which is the constraint that matters: the
+ * All four sit within 20 degrees of the one anchor, which is the constraint that matters: the
  * draft preview is thrown away the moment an AUTO-ANCHOR commits (`:329` clears
  * `previewRef`, and the overlay repaints with the committed blue path alone), and
  * `maybeCommitAutoAnchor` fires once the preview path reaches
@@ -78,8 +78,8 @@ const DISC_RADIUS_FRACTION = 0.18;
  * it is what lets this file assert a colour at all.
  */
 const ANCHOR_DEGREES = 270;
-const HOVER_MAGNETIC = 285;
-const HOVER_ALT = 300;
+const HOVER_MAGNETIC = 280;
+const HOVER_ALT = 290;
 
 /**
  * How much shorter the committed path must be after Backspace, as a fraction of its height
@@ -266,6 +266,13 @@ test.describe('Magnetic Lasso', () => {
    * input that differs.
    */
   test('Alt suppresses the magnet, and releasing it restores it', async ({ page }) => {
+    // This test measures the modifier, not automatic fastening. Keep the active
+    // segment below the longest documented fastening span; the control test below
+    // still pins the seeded Frequency 40 default.
+    const frequency = page.getByRole('slider', { name: /^Frequency/ });
+    await frequency.fill('0');
+    await expect(frequency).toHaveAccessibleName('Frequency 0');
+
     const box = await workspaceBox(page);
     const clip = canvasClip(page, box);
 

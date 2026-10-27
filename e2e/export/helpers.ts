@@ -7,10 +7,9 @@ import {
   DEFAULT_DOCUMENT_HEIGHT,
   DEFAULT_DOCUMENT_WIDTH,
   documentToCanvasOffset,
-  drawLine,
+  drawLineFromDocument,
   getWorkspaceCanvas,
   inkHeight,
-  inkWidth,
   INK_LUMA_FLOOR,
   measureInk,
   waitForCanvasRedraw,
@@ -272,6 +271,32 @@ export interface ExportGeometry {
   spreadY: number;
 }
 
+async function measureSignificantInkWidth(image: Buffer): Promise<number> {
+  const { data, info } = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const paper = 255 - INK_LUMA_FLOOR;
+  let left = info.width;
+  let right = -1;
+
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      const index = (y * info.width + x) * 4;
+      const alpha = data[index + 3];
+      if (alpha === 0) continue;
+      const luma = 0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2];
+      const weight = ((paper - luma) * alpha) / 255;
+      // Weak lossy-codec halos contribute to the centroid but not to the stroke's span.
+      if (weight <= INK_LUMA_FLOOR) continue;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+    }
+  }
+
+  if (right < left) {
+    throw new Error('The exported image carries no significant ink: the document under test is blank');
+  }
+  return right - left + 1;
+}
+
 /**
  * Decode an exported image and report where its ink is, in DOCUMENT pixels.
  *
@@ -294,7 +319,7 @@ export async function readExportGeometry(image: Buffer): Promise<ExportGeometry>
   return {
     centroidX: profile.centroidX,
     centroidY: profile.centroidY,
-    inkWidth: inkWidth(profile),
+    inkWidth: await measureSignificantInkWidth(image),
     inkHeight: inkHeight(profile),
     ink: profile.ink,
     spreadX: profile.spreadX,
@@ -439,7 +464,16 @@ export async function setupExportTest(
   const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y, documentSize);
 
   await clickToolButton(page, 'draw');
-  await drawLine(page, box, start.x, start.y, end.x, end.y);
+  await drawLineFromDocument(
+    page,
+    box,
+    EXPORT_LINE_START.x,
+    EXPORT_LINE_START.y,
+    EXPORT_LINE_END.x,
+    EXPORT_LINE_END.y,
+    {},
+    documentSize
+  );
 
   // The redraw clip has to be derived from the mapped line as well. The shared
   // `CANVAS_REDRAW_CLIP` is a fixed region of the canvas box, and at any canvas size other
@@ -923,13 +957,15 @@ function readPsdLayerRecords(file: Buffer, firstRecordAt: number, count: number,
  * the bytes directly — the signature (which is also the byte order: every multi-byte field
  * is big-endian), a real layer and mask section, at least the two layers the drawn document
  * has, and the stroke layer by name, inside the document, with pixels in it. The second
- * decodes the layer rasters and applies the same ink oracle the browser-decoded formats get,
- * through `measureInk`, so a PSD whose layers are present and named but blank is rejected
- * too.
+ * decodes the layer rasters AND the flat composite and applies the same ink oracle the
+ * browser-decoded formats get, through `measureInk`, so a PSD whose layers are present and
+ * named but blank is rejected too — and so is one whose layers hold the drawing while the
+ * composite a reader renders first is empty.
  *
  * A PSD with a broken layer table fails the signature or the section length, a PSD with its
  * layers flattened away fails the count, a PSD with the layers renamed fails the name check,
- * and a PSD whose layers are named but empty fails the last two.
+ * a PSD whose layers are named but empty fails the last two, and a PSD whose composite is
+ * blank or absent fails the oracle itself.
  */
 async function verifyPsdExport(file: Buffer, { label, sourceDataUrl }: ExportByteVerification): Promise<void> {
   const requireBytes = (bytes: number, what: string): void => {
@@ -1043,12 +1079,34 @@ interface DecodedPsdLayer {
   imageData: { width: number; height: number; data: Uint8ClampedArray } | undefined;
 }
 
-/** The drawing oracle, applied to a PSD's layer rasters. The same rule, measured the same way. */
+/**
+ * The drawing oracle, applied to a PSD's layers AND to its flat composite.
+ *
+ * Two claims, and the composite is the one that used to be missing. The layer rasters prove the
+ * file is a layered document; the composite proves it is a picture of THIS document. The
+ * exporter writes the composite itself — `writePsd({ ...size, canvas, children }, ...)` in
+ * `src/contexts/psd-utils.ts`, where `canvas` is the flattened document — so the two are
+ * independent claims about the same bytes, and a PSD can satisfy one while failing the other.
+ *
+ * Reading only the layers accepts a PSD whose layers hold the drawing and whose composite is
+ * blank, which is the same false green one level down from the guard's own: every check above
+ * passes, the layer table is structurally perfect, and the file opens as an empty image in
+ * anything that renders the composite. The composite is what Photoshop and every other reader
+ * shows first, so it is the one that has to carry the drawing.
+ */
 async function assertPsdCarriesDrawing(label: string, file: Buffer, sourceDataUrl: string): Promise<void> {
   initializePsdCanvas();
-  let decoded: { width: number; height: number; children?: DecodedPsdLayer[] };
+  let decoded: {
+    width: number;
+    height: number;
+    imageData?: { width: number; height: number; data: Uint8ClampedArray };
+    children?: DecodedPsdLayer[];
+  };
   try {
-    decoded = readPsd(new Uint8Array(file), { useImageData: true }) as unknown as typeof decoded;
+    decoded = readPsd(new Uint8Array(file), {
+      useImageData: true,
+      skipCompositeImageData: false,
+    }) as unknown as typeof decoded;
   } catch (error) {
     throw containerFailure(label, `its layers could not be decoded (${(error as Error).message})`);
   }
@@ -1083,6 +1141,21 @@ async function assertPsdCarriesDrawing(label: string, file: Buffer, sourceDataUr
     throw containerFailure(
       label,
       `its layers carry ${inked} inked pixels against the source's ${source.ink} of ${source.width}x${source.height}`
+    );
+  }
+
+  // The flat composite, which is the document a reader renders before it touches a layer. A PSD
+  // carrying no composite at all is rejected rather than waved through, because the layers
+  // passing above is then the only evidence there is and it is the wrong evidence.
+  const composite = decoded.imageData;
+  if (!composite) {
+    throw containerFailure(label, 'carries no flat composite, so there is no picture of the document to open');
+  }
+  const composited = (await measureInk(composite))?.pixelCount ?? 0;
+  if (composited === 0 || composited * MIN_EXPORT_INK_RATIO < source.ink) {
+    throw containerFailure(
+      label,
+      `its flat composite carries ${composited} inked pixels against the source's ${source.ink} of ${source.width}x${source.height}`
     );
   }
 }
@@ -1209,10 +1282,16 @@ export async function setupIcoTest(page: Page): Promise<string> {
   const end = documentToCanvasOffset(iconBox, ICON_STROKE.endX, ICON_STROKE.centerY, documentSize);
 
   await clickToolButton(page, 'draw');
-  await page.mouse.move(iconBox.x + start.x, iconBox.y + start.y);
-  await page.mouse.down();
-  await page.mouse.move(iconBox.x + end.x, iconBox.y + end.y, { steps: ICON_STROKE.steps });
-  await page.mouse.up();
+  await drawLineFromDocument(
+    page,
+    iconBox,
+    ICON_STROKE.startX,
+    ICON_STROKE.centerY,
+    ICON_STROKE.endX,
+    ICON_STROKE.centerY,
+    { steps: ICON_STROKE.steps },
+    documentSize
+  );
   // A clip derived from the MAPPED stroke, in PAGE coordinates for the same reason
   // `setupExportTest` says it is: the shared `CANVAS_REDRAW_CLIP` is a fixed region of a
   // 974x583 box and does not cover a stroke at box row 291, so waiting on it would poll

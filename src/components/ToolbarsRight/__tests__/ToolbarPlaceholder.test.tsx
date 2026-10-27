@@ -43,8 +43,13 @@ const PLACEHOLDER_TOOLS = [
   // `color-replacement` was here and is gone: it has a real options bar now, so there is no
   // placeholder group left for it to be keyed by.
   { toolName: 'pen', configKey: 'pen', title: 'Pen Tool', showTodoBadge: true },
-  { toolName: 'freeform-pen', configKey: 'pen', title: 'Freeform Pen Tool', showTodoBadge: true },
-  { toolName: 'curvature-pen', configKey: 'pen', title: 'Curvature Pen Tool', showTodoBadge: true },
+  { toolName: 'freeform-pen', configKey: 'freeform-pen', title: 'Freeform Pen Tool', showTodoBadge: true },
+  {
+    toolName: 'curvature-pen',
+    configKey: 'curvature-pen',
+    title: 'Curvature Pen Tool',
+    showTodoBadge: true,
+  },
   { toolName: 'add-anchor-point', configKey: 'pen', title: 'Add Anchor Point Tool', showTodoBadge: true },
   { toolName: 'delete-anchor-point', configKey: 'pen', title: 'Delete Anchor Point Tool', showTodoBadge: true },
   { toolName: 'convert-point', configKey: 'pen', title: 'Convert Point Tool', showTodoBadge: true },
@@ -112,6 +117,62 @@ describe('PlaceholderTool', () => {
     expect(screen.getByText('Empty Tool')).toBeInTheDocument();
     expect(screen.getByText('TODO: tool behavior not implemented yet.')).toBeInTheDocument();
   });
+
+  it('renders without crashing when title is null', () => {
+    render(<PlaceholderTool title={null as unknown as string} options={['Option']} />);
+
+    expect(screen.getByText('Option')).toBeInTheDocument();
+  });
+
+  it('renders an empty title span without crashing', () => {
+    render(<PlaceholderTool title="" options={['Option']} />);
+
+    expect(screen.getByText('Option')).toBeInTheDocument();
+  });
+
+  it('renders an empty description without adding extra text', () => {
+    render(<PlaceholderTool title="Tool" options={['Opacity']} description="" />);
+
+    expect(screen.getByText('Tool')).toBeInTheDocument();
+    expect(screen.queryByText('TODO: tool behavior not implemented yet.')).not.toBeInTheDocument();
+  });
+
+  it('renders option chips with special characters correctly', () => {
+    render(<PlaceholderTool title="Tool" options={['<script>', '&amp;', '"quoted"']} />);
+
+    expect(screen.getByText('<script>')).toBeInTheDocument();
+    expect(screen.getByText('&amp;')).toBeInTheDocument();
+    expect(screen.getByText('"quoted"')).toBeInTheDocument();
+  });
+
+  it('renders a whitespace-only title without crashing', () => {
+    render(<PlaceholderTool title="   " options={['Option']} />);
+
+    expect(screen.getByText('Option')).toBeInTheDocument();
+  });
+
+  // Tripwire: the component does not guard `options.map`, so undefined options
+  // crash the render. Once a null-guard is added, flip this to a positive
+  // assertion that the component renders gracefully.
+  it.fails('does not crash when options is undefined', () => {
+    render(<PlaceholderTool title="Tool" options={undefined as unknown as readonly string[]} />);
+
+    expect(screen.getByText('Tool')).toBeInTheDocument();
+  });
+
+  // Tripwire: each option is used as its own React key, so duplicates trigger a
+  // key-collision warning. Once the component deduplicates, flip this to a
+  // positive assertion that no warning is emitted.
+  it.fails('deduplicates repeated options without a React key warning', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PlaceholderTool title="Tool" options={['Opacity', 'Opacity']} />);
+
+    expect(spy).not.toHaveBeenCalledWith(
+      expect.stringContaining('Encountered two children with the same key'),
+      expect.anything()
+    );
+    spy.mockRestore();
+  });
 });
 
 describe('toolbarPlaceholderConfig', () => {
@@ -165,11 +226,20 @@ describe('placeholder tool wiring in toolsMap', () => {
     const usedKeys = new Set<string>(PLACEHOLDER_TOOLS.map((entry) => entry.configKey));
     const unreachableKeys = CONFIG_KEYS.filter((key) => !usedKeys.has(key));
 
-    // toolsMap wires freeform-pen, curvature-pen and rectangle to other groups, so these
-    // three entries in toolbarPlaceholderConfig.ts are currently dead config. Every other
-    // group is reached by its tool, which is what makes this a list of exactly three and not
-    // a growing pile: a group for a tool that has a real bar would land here too.
-    expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle']);
+    // `rectangle` is the one group no tool claims: the rail has no `rectangle` tool name, so
+    // `rectangle`/`ellipse`/`triangle`/`polygon`/`line` all render the real `Shape` bar and the
+    // group survives unused. It is correct for it to be here, and the exact equality is what
+    // keeps this a fixed point rather than a growing pile: a group for a tool that has a real
+    // bar, or one whose tool stopped being a placeholder, lands here too.
+    //
+    // The list is derived from the wiring table above, NOT from `toolsMap` — that table's
+    // fidelity to the registry is what the `it.each` render case pins. The `freeform-pen` and
+    // `curvature-pen` groups were on this list because both `placeholderTool(...)` calls named
+    // the `pen` key, which put the standard Pen's seven chips over Magnetic and Curve Fit, the
+    // controls those two tools exist for. Pointing each call at its own key is what cleared
+    // them, and re-pointing either call back at `pen` fails that render case on the missing
+    // `Magnetic` chip — checked by mutation, not argued.
+    expect(unreachableKeys).toEqual(['rectangle']);
   });
 
   it('keeps a config group for every tool that is still a placeholder', () => {

@@ -1,0 +1,761 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CANVAS_REDRAW_POLL_INTERVAL_MS, CANVAS_REDRAW_TIMEOUT_MS } from '../canvas-helpers';
+import { committedAntsOutline, hasNoCommittedAnts, readAntRuns, waitForCommittedAnts } from '../selection-ants';
+import type { Page } from '@playwright/test';
+
+/**
+ * `selection-ants.ts` without a browser.
+ *
+ * The module's surface is three functions that all take a Playwright `Page`, and the
+ * part worth testing is the part that runs INSIDE the page: the pixel scan, the two ant
+ * colours, the alpha guard and the `object-contain` scale-plus-centring arithmetic. All
+ * of that is ordinary code over a canvas element's `getImageData`, so it is reachable
+ * from Node by standing in two things:
+ *
+ * - `page.getByTestId(...).evaluate(fn)` — a `Page` whose single locator runs `fn`
+ *   against whatever the test hands it. `evaluate` is documented to serialise `fn` into
+ *   the page; here `fn` runs in this process instead, which is the whole point.
+ * - `window.HTMLCanvasElement` — the callback's only browser global, used for its
+ *   `instanceof` guard. The environment is Node, so `window` is absent and is installed
+ *   for the duration of the case.
+ *
+ * What is deliberately NOT faked is the arithmetic under test. A real `Uint8ClampedArray`
+ * of real RGBA bytes goes through the real loop, and the expected bounds are written out
+ * from the documented scale-plus-offset rule rather than captured from a run.
+ */
+
+/** RGBA bytes, as `getImageData` returns them. */
+type Rgba = readonly [number, number, number, number];
+
+/** One half of the marching-ants dash. */
+const BLACK: Rgba = [0, 0, 0, 255];
+/** The other half. Both are opaque, and both have to be recognised. */
+const WHITE: Rgba = [255, 255, 255, 255];
+/** Opaque, and neither ant colour: alpha alone would accept it, and must not. */
+const MID_GREY: Rgba = [128, 128, 128, 255];
+/** Opaque and saturated: the colour a selection overlay is drawn in. */
+const RED: Rgba = [255, 0, 0, 255];
+/** A white pixel with no alpha: skipped on alpha before the colour test ever runs. */
+const CLEAR_WHITE: Rgba = [255, 255, 255, 0];
+
+interface Paint {
+  readonly x: number;
+  readonly y: number;
+  readonly rgba: Rgba;
+}
+
+interface Box {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * A canvas whose backing store is a real RGBA buffer, transparent everywhere except
+ * the painted pixels. `object-contain` maps the store onto `box`, and that mapping is
+ * what the module has to reproduce, so `box` is a parameter rather than a constant.
+ */
+class FakeAntsCanvas {
+  readonly width: number;
+  readonly height: number;
+  private readonly pixels: Uint8ClampedArray;
+  private readonly box: Box;
+
+  constructor(width: number, height: number, paints: readonly Paint[], box?: Box) {
+    this.width = width;
+    this.height = height;
+    this.box = box ?? { left: 0, top: 0, width, height };
+    this.pixels = new Uint8ClampedArray(width * height * 4);
+    for (const { x, y, rgba } of paints) {
+      const at = (y * width + x) * 4;
+      this.pixels[at] = rgba[0];
+      this.pixels[at + 1] = rgba[1];
+      this.pixels[at + 2] = rgba[2];
+      this.pixels[at + 3] = rgba[3];
+    }
+  }
+
+  /** `'2d'` only, so the "no 2d context" branch is reachable from a test. */
+  getContext(
+    kind: string
+  ): { getImageData: (x: number, y: number, width: number, height: number) => { data: Uint8ClampedArray } } | null {
+    if (kind !== '2d') return null;
+    return {
+      getImageData: (x: number, y: number, width: number, height: number) => {
+        const data: number[] = [];
+        for (let row = y; row < y + height; row++) {
+          for (let col = x; col < x + width; col++) {
+            const at = (row * this.width + col) * 4;
+            data.push(this.pixels[at], this.pixels[at + 1], this.pixels[at + 2], this.pixels[at + 3]);
+          }
+        }
+        return { data: new Uint8ClampedArray(data) };
+      },
+    };
+  }
+
+  getBoundingClientRect(): Box {
+    return this.box;
+  }
+}
+
+/** The same element, with no 2d context, which the module treats as a hard error. */
+class ContextlessAntsCanvas extends FakeAntsCanvas {
+  override getContext(): null {
+    return null;
+  }
+}
+
+/** The `window` the page callback resolves `window.HTMLCanvasElement` against. */
+const BROWSER_GLOBALS = globalThis as unknown as { window?: unknown; document?: unknown };
+
+/** Virtual milliseconds. `waitForCommittedAnts` compares `Date.now()` against a deadline. */
+let now = 0;
+/** How many times the module slept between reads. */
+let waits = 0;
+
+/**
+ * A `Page` with the one method the module calls on it. `read` is re-invoked per call,
+ * which is how a test makes the ants arrive on the fourth poll instead of the first.
+ */
+function antsPage(read: () => unknown): Page {
+  const page = {
+    getByTestId: (testId: string) => {
+      // The test id is part of the contract with the app's canvas, and a rename on
+      // either side has to fail here rather than as an empty read in a spec.
+      if (testId !== 'selection-ants-canvas') throw new Error(`unexpected test id: ${testId}`);
+      return { evaluate: (callback: (element: unknown) => unknown) => Promise.resolve(callback(read())) };
+    },
+    waitForTimeout: async (ms: number) => {
+      waits += 1;
+      now += ms;
+    },
+  };
+  return page as unknown as Page;
+}
+
+/** Reads the same element forever, which is what a settled selection looks like. */
+function antsReading(canvas: FakeAntsCanvas | null): Page {
+  return antsPage(() => canvas);
+}
+
+/**
+ * A `Page` whose `evaluate` runs the callback in-process, with `document` standing in
+ * for the page's global so the callback's `document.querySelector` resolves it.
+ * Set only for the duration of the call; cleaned up so a later test does not see it.
+ */
+function evaluatePage(canvas: FakeAntsCanvas | null): Page {
+  const document = {
+    querySelector: (selector: string): FakeAntsCanvas | null => {
+      if (selector !== '[data-testid="selection-ants-canvas"]') {
+        throw new Error(`unexpected selector: ${selector}`);
+      }
+      return canvas;
+    },
+  };
+  const page = {
+    evaluate: (fn: (arg: unknown) => unknown, arg: unknown) => {
+      BROWSER_GLOBALS.document = document;
+      try {
+        return Promise.resolve(fn(arg));
+      } finally {
+        delete BROWSER_GLOBALS.document;
+      }
+    },
+  };
+  return page as unknown as Page;
+}
+
+beforeEach(() => {
+  now = 0;
+  waits = 0;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  BROWSER_GLOBALS.window = { HTMLCanvasElement: FakeAntsCanvas };
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete BROWSER_GLOBALS.window;
+});
+
+describe('committedAntsOutline', () => {
+  it('reports null for a canvas with no ants on it', async () => {
+    const page = antsReading(new FakeAntsCanvas(8, 8, []));
+    await expect(committedAntsOutline(page)).resolves.toBeNull();
+  });
+
+  it('reports the bounds of a single ant pixel at one to one', async () => {
+    const page = antsReading(new FakeAntsCanvas(8, 8, [{ x: 2, y: 3, rgba: BLACK }]));
+    await expect(committedAntsOutline(page)).resolves.toEqual({ left: 2, top: 3, right: 2, bottom: 3 });
+  });
+
+  it('accepts the white half of the dash as an ant', async () => {
+    const page = antsReading(new FakeAntsCanvas(8, 8, [{ x: 5, y: 1, rgba: WHITE }]));
+    await expect(committedAntsOutline(page)).resolves.toEqual({ left: 5, top: 1, right: 5, bottom: 1 });
+  });
+
+  it.each([
+    { name: 'a mid grey pixel', rgba: MID_GREY },
+    { name: 'a saturated red pixel', rgba: RED },
+  ])('rejects $name, because alpha alone would accept it', async ({ rgba }) => {
+    const page = antsReading(new FakeAntsCanvas(8, 8, [{ x: 4, y: 4, rgba }]));
+    await expect(committedAntsOutline(page)).resolves.toBeNull();
+  });
+
+  it('skips a transparent pixel whatever colour its bytes carry', async () => {
+    const page = antsReading(new FakeAntsCanvas(8, 8, [{ x: 4, y: 4, rgba: CLEAR_WHITE }]));
+    await expect(committedAntsOutline(page)).resolves.toBeNull();
+  });
+
+  it('spans every ant pixel, so the bounds are the outermost one on each axis', async () => {
+    const page = antsReading(
+      new FakeAntsCanvas(8, 8, [
+        { x: 1, y: 6, rgba: BLACK },
+        { x: 5, y: 2, rgba: WHITE },
+        { x: 3, y: 4, rgba: BLACK },
+      ])
+    );
+    await expect(committedAntsOutline(page)).resolves.toEqual({ left: 1, top: 2, right: 5, bottom: 6 });
+  });
+
+  it('maps a 2x backing store through the element scale, not onto its own pixels', async () => {
+    // object-contain, square to square: scale 1/2, no centring offset.
+    const canvas = new FakeAntsCanvas(200, 200, [{ x: 10, y: 10, rgba: BLACK }], {
+      left: 10,
+      top: 20,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 15,
+      top: 25,
+      right: 15,
+      bottom: 25,
+    });
+  });
+
+  it('centres a letterboxed backing store inside the element box', () => {
+    // 200x100 store in a 100x100 box: scale is min(100/200, 100/100) = 1/2, so the
+    // store is 50 CSS pixels tall inside 100, which puts 25 CSS pixels of letterbox
+    // above it and below it. A scale alone would report the top row at 0.
+    expect({ scale: Math.min(100 / 200, 100 / 100), offsetY: (100 - 100 * (100 / 200)) / 2 }).toEqual({
+      scale: 0.5,
+      offsetY: 25,
+    });
+  });
+
+  it('adds the letterbox offset to both edges of a letterboxed store', async () => {
+    const canvas = new FakeAntsCanvas(200, 100, [{ x: 0, y: 99, rgba: BLACK }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // Row 99 is the store's last row: 25 + 99 * 1/2 = 74.5 in CSS page space.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 0,
+      top: 74.5,
+      right: 0,
+      bottom: 74.5,
+    });
+  });
+
+  it('names the test id when the page has no ants canvas', async () => {
+    const page = antsPage(() => ({ tagName: 'DIV' }));
+    await expect(committedAntsOutline(page)).rejects.toThrow(
+      /committedAntsOutline: no \[data-testid="selection-ants-canvas"\] on the page/
+    );
+  });
+
+  it('fails when the canvas has no 2d context rather than reporting no ants', async () => {
+    // The distinction is the module's: "no ants" is an answer, "no context" is a
+    // broken oracle, and reading it as the first would pass every assertion after it.
+    const page = antsReading(new ContextlessAntsCanvas(8, 8, []));
+    await expect(committedAntsOutline(page)).rejects.toThrow(/no 2d context/);
+  });
+});
+
+describe('hasNoCommittedAnts', () => {
+  it('is true for a canvas with no ants on it', async () => {
+    await expect(hasNoCommittedAnts(antsReading(new FakeAntsCanvas(8, 8, [])))).resolves.toBe(true);
+  });
+
+  it('is false the moment one ant pixel is on it', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 0, y: 0, rgba: BLACK }]);
+    await expect(hasNoCommittedAnts(antsReading(canvas))).resolves.toBe(false);
+  });
+
+  it('reads absence rather than looking for the ants somewhere else', async () => {
+    // The same bytes as the case above, one ant on the far side of the store: the
+    // answer is "there are ants", never "there are no ants over there".
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 7, y: 7, rgba: WHITE }]);
+    await expect(hasNoCommittedAnts(antsReading(canvas))).resolves.toBe(false);
+  });
+});
+
+describe('waitForCommittedAnts', () => {
+  it('returns on the first read that finds ants, and does not sleep after it', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 1, y: 1, rgba: BLACK }]);
+    await expect(waitForCommittedAnts(antsReading(canvas), 'a committed lasso')).resolves.toBeUndefined();
+    expect(waits).toBe(0);
+  });
+
+  it('keeps polling a settled canvas until the ants arrive', async () => {
+    let reads = 0;
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 3, y: 3, rgba: WHITE }]);
+    const page = antsPage(() => {
+      reads += 1;
+      return reads < 4 ? new FakeAntsCanvas(8, 8, []) : canvas;
+    });
+
+    await expect(waitForCommittedAnts(page, 'a committed polygon')).resolves.toBeUndefined();
+    // Three empty reads, so three sleeps, and the fourth read is the one that answers.
+    expect(reads).toBe(4);
+    expect(waits).toBe(3);
+    expect(now).toBe(3 * CANVAS_REDRAW_POLL_INTERVAL_MS);
+  });
+
+  it('gives up at the redraw timeout, not one poll later or one poll sooner', async () => {
+    const page = antsReading(new FakeAntsCanvas(8, 8, []));
+    await expect(waitForCommittedAnts(page, 'a committed selection')).rejects.toThrow(/Timed out/);
+    expect(waits).toBe(CANVAS_REDRAW_TIMEOUT_MS / CANVAS_REDRAW_POLL_INTERVAL_MS);
+    expect(now).toBe(CANVAS_REDRAW_TIMEOUT_MS);
+  });
+
+  it('names what it was waiting for and the last reading it got', async () => {
+    const page = antsReading(new FakeAntsCanvas(8, 8, []));
+    await expect(waitForCommittedAnts(page, 'the freehand lasso border')).rejects.toThrow(
+      /Timed out waiting for the freehand lasso border \(last read: null, last error: null\)/
+    );
+  });
+
+  it('tells a read that threw every tick apart from one that returned null forever', async () => {
+    // Two different failures with the same symptom: a canvas that never appeared, and a
+    // canvas whose read is broken. Reporting them the same way sends whoever reads the
+    // failure to the wrong place.
+    const page = antsPage(() => {
+      throw new Error('no [data-testid="selection-ants-canvas"] on the page');
+    });
+
+    await expect(waitForCommittedAnts(page, 'the ants border')).rejects.toThrow(
+      /last read: null, last error: no \[data-testid="selection-ants-canvas"\] on the page/
+    );
+  });
+});
+
+describe('committedAntsOutline under the contain fit', () => {
+  it('maps a pillarboxed store (taller than the box) through the horizontal letterbox offset', async () => {
+    // 100x200 store in a 100x100 box: height binds, scale 1/2, 25px bar on each side.
+    const canvas = new FakeAntsCanvas(100, 200, [{ x: 0, y: 0, rgba: BLACK }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 25,
+      top: 0,
+      right: 25,
+      bottom: 0,
+    });
+  });
+
+  it('maps the bottom-right corner of a pillarboxed store through the horizontal offset', async () => {
+    const canvas = new FakeAntsCanvas(100, 200, [{ x: 99, y: 199, rgba: WHITE }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // offsetX 25 + 99 * 1/2 = 74.5; 199 * 1/2 = 99.5.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 74.5,
+      top: 99.5,
+      right: 74.5,
+      bottom: 99.5,
+    });
+  });
+
+  it('bounds ants on opposite corners of a pillarboxed store', async () => {
+    const canvas = new FakeAntsCanvas(
+      100,
+      200,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 199, rgba: WHITE },
+      ],
+      { left: 0, top: 0, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 25,
+      top: 0,
+      right: 74.5,
+      bottom: 99.5,
+    });
+  });
+
+  it('maps a letterboxed store (wider than the box) through the vertical letterbox offset', async () => {
+    // 400x100 store in a 100x100 box: width binds, scale 1/4, 37.5px bar top and bottom.
+    const canvas = new FakeAntsCanvas(400, 100, [{ x: 0, y: 0, rgba: BLACK }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 0,
+      top: 37.5,
+      right: 0,
+      bottom: 37.5,
+    });
+  });
+
+  it('maps the bottom-right corner of a 4x-wide letterboxed store', async () => {
+    const canvas = new FakeAntsCanvas(400, 100, [{ x: 399, y: 99, rgba: WHITE }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // offsetY 37.5 + 99 * 1/4 = 62.25; 399 * 1/4 = 99.75.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 99.75,
+      top: 62.25,
+      right: 99.75,
+      bottom: 62.25,
+    });
+  });
+
+  it('shifts every corner of a letterboxed store by a non-origin box', async () => {
+    const canvas = new FakeAntsCanvas(
+      200,
+      100,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 99, rgba: BLACK },
+      ],
+      { left: 30, top: 40, width: 100, height: 100 }
+    );
+    // scale 1/2, offsetY 25: top-left (30, 65), bottom-right (30 + 49.5, 40 + 25 + 49.5).
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 30,
+      top: 65,
+      right: 79.5,
+      bottom: 114.5,
+    });
+  });
+
+  it('shifts every corner of a pillarboxed store by a non-origin box', async () => {
+    const canvas = new FakeAntsCanvas(
+      100,
+      200,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 199, rgba: BLACK },
+      ],
+      { left: 60, top: 70, width: 100, height: 100 }
+    );
+    // scale 1/2, offsetX 25: top-left (85, 70), bottom-right (60 + 25 + 49.5, 70 + 99.5).
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 85,
+      top: 70,
+      right: 134.5,
+      bottom: 169.5,
+    });
+  });
+});
+
+describe('committedAntsOutline ant pixel placement at corners', () => {
+  it('lands ants on all four corners of a 1:1 store exactly on the element box corners', async () => {
+    // scale 1, no letterbox: store pixels equal page pixels, box origin added straight in.
+    const canvas = new FakeAntsCanvas(
+      100,
+      100,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 0, rgba: BLACK },
+        { x: 0, y: 99, rgba: WHITE },
+        { x: 99, y: 99, rgba: WHITE },
+      ],
+      { left: 100, top: 50, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 100,
+      top: 50,
+      right: 199,
+      bottom: 149,
+    });
+  });
+
+  it('maps the top-left corner ant of a 1:1 store to the box origin', async () => {
+    const canvas = new FakeAntsCanvas(100, 100, [{ x: 0, y: 0, rgba: BLACK }], {
+      left: 100,
+      top: 50,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 100,
+      top: 50,
+      right: 100,
+      bottom: 50,
+    });
+  });
+
+  it('maps the bottom-right corner ant of a 1:1 store to the box bottom-right', async () => {
+    const canvas = new FakeAntsCanvas(100, 100, [{ x: 99, y: 99, rgba: BLACK }], {
+      left: 100,
+      top: 50,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 199,
+      top: 149,
+      right: 199,
+      bottom: 149,
+    });
+  });
+
+  it('maps the top-right and bottom-left corner ants of a 1:1 store to their box corners', async () => {
+    const canvas = new FakeAntsCanvas(
+      100,
+      100,
+      [
+        { x: 99, y: 0, rgba: BLACK },
+        { x: 0, y: 99, rgba: WHITE },
+      ],
+      { left: 100, top: 50, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 100,
+      top: 50,
+      right: 199,
+      bottom: 149,
+    });
+  });
+
+  it('maps the top-right corner ant of a 2x store to the half-box corner', async () => {
+    const canvas = new FakeAntsCanvas(200, 200, [{ x: 199, y: 0, rgba: BLACK }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // 0 + 199 * 1/2 = 99.5.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 99.5,
+      top: 0,
+      right: 99.5,
+      bottom: 0,
+    });
+  });
+
+  it('maps the bottom-left corner ant of a 2x store to the half-box corner', async () => {
+    const canvas = new FakeAntsCanvas(200, 200, [{ x: 0, y: 199, rgba: WHITE }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // 0 + 199 * 1/2 = 99.5 on the non-zero axis.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 0,
+      top: 99.5,
+      right: 0,
+      bottom: 99.5,
+    });
+  });
+
+  it('bounds all four corners of a 2x store to the half-box rect', async () => {
+    const canvas = new FakeAntsCanvas(
+      200,
+      200,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 199, y: 0, rgba: BLACK },
+        { x: 0, y: 199, rgba: WHITE },
+        { x: 199, y: 199, rgba: WHITE },
+      ],
+      { left: 0, top: 0, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 0,
+      top: 0,
+      right: 99.5,
+      bottom: 99.5,
+    });
+  });
+});
+
+describe('readAntRuns', () => {
+  it('returns the painted run in one row, scanning the row axis', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 2, y: 3, rgba: BLACK },
+      { x: 3, y: 3, rgba: BLACK },
+      { x: 4, y: 3, rgba: BLACK },
+      { x: 5, y: 3, rgba: BLACK },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 10, height: 10 }, 'row');
+
+    expect(runs).toHaveLength(10);
+    expect(runs[3]).toEqual([[2, 5]]);
+    for (let y = 0; y < 10; y++) {
+      if (y !== 3) expect(runs[y]).toEqual([]);
+    }
+  });
+
+  it('accepts the white half of the dash as an ant on the column axis', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 4, y: 1, rgba: WHITE },
+      { x: 4, y: 2, rgba: WHITE },
+      { x: 4, y: 3, rgba: WHITE },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 10, height: 10 }, 'column');
+
+    expect(runs).toHaveLength(10);
+    expect(runs[4]).toEqual([[1, 3]]);
+    for (let x = 0; x < 10; x++) {
+      if (x !== 4) expect(runs[x]).toEqual([]);
+    }
+  });
+
+  it('returns multiple separate runs on one scan line', async () => {
+    const canvas = new FakeAntsCanvas(20, 5, [
+      { x: 1, y: 2, rgba: BLACK },
+      { x: 2, y: 2, rgba: BLACK },
+      { x: 3, y: 2, rgba: BLACK },
+      { x: 10, y: 2, rgba: WHITE },
+      { x: 11, y: 2, rgba: WHITE },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 20, height: 5 }, 'row');
+
+    expect(runs[2]).toEqual([
+      [1, 3],
+      [10, 11],
+    ]);
+  });
+
+  it('expresses each run as a single pixel', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 5, y: 5, rgba: BLACK }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'row');
+
+    expect(runs[5]).toEqual([[5, 5]]);
+    for (let y = 0; y < 8; y++) {
+      if (y !== 5) expect(runs[y]).toEqual([]);
+    }
+  });
+
+  it('rejects a mid-grey pixel, because alpha alone would accept it', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 4, y: 4, rgba: MID_GREY }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'column');
+
+    for (let x = 0; x < 8; x++) {
+      expect(runs[x]).toEqual([]);
+    }
+  });
+
+  it('rejects a saturated red pixel, because alpha alone would accept it', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 3, y: 6, rgba: RED }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'row');
+
+    expect(runs[6]).toEqual([]);
+  });
+
+  it('skips a transparent pixel whatever colour its bytes carry', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 2, y: 7, rgba: CLEAR_WHITE }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'column');
+
+    expect(runs[2]).toEqual([]);
+  });
+
+  it('clamps a window that runs past the right and bottom edges to the backing store', async () => {
+    const canvas = new FakeAntsCanvas(5, 5, [{ x: 4, y: 4, rgba: BLACK }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 2, y: 2, width: 20, height: 20 }, 'row');
+
+    // Clamped to 5x5 starting at (2,2): rows 2..4, width 3 (cols 2..4).
+    expect(runs).toHaveLength(3);
+    expect(runs[2]).toEqual([[4, 4]]);
+    expect(runs[0]).toEqual([]);
+    expect(runs[1]).toEqual([]);
+    // The clamped readHeight is 3, so row 5 does not exist in the result.
+    expect(runs[3]).toBeUndefined();
+  });
+
+  it('clamps a window with a negative origin to the backing store', async () => {
+    const canvas = new FakeAntsCanvas(5, 5, [{ x: 1, y: 1, rgba: WHITE }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: -3, y: -3, width: 10, height: 10 }, 'row');
+
+    // x0=0, y0=0, x1=5, y1=5: full canvas read.
+    expect(runs).toHaveLength(5);
+    expect(runs[1]).toEqual([[1, 1]]);
+    for (let y = 0; y < 5; y++) {
+      if (y !== 1) expect(runs[y]).toEqual([]);
+    }
+  });
+
+  it('reports runs in document pixels, offset by the read origin', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 3, y: 7, rgba: BLACK },
+      { x: 4, y: 7, rgba: BLACK },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 2, y: 5, width: 6, height: 3 }, 'row');
+
+    // Read window is rows 5..7, cols 2..7 (clamped to 8x8 backing store at (2,5) to (8,8)).
+    // On row 7 (index 2 in the result), the ant pixels are at x=3 and x=4 in document space.
+    expect(runs).toHaveLength(3);
+    expect(runs[2]).toEqual([[3, 4]]);
+  });
+
+  it('reports column scans in document y pixels', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 5, y: 2, rgba: BLACK },
+      { x: 5, y: 3, rgba: BLACK },
+      { x: 5, y: 4, rgba: BLACK },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 3, y: 1, width: 5, height: 8 }, 'column');
+
+    // Read window is cols 3..7, rows 1..9 (clamped to canvas bounds).
+    // Column 5 (index 2 in the result), ants at y=2,3,4 in document space.
+    expect(runs).toHaveLength(5);
+    expect(runs[2]).toEqual([[2, 4]]);
+  });
+
+  it('scans a sub-window rather than the whole backing store', async () => {
+    const canvas = new FakeAntsCanvas(20, 20, [
+      { x: 0, y: 0, rgba: BLACK },
+      { x: 19, y: 19, rgba: WHITE },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 5, y: 5, width: 5, height: 5 }, 'row');
+
+    // Window is the inner 5x5: nothing is painted in cols 5..9, rows 5..9.
+    for (const line of runs) {
+      expect(line).toEqual([]);
+    }
+  });
+
+  it('throws when the page has no ants canvas', async () => {
+    const page = evaluatePage(null);
+    await expect(readAntRuns(page, { x: 0, y: 0, width: 8, height: 8 }, 'row')).rejects.toThrow(
+      /readAntRuns: no \[data-testid="selection-ants-canvas"\] on the page/
+    );
+  });
+
+  it('throws when the canvas has no 2d context rather than reporting empty runs', async () => {
+    const page = evaluatePage(new ContextlessAntsCanvas(8, 8, []));
+    await expect(readAntRuns(page, { x: 0, y: 0, width: 8, height: 8 }, 'column')).rejects.toThrow(/no 2d context/);
+  });
+});

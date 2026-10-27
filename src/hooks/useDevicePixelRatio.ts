@@ -30,8 +30,6 @@ export function useDevicePixelRatio(): number {
 
     const onChange = () => {
       setRatio(currentDevicePixelRatio());
-      // The query captured at mount no longer matches, so it will never fire again. Listen to the
-      // one that matches now, or a second monitor change is invisible.
       query?.removeEventListener('change', onChange);
       query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
       query.addEventListener('change', onChange);

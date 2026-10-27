@@ -161,7 +161,9 @@ describe('defaultSettings', () => {
 
   it('covers every pen type and figure type in the saved presets', () => {
     expect(Object.keys(savedDrawPerPen).sort()).toEqual(['pen', 'pen-dashed', 'spray']);
-    expect(Object.keys(savedArgsPerFigure).sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle'].sort());
+    expect(Object.keys(savedArgsPerFigure).sort()).toEqual(
+      ['line', 'oval', 'polygon', 'rectangle', 'star', 'triangle'].sort()
+    );
 
     for (const penType of Object.keys(savedDrawPerPen) as PenType[]) {
       expect(savedDrawPerPen[penType].lineWidth, penType).toBeGreaterThan(0);
@@ -316,7 +318,7 @@ describe('saveLastSettings tool-name coverage', () => {
 const penPresets: readonly [PenType, Record<string, unknown>][] = [
   ['pen', { alpha: 0.9, lineWidth: 10 }],
   ['pen-dashed', { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] }],
-  ['spray', { alpha: 0.5, lineWidth: 100 }],
+  ['spray', { alpha: 0.5, flow: 50, lineWidth: 100 }],
 ];
 
 const figurePresets: readonly [FigureType, Record<string, unknown>][] = [
@@ -328,6 +330,8 @@ const figurePresets: readonly [FigureType, Record<string, unknown>][] = [
   // the seed: 5 is Adobe's Polygon-tool default, and a store that arrives
   // without the key must still draw a pentagon.
   ['polygon', { alpha: 1, lineWidth: 5, sides: 5, toolMode: 'shape' }],
+  // Adobe does not publish the Star Ratio default; 50% is this app's explicit choice.
+  ['star', { alpha: 1, lineWidth: 5, sides: 5, starRatio: 50, toolMode: 'shape' }],
 ];
 
 /** Walks nested settings values (e.g. `reposition.move`) looking for non-finite numbers. */
@@ -461,16 +465,15 @@ describe('defaultSettings assumptions baked into the registry', () => {
     expect(result[0].height).toBe(size.height);
   });
 
-  it('is the one default set the crop processor cannot consume as-is (the crop processor in src/tools/crop.ts)', () => {
-    // Every other tool runs on its seeded defaults; crop destructures `rect!` and the
-    // seeded rect is null, so the document-operation commit needs a real rect first.
+  it('lets the crop processor consume its seeded defaults as a no-op copy', () => {
+    // The live document operation needs a real rect, but the registered processor must still
+    // tolerate the persisted default record during replay.
     expect(defaultSettings.crop.rect).toBeNull();
-    expect(() =>
-      findToolProcessor('crop')!.imageProcessor({
-        size: { width: 40, height: 24 },
-        bitmap: createMockImageBitmap(40, 24),
-      })(defaultSettings.crop as never)
-    ).toThrow(TypeError);
+    const bitmap = createMockImageBitmap(40, 24);
+    const result = findToolProcessor('crop')!.imageProcessor({ size: { width: 40, height: 24 }, bitmap })(
+      defaultSettings.crop as never
+    );
+    expect(result).toEqual([bitmap]);
   });
 
   it('feeds the remaining settings straight into the composed CSS filters', () => {

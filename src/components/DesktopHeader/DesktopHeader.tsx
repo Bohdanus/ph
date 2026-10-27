@@ -72,6 +72,9 @@ export const MENUS_EXCLUDE: readonly ToolName[] = [
 
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
+  { toolName: 'hand', label: 'Hand Tool' },
+  { toolName: 'zoom', label: 'Zoom Tool' },
+  { toolName: 'rotate-view', label: 'Rotate View Tool' },
   { toolName: 'blur', label: 'Blur' },
   { toolName: 'crop', label: 'Crop' },
   { toolName: 'draw', label: 'Draw' },
@@ -89,8 +92,13 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
+  { toolName: 'spot-healing', label: 'Spot Healing Brush Tool' },
+  { toolName: 'healing-brush', label: 'Healing Brush Tool' },
+  { toolName: 'patch', label: 'Patch Tool' },
+  { toolName: 'red-eye', label: 'Red Eye Correction Tool' },
   { toolName: 'eraser', label: 'Eraser Tool' },
   { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
+  { toolName: 'ruler', label: 'Ruler Tool' },
   { toolName: 'sharpen', label: 'Sharpen Tool' },
   { toolName: 'smudge', label: 'Smudge Tool' },
   { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
@@ -100,6 +108,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'burn', label: 'Burn Tool' },
   { toolName: 'sponge', label: 'Sponge Tool' },
   { toolName: 'eyedropper', label: 'Eyedropper Tool' },
+  { toolName: 'color-sampler', label: 'Color Sampler Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
   { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
@@ -109,25 +118,20 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'polygon', label: 'Polygon Tool' },
   { toolName: 'line', label: 'Line Tool' },
   { toolName: 'custom-shape', label: 'Custom Shape Tool' },
-  // Adobe's own name for the tool, and the last row for the same reason the rail tile is
-  // last: the Hand is the last tool group, above the colour swatches.
-  { toolName: 'hand', label: 'Hand Tool' },
-  { toolName: 'rotate-view', label: 'Rotate View Tool' },
 ];
 
 /**
  * The five figure entries above are the *second* selection surface for the figures
  * — the sidebar already selects them as `toolName: 'shape'` plus a `figure` patch.
  * Dispatching the registered figure `ToolName`s directly mounted the Shape panel
- * with, say, `toolName: 'rectangle'`, where its `toolName !== 'shape'` guard
- * (`Shape.tsx:32`) suppressed the store-colour publish: the colour well said red
- * and the shape committed `defaultSettings.rectangle.color`, black.
+ * with a figure-specific tool name, bypassing the shared shape-family route and
+ * leaving the panel's colour synchronization dependent on the wrong args shape.
  *
- * So route them through the same path the sidebar uses, which is what makes that
- * guard correct for every surface rather than special-casing this menu.
+ * So route them through the same path the sidebar uses, which keeps every surface
+ * on the shared shape-family state path rather than special-casing this menu.
  *
  * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
- * figure is `oval`, exactly as `toolbar-mapping.ts:77` spells it.
+ * figure is `oval`, exactly as the toolbar mapping defines it.
  */
 const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
   rectangle: 'rectangle',
@@ -191,16 +195,30 @@ type MenuHostItem = {
  *   `brightness(…) contrast(…)` filter, which is Adobe's Brightness/Contrast and not
  *   Adobe's Levels. Naming it `Levels` under a menu that is supposed to be a clone is the
  *   falsehood this rename removes.
- * - **`Photo Filter` → the `color` id.** Its three controls are grayscale, sepia and
- *   saturation (`src/tools/functions.ts`'s `buildColorsFilter`). Adobe's Photo Filter is a
- *   lens filter with a Density slider and a Preserve Luminosity option, and sepia IS its
- *   Warming preset, but **two of the three controls are a partial match and `grayscale`
- *   has no counterpart in it.** It is a bounded divergence, recorded here rather than
- *   papered over, and it is strictly better than the alternative: `Black and White` needs
- *   per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
+ * - **`Desaturate` → the `color` id.** Adobe's Desaturate "converts a color image to
+ *   grayscale values, but leaves the image in the same color mode", and "assigns equal red,
+ *   green, and blue values to each pixel in an RGB image" — which is what the bar's
+ *   **Grayscale** slider does at 100. Adobe adds that the command "has the same effect as
+ *   setting Saturation to minus (-)100 in the Hue/Saturation adjustment", which is the bar's
+ *   **Saturation** slider
+ *   (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>). **`Sepia` is the bounded divergence**: it belongs to neither command, and
+ *   Adobe's Desaturate is a one-shot command with no dialog at all, where this bar is three
+ *   continuous sliders.
+ *
+ *   **This item used to be `Photo Filter`.** Adobe's Photo Filter is a lens filter applied
+ *   "from a preset filter or a custom color filter", with a **Density** slider and a
+ *   **Preserve Luminosity** option, and the bar reproduced **none** of those three — so an
+ *   enabled item opened a bar whose controls did not contain the command its label named.
+ *   `Photo Filter` is a `disabled` item now, which is this file's own rule applied: the
+ *   capability is unbuilt. `Desaturate` is the Adobe name in the same submenu the bar's
+ *   leading control actually computes, which is what `docs/TOOLS-TOO-HARD.md`'s enabled-items
+ *   entry requires of an adjustment command — an item whose computation does not match its
+ *   Adobe name is a falsehood and does not get enabled. Moving the row rather than dropping
+ *   it is what keeps `color` reachable at all: it is in `extraTools`, so it has no rail tile
+ *   and no `tools-menu-color-button`, and this submenu is the only path into the panel.
  *
  * **`Levels`, `Curves`, `Exposure`, `Black and White`, `Hue/Saturation`, `Vibrance`,
- * `Color Balance`, `Channel Mixer`, `Selective Color`, `Desaturate`, `Invert`,
+ * `Color Balance`, `Channel Mixer`, `Selective Color`, `Photo Filter`, `Invert`,
  * `Posterize`, `Threshold`, `Gradient Map`, `Equalize`, `Shadows/Highlights`, `HDR Toning`,
  * `Match Color`, `Replace Color` and `Color Lookup` are all disabled**, which is the
  * accurate state of this app: it has no adjustment layers at all, and
@@ -217,13 +235,13 @@ const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
   { label: 'Hue/Saturation' },
   { label: 'Color Balance' },
   { label: 'Black and White' },
-  { label: 'Photo Filter', toolName: 'color' },
+  { label: 'Photo Filter' },
   { label: 'Channel Mixer' },
   { label: 'Color Lookup' },
   { label: 'Selective Color' },
   { label: 'Shadows/Highlights' },
   { label: 'HDR Toning' },
-  { label: 'Desaturate' },
+  { label: 'Desaturate', toolName: 'color' },
   { label: 'Match Color' },
   { label: 'Replace Color' },
   { label: 'Invert' },
@@ -285,16 +303,16 @@ const DesktopHeader = () => {
     const figure = FIGURE_TOOLS[toolName];
     // Select first, then patch — deliberately *not* the order
     // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
-    // OUTGOING tool (`useApp.ts:167`), and `patchToolArgs` writes straight into the
-    // live `currentArgsRef` (`useCurrentTool.tsx:61`). Patching first would leave the
-    // text branch at `useLayer.ts:394` reading shape args — no `.text`, no `.rect` —
+    // OUTGOING tool through `goToTool()`, and `patchToolArgs()` writes straight into the
+    // live `currentArgsRef`. Patching first would leave the
+    // text branch in `commitDirtyTool()` reading shape args — no `.text`, no `.rect` —
     // so it early-returns and an unapplied text layer is dropped with nothing to undo.
     // Selecting first lets that commit read the text args it is meant to read.
     if (figure !== undefined) {
-      goToTool('shape');
+      if (goToTool('shape') === false) return;
       patchToolArgs('shape', { figure });
     } else {
-      goToTool(toolName);
+      if (goToTool(toolName) === false) return;
     }
     closeMenus();
   };
@@ -344,12 +362,12 @@ const DesktopHeader = () => {
 
   // Escape closes whatever is open, and the listener exists only while something is. With
   // no menu open the key belongs to whoever else handles it — the Transform panel cancels a
-  // pending transform on Escape (`Transform.tsx:41`, on `window`) — so this must not consume
+  // pending transform on Escape in `Transform` — so this must not consume
   // it. It does consume it while a menu IS open, because `stopPropagation` on `document`
   // stops the event reaching a `window` listener: the menu is the topmost thing open, so it
   // takes the first press and the panel takes the second. The dropdowns had no keyboard
   // dismissal at all before this, while the rail's flyout closes the same way
-  // (`SidebarLeft.tsx:554-564`).
+  // (`SidebarLeft`).
   useEffect(() => {
     if (openMenu === null) return;
     const handleEscape = (event: KeyboardEvent) => {
@@ -444,6 +462,7 @@ const DesktopHeader = () => {
                       flushSync(() => {
                         exportLayers = commitDirtyTool();
                       });
+                      if (exportLayers === null) return;
                       const data = await openSaveImageDialog({
                         fileName,
                         layers: exportLayers,

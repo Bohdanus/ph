@@ -11,7 +11,22 @@ import { resetOverlayAlpha } from '../util/canvas.ts';
 export const DASH_LENGTH = 6;
 export const GAP_LENGTH = 6;
 export const LINE_WIDTH = 1;
-export const SPEED = 1; // pixels per frame
+
+/**
+ * CSS px per frame the dash offset advances, so one 12px cycle takes 30 frames.
+ *
+ * Adobe documents no rate for the ants — `helpx.adobe.com` characterises the border only as
+ * "animated"/"marching", and the Guides/Grid/Slices preferences that expose guides colour and
+ * line style expose nothing for a selection edge — so this is a judgement call and not a
+ * derived constant. It was 1 CSS px per frame, which at 60fps walks a full 6/6 dash cycle in
+ * 0.2s: fast enough to read as noise rather than as a border, and fast enough that the eye
+ * cannot follow which dash moved. 0.4 is the operator's 2.5x reduction, which puts a cycle at
+ * half a second.
+ *
+ * Every consumer divides this by the contain fit in the same place it divides the dash length,
+ * so the rate is a screen speed and does not vary with zoom.
+ */
+export const SPEED = 0.4;
 
 export type AntsProps = {
   overlayRef: RefObject<HTMLCanvasElement | null>;

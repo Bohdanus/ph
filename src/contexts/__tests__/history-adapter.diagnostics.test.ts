@@ -20,11 +20,14 @@ import type { HistoryItem } from '../history-types.ts';
 import { updateHistoryTimeline } from '../history-timeline.ts';
 import type { LayerSource } from '../layer-types.ts';
 import {
+  HIDE_LAYER_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
+  REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
 
@@ -46,6 +49,7 @@ function blankLayer(id = layerId) {
     blendMode: 'source-over' as GlobalCompositeOperation,
     order: 0,
     pos: { x: 0, y: 0, width: 100, height: 80 },
+    presentationBounds: null,
     source: {
       kind: 'blank' as const,
       color: '#ffffff',
@@ -206,7 +210,7 @@ describe('MigrationDiagnostic code mapping', () => {
     });
   });
 
-  it('maps a document replacement inside a history to code document-replacement with action and history ids', () => {
+  it('warns when legacy replay ignores a later document source', () => {
     const registry = new AssetRegistry();
     const result = convert([blurItem(), { ...baselineHistory('replacement')[0] }, colorItem('color-after')], registry);
 
@@ -214,14 +218,48 @@ describe('MigrationDiagnostic code mapping', () => {
       {
         historyId: 'replacement',
         actionName: OPEN_DOCUMENT_ACTION,
-        severity: 'error',
+        severity: 'warning',
         code: 'document-replacement',
-        message: 'Document replacement must create a new durable document and cannot appear inside a document history.',
+        message:
+          'Legacy replay ignores every non-first document source, including its action and replacement state; the durable cursor remains at the preceding published entry.',
       },
     ]);
-    // The replacement produces no durable operation and maps to the preceding entry.
+    // The ignored replacement maps to the preceding published entry.
     expect(result.document.history.map((entry) => entry.id)).toEqual(['blur-edit', 'color-after']);
     expect(result.legacyCursorToDurableCursor[2]).toBe(0);
+  });
+
+  it('keeps a disabled document replacement as a warning without blocking the shadow', () => {
+    const registry = new AssetRegistry();
+    const replacement = { ...baselineHistory('disabled-replacement')[0]!, disabled: true };
+    const result = convertSafely([blurItem(), replacement], registry);
+
+    expect(result.status).toBe('current');
+    expect(result.document?.history.map((entry) => entry.id)).toEqual(['blur-edit']);
+    expect(result.legacyCursorToDurableCursor[2]).toBe(0);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'disabled-replacement',
+        actionName: OPEN_DOCUMENT_ACTION,
+        severity: 'warning',
+        code: 'document-replacement',
+      }),
+    ]);
+    registry.shutdown();
+  });
+
+  it('records the first enabled conversion failure at legacy index zero', () => {
+    const registry = new AssetRegistry();
+    const result = legacyHistoryToDurable(
+      [{ id: 'unsupported-at-zero', actionName: TOOL_ACTION, layerId, args: { toolName: 'unknown-tool' as never } }],
+      { documentId, registry }
+    );
+
+    expect(result.firstErrorIndex).toBe(0);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'unsupported-at-zero', severity: 'error' }),
+    ]);
+    registry.shutdown();
   });
 
   it('maps a whole-conversion failure to code conversion-failed without history or action keys', () => {
@@ -253,7 +291,7 @@ describe('MigrationDiagnostic code mapping', () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
-  it('stringifies a non-Error thrown value into the per-entry diagnostic message', () => {
+  it('rejects a layer-source accessor without evaluating its thrown value', () => {
     const registry = new AssetRegistry();
     const result = convert([itemThrowingOnLayerSource('thrown-string', 'legacy entry exploded')], registry);
 
@@ -263,17 +301,17 @@ describe('MigrationDiagnostic code mapping', () => {
         actionName: TOOL_ACTION,
         severity: 'error',
         code: 'invalid-history-entry',
-        message: 'legacy entry exploded',
+        message: 'Legacy history items must contain own enumerable data properties.',
       },
     ]);
   });
 
-  it('stringifies a thrown plain object per entry and keeps the entry identity', () => {
+  it('rejects a layer-source accessor without stringifying its thrown value', () => {
     const registry = new AssetRegistry();
     const thrown = { toString: () => 'raster source vanished' };
     const result = convert([itemThrowingOnLayerSource('thrown-object', thrown)], registry);
 
-    expect(result.diagnostics[0]?.message).toBe('raster source vanished');
+    expect(result.diagnostics[0]?.message).toBe('Legacy history items must contain own enumerable data properties.');
     expect(result.diagnostics[0]).toMatchObject({ historyId: 'thrown-object', code: 'invalid-history-entry' });
   });
 
@@ -300,7 +338,7 @@ describe('MigrationDiagnostic code mapping', () => {
     expect(result.diagnostics[0]?.message).toBe(`Layer ${layerId} has no durable source or raster materialization`);
   });
 
-  it('produces error severity for every diagnostic code in a single conversion', () => {
+  it('preserves warning severity while reporting unsupported and malformed entries', () => {
     const registry = new AssetRegistry();
     class FakeClass {
       value = 'not-plain';
@@ -325,7 +363,7 @@ describe('MigrationDiagnostic code mapping', () => {
       'unsupported-history-feature',
       'invalid-history-entry',
     ]);
-    expect(result.diagnostics.every((diagnostic) => diagnostic.severity === 'error')).toBe(true);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.severity)).toEqual(['warning', 'error', 'error']);
     expect(result.diagnostics.every((diagnostic) => typeof diagnostic.message === 'string')).toBe(true);
     expect(result.diagnostics.every((diagnostic) => typeof diagnostic.historyId === 'string')).toBe(true);
     expect(result.diagnostics.every((diagnostic) => typeof diagnostic.actionName === 'string')).toBe(true);
@@ -356,6 +394,28 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
     ).toBe(true);
   });
 
+  it('reconciles stale raster assets for an empty document ID', () => {
+    const registry = new AssetRegistry();
+    const bitmap = createOwnedBitmap(8, 6);
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+    const first = convertLegacyHistorySafely([baselineItemWithImage(bitmap.bitmap)], { documentId: '', registry });
+    expect(first.status).toBe('current');
+    if (first.status !== 'current' || !first.document) throw new Error('expected an image baseline conversion');
+    const firstDocument = first.document;
+    const staleAssetId = [...collectDurableAssetIds(firstDocument)][0];
+    expect(staleAssetId).toBeDefined();
+    expect(registry.getRecord(staleAssetId!)).toBeDefined();
+
+    const second = convertLegacyHistorySafely(baselineHistory(), { documentId: '', registry });
+
+    expect(second.status).toBe('current');
+    expect(reconcile).toHaveBeenNthCalledWith(1, '', collectDurableAssetIds(firstDocument));
+    expect(reconcile).toHaveBeenNthCalledWith(2, '', new Set());
+    expect(registry.getRecord(staleAssetId!)).toBeUndefined();
+    expect(bitmap.close).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
   it('does not reconcile assets for a conversion rejected by an error diagnostic', () => {
     const registry = new AssetRegistry();
     const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
@@ -368,9 +428,71 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('retains only an exact prefix under an independent owner when a source-dependent suffix follows an unsupported entry', async () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        imageLayerItem('image-layer', createOwnedBitmap(8, 6).bitmap),
+        { id: 'pen-tool', actionName: TOOL_ACTION, layerId: 'image-layer', args: { toolName: 'pen' } },
+        colorItem('color-after-pen'),
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.safePrefix?.safeThroughLegacyCursor).toBe(1);
+    expect(result.safePrefix?.legacyCursorToDurableCursor).toHaveLength(2);
+    expect(result.safePrefix?.document.history.map((entry) => entry.id)).toEqual(['image-layer']);
+
+    const operation = result.safePrefix?.document.history[0]?.operation;
+    expect(operation?.kind).toBe('create-layer');
+    if (operation?.kind !== 'create-layer' || operation.layer.source.kind !== 'raster')
+      throw new Error('expected the safe prefix to retain the image source');
+
+    const assetId = operation.layer.source.assetId;
+    expect(registry.getRecord(assetId)?.documentId).toContain(`${documentId}:partial:`);
+    const lease = await registry.resolve(assetId);
+    expect(lease.bitmap).toBeDefined();
+    lease.release();
+    result.safePrefix?.release();
+    expect(registry.getRecord(assetId)).toBeUndefined();
+    registry.shutdown();
+  });
+
+  it('builds an empty safe prefix when the first legacy entry fails', () => {
+    const registry = new AssetRegistry();
+    const result = convertLegacyHistorySafely(
+      [{ id: 'pen-at-zero', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
+      { documentId, initialSize, initialFrame: baselineFrame, registry }
+    );
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.safePrefix?.safeThroughLegacyCursor).toBe(-1);
+    expect(result.safePrefix?.document.history).toEqual([]);
+    result.safePrefix?.release();
+    result.safePrefix?.release();
+    registry.shutdown();
+  });
+
+  it('keeps an empty legacy timeline current without inventing a history row', () => {
+    const registry = new AssetRegistry();
+    const result = convertLegacyHistorySafely([], { documentId, initialSize, initialFrame: baselineFrame, registry });
+
+    expect(result.status).toBe('current');
+    expect(result.document?.history).toEqual([]);
+    expect(result.document?.baseline.frame).toEqual(baselineFrame);
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.diagnostics).toEqual([]);
+    registry.shutdown();
   });
 
   it('rolls back assets registered by a failed conversion without losing pre-existing baselines', async () => {
@@ -389,11 +511,15 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     const registeredIds = register.mock.results.map((call) => call.value as AssetId).filter((id) => id !== existingId);
-    expect(registeredIds).toHaveLength(1);
-    // The transaction rolled the asset registered by the failed conversion back...
+    expect(registeredIds).toHaveLength(2);
+    // The transaction rolled the asset registered by the failed full conversion back...
     expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
+    // The exact prefix owns a separate diagnostic asset until its consumer releases it.
+    expect(registry.getRecord(registeredIds[1]!)).toBeDefined();
+    result.safePrefix?.release();
+    expect(registry.getRecord(registeredIds[1]!)).toBeUndefined();
     // ...while leaving the baseline the caller owned before the conversion intact.
     expect(registry.getRecord(existingId)).toBeDefined();
     const lease = await registry.resolve(existingId);
@@ -541,7 +667,21 @@ describe('durable entry id uniqueness', () => {
     return operations.map((operation) => (operation.kind === 'apply-filter' ? operation.filter.toolName : undefined));
   }
 
-  it('publishes one durable entry for a repeated legacy id and reports the repeat as a warning naming the id', () => {
+  it('does not publish a blend-mode patch under the opacity action owner', () => {
+    const registry = new AssetRegistry();
+    const result = convert(
+      [{ id: 'blend-mode', actionName: SET_LAYER_OPACITY_ACTION, layerId, args: { blendMode: 'multiply' } }],
+      registry
+    );
+
+    // Blend mode has no durable action owner yet. Keeping this unsupported
+    // patch out of the shadow prevents it from becoming a durable operation
+    // until a dedicated property action and diagnostic contract are designed.
+    expect(result.document.history).toEqual([]);
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, -1]);
+  });
+
+  it('publishes one durable entry for a repeated legacy id and reports the omitted edit as an error', () => {
     const registry = new AssetRegistry();
     const result = convert([blurItem('shared-id'), colorItem('shared-id')], registry);
 
@@ -565,7 +705,7 @@ describe('durable entry id uniqueness', () => {
       {
         historyId: 'shared-id',
         actionName: TOOL_ACTION,
-        severity: 'warning',
+        severity: 'error',
         code: 'invalid-history-entry',
         message: expect.stringContaining('shared-id'),
       },
@@ -573,30 +713,169 @@ describe('durable entry id uniqueness', () => {
     expect(result.diagnostics[0]?.message).not.toContain('undefined');
   });
 
-  it('keeps the conversion status current for a timeline that repeats an id, so the whole shadow is not withheld', () => {
+  it('returns a partial status when an enabled repeated id omits a state-changing edit', () => {
     const registry = new AssetRegistry();
     const result = convertSafely([blurItem('shared-id'), colorItem('shared-id'), colorItem('after')], registry);
 
-    // A warning, never an error. `convertLegacyHistorySafely` rolls the asset
-    // transaction back and returns no document on the first `error`, so an error
-    // here would withhold the shadow for EVERY entry in the timeline — including
-    // the ones the legacy timeline handles without complaint.
-    expect(result.status).toBe('current');
-    expect(result.document).not.toBeNull();
-    // Spelled out, not `every(...)`: a predicate over an empty array is true, so
-    // it would have passed with no diagnostic at all — the one thing this test
-    // exists to prevent. The exact array also pins the severity to `warning`,
-    // which is the claim under the test, and the length to the single repeat.
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
     expect(result.diagnostics).toEqual([
       {
         historyId: 'shared-id',
         actionName: TOOL_ACTION,
-        severity: 'warning',
+        severity: 'error',
         code: 'invalid-history-entry',
         message: expect.stringContaining('shared-id'),
       },
     ]);
+  });
+
+  it('keeps a disabled repeated id current because legacy replay also skips the edit', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [blurItem('shared-id'), { ...colorItem('shared-id'), disabled: true }, colorItem('after')],
+      registry
+    );
+
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'warning', code: 'invalid-history-entry' }),
+    ]);
     expect(result.document!.history.map((entry) => entry.id)).toEqual(['shared-id', 'after']);
+  });
+
+  it('keeps an idempotent duplicate visibility edit current', () => {
+    const registry = new AssetRegistry();
+    const hide = { id: 'shared-id', actionName: HIDE_LAYER_ACTION, layerId } satisfies HistoryItem;
+    const result = convertSafely([hide, { ...hide }], registry);
+
+    expect(result.status).toBe('current');
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'warning', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.document?.history).toHaveLength(1);
+  });
+
+  it('does not derive a disabled unsupported duplicate and keeps the shadow current', () => {
+    const registry = new AssetRegistry();
+    const first = blurItem('shared-id');
+    const disabledUnsupported: HistoryItem = {
+      id: 'shared-id',
+      actionName: TOOL_ACTION,
+      layerId,
+      args: { toolName: 'pen' },
+      disabled: true,
+    };
+    const result = convertSafely([first, disabledUnsupported], registry);
+
+    expect(result.status).toBe('current');
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'warning', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.document?.history).toHaveLength(1);
+  });
+
+  it('does not let an unsupported disabled row block an exact suffix', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        blurItem('before-disabled'),
+        { id: 'disabled-pen', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' }, disabled: true },
+        colorItem('after-disabled'),
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('current');
+    expect(result.document?.history.map((entry) => entry.id)).toEqual(['before-disabled', 'after-disabled']);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'disabled-pen', severity: 'error', code: 'unsupported-history-feature' }),
+    ]);
+    registry.shutdown();
+  });
+
+  it('reserves the id of an unsupported disabled row against a later enabled edit', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        blurItem('before-disabled'),
+        { id: 'shared-disabled-id', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' }, disabled: true },
+        colorItem('shared-disabled-id'),
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'shared-disabled-id',
+        severity: 'error',
+        code: 'unsupported-history-feature',
+      }),
+      expect.objectContaining({ historyId: 'shared-disabled-id', severity: 'error', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.safePrefix?.document.history.map((entry) => entry.id)).toEqual(['before-disabled']);
+    result.safePrefix?.release();
+    registry.shutdown();
+  });
+
+  it('keeps safe-prefix cursor mappings aligned to original indices across disabled rows', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        { id: 'disabled-before-failure', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' }, disabled: true },
+        { id: 'enabled-failure', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('partial');
+    expect(result.safePrefix?.safeThroughLegacyCursor).toBe(1);
+    expect(result.safePrefix?.legacyCursorToDurableCursor).toEqual([-1, -1]);
+    result.safePrefix?.release();
+    registry.shutdown();
+  });
+
+  it('fails closed for repeated raster operations until canonical no-op parity is proven', () => {
+    const registry = new AssetRegistry();
+    const first = blurItem('shared-id');
+    const result = convertSafely([first, { ...first }], registry);
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'error', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+  });
+
+  it('withholds the suffix after a state-changing duplicate from the partial projection', () => {
+    const registry = new AssetRegistry();
+    const first = blurItem('shared-id');
+    const result = convertSafely([first, { ...first }, colorItem('after-duplicate')], registry);
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.safePrefix?.safeThroughLegacyCursor).toBe(1);
+    expect(result.safePrefix?.document.history.map((entry) => entry.id)).toEqual(['shared-id']);
+    result.safePrefix?.release();
+    registry.shutdown();
+  });
+
+  it('keeps a duplicate removal current when the repeated removal targets an absent layer', () => {
+    const registry = new AssetRegistry();
+    const remove = { id: 'shared-id', actionName: REMOVE_ACTION, layerId } satisfies HistoryItem;
+    const result = convertSafely([remove, { ...remove }], registry);
+
+    expect(result.status).toBe('current');
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'warning', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.document?.history).toHaveLength(1);
   });
 
   it('keeps converting the entries after a repeat, so the report is scoped to the duplicate', () => {
@@ -652,6 +931,7 @@ describe('durable entry id uniqueness', () => {
           id: 'blur-edit',
           schemaVersion: 1,
           enabled: true,
+          provenance: { actionName: TOOL_ACTION, toolName: 'blur' },
           operation: {
             kind: 'apply-filter',
             layerId,
@@ -662,6 +942,7 @@ describe('durable entry id uniqueness', () => {
           id: 'color-edit',
           schemaVersion: 1,
           enabled: true,
+          provenance: { actionName: TOOL_ACTION, toolName: 'color' },
           operation: {
             kind: 'apply-filter',
             layerId,
@@ -674,21 +955,20 @@ describe('durable entry id uniqueness', () => {
     expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 1]);
   });
 
-  it('does not consume the id of a dropped rename, so a later entry may still claim it', () => {
+  it('reserves the id of a dropped rename against a later state-changing entry', () => {
     const registry = new AssetRegistry();
-    // The dropped rename publishes nothing and reports nothing, so its id was
-    // never handed out: the later `shared` is a first occurrence, not a repeat.
     const result = convert([blurItem('first'), droppedRenameItem('shared'), colorItem('shared')], registry);
 
-    expect(result.document.history.map((entry) => entry.id)).toEqual(['first', 'shared']);
-    expect(result.diagnostics).toEqual([]);
-    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 0, 1]);
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['first']);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared', severity: 'error', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.firstErrorIndex).toBe(3);
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 0, 0]);
   });
 
-  it('does not consume the id of a tool entry that derives no durable operation', () => {
+  it('reserves the id of a tool entry with no durable operation', () => {
     const registry = new AssetRegistry();
-    // A selection tool records no durable operation at all: it is neither
-    // published nor reported, so it cannot shadow a later entry's id either.
     const result = convert(
       [
         blurItem('first'),
@@ -698,8 +978,11 @@ describe('durable entry id uniqueness', () => {
       registry
     );
 
-    expect(result.document.history.map((entry) => entry.id)).toEqual(['first', 'shared']);
-    expect(result.diagnostics).toEqual([]);
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['first']);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared', severity: 'error', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.firstErrorIndex).toBe(3);
   });
 
   it('maps a skipped repeat to the same durable cursor a dropped entry maps to, never the tip', () => {
@@ -784,14 +1067,14 @@ describe('durable entry id uniqueness', () => {
     expect(last?.kind).toBe('reorder-layers');
     expect(last?.kind === 'reorder-layers' && last.orderByLayerId).toEqual({
       'layer-a': 0,
-      [layerId]: 1,
-      'layer-b': 2,
+      [layerId]: 2,
+      'layer-b': 3,
     });
     // The user-visible half: replaying the shadow stacks the layers that way.
     const replayed = replayDurableDocument(result.document);
     expect(
       Object.fromEntries(Object.entries(replayed.layers).map(([id, layer]) => [id, layer.snapshot.order]))
-    ).toEqual({ 'layer-a': 0, [layerId]: 1, 'layer-b': 2 });
+    ).toEqual({ 'layer-a': 0, [layerId]: 2, 'layer-b': 3 });
   });
 
   it('leaves the id-keyed entry lookup resolving exactly one entry, so toggling the id cannot disable another edit', () => {
@@ -870,13 +1153,12 @@ describe('durable entry id uniqueness', () => {
     expect(filterToolNames(atTip.layers[layerId]?.operations ?? [])).toEqual(['blur', 'color']);
   });
 
-  it('reports a later entry that reuses the baseline open-document id', () => {
+  it.each(['baseline-id-collision', ''])('reports a later entry that reuses baseline id %s', (sharedId) => {
     // The baseline document-source id is meaningful to the legacy first-match
     // resolver even though the source is not itself a durable history entry.
     // Conversion seeds that id in the duplicate set, so a later edit cannot
     // publish under the same key and make the two resolvers disagree silently.
     const registry = new AssetRegistry();
-    const sharedId = 'baseline-id-collision';
     const history = [...baselineHistory(sharedId), blurItem(sharedId)];
 
     const result = legacyHistoryToDurable(history, { documentId, registry });
@@ -885,7 +1167,7 @@ describe('durable entry id uniqueness', () => {
       expect.objectContaining({
         historyId: sharedId,
         actionName: TOOL_ACTION,
-        severity: 'warning',
+        severity: 'error',
         code: 'invalid-history-entry',
         message: expect.stringContaining('baseline document-source entry'),
       }),
@@ -906,5 +1188,22 @@ describe('durable entry id uniqueness', () => {
     // does not leave a second edit for the wrong first-match lookup to toggle.
     const durable = toggleDurableEntry(result.document, sharedId);
     expect(durable).toBe(result.document);
+    registry.shutdown();
+  });
+
+  it('reserves the ID of an ignored later document source against a state-changing entry', () => {
+    const registry = new AssetRegistry();
+    const sharedId = 'ignored-source-collision';
+    const history = [...baselineHistory(), ...baselineHistory(sharedId), colorItem(sharedId)];
+
+    const result = legacyHistoryToDurable(history, { documentId, registry });
+
+    expect(result.diagnostics.map(({ historyId, severity, code }) => ({ historyId, severity, code }))).toEqual([
+      { historyId: sharedId, severity: 'warning', code: 'document-replacement' },
+      { historyId: sharedId, severity: 'error', code: 'invalid-history-entry' },
+    ]);
+    expect(result.document.history).toEqual([]);
+    expect(result.firstErrorIndex).toBe(2);
+    registry.shutdown();
   });
 });

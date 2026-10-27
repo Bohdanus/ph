@@ -428,10 +428,18 @@ describe('createEdgeMapFromImageData', () => {
 describe('createEdgeMapFromCanvas', () => {
   it('reads the whole canvas and produces a gradient map', () => {
     const canvas = makeMockCanvas(8, 6, {
+      createImageData: vi.fn(
+        (width: number, height: number) =>
+          ({
+            data: new Uint8ClampedArray(width * height * 4),
+            width,
+            height,
+          }) as ImageData
+      ) as unknown as CanvasRenderingContext2D['createImageData'],
       getImageData: vi.fn(() => createVerticalEdgeImageData(8, 6, 4)),
     });
 
-    const edgeMap = createEdgeMapFromCanvas(canvas);
+    const edgeMap = createEdgeMapFromCanvas(canvas, { width: 8, height: 6 });
 
     expect(edgeMap?.width).toBe(8);
     expect(edgeMap?.height).toBe(6);
@@ -441,20 +449,20 @@ describe('createEdgeMapFromCanvas', () => {
   });
 
   it('returns null for a null canvas', () => {
-    expect(createEdgeMapFromCanvas(null)).toBeNull();
+    expect(createEdgeMapFromCanvas(null, { width: 8, height: 6 })).toBeNull();
   });
 
   it.each([
     ['zero width', 0, 6],
     ['zero height', 8, 0],
   ])('returns null for a canvas with %s', (_label, width, height) => {
-    expect(createEdgeMapFromCanvas(makeMockCanvas(width, height))).toBeNull();
+    expect(createEdgeMapFromCanvas(makeMockCanvas(width, height), { width, height })).toBeNull();
   });
 
   it('returns null when the canvas has no 2D context', () => {
     const canvas = { width: 4, height: 4, getContext: () => null } as unknown as HTMLCanvasElement;
 
-    expect(createEdgeMapFromCanvas(canvas)).toBeNull();
+    expect(createEdgeMapFromCanvas(canvas, { width: 4, height: 4 })).toBeNull();
   });
 
   it('returns null instead of throwing when the read-back is rejected', () => {
@@ -464,7 +472,7 @@ describe('createEdgeMapFromCanvas', () => {
       },
     });
 
-    expect(createEdgeMapFromCanvas(canvas)).toBeNull();
+    expect(createEdgeMapFromCanvas(canvas, { width: 4, height: 4 })).toBeNull();
   });
 });
 

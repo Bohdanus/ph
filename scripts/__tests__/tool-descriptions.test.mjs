@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { availableTools } from '../../toolbar-mapping.ts';
+import { availableTools, toolbarMap } from '../../toolbar-mapping.ts';
 import { renderToolDocs, renderTooltips } from '../generate-tool-docs.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-const readRepoFile = (path) => readFileSync(resolve(REPO_ROOT, path), 'utf8');
+const readRepoFile = (path) => readFileSync(resolve(REPO_ROOT, path), 'utf8').replace(/\r\n/g, '\n');
 
 const FAMILIES = [
   'selection',
@@ -20,7 +20,8 @@ const FAMILIES = [
   'type-crop',
   'transform',
   'eyedropper-draw',
-  'navigation',
+  'view',
+  'patch',
 ];
 
 // Module scope, not inside a `describe`: the dynamic imports need top-level `await`, and
@@ -32,6 +33,10 @@ const entries = await Promise.all(
 );
 
 const descriptions = Object.assign({}, ...entries.map(([, record]) => record));
+// Star is a figure variant whose toolbar identity is the registered `shape` tool; it remains in
+// the full research record so generated docs can describe the variant without becoming a second
+// selectable ToolName.
+const registeredDescriptions = Object.fromEntries(Object.entries(descriptions).filter(([name]) => name !== 'star'));
 
 /** `file:line`, the only citation form `implementationRefs` and `appRef` accept. *
  *
@@ -53,7 +58,7 @@ const REF_PATTERN = /^(?<path>[^\s:]+):(?<line>\d+)$/;
  */
 describe('tool description citations', () => {
   it('covers every registered tool', () => {
-    expect(new Set(Object.keys(descriptions))).toEqual(new Set(availableTools));
+    expect(new Set(Object.keys(registeredDescriptions))).toEqual(new Set(availableTools));
   });
 
   it('cites at least one real file for every tool, and every citation resolves', () => {
@@ -79,6 +84,32 @@ describe('tool description citations', () => {
     }
 
     expect(broken).toEqual([]);
+  });
+
+  it('keeps the text toolbar citations attached to the controls they describe', () => {
+    const expected = new Map([
+      ['Font family', /FontSelect/],
+      ['Size', /data-testid="font-size-input"/],
+      ['Text color', /id="text-color"/],
+      ['Align Text Left / Center Text / Align Text Right', /id="align-select"/],
+      ['Commit / Cancel', /Commit/],
+    ]);
+    const text = descriptions.text;
+    const mismatches = [];
+
+    for (const option of text.options) {
+      const pattern = expected.get(option.control);
+      if (!pattern || option.appRef === undefined) continue;
+      const match = /^(?<path>[^:]+):(?<line>\d+)$/.exec(option.appRef);
+      if (!match) {
+        mismatches.push(`${option.control}: malformed appRef ${option.appRef}`);
+        continue;
+      }
+      const source = readRepoFile(match.groups.path).split('\n')[Number(match.groups.line) - 1] ?? '';
+      if (!pattern.test(source)) mismatches.push(`${option.control}: ${option.appRef} does not contain ${pattern}`);
+    }
+
+    expect(mismatches).toEqual([]);
   });
 
   // A duplicated key is invisible to `index.ts`: the later spread silently wins, and the losing
@@ -110,7 +141,7 @@ describe('tool description citations', () => {
 
     expect(empty, `family modules with no tools: ${empty.join(', ')}`).toEqual([]);
     expect(duplicates).toEqual([]);
-    expect([...seen.keys()].sort()).toEqual([...availableTools].sort());
+    expect([...seen.keys()].filter((name) => name !== 'star').sort()).toEqual([...availableTools].sort());
   });
 });
 
@@ -135,11 +166,19 @@ describe('the generated files', () => {
     expect(readRepoFile('src/tools/descriptions/tooltips.ts')).toBe(expected);
   });
 
-  it('projects the record into the tooltip projection without changing a value', async () => {
-    const { toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+  it('projects description values and the toolbar-declared shortcut into tooltips', async () => {
+    const { descriptionKeyFor, toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+    const toolbarShortcuts = new Map();
+    for (const section of toolbarMap) {
+      for (const group of section) {
+        for (const entry of group) {
+          toolbarShortcuts.set(descriptionKeyFor(entry.name, entry.figure), entry.shortcut);
+        }
+      }
+    }
     const drifted = [];
 
-    for (const [key, tool] of Object.entries(descriptions)) {
+    for (const [key, tool] of Object.entries(registeredDescriptions)) {
       const projection = toolTooltips[key];
       if (projection === undefined) {
         drifted.push(`${key}: in the record but not in the projection`);
@@ -147,15 +186,43 @@ describe('the generated files', () => {
       }
       if (projection.summary !== tool.summary) drifted.push(`${key}: summary differs`);
       if (projection.implementation !== tool.implementation) drifted.push(`${key}: implementation differs`);
+      if (projection.shortcut !== toolbarShortcuts.get(key)) drifted.push(`${key}: toolbar shortcut differs`);
     }
 
     expect(drifted).toEqual([]);
-    expect(Object.keys(toolTooltips).sort()).toEqual(Object.keys(descriptions).sort());
+    expect(Object.keys(toolTooltips).sort()).toEqual(Object.keys(registeredDescriptions).sort());
+  });
+
+  it('does not project family-cycle keys or command shortcuts as a tool-tile shortcut', async () => {
+    const { toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+
+    for (const key of [
+      'pencil',
+      'color-replacement',
+      'patch',
+      'gradient',
+      'sponge',
+      'smudge',
+      'rotate-view',
+      'transform',
+    ]) {
+      expect(toolTooltips[key].shortcut, key).toBeUndefined();
+    }
   });
 
   it('documents every tool', () => {
     const doc = readRepoFile('docs/TOOLS.md');
     const missing = availableTools.filter((name) => !doc.includes(`\`${name}\``));
     expect(missing, `tools absent from docs/TOOLS.md: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('documents the Star Tool and the generic Shape Tool group under distinct headings', () => {
+    const doc = readRepoFile('docs/TOOLS.md');
+    const headings = [...doc.matchAll(/^### (.+)$/gm)].map(([, heading]) => heading);
+
+    expect(headings.filter((heading) => heading === 'Star Tool')).toHaveLength(1);
+    expect(
+      headings.filter((heading) => heading === 'Shape Tool (the Tools panel group; no entry by that name)')
+    ).toHaveLength(1);
   });
 });

@@ -26,13 +26,17 @@ const {
   loadPsd: vi.fn(),
   loadTiffFile: vi.fn(),
 }));
+const TINY_PNG_BYTES = Uint8Array.from(
+  atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+  (character) => character.charCodeAt(0)
+);
 vi.mock('../psd-utils.ts', () => ({ loadPsd }));
 vi.mock('../tiff-utils.ts', () => ({ encodeTiff, loadTiffFile }));
 vi.mock('../bmp-utils.ts', () => ({ encodeBmp, loadBmpFile }));
 vi.mock('../gif-utils.ts', () => ({ encodeGif }));
 vi.mock('../avif-utils.ts', () => ({ encodeAvif, loadAvifFile }));
 vi.mock('../ico-utils.ts', () => ({ encodeIco, loadIcoFile }));
-vi.mock('../svg-utils.ts', () => ({ encodeSvg }));
+vi.mock('../svg-utils.ts', async (importOriginal) => ({ ...(await importOriginal()), encodeSvg }));
 
 describe('document file routing', () => {
   beforeEach(() => {
@@ -78,7 +82,7 @@ describe('document file routing', () => {
   });
 
   it('routes a raster through FileReader and waits for image decoding', async () => {
-    const file = new File(['PNG data'], 'photo.png', { type: 'image/png' });
+    const file = new File([TINY_PNG_BYTES], 'photo.png', { type: 'image/png' });
     const readAsDataURL = vi.fn();
     let reader!: { onload: (event: { target: { result: string } }) => void };
     let image!: HTMLImageElement;
@@ -93,6 +97,8 @@ describe('document file routing', () => {
     );
     vi.spyOn(globalThis, 'Image').mockImplementation(function (this: HTMLImageElement) {
       this.onload = () => {};
+      this.width = 1;
+      this.height = 1;
       this.src = '';
       image = this;
       return this;
@@ -132,6 +138,8 @@ describe('document file routing', () => {
     );
     vi.spyOn(globalThis, 'Image').mockImplementation(function (this: HTMLImageElement) {
       this.onload = () => {};
+      this.width = 1;
+      this.height = 1;
       this.src = '';
       image = this;
       return this;

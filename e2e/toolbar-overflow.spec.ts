@@ -1,5 +1,6 @@
 import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { waitForFlyoutFocus } from './helpers/toolbar-helpers';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool } from '../toolbar-mapping.ts';
 
 /**
@@ -277,6 +278,7 @@ test.describe('Left tool rail overflow', () => {
     await page.keyboard.press('ArrowDown');
 
     await expect(toolsMenu(page)).toBeVisible();
+    await waitForFlyoutFocus(page);
     // The FIRST item of the menu it opened, by DOM order, rather than a name: which tool is
     // first depends on how much fits, so naming it would pin the viewport as well as the
     // behaviour. Comparing against the menu's own first item says what the contract is.

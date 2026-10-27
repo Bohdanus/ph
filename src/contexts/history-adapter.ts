@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { isEqual } from 'lodash-es';
 
 import type { DocumentFrame } from './document-frame.ts';
 import { documentFrameFromSize, isValidDocumentFrame } from './document-frame.ts';
@@ -21,29 +22,54 @@ import {
   cloneLayerSnapshot,
   collectDurableAssetIds,
   freezeDurableDocument,
+  refreezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
+import { durableEntryProvenance } from './history-provenance.ts';
 import type { HistoryItem } from './history-types.ts';
-import type { Layer, LayerId, LayerSource, LayersRecord, ToolLayerSource } from './layer-types.ts';
+import {
+  isLayerBlendMode,
+  type Layer,
+  type LayerId,
+  type LayerSource,
+  type LayersRecord,
+  type ToolLayerSource,
+} from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
-import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
-import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
+import type { NewBedrockSize, ToolArgs, VectorToolName } from './tool-types.ts';
+import { deriveSelectionBaseline, isValidLegacySelectionSnapshot, selectionSnapshot } from './selection-baseline.ts';
+import {
+  getTransformFromHistoryArgs,
+  isIdentityAffineTransform,
+  isTrapezoidOnlyTransform,
+  validateAffineTransform,
+  type AffineTransform,
+} from './affine-transform.ts';
 import type { ActionType } from '../util/constants.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
-import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
-import { toolLayerBlendMode } from './layer-utils.ts';
+import {
+  deriveLayerNameAndOrder,
+  reorderLayerOrderValues,
+  type LayerOrderRecord,
+  toolLayerBlendMode,
+} from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
@@ -80,15 +106,35 @@ export type LegacyConversionResult = Readonly<{
    * cursor, never to the durable history tip.
    */
   legacyCursorToDurableCursor: readonly number[];
+  /** The first legacy index whose enabled entry could not be converted exactly. */
+  firstErrorIndex?: number;
 }>;
 
-export type DurableConversionStatus = 'current' | 'unavailable';
+/**
+ * `partial` means an enabled entry produced a blocking conversion diagnostic, so
+ * a prefix may be useful for diagnostics, but no exact durable document is
+ * publishable yet. Diagnostics from disabled legacy rows do not block parity.
+ * The safe boundary deliberately returns no document or cursor map for it.
+ */
+export type DurableConversionStatus = 'current' | 'partial' | 'unavailable';
+
+export type DurableSafePrefixProjection = Readonly<{
+  /** The exact prefix before the first failing legacy entry. */
+  document: DurableDocument;
+  /** Cursor mappings are present only through `safeThroughLegacyCursor`. */
+  legacyCursorToDurableCursor: readonly number[];
+  safeThroughLegacyCursor: number;
+  /** Releases the independent prefix owner and any assets it registered. */
+  release: () => void;
+}>;
 
 export type DurableConversionAttempt = Readonly<{
   status: DurableConversionStatus;
   document: DurableDocument | null;
   diagnostics: readonly MigrationDiagnostic[];
   legacyCursorToDurableCursor: readonly number[];
+  /** Diagnostic-only exact prefix; never a current StoreData projection. */
+  safePrefix?: DurableSafePrefixProjection;
 }>;
 
 export type LegacyConversionOptions = Readonly<{
@@ -98,6 +144,8 @@ export type LegacyConversionOptions = Readonly<{
   durableRevision?: number;
   initialSize?: Size;
   initialFrame?: DocumentFrame;
+  /** Asset owner used for diagnostic-only conversions; defaults to documentId. */
+  assetOwnerId?: string;
   registry?: AssetRegistry;
 }>;
 
@@ -170,16 +218,255 @@ function sourceSize(source: LayerSource): Size {
   return source.isBedrock ? { ...source.size } : { width: source.pos.width, height: source.pos.height };
 }
 
-function asLegacyLayerSource(value: unknown): LayerSource | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const kind = (value as { kind?: unknown }).kind;
-  return kind === 'blank' || kind === 'image' || kind === 'tool' ? (value as LayerSource) : undefined;
+function readOwnDataProperty(
+  value: unknown,
+  key: string
+): { found: false } | { found: true; accessor: true } | { found: true; accessor: false; value: unknown } {
+  if (!value || typeof value !== 'object') return { found: false };
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return { found: false };
+  if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return { found: true, accessor: true };
+  return { found: true, accessor: false, value: descriptor.value };
 }
 
-function registerRaster(registry: AssetRegistry, documentId: string, bitmap: BitmapSource): AssetId {
+function hasOwnDataRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  return Reflect.ownKeys(value).every((key) => {
+    if (typeof key !== 'string') return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return !!descriptor?.enumerable && Object.hasOwn(descriptor, 'value');
+  });
+}
+
+function hasSafeDataTree(value: unknown, ancestors = new Set<object>()): boolean {
+  if (value === null || value === undefined || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object' || ancestors.has(value)) return false;
+  const array = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return false;
+  ancestors.add(value);
+  try {
+    for (const key of Reflect.ownKeys(value)) {
+      if (array && key === 'length') continue;
+      if (typeof key !== 'string') return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (
+        !descriptor?.enumerable ||
+        !Object.hasOwn(descriptor, 'value') ||
+        !hasSafeDataTree(descriptor.value, ancestors)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function hasSafeRecordKeys(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = []
+): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    Reflect.ownKeys(value).every((key) => {
+      if (typeof key !== 'string' || !allowed.has(key)) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return !!descriptor?.enumerable && Object.hasOwn(descriptor, 'value');
+    })
+  );
+}
+
+function hasSafeDocumentSource(
+  value: unknown
+): value is { layers: LayersRecord; size: Size | undefined; frame?: DocumentFrame } {
+  if (!hasSafeRecordKeys(value, ['layers', 'size'], ['frame'])) return false;
+  if (
+    value.size !== undefined &&
+    (!hasSafeRecordKeys(value.size, ['width', 'height']) ||
+      typeof value.size.width !== 'number' ||
+      !Number.isFinite(value.size.width) ||
+      typeof value.size.height !== 'number' ||
+      !Number.isFinite(value.size.height))
+  ) {
+    return false;
+  }
+  if (Object.hasOwn(value, 'frame') && value.frame !== undefined) {
+    const frame = value.frame;
+    if (
+      !hasSafeRecordKeys(frame, ['x', 'y', 'width', 'height']) ||
+      ['x', 'y', 'width', 'height'].some(
+        (key) => typeof frame[key] !== 'number' || !Number.isFinite(frame[key] as number)
+      )
+    ) {
+      return false;
+    }
+  }
+
+  const layers = value.layers;
+  if (!hasOwnDataRecord(layers)) return false;
+  for (const layerId of Object.keys(layers)) {
+    const layer = layers[layerId];
+    if (!hasOwnDataRecord(layer)) return false;
+    const pos = readOwnDataProperty(layer, 'pos');
+    if (!pos.found || pos.accessor || !hasSafeRecordKeys(pos.value, ['x', 'y', 'width', 'height'])) return false;
+    const posValue = pos.value;
+    if (
+      ['x', 'y', 'width', 'height'].some(
+        (key) => typeof posValue[key] !== 'number' || !Number.isFinite(posValue[key] as number)
+      )
+    ) {
+      return false;
+    }
+    const source = readOwnDataProperty(layer, 'source');
+    if (
+      source.found &&
+      !source.accessor &&
+      source.value !== undefined &&
+      source.value !== null &&
+      !asLegacyLayerSource(source.value)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function asLegacyLayerSource(value: unknown): LayerSource | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const kindProperty = readOwnDataProperty(value, 'kind');
+  if (!kindProperty.found || kindProperty.accessor) return undefined;
+  const kind = kindProperty.value;
+  let requiredSourceKeys: readonly string[];
+  let optionalSourceKeys: readonly string[];
+  switch (kind) {
+    case 'blank':
+      requiredSourceKeys = ['color', 'opacity'];
+      optionalSourceKeys = [];
+      break;
+    case 'image':
+      requiredSourceKeys = ['bitmap'];
+      optionalSourceKeys = ['name'];
+      break;
+    case 'tool':
+      requiredSourceKeys = ['args'];
+      optionalSourceKeys = ['canvas'];
+      break;
+    default:
+      return undefined;
+  }
+
+  const bedrock = readOwnDataProperty(value, 'isBedrock');
+  if (bedrock.found && bedrock.accessor) return undefined;
+  if (bedrock.found && !bedrock.accessor && bedrock.value !== undefined && typeof bedrock.value !== 'boolean') {
+    return undefined;
+  }
+  const isBedrock = bedrock.found && !bedrock.accessor && bedrock.value === true;
+  const positionKeys = isBedrock ? ['size'] : ['pos'];
+  const optionalPositionKeys = isBedrock ? ['pos'] : ['isBedrock'];
+  const required = ['kind', ...requiredSourceKeys, ...positionKeys, ...(isBedrock ? ['isBedrock'] : [])];
+  const optional = [...optionalSourceKeys, ...optionalPositionKeys];
+  if (!hasSafeRecordKeys(value, required, optional)) return undefined;
+
+  const position = isBedrock ? value.size : value.pos;
+  const positionKeysExpected = isBedrock ? ['width', 'height'] : ['x', 'y', 'width', 'height'];
+  if (
+    !hasSafeRecordKeys(position, positionKeysExpected) ||
+    positionKeysExpected.some((key) => typeof position[key] !== 'number' || !Number.isFinite(position[key]))
+  ) {
+    return undefined;
+  }
+  if (isBedrock && Object.hasOwn(value, 'pos')) {
+    const bedrockPosition = value.pos;
+    if (
+      !hasSafeRecordKeys(bedrockPosition, ['x', 'y', 'width', 'height']) ||
+      ['x', 'y', 'width', 'height'].some(
+        (key) => typeof bedrockPosition[key] !== 'number' || !Number.isFinite(bedrockPosition[key])
+      )
+    ) {
+      return undefined;
+    }
+  }
+  if (kind === 'blank' && (typeof value.color !== 'string' || typeof value.opacity !== 'number')) return undefined;
+  if (kind === 'image' && value.name !== undefined && typeof value.name !== 'string') return undefined;
+  if (kind === 'tool' && !hasSafeDataTree(value.args)) return undefined;
+  return value as LayerSource;
+}
+
+export function legacyLayerSourceFromItem(item: HistoryItem): LayerSource | undefined {
+  const source = readOwnDataProperty(item, 'layerSource');
+  if (source.found && source.accessor) return undefined;
+  if (source.found && !source.accessor && source.value !== undefined && source.value !== null) {
+    return asLegacyLayerSource(source.value);
+  }
+  const args = readOwnDataProperty(item, 'args');
+  return args.found && !args.accessor ? asLegacyLayerSource(args.value) : undefined;
+}
+
+function malformedLayerSourceMessage(candidate: unknown, item: HistoryItem): string {
+  const kind = readOwnDataProperty(candidate, 'kind');
+  if (kind.found && !kind.accessor && kind.value === 'tool') {
+    const args = readOwnDataProperty(candidate, 'args');
+    if (args.found && !args.accessor && !hasSafeDataTree(args.value)) {
+      return `Non-plain value at layer:${item.layerId}.source.args`;
+    }
+  }
+  return 'Legacy layer source is not canonical data.';
+}
+
+function malformedLayerSourceMessageForItem(item: HistoryItem): string | null {
+  const source = readOwnDataProperty(item, 'layerSource');
+  if (source.found && source.accessor) return 'Legacy layer source is not canonical data.';
+  if (source.found && !source.accessor && source.value !== undefined && source.value !== null) {
+    return asLegacyLayerSource(source.value) ? null : malformedLayerSourceMessage(source.value, item);
+  }
+  if (
+    item.actionName !== NEW_LAYER_ACTION &&
+    item.actionName !== TOOL_ACTION &&
+    item.actionName !== REPLACE_LAYER_SOURCE_ACTION
+  ) {
+    return null;
+  }
+  const args = readOwnDataProperty(item, 'args');
+  if (!args.found || args.accessor || !args.value || typeof args.value !== 'object') return null;
+  if (item.actionName === TOOL_ACTION || item.actionName === REPLACE_LAYER_SOURCE_ACTION) {
+    const sourceCarrier = readOwnDataProperty(args.value, 'source');
+    if (
+      !sourceCarrier.found ||
+      sourceCarrier.accessor ||
+      !sourceCarrier.value ||
+      typeof sourceCarrier.value !== 'object'
+    ) {
+      return null;
+    }
+    const source = sourceCarrier.value;
+    const kind = readOwnDataProperty(source, 'kind');
+    return kind.found && !kind.accessor && kind.value === 'tool' && !asLegacyLayerSource(source)
+      ? malformedLayerSourceMessage(source, item)
+      : null;
+  }
+  const kind = readOwnDataProperty(args.value, 'kind');
+  return kind.found &&
+    !kind.accessor &&
+    (kind.value === 'blank' || kind.value === 'image' || kind.value === 'tool') &&
+    !asLegacyLayerSource(args.value)
+    ? malformedLayerSourceMessage(args.value, item)
+    : null;
+}
+
+function registerRaster(registry: AssetRegistry, assetOwnerId: string, bitmap: BitmapSource): AssetId {
   // Legacy history/runtime layers retain ownership until the durable model is
   // authoritative. The diagnostic sidecar must never close their bitmaps.
-  return registry.registerBaseline(documentId, bitmap, { ownership: 'borrow' });
+  return registry.registerBaseline(assetOwnerId, bitmap, { ownership: 'borrow' });
 }
 
 /**
@@ -223,20 +510,20 @@ function convertToolSource(source: ToolLayerSource, layer: Layer): DurableLayerS
   if (kind === 'legacy-tool') {
     return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
   }
-  return Object.freeze({
-    kind,
-    toolName: source.args.toolName,
-    args,
-    size,
-    sourcePos: Object.freeze({ ...layer.pos }),
-    isBedrock,
-  });
+  const sourcePos = Object.freeze({ ...layer.pos });
+  if (kind === 'vector') {
+    return Object.freeze({ kind, toolName: source.args.toolName as VectorToolName, args, size, sourcePos, isBedrock });
+  }
+  if (kind === 'text') {
+    return Object.freeze({ kind, toolName: source.args.toolName, args, size, sourcePos, isBedrock });
+  }
+  return Object.freeze({ kind, toolName: source.args.toolName, args, size, sourcePos, isBedrock });
 }
 
 function convertSource(
   source: LayerSource,
   layer: Layer,
-  documentId: string,
+  assetOwnerId: string,
   registry: AssetRegistry
 ): DurableLayerSource {
   const size = sourceSize(source);
@@ -247,7 +534,7 @@ function convertSource(
     case 'image':
       return Object.freeze({
         kind: 'raster',
-        assetId: registerRaster(registry, documentId, source.bitmap),
+        assetId: registerRaster(registry, assetOwnerId, source.bitmap),
         width: source.bitmap.width,
         height: source.bitmap.height,
         ...(source.name ? { name: source.name } : {}),
@@ -258,11 +545,11 @@ function convertSource(
   }
 }
 
-export function convertLayer(layer: Layer, documentId: string, registry: AssetRegistry): DurableLayerSnapshot {
+export function convertLayer(layer: Layer, assetOwnerId: string, registry: AssetRegistry): DurableLayerSnapshot {
   if (!layer.source) {
     if (!layer.bitmap)
       throw new UnsupportedHistoryFeatureError(`Layer ${layer.id} has no durable source or raster materialization`);
-    const assetId = registerRaster(registry, documentId, layer.bitmap);
+    const assetId = registerRaster(registry, assetOwnerId, layer.bitmap);
     return toLayerSnapshot(
       {
         id: layer.id,
@@ -290,19 +577,19 @@ export function convertLayer(layer: Layer, documentId: string, registry: AssetRe
       order: layer.order,
       pos: { ...layer.pos },
     },
-    convertSource(layer.source, layer, documentId, registry)
+    convertSource(layer.source, layer, assetOwnerId, registry)
   );
 }
 
-function snapshotLayers(layers: LayersRecord, documentId: string, registry: AssetRegistry): DurableLayerSnapshot[] {
+function snapshotLayers(layers: LayersRecord, assetOwnerId: string, registry: AssetRegistry): DurableLayerSnapshot[] {
   return Object.values(layers)
     .sort((left, right) => left.order - right.order)
-    .map((layer) => convertLayer(layer, documentId, registry));
+    .map((layer) => convertLayer(layer, assetOwnerId, registry));
 }
 
 function frameFromLegacy(
   item: HistoryItem | undefined,
-  initialSize: Size,
+  initialSize: Size | undefined,
   initialFrame?: DocumentFrame
 ): DocumentFrame {
   return item?.documentSource?.frame
@@ -315,10 +602,10 @@ function frameFromLegacy(
 }
 
 /**
- * The frame the FIRST entry establishes when it is a bedrock source rather than a
+ * The frame an ENABLED first entry establishes when it is a bedrock source rather than a
  * document source — the shape `File > New` produces, where `createBlankLayer(params,
  * true)` replaces the document and writes a single `NEW_LAYER` entry carrying
- * `{ isBedrock: true, size }` (`useLayer.ts:245-258`, `history-utils.ts:22-25`).
+ * `{ isBedrock: true, size }` from `createBlankLayer()`, interpreted by `history-utils`.
  *
  * The baseline describes the document at cursor -1, and for that history the bedrock
  * size IS that document, so reading it here is what makes the shadow agree with the
@@ -327,25 +614,38 @@ function frameFromLegacy(
  * `currentFrame` alone, which is right for every LATER entry and wrong for the one
  * that opened the document.
  *
- * It outranks `options.initialFrame` deliberately, and for the same reason legacy
- * replay does: that option is the store's CURRENT frame, which a later crop has
- * already moved, while legacy replay restores the bedrock size when the cursor walks
- * back to index 0. A converter that preferred it would describe cursor -1 as the
- * cropped document, so the two models would disagree at exactly the cursor where the
- * user can undo into the un-cropped original.
+ * For an enabled first entry it outranks `options.initialFrame` deliberately, and
+ * for the same reason legacy replay does: that option is the store's CURRENT frame,
+ * which a later crop has already moved, while legacy replay restores the bedrock
+ * size when the cursor walks back to index 0. A converter that preferred it would
+ * describe cursor -1 as the cropped document, so the two models would disagree at
+ * exactly the cursor where the user can undo into the un-cropped original.
  */
 function frameFromFirstEntryBedrock(item: HistoryItem | undefined): DocumentFrame | undefined {
-  if (!item || item.documentSource) return undefined;
-  const source = item.layerSource ?? asLegacyLayerSource(item.args);
+  if (!item) return undefined;
+  const documentSource = readOwnDataProperty(item, 'documentSource');
+  if (documentSource.found && (documentSource.accessor || documentSource.value)) return undefined;
+  const source = legacyLayerSourceFromItem(item);
   if (source?.isBedrock) return documentFrameFromSize(source.size);
-  if ((item.args as NewBedrockSize | undefined)?.isBedrock) {
-    return documentFrameFromSize((item.args as NewBedrockSize).size);
+  const args = readOwnDataProperty(item, 'args');
+  if (!args.found || args.accessor || !args.value || typeof args.value !== 'object') return undefined;
+  const isBedrock = readOwnDataProperty(args.value, 'isBedrock');
+  if (isBedrock.found && !isBedrock.accessor && isBedrock.value === true) {
+    const size = readOwnDataProperty(args.value, 'size');
+    if (!size.found || size.accessor) return undefined;
+    return documentFrameFromSize(size.value as NewBedrockSize['size']);
   }
   return undefined;
 }
 
-function entry<Op extends DurableOperation>(id: string, operation: Op, enabled = true): DurableHistoryEntry<Op> {
-  return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
+function entry<Op extends DurableOperation>(item: HistoryItem, operation: Op, enabled = true): DurableHistoryEntry<Op> {
+  return Object.freeze({
+    id: item.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled,
+    provenance: durableEntryProvenance(item),
+    operation,
+  });
 }
 
 /**
@@ -360,32 +660,24 @@ export function deriveSetDocumentFrameEntry(
   item: HistoryItem,
   currentFrame: DocumentFrame
 ): DurableHistoryEntry | null {
-  const args = item.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
+  const args = item.args as
+    { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame; transform?: AffineTransform } | undefined;
   if (!isValidDocumentFrame(args?.nextFrame)) return null;
-  const operation = Object.freeze({
-    kind: 'set-document-frame',
-    previous: args?.previousFrame ?? { ...currentFrame },
-    next: { ...args.nextFrame },
-  });
-  return entry(item.id, operation, isEntryEnabled(item));
-}
-
-/**
- * Structural guard for a durable selection snapshot.
- *
- * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
- * as `next?.activeSelectionId ?? null` (`history-replay.ts:122`): a snapshot that
- * omits the id still retains its selections and only loses the active id.
- * Rejecting that shape here would make the shadow clear selections that legacy
- * replay keeps. The guard only asks whether the value can be read as a snapshot
- * at all; normalizing the id to `null` is `deriveSetSelectionEntry`'s job.
- */
-function isValidSelectionSnapshot(value: unknown): value is SelectionSnapshot {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const candidate = value as { selections?: unknown; activeSelectionId?: unknown };
-  if (!Array.isArray(candidate.selections)) return false;
-  const { activeSelectionId } = candidate;
-  return activeSelectionId === undefined || activeSelectionId === null || typeof activeSelectionId === 'string';
+  let transform: AffineTransform | null = null;
+  if (args?.transform !== undefined) {
+    try {
+      transform = validateAffineTransform(args.transform);
+    } catch {
+      return null;
+    }
+  }
+  const previous = args?.previousFrame ?? { ...currentFrame };
+  const next = { ...args.nextFrame };
+  const operation =
+    transform && !isIdentityAffineTransform(transform)
+      ? Object.freeze({ kind: 'transform-document' as const, previous, next, transform })
+      : Object.freeze({ kind: 'set-document-frame' as const, previous, next });
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -420,16 +712,16 @@ export function deriveSetSelectionEntry(
   const args = item.args as
     { previousSelectionState?: SelectionSnapshot; nextSelectionState?: SelectionSnapshot } | undefined;
   const next = args?.nextSelectionState;
-  if (!isValidSelectionSnapshot(next)) return null;
+  if (!isValidLegacySelectionSnapshot(next)) return null;
   const previous = args?.previousSelectionState;
   const operation = Object.freeze({
     kind: 'set-selection',
-    before: isValidSelectionSnapshot(previous)
+    before: isValidLegacySelectionSnapshot(previous)
       ? selectionSnapshot(previous.selections, previous.activeSelectionId)
       : selectionSnapshot(currentSelections.selections, currentSelections.activeSelectionId),
     after: selectionSnapshot(next.selections, next.activeSelectionId),
   });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -442,15 +734,20 @@ export function deriveSetSelectionEntry(
  * The value is the closed set of properties an action may own, not every key
  * `DurableLayerPropertyPatch` admits. Narrowing it here is what lets both the
  * derivation and the append validator exhaustively switch on the owned key —
- * widening it to `keyof DurableLayerPropertyPatch` would let a new action own
- * `opacity` and fall into the visibility arm as a silent default.
+ * widening it to `keyof DurableLayerPropertyPatch` would let a new action own a
+ * property without an explicit derivation and validation arm. That is also why
+ * an action must not own a property without adding its explicit derivation branch.
  */
-type LayerPropertyKey = 'visible' | 'name';
+type LayerPropertyKey = 'visible' | 'name' | 'opacity' | 'blendMode' | 'locked';
 
 const LAYER_PROPERTY_BY_ACTION = {
   [SHOW_LAYER_ACTION]: 'visible',
   [HIDE_LAYER_ACTION]: 'visible',
   [RENAME_LAYER_ACTION]: 'name',
+  [SET_LAYER_OPACITY_ACTION]: 'opacity',
+  [SET_LAYER_BLEND_MODE_ACTION]: 'blendMode',
+  [LOCK_LAYER_ACTION]: 'locked',
+  [UNLOCK_LAYER_ACTION]: 'locked',
 } as const satisfies Partial<Record<ActionType, LayerPropertyKey>>;
 
 type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
@@ -496,6 +793,16 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     const name = (item.args as { name?: unknown } | undefined)?.name;
     if (typeof name !== 'string') return null;
     patch = { name };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'opacity') {
+    const opacity = (item.args as { opacity?: unknown } | undefined)?.opacity;
+    if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
+    patch = { opacity };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'blendMode') {
+    const blendMode = (item.args as { blendMode?: unknown } | undefined)?.blendMode;
+    if (!isLayerBlendMode(blendMode)) return null;
+    patch = { blendMode };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'locked') {
+    patch = { locked: item.actionName === LOCK_LAYER_ACTION };
   } else {
     // Visibility comes from the action, never from `args.visible`: that is the
     // rule legacy replay applies, and a hand-built args object must not be able
@@ -507,7 +814,7 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     layerId: item.layerId,
     patch: Object.freeze(patch),
   });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -522,7 +829,7 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
 export function deriveRemoveLayerEntry(item: HistoryItem): DurableHistoryEntry<RemoveLayerOperation> | null {
   if (item.actionName !== REMOVE_ACTION) return null;
   const operation: RemoveLayerOperation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -551,13 +858,25 @@ export function deriveRemoveLayerEntry(item: HistoryItem): DurableHistoryEntry<R
  * `legacyToolArgs` is shared there, so neither restates the carrier.
  */
 export function editableSourceReplacementFromEntry(item: HistoryItem): ToolLayerSource | undefined {
-  if (item.layerSource) return undefined;
-  const candidate = (item.args as { source?: unknown } | undefined)?.source;
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
-  if ((candidate as { kind?: unknown }).kind !== 'tool') return undefined;
-  const source = candidate as ToolLayerSource;
-  const toolName = (source.args as { toolName?: unknown } | undefined)?.toolName;
-  if (typeof toolName !== 'string' || !editableDurableSourceKind(toolName)) return undefined;
+  const layerSource = readOwnDataProperty(item, 'layerSource');
+  if (layerSource.found && (layerSource.accessor || (layerSource.value !== undefined && layerSource.value !== null))) {
+    return undefined;
+  }
+  const args = readOwnDataProperty(item, 'args');
+  if (!args.found || args.accessor) return undefined;
+  const candidate = readOwnDataProperty(args.value, 'source');
+  if (!candidate.found || candidate.accessor) return undefined;
+  const source = asLegacyLayerSource(candidate.value);
+  if (!source || source.kind !== 'tool') return undefined;
+  const toolName = readOwnDataProperty(source.args, 'toolName');
+  if (
+    !toolName.found ||
+    toolName.accessor ||
+    typeof toolName.value !== 'string' ||
+    !editableDurableSourceKind(toolName.value)
+  ) {
+    return undefined;
+  }
   if (source.isBedrock) return undefined;
   return source;
 }
@@ -609,12 +928,17 @@ export function deriveReplaceLayerSourceEntry(
     source,
     pos: Object.freeze({ ...runtime.pos }),
   });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
+  const id = item ? readOwnDataProperty(item, 'id') : { found: false as const };
+  const actionName = item ? readOwnDataProperty(item, 'actionName') : { found: false as const };
   return {
-    ...(item ? { historyId: item.id, actionName: item.actionName } : {}),
+    ...(id.found && !id.accessor && typeof id.value === 'string' ? { historyId: id.value } : {}),
+    ...(actionName.found && !actionName.accessor && typeof actionName.value === 'string'
+      ? { actionName: actionName.value as HistoryItem['actionName'] }
+      : {}),
     severity: 'error',
     code:
       error instanceof UnsupportedHistoryFeatureError
@@ -627,8 +951,59 @@ function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagn
 }
 
 export function isEntryEnabled(item: HistoryItem): boolean {
-  const nested = item.args as { enabled?: unknown } | undefined;
-  return !item.disabled && nested?.enabled !== false;
+  // `HistoryItem.disabled` is the only legacy replay gate. An `enabled` field
+  // nested in action args belongs to that action's payload and must not make
+  // the durable fold skip an entry that replayHistory will apply.
+  return !item.disabled;
+}
+
+function duplicateChangesLegacyState(
+  operation: DurableOperation,
+  layersBefore: ReadonlyMap<LayerId, DurableLayerSnapshot>,
+  frameBefore: DocumentFrame,
+  selectionsBefore: SelectionSnapshot
+): boolean {
+  switch (operation.kind) {
+    case 'set-layer-properties': {
+      const layer = layersBefore.get(operation.layerId);
+      if (!layer) return false;
+      const before = layer as unknown as Record<string, unknown>;
+      return Object.entries(operation.patch).some(([key, value]) => !isEqual(before[key], value));
+    }
+    case 'remove-layer':
+      return layersBefore.has(operation.layerId);
+    case 'reposition-layer': {
+      const layer = layersBefore.get(operation.layerId);
+      if (!layer) return false;
+      if (operation.move && (layer.pos.x !== operation.move.x || layer.pos.y !== operation.move.y)) {
+        return true;
+      }
+      if (operation.resize && !isEqual(layer.pos, operation.resize)) {
+        return true;
+      }
+      return false;
+    }
+    case 'reorder-layers':
+      return Object.entries(operation.orderByLayerId).some(
+        ([layerId, order]) => layersBefore.get(layerId)?.order !== order
+      );
+    case 'set-document-frame':
+      return !isEqual(frameBefore, operation.next);
+    case 'transform-document':
+      return !isEqual(frameBefore, operation.next) || !isIdentityAffineTransform(operation.transform);
+    case 'set-selection':
+      return !isEqual(selectionsBefore, operation.after);
+    case 'replace-layer-source': {
+      const layer = layersBefore.get(operation.layerId);
+      if (!layer) return false;
+      return !isEqual(layer.source, operation.source) || !isEqual(layer.pos, operation.pos);
+    }
+    default:
+      // Creation, merge, raster, filter, and affine operations are retained
+      // operations even when their arguments happen to repeat; they change the
+      // durable operation stream and cannot be proven no-op from the snapshot.
+      return true;
+  }
 }
 
 export function operationForTool(
@@ -642,6 +1017,9 @@ export function operationForTool(
   if (!args || typeof args !== 'object' || typeof args.toolName !== 'string') return null;
   const processor = findToolProcessor(args.toolName);
   if (!processor) throw new UnsupportedHistoryFeatureError(`Unknown processor ${args.toolName}`, item.id);
+  if (processor.replay.kind === 'unimplemented') {
+    throw new UnsupportedHistoryFeatureError(`Tool ${args.toolName} cannot be replayed durably`, item.id);
+  }
 
   if (args.toolName === 'transform') {
     const transformCandidate = args as ToolArgs & { transform?: unknown; trapezoid?: number };
@@ -715,13 +1093,24 @@ export function operationForTool(
   throw new UnsupportedHistoryFeatureError(`Tool ${args.toolName} cannot be replayed durably`, item.id);
 }
 
-function snapshotFromDocumentSource(item: HistoryItem, documentId: string, registry: AssetRegistry) {
-  const documentSource = item.documentSource;
-  if (!documentSource) return null;
-  const layers = snapshotLayers(documentSource.layers, documentId, registry);
+function snapshotFromDocumentSource(item: HistoryItem, assetOwnerId: string, registry: AssetRegistry) {
+  const documentSourceProperty = readOwnDataProperty(item, 'documentSource');
+  if (
+    !documentSourceProperty.found ||
+    documentSourceProperty.accessor ||
+    !hasSafeDocumentSource(documentSourceProperty.value)
+  ) {
+    return null;
+  }
+  const documentSource = documentSourceProperty.value;
+  const layers = snapshotLayers(documentSource.layers, assetOwnerId, registry);
+  const itemLayerId = readOwnDataProperty(item, 'layerId');
   const activeLayerId =
-    item.layerId && layers.some((layer) => layer.id === item.layerId)
-      ? item.layerId
+    itemLayerId.found &&
+    !itemLayerId.accessor &&
+    typeof itemLayerId.value === 'string' &&
+    layers.some((layer) => layer.id === itemLayerId.value)
+      ? itemLayerId.value
       : (layers[layers.length - 1]?.id ?? null);
   return {
     frame: frameFromLegacy(item, documentSource.size),
@@ -743,9 +1132,29 @@ export function legacyHistoryToDurable(
   }
   const legacyHistory = history as readonly HistoryItem[];
   const documentId = options.documentId ?? uuidv4();
+  const assetOwnerId = options.assetOwnerId ?? documentId;
   const registry = options.registry ?? getAssetRegistry();
   const first = legacyHistory[0];
-  const initialSize = options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 };
+  const firstIsSafe = hasOwnDataRecord(first);
+  const firstIsEnabled = firstIsSafe && isEntryEnabled(first as HistoryItem);
+  const firstDocumentSourceProperty = firstIsSafe
+    ? readOwnDataProperty(first, 'documentSource')
+    : { found: false as const };
+  const firstDocumentSource =
+    firstDocumentSourceProperty.found &&
+    !firstDocumentSourceProperty.accessor &&
+    firstDocumentSourceProperty.value &&
+    typeof firstDocumentSourceProperty.value === 'object' &&
+    hasSafeDocumentSource(firstDocumentSourceProperty.value)
+      ? firstDocumentSourceProperty.value
+      : undefined;
+  const firstDocumentSize = firstDocumentSource
+    ? readOwnDataProperty(firstDocumentSource, 'size')
+    : { found: false as const };
+  const initialSize = options.initialSize ??
+    (firstIsEnabled && firstDocumentSize.found && !firstDocumentSize.accessor
+      ? (firstDocumentSize.value as Size | undefined)
+      : undefined) ?? { width: 1, height: 1 };
   // Both branches must seed identically, so the durable baseline reads the same
   // unbounded rule legacy replay uses. It cannot be narrowed to the pre-first-entry
   // state while a selection is created outside history: the tool-switch clear's
@@ -755,49 +1164,117 @@ export function legacyHistoryToDurable(
   // A source never carries a document frame. Bedrock establishes the frame only
   // at history index 0; the durable path's only frame writer is the
   // `set-document-frame` operation.
-  const initial = (first && isEntryEnabled(first) ? snapshotFromDocumentSource(first, documentId, registry) : null) ?? {
-    frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
+  const initial = (firstIsEnabled && firstDocumentSource
+    ? snapshotFromDocumentSource(first as HistoryItem, assetOwnerId, registry)
+    : null) ?? {
+    frame:
+      (firstIsEnabled ? frameFromFirstEntryBedrock(first) : undefined) ??
+      options.initialFrame ??
+      documentFrameFromSize(initialSize),
     layers: [],
     activeLayerId: null,
   };
   const baseline: DurableBaseline = { ...initial, selections: selectionBaseline };
   const diagnostics: MigrationDiagnostic[] = [];
   const legacyCursorToDurableCursor: number[] = [];
+  let firstErrorIndex: number | undefined;
   let currentLayers = new Map(initial.layers.map((layer) => [layer.id, layer]));
   let currentFrame = { ...initial.frame };
   let currentSelections: SelectionSnapshot = selectionBaseline;
   const entries: DurableHistoryEntry[] = [];
-  // Ids already published as a durable entry. Two id-based resolvers exist and
-  // both take the FIRST match, which is what a repeated id threatens:
+  // Ids already claimed by an earlier legacy row. Two id-based resolvers exist
+  // and both take the FIRST match, which is what a repeated id threatens:
   // `updateHistoryTimeline` finds the first entry in the LEGACY timeline
-  // (`history-timeline.ts:23-28`) and `toggleDurableEntry` finds the first in the
+  // (`history-timeline`); `toggleDurableEntry()` finds the first in the
   // durable document (`toggleDurableEntry` below). Publishing a repeat would give
   // the two lists different first matches for one key, so a History-panel toggle
   // would disable a different edit in each model. Skipping the repeat keeps them
   // aligned. Replay is not part of this: `replayDurableDocument` addresses
-  // history by ARRAY INDEX (`durable-replay.ts:56-59`), so no replay is misresolved
-  // either way — the alignment of the two id resolvers is the whole reason this
-  // is a warning. An error diagnostic would withhold the shadow outright
-  // (`convertLegacyHistorySafely` voids on the first one), which is not a price
-  // worth paying for a timeline that still replays correctly.
+  // history by ARRAY INDEX in `replayDurableDocument`, so no replay is misresolved
+  // either way. Disabled repeats are resolver-only warnings because legacy replay
+  // skips them. An enabled repeat is different: legacy applies an edit that the
+  // durable history cannot publish, so the safe wrapper must withhold the exact
+  // projection rather than call it current.
   //
-  // Only ids that actually reached `entries` are recorded, except for the
-  // document-source baseline. That source is not a durable entry, but its id is
-  // still the first key the legacy timeline can resolve, so a later entry that
-  // reuses it must be refused just like a published duplicate. Refused document
-  // replacements and entries whose derivation throws do not consume their ids.
-  const baselineEntryId = first?.documentSource ? first.id : undefined;
-  const publishedEntryIds = new Set<string>(baselineEntryId ? [baselineEntryId] : []);
+  // Every legacy id claims a first-match resolver slot, even when a row is a
+  // non-first document source or does not derive a durable operation. Reserving
+  // those ids prevents a later row from resolving differently between the two
+  // timelines.
+  const firstId = firstIsSafe ? readOwnDataProperty(first, 'id') : { found: false as const };
+  const baselineEntryId =
+    firstDocumentSource && firstId.found && !firstId.accessor && typeof firstId.value === 'string'
+      ? firstId.value
+      : undefined;
+  const claimedEntryIds = new Set<string>(baselineEntryId !== undefined ? [baselineEntryId] : []);
 
-  for (const item of legacyHistory) {
-    if (item !== first && item.documentSource && publishedEntryIds.has(item.id)) {
+  for (const [legacyIndex, item] of legacyHistory.entries()) {
+    if (!hasOwnDataRecord(item)) {
+      const diagnostic = diagnosticFromError(
+        new Error('Legacy history items must contain own enumerable data properties.'),
+        item
+      );
+      diagnostics.push(diagnostic);
+      const itemId = readOwnDataProperty(item, 'id');
+      if (itemId.found && !itemId.accessor && typeof itemId.value === 'string') claimedEntryIds.add(itemId.value);
+      firstErrorIndex ??= legacyIndex;
+      legacyCursorToDurableCursor.push(entries.length - 1);
+      continue;
+    }
+    const enabled = isEntryEnabled(item);
+    const documentSourceProperty = readOwnDataProperty(item, 'documentSource');
+    if (
+      legacyIndex === 0 &&
+      documentSourceProperty.found &&
+      !documentSourceProperty.accessor &&
+      documentSourceProperty.value !== undefined &&
+      documentSourceProperty.value !== null &&
+      !hasSafeDocumentSource(documentSourceProperty.value)
+    ) {
+      const diagnostic = diagnosticFromError(new Error('Legacy document source is not canonical data.'), item);
+      diagnostics.push({ ...diagnostic, severity: enabled ? 'error' : 'warning' });
+      claimedEntryIds.add(item.id);
+      if (enabled) firstErrorIndex ??= legacyIndex;
+      legacyCursorToDurableCursor.push(entries.length - 1);
+      continue;
+    }
+    const layersBefore = new Map(currentLayers);
+    const frameBefore = { ...currentFrame };
+    const selectionsBefore = currentSelections;
+    if (item !== first && item.documentSource && claimedEntryIds.has(item.id)) {
+      diagnostics.push({
+        historyId: item.id,
+        actionName: item.actionName,
+        // A disabled duplicate is a parity-preserving resolver warning. An
+        // enabled duplicate represents a legacy edit that the durable history
+        // cannot publish, so the safe boundary must fail closed as partial.
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: `History entry ${item.id} (${item.actionName}) repeats an id claimed by an earlier timeline entry. Legacy replay ignores this non-first document source, and the id remains reserved so legacy and durable resolvers continue to target the same first occurrence.`,
+      });
+      legacyCursorToDurableCursor.push(entries.length - 1);
+      continue;
+    }
+    if (!enabled && claimedEntryIds.has(item.id)) {
       diagnostics.push({
         historyId: item.id,
         actionName: item.actionName,
         severity: 'warning',
         code: 'invalid-history-entry',
-        message: `History entry ${item.id} (${item.actionName}) reuses the id of the baseline document-source entry, so it was not published as a durable entry. The baseline is not itself in durable history, but its id is already meaningful to the legacy timeline and must remain unique.`,
+        message: `History entry ${item.id} (${item.actionName}) repeats an id claimed by an earlier timeline entry, but legacy replay skips this disabled entry. It was not published again so legacy and durable id resolvers continue to target the first occurrence.`,
       });
+      legacyCursorToDurableCursor.push(entries.length - 1);
+      continue;
+    }
+    if (legacyIndex > 0 && item.documentSource) {
+      diagnostics.push({
+        historyId: item.id,
+        actionName: item.actionName,
+        severity: 'warning',
+        code: 'document-replacement',
+        message:
+          'Legacy replay ignores every non-first document source, including its action and replacement state; the durable cursor remains at the preceding published entry.',
+      });
+      claimedEntryIds.add(item.id);
       legacyCursorToDurableCursor.push(entries.length - 1);
       continue;
     }
@@ -819,20 +1296,22 @@ export function legacyHistoryToDurable(
       diagnostics.push({
         historyId: item.id,
         actionName: item.actionName,
-        severity: 'error',
+        severity: enabled ? 'error' : 'warning',
         code: 'document-replacement',
         message: 'Document replacement must create a new durable document and cannot appear inside a document history.',
       });
+      if (enabled) firstErrorIndex ??= legacyIndex;
       legacyCursorToDurableCursor.push(entries.length - 1);
       continue;
     }
     let operation: DurableOperation | null = null;
-    const enabled = isEntryEnabled(item);
     try {
-      const source = item.layerSource ?? asLegacyLayerSource(item.args);
+      const malformedSource = malformedLayerSourceMessageForItem(item);
+      if (malformedSource) throw new Error(malformedSource);
+      const source = legacyLayerSourceFromItem(item);
       if ((item.actionName === NEW_LAYER_ACTION || (item.actionName === TOOL_ACTION && source)) && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
-        const layer = convertLayer(runtimeLayer, documentId, registry);
+        const layer = convertLayer(runtimeLayer, assetOwnerId, registry);
         if (enabled) currentLayers.set(layer.id, layer);
         operation = Object.freeze({ kind: 'create-layer', layer });
       } else if (isSetLayerPropertiesAction(item.actionName)) {
@@ -849,23 +1328,19 @@ export function legacyHistoryToDurable(
         const layerToMoveId = args?.layerToMoveId;
         const afterWhichLayerId = args?.afterWhichLayerId;
         // `replayHistory` skips the move entirely when either id is absent
-        // (`history-replay.ts:148`), leaving the order untouched, so conversion
-        // records nothing and leaves `currentLayers` alone. A named but missing
+        // in `replayHistory`'s `REORDER_ACTION` arm, leaving the order untouched,
+        // so conversion records nothing and leaves `currentLayers` alone. A named but missing
         // anchor is not a placement at the bottom: `remaining.indexOf` would be
         // -1, and `+ 1` would record a move to index 0 that the document never
         // performs. The cursor map below already treats a null operation as
         // "map to the preceding durable cursor", the same as a dropped rename.
         const anchorPresent = !afterWhichLayerId || currentLayers.has(afterWhichLayerId);
         if (layerToMoveId && currentLayers.has(layerToMoveId) && anchorPresent) {
-          const order = Object.fromEntries(
-            [...currentLayers.values()]
-              .sort((left, right) => left.order - right.order)
-              .map((layer, index) => [layer.id, index])
-          );
-          const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
-          const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
-          remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
-          const orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
+          const orderByLayerId = reorderLayerOrderValues({
+            orderByLayerId: Object.fromEntries([...currentLayers.values()].map((layer) => [layer.id, layer.order])),
+            layerToMoveId,
+            afterWhichLayerId,
+          })!;
           operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
           if (enabled) {
             for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
@@ -886,17 +1361,13 @@ export function legacyHistoryToDurable(
           operation = frameEntry.operation;
           if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
         } else {
-          // `replayHistory` drops a frame action whose `nextFrame` is not a valid
-          // frame too (`history-replay.ts:112-117` guards the assignment on
-          // `isValidDocumentFrame`), so for an enabled entry the shadow stays in
-          // PARITY with legacy replay and there is no disagreement to fail closed
-          // over. (One shape is not parity and is not claimed to be: a DISABLED
-          // entry, which legacy replay skips without an opinion
-          // (`history-replay.ts:75`). A bedrock source is parity at every index —
-          // legacy replay honours it only for the initial document entry
-          // (`history-replay.ts:104-109`) and `frameFromFirstEntryBedrock` reads the
-          // same entry for the baseline, so a bedrock commit at any LATER index
-          // moves neither side.)
+          // `replayHistory` drops a frame action whose `nextFrame` is not valid:
+          // its `SET_DOCUMENT_FRAME_ACTION` arm guards the assignment with
+          // `isValidDocumentFrame`, so the shadow stays in PARITY for enabled
+          // entries. A disabled entry is not parity: legacy replay skips it
+          // before dispatch. Bedrock is parity at every index because legacy
+          // replay and `frameFromFirstEntryBedrock` both use only the initial
+          // entry to establish the frame.
           // But parity alone is not observability: this branch cannot throw, so
           // without a diagnostic the conversion reports `status: 'current'`
           // while silently losing a document-frame change, and the only other
@@ -917,7 +1388,7 @@ export function legacyHistoryToDurable(
         }
       } else if (item.actionName === SELECTION_ACTION) {
         const next = (item.args as { nextSelectionState?: unknown } | undefined)?.nextSelectionState;
-        if (next !== undefined && next !== null && !isValidSelectionSnapshot(next)) {
+        if (next !== undefined && next !== null && !isValidLegacySelectionSnapshot(next)) {
           // Present but unreadable — `{}`, `{ selections: null }`, `[]`, a
           // non-array, and so on. `replayHistory` throws on every one of these
           // when it reads `next.selections.map(...)`, and the pre-derivation code
@@ -961,7 +1432,7 @@ export function legacyHistoryToDurable(
         }
       } else if (item.actionName === MERGE_ACTION && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
-        const layer = convertLayer(runtimeLayer, documentId, registry);
+        const layer = convertLayer(runtimeLayer, assetOwnerId, registry);
         const removedLayerIds = [...currentLayers.keys()].filter((id) => id !== layer.id);
         if (enabled) currentLayers = new Map([[layer.id, layer]]);
         operation = Object.freeze({ kind: 'merge-document', result: layer, removedLayerIds });
@@ -1031,13 +1502,15 @@ export function legacyHistoryToDurable(
         }
       }
     } catch (error) {
-      diagnostics.push(diagnosticFromError(error, item));
+      const diagnostic = diagnosticFromError(error, item);
+      diagnostics.push(diagnostic);
+      if (enabled && diagnostic.severity === 'error') firstErrorIndex ??= legacyIndex;
     }
     if (operation) {
-      if (publishedEntryIds.has(item.id)) {
+      if (claimedEntryIds.has(item.id)) {
         const isBaselineId = item.id === baselineEntryId;
-        // A repeat of an id already claimed by the durable timeline (or by its
-        // document-source baseline). The fold state
+        // A repeat of an id already claimed by an earlier timeline row or by the
+        // document-source baseline. The fold state
         // (`currentLayers`, `currentFrame`, `currentSelections`) is deliberately
         // LEFT ADVANCED: the legacy timeline is authoritative and the duplicate is
         // a real edit, so the operations derived after it must see the state the
@@ -1054,22 +1527,30 @@ export function legacyHistoryToDurable(
         // `set-selection` applies `after` only — so this is a latent hazard for
         // the day something does, not a live wrong answer.
         //
-        // Only the publication is withheld. The cursor map below records the
-        // preceding durable index, the same handling a dropped rename gets.
+        // Disabled repeats preserve parity because legacy replay skips them.
+        // Enabled repeats are partial only when the operation changes the
+        // legacy snapshot. Proven idempotent or absent-layer no-ops remain
+        // warning-only. The cursor map below remains useful to the raw
+        // converter but is removed by convertLegacyHistorySafely for errors.
+        const duplicateIsStateChanging = Boolean(
+          enabled && operation && duplicateChangesLegacyState(operation, layersBefore, frameBefore, selectionsBefore)
+        );
         diagnostics.push({
           historyId: item.id,
           actionName: item.actionName,
-          severity: 'warning',
+          severity: duplicateIsStateChanging ? 'error' : 'warning',
           code: 'invalid-history-entry',
           message: isBaselineId
             ? `History entry ${item.id} (${item.actionName}) reuses the id of the baseline document-source entry, so it was not published as a durable entry. The baseline is not itself in durable history, but its id is already meaningful to the legacy timeline and must remain unique.`
-            : `History entry ${item.id} (${item.actionName}) repeats an id already published as a durable entry, so it was not published again. A history entry id must be unique within a document: the edit it describes is missing from the durable document, and every entry after it was derived from the state this one would have produced, which that document does not reach.`,
+            : `History entry ${item.id} (${item.actionName}) repeats an id claimed by an earlier timeline entry, so it was not published again. A history entry id must be unique within a document: the edit it describes is missing from the durable document, and every entry after it was derived from the state this one would have produced, which that document does not reach.`,
         });
+        if (duplicateIsStateChanging) firstErrorIndex ??= legacyIndex;
       } else {
-        publishedEntryIds.add(item.id);
-        entries.push(entry(item.id, operation, enabled));
+        claimedEntryIds.add(item.id);
+        entries.push(entry(item, operation, enabled));
       }
     }
+    if (!operation) claimedEntryIds.add(item.id);
     legacyCursorToDurableCursor.push(entries.length - 1);
   }
 
@@ -1082,37 +1563,96 @@ export function legacyHistoryToDurable(
     history: entries,
     cursor: entries.length - 1,
   });
-  return { document, diagnostics, legacyCursorToDurableCursor: Object.freeze(legacyCursorToDurableCursor) };
+  return {
+    document,
+    diagnostics,
+    legacyCursorToDurableCursor: Object.freeze(legacyCursorToDurableCursor),
+    ...(firstErrorIndex === undefined ? {} : { firstErrorIndex }),
+  };
+}
+
+function buildSafePrefixProjection(
+  history: readonly HistoryItem[],
+  options: LegacyConversionOptions,
+  registry: AssetRegistry,
+  documentId: string,
+  firstErrorIndex: number
+): DurableSafePrefixProjection | undefined {
+  const ownerId = `${documentId}:partial:${uuidv4()}`;
+  try {
+    const prefix = legacyHistoryToDurable(history.slice(0, firstErrorIndex), {
+      ...options,
+      documentId,
+      assetOwnerId: ownerId,
+      registry,
+    });
+    if (prefix.firstErrorIndex !== undefined) {
+      registry.disposeDocument(ownerId);
+      return undefined;
+    }
+    let released = false;
+    return {
+      document: prefix.document,
+      legacyCursorToDurableCursor: prefix.legacyCursorToDurableCursor,
+      safeThroughLegacyCursor: firstErrorIndex - 1,
+      release: () => {
+        if (released) return;
+        released = true;
+        registry.disposeDocument(ownerId);
+      },
+    };
+  } catch {
+    registry.disposeDocument(ownerId);
+    return undefined;
+  }
 }
 
 /**
  * Conversion has runtime asset side effects, so do not expose a partial
- * document after an unsupported entry. The legacy path remains the fallback
- * until every history action has a durable equivalent.
+ * document after an enabled unsupported entry. The legacy path remains the
+ * fallback until every history action has a durable equivalent.
  */
 export function convertLegacyHistorySafely(
   history: readonly HistoryItem[] | DurableDocument,
   options: LegacyConversionOptions = {}
 ): DurableConversionAttempt {
+  if (Array.isArray(history) && options.documentId === undefined) {
+    throw new Error('convertLegacyHistorySafely: documentId is required when converting a legacy history array');
+  }
   const registry = options.registry ?? getAssetRegistry();
   const isDurableDocument = (h: readonly HistoryItem[] | DurableDocument): h is DurableDocument =>
     !Array.isArray(h) && 'documentId' in h;
   const documentId = options.documentId ?? (isDurableDocument(history) ? history.documentId : undefined);
-  const transaction = documentId ? registry.beginDocumentAssetTransaction(documentId) : undefined;
+  const assetOwnerId = options.assetOwnerId ?? documentId;
+  const transaction = assetOwnerId !== undefined ? registry.beginDocumentAssetTransaction(assetOwnerId) : undefined;
 
   try {
     const converted = legacyHistoryToDurable(history, { ...options, registry });
-    if (converted.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+    if (converted.firstErrorIndex !== undefined) {
       transaction?.rollback();
+      const safePrefix =
+        Array.isArray(history) && documentId !== undefined && converted.firstErrorIndex !== undefined
+          ? buildSafePrefixProjection(history, options, registry, documentId, converted.firstErrorIndex)
+          : undefined;
       return {
-        status: 'unavailable',
+        // This is a conversion-quality failure, not an infrastructure throw.
+        // Keep it distinct from `unavailable` so callers can report that a
+        // partial projection exists without ever treating it as exact.
+        status: 'partial',
         document: null,
         diagnostics: converted.diagnostics,
-        legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
+        // A conversion error makes the fold after the offending entry
+        // unproven: later operations may have been derived from stale state.
+        // The document is withheld, so exposing that map would let a caller
+        // pair legacy cursors with a durable timeline that is not available.
+        legacyCursorToDurableCursor: [],
+        ...(safePrefix ? { safePrefix } : {}),
       };
     }
     transaction?.commit();
-    registry.reconcileDocumentAssets(converted.document.documentId, collectDurableAssetIds(converted.document));
+    if (assetOwnerId !== undefined) {
+      registry.reconcileDocumentAssets(assetOwnerId, collectDurableAssetIds(converted.document));
+    }
     return { status: 'current', ...converted };
   } catch (error) {
     transaction?.rollback();
@@ -1128,25 +1668,63 @@ export function convertLegacyHistorySafely(
 /** Named alias used at the compatibility boundary by importers and callers. */
 export const convertLegacyHistory = legacyHistoryToDurable;
 
+/**
+ * The durable converter's source-to-runtime rule, and nothing but a delegation for
+ * the two fields the runtime rule owns.
+ *
+ * It used to re-derive the layer from the source here, binding the bare kind as
+ * `name` and folding `Math.max(-1, ...orders) + 1` for `order`. That was a second
+ * rule, and it disagreed with `createLayerSource` — the rule `replayHistory` builds
+ * a layer through, wired at `useHistory.ts` — on the first layer of any document:
+ * `'Blank'` at order `0` here, `'Blank 1'` at order `1` there, and no `ellipsify` on
+ * a long image name on this side. Two live tests pinned the two answers, so neither
+ * was accidental; the runtime rule is what the document means and this is the copy,
+ * so the copy derives through {@link deriveLayerNameAndOrder} — the derivation
+ * `createLayerSource` itself makes — rather than keeping a second one.
+ *
+ * `name` and `order` are read together because they are one derivation: the number
+ * in the name suffix IS the order, so taking one from the runtime rule and folding
+ * the other here would leave a third rule rather than one of the two.
+ *
+ * The layer set is read for its orders alone (`LayerOrderRecord`). Rebuilds use
+ * durable snapshots; source-backed appends pass the live record so legacy
+ * sparse orders after a reorder produce the same next name/order as the UI. The
+ * empty map in {@link deriveReplaceLayerSourceEntry} stays meaningful because
+ * replacement discards the derived order, exactly as the old fold's did.
+ *
+ * The rest of the layer stays derived here, and deliberately: `createLayerSource`
+ * would also allocate a canvas per blank source and run a creator tool's
+ * `imageProcessor`, and this is a conversion that wants two fields. `pos` in
+ * particular is the authored box rather than the patched one, which is a separate
+ * question from the one this function was re-deriving.
+ */
 export function sourceToRuntimeLayer(
   id: LayerId,
   source: LayerSource,
-  layers: Map<LayerId, DurableLayerSnapshot>
+  layers: Map<LayerId, DurableLayerSnapshot> | Readonly<Record<LayerId, Pick<Layer, 'order'>>>
 ): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
+  const orders: LayerOrderRecord = Object.create(null);
+  if (layers instanceof Map) {
+    for (const [layerId, layer] of layers) orders[layerId] = layer;
+  } else {
+    for (const [layerId, layer] of Object.entries(layers)) orders[layerId as LayerId] = layer;
+  }
+  const { name, order } = deriveLayerNameAndOrder(orders, source);
   return {
     id,
-    name: source.kind === 'image' ? (source.name ?? 'Image') : source.kind === 'tool' ? source.args.toolName : 'Blank',
+    name,
     isBedrock: !!source.isBedrock,
     visible: true,
     opacity: 1,
     locked: false,
     blendMode: source.kind === 'tool' ? toolLayerBlendMode(source.args) : 'source-over',
-    order: Math.max(-1, ...[...layers.values()].map((layer) => layer.order)) + 1,
+    order,
     pos,
     source,
     operations: [],
+    presentationBounds: null,
     bitmap: source.kind === 'image' ? source.bitmap : null,
     tmpCanvas: null,
   };
@@ -1160,8 +1738,7 @@ export function createDurableDocument(
 
 export function appendDurableEntry(document: DurableDocument, next: DurableHistoryEntry): DurableDocument {
   const history = [...document.history.slice(0, document.cursor + 1), next];
-  return freezeDurableDocument({
-    ...cloneDurableDocument(document),
+  return refreezeDurableDocument(document, {
     history,
     cursor: history.length - 1,
     branchRevision: document.branchRevision + 1,
@@ -1175,8 +1752,7 @@ export function toggleDurableEntry(document: DurableDocument, entryId: string): 
   const history = document.history.map((historyEntry, historyIndex) =>
     historyIndex === index ? Object.freeze({ ...historyEntry, enabled: !historyEntry.enabled }) : historyEntry
   );
-  return freezeDurableDocument({
-    ...document,
+  return refreezeDurableDocument(document, {
     history,
     branchRevision: document.branchRevision + 1,
     durableRevision: document.durableRevision + 1,
@@ -1187,5 +1763,5 @@ export function setDurableCursor(document: DurableDocument, cursor: number): Dur
   if (!Number.isInteger(cursor) || cursor < -1 || cursor >= document.history.length) return document;
   return cursor === document.cursor
     ? document
-    : freezeDurableDocument({ ...document, cursor, durableRevision: document.durableRevision + 1 });
+    : refreezeDurableDocument(document, { cursor, durableRevision: document.durableRevision + 1 });
 }

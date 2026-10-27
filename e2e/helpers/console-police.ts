@@ -49,10 +49,9 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
  * WHAT IS REPORTED BUT NOT FAILED
  *   Console warnings and failed requests are printed and attached to the report
  *   without failing the test. Warnings are advisory by construction, and this
- *   app's `index.html:18,35` loads a Google Tag Manager container that beacons to
- *   `region1.google-analytics.com` on every page — including every e2e run, which
- *   makes the suite non-hermetic and would otherwise fail ~36 times over a
- *   network call no test controls.
+ *   app's `index.html` is hermetic — the Google Tag Manager container that
+ *   previously beaconed to `region1.google-analytics.com` on every page was
+ *   removed by `c5f1759b`, so the suite no longer inherits any external beacon.
  */
 export interface ConsoleEntry {
   text: string;
@@ -108,6 +107,15 @@ export const ACCEPTED_CONSOLE_ERRORS: readonly AcceptedConsoleError[] = [
     // well as the text, so the entry this rule judges carries the URL of the message it
     // was recorded from. See `entryKey`.
     urlPattern: /^\/favicon\.ico$/,
+  },
+  {
+    match: 'color-sampler-cap-reached',
+    reason:
+      "The Color Sampler's intentional refusal at its four-sampler cap. Vite wraps this " +
+      'console.error and Playwright reports the location as `/@vite/client`; unwrapped runs ' +
+      'report `ColorSamplerToolArea.tsx` directly. The unique refusal token and these two ' +
+      'locations keep unrelated console errors failing.',
+    urlPattern: /(?:\/src\/components\/Main\/ColorSamplerToolArea\.tsx|\/@vite\/client)$/,
   },
   {
     match: 'Error boundary caught a throw from',

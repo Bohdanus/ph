@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { useLayers } from '../useLayer.ts';
+import { useHistory } from '../useHistory.ts';
 import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { ToolArgs } from '../tool-types.ts';
@@ -34,6 +35,7 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 40, height: 20 },
+    presentationBounds: null,
     operations: [],
     ...overrides,
   };
@@ -41,7 +43,31 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
 
 function useLayerHarness() {
   const [store, dispatch] = useStore();
-  return { store, dispatch, layers: useLayers() };
+  return { store, dispatch, layers: useLayers(), history: useHistory() };
+}
+
+/**
+ * The record a navigation has to reproduce, minus the two fields no comparison across one can use:
+ * `bitmap` and `tmpCanvas` are pixels, and `createLayerSource` materialises a FRESH canvas for a
+ * `blank` source on every replay, so identity and object-graph equality are unavailable across a
+ * navigation and asserting them would pin the mock rather than the record.
+ */
+function committedShape(layer: Layer) {
+  const source = layer.source as (Layer['source'] & { isBedrock?: boolean }) | undefined;
+  return {
+    id: layer.id,
+    name: layer.name,
+    order: layer.order,
+    visible: layer.visible,
+    isBedrock: layer.isBedrock,
+    pos: layer.pos,
+    operations: layer.operations,
+    // Compared as a boolean because the flag is written two ways for one meaning: a source a
+    // history entry carries spells it out, and one built straight from `createBlankLayer` leaves it
+    // implicit. Only its ABSENCE is load-bearing here — a record the replay rebuilt names a source,
+    // a record that swallowed a draft names none.
+    source: source && { ...source, isBedrock: Boolean(source.isBedrock) },
+  };
 }
 
 function setup({
@@ -111,11 +137,125 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
       });
     });
 
-    const params = processor.mock.calls[0]![0] as { bitmap: OffscreenCanvas; size: Layer['pos'] };
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
     expect(params.bitmap).not.toBe(source.bitmap);
     expect(params.bitmap.width).toBe(80);
     expect(params.bitmap.height).toBe(20);
-    expect(params.size).toEqual({ x: 0, y: 0, width: 80, height: 20 });
+    expect(params.size).toEqual({ width: 80, height: 20 });
+    processor.mockRestore();
+  });
+
+  it('passes integer staged pixels to a processor while publishing fractional preview bounds', () => {
+    const raster = new OffscreenCanvas(41, 20);
+    const source = makeLayer('edited', 0, {
+      pos: { x: 10, y: 5, width: 40, height: 20 },
+      operations: [
+        {
+          id: 'fractional-scale',
+          kind: 'affine-transform',
+          transform: { a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+    });
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
+    expect(params.bitmap.width).toBe(41);
+    expect(params.bitmap.height).toBe(20);
+    expect(params.size).toEqual({ width: 41, height: 20 });
+    expect(result.current.store.previewLayers.current.edited!.layer.pos).toEqual({
+      x: 10,
+      y: 5,
+      width: 40.5,
+      height: 20,
+    });
+    processor.mockRestore();
+  });
+
+  it('stages a resized raster to the visible layer bounds before a live pixel edit', () => {
+    const raster = new OffscreenCanvas(80, 40);
+    const source = makeLayer('edited', 0, {
+      bitmap: { width: 40, height: 20 } as ImageBitmap,
+      pos: { x: 10, y: 5, width: 80, height: 40 },
+    });
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
+    expect(params.bitmap).not.toBe(source.bitmap);
+    expect(params.bitmap.width).toBe(80);
+    expect(params.bitmap.height).toBe(40);
+    expect(params.size).toEqual({ width: 80, height: 40 });
+    expect(result.current.store.previewLayers.current.edited!.layer.pos).toEqual(source.pos);
+    processor.mockRestore();
+  });
+
+  it('publishes a cached baked presentation at its bounds when a pixel edit replaces its raster', () => {
+    const cachedRaster = new OffscreenCanvas(80, 40);
+    const processedRaster = new OffscreenCanvas(80, 40);
+    const enabledTransform = {
+      id: 'transform',
+      kind: 'affine-transform' as const,
+      enabled: true,
+      transform: { a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 },
+    };
+    const disabledFilter = {
+      id: 'disabled-filter',
+      kind: 'filter' as const,
+      enabled: false,
+      args: { toolName: 'blur' as const, radius: 2 },
+    };
+    const source = makeLayer('edited', 0, {
+      tmpCanvas: cachedRaster,
+      pos: { x: 10, y: 5, width: 40, height: 20 },
+      presentationBounds: { x: 15, y: 8, width: 80, height: 40 },
+      operations: [enabledTransform, disabledFilter],
+    });
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [processedRaster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const params = processor.mock.calls[0]![0] as {
+      bitmap: OffscreenCanvas;
+      size: { width: number; height: number };
+    };
+    const preview = result.current.store.previewLayers.current.edited!.layer;
+    expect(params.bitmap).toBe(cachedRaster);
+    expect(params.size).toEqual({ width: 80, height: 40 });
+    expect(preview.pos).toEqual({ x: 15, y: 8, width: 80, height: 40 });
+    expect(preview.operations).toEqual([disabledFilter]);
+    expect(preview.presentationBounds).toBeNull();
     processor.mockRestore();
   });
 
@@ -324,6 +464,98 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
     expect(reported).toContain('PUBLISH_RUNTIME_PRESENTATION carries presentation caches only');
     expect(reported).toContain('Offending layer ids: edited');
   });
+
+  it('accepts an identity affine transform preview in commitDirtyTool without logging an error', async () => {
+    const raster = new OffscreenCanvas(40, 20);
+    const storedLayer = makeLayer('edited', 0);
+    const previewLayer = {
+      ...storedLayer,
+      operations: [
+        {
+          id: 'identity-scale',
+          kind: 'affine-transform' as const,
+          transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+      tmpCanvas: raster as unknown as Layer['tmpCanvas'],
+    };
+    const processor = vi.spyOn(toolProcessors.transform, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: storedLayer }, activeLayerId: 'edited' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // Stage the preview with identity affine operation and tmpCanvas.
+    act(() => {
+      result.current.store.previewLayers.current = {
+        edited: { layer: previewLayer, toolArgs: { toolName: 'transform' } as ToolArgs },
+      };
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    // No error logged for identity affine.
+    expect(consoleError).not.toHaveBeenCalled();
+    // Preview cleared, cache promoted, identity operation removed from durable state.
+    expect(store.previewLayers.current).toEqual({});
+    expect(store.layers.edited!.tmpCanvas).toBeNull();
+    expect(store.layers.edited!.bitmap).not.toBeNull();
+    expect(store.layers.edited!.operations).toEqual([]);
+    expect(store.history).toEqual([]);
+    processor.mockRestore();
+  });
+
+  it('refuses a non-identity affine transform preview in commitDirtyTool and logs an error', async () => {
+    const raster = new OffscreenCanvas(80, 20);
+    const storedLayer = makeLayer('edited', 0);
+    const previewLayer = {
+      ...storedLayer,
+      operations: [
+        {
+          id: 'scale-affine',
+          kind: 'affine-transform' as const,
+          transform: { a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+      tmpCanvas: raster as unknown as Layer['tmpCanvas'],
+    };
+    const processor = vi.spyOn(toolProcessors.transform, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: storedLayer }, activeLayerId: 'edited' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // Stage the preview with non-identity affine operation and tmpCanvas.
+    act(() => {
+      result.current.store.previewLayers.current = {
+        edited: { layer: previewLayer, toolArgs: { toolName: 'transform' } as ToolArgs },
+      };
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    // Error logged for non-identity affine.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const reported = consoleError.mock.calls[0][0] as string;
+    expect(reported).toContain('PUBLISH_RUNTIME_PRESENTATION carries presentation caches only');
+    expect(reported).toContain('Offending layer ids: edited');
+    // Preview cleared but publication refused: stored layer unchanged, no cache promoted.
+    expect(store.layers.edited!.operations).toEqual([]);
+    expect(store.layers.edited!.tmpCanvas).toBeNull();
+    expect(store.layers.edited!.bitmap).toEqual({ width: 40, height: 20 } as ImageBitmap);
+    expect(store.history).toEqual([]);
+    processor.mockRestore();
+  });
 });
 
 describe('useLayers commitDirtyTool history boundary', () => {
@@ -378,7 +610,7 @@ describe('useLayers commitDirtyTool history boundary', () => {
       });
     });
 
-    let returned: LayersRecord | undefined;
+    let returned: LayersRecord | null | undefined;
     act(() => {
       returned = result.current.layers.commitDirtyTool(true);
     });
@@ -387,9 +619,206 @@ describe('useLayers commitDirtyTool history boundary', () => {
     });
 
     // A deferred commit returns the merged record for the caller's own dispatch.
-    expect(Object.keys(returned!)).toEqual(['edited']);
+    expect(Object.keys(returned ?? {})).toEqual(['edited']);
     expect(result.current.store.history).toEqual([]);
     expect(result.current.store.previewLayers.current).toEqual({});
+    processor.mockRestore();
+  });
+});
+
+describe('useLayers deferred commit ownership', () => {
+  /**
+   * Two previews at once: one the committing caller owns, one staged by a different consumer —
+   * a gesture on another layer, or a document-scoped raster draft. `updateLayerByTool` commits
+   * ONE layer, so only that layer's pixels may reach the committed record.
+   */
+  function stageTwoPreviews() {
+    const draftRaster = new OffscreenCanvas(40, 20);
+    const commitRaster = new OffscreenCanvas(40, 20);
+    const processor = vi
+      .spyOn(toolProcessors.brush, 'imageProcessor')
+      .mockReturnValueOnce(() => [draftRaster])
+      .mockReturnValueOnce(() => [commitRaster]);
+    const before = { a: makeLayer('a', 0), b: makeLayer('b', 1) };
+    const { result } = setup({ layers: before, activeLayerId: 'a' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({ id: 'b', toolArgs: { toolName: 'brush', lineWidth: 6 } as ToolArgs });
+    });
+    return { result, processor, before, draftRaster };
+  }
+
+  /**
+   * A document the timeline can rebuild, which is the precondition for a navigation being a replay
+   * at all: `replayHistory` starts from `{}` and honours a `documentSource` at index 0 only, so it
+   * is `createBlankLayer(..., true)` that puts the base document IN the timeline and the second
+   * call that appends a `NEW_LAYER` entry after it. Ids come back from the store because
+   * `createLayerSource` mints them.
+   */
+  function seedReplayableDocument() {
+    const { result } = renderHook(useLayerHarness, { wrapper: StoreProvider });
+    act(() => {
+      result.current.store.canvasRef.current = document.createElement('canvas');
+      result.current.store.toolOverlayRef.current = document.createElement('canvas');
+      result.current.store.previewLayers.current = {};
+    });
+    act(() => {
+      result.current.layers.createBlankLayer(
+        { color: '#ffffff', opacity: 1, isBedrock: true, size: { ...size } },
+        true
+      );
+    });
+    act(() => {
+      result.current.layers.createBlankLayer({
+        color: '#ff0000',
+        opacity: 1,
+        pos: { x: 0, y: 0, width: 40, height: 20 },
+      });
+    });
+    const [ownedId, draftId] = Object.keys(result.current.store.layers);
+    return { result, ownedId, draftId };
+  }
+
+  it("leaves another layer's live preview pending instead of folding it into the caller's commit", async () => {
+    const { result, processor, before, draftRaster } = stageTwoPreviews();
+    expect(result.current.store.previewLayers.current.b!.layer.tmpCanvas).toBe(draftRaster);
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'a',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const store = result.current.store;
+    // The caller's own layer committed, with the one history entry that reproduces it.
+    expect(store.history.map((entry) => [entry.actionName, entry.layerId])).toEqual([[TOOL_ACTION, 'a']]);
+    expect(store.previewLayers.current.a).toBeUndefined();
+    expect(store.layers.a!.tmpCanvas).toBeNull();
+
+    // The other layer's draft is still a draft: pending in the preview map, and byte-for-byte
+    // absent from the committed record. Publishing it would leave pixels with no history entry.
+    expect(store.previewLayers.current.b!.layer.tmpCanvas).toBe(draftRaster);
+    expect(store.layers.b).toEqual(before.b);
+    processor.mockRestore();
+  });
+
+  it('leaves a dirty cache it does not own staged, which is the only way the promotion loop stays inside the scope', async () => {
+    // The fallback scan must skip the unowned cache rather than promoting it. Ordered with the
+    // unowned cache FIRST because `Object.values` walks the record's insertion order: a scoped
+    // commit reaches the owned layer's own cache only by declining this one. That is the whole
+    // difference the `ownedLayerId` check makes here, so the assertion is on the CACHE and not on
+    // the record — a promotion is the only thing this loop can cause.
+    const foreignCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
+    const { result } = setup({
+      layers: { foreign: makeLayer('foreign', 0, { tmpCanvas: foreignCache }), owned: makeLayer('owned', 1) },
+      activeLayerId: 'owned',
+    });
+    const processor = vi
+      .spyOn(toolProcessors.brush, 'imageProcessor')
+      .mockReturnValue(() => [new OffscreenCanvas(40, 20)]);
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'owned',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    // ONE claim, two halves. The owned half is the control — asserting the
+    // unowned half alone would also pass on a loop that promoted nothing at all, which is the other
+    // way this loop can be inert. Removing the scope check promotes the unowned cache instead and
+    // the unowned half reads `null`.
+    //
+    // `toBe`, not `toEqual`: two `OffscreenCanvas`es of the same size are `toEqual`, so a
+    // structural comparison proves only "some canvas" and would pass on a loop that swapped in a
+    // fresh one. The claim is that this cache is left exactly where it was found.
+    expect(result.current.store.layers.owned!.tmpCanvas).toBeNull();
+    expect(result.current.store.layers.foreign!.tmpCanvas).toBe(foreignCache);
+    processor.mockRestore();
+  });
+
+  it('promotes every dirty committed cache during an unscoped commit', async () => {
+    const firstCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
+    const secondCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
+    const firstBitmap = { width: 1, height: 1 } as ImageBitmap;
+    const secondBitmap = { width: 1, height: 1 } as ImageBitmap;
+    const { result } = setup({
+      layers: {
+        first: makeLayer('first', 0, { bitmap: firstBitmap, tmpCanvas: firstCache }),
+        second: makeLayer('second', 1, { bitmap: secondBitmap, tmpCanvas: secondCache }),
+      },
+      activeLayerId: 'first',
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    expect(store.layers.first!.tmpCanvas).toBeNull();
+    expect(store.layers.second!.tmpCanvas).toBeNull();
+    expect(store.layers.first!.bitmap).not.toBe(firstBitmap);
+    expect(store.layers.second!.bitmap).not.toBe(secondBitmap);
+    expect(store.history).toEqual([]);
+  });
+
+  it('a real undo replays the timeline, and the layer the commit did not own comes back as the record it published', async () => {
+    const draftRaster = new OffscreenCanvas(40, 20);
+    const commitRaster = new OffscreenCanvas(40, 20);
+    const processor = vi
+      .spyOn(toolProcessors.brush, 'imageProcessor')
+      .mockReturnValueOnce(() => [draftRaster])
+      .mockReturnValueOnce(() => [commitRaster])
+      .mockReturnValue(() => [commitRaster]);
+    const { result, ownedId, draftId } = seedReplayableDocument();
+    const seededOwned = committedShape(result.current.store.layers[ownedId]!);
+
+    // A live draft on the other layer, staged the way a second concurrent gesture stages one.
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: draftId,
+        toolArgs: { toolName: 'brush', lineWidth: 6 } as ToolArgs,
+      });
+    });
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: ownedId,
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    // Three entries — document, new layer, tool — and the tool commit cleared the owned layer's
+    // `source`, which is what the raster commit does. So there is a state below to navigate back
+    // FROM, and the undo below has something it can fail to reverse.
+    expect(result.current.store.historyIndex).toBe(2);
+    expect(result.current.store.layers[ownedId]!.source).toBeUndefined();
+    const published = committedShape(result.current.store.layers[draftId]!);
+
+    // THE NAVIGATION IS A REPLAY, not the store's own layers handed back to it. The owned layer's
+    // `source` comes back, which only `replayHistory` rebuilding the record from the timeline can
+    // do; a navigation that echoed the current record would leave it undefined and fail here.
+    await act(async () => {
+      await result.current.history.undo();
+    });
+    expect(result.current.store.historyIndex).toBe(1);
+    expect(committedShape(result.current.store.layers[ownedId]!)).toEqual(seededOwned);
+
+    // AND THE UNOWNED LAYER IS A FIXED POINT OF THAT REPLAY: what the timeline rebuilt for it is
+    // the record the scoped commit published, at the cursor below the commit and at the tip. A
+    // commit that folded the draft in publishes a record naming no `source` at all, which no replay
+    // of this timeline reproduces — so the undo would silently revert a draft nothing ever recorded.
+    expect(committedShape(result.current.store.layers[draftId]!)).toEqual(published);
+    await act(async () => {
+      await result.current.history.redo();
+    });
+    expect(result.current.store.historyIndex).toBe(2);
+    expect(committedShape(result.current.store.layers[draftId]!)).toEqual(published);
     processor.mockRestore();
   });
 });
@@ -404,7 +833,7 @@ describe('useLayers text commit boundary', () => {
     act(() => {
       result.current.store.currentArgs.current = { toolName: 'text', text: '' } as ToolArgs;
       const returned = result.current.layers.commitDirtyTool();
-      expect(Object.keys(returned)).toEqual([]);
+      expect(returned).toEqual({});
     });
 
     expect(result.current.store.history).toEqual([]);
@@ -420,7 +849,7 @@ describe('useLayers text commit boundary', () => {
     act(() => {
       result.current.store.currentArgs.current = { toolName: 'text', text: 'Hello', rect: null } as ToolArgs;
       const returned = result.current.layers.commitDirtyTool();
-      expect(Object.keys(returned)).toEqual([]);
+      expect(returned).toEqual({});
     });
 
     // The stale text survives in the shared draft: the guard is the cleared rect,

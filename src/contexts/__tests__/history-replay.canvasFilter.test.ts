@@ -36,6 +36,7 @@ function createTestLayer(id: string): Layer {
     blendMode: 'source-over',
     order: 1,
     pos: { ...layerSource.pos },
+    presentationBounds: null,
     operations: [],
   };
 }

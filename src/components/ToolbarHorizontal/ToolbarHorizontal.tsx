@@ -2,7 +2,7 @@ import { toolsMap } from '../../tools/toolsMap.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 
 const TOOLBAR_BASE_CLASS =
-  'bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 h-[50px] [grid-area:toolbar] max-md:hidden';
+  'toolbar-horizontal bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 h-[50px] [grid-area:toolbar] max-md:hidden';
 
 const ToolbarHorizontal = () => {
   const [{ hasImage, toolName }] = useStore();
@@ -35,10 +35,9 @@ const ToolbarHorizontal = () => {
     // measurement of the transform bar at all: 1036 is the RAIL's height threshold, the
     // height below which it folds two tiles (`e2e/toolbar-fit.spec.ts:258-261`). Transform's
     // own `min-content` is 548px, measured, and fits every band that shows this strip — so
-    // the bar is not what needs the tablet scrollbar. Height is the axis that has bitten
-    // here: the strip is a fixed `h-[50px]`, so a panel column taller than 50px paints over
-    // the header and the workspace rather than scrolling, which is the defect commit
-    // c424469a removed from the transform bar's right-hand column.
+    // the bar is not what needs the tablet scrollbar. Fine-pointer layout remains fixed at
+    // 50px; coarse-pointer sliders use taller targets on tablets, so toolbar-horizontal
+    // lets the grid row grow to the options panel's content height.
     //
     // Scrolling in the tablet band does clip vertically, which is why the font list is
     // portalled to `document.body` — see `src/components/ToolbarsRight/Text/FontSelect.tsx`.

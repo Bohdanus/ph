@@ -8,16 +8,31 @@ import {
   type DocumentFrame,
 } from './document-frame.ts';
 import { createAffineLayerOperation, createLayerOperation, reorderLayers } from './layer-utils.ts';
-import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
+import {
+  isLayerBlendMode,
+  type Layer,
+  type LayerId,
+  type LayerOperationArgs,
+  type LayerSource,
+  type LayersRecord,
+} from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ActionType } from '../util/constants.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
-import { deriveSelectionBaseline, type SelectionHistoryArgs } from './selection-baseline.ts';
+import {
+  activeSelectionIdFromSnapshot,
+  cloneSelection,
+  deriveSelectionBaseline,
+  isValidLegacySelectionSnapshot,
+  type SelectionHistoryArgs,
+} from './selection-baseline.ts';
+import { documentAffineToLayerLocal, isIdentityAffineTransform, validateAffineTransform } from './affine-transform.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
@@ -26,8 +41,11 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
 
 /**
@@ -45,7 +63,14 @@ import {
 export type ReplayDiagnostic = Readonly<{
   historyId?: string;
   actionName?: ActionType;
-  code: 'canvas-filter-unsupported' | 'invalid-affine-transform';
+  code:
+    | 'canvas-filter-unsupported'
+    | 'invalid-affine-transform'
+    | 'invalid-layer-blend-mode'
+    | 'invalid-document-transform'
+    | 'invalid-layer-opacity'
+    | 'invalid-layer-source'
+    | 'invalid-selection-snapshot';
   error: unknown;
 }>;
 
@@ -88,7 +113,9 @@ export function replayHistory(
   initialFrame: DocumentFrame = documentFrameFromSize(initialSize)
 ): HistoryReplayResult {
   let layers: LayersRecord = {};
-  let documentFrame = cloneDocumentFrame(initialFrame);
+  const firstFrameTransition = history.find((item) => item.actionName === SET_DOCUMENT_FRAME_ACTION);
+  const baselineFrame = (firstFrameTransition?.args as DocumentFrameHistoryArgs | undefined)?.previousFrame;
+  let documentFrame = cloneDocumentFrame(isValidDocumentFrame(baselineFrame) ? baselineFrame : initialFrame);
   const selectionBaseline = deriveSelectionBaseline(history);
   let selections: Selection[] = selectionBaseline.selections.map((selection) => ({ ...selection }));
   let activeSelectionId: string | null = selectionBaseline.activeSelectionId;
@@ -104,12 +131,12 @@ export function replayHistory(
       // A document replacement means to be a WHOLE new document, so it is honoured
       // only as the first entry, which is how one is ever written: the single
       // production producer is `REPLACE_DOCUMENT` with `history: [entry]`
-      // (`useApp.ts:120`, `useLayer.ts:195`). Carried mid-history it would replace
+      // from the document-replacement path in `useApp`. Carried mid-history it would replace
       // the layer record and resize the canvas from anywhere in the timeline, which
       // is the same class of defect as the mid-history bedrock source below, so it is
       // refused — the durable converter already refuses it, reporting
       // `document-replacement` and holding the previous state
-      // (`history-adapter.ts:640`). Unreachable in production today, so this is a
+      // through `history-adapter`. Unreachable in production today, so this is a
       // parity repair rather than a fix for something a user can see.
       if (index === 0) {
         layers = cloneLayers(documentSource.layers);
@@ -134,17 +161,56 @@ export function replayHistory(
     }
 
     if (actionName === SET_DOCUMENT_FRAME_ACTION) {
-      const nextFrame = (args as DocumentFrameHistoryArgs | undefined)?.nextFrame;
-      if (isValidDocumentFrame(nextFrame)) {
-        documentFrame = cloneDocumentFrame(nextFrame);
+      const frameArgs = args as DocumentFrameHistoryArgs | undefined;
+      const nextFrame = frameArgs?.nextFrame;
+      if (!isValidDocumentFrame(nextFrame)) continue;
+
+      let transform = frameArgs?.transform;
+      if (transform !== undefined) {
+        try {
+          transform = validateAffineTransform(transform);
+          if (!isIdentityAffineTransform(transform)) {
+            const transformedLayers = Object.values(layers).map((layer) => {
+              const localTransform = validateAffineTransform(documentAffineToLayerLocal(transform!, layer.pos), {
+                width: layer.pos.width,
+                height: layer.pos.height,
+              });
+              return {
+                ...layer,
+                operations: [...layer.operations, createAffineLayerOperation(localTransform, `${item.id}:${layer.id}`)],
+                tmpCanvas: null,
+                presentationBounds: null,
+              };
+            });
+            layers = Object.fromEntries(transformedLayers.map((layer) => [layer.id, layer]));
+          }
+        } catch (error) {
+          diagnostics.push({
+            historyId: item.id,
+            actionName,
+            code: 'invalid-document-transform',
+            error,
+          });
+          continue;
+        }
       }
+      documentFrame = cloneDocumentFrame(nextFrame);
       continue;
     }
 
     if (actionName === SELECTION_ACTION) {
       const next = (args as SelectionHistoryArgs | undefined)?.nextSelectionState;
-      selections = next?.selections.map((selection) => ({ ...selection })) ?? [];
-      activeSelectionId = next?.activeSelectionId ?? null;
+      if (next != null && !isValidLegacySelectionSnapshot(next)) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-selection-snapshot',
+          error: new TypeError('Selection history value is not a valid selection snapshot'),
+        });
+        continue;
+      }
+      selections = next?.selections.map(cloneSelection) ?? [];
+      activeSelectionId = activeSelectionIdFromSnapshot(selections, next?.activeSelectionId);
       continue;
     }
 
@@ -162,6 +228,41 @@ export function replayHistory(
     if (actionName === RENAME_LAYER_ACTION) {
       const layer = layers[layerId];
       if (layer) layers = { ...layers, [layerId]: { ...layer, name: (args as { name: string }).name } };
+      continue;
+    }
+    if (actionName === SET_LAYER_OPACITY_ACTION) {
+      const opacity = (args as { opacity?: unknown } | undefined)?.opacity;
+      if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-opacity',
+          error: new TypeError('Layer opacity history value must be a finite number between 0 and 1'),
+        });
+        continue;
+      }
+      const layer = layers[layerId];
+      if (layer) layers = { ...layers, [layerId]: { ...layer, opacity: (args as { opacity: number }).opacity } };
+      continue;
+    }
+    if (actionName === SET_LAYER_BLEND_MODE_ACTION) {
+      const blendMode = (args as { blendMode?: unknown } | undefined)?.blendMode;
+      if (!isLayerBlendMode(blendMode)) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-blend-mode',
+          error: new TypeError('Layer blend mode history value is not supported'),
+        });
+        continue;
+      }
+      const layer = layers[layerId];
+      if (layer) layers = { ...layers, [layerId]: { ...layer, blendMode } };
+      continue;
+    }
+    if (actionName === LOCK_LAYER_ACTION || actionName === UNLOCK_LAYER_ACTION) {
+      const layer = layers[layerId];
+      if (layer) layers = { ...layers, [layerId]: { ...layer, locked: actionName === LOCK_LAYER_ACTION } };
       continue;
     }
     if (actionName === REORDER_ACTION) {
@@ -183,10 +284,25 @@ export function replayHistory(
     if (actionName === REPLACE_LAYER_SOURCE_ACTION) {
       const layer = layers[layerId];
       const replacementSource = (args as { source?: unknown } | undefined)?.source;
-      if (!layer || !replacementSource || typeof replacementSource !== 'object' || Array.isArray(replacementSource)) {
+      if (!layer) continue;
+      if (!replacementSource || typeof replacementSource !== 'object' || Array.isArray(replacementSource)) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-source',
+          error: new TypeError('Layer source history value must be an object'),
+        });
         continue;
       }
-      if ((replacementSource as { kind?: unknown }).kind !== 'tool') continue;
+      if ((replacementSource as { kind?: unknown }).kind !== 'tool') {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-source',
+          error: new TypeError('Layer source history value must be a tool source'),
+        });
+        continue;
+      }
       const replacement = dependencies.createLayer({
         layerId,
         layers,
@@ -196,10 +312,14 @@ export function replayHistory(
         ...layers,
         [layerId]: {
           ...layer,
+          name: replacement.name,
           pos: { ...replacement.pos },
           source: replacement.source,
           bitmap: replacement.bitmap,
-          tmpCanvas: null,
+          // Preserve the creator's rendered replacement; replay should not discard its raster and
+          // rely on a different reconstruction path.
+          tmpCanvas: replacement.tmpCanvas,
+          presentationBounds: null,
           operations: [...layer.operations],
           lastHistoryId: item.id,
         },
@@ -228,7 +348,7 @@ export function replayHistory(
         try {
           requireCanvasFilter(toolArgs.toolName);
         } catch (error) {
-          // The commit gate at `useLayer.ts:356` refuses the same tool and logs it
+          // The `tempUpdateLayer()` canvas-filter gate refuses the same tool and logs it
           // there, before any `TOOL_ACTION` exists, so this catch is a backstop for
           // a timeline that arrived some other way. It records rather than logs,
           // because replay repeats: see `ReplayDiagnostic`.
@@ -277,7 +397,7 @@ export function replayHistory(
         // one loses a real edit: `getTransformFromHistoryArgs` validates the affine
         // against `layer.pos` AS IT IS NOW, while it was validated at commit time
         // against the pos the layer had then (`normalizeCommittedToolArgs` at
-        // `useLayer.ts:74-79` writes the retained transform into the committed
+        // `normalizeCommittedToolArgs()` writes the retained transform into the committed
         // args), so a transform valid when committed can fail a bounds check here
         // after the layer moved. Recorded, not logged — see `ReplayDiagnostic`.
         diagnostics.push({

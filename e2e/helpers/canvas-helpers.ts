@@ -77,6 +77,17 @@ export interface ScreenshotBounds {
  * measured a mark and a caller that measured the same mark twice as wide.
  */
 export function screenshotBoundsToCss(bounds: ScreenshotBounds, box: BoundingBox): CssBounds {
+  if (
+    !Number.isFinite(bounds.imageWidth) ||
+    bounds.imageWidth <= 0 ||
+    !Number.isFinite(bounds.imageHeight) ||
+    bounds.imageHeight <= 0
+  ) {
+    throw new RangeError(
+      `Screenshot bounds require positive finite image dimensions; received ${bounds.imageWidth}x${bounds.imageHeight}`
+    );
+  }
+
   return imageBoundsToCss(
     { width: bounds.imageWidth, height: bounds.imageHeight },
     { x: box.x, y: box.y, width: box.width, height: box.height },
@@ -288,7 +299,7 @@ export const DRAW_TOOL_STROKE_WIDTH = 10;
  *
  * WHY A NUMBER AND NOT A RULE. A stroke rasterised into the document canvas has boundaries at
  * its two endpoints and at `lineWidth/2` beyond each of them in every direction; the pen is
- * `moveTo` + `bezierSmoothedLine` + `stroke` with a ROUND cap (`src/tools/draw.ts:56`), and
+ * `moveTo` + `bezierSmoothedLine` + `stroke` with a ROUND cap (`src/tools/draw.ts:55`), and
  * the layer is composited at float x/y (`src/contexts/layer-renderer.ts:81`). A boundary that
  * lands exactly on an integer document pixel therefore sits on a Skia anti-aliasing rounding
  * tie, and the SIGN of a sub-pixel error decides an 8-bit coverage value.
@@ -353,6 +364,50 @@ export function documentStrokeBoundaryMargin(
     offGrid(end.y - half),
     offGrid(end.y + half)
   );
+}
+
+/**
+ * Half of the Draw tool's default `lineWidth`, which is 10 DOCUMENT pixels
+ * (`savedDrawPerPen.pen` in `src/tools/settings.ts`, spread into `defaultSettings.draw`).
+ * A stroke's painted extent therefore runs half a stroke WIDER than the
+ * point that was asked for on each side, and `getDarkPixelBounds` reports the whole painted
+ * extent rather than its centre line. That is the entire legitimate reason a stroke's edge
+ * is not at the cursor, and it is why the bound below is a function of the fit scale rather
+ * than a constant: the same 10 document pixels scale to more CSS pixels in a wider window
+ * and fewer in a narrower one, so any single constant is either loose or tight depending on
+ * the viewport.
+ */
+export const DRAW_HALF_WIDTH_DOC_PX = 5;
+
+/**
+ * What is left after the geometric half-width: the faint antialiased fringe of the round
+ * cap, and the one-image-pixel convention of `imageBoundsToCss`, which maps an inclusive
+ * pixel index to the CENTRE of that pixel (see `imageBoundsToCss` in `screenshot-scale.ts`) and
+ * so under-reports a covered span by half a CSS pixel on a 1:1 capture. `getDarkPixelBounds`
+ * also applies a DARK THRESHOLD, so it discards the faintest fringe pixels entirely, which
+ * is why the measured deviation lands a little UNDER `DRAW_HALF_WIDTH_DOC_PX * scale` rather
+ * than on it. 2px covers both; the measured slack over it is a margin and not a fit.
+ */
+export const ANTIALIASED_FLANGE_CSS_PX = 2;
+
+/**
+ * How far the stroke's painted edge may sit from the cursor point that asked for it: the
+ * brush's own half-width converted to CSS by the app's contain fit, plus the fringe above.
+ *
+ * Derived from `containFit`, which is the suite's single implementation of the app's fit and
+ * is asserted equal to the app's own published `data-fit-*` at more than one rect size by
+ * `e2e/export/visual-regression.spec.ts`. So the bound moves WITH the viewport instead of
+ * being a constant that happened to hold.
+ *
+ * What it does NOT absorb is any mapping error, and that is the load-bearing property. A
+ * contain-scale mismatch (the `drawLine` coordinate gap) is worth tens of CSS pixels: the
+ * difference between painting the document stretched across the box and painting it
+ * contained is the box's letterbox margin on each axis. A tolerance of this magnitude still
+ * catches that with an order of magnitude to spare, so this number can absorb the stroke's
+ * own width and nothing else.
+ */
+export function toleranceFor(box: BoundingBox): number {
+  return DRAW_HALF_WIDTH_DOC_PX * containFit(box, DEFAULT_DOCUMENT_SIZE).scale + ANTIALIASED_FLANGE_CSS_PX;
 }
 
 /** `[ms]` — the shared default timeout of every redraw wait below. Not a coordinate. */
@@ -620,9 +675,24 @@ function clamp(value: number, min: number, max: number): number {
  * reports success — and because "the page does not scroll" is a property of the current
  * layout rather than of the helper's contract. If a future change reintroduces an
  * overflowing page, the read below degrades to working instead of to a false negative.
+ *
+ * WHAT THIS FUNCTION WILL NOT DO, AND WHY IT IS CHECKED FIRST. A clip whose HEIGHT exceeds
+ * the viewport's cannot be photographed whole: `page.screenshot` trims the clip against the
+ * viewport and returns the intersection without saying so, so a 900px clip in a 720px
+ * window comes back 720px tall at exit 0. The scroll below moves the region's ORIGIN, and
+ * it deliberately does not move its EXTENT — nothing here bounds `clip.height`, and the
+ * `clamp` at the top of this file bounds the scroll TARGET, not the clip. An over-tall clip
+ * therefore takes the scroll path, keeps its full height, and is photographed short. See
+ * `HANDOFF.md` §242. Refusing is the only honest answer: the caller asked for a region the
+ * page cannot render, and a smaller image is a wrong answer wearing a plausible shape.
  */
 async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
   const viewport = await readPageViewport(page);
+  if (clip.height > viewport.height) {
+    throw new Error(
+      `onScreenClip: a screenshot clip cannot be taller than the viewport: requested ${clip.height}px in a ${viewport.height}px window`
+    );
+  }
   const pageRect = viewportRectToPageRect(clip, { x: viewport.scrollX, y: viewport.scrollY });
   const alreadyVisible =
     pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height;
@@ -645,13 +715,14 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
 }
 
 /**
- * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the only
- * export here that is read out of the live page rather than derived from a box.
+ * Reads the window's scroll offset when a caller needs it. `onScreenClip` also reads,
+ * changes, and restores scroll internally; this export lets other helpers query the
+ * current offset.
  *
- * The one place in the helpers that reads page state rather than deriving geometry from a
- * box: a page function, read at the call site. Caching it would be wrong rather than merely
- * stale — `clickToolButton` scrolls the window by 440px in this build, so an offset read
- * once is wrong by a different amount before and after any tool click.
+ * Do not cache the value across operations: helpers such as `onScreenClip` can change
+ * the window position, and `preservingScroll` reads it before a tool click so it can
+ * restore that position afterward. The app shell no longer scrolls at document level;
+ * see `e2e/OPEN_PROBLEMS.md`.
  */
 export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
@@ -911,6 +982,47 @@ export async function drawLine(
 }
 
 /**
+ * Draws a straight stroke on the canvas at DOCUMENT coordinates. `[DOCUMENT]` endpoints,
+ * converted through the app's contain fit before they reach `page.mouse`.
+ *
+ * This is the contain-aware companion to `drawLine`, and the two differ on purpose. `drawLine`
+ * takes box-relative offsets and applies no contain scale — `e2e/OPEN_PROBLEMS.md` records
+ * that as a P2: a document point reaches `page.mouse` as `(x / scale, (y - offsetY) / scale)`
+ * once the box origin is added, and a spec that asserts a specific document row is tens of
+ * pixels off. The arithmetic is `documentToCanvasOffset`, which is the single place the fit
+ * rule lives, so this helper cannot drift from the app's own mapping.
+ *
+ * It is NOT a replacement for `drawLine`. Every spec that calls `drawLine` today is written
+ * around box-relative coordinates and survives only because its strokes need to land
+ * SOMEWHERE, not where they were asked to land; changing `drawLine`'s meaning would break all
+ * of them at once. This helper exists for the callers that need document precision — the
+ * export fixture, which asserts a specific row against a committed baseline, and any future
+ * spec that names a pixel position.
+ *
+ * `documentSize` defaults to the seeded document; pass the measured backing store when you
+ * have it. `documentFrame` defaults to the origin and no current caller passes it.
+ *
+ * The gesture itself is delegated to `drawLine`, so every behaviour pinned by
+ * `canvas-interaction.unit.test.ts` — the `steps` normalisation, the zero-size box, the
+ * negative box origin — carries over unchanged rather than being re-derived here.
+ */
+export async function drawLineFromDocument(
+  page: Page,
+  box: BoundingBox,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  options: DrawLineOptions = {},
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE,
+  documentFrame: DocumentFrameOrigin = ZERO_DOCUMENT_FRAME
+): Promise<void> {
+  const start = documentToCanvasOffset(box, startX, startY, documentSize, documentFrame);
+  const end = documentToCanvasOffset(box, endX, endY, documentSize, documentFrame);
+  await drawLine(page, box, start.x, start.y, end.x, end.y, options);
+}
+
+/**
  * Clip region of the standard test line, PAGE-relative.
  *
  * PAGE, not BOX: the box is added, and the result is handed straight to `page.screenshot`
@@ -964,7 +1076,7 @@ export type CanvasPixelPredicate = (screenshot: Buffer) => Promise<boolean>;
 export interface WaitForCanvasPixelsOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
-  /** Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels within 10000ms". */
+  /** Named in the timeout error, e.g. "Canvas did not render red pixels within 10000ms after 101 polls". */
   description?: string;
 }
 
@@ -989,8 +1101,10 @@ export async function waitForCanvasPixels(
   const timeoutMs = options.timeoutMs ?? CANVAS_REDRAW_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? CANVAS_REDRAW_POLL_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
 
   for (;;) {
+    pollCount += 1;
     // What is re-derived every poll is the WINDOW, not the box. `clip` is a by-value
     // argument, so the loop reads the same PAGE rect on every attempt for the whole timeout —
     // `canvas-redraw.unit.test.ts` pins that the identical object reaches `page.screenshot`
@@ -1011,7 +1125,10 @@ export async function waitForCanvasPixels(
       await onScreen.restore();
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
+      const pollLabel = pollCount === 1 ? 'poll' : 'polls';
+      throw new Error(
+        `Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms after ${pollCount} ${pollLabel}`
+      );
     }
     await page.waitForTimeout(pollIntervalMs);
   }
@@ -1100,6 +1217,11 @@ export interface StrokeAnalysis {
   verticalSpread: number;
   /** Stroke pixels in the capture: a raw image count, so it scales with the capture's area. */
   pixelCount: number;
+}
+
+export interface StrokeAnalysisOptions {
+  /** The capture is from the Spray tool, whose opacity and colour can produce mid-tone ink. */
+  tool?: 'spray';
 }
 
 /**
@@ -1307,8 +1429,9 @@ function captureScale(imageWidth: number, imageHeight: number, region: CaptureRe
  * cell colours, and the second of those is checked FIRST because the dark cell sits below
  * `DARK_THRESHOLD` and an exclusion that ran after `isDark` would never be reached for it.
  * What is left is ink: below `DARK_THRESHOLD` in every channel, or a low-saturation grey above
- * `SPRAY_LUMINANCE_THRESHOLD`. A capture carrying nothing else returns `null`, which is the
- * answer `e2e/pen-types.spec.ts:37-40` polls on.
+ * `SPRAY_LUMINANCE_THRESHOLD`. When the caller identifies the captured tool as Spray, any
+ * non-background pixel is accepted; the tool's selected opacity and colour can make its ink
+ * mid-tone or saturated. A capture carrying nothing else returns `null`.
  *
  * `region` is the CSS-pixel size of the clip the capture was taken over, and it is what
  * makes the classification independent of the host's pixel density. The thresholds in
@@ -1330,7 +1453,8 @@ function captureScale(imageWidth: number, imageHeight: number, region: CaptureRe
  */
 export async function getStrokeAnalysis(
   screenshot: Buffer | ImageDataResult,
-  region: CaptureRegion
+  region: CaptureRegion,
+  options: StrokeAnalysisOptions = {}
 ): Promise<StrokeAnalysis | null> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
@@ -1370,8 +1494,9 @@ export async function getStrokeAnalysis(
     const isSpray =
       !isDark &&
       !isNearWhite &&
-      luminance > STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD &&
-      saturation < STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD;
+      (options.tool === 'spray' ||
+        (luminance > STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD &&
+          saturation < STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD));
 
     if (isLetterbox) continue;
 

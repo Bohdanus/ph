@@ -501,4 +501,118 @@ describe('useKeyboardEvents', () => {
       expect(isDocumentGestureOpen()).toBe(false);
     });
   });
+
+  describe('edge cases', () => {
+    it('matches mod:true when only ctrlKey is pressed (cross-platform modifier)', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'b', mod: true, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, metaKey: false, bubbles: true }));
+
+      expect(onKeyDown).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not match when shift:false is explicit and shiftKey is pressed', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'a', shift: false, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', shiftKey: true, bubbles: true }));
+
+      expect(onKeyDown).not.toHaveBeenCalled();
+    });
+
+    it('requires alt:true specifically — ctrl alone does not satisfy it', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'a', alt: true, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, altKey: false, bubbles: true }));
+
+      expect(onKeyDown).not.toHaveBeenCalled();
+    });
+
+    it('does not re-fire on auto-repeat keys for non-repeat shortcuts', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'a', onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', repeat: true, bubbles: true }));
+
+      expect(onKeyDown).not.toHaveBeenCalled();
+    });
+
+    it('fires safely on a non-Element target (document / null target path)', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'z', onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true }));
+
+      expect(onKeyDown).toHaveBeenCalledTimes(1);
+    });
+
+    it.fails('does not call preventDefault on auto-repeat for shortcuts that opt out of repeat', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'a', preventDefault: true, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      const repeatEvent = new KeyboardEvent('keydown', {
+        key: 'a',
+        repeat: true,
+        cancelable: true,
+        bubbles: true,
+      });
+
+      document.dispatchEvent(repeatEvent);
+
+      expect(repeatEvent.defaultPrevented).toBe(false);
+    });
+
+    it.fails('stopPropagation prevents other document-level keydown listeners from firing', () => {
+      const onKeyDown = vi.fn();
+      const spy = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'a', stopPropagation: true, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      document.addEventListener('keydown', spy);
+
+      try {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener('keydown', spy);
+      }
+    });
+  });
 });

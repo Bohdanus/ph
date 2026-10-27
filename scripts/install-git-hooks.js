@@ -1,9 +1,11 @@
 /**
  * Installs the shared git hook entry points and points `core.hooksPath` at them.
  *
- * Runs from `npm install` through the `prepare` script. Idempotent, safe to run
- * by hand, and deliberately unable to fail an install: a tarball build outside a
- * git checkout prints a warning and exits 0.
+ * Runs from `npm install` through the `prepare` script. Idempotent and safe to
+ * run by hand. A tarball build outside a git checkout prints a warning and exits
+ * 0; inside the repository, failure to identify and persist the designated
+ * main-worktree identity aborts setup because detached main would otherwise
+ * lose protection.
  *
  * WHY THIS EXISTS INSTEAD OF HUSKY
  * -------------------------------
@@ -28,14 +30,16 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { registerMainWorktree } from './main-worktree-guard.mjs';
 
 /**
  * The hooks installed here. Each one runs the worktree's own `.husky/<name>`.
  *
  * `post-merge` is the odd one out and the asymmetry is deliberate. `pre-commit`,
- * `pre-push` and `pre-merge-commit` GATE: they can stop work, and they do. `post-merge`
+ * `commit-msg`, `pre-push` and `pre-merge-commit` GATE: they can stop work, and they do. `post-merge`
  * REPORTS: the merge is already recorded by the time it runs, so a failure in it could
  * not prevent anything and would only leave the operator with a landed merge and an
  * error. It is here to clear claims that the merge just made false — see
@@ -46,7 +50,7 @@ import path from 'node:path';
  * limit that comes with it: git runs NO hook for a fast-forward, so that landing shape
  * is uncovered by design rather than by oversight.
  */
-const HOOKS = ['pre-commit', 'pre-push', 'pre-merge-commit', 'post-merge'];
+const HOOKS = ['pre-commit', 'commit-msg', 'pre-push', 'pre-merge-commit', 'post-merge'];
 
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -66,6 +70,67 @@ function dispatcher(name) {
 
 hook="$(git rev-parse --show-toplevel)/.husky/${name}"
 if [ ! -f "$hook" ]; then
+\t# Older linked worktrees can predate a new commit-msg hook until they sync.
+\t# Run the designated main checkout's final guard when it is available; cwd
+\t# remains this linked worktree so the guard checks its actual Git state.
+\tif [ "${name}" = "commit-msg" ]; then
+\t\tmain_worktree_path="$(git config --local --get ph.mainWorktreePath 2>/dev/null || true)"
+\t\tmain_message_guard="$main_worktree_path/scripts/commit-reviewed-landing-message-guard.mjs"
+\t\tregistered_main_git_dir="$(git config --local --get ph.mainWorktreeGitDir 2>/dev/null || true)"
+\t\tregistered_main_identity="$(git config --local --get ph.mainWorktreeIdentity 2>/dev/null || true)"
+\t\tvalidated_main_git_dir=""
+\t\tvalidated_main_identity=""
+\t\tsaved_main_identity_match=false
+\t\tif [ -n "$main_worktree_path" ] && [ -d "$main_worktree_path" ]; then
+\t\t\tvalidated_main_git_dir="$(git -C "$main_worktree_path" rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null || true)"
+\t\t\tif [ -n "$validated_main_git_dir" ] && [ -f "$validated_main_git_dir/kilo-main-worktree-identity" ]; then
+\t\t\t\tvalidated_main_identity="$(cat "$validated_main_git_dir/kilo-main-worktree-identity" 2>/dev/null || true)"
+\t\t\tfi
+\t\tfi
+\t\tif [ -n "$registered_main_identity" ] && [ "$validated_main_git_dir" = "$registered_main_git_dir" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
+\t\t\tsaved_main_identity_match=true
+\t\tfi
+\t\tif [ -f "$main_message_guard" ] && [ -n "$registered_main_identity" ] && [ "$validated_main_git_dir" = "$registered_main_git_dir" ] && [ "$validated_main_identity" = "$registered_main_identity" ]; then
+\t\t\tnode "$main_message_guard" "$1"
+\t\t\texit $?
+\t\tfi
+\t\t# Preserve Chat attribution if the designated checkout predates the final guard.
+\t\tcurrent_git_dir="$(git rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null || true)"
+\t\tcommon_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+\t\tdesignated_main_git_dir="$(git config --local --get ph.mainWorktreeGitDir 2>/dev/null || true)"
+\t\tcurrent_main_identity=""
+\t\tif [ -n "$current_git_dir" ] && [ -f "$current_git_dir/kilo-main-worktree-identity" ]; then
+\t\t\tcurrent_main_identity="$(cat "$current_git_dir/kilo-main-worktree-identity" 2>/dev/null || true)"
+\t\tfi
+\t\tdesignated_main_identity_match=false
+\t\tif [ -n "$registered_main_identity" ] && [ "$current_git_dir" = "$designated_main_git_dir" ] && [ -n "$current_main_identity" ] && [ "$current_main_identity" = "$registered_main_identity" ]; then
+\t\t\tdesignated_main_identity_match=true
+\t\tfi
+\t\tcurrent_worktree_path="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+\t\tif [ -n "$current_worktree_path" ]; then
+\t\t\tcurrent_worktree_path="$(cd "$current_worktree_path" 2>/dev/null && pwd -P || true)"
+\t\tfi
+\t\tif [ -n "$main_worktree_path" ]; then
+\t\t\tmain_worktree_path="$(cd "$main_worktree_path" 2>/dev/null && pwd -P || true)"
+\t\tfi
+\t\tcurrent_branch_ref="$(git symbolic-ref --quiet HEAD 2>/dev/null || true)"
+\t\tcurrent_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+\t\tdetached_designated_main_path=false
+\t\tif [ -z "$registered_main_identity" ] && [ -n "$main_worktree_path" ] && [ "$current_worktree_path" = "$main_worktree_path" ] && [ -z "$current_branch_ref" ]; then
+\t\t\tdetached_designated_main_path=true
+\t\tfi
+\t\tif [ "$current_branch" != "main" ] && [ "$current_git_dir" != "$common_git_dir" ] && [ "$designated_main_identity_match" != true ] && [ "$detached_designated_main_path" != true ]; then
+\t\tif [ -n "$registered_main_identity" ] && [ "$saved_main_identity_match" != true ]; then
+\t\t\techo "gate: cannot locate the designated main commit-msg guard with its saved identity; run 'npm install' from the designated main worktree" >&2
+\t\t\texit 1
+\t\tfi
+\t\tif git interpret-trailers --parse "$1" 2>/dev/null | awk -F: 'tolower($1) == "chat" { count++; if (substr($0, index($0, ":") + 1) ~ /[^[:space:]]/) nonempty++ } END { exit !(count == 1 && nonempty == 1) }'; then
+\t\t\texit 0
+\t\tfi
+\t\techo "gate: every commit must have exactly one non-empty Chat: trailer" >&2
+\t\texit 1
+\t\tfi
+\tfi
 \techo "gate: $hook is missing, so there is no gate to run" >&2
 \techo "gate: run 'npm install' here, or 'git config --unset core.hooksPath'" >&2
 \texit 1
@@ -81,8 +146,74 @@ if grep -q 'husky\\.sh' "$hook" && [ ! -f "$(dirname "$hook")/_/husky.sh" ]; the
 \texit 1
 fi
 
+# Snapshot a prepared merge before the worktree's pre-commit hook can remove its
+# Git markers. The second snapshot below refreshes the result tree after lint-staged.
+if [ "${name}" = "pre-commit" ]; then
+\tworktree_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+\tstate_guard="$worktree_root/scripts/commit-reviewed-landing-message-guard.mjs"
+\tif [ ! -f "$state_guard" ]; then
+\t\tmain_worktree_path="$(git config --local --get ph.mainWorktreePath 2>/dev/null || true)"
+\t\tstate_guard="$main_worktree_path/scripts/commit-reviewed-landing-message-guard.mjs"
+\tfi
+\tif [ -f "$state_guard" ]; then
+\t\tnode "$state_guard" --record-prepared-merge-before
+\t\trecord_status=$?
+\t\tif [ "$record_status" -ne 0 ]; then
+\t\t\texit "$record_status"
+\t\tfi
+\tfi
+fi
+
 sh -e "$hook" "$@"
+hook_status=$?
+
+# Refresh the prepared merge after the worktree's own pre-commit checks and
+# lint-staged rewrites. This common dispatcher also covers linked worktrees
+# whose tracked pre-commit hook predates the state recorder.
+if [ "${name}" = "pre-commit" ]; then
+\tworktree_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+\tstate_guard="$worktree_root/scripts/commit-reviewed-landing-message-guard.mjs"
+\tif [ ! -f "$state_guard" ]; then
+\t\tmain_worktree_path="$(git config --local --get ph.mainWorktreePath 2>/dev/null || true)"
+\t\tstate_guard="$main_worktree_path/scripts/commit-reviewed-landing-message-guard.mjs"
+\tfi
+\tif [ -f "$state_guard" ]; then
+\t\tnode "$state_guard" --record-prepared-merge-after
+\t\trecord_status=$?
+\t\tif [ "$record_status" -ne 0 ]; then
+\t\t\texit "$record_status"
+\t\tfi
+\tfi
+fi
+
+if [ "$hook_status" -ne 0 ]; then
+\texit "$hook_status"
+fi
+
+exit 0
 `;
+}
+
+function hasLinkedWorktree(records, commonDir) {
+  const canonicalCommonDir = realpathSync(commonDir);
+  return records.some((record) => {
+    if (!record.trim()) return false;
+    const recordPath = record.match(/^worktree (.+)$/m)?.[1];
+    if (!recordPath) return true;
+    try {
+      const actualPath = realpathSync(recordPath);
+      const actualGitDir = realpathSync(
+        execFileSync('git', ['-C', actualPath, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }).trim()
+      );
+      return actualGitDir !== canonicalCommonDir;
+    } catch {
+      // An existing but unreadable linked checkout is still ambiguous.
+      return existsSync(recordPath);
+    }
+  });
 }
 
 function main() {
@@ -92,6 +223,118 @@ function main() {
   } catch {
     console.warn('gate: not a git checkout, skipping hook install.');
     return;
+  }
+
+  const records = git(['worktree', 'list', '--porcelain']).split('\n\n');
+  const mainRecord = records.find((record) => /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record));
+  const mainPath = mainRecord?.match(/^worktree (.+)$/m)?.[1];
+  const hasLinkedCheckout = !mainPath && hasLinkedWorktree(records, commonDir);
+  if (mainPath && !registerMainWorktree(mainPath, { required: true })) {
+    throw new Error(`could not persist the designated main worktree identity for ${mainPath}`);
+  }
+  if (!mainPath && process.env.CI === 'true' && !hasLinkedCheckout) {
+    // A single-worktree CI checkout has no secondary checkout to mistake for
+    // designated main. Keep the primary checkout's protection; skip only the
+    // missing registration that would otherwise block hook installation.
+    console.warn(
+      'gate: running in CI without a refs/heads/main worktree; installing hooks without main-worktree identity registration.'
+    );
+  } else if (!mainPath) {
+    let registeredPath = null;
+    let registeredGitDir = null;
+    let registeredIdentity = null;
+    try {
+      registeredPath = git(['config', '--local', '--get', 'ph.mainWorktreePath']);
+      registeredGitDir = git(['config', '--local', '--get', 'ph.mainWorktreeGitDir']);
+      registeredIdentity = git(['config', '--local', '--get', 'ph.mainWorktreeIdentity']);
+    } catch {
+      // A first install with detached main has no saved identity to fall back to.
+    }
+    let canonicalRegisteredPath = null;
+    try {
+      if (registeredPath) canonicalRegisteredPath = realpathSync(registeredPath);
+    } catch {
+      // The registered worktree may have moved; its private marker can identify it below.
+    }
+    let registeredRecord = canonicalRegisteredPath
+      ? records.find((record) => {
+          const recordPath = record.match(/^worktree (.+)$/m)?.[1];
+          try {
+            return (
+              /(?:^|\n)detached(?:\n|$)/.test(record) &&
+              recordPath &&
+              realpathSync(recordPath) === canonicalRegisteredPath
+            );
+          } catch {
+            return false;
+          }
+        })
+      : null;
+    if (registeredIdentity && registeredGitDir) {
+      for (const record of records) {
+        if (!/(?:^|\n)detached(?:\n|$)/.test(record)) continue;
+        const recordPath = record.match(/^worktree (.+)$/m)?.[1];
+        if (!recordPath) continue;
+        try {
+          const actualPath = realpathSync(recordPath);
+          const actualGitDir = realpathSync(
+            execFileSync('git', ['-C', actualPath, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'], {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'pipe'],
+            }).trim()
+          );
+          const identityPath = path.join(actualGitDir, 'kilo-main-worktree-identity');
+          if (
+            actualGitDir === realpathSync(registeredGitDir) &&
+            existsSync(identityPath) &&
+            readFileSync(identityPath, 'utf8').trim() === registeredIdentity
+          ) {
+            canonicalRegisteredPath = actualPath;
+            registeredRecord = record;
+            break;
+          }
+        } catch {
+          // A stale or moved nonmatching worktree is not identity proof.
+        }
+      }
+    }
+    let registeredIdentityMatches = false;
+    let validatedDetachedMainPath = null;
+    if (registeredPath && registeredGitDir && registeredRecord) {
+      try {
+        const actualPath = realpathSync(registeredRecord.match(/^worktree (.+)$/m)[1]);
+        const actualGitDir = realpathSync(
+          execFileSync('git', ['-C', actualPath, 'rev-parse', '--path-format=absolute', '--absolute-git-dir'], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }).trim()
+        );
+        const actualCommonDir = realpathSync(
+          execFileSync('git', ['-C', actualPath, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }).trim()
+        );
+        const actualIdentity = readFileSync(path.join(actualGitDir, 'kilo-main-worktree-identity'), 'utf8').trim();
+        registeredIdentityMatches =
+          Boolean(registeredIdentity) &&
+          actualIdentity === registeredIdentity &&
+          actualPath === canonicalRegisteredPath &&
+          actualGitDir === realpathSync(registeredGitDir) &&
+          actualCommonDir === realpathSync(commonDir);
+        if (registeredIdentityMatches) validatedDetachedMainPath = actualPath;
+      } catch {
+        // A stale path or identity is not proof that the protected checkout remains available.
+      }
+    }
+    if (!registeredIdentityMatches) {
+      throw new Error(
+        'cannot identify the designated main worktree: keep refs/heads/main checked out during the first hook install, or restore its saved identity'
+      );
+    }
+    if (!registerMainWorktree(validatedDetachedMainPath, { required: true, allowDetached: true })) {
+      throw new Error(`could not migrate the detached main worktree identity for ${validatedDetachedMainPath}`);
+    }
   }
 
   const hooksDir = path.join(commonDir, 'hooks-gate');

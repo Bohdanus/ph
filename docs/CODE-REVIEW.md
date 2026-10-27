@@ -1,5 +1,11 @@
 # Code review subagent
 
+This file documents Kilo's `task` launcher, loaded `code-reviewer` mode, and
+Kilo permission profile. Codex subagent tools and permission inheritance differ;
+use [`CODEX-ORCHESTRATION.md`](CODEX-ORCHESTRATION.md) for Codex launch and
+context practices. The review contract below—independent, read-only findings
+that the root agent verifies—applies in either runtime.
+
 **THE REVIEW IS A SUBAGENT, NOT A FEELING.** [`docs/README.md`](README.md) indexes
 this file and [`docs/KILO.md`](KILO.md) carries its permission profile; `AGENTS.md`
 does not require the review, so this file is both the prompt and the rule. The prompt

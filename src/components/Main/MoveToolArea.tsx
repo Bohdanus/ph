@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useApp } from '../../hooks/useApp.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import type { Pos, RectXYSorted } from '../../contexts/general-types.ts';
 import { useMarchingAnts } from '../../hooks/useAnts.ts';
@@ -17,6 +19,7 @@ import {
   documentToCanvasPos,
 } from '../../contexts/document-frame.ts';
 import { getLayerPresentationBounds } from '../../contexts/affine-transform.ts';
+import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 
 type moveToolAreaProps = {
   className?: string;
@@ -27,7 +30,9 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     { containerRef, toolOverlayRef, rectOverlayRef, activeLayerId, layers, totalSize, documentFrame: currentFrame },
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { tempUpdateLayer, setActiveLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, cancelLayerPreview, setActiveLayer, updateLayerByTool, beginTextLayerEdit } = useLayers();
+  const { setToolArgs } = useCurrentTool();
+  const { goToTool } = useApp();
   const containScale = useContainScale(containerRef, totalSize);
   const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef, scaleRef: containScale });
 
@@ -46,6 +51,11 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const interactionStartPosRef = useRef<Pos | null>(null);
   const interactionStartBoundsRef = useRef<Pos | null>(null);
   const isInteractionActiveRef = useRef(false);
+  const interactionPointerIdRef = useRef<number | null>(null);
+  const cancelLayerPreviewRef = useRef(cancelLayerPreview);
+  useLayoutEffect(() => {
+    cancelLayerPreviewRef.current = cancelLayerPreview;
+  }, [cancelLayerPreview]);
   /**
    * The pointer id this component's own claim was taken with. The layer move and
    * the layer resize are one gesture with two shapes, and neither `onChangeEnd`
@@ -112,6 +122,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       onPointerDown: handlePointerDown_useRect,
       onPointerMove: handlePointerMove_useRect,
       onPointerUp: handlePointerUp_useRect,
+      onPointerCancel: handlePointerCancel_useRect,
     },
     rectHandles: { clearSelection },
     pointerState: { getLocalCoords, isMouseDown, pointerIdRef },
@@ -166,6 +177,14 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   // todo in future when optimizing this do cache all the layers below the active one and above, to only  reposition the current
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    // useRect refuses a second pointer while the owner is still down. Its boolean result also
+    // means "accepted, but not a drag handle", so do not use that return value as acceptance.
+    // The wrapper must preserve its own layer and pointer snapshots when useRect rejects the press.
+    if (isInteractionActiveRef.current || isMouseDown.current) {
+      handlePointerDown_useRect(event);
+      return;
+    }
+
     // Whether this press could start a gesture at all, read BEFORE the delegation.
     // `useRect.onPointerDown` refuses a non-primary button and a second pointer, and
     // a press it refused starts nothing — so a right-click on a layer must not
@@ -189,6 +208,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       interactionStartPosRef.current = layerId ? { ...layers[layerId].pos } : null;
       interactionStartBoundsRef.current = layerId ? getLayerPresentationBounds(layers[layerId]) : null;
       isInteractionActiveRef.current = !!layerId;
+      interactionPointerIdRef.current = isInteractionActiveRef.current ? pointerId : null;
       // The resize half of the gesture, and the reason this claim is taken on
       // both exits of the press rather than at the end of this function: the
       // drag-handle branch returns here, and it is a drag like any other.
@@ -203,6 +223,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       interactionStartPosRef.current = null;
       interactionStartBoundsRef.current = null;
       isInteractionActiveRef.current = false;
+      interactionPointerIdRef.current = null;
       // indicate somehow bedrock is selected
     } else {
       selectedLayerIdRef.current = layerUnderPointerId;
@@ -212,6 +233,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
         ? getLayerPresentationBounds(layers[layerUnderPointerId])
         : null;
       isInteractionActiveRef.current = !!layerUnderPointerId;
+      interactionPointerIdRef.current = isInteractionActiveRef.current ? pointerId : null;
       containerRef.current!.classList.add('cursor-grabbing');
     }
 
@@ -290,6 +312,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     interactionLayerIdRef.current = null;
     interactionStartPosRef.current = null;
     interactionStartBoundsRef.current = null;
+    interactionPointerIdRef.current = null;
 
     containerRef.current!.classList.remove('cursor-grabbing');
   }
@@ -300,6 +323,11 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
    * pointer outright — have in common.
    */
   function abandonInteraction() {
+    // Abort the temporary pixel transform before dropping its owner refs. A cancelled or
+    // interrupted drag must return to the committed layer presentation.
+    const layerId = interactionLayerIdRef.current;
+    if (isInteractionActiveRef.current && layerId) cancelLayerPreview(layerId);
+
     // Paired with the interaction teardown rather than left to pointerup: these
     // handlers are the abort routes that already abandon the drag, so a document
     // claim left open here would outlive a gesture that is over.
@@ -309,6 +337,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     interactionLayerIdRef.current = null;
     interactionStartPosRef.current = null;
     interactionStartBoundsRef.current = null;
+    interactionPointerIdRef.current = null;
   }
 
   function handlePointerLeave(event: React.PointerEvent) {
@@ -320,17 +349,29 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     ants.clear();
   }
 
-  function handlePointerCancel() {
-    // The route `handlePointerLeave` cannot cover. `usePointerPosition` nulls its
-    // own tracking from a NATIVE `pointercancel` listener, so `useRect`'s
-    // `isPointerUpValid` is false from that moment on and no `pointerup` ever
-    // follows; and the leave handler early-returns on a pointerId mismatch, which
-    // is exactly what a cancelled touch pointer leaves behind. Without this, a
-    // UA-cancelled pan kept the claim live and every document-mutating shortcut
-    // stayed dead until the next press.
-    abandonInteraction();
+  function handlePointerCancel(event: React.PointerEvent<HTMLDivElement>) {
+    // Let useRect reject a foreign cancel and reset its own pointer, RAF, and overlay state for
+    // the pointer it owns. This wrapper also owns the layer preview and document claim.
+    handlePointerCancel_useRect?.(event);
+    if (interactionPointerIdRef.current !== getPointerId(event)) return;
 
+    abandonInteraction();
     containerRef.current?.classList.remove('cursor-grabbing');
+  }
+
+  function handleDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+    const point = canvasToDocumentPoint(
+      getLocalCoords(event as unknown as React.PointerEvent<HTMLDivElement>),
+      documentFrame
+    );
+    const layerId = getLayerIdByPoint(layers, point);
+    const layer = layerId ? layers[layerId] : undefined;
+    const target = layer ? textLayerEditTarget(layer, documentFrame) : null;
+    if (!target) return;
+    if (goToTool('text') === false) return;
+    setActiveLayer(target.layerId);
+    beginTextLayerEdit(target.layerId);
+    setToolArgs(target.args);
   }
 
   useEffect(() => {
@@ -338,7 +379,14 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     // with the provider-level `resetDocumentGestures`, this is what bounds a
     // leaked claim to the mount that leaked it.
     return () => {
+      const layerId = interactionLayerIdRef.current;
+      if (isInteractionActiveRef.current && layerId) cancelLayerPreviewRef.current(layerId);
       releaseDocumentClaim();
+      interactionPointerIdRef.current = null;
+      isInteractionActiveRef.current = false;
+      interactionLayerIdRef.current = null;
+      interactionStartPosRef.current = null;
+      interactionStartBoundsRef.current = null;
     };
   }, []);
 
@@ -350,6 +398,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
       onPointerCancel={handlePointerCancel}
+      onDoubleClick={handleDoubleClick}
     />
   );
 };

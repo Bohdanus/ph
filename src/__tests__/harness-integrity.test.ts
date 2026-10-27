@@ -1,10 +1,11 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { ReadableStream, TransformStream, WritableStream } from 'node:stream/web';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { configDefaults } from 'vitest/config';
 import e2eProjectConfig from '../../vitest.e2e.config.ts';
 import rootProjectConfig from '../../vitest.config.ts';
+import viteProjectConfig from '../../vite.config.ts';
 import { createMockCanvasContext as createGlobalMockCanvasContext } from '../test/setup.ts';
 import { makeMockCanvas, makeMockCtx, makeMockOffscreenCanvas } from './canvas-mock.ts';
 import {
@@ -634,7 +635,7 @@ const matchSegments = (pattern: string[], value: string[]): boolean => {
 };
 
 const matchesGlob = (pattern: string, repoRelativePath: string) =>
-  matchSegments(pattern.split('/'), repoRelativePath.split('/'));
+  matchSegments(pattern.split('/'), repoRelativePath.split(/[/\\]/));
 
 const hasExactEntries = (actual: readonly string[] | undefined, expected: readonly string[]) =>
   actual !== undefined &&
@@ -847,6 +848,89 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
   const e2eTest = e2eProjectConfig.test;
 
   /**
+   * The dev server must not watch `.kilo/`, and the pattern must be the ABSOLUTE one.
+   *
+   * `AGENTS.md` puts every worktree under `$MAIN/.kilo/worktrees/`, so the swarm writes a
+   * second checkout into the directory the app is served from. The watcher does not read
+   * `.gitignore`, and the four defaults `resolveChokidarOptions` starts from do not cover
+   * `.kilo`, so without this key a `tsconfig.json` written by any agent takes
+   * `reloadOnTsconfigChange` and sends `full-reload` to every page a suite has open. The
+   * document is blank for the reload, so a helper probing with a non-waiting `count()` fails
+   * on a tool that was there a moment ago — which is what `e2e/layers.spec.ts` "a layer keeps
+   * its hidden state across a reorder" reported on `main`, as a pure-white failure
+   * screenshot, no console error, and a passing isolated run. `vite.config.ts` records what
+   * was reproduced and what was not; nothing here re-derives it.
+   *
+   * **THE ANCHORING HALF IS THE POINT.** The watcher matches `ignored` against ABSOLUTE
+   * paths, and a worktree's own absolute path contains `/.kilo/`, so the obvious
+   * leading-`**` glob (two stars, a slash, then `.kilo/**`) matches EVERY file in a served
+   * root that is a worktree: `src/`, `index.html` and `tsconfig.json` included. A dev server
+   * in that state logs no `hmr update` and no `changed tsconfig file detected` line for any
+   * edit, which is a watcher switched off and not a narrower one.
+   *
+   * That defect is INVISIBLE to a guard that only reasons about files of THIS checkout,
+   * because from a main checkout the broken glob and the anchored one agree on all of them:
+   * the paths a `**`-prefixed pattern wrongly swallows are the files of a checkout at a
+   * `.kilo` path, and from a main checkout that is a DIFFERENT checkout, served by a
+   * different server with a different config. So the last block below judges the pattern
+   * against such a path — a checkout whose absolute form contains `.kilo` and which is not
+   * under this checkout's own `.kilo` — and requires its sources to stay watched. The
+   * anchored pattern satisfies that from either kind of root, which is what makes the block
+   * a guard rather than a fact about one machine.
+   *
+   * Nothing is claimed about that checkout's OWN `.kilo`: a checkout's config is what runs
+   * when it is the one served, and the pattern under test is this checkout's.
+   *
+   * What this cannot see, and no guard in this repository can: the glob semantics belong to
+   * the watcher Vite BUNDLES, which is not the `chokidar` in `node_modules`. `vite.config.ts`
+   * states that dependency and when to re-measure it.
+   */
+  it('excludes the .kilo of this checkout from the dev server watch, and only .kilo', () => {
+    const ignored = viteProjectConfig.server?.watch?.ignored;
+    expect(Array.isArray(ignored), '`server.watch.ignored` must be an array the watcher accepts').toBe(true);
+    const patterns = ignored as string[];
+    expect(patterns.length, 'one pattern, so the ignore set cannot accumulate a stale entry').toBe(1);
+    expect(
+      patterns.every((pattern) => typeof pattern === 'string'),
+      'a function matcher is accepted by the watcher but is not a glob, and would throw here instead of failing'
+    ).toBe(true);
+    const isIgnored = (absolutePath: string) => patterns.some((pattern) => matchesGlob(pattern, absolutePath));
+
+    // Everything this checkout actually serves stays watched.
+    for (const served of ['src/main.tsx', 'index.html', 'tsconfig.json', 'vite.config.ts', 'src/index.scss']) {
+      expect(isIgnored(resolve(REPO_ROOT, served)), `${served} is served by the app and must stay watched`).toBe(false);
+    }
+
+    // And everything under its own `.kilo` does not, which is the whole fix. These are other
+    // checkouts and other swarm state, none of which this server serves.
+    for (const swarm of ['.kilo/worktrees/x/tsconfig.json', '.kilo/agent-manager.json', '.kilo/plans/p.md']) {
+      expect(isIgnored(resolve(REPO_ROOT, swarm)), `${swarm} is swarm state and must not be watched`).toBe(true);
+    }
+
+    // THE ANCHOR. A checkout rooted at a path that contains a `.kilo` segment, which is what
+    // `AGENTS.md` makes of every worktree, and NOT under this checkout's own `.kilo`. A
+    // pattern that keys on any `.kilo` segment rather than on this checkout's own directory
+    // ignores its sources, and a dev server rooted there then has no watcher at all.
+    const checkoutAtAKiloPath = resolve(REPO_ROOT, '..', '.kilo', 'worktrees', 'a-sibling');
+    const ownKilo = resolve(REPO_ROOT, '.kilo');
+    expect(
+      checkoutAtAKiloPath.startsWith(ownKilo),
+      'the probe must lie outside the .kilo of this checkout, or this block proves only what the one above proves'
+    ).toBe(false);
+    expect(
+      checkoutAtAKiloPath,
+      'the probe must contain a .kilo segment, or a `**`-prefixed pattern cannot match it and the block cannot fail'
+    ).toContain(`${sep}.kilo${sep}`);
+    for (const served of ['src/main.tsx', 'index.html', 'tsconfig.json']) {
+      expect(
+        isIgnored(resolve(checkoutAtAKiloPath, served)),
+        `${served} of a checkout whose own absolute path contains .kilo must stay watched — ` +
+          'a pattern matching on any .kilo segment disables that watcher entirely'
+      ).toBe(false);
+    }
+  });
+
+  /**
    * `include` and `exclude` are BOTH read by every collection guard below, and
    * each falls back to the Vitest default rather than to `[]`. An empty fallback
    * would make a project that declares neither key collect nothing while every
@@ -1052,6 +1136,124 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
       await readPlaywrightForbidOnly('1'),
       '`playwright.config.ts` stops forbidding `test.only` under CI. That half used to hold; the guard is `true` in BOTH readings or it is not a guard.'
     ).toBe(true);
+  });
+
+  it('turns flaky tests into failures on every run, not only under CI', () => {
+    expect(
+      playwrightConfig.failOnFlakyTests,
+      '`playwright.config.ts` does not set `failOnFlakyTests` unconditionally. `retries` is 0 locally, so failOnFlakyTests cannot fire locally either — a single value that is conditional on `process.env.CI` is not a guard, it is the same silent scope reduction the `forbidOnly` check above catches for `test.only`.'
+    ).toBe(true);
+  });
+
+  it('keeps the browser color scheme stable without treating it as the app theme pin', () => {
+    // `colorScheme` sets `prefers-color-scheme`, which ThemeContext no longer reads.
+    // The shared `extended-test` fixture seeds the app's `localStorage.theme` to light
+    // for fresh contexts; its own unit tests guard that pixel-helper precondition. Keep
+    // this assertion scoped to the browser media preference so a future reader does
+    // not mistake it for the mechanism that selects the workspace checkerboard.
+    expect(
+      playwrightConfig.use?.colorScheme,
+      'playwright.config.ts keeps the browser media preference stable; the shared test fixture pins the app theme'
+    ).toBe('light');
+  });
+
+  /**
+   * P3 — no HiDPI project is declared, despite the product boundary requiring tablet/
+   * high-DPI support. `playwright.config.ts` has only the single `Google Chrome`
+   * project at the default `deviceScaleFactor: 1`.
+   *
+   * The gap is NOT a one-line fix. Running the suite with `deviceScaleFactor` forced
+   * to 2 yields 256 pass, 6 fail, 2 skipped. The failures span four files and are
+   * assertions that compare CSS-pixel literals against pixels captured on a 2x surface:
+   *
+   *   - `e2e/helpers/cdp-helpers.spec.ts` — the `deviceScaleFactor: 2` block that
+   *     already exists as a known-different mode (the `expectFaithfulCaptureOf` block
+   *     doc-comment explains why DPR cannot be asserted as a constant).
+   *   - `e2e/helpers/color-helpers.spec.ts` — swatch colour compared against a literal
+   *     CSS colour on a 2x surface.
+   *   - `e2e/erase-fill-eyedropper.spec.ts` — an eyedropper block-average over a
+   *     fixed-size sample in image pixels.
+   *   - `e2e/keyboard-shortcuts.spec.ts` and `e2e/responsive-shell.spec.ts` — one
+   *     test each.
+   *
+   * This test pins the CHARACTERISATION: NO project sets `deviceScaleFactor > 1`. When
+   * the gap is closed by fixing the six failures and adding a 2x project, this test
+   * must be updated in the same change — a project that silently appeared without a
+   * matching guard would multiply every run's cost without the six fixes that make it
+   * green. The `OPEN_PROBLEMS.md` entry tracks the decision; this test keeps the
+   * current state from being silently changed.
+   */
+  it('declares exactly one project with no HiDPI override (P3 characterisation)', () => {
+    const projects = playwrightConfig.projects ?? [];
+
+    expect(projects.length, 'a second project was added without updating this guard').toBe(1);
+    expect(projects[0]?.name).toBe('Google Chrome');
+
+    // No project sets a `deviceScaleFactor` above 1. The default `devices['Desktop
+    // Chrome']` that the sole project spreads DOES include `deviceScaleFactor: 1`
+    // explicitly, so the check is `> 1` — not presence — to avoid a false positive.
+    const withHiDpi = projects.filter((project) => {
+      const dpr = (project.use as { deviceScaleFactor?: number } | undefined)?.deviceScaleFactor;
+      return dpr !== undefined && dpr > 1;
+    });
+    expect(
+      withHiDpi,
+      'a project with deviceScaleFactor > 1 was added; see the P3 characterisation comment for the six known failures that must be fixed first'
+    ).toEqual([]);
+  });
+
+  /**
+   * P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>`. Playwright's
+   * `elementState('disabled')` retargets a non-form-control up through `label.control`,
+   * so an `<option>` inside a label-wrapped `<select>` is checked against the SELECT, which
+   * carries no `disabled` attribute. The result is `Received: enabled` for an option that
+   * demonstrably has `disabled=""`. This meta-test scans every e2e spec and fails if it
+   * finds a `toBeDisabled()` assertion on a locator whose selector contains `option`,
+   * so the anti-pattern cannot be reintroduced without a deliberate review.
+   */
+  it('never asserts toBeDisabled() on an <option> locator in any e2e spec', () => {
+    // The pattern matches `.locator('option...')` — where `option` is a complete tag
+    // selector (not the prefix of `option-group` or similar) — followed by a chain of
+    // ONLY retargeting methods (`.not`, `.first()`, `.last()`, `.nth()`) and then
+    // `.toBeDisabled(`. Comments are stripped first, so a cautionary note like
+    // "// Don't use .locator('option').toBeDisabled()" is not flagged.
+    //
+    // The chain restricts to retargeting methods so that `.locator('option').allTextContents()`
+    // or `.locator('option').evaluateAll(...)` cannot match: those methods are not in
+    // the allowed set, so the chain stops and `.toBeDisabled(` cannot attach. The
+    // quote backreference `\1` handles attribute selectors with inner quotes like
+    // `'option[value="brush"]'` (outer single, inner double). `(?![\w-])` after
+    // `option` rejects `option-group` and `option-panel` — non-`<option>` elements
+    // unaffected by the label.control retarget.
+    //
+    // `[^\n]` confines the match to a single line: `[\s\S]*?\1` would backtrack
+    // across unrelated lines, matching from a `.locator('option')` on line N to a
+    // `.toBeDisabled()` on line N+200 where the intervening text happens to contain
+    // another `'` — a false positive that defeated this guard against
+    // `crop-history.spec.ts` and `erase-fill-eyedropper.spec.ts`, both of which
+    // use `.locator('option')` for a DIFFERENT purpose than `.toBeDisabled()`.
+    // Locator strings in this suite are always single-line, so the confinement
+    // loses no coverage.
+    const OPTION_DISABLED_PATTERN =
+      /\.locator\(\s*(['"])option(?![\w-])(?:(?!\1\s*\))[^\n])*?\1\s*\)(?:\s*\.\s*(?:not|first|last|nth)\s*(?:\([^)]*\))?\s*)*\s*\.toBeDisabled\s*\(/;
+
+    expect(OPTION_DISABLED_PATTERN.test("page.locator('option').all(); page.locator('button').toBeDisabled();")).toBe(
+      false
+    );
+
+    const offenders: string[] = [];
+    for (const specFile of e2eSpecFiles) {
+      const source = readFileSync(resolve(REPO_ROOT, specFile), 'utf8');
+      const sourceWithoutComments = source.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      if (OPTION_DISABLED_PATTERN.test(sourceWithoutComments)) {
+        offenders.push(specFile);
+      }
+    }
+
+    expect(
+      offenders,
+      "these e2e specs call toBeDisabled() on an <option> locator, which Playwright retargets to the parent <select> and always reports as enabled. Use toHaveAttribute('disabled', '') and the enabled-set workaround instead — see e2e/OPEN_PROBLEMS.md."
+    ).toEqual([]);
   });
 
   it('keeps app coverage a measure of src/ by excluding e2e/**', () => {

@@ -10,7 +10,10 @@ import {
 } from '../tools/text.ts';
 import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
-import type { Ctx2D, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
+import { documentToCanvasPos, type DocumentFrame } from '../contexts/document-frame.ts';
+import type { Ctx2D, Point, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
+
+const ORIGIN_DOCUMENT_FRAME: DocumentFrame = { x: 0, y: 0, width: 0, height: 0 };
 
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
   if (!canvasRef.current) return { width: 0, height: 0 };
@@ -137,6 +140,23 @@ export function sortRoundRect(rect: RectXY): Pos {
   return roundedPos(x1, y1, x2, y2);
 }
 
+export function rectCenter(rect: RectXY): Point {
+  return { x: (rect.x1 + rect.x2) / 2, y: (rect.y1 + rect.y2) / 2 };
+}
+
+export function rotatePointAround(point: Point, center: Point, degrees: number): Point {
+  const radians = (degrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const x = point.x - center.x;
+  const y = point.y - center.y;
+  return { x: center.x + x * cos - y * sin, y: center.y + x * sin + y * cos };
+}
+
+export function angleFromCenter(center: Point, point: Point): number {
+  return (Math.atan2(point.y - center.y, point.x - center.x) * 180) / Math.PI;
+}
+
 export function sortedRectToPos(rectSorted: RectXYSorted): Pos {
   const { x1, y1, x2, y2 } = rectSorted;
 
@@ -156,6 +176,10 @@ export function reduceRect(sortedRect: RectXYSorted, pos: Pos) {
     y2: sortedRect.y2 - pos.y,
   };
 }
+
+/** Convert a canvas-space rectangle to layer-local coordinates; an absent frame uses the canvas origin. */
+export const canvasRectToLocal = (rect: RectXY, layerPos: Pos, frame?: DocumentFrame | null): RectXY =>
+  reduceRect(sortRect(rect), documentToCanvasPos(layerPos, frame ?? ORIGIN_DOCUMENT_FRAME));
 
 export function posToSortedRect(rect: Pos): RectXYSorted {
   const { x, y, width, height } = rect;
@@ -220,7 +244,7 @@ export const calculateNewRect = (
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  const { align, text, rect } = newArgs;
+  const { text, rect } = newArgs;
   // No rect means the text has not been placed on the canvas yet, and there is nothing to
   // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
   // document origin, which no caller wanted: the only path that can reach here with a null
@@ -303,53 +327,38 @@ export const calculateNewRect = (
       }
     } else {
       /**
-       * The point arm, and the ONE place `align` moves a box rather than moving ink.
+       * The point arm, and the ONE place a point box's geometry is decided at all.
        *
-       * `align` is honoured twice, by two different mechanisms, and which one runs depends on
-       * whether the box has room:
+       * **The box hugs its ink, in both directions, and stays centred on the click.** Width and
+       * height are recomputed on every edit so replacing the placeholder does not leave unused space,
+       * and the click remains the stable anchor while the text changes.
        *
-       * - **The box has slack** (`requiredWidth <= currentWidth`) — a box the user widened with a
-       *   handle. The box is left EXACTLY where it is, and `renderText`'s anchor
-       *   (`boxLeft + (boxRight - boxLeft - width) / 2` for centre, `boxRight - width` for right)
-       *   moves the ink inside it. Nothing to do here, and moving the box would be wrong: it would
-       *   displace the ink a second time, by the same slack, on top of the anchor.
-       * - **The text outgrows the box** (`requiredWidth > currentWidth`). There is no slack to
-       *   distribute, so the growth itself has to be placed, and that is this arm: rightward for
-       *   left, symmetrically about the current centre for centre, leftward with the right edge
-       *   pinned for right.
+       * - The width is recomputed every call rather than compared against what is there. "When you
+       *   enter point type, each line of type is independent — the line expands or shrinks as you edit
+       *   it, but it doesn't wrap to the next line" (`creating-type.html`). This arm used to grow only,
+       *   on the reasoning that slack meant "a box the user widened with a handle" — which stopped being
+       *   true the moment a box is born holding the `'Lorem ipsum'` placeholder, because then it
+       *   carries slack the user never chose, and three characters typed over the placeholder left the
+       *   line as wide as the placeholder. A grow-only rule cannot tell the two apart.
+       * - Point type is not a paragraph alignment box, so the width follows the content rather than
+       *   distributing slack for `align`. The app's point-text interaction keeps the placement click
+       *   centred instead, which makes typing in either direction predictable.
        *
-       * A point box whose width is exactly its ink has neither, so all three settings render
-       * identically there. That is not a defect to fix in this file: it is what "each line of type
-       * is independent — the line expands or shrinks as you edit it" (Adobe, `creating-type.html`)
-       * means for a box that hugs its own text. `HANDOFF.md` carries the open question about
-       * whether the bar should say so.
+       * A consequence, stated because it is real: widening a POINT box with a handle now survives only
+       * until the next keystroke, which snaps it back to its ink. Adobe has no handle on a point line
+       * at all, so this is the closer of the two behaviours, and the handle belongs to `HANDOFF.md`'s
+       * transform question rather than to point type.
        *
-       * The `align` comparison below is a chain rather than a `switch` because the third arm IS
-       * the fallthrough: an absent or unrecognised value — a hand-edited or forward-version
-       * settings record, or an args object built before `align` was a field — grows rightward,
-       * which is where the tool starts. A `switch` with three named cases and no default left that
-       * input doing NOTHING at all, while `renderText`'s own anchor documents the opposite rule for
-       * the same value on the same box. The two halves of one alignment must not disagree about
-       * where an unrecognised value lands.
+       * `clampEdge` still applies to the calculated left edge. A click close to the document edge may
+       * therefore lose perfect centring to keep the layer origin inside the document.
        */
-      const currentWidth = newRect.x2 - newRect.x1;
       const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-      if (requiredWidth > currentWidth) {
-        // Each re-placed left edge is clamped again, because `align` can move it off the origin
-        // this rect started from: a centred or right-flushed box growing leftwards off a click at
-        // the document's left edge would otherwise START outside the document, which is the one
-        // thing this rect's origin may not do. The EXTENT is then rebuilt from the clamped edge
-        // rather than kept, because clamping an edge inward and leaving the other one alone would
-        // crop exactly the ink this rule exists to preserve.
-        const grownLeft =
-          align === 'center'
-            ? newRect.x1 - (requiredWidth - currentWidth) / 2
-            : align === 'right'
-              ? newRect.x2 - requiredWidth
-              : newRect.x1;
-        const x1 = clampEdge(grownLeft, imageSize.width);
-        newRect = { ...newRect, x1, x2: x1 + requiredWidth };
-      }
+      // `newRect` has already been clamped for the document frame. Use the incoming rect's centre
+      // instead: after the first keystroke its left edge is no longer the placement point, and using
+      // it as the next centre makes the box drift left by half its previous width on every edit.
+      const centerX = (placed.x1 + placed.x2) / 2;
+      const x1 = clampEdge(centerX - requiredWidth / 2, imageSize.width);
+      newRect = { ...newRect, x1, x2: x1 + requiredWidth };
     }
   }
 
@@ -364,9 +373,9 @@ export const calculateNewRect = (
   // not yet resident — on every keystroke, purely to have the number discarded one line later.
   if (!isParagraph) {
     const pointRequiredHeight = hardBreakHeight(ctx2d, newArgs, text);
-    if (pointRequiredHeight > newRect.y2 - newRect.y1) {
-      newRect = { ...newRect, y2: newRect.y1 + pointRequiredHeight };
-    }
+    const centerY = (placed.y1 + placed.y2) / 2;
+    const y1 = clampEdge(centerY - pointRequiredHeight / 2, imageSize.height);
+    newRect = { ...newRect, y1, y2: y1 + pointRequiredHeight };
   }
 
   // A PARAGRAPH box keeps every edge clamped to the document, which is the same

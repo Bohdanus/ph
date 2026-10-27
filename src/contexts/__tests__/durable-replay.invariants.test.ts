@@ -35,6 +35,7 @@ function createBaselineLayer(): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { x: 20, y: 30, width: 120, height: 80 },
+    presentationBounds: null,
     source: {
       kind: 'blank' as const,
       color: '#ffffff',
@@ -197,13 +198,13 @@ describe('replayDurableDocument invariants (P1.7)', () => {
     // This test used to call `replayDurableDocument` — the entry point that does
     // NOT clone — and discard the result, so the name described a guarantee the
     // body never exercised and `cloneDurableDocument` inside `replayDurableAtCursor`
-    // (`durable-replay.ts:170`) was invisible to the suite.
+    // was invisible to the suite.
     //
     // Assertions (b) and (c) are both load-bearing for the clone, and (c) is the
     // one that regresses if `replayDurableAtCursor` ever becomes a bare
-    // delegation. The reducer pushes `entry.operation` BY REFERENCE
-    // (`durable-replay.ts:119`), so a direct `replayDurableDocument` hands back
-    // the source document's own operation object. `replayDurableAtCursor` only
+    // delegation. `replayDurableDocument` retains the source operation object in
+    // the replay layer's operations, so the source document's operation is what
+    // direct replay returns. `replayDurableAtCursor` only
     // returns a different object because it cloned first, and the
     // `directOperation` identity assertion in (c) makes that premise explicit:
     // it proves the two replays differ because of the clone, and not because the
@@ -350,6 +351,7 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
       blendMode: 'source-over',
       order,
       pos: { x: 20, y: 30, width: 120, height: 80 },
+      presentationBounds: null,
       source: {
         kind: 'blank' as const,
         color: '#ffffff',
@@ -511,8 +513,8 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
     );
 
     const replay = replayDurableDocument(document);
-    expect(replay.layers[layerId]?.snapshot.order).toBe(1);
-    expect(replay.layers[layer2Id]?.snapshot.order).toBe(0);
+    expect(replay.layers[layerId]?.snapshot.order).toBe(2);
+    expect(replay.layers[layer2Id]?.snapshot.order).toBe(1);
   });
 
   it('apply-filter on non-existent layer is a no-op', () => {
@@ -745,13 +747,13 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
   it('set-selection replaces selections entirely', () => {
     const selection1 = {
       id: 'sel-1',
-      points: [{ x: 1, y: 2 }],
+      points: [[{ x: 1, y: 2 }]],
       isActive: true,
       pos: { x: 1, y: 2, width: 10, height: 12 },
     };
     const selection2 = {
       id: 'sel-2',
-      points: [{ x: 5, y: 6 }],
+      points: [[{ x: 5, y: 6 }]],
       isActive: true,
       pos: { x: 5, y: 6, width: 20, height: 30 },
     };

@@ -34,25 +34,40 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
  *    exactly two groups sharing the divider that is the whole column, which is why
  *    `splitRatio` is a fraction of the column rather than a pixel height per panel.
  *
- *  - **Panels move by their tab, and the drop target is drawn as a blue line.** "To dock a
- *    panel, drag it by it's tab to the edge of another panel or panel group. Release the tab
- *    when a blue highlight appears." (dock-undock-panels) "Drag a panel on to a blue zone to
- *    dock it." (move-panels) So `panelOrder` is the panel's identity moving between slots,
- *    and the insertion affordance is drawn rather than implied.
+ *  - **This clone keeps its two panels pinned to the right edge.** Adobe documents movable and
+ *    floating panels, but the product requirement for this editor explicitly retires that
+ *    interaction. The panel column remains docked; only its width and shared vertical divider
+ *    are draggable.
  *
  *  - **Double-clicking a tab rolls its group up to the tab bar**, and clicking again restores
  *    it. (Adobe Photoshop CC Classroom in a Book; Lesa Snider describes it as rolling "up like
  *    a window shade".) That is `rolledUp`.
  *
- *  - **The Tools panel is draggable to either side, and cannot be resized.** "The Tools panel
- *    appears at the left side of the application window, by default. However, you can dock the
- *    Tools panel to either the right or left sides of the application window or let it float
- *    over the document window area. Unlike most panels in Photoshop, however, you cannot dock
- *    the Tools panel at the bottom of the Photoshop application window or group it with other
- *    panels in panel tab groups." (teachucomp; the CC-era Adobe book states the same rule:
- *    "You cannot resize the Tools panel or options bar.") So `dockOnLeft` is draggable and the
- *    rail's WIDTH deliberately is not — the rail keeps its 108px/56px column layouts, which is
- *    exactly Photoshop's model.
+ *  - **The Tools rail is pinned to the left edge in this clone.** Adobe documents relocation,
+ *    but the current product requirement retires that feature. The rail keeps its 108px/56px
+ *    column layouts and cannot be moved or resized.
+ *
+ *    The sentence this bullet used to quote — "you can dock the Tools panel to either the right
+ *    or left sides of the application window or let it float over the document window area" — is
+ *    NOT on any Adobe page reachable today. It is widely reproduced on third-party sites, and
+ *    quoting it as Adobe's would be a citation this repository cannot re-derive. The panel rule
+ *    above says the same thing about the Tools panel and IS verifiable, so that is what is cited.
+ *
+ *  - **The Tools panel and the panel dock are INDEPENDENT, and each has its own edge.**
+ *    `toolsSide` and `dockSide` are two separate facts for a reason that is Adobe's rather than
+ *    this app's: "A dock is a collection of panels grouped together vertically" and "To dock a
+ *    panel, drag it by it's tab to the edge of another panel or panel group."
+ *    (…/learn-the-basics/dock-undock-panels.html) Docking is ADDITIVE — a panel dropped on a
+ *    column JOINS that column — so dropping the Tools panel on an edge that already has a dock
+ *    puts the two in ONE column as two panel groups, and leaves the other edge alone.
+ *
+ *    One shared boolean could not express that, and the shape it forced is the bug this replaces:
+ *    with a single `dockOnLeft` the rail claimed `[grid-area:left]` exactly when the dock claimed
+ *    `[grid-area:right]`, so the two were pinned to OPPOSITE edges and every re-dock of either one
+ *    teleported the other. Adobe documents no such exchange, and it is worth being precise about
+ *    why: the "you cannot group it with other panels in panel tab groups" half of the old rule is
+ *    about TAB GROUPS, and a column of panel groups is precisely not a tab group, so sharing a
+ *    column stays legal.
  *
  *  - **Layout persists per workspace.** "In Photoshop, workspaces display your last arrangement
  *    of panels" (restore-workspaces), and a workspace "remembers the size and position of
@@ -66,7 +81,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
  *    https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/stack-floating-panels.html)
  *    and a clone that cannot float is a clone that cannot get a panel out of the way. It needs
  *    its own window layer, z-order and off-viewport persistence, so it is a separate piece of
- *    work rather than a flag here.
+ *    work rather than a flag here. `toolsSide` deliberately has no third value: a Tools panel
+ *    that could FLOAT is a different state from one docked to either edge, and a `PanelSide`
+ *    with a `'floating'` member would let a drag commit a state with no rendering for it.
  *  - **`Tab` / `Shift+Tab`.** "Press Tab to hide all panels... Press Shift + Tab to hide all
  *    panels except the Tools panel and Options bar." (hide-show-panels) This app already binds
  *    Tab to leave an open flyout (`SidebarLeft.tsx`), and a global hide is a different feature
@@ -87,6 +104,16 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 /** The two panels in the dock. History and Layers are the only two the shell ships. */
 export type PanelId = 'history' | 'layers';
+
+/**
+ * Which edge of the window a column sits against.
+ *
+ * A `'left' | 'right'` rather than a boolean, and two of them rather than one, for the reason the
+ * header gives: the Tools rail and the panel dock are separate Adobe-documented subjects with
+ * separate edges, and a boolean named after the dock reads as a property OF the dock while
+ * silently steering the rail. Naming both facts makes the independence impossible to misread.
+ */
+export type PanelSide = 'left' | 'right';
 
 /** Top-to-bottom. History first is the pre-existing order, and stays the default. */
 export type PanelOrder = readonly PanelId[];
@@ -121,7 +148,10 @@ interface LayoutState {
   splitRatio: number;
   panelOrder: PanelOrder;
   rolledUp: Record<PanelId, boolean>;
-  dockOnLeft: boolean;
+  /** Compatibility field; the shipped rail is always left-docked. */
+  toolsSide: PanelSide;
+  /** Compatibility field; the shipped panel dock is always right-docked. */
+  dockSide: PanelSide;
   isCollapsed: boolean;
 }
 
@@ -130,7 +160,8 @@ const DEFAULT_STATE: LayoutState = {
   splitRatio: DEFAULT_SPLIT_RATIO,
   panelOrder: ['history', 'layers'],
   rolledUp: { history: false, layers: false },
-  dockOnLeft: false,
+  toolsSide: 'left',
+  dockSide: 'right',
   isCollapsed: false,
 };
 
@@ -173,7 +204,14 @@ export interface PanelLayout extends LayoutState {
   setPanelOrder: (order: PanelOrder) => void;
   /** Rolls a panel's group up to its tab bar, or back down. A double-click on the tab. */
   setRolledUp: (id: PanelId, rolledUp: boolean) => void;
-  setDockOnLeft: (onLeft: boolean) => void;
+  /**
+   * Compatibility no-op. Rail relocation is retired.
+   */
+  setToolsSide: (side: PanelSide) => void;
+  /**
+   * Compatibility no-op. Panel relocation is retired.
+   */
+  setDockSide: (side: PanelSide) => void;
   /** The dock's double-arrow. Collapsing preserves the width the user had chosen. */
   toggleCollapsed: () => void;
   /** `Window > Workspace > Reset`. Returns every field to `DEFAULT_STATE`. */
@@ -201,7 +239,8 @@ const noProviderValue: PanelLayout = {
   setSplitRatio: () => {},
   setPanelOrder: () => {},
   setRolledUp: () => {},
-  setDockOnLeft: () => {},
+  setToolsSide: () => {},
+  setDockSide: () => {},
   toggleCollapsed: () => {},
   resetWorkspace: () => {},
 };
@@ -248,7 +287,7 @@ const readStoredLayout = (): Partial<LayoutState> => {
   // the only way out of the icon strip is `setDockWidth(layout.dockWidth)`, which re-collapses
   // on a width that is still under the floor, and the double-arrow that would otherwise widen it
   // is not rendered while collapsed. A hand-edited, stale or cross-version value was enough to
-  // reach it, and `Window > Reset Workspace` was the only escape.
+  // reach it, and `Window > Workspace > Reset Essentials` was the only escape.
   //
   // So: collapse on read, exactly as `setDockWidth` does on write, and let the remembered width
   // be the one that will fit again. The second pass is what keeps the dock recoverable — a
@@ -277,9 +316,34 @@ const readStoredLayout = (): Partial<LayoutState> => {
     const rolled = record.rolledUp as Record<string, unknown>;
     stored.rolledUp = { history: rolled.history === true, layers: rolled.layers === true };
   }
-  if (typeof record.dockOnLeft === 'boolean') {
-    stored.dockOnLeft = record.dockOnLeft;
-  }
+  // Assigned ONLY when the read recognised a side. An unconditional assignment would put an
+  // OWN property holding `undefined` into the result, and the provider seeds state with
+  // `{ ...DEFAULT_STATE, ...readStoredLayout() }` — a spread copies own enumerable properties
+  // whatever their value, so `toolsSide: undefined` would overwrite the default rather than defer
+  // to it. That contradicts this function's own contract ("anything unrecognised is treated as
+  // absent") and it is not reachable only from a corrupt record: `{}`, or a record holding
+  // nothing but a dock width, both read as absent for every side.
+  //
+  // It is user-visible rather than a type-level nuisance. `SidebarLeft` branches on
+  // `toolsSide === 'left'`, `undefined` is not `'left'`, so such a workspace rendered the tools
+  // rail on the RIGHT — and the write effect then `JSON.stringify`ed the `undefined` away, so the
+  // record lost both keys and every later load re-derived the same `undefined`. The rail could
+  // not get back to the left edge except through a reset.
+  // Older workspaces may contain side preferences, but relocation is retired and must not be
+  // restored. Normalize both edges to the fixed shell positions.
+  stored.toolsSide = 'left';
+  stored.dockSide = 'right';
+  // Migration from the single shared `dockOnLeft` this replaces, and it has to be a MIGRATION
+  // rather than a discard. That one flag did not say which column was where so much as which of
+  // the two was where — a stored `true` rendered the rail right and the dock left, and a stored
+  // `false` the other way round. Discarding it would silently snap every workspace that had ever
+  // been re-docked back to the default arrangement on the next reload, which is the user's layout
+  // being replaced by a guess. So a record with no new field and a boolean reads as the pair it
+  // used to mean, and the workspace the user had survives the rename intact.
+  //
+  // Per field rather than all-or-nothing: a record written by a build that had both fields can
+  // only be whole, but a hand-edited or partially-written one should not lose a valid side
+  // because its sibling was missing.
   // Read LAST, and only when the width did not already decide it. A record that says
   // `isCollapsed: false` beside a 45px width is not a dock that opens — it is a 45px column
   // with both panel groups and their labels, no icon strip, and a control that says
@@ -339,8 +403,16 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
     setState((current) => ({ ...current, rolledUp: { ...current.rolledUp, [id]: isRolledUp } }));
   }, []);
 
-  const setDockOnLeft = useCallback((onLeft: boolean) => {
-    setState((current) => ({ ...current, dockOnLeft: onLeft }));
+  // Each writes ONE field and reads no other, which is the property that makes the two subjects
+  // independent. They used to share a field, which is why moving one had to invert it to move the
+  // other, and why the inversion was easy to get backwards: `SidebarLeft.tsx` carries the note
+  // about the two inversions cancelling. With one field each there is nothing to invert.
+  const setToolsSide = useCallback(() => {
+    // Kept for old consumers; the rail is pinned to the left edge.
+  }, []);
+
+  const setDockSide = useCallback(() => {
+    // Kept for old consumers; the panel dock is pinned to the right edge.
   }, []);
 
   const toggleCollapsed = useCallback(() => {
@@ -361,7 +433,8 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
       setSplitRatio,
       setPanelOrder,
       setRolledUp,
-      setDockOnLeft,
+      setToolsSide,
+      setDockSide,
       toggleCollapsed,
       resetWorkspace,
     }),
@@ -372,7 +445,8 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
       setSplitRatio,
       setPanelOrder,
       setRolledUp,
-      setDockOnLeft,
+      setToolsSide,
+      setDockSide,
       toggleCollapsed,
       resetWorkspace,
     ]

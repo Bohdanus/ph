@@ -94,6 +94,11 @@
  *   the lock, how often to re-check, and how long a dead holder blocks the queue.
  * - `E2E_SKIP_LOCK=1` (or `--no-lock`) — skip the queue entirely, loudly. Since the
  *   lock is only a queue, this costs scheduling and nothing else.
+ * - Quiet output is the default. `--verbose` or `E2E_QUIET=0` streams suite output;
+ *   `--quiet` or `E2E_QUIET=1` explicitly captures it and replays it to stderr only
+ *   when the suite fails. This keeps green runs from flooding the transcript with
+ *   minutes of list-reporter lines, using the same batching strategy as
+ *   `scripts/quiet-command.mjs`. stdin remains inherited, so Ctrl-C reaches the child.
  * - `CI` — keeps the default port and the default output directory. A CI job owns
  *   its runner outright, and the `e2e` job's artifacts are collected from the shared
  *   `test-results/`.
@@ -628,10 +633,21 @@ export function resolvePlaywrightCli() {
 /**
  * Start the suite and resolve with the exit code it finished on.
  *
- * `stdio: 'inherit'` is why this is a wrapper and not `execSync`: an e2e suite
- * streams a `list` reporter for minutes, and a buffered child looks hung.
- * `process.execPath` plus a resolved path means no shell, no PATH lookup, and no
- * `playwright.cmd` on Windows.
+ * The default quiet mode captures output and replays it only on failure; `--verbose`
+ * can restore live streaming for diagnosis. `process.execPath` plus a resolved path
+ * means no shell, no PATH lookup, and no `playwright.cmd` on Windows.
+ *
+ * ## Quiet mode
+ *
+ * When `options.quiet` is set (the default for wrapped runs), stdout and stderr
+ * are piped — captured but never seen by the terminal — and replayed to stderr
+ * ONLY when the suite exits non-zero. This mirrors `scripts/quiet-command.mjs`,
+ * which the commit and push gates already use so a green check stays silent. An
+ * e2e suite that passes should not emit a wall of list-reporter lines into the
+ * transcript every time; only a failure does, with the full output to diagnose it.
+ *
+ * `stdio: ['inherit', 'pipe', 'pipe']` keeps stdin attached so Ctrl-C still
+ * reaches the child.
  *
  * ## Why there are signal handlers at all, and what they cost
  *
@@ -651,9 +667,11 @@ export function runPlaywright(args, options = {}) {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? REPO_ROOT;
   const cli = options.cli ?? resolvePlaywrightCli();
+  const quiet = options.quiet ?? false;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: 'inherit' });
+    const stdio = quiet ? ['inherit', 'pipe', 'pipe'] : 'inherit';
+    const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio });
 
     let signalled = 0;
     const forward = (signal, name) => () => {
@@ -675,15 +693,27 @@ export function runPlaywright(args, options = {}) {
     process.on('SIGINT', onSigint);
     process.on('SIGTERM', onSigterm);
 
+    const captured = quiet ? [] : null;
+    if (quiet) {
+      child.stdout.on('data', (chunk) => captured.push(chunk));
+      child.stderr.on('data', (chunk) => captured.push(chunk));
+    }
+
     child.on('error', (error) => {
       cleanup();
+      if (quiet && captured.length > 0) process.stderr.write(Buffer.concat(captured));
       reject(error);
     });
     child.on('close', (code, signal) => {
       cleanup();
       // A signalled run has no exit code of its own. 128 + signal is the shell's
       // own convention, and it keeps `npm run test:e2e` red either way.
-      resolve(signal ? 128 + (constants.signals[signal] ?? 0) : (code ?? 1));
+      const exitCode = signal ? 128 + (constants.signals[signal] ?? 0) : (code ?? 1);
+      if (quiet && exitCode !== 0) {
+        const output = Buffer.concat(captured);
+        if (output.length > 0) process.stderr.write(output);
+      }
+      resolve(exitCode);
     });
   });
 }
@@ -724,8 +754,13 @@ const HELP = [
   '  rarely run e2e at once. It is advisory - a run never refuses to start because of it,',
   '  and a board that cannot be reached just means no queue. Two runs at once is fine.',
   '',
+  '  Quiet output is the default. --verbose (or E2E_QUIET=0) streams suite output;',
+  '  --quiet (or E2E_QUIET=1) explicitly captures it, replaying only on failure.',
+  '  This keeps a green run from flooding the terminal with minutes of list-reporter',
+  '  lines — the same batching strategy the commit and push gates use.',
+  '',
   '  Environment: E2E_LOCK_TIMEOUT, E2E_LOCK_POLL, E2E_LOCK_LEASE, E2E_SKIP_LOCK=1,',
-  '  E2E_ALLOW_REMOTE=1. The header of scripts/e2e-run.mjs is the full contract.',
+  '  E2E_QUIET=0|1, E2E_ALLOW_REMOTE=1. The header of scripts/e2e-run.mjs is the full contract.',
 ].join('\n');
 
 export async function run(argv, options = {}) {
@@ -740,8 +775,14 @@ export async function run(argv, options = {}) {
   // `test` is the Playwright SUBCOMMAND, and npm appends a caller's arguments after
   // the script rather than inside it. The scripts that call this wrapper
   // (`test:e2e:headed`, `:ui`, `:debug`, `:update-baselines`) pass run arguments
-  // too, so every one of them needs the subcommand as well.
-  const playwrightArgv = ['test', ...argv.filter((arg) => arg !== '--no-lock')];
+  // too, so every one of them needs the subcommand as well. Wrapper flags are
+  // consumed here and never forwarded to Playwright.
+  const separatorIndex = argv.indexOf('--');
+  const wrapperArgs = argv.slice(0, separatorIndex === -1 ? argv.length : separatorIndex);
+  const forwardedArgs = wrapperArgs.filter((arg) => !['--no-lock', '--quiet', '--verbose'].includes(arg));
+  if (separatorIndex !== -1) forwardedArgs.push(...argv.slice(separatorIndex));
+  const quiet = wrapperArgs.includes('--quiet') || (!wrapperArgs.includes('--verbose') && env.E2E_QUIET !== '0');
+  const playwrightArgv = ['test', ...forwardedArgs];
 
   if (isHelpRequest(playwrightArgv)) {
     // Nothing runs, so there is nothing to prepare — but the refusals still run
@@ -749,12 +790,14 @@ export async function run(argv, options = {}) {
     // as refused unconditionally and "unconditionally" should not have a help-shaped
     // exception. They are cheap and they throw before anything is started.
     assertOwnServer(env);
-    return spawnSuite(playwrightArgv, { ...options, env });
+    return spawnSuite(playwrightArgv, { ...options, env, quiet: false });
   }
 
   // The guarantee is settled first, because it is the one that must not be negotiable.
   const remote = assertOwnServer(env);
   if (remote) log(`${PREFIX} WARNING: ${remote}`);
+
+  if (quiet) log(`${PREFIX} quiet: suite output is captured and only shown on failure`);
 
   const childEnv = { ...env };
 
@@ -791,7 +834,7 @@ export async function run(argv, options = {}) {
     ? 'CI'
     : env.E2E_SKIP_LOCK === '1'
       ? 'E2E_SKIP_LOCK=1'
-      : argv.includes('--no-lock')
+      : wrapperArgs.includes('--no-lock')
         ? '--no-lock'
         : null;
   const lock = skipReason ? null : (options.lock ?? new SwarmLock({ ...options, env, log }));
@@ -855,7 +898,7 @@ export async function run(argv, options = {}) {
 
   try {
     if (queued) lock.startRenewal((why) => log(`${PREFIX} ${why}`));
-    const code = await spawnSuite(playwrightArgv, { ...options, env: childEnv });
+    const code = await spawnSuite(playwrightArgv, { ...options, env: childEnv, quiet });
     // Close the record. Without this, a run that died before Playwright started and a
     // run that served an hour of tests leave byte-identical evidence except for the
     // wall-clock stamp, and the file exists to be read by someone debugging a failure

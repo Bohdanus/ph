@@ -20,6 +20,8 @@ import SidebarLeft from '../SidebarLeft.tsx';
  * own measurement — which needs real boxes — is untouched.
  */
 const TILE_HEIGHT = 44;
+const ROW_GAP = 6;
+const SECTION_BREAK_HEIGHT = 7;
 const SLOT_WIDTH = 56;
 
 type Geometry = { slotHeight: number };
@@ -102,6 +104,17 @@ const setSlotHeight = (slotHeight: number): void => {
     geometry.slotHeight = slotHeight;
     flushObservers();
   });
+};
+
+/** Fit height derived from the rail's row and section costs. */
+const fullRailSlotHeight = (): number => {
+  const groupCount = toolbarMap.flat().length;
+  const sectionCount = toolbarMap.filter((section) => section.length > 0).length;
+  return (
+    groupCount * TILE_HEIGHT +
+    Math.max(0, groupCount - 1) * ROW_GAP +
+    Math.max(0, sectionCount - 1) * SECTION_BREAK_HEIGHT
+  );
 };
 
 /** The tool tiles currently on the rail, in the order the rail renders them. */
@@ -216,11 +229,12 @@ describe('SidebarLeft overflow', () => {
       expect(items, `${label} must be reachable from the three-dots tile`).toContain(label);
     }
     // And nothing that still has a tile is offered again — a tool with two ways in is a tool
-    // whose identity is ambiguous. The Eyedropper is the LAST group that survived at 300px,
-    // so it is the one that would be offered twice if the boundary were a row too far down.
-    expect(items).not.toContain('Move Tool');
-    expect(items).not.toContain('Magic Wand Tool');
-    expect(items).not.toContain('Eyedropper Tool');
+    // whose identity is ambiguous. The exact surviving prefix changes when a new Photoshop
+    // group is added, so derive the negative half from the rendered tile labels rather than
+    // freezing a stale boundary name in this test.
+    for (const toolName of visibleTools().filter((name) => name !== 'more-tools')) {
+      expect(items).not.toContain(screen.getByTestId(`tool-button-${toolName}`).getAttribute('aria-label'));
+    }
 
     // Every tool in the map is reachable from EITHER a tile or the flyout, and from exactly
     // one of them. That is the whole contract the feature exists to keep, so it is stated as
@@ -425,7 +439,7 @@ describe('SidebarLeft the three-dots tile', () => {
       fireEvent.pointerUp(overflowTile()!, { button: 0 });
     });
     act(() => {
-      fireEvent.click(overflowTile()!);
+      fireEvent.click(overflowTile()!, { detail: 1 });
     });
     expect(goToTool, 'a press on the three-dots tile must not choose a tool').not.toHaveBeenCalled();
 
@@ -458,12 +472,10 @@ describe('SidebarLeft the three-dots tile', () => {
   });
 
   it('is still reachable by an activation after a press that left the tile before release', () => {
-    // A press that leaves the button before releasing — a drag, or a scroll that steals the
-    // pointer — produces NO click, so the flag the press set to swallow that click survives.
-    // For a mouse the next press clears it first, so nothing is observably wrong. For anything
-    // that activates without a press there is no next press: the stranded flag swallows the
-    // activation, and this tile — the only way into the tools that did not fit — becomes
-    // unreachable for it. So the flag is cleared on leave and cancel, and this pins that.
+    // Leaving cancels the hold but retains pointer ownership until its terminal event, so a
+    // pressless activation can be distinguished from the pointer's later synthesized click.
+    // The overflow tile is the only way into tools that do not fit; its pressless activation
+    // must still open it without consuming the pointer's owner-click suppression.
     vi.useFakeTimers();
     setSlotHeight(TILE_HEIGHT);
     render(<SidebarLeft />);
@@ -475,8 +487,8 @@ describe('SidebarLeft the three-dots tile', () => {
       fireEvent.pointerLeave(overflowTile()!);
     });
 
-    // The press opened the menu, so dismiss it the way an outside click would, leaving the
-    // pressless activation below to run against a closed menu and whatever the flag now holds.
+    // Dismiss the menu while keeping the original pointer down, then exercise the independent
+    // pressless activation against a closed menu.
     act(() => {
       fireEvent.keyDown(overflowTile()!, { key: 'Escape' });
     });
@@ -491,6 +503,15 @@ describe('SidebarLeft the three-dots tile', () => {
     expect(
       screen.queryByRole('menu'),
       'an activation after an abandoned press must still open the menu; swallowing it makes the hidden tools unreachable without a mouse'
+    ).not.toBeNull();
+
+    act(() => {
+      fireEvent.pointerUp(overflowTile()!, { pointerId: 0 });
+      fireEvent.click(overflowTile()!, { detail: 1 });
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'the original pointer release must not undo the independent pressless activation'
     ).not.toBeNull();
     expect(goToTool, 'and it must not have chosen a tool on the way').not.toHaveBeenCalled();
   });
@@ -514,7 +535,7 @@ describe('SidebarLeft the three-dots tile', () => {
       fireEvent.pointerUp(overflowTile()!, { button: 0 });
     });
     act(() => {
-      fireEvent.click(overflowTile()!);
+      fireEvent.click(overflowTile()!, { detail: 1 });
     });
     expect(
       screen.queryByRole('menu'),
@@ -550,5 +571,20 @@ describe('SidebarLeft the three-dots tile', () => {
     expect(screen.getByTestId('foreground-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('background-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('swap-colors-button')).toBeInTheDocument();
+  });
+
+  it('closes the overflow flyout when the whole rail fits and does not reopen it when it returns', () => {
+    render(<SidebarLeft />);
+    setSlotHeight(TILE_HEIGHT);
+    openOverflowFlyout();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+
+    setSlotHeight(fullRailSlotHeight());
+    expect(overflowTile()).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    setSlotHeight(TILE_HEIGHT);
+    expect(overflowTile()).not.toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });

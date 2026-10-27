@@ -45,7 +45,7 @@ vi.mock('../../../tools/draw.ts', () => ({
 }));
 
 vi.mock('../../../tools/shape.ts', () => ({
-  // The Sides constants and the normalizer are named by the Shape bar at module
+  // The Sides and Star Ratio constants and normalizers are named by the Shape bar at module
   // scope, so a mock that omits them fails the whole file at import rather than one
   // assertion: the named import resolves to undefined and the JSX below never renders.
   //
@@ -58,6 +58,10 @@ vi.mock('../../../tools/shape.ts', () => ({
   MIN_POLYGON_SIDES: 3,
   MAX_POLYGON_SIDES: 100,
   polygonSides: () => 5,
+  DEFAULT_STAR_RATIO: 50,
+  MIN_STAR_RATIO: 1,
+  MAX_STAR_RATIO: 99,
+  starRatio: () => 50,
   shape:
     ({ size }: { size: { width: number; height: number } }) =>
     (args: any) => {

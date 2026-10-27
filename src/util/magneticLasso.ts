@@ -1,5 +1,6 @@
-import type { Point } from '../contexts/general-types.ts';
+import type { Point, Size } from '../contexts/general-types.ts';
 import { distanceBetweenPoints } from './selection.ts';
+import { readCanvasImageDataAtLogicalSize } from './canvas-image-data.ts';
 
 const MAX_MAGNETIC_PATH_AREA = 32_000;
 const LINE_SAMPLE_STEP = 2;
@@ -136,22 +137,9 @@ function dedupeSequentialPoints(points: Point[]): Point[] {
   return result;
 }
 
-export function createEdgeMapFromCanvas(canvas: HTMLCanvasElement | null): EdgeMap | null {
-  if (!canvas || canvas.width === 0 || canvas.height === 0) return null;
-
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
-
-  try {
-    return createEdgeMapFromImageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
-  } catch (error) {
-    // As in `magicWand.ts`: `getImageData` throws on a tainted or zero-area
-    // canvas, and `null` here is read by the caller as an empty edge map, so the
-    // lasso silently traces nothing. Reported per HANDOFF.md §98, one line per
-    // gesture.
-    console.error(error);
-    return null;
-  }
+export function createEdgeMapFromCanvas(canvas: HTMLCanvasElement | null, logicalSize: Size): EdgeMap | null {
+  const imageData = readCanvasImageDataAtLogicalSize(canvas, logicalSize);
+  return imageData ? createEdgeMapFromImageData(imageData) : null;
 }
 
 export function createEdgeMapFromImageData(imageData: ImageData): EdgeMap {

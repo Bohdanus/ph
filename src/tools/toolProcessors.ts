@@ -2,8 +2,12 @@ import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { blur } from './blur.ts';
 import { cloneStamp } from './cloneStamp.ts';
+import { redEye } from './redEye.ts';
+import { spotHealing } from './spotHealing.ts';
+import { healingBrush } from './healingBrush.ts';
+import { patch } from './patch.ts';
 import { colors } from './colors.ts';
-import { colorReplacement } from './colorReplacement.ts';
+import { colorReplacement, COLOR_REPLACEMENT_MAX_STAGING_PIXELS } from './colorReplacement.ts';
 import { crop } from './crop.ts';
 import { burn, dodge } from './dodgeBurn.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
@@ -24,10 +28,12 @@ import { smudge } from './smudge.ts';
 import { sponge } from './sponge.ts';
 import { text } from './text.ts';
 import { transform } from './transform.ts';
+import { MAX_RASTER_SELECTION_PIXELS } from '../util/selection-mask.ts';
 
 export type ProcessorToolParams = {
   size: Size;
   bitmap: BitmapSource;
+  previousCanvas?: BitmapSource;
 };
 
 export type CreatorToolParams = {
@@ -58,6 +64,8 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
+  /** Maximum staged raster size for processors whose pixel algorithms have an explicit cap. */
+  maxStagingPixelCount?: number;
   /**
    * Whether the processor reads the existing layer bitmap before producing its
    * raster result. Omitted means true; draw-backed paint processors are the
@@ -84,20 +92,37 @@ export type ToolProcessorDefinition = {
 /**
  * Tools that rasterize nothing, commit no pixels and record no history state.
  *
- * The eyedropper, the Hand and Rotate View belong here and not under `commit: 'unimplemented'`:
- * all three are working tools, not dead buttons. Adobe's rule is that a history state comes from a change to
- * pixels. The eyedropper changes only the app's foreground colour, and the Hand changes only
- * the view — neither touches a pixel, so neither has a `commit` kind, a `replay()` descriptor,
- * a `HistoryItem` or a durable operation. `unimplemented` cannot express that — it means "this
+ * The eyedropper belongs here and not under `commit: 'unimplemented'`: it is a working tool, not a
+ * dead button. Adobe's rule is that a history state comes from a change to pixels, and sampling
+ * changes only the app's foreground colour, so it has no `commit` kind, no `replay()` descriptor,
+ * no `HistoryItem` and no durable operation. `unimplemented` cannot express that — it means "this
  * tool does not work yet", and it is read as exactly that by `src/components/Main/Main.tsx`'s tool
  * dispatch. Naming the set is also what lets a consumer of `toolProcessors` distinguish "this tool
  * has no processor" from "this tool name does not exist".
  *
- * `HandToolArea` additionally never calls `claimDocumentGesture`, for the same reason: it
- * writes no pixel, so claiming the single document slot would make the tool refuse itself and
- * would break the "one document owner at a time" invariant `document-gesture.ts` documents.
+ * The Ruler is the second member, and it earns the set by the same rule rather than by affinity
+ * with the Eyedropper. Adobe describes the measuring line as a **nonprinting** line and gives its
+ * removal as dragging it out of the image or clicking Clear — not as undoing an edit — so a
+ * measurement changes no pixel and there is nothing for a history state to restore. `HANDOFF.md`
+ * §74 groups it as the measurement band "because these are `PIXEL_FREE_TOOLS` like the Eyedropper,
+ * committing no pixels and needing no durable operation", and that decision is the app-side answer
+ * to a question Adobe never states outright.
+ *
+ * The Color Sampler is the third, on Adobe's own one-line description: "Color Sampler tool |
+ * Displays color values for up to four areas." It displays rather than edits, so the pixels under a
+ * sampler are unchanged by its existence and a sample is not a document fact. It reads a pixel the
+ * way the Eyedropper does and writes it to a module store rather than to the foreground swatch, and
+ * neither difference gives it a `commit` kind.
+ * <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html>
  */
-export const PIXEL_FREE_TOOLS = ['eyedropper', 'hand', 'rotate-view'] as const satisfies readonly ToolName[];
+export const PIXEL_FREE_TOOLS = [
+  'eyedropper',
+  'ruler',
+  'color-sampler',
+  'hand',
+  'zoom',
+  'rotate-view',
+] as const satisfies readonly ToolName[];
 
 /** The tools that do have a processor, which is the registry's key set. */
 export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;
@@ -123,7 +148,7 @@ const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: num
 const replay = (kind: ToolReplayKind, requiresRaster: boolean, deterministic = true) =>
   Object.freeze({ kind, deterministic, version: 1, requiresRaster });
 
-/** The width `defaultSettings.pencil` seeds the pencil with (src/tools/settings.ts:126). */
+/** The width `defaultSettings.pencil.lineWidth` seeds the pencil with. */
 const DEFAULT_PENCIL_LINE_WIDTH = 3;
 
 const unimplemented = () => () => [null as never] as ToolResult;
@@ -188,15 +213,13 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   'polygonal-lasso': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: selection,
   },
   'freehand-lasso': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: selection,
   },
@@ -214,47 +237,42 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   'rectangular-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
   // The Photoshop focus family below, plus the tonal tools, are all `commit: 'raster'`
   // and therefore all get durable shadow support with no durable code of their own:
-  // `history-adapter.ts:416-424` converts ANY `commit: 'raster'` tool into an
+  // `history-adapter` converts ANY `commit: 'raster'` tool into an
   // `apply-raster-processor` operation keyed on `args.toolName`, with no allowlist to
   // extend. A new raster tool is replayable in the shadow document the day it is
   // registered here.
   'elliptical-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: ellipticalSelection,
   },
   // The 1-pixel marquees are the Rectangular Marquee's processor verbatim: it is a
   // pass-through that returns the document bitmap untouched, because a selection is
-  // geometry in the store and no pixels at all (`rectangularSelection.ts:9`-`:13`).
+  // geometry in the store and no pixels at all (`rectangularSelection()`).
   // Two separate `replay(...)` calls rather than one shared result, because
-  // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
+  // `tool-processors.test.ts` requires a distinct frozen descriptor per tool.
   'single-row-marquee': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
   'single-column-marquee': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
   'quick-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: quickSelection,
   },
@@ -307,6 +325,31 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: cloneStamp,
   },
+  'red-eye': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: redEye,
+  },
+  'spot-healing': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: spotHealing,
+  },
+  'healing-brush': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: healingBrush,
+  },
+  patch: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: patch,
+  },
   brush: {
     commit: 'raster',
     creator: true,
@@ -331,6 +374,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     },
   },
   'color-replacement': {
+    maxStagingPixelCount: COLOR_REPLACEMENT_MAX_STAGING_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     // No `@ts-expect-error` here, unlike the entries above it: `colorReplacement` narrows its
@@ -344,11 +388,13 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: (params) => (args) => eraser(params)(args),
   },
   'magic-eraser': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => magicEraser(params)(args),
   },
   'paint-bucket': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => paintBucket(params)(args),

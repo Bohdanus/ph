@@ -49,7 +49,7 @@ function makeFilteredLayer(toolName: (typeof FILTER_TOOL_NAMES)[number]): Durabl
 
 const makeRequest = (registry: AssetRegistry): MaterializationRequest => ({
   documentId: 'test-doc',
-  baselineAssetGeneration: 0,
+  baselineAssetGeneration: registry.getDocumentGeneration('test-doc'),
   operationSetRevision: 0,
   assetRegistry: registry,
 });

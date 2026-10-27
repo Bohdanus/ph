@@ -1,4 +1,13 @@
-import React, { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
 import { renderExportCanvas } from './export-canvas.ts';
 import type { PsdDocument } from './psd-utils.ts';
@@ -9,6 +18,12 @@ import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
+import { useOptionalStore } from './StoreContext.tsx';
+import { composeDurableDocument } from './durable-compositor.ts';
+import { replayDurableAtCursor } from './durable-replay.ts';
+import { getAssetRegistry } from './asset-registry.ts';
+import { durableExportRecords } from './export-canvas.ts';
+import { documentFrameEquals } from './document-frame.ts';
 
 export type ImageUploadResponse =
   | { fileName: string; document: PsdDocument }
@@ -43,6 +58,12 @@ type FileProviderProps = PropsWithChildren;
 
 // FileProvider is a persistent provider that owns the hidden DOM used for file I/O
 export const FileProvider = ({ children }: FileProviderProps) => {
+  const storeContext = useOptionalStore();
+  const store = storeContext?.[0] ?? null;
+  const latestStoreRef = useRef(store);
+  useEffect(() => {
+    latestStoreRef.current = store;
+  }, [store]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [showNewDialog, setShowNewDialog] = useState(false);
@@ -91,40 +112,99 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     }
   };
 
-  const openNewImageDialog = () => {
+  const openNewImageDialog = useCallback(() => {
     setShowNewDialog(true);
     return new Promise<NewDocumentBlankParams | null>((resolve) => {
       newResolverRef.current = resolve;
     });
-  };
+  }, []);
 
-  const openLoadImageDialog = () => {
+  const openLoadImageDialog = useCallback(() => {
     return new Promise<ImageUploadResponse | null>((resolve) => {
       uploadResolverRef.current = resolve;
       // trigger file picker
       fileInputRef.current?.click();
     });
-  };
+  }, []);
 
-  const openSaveImageDialog = (input: ImageSaveInput) => {
+  const openSaveImageDialog = useCallback((input: ImageSaveInput) => {
     setFileInput(input);
     setShowSaveDialog(true);
     return new Promise<ImageSaveResponse | null>((resolve) => {
       saveResolverRef.current = resolve;
     });
-  };
+  }, []);
 
-  async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
+  const value = useMemo(
+    () => ({ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }),
+    [openNewImageDialog, openLoadImageDialog, openSaveImageDialog]
+  );
+
+  async function handleImageSave({ fileName, format, quality }: ImageSaveResponse): Promise<ImageSaveResponse | null> {
+    let durableComposite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
     try {
       const { layers, size, documentFrame } = fileInput!;
+      let exportLayers = layers;
+      let exportSize = size;
+      let exportFrame = documentFrame;
+      const current = latestStoreRef.current;
+      const frameMatches =
+        documentFrame && current?.documentFrame
+          ? documentFrameEquals(documentFrame, current.documentFrame)
+          : documentFrame === current?.documentFrame;
+      if (
+        current?.durableStatus === 'current' &&
+        current.durableDocument &&
+        current.durableDocument.cursor === current.historyIndex &&
+        current.durableDocument.documentId === current.documentId &&
+        current.durableDocument.documentRevision === current.documentRevision &&
+        current.durableDocument.branchRevision === current.branchRevision &&
+        layers === current.layers &&
+        size.width === current.totalSize.width &&
+        size.height === current.totalSize.height &&
+        frameMatches
+      ) {
+        try {
+          const replay = replayDurableAtCursor(current.durableDocument, current.durableDocument.cursor);
+          durableComposite = await composeDurableDocument(replay, {
+            documentId: current.documentId,
+            baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
+            operationSetRevision: current.durableDocument.durableRevision,
+            assetRegistry: getAssetRegistry(),
+          });
+          const records = durableExportRecords(replay, durableComposite);
+          const latest = latestStoreRef.current;
+          if (
+            !latest ||
+            latest.durableStatus !== 'current' ||
+            latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
+            latest.historyIndex !== current.historyIndex ||
+            latest.documentRevision !== current.documentRevision ||
+            latest.branchRevision !== current.branchRevision
+          ) {
+            durableComposite.release();
+            durableComposite = undefined;
+          } else {
+            exportLayers = records.layers;
+            exportSize = records.size;
+            exportFrame = records.frame;
+          }
+        } catch {
+          durableComposite?.release();
+          durableComposite = undefined;
+        }
+      }
+
       if (format === 'psd') {
         const { savePsd } = await import('./psd-utils.ts');
-        const buffer = documentFrame ? await savePsd(layers, size, documentFrame) : await savePsd(layers, size);
+        const buffer = exportFrame
+          ? await savePsd(exportLayers, exportSize, exportFrame)
+          : await savePsd(exportLayers, exportSize);
         downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), fileName, 'psd');
       } else {
         // Rendered here rather than handed in, so the encoded pixels are the DOCUMENT at
         // DOCUMENT resolution whatever the display canvas is doing. See export-canvas.ts.
-        await saveImageToDisk(renderExportCanvas(layers, size, documentFrame), fileName, format, quality);
+        await saveImageToDisk(renderExportCanvas(exportLayers, exportSize, exportFrame), fileName, format, quality);
       }
       saveResolverRef.current?.(quality === undefined ? { fileName, format } : { fileName, format, quality });
       saveResolverRef.current = null;
@@ -139,16 +219,18 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       // still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
-    } catch (e) {
-      console.error('Failed to save image:', e);
-      // `null` is the in-band failure signal every caller already guards with
-      // `if (data)`, so it still resolves, and it still resolves the promise exactly once
-      // because it is the first and only caller of a resolver that is nulled immediately
-      // after. The dialog, the staged input and the dialog's own controls all stay put, so
-      // the retry re-enters this `try` with `fileInput` intact and the now-nulled
-      // `saveResolverRef` makes the second resolution a no-op rather than a stale resolve.
+      return quality === undefined ? { fileName, format } : { fileName, format, quality };
+    } catch (error) {
+      // Resolve the caller's promise with null so openSaveImageDialog callers
+      // (AppKeyboardShortcuts, DesktopHeader, etc.) treat the attempt as a non-save and
+      // skip their save-state dispatch. Clearing the resolver first keeps retries from
+      // settling an already-completed promise. Re-throw so SaveDialog's own catch block
+      // can surface the detailed error message and keep the dismiss affordance.
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
+      throw error;
+    } finally {
+      durableComposite?.release();
     }
   }
 
@@ -173,7 +255,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   };
 
   return (
-    <FileContext.Provider value={{ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }}>
+    <FileContext.Provider value={value}>
       {children}
       <input
         type="file"

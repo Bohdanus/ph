@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +7,7 @@ import { mobileToolGroups } from '../mobile-tools.ts';
 import { toolbarMap } from '../../../../toolbar-mapping.ts';
 
 const useStoreMock = vi.hoisted(() => vi.fn());
+const dispatchMock = vi.hoisted(() => vi.fn());
 const goToToolMock = vi.hoisted(() => vi.fn());
 const patchToolArgsMock = vi.hoisted(() => vi.fn());
 
@@ -24,7 +25,8 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({ toolArgs: { toolName: 'draw' }, patchToolArgs: patchToolArgsMock }),
 }));
 
-const setTool = (toolName: string, hasImage = true) => useStoreMock.mockReturnValue([{ toolName, hasImage }]);
+const setTool = (toolName: string, hasImage = true) =>
+  useStoreMock.mockReturnValue([{ toolName, hasImage, color: '#123456', backgroundColor: '#abcdef' }, dispatchMock]);
 
 describe('MobileBottomBar', () => {
   beforeEach(() => {
@@ -44,21 +46,29 @@ describe('MobileBottomBar', () => {
     }
   });
 
-  it('reaches the four tools the old hand-written list predated', () => {
+  it('reaches the tools that the old hand-written list predated', () => {
     // The old list was `MOBILE_TOOLS: MobileToolItem[]` — a literal that nothing
     // type-checked against `ToolName`, so `eraser`, `magic-eraser`,
     // `paint-bucket` and `eyedropper` (commit 80eb207) simply never appeared. A
-    // tile is the desktop rail's group, so these four arrive on the owning tile's
-    // group and are selected from the tool sheet's picker for that group
-    // (see MobileToolSheet.test.tsx).
+    // tile is the desktop rail's group, so these tools now each have their own
+    // Photoshop-faithful group (Brush/E/G split) and are selected from the tool
+    // sheet's picker for that group (see MobileToolSheet.test.tsx).
     render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
 
-    const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eraser'))!;
+    const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('brush'))!;
     expect(brushGroup.primaryTool).toBe('brush');
-    expect(brushGroup.matchingTools).toEqual(
-      expect.arrayContaining(['brush', 'eraser', 'magic-eraser', 'paint-bucket', 'color-replacement', 'pencil'])
-    );
+    expect(brushGroup.matchingTools).toEqual(['brush', 'pencil', 'color-replacement']);
     expect(screen.getByRole('button', { name: 'Brush Tool' })).toBeInTheDocument();
+
+    const eraserGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eraser'))!;
+    expect(eraserGroup.primaryTool).toBe('eraser');
+    expect(eraserGroup.matchingTools).toEqual(['eraser', 'magic-eraser']);
+    expect(screen.getByRole('button', { name: 'Eraser Tool' })).toBeInTheDocument();
+
+    const paintBucketGroup = mobileToolGroups.find((group) => group.matchingTools.includes('paint-bucket'))!;
+    expect(paintBucketGroup.primaryTool).toBe('paint-bucket');
+    expect(paintBucketGroup.matchingTools).toEqual(['paint-bucket']);
+    expect(screen.getByRole('button', { name: 'Paint Bucket Tool' })).toBeInTheDocument();
 
     const eyedropperGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eyedropper'))!;
     expect(eyedropperGroup.primaryTool).toBe('eyedropper');
@@ -139,6 +149,40 @@ describe('MobileBottomBar', () => {
 
     expect(onOpenLayers).toHaveBeenCalledTimes(1);
     expect(goToToolMock).not.toHaveBeenCalled();
+  });
+
+  it('provides touch-sized foreground and background color swatches with native pickers', async () => {
+    const user = userEvent.setup();
+    render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
+
+    const foreground = screen.getByRole('button', { name: 'Foreground Color' });
+    const background = screen.getByRole('button', { name: 'Background Color' });
+    expect(foreground.className).toContain('min-h-11');
+    expect(foreground.className).toContain('min-w-11');
+    expect(background.className).toContain('min-h-11');
+    expect(background.className).toContain('min-w-11');
+    expect(screen.getByTestId('mobile-foreground-color-input')).toHaveValue('#123456');
+    expect(screen.getByTestId('mobile-background-color-input')).toHaveValue('#abcdef');
+
+    const foregroundInput = screen.getByTestId('mobile-foreground-color-input');
+    const clickForegroundInput = vi.spyOn(foregroundInput, 'click');
+    await user.click(foreground);
+    expect(clickForegroundInput).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(foregroundInput, { target: { value: '#ff0000' } });
+    fireEvent.change(screen.getByTestId('mobile-background-color-input'), { target: { value: '#00ff00' } });
+    expect(dispatchMock).toHaveBeenNthCalledWith(1, { type: 'SET_COLOR', payload: '#ff0000' });
+    expect(dispatchMock).toHaveBeenNthCalledWith(2, { type: 'SET_BACKGROUND_COLOR', payload: '#00ff00' });
+  });
+
+  it('swaps foreground and background colors', async () => {
+    const user = userEvent.setup();
+    render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Swap foreground and background colors' }));
+
+    expect(dispatchMock).toHaveBeenNthCalledWith(1, { type: 'SET_COLOR', payload: '#abcdef' });
+    expect(dispatchMock).toHaveBeenNthCalledWith(2, { type: 'SET_BACKGROUND_COLOR', payload: '#123456' });
   });
 
   it('keeps every tile at least 44px on both axes', () => {
