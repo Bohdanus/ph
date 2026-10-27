@@ -150,8 +150,11 @@ describe('Linux baseline promotion workflow', () => {
     expect(promotionStep).toContain('CHAT_ID: ${{ github.event.client_payload.chat_id }}');
     expect(promotionStep).toContain('git push origin "HEAD:refs/heads/$SOURCE_BRANCH"');
     expect(promotionStep).not.toContain('--force');
-    expect(promotionStep).toContain('-m "Chat: $CHAT_ID"');
-    expect(promotionStep).not.toContain('Co-authored-by: Copilot');
+    expect(promotionStep).toContain('if [[ "$CHAT_ID" == copilotcli:/* ]]');
+    expect(promotionStep).toContain('COMMIT_TRAILERS=$(printf');
+    expect(promotionStep).toContain('Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>');
+    expect(promotionStep).toContain('COMMIT_TRAILERS="Chat: $CHAT_ID"');
+    expect(promotionStep).toContain(`commit -m 'test: refresh Linux export baselines' -m "$COMMIT_TRAILERS"`);
     expect(stagingStep).toContain('git check-attr text eol filter ident working-tree-encoding -- "$target"');
     expect(stagingStep).toContain(': ident: unspecified');
   });
