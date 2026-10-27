@@ -1379,6 +1379,21 @@ describe('renderText', () => {
       expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
     });
 
+    it('measures the unshaped fallback advances when Canvas lacks letterSpacing', () => {
+      const ctx = makeTextCtx({
+        measure: (value) => metrics(value.length * CH - (value.startsWith('AVE') ? 5 : 0)),
+      });
+      const args = { ...baseArgs, text: 'Wave', smallCaps: true, tracking: 100 };
+
+      expect('letterSpacing' in ctx).toBe(false);
+      expect(getTextWidth(ctx, args)).toBeCloseTo(37.09375, 5);
+      renderText(ctx, args);
+
+      expect(ctx.translate).toHaveBeenNthCalledWith(1, TEXT_PADDING + 12, 21);
+      expect(ctx.translate).toHaveBeenNthCalledWith(2, TEXT_PADDING + 21.03125, 21);
+      expect(ctx.translate).toHaveBeenNthCalledWith(3, TEXT_PADDING + 30.0625, 21);
+    });
+
     it('keeps All Caps and Small Caps independent of contexts with neither toggle', () => {
       const ctx = makeTextCtx({ modern: true });
 

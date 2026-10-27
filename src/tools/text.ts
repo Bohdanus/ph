@@ -473,7 +473,16 @@ function measureWithoutLetterSpacing(ctx: Ctx2D, text: string): number {
 function manualCapsWidth(ctx: Ctx2D, line: string, spacing: number, mode: CanvasCapsMode): number {
   const runs = manualCapsRuns(line, mode);
   const clusterCount = runs.reduce((count, run) => count + run.clusterCount, 0);
-  const glyphWidth = runs.reduce((width, run) => width + measureWithoutLetterSpacing(ctx, run.text) * run.scale, 0);
+  // `fillLine` has to draw each grapheme separately to add tracking when Canvas has no native
+  // `letterSpacing`; measure the same unkerned advances here so wrapping and alignment match the
+  // actual cursor path. Keep whole-run shaping when native letter spacing can draw the run intact.
+  const needsPerClusterWidths = spacing !== 0 && !hasLetterSpacing(ctx);
+  const glyphWidth = runs.reduce((width, run) => {
+    const chunks = needsPerClusterWidths ? graphemes(run.text) : [run.text];
+    return (
+      width + chunks.reduce((runWidth, chunk) => runWidth + measureWithoutLetterSpacing(ctx, chunk) * run.scale, 0)
+    );
+  }, 0);
   return Math.max(0, glyphWidth + Math.max(0, clusterCount - 1) * spacing);
 }
 
