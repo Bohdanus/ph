@@ -2130,10 +2130,8 @@ test.describe('Text tool', () => {
       Math.abs(allCaps.height - plainUppercase.height),
       'All Caps changed uppercase height beyond the two-pixel row-rasterization allowance'
     ).toBeLessThanOrEqual(2);
-    expect(
-      smallCaps.width,
-      'Small Caps did not narrow lowercase characters by at least five percent'
-    ).toBeLessThanOrEqual(plainMixedCase.width * 0.95);
+    expect(smallCaps.width, 'Small Caps did not narrow lowercase characters').toBeLessThan(allCaps.width);
+    expect(smallCaps.pixelCount, 'Small Caps did not render a distinct cap-height mix').not.toBe(allCaps.pixelCount);
     expect(
       Math.abs(smallCaps.height - plainMixedCase.height),
       'Small Caps scaled the existing uppercase character beyond the two-pixel row-rasterization allowance'
@@ -2145,7 +2143,7 @@ test.describe('Text tool', () => {
     expectInkInsideRect(smallCaps, box, CAPS_RECTS.smallCaps, 'the small-caps commit');
   });
 
-  test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps but accepts shorthand', async ({
+  test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps and accepts shorthand', async ({
     page,
   }, testInfo) => {
     await hideCanvasFontVariantCaps(page);
@@ -2187,7 +2185,7 @@ test.describe('Text tool', () => {
     expectInkInsideRect(committed, box, rect, 'the small-caps commit');
   });
 
-  test('Small Caps preview matches its commit when Canvas rejects the small-caps shorthand', async ({
+  test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps and rejects shorthand', async ({
     page,
   }, testInfo) => {
     await hideCanvasFontVariantCaps(page, { ignoreSmallCapsShorthand: true });

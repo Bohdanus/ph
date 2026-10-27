@@ -97,7 +97,12 @@ const appliedDuring = new WeakMap<CanvasRenderingContext2D, Record<string, unkno
 const makeTextCtx = ({
   measure = widthOnlyMeasure,
   modern = false,
-}: { measure?: (value: string) => TextMetrics; modern?: boolean } = {}): CanvasRenderingContext2D => {
+  nativeFontVariantCaps = true,
+}: {
+  measure?: (value: string) => TextMetrics;
+  modern?: boolean;
+  nativeFontVariantCaps?: boolean;
+} = {}): CanvasRenderingContext2D => {
   const ctx = makeMockCtx({
     measureText: vi.fn(measure),
     ...(modern ? { letterSpacing: '0px', fontVariantCaps: 'normal' } : {}),
@@ -136,7 +141,11 @@ const makeTextCtx = ({
   appliedDuring.set(ctx, log);
   vi.mocked(ctx.measureText).mockImplementation((value: string) => {
     log.push(Object.fromEntries(RESTORED_BY_SAVE.map((key) => [key, target[key]])) as Record<string, unknown>);
-    return measure(value);
+    const result = measure(value);
+    const variant = target.fontVariantCaps;
+    const smallCaps =
+      variant === 'small-caps' && value === value.toLowerCase() && value.toUpperCase() !== value.toLowerCase();
+    return modern && nativeFontVariantCaps && smallCaps ? { ...result, width: result.width * 0.703125 } : result;
   });
 
   // Seeded so the restore assertions compare against a known value rather than against `undefined`,
@@ -890,6 +899,10 @@ describe('renderText', () => {
       // — so `ctx.fontVariantCaps` was `undefined`, and `expect(undefined).not.toBe('normal')` passes
       // against a renderer that never applies caps at all. Two assertions that cannot fail.
       const ctx = makeTextCtx({ modern: true });
+      const letterSpacingAtDraw: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        letterSpacingAtDraw.push(ctx.letterSpacing);
+      });
       ctx.font = '10px sans-serif';
 
       renderText(ctx, { ...baseArgs, tracking: 250, allCaps: true });
@@ -902,7 +915,7 @@ describe('renderText', () => {
       // something rather than confirming that nothing was ever applied.
       expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
       // tracking 250 of 1000 em at the base 20px is 5px.
-      expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('5px');
+      expect(letterSpacingAtDraw).toEqual(['5px']);
     });
 
     it("restores the caller's alpha after rendering a draft", () => {
@@ -1317,49 +1330,53 @@ describe('renderText', () => {
       expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
     });
 
-    it('uses the CSS small-caps font shorthand when Canvas lacks fontVariantCaps', () => {
+    it('synthesizes grapheme-safe small caps when Canvas lacks fontVariantCaps', () => {
       const ctx = makeTextCtx();
       const fonts: string[] = [];
-      vi.mocked(ctx.measureText).mockImplementation((value: string) =>
-        metrics(value.length * (ctx.font.startsWith('small-caps ') ? CH * 0.75 : CH))
-      );
-      vi.mocked(ctx.fillText).mockImplementation(() => fonts.push(ctx.font));
+      const glyphs: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation((value: string) => {
+        fonts.push(ctx.font);
+        glyphs.push(value);
+      });
 
       renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
 
       expect('fontVariantCaps' in ctx).toBe(false);
-      expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
-      expect(fonts).toEqual(['small-caps 20px Arial']);
+      expect(glyphs).toEqual(['W', 'AVE']);
+      expect(fonts).toEqual(['20px Arial', '20px Arial']);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
     });
 
     it('uses grapheme-safe faux small caps when Canvas exposes but ignores the variant', () => {
-      const ctx = makeTextCtx({ modern: true });
+      const ctx = makeTextCtx({ modern: true, nativeFontVariantCaps: false });
       const fonts: string[] = [];
       vi.mocked(ctx.fillText).mockImplementation(() => fonts.push(ctx.font));
 
       renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
 
       expect(vi.mocked(ctx.fillText).mock.calls.map(([value]) => value)).toEqual(['W', 'AVE']);
-      expect(fonts).toEqual(['20px Arial', '14.0625px Arial']);
+      expect(fonts).toEqual(['20px Arial', '20px Arial']);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
       expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
     });
 
     it('applies tracking between graphemes in faux small caps', () => {
       const ctx = makeTextCtx({
         modern: true,
+        nativeFontVariantCaps: false,
         measure: (value) => metrics(value.length * CH - (value.startsWith('AVE') ? 5 : 0)),
       });
       const args = { ...baseArgs, text: 'Wave', smallCaps: true, tracking: 100 };
 
-      expect(getTextWidth(ctx, args)).toBe(46);
+      expect(getTextWidth(ctx, args)).toBeCloseTo(33.578125, 5);
       renderText(ctx, args);
 
       expect(vi.mocked(ctx.fillText).mock.calls.map(([glyph, x]) => [glyph, x])).toEqual([
         ['W', TEXT_PADDING],
-        ['A', TEXT_PADDING + 12],
-        ['V', TEXT_PADDING + 24],
-        ['E', TEXT_PADDING + 36],
+        ['AVE', 0],
       ]);
+      expect(ctx.translate).toHaveBeenCalledWith(TEXT_PADDING + 12, 21);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
     });
 
     it('keeps All Caps and Small Caps independent of contexts with neither toggle', () => {
