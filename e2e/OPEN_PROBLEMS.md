@@ -222,12 +222,15 @@ remain:
    the dark theme their threshold is satisfied by `#121212` and `#000` alone, so a wait
    on either can be satisfied by a clip containing no stroke.
 
-**This is LATENT today, and one declaration is the only thing making it so.**
-The top-level `use` block's `colorScheme: 'light'` in `playwright.config.ts` is that declaration, and
-its value is Playwright's own default, so every currently-green test relies on a precondition this
-file states and nothing enforces. Remove that line, or write a spec that pins
-`colorScheme: 'dark'` for itself, and the wrong-pass returns with no other file
-noticing.
+**The app-theme precondition is enforced by the shared test fixture, not by
+`colorScheme`.** `e2e/fixtures/extended-test.ts` seeds `localStorage.theme` to `light` in a
+fresh context, and `extended-fixture.unit.test.ts` plus
+`pinned-theme-payload.unit.test.ts` guard that behavior. Playwright's `colorScheme` option
+only sets `prefers-color-scheme`; `ThemeContext` no longer reads that query. A test that
+switches the app to dark and then passes a capture containing workspace backdrop to one of
+these color-only helpers can still wrong-pass. `canvasRedrawClip` keeps the standard stroke
+clip inside the document; review custom clips in any dark-theme test separately. Setting
+`colorScheme: 'dark'` alone does not select the app's dark theme.
 
 Pinned by the `#000`-wash case
 `it('reads a pure #000 capture as ink, so the dark theme's gaps are the residual it leaves')`
@@ -235,11 +238,13 @@ in `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts`, which asserts th
 full black capture classifies as `{type: 'spray'}` on purpose. A fix removes that pin
 in the same change.
 
-Fix: apply the same cell-colour exclusion inside `hasDarkPixels` and
-`getDarkPixelBounds` that `getStrokeAnalysis` already applies, and widen it from two
-exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps are
-covered too. Add a dark-theme case that pins the direction this depends on, so the
-latent wrong-pass has a tripwire of its own rather than resting on a config default.
+Do not widen RGB thresholds to hide the residual: the dark checkerboard's `#000` gaps are
+the same color as the app's default black ink. A generic backdrop-aware fix needs spatial
+context (at least the resolved theme, capture origin and scale, and document bounds or a
+backdrop mask) so it can exclude backdrop by position without excluding black ink in the
+document. Otherwise, keep dark-theme captures out of color-only helper calls. Regression
+coverage for a future fix must retain true `#000` document ink while excluding dark cells,
+dark gaps, and antialiased checkerboard edges.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
