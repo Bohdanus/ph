@@ -311,25 +311,12 @@ describe('tool image processors', () => {
       }
     });
 
-    it('passes a NaN brightness/contrast straight into the filter string (levels.ts — the levels() processor)', () => {
-      // `proportionateFactor` has no guard, so non-finite inputs survive into the composed CSS
-      // filter. `presentation-evaluator.ts` — `numericFilterArg()` is what refuses them on the
-      // live render path; this processor has no such gate, which is what the tripwire below
-      // records.
-      const [result] = levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
+    it('normalizes non-finite Levels arguments before applying the processor filter', () => {
+      const [result] = levels(params)({ brightness: Number.NaN, contrast: 40, toolName: 'levels' });
 
-      expect(lastCanvas().ctx.filter).toBe('brightness(NaN%) contrast(NaN%)');
+      expect(lastCanvas().ctx.filter).toBe('brightness(100%) contrast(140%)');
       expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
-
-    it.fails(
-      'sanitizes a non-finite brightness/contrast before it reaches the CSS filter (levels.ts — the levels() processor)',
-      () => {
-        levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
-
-        expect(lastCanvas().ctx.filter).not.toContain('NaN');
-      }
-    );
   });
 
   describe('crop', () => {

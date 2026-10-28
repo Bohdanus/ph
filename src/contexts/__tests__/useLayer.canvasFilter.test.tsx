@@ -166,6 +166,57 @@ describe('a refused ctx.filter tool leaves no history state and no operation', (
     errorSpy.mockRestore();
   });
 
+  it('normalizes non-finite Levels args in a live preview before committing the operation', () => {
+    overrideCanvasFilterSupport(true);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = setupToolWithLayer('levels');
+    let previewed = false;
+
+    act(() => {
+      previewed = result.current.layers.tempUpdateLayer({
+        id: 'layer-1',
+        toolArgs: { toolName: 'levels', brightness: Number.NaN, contrast: 40 },
+      });
+      result.current.layers.commitDirtyTool();
+    });
+
+    const layer = result.current.store.layers['layer-1'];
+    const operation = layer.operations[0];
+    expect(previewed).toBe(true);
+    if (!operation || operation.kind === 'affine-transform') throw new Error('expected a Levels filter operation');
+    expect(operation.args).toEqual({ toolName: 'levels', brightness: 0, contrast: 40 });
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: TOOL_ACTION,
+      args: { toolName: 'levels', brightness: 0, contrast: 40 },
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('normalizes non-finite Levels args before retaining the layer operation and history item', async () => {
+    overrideCanvasFilterSupport(true);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = setupToolWithLayer('levels');
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'layer-1',
+        toolArgs: { toolName: 'levels', brightness: Number.NaN, contrast: 40 },
+      });
+    });
+
+    const layer = result.current.store.layers['layer-1'];
+    const operation = layer.operations[0];
+    if (!operation || operation.kind === 'affine-transform') throw new Error('expected a Levels filter operation');
+    expect(operation.args).toEqual({ toolName: 'levels', brightness: 0, contrast: 40 });
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: TOOL_ACTION,
+      args: { toolName: 'levels', brightness: 0, contrast: 40 },
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it('a non-filter tool is unaffected by an absent filter support', async () => {
     overrideCanvasFilterSupport(false);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);

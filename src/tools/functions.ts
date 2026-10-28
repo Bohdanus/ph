@@ -104,9 +104,9 @@ const CONTRAST_FACTOR_SPAN = CONTRAST_SLIDER_RANGE.max;
  * | Contrast   | `0`    | `1`    |
  * | Contrast   | `+100` | `2`    |
  *
- * Non-finite input propagates, as `expAdjustment` also did: `presentation-evaluator.ts`'s
- * `numericFilterArg` owns the refusal, and the `it.fails` tripwire in `image-processors.test.ts`
- * depends on nothing here sanitising it first.
+ * Non-finite input propagates at this low-level formatter. `normalizeLevelsToolArgs()` handles
+ * malformed values at the Levels tool boundary, while `presentation-evaluator.ts`'s
+ * `numericFilterArg` continues to refuse corrupt retained operations.
  */
 export function proportionateFactor(value: number, span: number): number {
   return 1 + value / span;
