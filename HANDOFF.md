@@ -151,7 +151,9 @@ later edits cannot use this exception to skip that gate. The default app starts 
 the tested paste and Background flows therefore remain on the legacy presentation. The browser
 spec verifies their exact undo/redo pixels and PNG/PSD exports, not durable presentation.
 The eligible gate-free prefix is covered by a focused unit test but has no proven normal UI entry
-point yet. Logical replay remains legacy-owned.
+point yet. A source-derived candidate is disabling the default blank history row through the
+History panel; validate it with the next-run E2E in `docs/HISTORY-MIGRATION-NEXT.md` before calling
+the exception product-reachable. Logical replay remains legacy-owned.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,

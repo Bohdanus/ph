@@ -2,18 +2,22 @@
 
 ## Current-main sync and active decision record — 2026-10-28
 
-The actual local `refs/heads/main` is checked out at
+At the time of this sync, the actual local `refs/heads/main` was checked out at
 `/Users/bkalynovskyi/ph/.kilo/worktrees/main-landing-selection-20261028`, not the root
-`main-sync` checkout. The reviewed main pin for this sync is
-`3ccccba083eab71df75971bcb4037d7df1fb9f13`. The migration branch is
+`main-sync` checkout. The reviewed main pin for the sync is
+`3ccccba083eab71df75971bcb4037d7df1fb9f13`. A fresh worktree-list check on 2026-10-28
+now places `refs/heads/main` at
+`/Users/bkalynovskyi/ph/.kilo/worktrees/main-clean-20261028`, still at that same SHA. The
+migration branch is
 `docs/history-migration-plan-20261027` in
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-migration-plan-20261027`.
 
-The main-into-branch merge is prepared in this task worktree with that exact `MERGE_HEAD`;
-its four conflicts are resolved and staged here. `git cherry` found the implementation and checkpoint
-commits `eeed3af4` and `d6968c47` are unique to this branch. `git range-diff` shows the
-40 current-main commits and two branch commits have no corresponding patches, so this is
-a real sync merge, not a replay of equivalent commits.
+The main-into-branch merge was committed as `976a201e7009f78d89caf9112d56af730438324b`,
+with parents `d6968c47e1ae5ba6a85bc4cd9bb2e0adad9b0176` and
+`3ccccba083eab71df75971bcb4037d7df1fb9f13`. The plan checkpoint is `98f2fb5f2b55fb85d83a280861a891a08691a822`.
+`git cherry` found the implementation and checkpoint commits `eeed3af4` and `d6968c47` are
+unique to this branch. `git range-diff` showed the 40 main commits and two branch commits have no
+corresponding patches, so this was a real sync merge, not a replay of equivalent commits.
 
 Conflict resolution ledger:
 
@@ -27,15 +31,34 @@ Conflict resolution ledger:
   composite mismatch. Add the bounded create behavior and its fallback rule from this plan.
   Do not retain the older one-raster frame status as current evidence.
 
-The inventory snapshot at `2026-10-28T17:41Z` was generated before this merge changed the
-task checkout. It recorded main at `3ccccba`, 41 worktrees, no ready-to-land candidates,
-and two live writer chats. `branches:orphan` reported 13 refs; no orphan or unrelated
-worktree was changed. `repo:state` still reports an open `AUTO_MERGE`/`MERGE_HEAD` in
-`dispose-worktree-main-ref-20261028`, whose working-tree status is clean. Do not inspect or
-resolve its content on this task. The actual-main checkout also has the unrelated
-untracked `HANDOFF-OPERATIONAL-20261028.md`; do not stage it. The fractional-frame
-root-cause worktree and source-backed import/replacement worktree are still marked in use;
-their files are outside this task's write set.
+The `2026-10-28T17:41Z` inventory snapshot was generated before the sync and is stale. The latest
+post-commit inventory refresh wrote the canonical `WORKTREES.json` in `main-clean-20261028` and
+reported 45 worktrees, one ready to land, and seven to dispose. `npm run branches:orphan` reports
+13 refs with no worktree; it disposed none. These are snapshots and must be refreshed after
+tomorrow's tests/commits stop changing the roster. `npm run repo:state` still exits nonzero for an unrelated `AUTO_MERGE` in
+`/Users/bkalynovskyi/ph/.kilo/worktrees/dispose-worktree-main-ref-20261028`, branch
+`fix/dispose-worktree-main-ref-20261028`, HEAD `d34305f4fca0996664029cd2003e912f4d844e4d`.
+Do not inspect or resolve that operation from this task; it blocks landing until its owner clears
+it, but it does not erase the branch-local migration handoff.
+
+Fresh local ownership snapshot (recheck it at resume; these are leads, not permission to harvest):
+
+- `ph-12` is still claimed by this branch for the source-backed create slice, but its lease had
+  178 minutes remaining at the check. The next agent must inspect `show ph-12`, renew/reclaim it,
+  and run `swarm check` before edits.
+- `history-migration-reimplementation-20261028` is at `17d476fa`, 47 commits behind current
+  main, and has an untracked `HANDOFF-SALVAGE-20261028.md` for a different blocked SALVAGE PLANS
+  task. It is not the continuation branch or migration source of truth.
+- `source-backed-ownership-20261028` is at `48fc2c85`, 21 commits behind current main, with an
+  untracked quarantine file. Do not merge or reuse it without a fresh owner handoff.
+- `source-backed-import-replacement-hardening-20261028` is clean at `95785f9a`, seven commits
+  ahead of current main and missing one main commit. Treat it as a separate candidate; recheck its
+  owner, worktree, tests and merge base before selecting import/replacement work.
+- `frame-fractional-composite-root-cause-20261028` is 14 commits ahead of current main. The older
+  `history-frame-control-raster-delta-20261027` worktree has uncommitted changes and is 140 main
+  commits behind. Do not edit, cherry-pick, or harvest either frame investigation here.
+- The swarm board showed `ph-12` as the only claimed issue; its three currently ready issues are
+  unrelated E2E work. Board state and these branch counts can change before tomorrow.
 
 The migration issue `ph-12` is reclaimed by this branch. Files held: `StoreContext.tsx`,
 the source-backed presentation unit and E2E specs, the document-reset regression test, the
@@ -45,14 +68,136 @@ applies to the pre-sync candidate only.
 ## Restart checkpoint: preserve this work first
 
 Status: **Slice 1's bounded unit contract is implemented and current-main sync validation
-is complete; its positive path is still unproven in normal UI flows; the merge commit is
-committed into this branch as `976a201e7009f78d89caf9112d56af730438324b` and not landed
-onto main; broader migration remains unproven**.
+is complete; the default startup path remains gated, while a History-panel route is a
+source-derived but untested reachability candidate; the sync is committed in this branch
+and not landed onto main; broader migration remains unproven**.
 Implementation checkpoint: `eeed3af4b613d7a14e2821016038e7ee05508769`. This commit and
 the prior handoff commit are not ancestors of current main.
 This is the durable handoff if the coordinating session loses quota. Resume in the
 absolute task worktree below, never in the root `main-sync` checkout. Do not recreate
 the changes or harvest the separate active frame task.
+
+## Next-run execution plan — prepared 2026-10-28
+
+The committed data is sufficient to resume this branch without reconstructing the design, but it
+is not sufficient to claim the history migration is finished. `HistoryItem[]` and
+`replayHistory()` remain the production logical authority; durable replay is a shadow/presentation
+path with explicit fallback. Frame parity, source ownership for several producers, and the
+authority/performance slices remain open. The next run should close or conclusively disprove one
+product-reachable source-backed create path, then select the next independently owned slice. Do
+not attempt the authority cutover as a continuation shortcut.
+
+### Re-entry and ownership gates
+
+1. Run `git worktree list --porcelain` first. Resolve the live `refs/heads/main` worktree and SHA
+   from that output; do not trust a prior path or the root `main-sync` checkout. At the last check,
+   main was `3ccccba083eab71df75971bcb4037d7df1fb9f13` in `main-clean-20261028`, while this branch
+   was clean at `98f2fb5f2b55fb85d83a280861a891a08691a822` and already contained main as a parent.
+2. Verify `pwd`, this worktree's top-level, branch, HEAD, git/common-dir, and status before editing.
+   Run `npm run repo:state`, `npm run swarm -- status`, `npm run swarm -- show ph-12`, and
+   `npm run swarm -- check` for every planned path. The `ph-12` lease will have expired by
+   tomorrow; only continue after the live claim is reacquired and no other writer holds the paths.
+3. `repo:state` currently reports the unrelated `AUTO_MERGE` above. Do not enter or repair that
+   worktree. Local branch-only investigation can proceed in the owned task checkout; do not land,
+   push, dispose worktrees, or declare the repository globally ready while the operation remains.
+4. Treat the fresh worktree/branch inventory above as a snapshot, not a queue. In particular, do
+   not take changes from the stale reimplementation handoff or the source/frame worktrees without
+   their owners' explicit handoff and a current-main diff review. Run `node scripts/worktree-inventory.mjs`
+   only after tests and commits stop changing the roster; never add `--quiet`.
+
+### First bounded objective: prove the gate-free append through the existing UI
+
+The default blank-document path is still gated: `BlankImageStarter` calls `setBlankImage()`,
+`createBlankLayer(..., true)` records a `NEW_LAYER_ACTION`, and `_addLayer()` replaces the document.
+That `REPLACE_DOCUMENT` path does not call `publishDurableAppendPresentation()`; only committed
+appends and store-owned reorder commits invoke that publisher. Ordinary paste and Background
+conversion therefore begin with an active gated prefix. The existing E2E proves their legacy
+fallback and exact pixels/exports.
+
+A concrete alternate route is visible in source but has not been proven in a browser test:
+
+- `HistoryTab.tsx` exposes an eye button to disable any history row.
+- `useHistory.toggleDisabled()` refuses to disable the first `OPEN_DOCUMENT_ACTION`, but it does
+  not apply that protection to the default first `NEW_LAYER_ACTION`.
+- `replayHistory()` skips disabled entries, and `durablePresentationGateReason()` skips them too.
+
+Therefore a user may be able to disable the initial blank row and then append a source-backed
+layer whose prior active prefix passes the existing gate. This is an inference from code, not a
+verified product flow. Test it before changing production gates:
+
+1. In headless E2E, start from the real default blank document and disable its first History row
+   through the visible History-tab control. Verify the row is disabled, the replayed empty/current
+   document remains usable, and an external paste through the existing deterministic clipboard
+   fixture reaches the real `COMMIT_DOCUMENT_EDIT` path.
+2. Before undo/redo, assert the append becomes `current` and its presentation selector is `durable`.
+   Compare the exact composite and layer pixels, then verify native-resolution PNG and PSD output.
+   Undo and redo must retain exact pixels and the disabled root entry; this is the only evidence
+   that the UI flow, source transaction and navigation all agree.
+3. Keep the first-row `OPEN_DOCUMENT_ACTION` disable refusal covered. Preserve existing tests for
+   stale replacement, incomplete coverage, finalization failure, tool sources, lease retirement,
+   and legacy fallback. No tolerance, implicit rasterization, or broad generic image opt-in.
+4. If this flow is valid and passes, document the result narrowly: the create exception is
+   reachable after the user disables the default blank history row; ordinary new-document,
+   paste and imported-raster flows remain gated unless separately proven. If disabling the root
+   creates an invalid document or the append cannot publish safely, leave the gate unchanged and
+   hand the baseline ownership decision to Sol. Do not claim the exception is unreachable in all
+   UI states, and do not exempt the root entry by assumption.
+
+This closes or blocks the existing `ph-12` slice; it does **not** finish durable history migration.
+The known positive unit fixture uses a synthetic gate-free `OPEN_DOCUMENT_ACTION` baseline, and
+the Sol audit did not test the History-tab disable route.
+
+### Choose the next implementation slice only after the first objective
+
+After the gate-reachability E2E, re-read the current plan's Slice 2A/2B acceptance tables and
+inspect live ownership. Slice 2A frame parity and Slice 2B source-family ownership are independent;
+neither can be declared complete from the other. The current source-backed import/replacement
+branch is a separate seven-commit candidate with one local-main commit missing, so it is not ready
+to cherry-pick or merge without owner handoff, rebase/merge-base review, tests and two read-only
+reviews. The fractional frame investigation remains separately owned. Choose one family only when
+there is a named missing behavior and its exact test/producer path; eligible candidates listed in
+Slice 2B are editable vector/text creation, typed replacement, merge/import replacement, and
+whole-document replacement. Do not duplicate an existing adapter or worktree's implementation.
+
+For any selected family, establish before editing:
+
+- The real producer and exact `HistoryItem`/durable entry shape; preserve operation ordering,
+  labels, sparse order, selection and active-layer identity.
+- Asset owner/generation and borrowed/owned bitmap lifetime through append, navigation, disabled
+  rows, append-after-undo, document replacement and close.
+- Whole-document renderer coverage and parity at every relevant cursor: exact composite, per-layer
+  bounds/alpha/pixels, mounted runtime projection, PNG and PSD adapters. Unsupported layers force
+  whole-document fallback.
+- Stale completion, missing asset, refusal, finalization failure, preview interleaving and failed
+  final draw all retain one consistent legacy state without a duplicate append or partial publish.
+
+Keep Slice 3 (durable-first logical undo/redo and history-panel navigation) and the bedrock
+ownership exception as Sol-level architecture gates. Slice 4 requires measurements from the real
+production replay path. Do not retire `HistoryItem[]` readers or advertise a single authority until
+all supported surface families, fallback policy, performance/cancellation and final-draw rollback
+are proven together.
+
+### Validation, review and finish criteria
+
+- Use the focused suites already named in this plan plus
+  `npm run test:e2e -- e2e/source-backed-history.spec.ts`; run `npm run test:e2e:unit` whenever
+  E2E files change.
+  Then run `npm run test -- --silent`, `npm run tsc`, `npm run build`, and `npm run lint:check`
+  on the exact candidate. Follow `docs/E2E-MIRROR.md` for a broad mirrored E2E run; never open a
+  browser window.
+- Migration/persistence/cross-module behavior needs two independent read-only reviews after the
+  implementation is final. The operator's current instruction is Luna or stronger only; do not
+  use free-model routes. Read `MODELS.md` before any model/provider selection, and honor its
+  subtask and cost rules for Sol/Terra. Reviewers report; the coordinator verifies findings.
+- Do not call the migration complete until Slice 2A and every needed Slice 2B source family have
+  explicit parity/ownership gates; Slice 3 performs atomic durable-first navigation with exact
+  labels and tool hydration; and Slice 4 measures replay cost, cancellation and safe baseline
+  acceptance. The `HistoryItem[]` authority can be removed only in that reviewed change. Otherwise
+  record the exact completed slice and leave the broader migration `unproven` with the next
+  dependency named.
+- Commit only reviewed, high-confidence changes with the native `Chat:` trailer. Landing to main
+  remains a separate pinned procedure and is blocked until the owner clears the current
+  `repo:state` operation and the exact latest-main/parent/tree checks pass.
 
 Implemented files:
 
@@ -60,8 +205,8 @@ Implemented files:
   compose in the background, and only if the preceding active cursor prefix passes main's
   existing ownership and frame gates. The new entry keeps legacy navigation fallback.
   The actual app boot path starts with a blank `NEW_LAYER_ACTION`, which main's gate marks
-  `ownership-unproven`; imported raster baselines are gated too. The exception therefore
-  has no proven normal UI entry point yet. Do not relax the cursor gate to make it reachable.
+  `ownership-unproven`; imported raster baselines are gated too. The History-tab disable route is
+  a source-derived candidate, not yet E2E-proven. Do not relax the cursor gate to make it reachable.
   Transaction ordering, freshness, renderer compatibility and whole-document coverage
   gates remain intact. Tool-source creates, later source-backed edits, merge, replacement
   and frame commits stay gated.
@@ -120,8 +265,8 @@ Current reachability finding — 2026-10-28: `App.tsx` creates the default blank
 active `NEW_LAYER_ACTION` as `ownership-unproven`. Consequently both actual paste and
 Background conversion start from an already-gated prefix. The narrow append exception is
 unit-tested against a gate-free `OPEN_DOCUMENT_ACTION` blank baseline, but that baseline has
-not been shown reachable through the product UI. Keep the implementation bounded and mark
-this product migration unproven until the history/ownership contract is deliberately resolved.
+not yet been demonstrated through the product UI. Keep the implementation bounded; do not
+broaden the active-prefix gate.
 
 The boot path uses `REPLACE_DOCUMENT`, which builds the durable shadow and requests temporary
 layer presentation but does not call `publishDurableAppendPresentation()`. That background
@@ -130,11 +275,14 @@ positive append exception; later paste and Background commits encounter that sou
 prior active prefix and remain gated. The targeted browser spec confirms unpublished status and
 legacy fallback while checking exact visible and exported pixels.
 
-The focused Sol audit reached the same boundary: on ordinary active startup and raster-import
-paths the positive exception is not reachable, and no fully proven narrow fix was identified.
-Exempting only the initial blank bedrock remains a possible design question, but it requires
-product-flow E2E plus cursor and asset-ownership proof under the authority plan. A disabled
-startup entry was not investigated, so do not claim impossibility across every UI state.
+The focused Sol audit reached the same boundary for ordinary active startup and raster-import
+paths; it did not investigate a disabled startup entry. A fresh source read now shows a candidate
+alternate path: `HistoryTab.tsx` exposes a disable button for each row, `useHistory.toggleDisabled()`
+protects only an opening `OPEN_DOCUMENT_ACTION`, and both `replayHistory()` and the presentation
+gate skip disabled entries. This makes disabling the first blank `NEW_LAYER_ACTION` a plausible
+way to create a gate-free prefix, but no real UI/E2E proof exists yet and the resulting empty
+document must be checked for correctness. Do not call the exception unreachable across all UI
+states, and do not call this candidate reachable until the planned headless E2E passes.
 
 Sync-tree evidence after the main merge: the four focused StoreContext/presentation suites pass
 96 tests; the document-reset suite passes 15 tests after its stale durable-cache expectation was
@@ -164,14 +312,10 @@ source gate, append caller, startup producer, navigation behavior, and fallback 
 
 Current next steps:
 
-1. The merge is committed with the expected parents and the task worktree is clean. Run
-   `npm run repo:state`, regenerate inventory, then run `npm run branches:orphan`; inspect reports
-   without resolving the unrelated active operation or disposing or modifying unrelated work.
-2. Do not widen this create gate to force UI reachability. Continue with an unowned,
-   independently provable source-backed family only after
-   checking live ownership. The frame fractional-composite and import/replacement tasks
-   remain with their active owners. Keep Slice 3 and Slice 4 unstarted until their explicit
-   proof gates are met. Landing this branch onto main is a separate pinned procedure.
+Use the **Next-run execution plan** above as the live handoff. It supersedes the earlier inventory
+command list: the last inventory is stale against the now-45-worktree registry, and the next run
+must first prove or reject the History-tab disabled-root path. Do not widen the gate or begin
+Slice 3/4 before those dependencies are resolved.
 
 For subsequent edits, stage only owned paths. This ignored plan needs `git add -f`.
 Commits require `Chat: 01a17f24-9224-7aa0-a412-3afafa09f797` and normal

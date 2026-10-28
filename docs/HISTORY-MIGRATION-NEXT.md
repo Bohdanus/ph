@@ -47,7 +47,10 @@ document through `setBlankImage()`, and `useLayer.ts` stores its initial blank l
 raster baselines are gated as well. Paste and Background conversion therefore remain on the
 legacy presentation for those flows. The focused unit test uses a gate-free blank
 `OPEN_DOCUMENT_ACTION` baseline to prove the narrow condition, but no normal UI path producing
-that prefix has been established. Do not broaden the exception to bypass the active-prefix gate.
+that prefix has been proven. Source inspection identifies an unverified candidate: the History
+panel can disable the default blank `NEW_LAYER_ACTION`, and disabled rows are skipped by replay and
+the presentation gate. Use the next-run E2E in the continuation plan to determine whether this is a
+valid product path; do not broaden the exception to bypass the active-prefix gate.
 
 ## Loose Ends
 
