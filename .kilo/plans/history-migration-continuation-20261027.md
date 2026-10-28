@@ -46,7 +46,8 @@ applies to the pre-sync candidate only.
 
 Status: **Slice 1's bounded unit contract is implemented and current-main sync validation
 is complete; its positive path is still unproven in normal UI flows; the merge commit is
-pending; broader migration remains unproven**.
+committed into this branch as `976a201e7009f78d89caf9112d56af730438324b` and not landed
+onto main; broader migration remains unproven**.
 Implementation checkpoint: `eeed3af4b613d7a14e2821016038e7ee05508769`. This commit and
 the prior handoff commit are not ancestors of current main.
 This is the durable handoff if the coordinating session loses quota. Resume in the
@@ -148,6 +149,9 @@ fixture does not prove normal UI reachability. Both Kilo calls completed with `f
 product-flow proof remain open.
 After this plan update, the citation suite passed 24 checks and `npm run lint:check` passed with
 64 existing warnings, zero errors, and clean Prettier formatting.
+The validated main-into-branch merge is commit `976a201e7009f78d89caf9112d56af730438324b`,
+with parents `d6968c47e1ae5ba6a85bc4cd9bb2e0adad9b0176` and
+`3ccccba083eab71df75971bcb4037d7df1fb9f13`. It is not a landing onto main.
 
 The five silent-loss sweeps are complete on the staged merge: the marker scan is clean across
 50 staged paths; heading counts are HANDOFF 46/46/46/46 and TEST-FLAKES 14/14/14/14
@@ -160,17 +164,10 @@ source gate, append caller, startup producer, navigation behavior, and fallback 
 
 Current next steps:
 
-1. The staged candidate is clean: 50 paths, no conflict markers or unmerged entries, no unstaged
-   edits, and the expected `MERGE_HEAD`. Preserve the active unrelated `AUTO_MERGE` operation and
-   leave the main worktree's untracked operational handoff alone.
-2. With current-main tests, the paid Sol audit, two zero-cost read-only reviews, citation checks,
-   lint and formatting closed, commit this main-into-branch merge after the required Git mapping
-   preflight. The message must name the four conflict decisions and use the current native Chat
-   trailer. Do not land it onto main.
-3. Regenerate inventory only after
-   tests and commits stop changing the roster; run `npm run branches:orphan` and inspect
-   without disposing or modifying unrelated work.
-4. Do not widen this create gate to force UI reachability. Continue with an unowned,
+1. The merge is committed with the expected parents and the task worktree is clean. Run
+   `npm run repo:state`, regenerate inventory, then run `npm run branches:orphan`; inspect reports
+   without resolving the unrelated active operation or disposing or modifying unrelated work.
+2. Do not widen this create gate to force UI reachability. Continue with an unowned,
    independently provable source-backed family only after
    checking live ownership. The frame fractional-composite and import/replacement tasks
    remain with their active owners. Keep Slice 3 and Slice 4 unstarted until their explicit

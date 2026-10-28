@@ -191,6 +191,7 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 
 The source of truth for this migration's implementation slices and acceptance gates is
 [the durable history continuation plan](../.kilo/plans/history-migration-continuation-20261027.md).
-The prepared main-into-branch merge targets local main at
-`3ccccba083eab71df75971bcb4037d7df1fb9f13`. It is staged but not committed; finish and validate
-the merge before treating this as the branch's durable baseline.
+The main-into-branch sync is committed on this branch as
+`976a201e7009f78d89caf9112d56af730438324b`, with local main at
+`3ccccba083eab71df75971bcb4037d7df1fb9f13` as its second parent. This is a branch sync, not a
+landing onto main; the positive create path remains unproven in normal UI flows.
