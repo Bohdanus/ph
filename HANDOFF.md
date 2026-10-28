@@ -103,6 +103,9 @@ bold-italic serif paragraph text layer through a two-frame sequence, with exact 
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
 combinations; other retained-affine operation combinations and angles, blank opacity variants, other
 text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
+An exploratory mixed-source fractional-frame variant kept exact per-layer pixels and bounds but its
+first composite transition differed at canvas pixel (5, 26): legacy red/alpha 188/122 versus durable
+190/121. Keep mixed-source fractional composition open until this one-pixel mismatch is explained.
 Do not add `SET_DOCUMENT_FRAME_ACTION` to background
 presentation until the full frame gate is explicit.
 The UI test intentionally continues to observe legacy presentation on commit and
@@ -129,8 +132,8 @@ two frame transforms. A three-transition mixed-source differential also checks e
 and pixels after two sequential affines on an opaque blank, one affine on a 45%-opacity blank, and one
 each on vector, paint, and point text, at all six affine cursors and after each frame transition. Next
 expand the frame matrix across open angles, other affine combinations, other blank opacity values,
-other text styling/rotation, and exact fractional
-bounds. Establish
+other text styling/rotation, and resolve the mixed-source fractional-frame composite mismatch before
+claiming broader exact fractional bounds. Establish
 source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
 are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
 failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration

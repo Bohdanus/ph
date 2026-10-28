@@ -57,7 +57,9 @@ is for this review closeout.
    bitmap dimensions, and pixels at all six affine cursors and after each frame transition. These
    fixtures close only their listed combinations: other transform combinations, angles, text
    styling/rotation variants, other blank opacity values, and exact fractional
-   bounds across the wider source matrix remain open. Do not publish
+   bounds across the wider source matrix remain open. An exploratory mixed-source fractional-frame
+   variant passed per-layer checks but its first composite transition differed at canvas pixel
+   (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not publish
    frame-changing commits durably until the full frame gate is explicit.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
@@ -84,7 +86,9 @@ priority or dependency. They may be pursued in either order or in parallel.
    three-transition fixture applies two sequential retained affines to an opaque blank, one retained
    affine to a 45%-opacity blank, and one each to vector, paint, and point text, then checks exact
    per-layer pixels, bounds, and bitmap dimensions at all six affine cursors and after each frame
-   transition. These fixtures close only their listed combinations. Next cover the
+   transition. A fractional-frame probe of this mix preserved per-layer parity but found a one-pixel
+   composite mismatch at the first transition; investigate it before broadening fractional coverage.
+   These fixtures close only their listed combinations. Next cover the
    open angles, additional retained-affine combinations, other text styling/rotation, blank opacity
    variants, and exact fractional materialized bounds across the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
@@ -160,5 +164,6 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 - Reports that composite release was missing or that replay cursors were offset did not reproduce
   when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
 - Exact fractional bounds across the wider frame and source matrix remain unproven. The mixed-source
-  fixture pins exact bounds for its listed integer-origin frame cases; the raster and styled
-  paragraph-text fixtures cover fractional frame origins and extents.
+  fixture pins exact bounds for its listed integer-origin frame cases; a fractional-frame probe keeps
+  per-layer bounds and pixels exact but differs in its first composite transition by one pixel. The
+  raster and styled paragraph-text fixtures cover fractional frame origins and extents.
