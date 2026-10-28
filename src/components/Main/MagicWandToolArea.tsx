@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
-import type { Point } from '../../contexts/general-types.ts';
+import type { Point, Selection } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { MagicWandToolArgs } from '../../tools/magicWand.ts';
@@ -21,7 +21,8 @@ type MagicWandToolAreaProps = {
 };
 
 export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAreaProps) => {
-  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame, renderSelector }, dispatch] =
+    useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as MagicWandToolArgs;
@@ -51,6 +52,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || args.toolName !== 'magic-wand') return;
+    if (renderSelector.source === 'pending') return;
 
     event.preventDefault();
 
@@ -59,47 +61,55 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
 
     dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'magic-wand' } });
 
-    const result = createMagicWandSelectionFromCanvas(canvasRef.current, seed, totalSize, {
-      smoothing: args.smoothing,
-      tolerance: args.tolerance,
-      contiguous: args.contiguous,
-    });
-
-    if (!result) {
-      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
-      redrawOverlay();
-      return;
-    }
-
-    const metadata = {
-      magicWand: {
-        boundaryEdgeCount: result.boundaryEdgeCount,
-        sampleColor: result.sampleColor,
-        seed: { x: Math.floor(seed.x + documentFrame.x), y: Math.floor(seed.y + documentFrame.y) },
-        selectedPixelCount: result.selectedPixelCount,
+    let selection: Selection | null = null;
+    try {
+      const result = createMagicWandSelectionFromCanvas(canvasRef.current, seed, totalSize, {
         smoothing: args.smoothing,
         tolerance: args.tolerance,
-      },
-    };
-    const selection = result.rasterMask
-      ? createCommittedRasterSelection({
-          id: uuidv4(),
-          metadata,
-          rasterMask: result.rasterMask,
-          pos: {
-            x: result.bounds.x + documentFrame.x,
-            y: result.bounds.y + documentFrame.y,
-            width: result.bounds.width,
-            height: result.bounds.height,
-          },
-          sourceTool: 'magic-wand',
-        })
-      : createCommittedPolygonSelectionFromContours({
-          id: uuidv4(),
-          metadata,
-          points: result.points.map((contour) => contour.map((point) => canvasToDocumentPoint(point, documentFrame))),
-          sourceTool: 'magic-wand',
-        });
+        contiguous: args.contiguous,
+      });
+
+      if (!result) {
+        dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+        redrawOverlay();
+        return;
+      }
+
+      const metadata = {
+        magicWand: {
+          boundaryEdgeCount: result.boundaryEdgeCount,
+          sampleColor: result.sampleColor,
+          seed: { x: Math.floor(seed.x + documentFrame.x), y: Math.floor(seed.y + documentFrame.y) },
+          selectedPixelCount: result.selectedPixelCount,
+          smoothing: args.smoothing,
+          tolerance: args.tolerance,
+        },
+      };
+      selection = result.rasterMask
+        ? createCommittedRasterSelection({
+            id: uuidv4(),
+            metadata,
+            rasterMask: result.rasterMask,
+            pos: {
+              x: result.bounds.x + documentFrame.x,
+              y: result.bounds.y + documentFrame.y,
+              width: result.bounds.width,
+              height: result.bounds.height,
+            },
+            sourceTool: 'magic-wand',
+          })
+        : createCommittedPolygonSelectionFromContours({
+            id: uuidv4(),
+            metadata,
+            points: result.points.map((contour) => contour.map((point) => canvasToDocumentPoint(point, documentFrame))),
+            sourceTool: 'magic-wand',
+          });
+    } catch (error) {
+      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+      redrawOverlay();
+      console.error('Unable to create Magic Wand selection', error);
+      return;
+    }
 
     if (!selection) {
       dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
@@ -112,7 +122,14 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     // transient, and `START_SELECTION_DRAFT` above is the only earlier dispatch.
     // Routed through the single-writer hook so the drawn selection becomes one
     // undoable document edit instead of living only on a later clear entry.
-    commitSelection(selection, 'create');
+    try {
+      commitSelection(selection, 'create');
+    } catch (error) {
+      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+      redrawOverlay();
+      console.error('Unable to commit Magic Wand selection', error);
+      return;
+    }
     redrawOverlay();
   };
 
