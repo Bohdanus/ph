@@ -133,6 +133,33 @@ afterEach(() => {
 });
 
 describe('useLayers adopted raster presentation ownership', () => {
+  it('releases a materialized bitmap when its guarded replacement request is stale', async () => {
+    const source = { width: 12, height: 8 } as OffscreenCanvas;
+    const materialized = { width: 12, height: 8, close: vi.fn() } as unknown as ImageBitmap;
+    vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue(materialized));
+    const { result } = setup();
+
+    let created: boolean | undefined;
+    await act(async () => {
+      created = await result.current.layers.createLayerFromBitmap(
+        {
+          bitmap: source as unknown as ImageBitmap,
+          name: 'Stale.png',
+          isBedrock: true,
+          size: { width: 12, height: 8 },
+        },
+        true,
+        () => false
+      );
+    });
+
+    expect(created).toBe(false);
+    expect(result.current.store.layers).toEqual({});
+    expect(indexOfType('REPLACE_DOCUMENT')).toBe(-1);
+    expect(adoptionActions()).toEqual([]);
+    expect(materialized.close).toHaveBeenCalledOnce();
+  });
+
   it('registers an imported raster with the scope by identity after publishing the layer', async () => {
     const bitmap = immutableBitmap();
     const { result } = setup({ layers: { existing: makeLayer('existing', 0) }, activeLayerId: 'existing' });

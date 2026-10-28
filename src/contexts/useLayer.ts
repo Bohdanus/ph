@@ -571,14 +571,24 @@ export const useLayers = () => {
     );
   };
 
-  const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
+  const createLayerFromBitmap = async (
+    params: FileImageParams,
+    replaceDocument = false,
+    isCurrentRequest?: () => boolean
+  ) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
     if (currentLayers === null) return false;
 
+    const ownsMaterializedBitmap = typeof (params.bitmap as { close?: unknown }).close !== 'function';
+    const bitmap = await immutableRaster(params.bitmap);
+    if (isCurrentRequest && !isCurrentRequest()) {
+      if (ownsMaterializedBitmap) (bitmap as ImageBitmap).close();
+      return false;
+    }
     const source: ImageLayerSource = {
       kind: 'image',
       ...params,
-      bitmap: await immutableRaster(params.bitmap),
+      bitmap,
     };
     const newLayer = createLayerSource({ layers: currentLayers, source });
 
