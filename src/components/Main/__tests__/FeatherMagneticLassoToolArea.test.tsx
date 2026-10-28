@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   dispatch: vi.fn(),
   selectionDraft: { status: 'idle' as 'idle' | 'draft' },
+  renderSelector: { source: 'legacy' as 'legacy' | 'pending' | 'durable' },
   shortcutHandlers: new Map<string, () => void>(),
   rawShortcuts: new Map<string, MockShortcut>(),
   selections: [] as Selection[],
@@ -66,6 +67,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       containerRef: { current: document.createElement('div') },
       history: [],
       historyIndex: -1,
+      renderSelector: h.renderSelector,
       // The Backspace/Delete registrations no longer gate on this field, but a
       // test still sets it to model what the sidebar deselect leaves in the
       // store.
@@ -100,6 +102,7 @@ describe('FeatherMagneticLassoToolArea', () => {
     h.activeSelectionId = null;
     h.dispatch.mockClear();
     h.selectionDraft = { status: 'idle' };
+    h.renderSelector = { source: 'legacy' };
     h.shortcutHandlers.clear();
     h.rawShortcuts.clear();
     h.selections = [];
@@ -359,6 +362,39 @@ describe('FeatherMagneticLassoToolArea', () => {
     expect(selectionEdits()[0].payload.updates.activeSelectionId).toBe(
       selectionEdits()[0].payload.updates.selections[0].id
     );
+  });
+
+  it('does not build an edge map from stale canvas pixels while replay is pending', () => {
+    installEdgeMapCanvas();
+    h.renderSelector = { source: 'pending' };
+    const { ctx } = renderArea({ current: createMockContext() });
+
+    fireEvent.pointerDown(ctx, { button: 0, clientX: 10, clientY: 10 });
+
+    expect(getContextSpy).not.toHaveBeenCalled();
+    expect(h.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('cancels an in-progress lasso draft when replay becomes pending', () => {
+    installEdgeMapCanvas();
+    installManualRaf();
+    const { ctx, rerenderStore } = renderArea({ current: createMockContext() });
+
+    fireEvent.pointerDown(ctx, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(ctx, { clientX: 30, clientY: 30 });
+    expect(h.dispatch).toHaveBeenCalledWith({
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: 'feather-magnetic-lasso' },
+    });
+
+    h.renderSelector = { source: 'pending' };
+    rerenderStore();
+    expect(cancelAnimationFrameSpy).toHaveBeenCalled();
+    act(() => rafCallbacks[0]?.(0));
+    h.shortcutHandlers.get('Enter')?.();
+
+    expect(h.dispatch).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    expect(selectionEdits()).toEqual([]);
   });
 
   it('appends exactly one history entry for a multi-click, multi-pointermove lasso gesture', () => {

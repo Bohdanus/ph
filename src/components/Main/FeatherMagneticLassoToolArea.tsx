@@ -141,7 +141,8 @@ function drawFeatherMagneticOverlay({
 }
 
 export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: FeatherMagneticLassoToolAreaProps) => {
-  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame, renderSelector }, dispatch] =
+    useStore();
   // `clearSelections` is gone with `removeLastAnchor`'s empty-list arm: a
   // Backspace aimed at nothing is a no-op now, not a deselect. `commitSelection`
   // stays, and is the one writer this component owns.
@@ -257,6 +258,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   }
 
   function processPointerMovePreview({ coords, magneticEnabled }: PendingPointerMove) {
+    if (renderSelector.source === 'pending') {
+      cancelSelectionDraft();
+      return;
+    }
     if (anchorsRef.current.length === 0) return;
 
     const start = anchorsRef.current[0];
@@ -376,6 +381,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
   function finishSelection() {
     if (anchorsRef.current.length === 0) return;
+    if (renderSelector.source === 'pending') {
+      cancelSelectionDraft();
+      return;
+    }
 
     flushPendingPointerMoveFrame();
 
@@ -482,6 +491,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    if (renderSelector.source === 'pending') {
+      cancelSelectionDraft();
+      return;
+    }
 
     event.preventDefault();
     cancelPendingPointerMoveFrame();
@@ -516,6 +529,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (renderSelector.source === 'pending') {
+      cancelSelectionDraft();
+      return;
+    }
     const coords = clampToImage(getLocalCoords(event));
     if (anchorsRef.current.length === 0) return;
 
@@ -581,6 +598,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   useEffect(() => {
     redrawOverlay();
   }, [redrawOverlay]);
+
+  useEffect(() => {
+    if (renderSelector.source === 'pending') cancelSelectionDraft();
+  });
 
   useEffect(() => {
     const ctx = overlayCtxRef.current;
