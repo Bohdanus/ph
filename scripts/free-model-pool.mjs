@@ -367,6 +367,10 @@ function failureReason(response, payload) {
   return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
 }
 
+function isPerKeyFailure(status) {
+  return status === 401 || status === 402 || status === 429;
+}
+
 function hasReportedNonZeroCost(usage) {
   if (usage === undefined || usage === null) return false;
   if (typeof usage !== 'object' || Array.isArray(usage)) return true;
@@ -652,7 +656,6 @@ export async function completeWithFreeModel(
     attempts.set(candidate.source, sourceAttempts + 1);
     if (candidate.source === 'groq') {
       const effectiveMaxTokens = Math.max(maxTokens, 1024);
-      let groqSucceeded = false;
       for (const key of groqKeys) {
         if (exhaustedGroqKeys.has(key)) continue;
         let response;
@@ -682,8 +685,7 @@ export async function completeWithFreeModel(
         } catch (error) {
           const retryAfter = retryAfterHint(response);
           errors.push(`groq/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`);
-          const isPerKeyFailure = response.status === 401 || response.status === 402 || response.status === 429;
-          if (isPerKeyFailure) exhaustedGroqKeys.add(key);
+          if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
           continue;
         }
         if (hasReportedNonZeroCost(payload?.usage)) {
@@ -723,8 +725,7 @@ export async function completeWithFreeModel(
           ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
           : failureReason(response, payload);
         errors.push(`groq/${candidate.model}: ${reason}`);
-        const isPerKeyFailure = response.status === 401 || response.status === 402 || response.status === 429;
-        if (isPerKeyFailure) exhaustedGroqKeys.add(key);
+        if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
       }
       if (groqKeys.every((key) => exhaustedGroqKeys.has(key))) exhausted.add('groq');
       continue;
@@ -937,20 +938,22 @@ export async function main(
         .map((p) => p.trim())
         .filter(Boolean);
     }
-    const probe = await probeGroqKeysImpl({ fetchImpl, keyDir: effectiveKeyDir });
-    const discoveredFiles = await discoverGroqKeyFiles(effectiveKeyDir);
-    const allPaths = [...new Set([...filePaths, ...(filePaths.length > 0 ? [] : discoveredFiles)])];
-    const results = [];
-    for (const filePath of allPaths) {
-      let key;
-      try {
-        key = await loadGroqKeyFromFile(filePath);
-      } catch (error) {
-        results.push({ keyFile: filePath, ok: false, reason: 'file_error', detail: error.message });
-        continue;
+    let results;
+    if (filePaths.length > 0) {
+      results = [];
+      for (const filePath of filePaths) {
+        let key;
+        try {
+          key = await loadGroqKeyFromFile(filePath);
+        } catch (error) {
+          results.push({ keyFile: filePath, ok: false, reason: 'file_error', detail: error.message });
+          continue;
+        }
+        const probed = await probeGroqKey({ fetchImpl, groqApiKey: key });
+        results.push({ keyFile: filePath, ...probed });
       }
-      const probed = await probeGroqKey({ fetchImpl, groqApiKey: key });
-      results.push({ keyFile: filePath, ...probed });
+    } else {
+      results = await probeGroqKeysImpl({ fetchImpl, keyDir: effectiveKeyDir });
     }
     stdout.write(`${JSON.stringify({ checkedAt: new Date().toISOString(), keys: results }, null, 2)}\n`);
     return 0;
