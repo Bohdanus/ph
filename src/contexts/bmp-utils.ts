@@ -73,7 +73,11 @@ export async function preflightBmpFile(
 
   let metadataEnd = dibEnd;
   if (compression === BI_BITFIELDS && dibSize === 40) metadataEnd += 12;
-  if (compression === BI_ALPHABITFIELDS && dibSize === 40) metadataEnd += 16;
+  if (compression === BI_ALPHABITFIELDS) {
+    if (dibSize === 40) metadataEnd += 16;
+    else if (dibSize === 52) metadataEnd += 4;
+    else if (dibSize < 56) throw new Error('Unsupported BMP alpha bitfields header');
+  }
   if (bitsPerPixel <= 8) {
     const paletteCount = colorsUsed || 1 << bitsPerPixel;
     if (paletteCount > 1 << bitsPerPixel) throw new Error('Invalid BMP palette');
@@ -81,6 +85,22 @@ export async function preflightBmpFile(
   }
   if (!Number.isSafeInteger(metadataEnd) || metadataEnd > pixelOffset) {
     throw new Error('Invalid BMP pixel data offset');
+  }
+  if (compression === BI_ALPHABITFIELDS) {
+    const masksBuffer = await file.slice(54, 70).arrayBuffer();
+    const masksView = new DataView(masksBuffer);
+    ensureRange(masksView, 0, 16);
+    const masks = Array.from({ length: 4 }, (_, index) => masksView.getUint32(index * 4, true));
+    if (bitsPerPixel === 16 && masks.some((mask) => mask > 0xffff)) {
+      throw new Error('Invalid BMP bitfield mask');
+    }
+    if (masks[3] === 0) throw new Error('Invalid BMP alpha bitfield mask');
+    if (
+      masks.some((mask) => !isContiguousBitMask(mask)) ||
+      masks.some((mask, index) => masks.slice(index + 1).some((otherMask) => (mask & otherMask) !== 0))
+    ) {
+      throw new Error('Invalid BMP bitfield mask');
+    }
   }
 
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
@@ -117,6 +137,13 @@ function ensureRange(view: DataView, offset: number, length: number) {
   if (offset < 0 || offset + length > view.byteLength) {
     throw new Error('Invalid BMP file');
   }
+}
+
+function isContiguousBitMask(mask: number): boolean {
+  if (mask === 0) return true;
+  let normalizedMask = mask;
+  while ((normalizedMask & 1) === 0) normalizedMask >>>= 1;
+  return (normalizedMask & (normalizedMask + 1)) === 0;
 }
 
 function channelFromMask(value: number, mask: number): number {

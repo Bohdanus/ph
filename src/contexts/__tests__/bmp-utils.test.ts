@@ -93,7 +93,20 @@ function buildBmp(spec: BmpSpec): ArrayBuffer {
     indices = [],
   } = spec;
   const masks = spec.masks ?? [0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000];
-  const maskBytes = compression === 3 ? (dibSize === 40 ? (bitsPerPixel === 32 ? 16 : 12) : 0) : 0;
+  const maskBytes =
+    compression === 3
+      ? dibSize === 40
+        ? bitsPerPixel === 32
+          ? 16
+          : 12
+        : 0
+      : compression === 6
+        ? dibSize === 40
+          ? 16
+          : dibSize === 52
+            ? 4
+            : 0
+        : 0;
   const paletteCount = colorsUsed || (bitsPerPixel <= 8 ? 1 << bitsPerPixel : 0);
   const pixelOffset = 14 + dibSize + maskBytes + paletteCount * 4;
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
@@ -120,7 +133,7 @@ function buildBmp(spec: BmpSpec): ArrayBuffer {
     view.setUint32(54, masks[0], true);
     view.setUint32(58, masks[1], true);
     view.setUint32(62, masks[2], true);
-    if (maskBytes === 16) view.setUint32(66, masks[3], true);
+    if (maskBytes === 16 || (compression === 6 && maskBytes === 4)) view.setUint32(66, masks[3], true);
   } else if (dibSize >= 52) {
     view.setUint32(54, masks[0], true);
     view.setUint32(58, masks[1], true);
@@ -719,5 +732,191 @@ describe('loadBmpFile', () => {
     await expect(preflightBmpFile(file, { allowNativeCompression: true })).resolves.toBe(boundedBlob);
     expect(slice).toHaveBeenNthCalledWith(1, 0, 54);
     expect(slice).toHaveBeenNthCalledWith(2, 0, fileSize, 'image/bmp');
+  });
+});
+
+describe('preflightBmpFile BI_ALPHABITFIELDS', () => {
+  it.each([40, 52, 56, 108, 124])('accepts a %i-byte DIB header with an alpha mask', async (dibSize) => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 32,
+          compression: 6,
+          dibSize,
+          rows: [[[1, 2, 3, 255]]],
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).resolves.toBeInstanceOf(Blob);
+  });
+
+  it('accepts 16-bit alpha bitfields with four external masks', async () => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 16,
+          compression: 6,
+          masks: [0x7c00, 0x03e0, 0x001f, 0x8000],
+          rows: [[0x8001]],
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).resolves.toBeInstanceOf(Blob);
+  });
+
+  it.each([
+    { channel: 'red', masks: [0x10000, 0x03e0, 0x001f, 0x8000] },
+    { channel: 'alpha', masks: [0x7c00, 0x03e0, 0x001f, 0x80000000] },
+  ])('rejects a 16-bit $channel mask with out-of-range bits', async ({ masks }) => {
+    const blob = new Blob(
+      [buildBmp({ width: 1, height: 1, bitsPerPixel: 16, compression: 6, masks, rows: [[0x8001]] })],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow('Invalid BMP bitfield mask');
+  });
+
+  it('rejects a non-contiguous 16-bit color mask', async () => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 16,
+          compression: 6,
+          masks: [0x7400, 0x03e0, 0x001f, 0x8000],
+          rows: [[0x8001]],
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow('Invalid BMP bitfield mask');
+  });
+
+  it('rejects an alpha mask that overlaps the red mask', async () => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 16,
+          compression: 6,
+          masks: [0x7c00, 0x03e0, 0x001f, 0x7c00],
+          rows: [[0x8001]],
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow('Invalid BMP bitfield mask');
+  });
+
+  it('rejects alpha bitfields at color depths other than 16 or 32 bits', async () => {
+    const blob = new Blob([buildBmp({ width: 1, height: 1, bitsPerPixel: 24, compression: 6, rows: [[[1, 2, 3]]] })], {
+      type: 'image/bmp',
+    });
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow(
+      'Unsupported BMP compression'
+    );
+  });
+
+  it.each([41, 51, 53, 54, 55])('rejects an unsupported %i-byte alpha bitfields header', async (dibSize) => {
+    const blob = new Blob(
+      [buildBmp({ width: 1, height: 1, bitsPerPixel: 32, compression: 6, dibSize, rows: [[[1, 2, 3, 255]]] })],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow(
+      'Unsupported BMP alpha bitfields header'
+    );
+  });
+
+  it.each([40, 52, 56])('rejects a %i-byte DIB header without an alpha mask', async (dibSize) => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 32,
+          compression: 6,
+          dibSize,
+          masks: [0x00ff0000, 0x0000ff00, 0x000000ff, 0],
+          rows: [[[1, 2, 3, 255]]],
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow(
+      'Invalid BMP alpha bitfield mask'
+    );
+  });
+
+  it.each([40, 52])('rejects a truncated external alpha mask after a %i-byte DIB header', async (dibSize) => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 32,
+          compression: 6,
+          dibSize,
+          rows: [[[1, 2, 3, 255]]],
+          truncate: 5,
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow('Invalid BMP file');
+  });
+
+  it('rejects a 56-byte DIB header truncated before its alpha mask is available', async () => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 32,
+          compression: 6,
+          dibSize: 56,
+          rows: [[[1, 2, 3, 255]]],
+          truncate: 5,
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob, { allowNativeCompression: true })).rejects.toThrow(
+      'Invalid BMP pixel data offset'
+    );
+  });
+
+  it('keeps alpha bitfields disabled unless native compression is allowed', async () => {
+    const blob = new Blob(
+      [
+        buildBmp({
+          width: 1,
+          height: 1,
+          bitsPerPixel: 32,
+          compression: 6,
+          dibSize: 56,
+          rows: [[[1, 2, 3, 255]]],
+        }),
+      ],
+      { type: 'image/bmp' }
+    );
+
+    await expect(preflightBmpFile(blob)).rejects.toThrow('Unsupported BMP compression');
   });
 });
