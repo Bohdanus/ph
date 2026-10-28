@@ -22,11 +22,11 @@ function blank(id = 'base'): Layer {
   };
 }
 
-function added(kind: 'image' | 'blank'): Layer {
+function added(kind: 'image' | 'blank', id = 'added', order = 1): Layer {
   const pos = { x: 22, y: 28, width: 24, height: 18 };
   const bitmap = kind === 'image' ? createMockImageBitmap(pos.width, pos.height) : null;
   return {
-    ...createMockLayer({ id: 'added', pos, order: 1, name: 'Layer 2' }),
+    ...createMockLayer({ id, pos, order, name: `Layer ${order + 1}` }),
     bitmap,
     source: bitmap
       ? { kind: 'image', bitmap, pos, isBedrock: false }
@@ -84,7 +84,7 @@ function compositeFor(layers: LayersRecord) {
   return { composite, releaseLayers };
 }
 
-function mount() {
+function mount(sourceBackedBaseline = false) {
   let current!: { store: StoreData; dispatch: StoreDispatch };
   function Probe() {
     const [store, dispatch] = useStore();
@@ -100,14 +100,16 @@ function mount() {
   );
   function replace(documentId = 'source-create') {
     const base = blank();
-    const history: HistoryItem[] = [
-      {
-        id: 'open',
-        actionName: OPEN_DOCUMENT_ACTION,
-        layerId: base.id,
-        documentSource: { layers: { [base.id]: base }, size: { width: frame.width, height: frame.height }, frame },
-      },
-    ];
+    const history: HistoryItem[] = sourceBackedBaseline
+      ? [{ id: 'open', actionName: NEW_LAYER_ACTION, layerId: base.id, layerSource: base.source }]
+      : [
+          {
+            id: 'open',
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId: base.id,
+            documentSource: { layers: { [base.id]: base }, size: { width: frame.width, height: frame.height }, frame },
+          },
+        ];
     act(() =>
       current.dispatch({
         type: 'REPLACE_DOCUMENT',
@@ -176,6 +178,44 @@ describe('source-backed create presentation', () => {
     probe.unmount();
     for (const record of Object.values(composite.layers)) expect(record.lease.release).toHaveBeenCalledTimes(1);
     if (layer.bitmap) expect((layer.bitmap as ImageBitmap).close).not.toHaveBeenCalled();
+  });
+
+  it('does not let a later create bypass an earlier source-backed cursor gate', async () => {
+    const pending = deferred<DurableComposite>();
+    const compose = vi.spyOn(compositor, 'composeDurableDocument').mockReturnValue(pending.promise);
+    const probe = mount();
+    const first = added('blank');
+    const { composite } = compositeFor({ ...probe.store().layers, [first.id]: first });
+
+    probe.create(first);
+    expect(compose).toHaveBeenCalledTimes(1);
+    probe.create(added('image', 'later', 2));
+
+    expect(compose).toHaveBeenCalledTimes(1);
+    expect(probe.store().renderSelector.source).toBe('legacy');
+    expect(probe.store().history).toHaveLength(3);
+    await act(async () => {
+      pending.resolve(composite);
+      await pending.promise;
+    });
+    expect(probe.store().renderSelector.source).toBe('legacy');
+    expect(composite.release).toHaveBeenCalledTimes(1);
+    probe.unmount();
+    for (const record of Object.values(composite.layers)) expect(record.lease.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a create behind the gate when the live blank document starts with a source-backed entry', () => {
+    const compose = vi.spyOn(compositor, 'composeDurableDocument');
+    const probe = mount(true);
+
+    probe.create(added('image'));
+
+    expect(compose).not.toHaveBeenCalled();
+    expect(probe.store().durableStatus).toBe('current');
+    expect(probe.store().durablePresentation.status).toBe('unpublished');
+    expect(probe.store().renderSelector.source).toBe('legacy');
+    expect(probe.store().history).toHaveLength(2);
+    probe.unmount();
   });
 
   it('discards a completed create when its document was replaced', async () => {

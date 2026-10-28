@@ -36,23 +36,47 @@ is for this review closeout.
   projection with legacy fallback, not a completed undo/redo authority cutover. Supported committed
   eligible append/reorder transitions also compose a durable presentation in the background, but keep
   the already-visible legacy selector active while composition runs so transient previews are not
-  blocked. Image/blank layer creates can request that presentation after asset finalization;
-  tool-source creates, source replacements, merge and frame-changing commits retain their gates.
+  blocked. Image/blank layer creates can request that presentation after asset finalization only if
+  the preceding active cursor prefix passes the existing ownership and frame gates; their own
+  navigation cursor remains on the legacy fallback. Tool-source creates, later source-backed edits,
+  source replacements, merge and frame-changing commits retain their gates.
+
+The current default UI path does not reach that create exception. `App.tsx` boots a blank
+document through `setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a
+`NEW_LAYER_ACTION`; the current ownership gate treats that active entry as unproven. Imported
+raster baselines are gated as well. Paste and Background conversion therefore remain on the
+legacy presentation for those flows. The focused unit test uses a gate-free blank
+`OPEN_DOCUMENT_ACTION` baseline to prove the narrow condition, but no normal UI path producing
+that prefix has been established. Do not broaden the exception to bypass the active-prefix gate.
 
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
    staged presentation projection, and eligible committed append/reorder presentation composes in
-   the background, including image/blank layer creates after their asset transaction settles.
-   Other source-backed commits and frame-changing commits remain on the complete legacy path.
+   the background. A new image/blank layer create may request composition after asset finalization
+   only if the prior active prefix passes the ownership and frame gates; its own navigation cursor
+   and later appends still use the complete legacy fallback. Other source-backed commits and
+   frame-changing commits remain on the complete legacy path.
+   The image/blank exception is not yet product-reachable from the default new-document or
+   imported-raster paths because both active prefixes are gated; keep that migration unproven
+   until baseline ownership is resolved explicitly.
    Live previews also keep the complete legacy layer base until they clear;
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
-   now covers a retained affine layer transform before a later frame transform at both history
-   cursors. This adds one case only; other angles, retained-affine combinations, source/tool
-   variants, text styling/rotation, frame sequences, and fractional materialized bounds remain open.
-   Do not publish frame-changing commits durably until the full frame gate is explicit.
+   covers two retained affine layer transforms across two successive non-quarter frame transforms
+   with fractional origins and extents, including exact per-layer bounds and pixels at each tested
+   affine or frame-transition cursor and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
+   affine and a two-frame sequence with exact per-layer comparisons. A three-transition mixed-source
+   frame sequence applies two sequential retained affines to an opaque blank, one retained affine to a
+   45%-opacity blank, and one each to vector, paint, and point text, comparing exact per-layer bounds,
+   bitmap dimensions, and pixels at all six affine cursors and after each frame transition. These
+   fixtures close only their listed combinations: other transform combinations, angles, text
+   styling/rotation variants, other blank opacity values, and exact fractional
+   bounds across the wider source matrix remain open. An exploratory mixed-source fractional-frame
+   variant passed per-layer checks but its first composite transition differed at canvas pixel
+   (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not publish
+   frame-changing commits durably until the full frame gate is explicit.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
@@ -70,21 +94,27 @@ priority or dependency. They may be pursued in either order or in parallel.
    layer base while append composition is pending or accepted, then reveal the durable base only
    after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
-3. Expand parity-only frame work. The retained-affine fixture in `e2e/crop-history.spec.ts` is now
-   a tripwire: it compares both renderers at the layer-transform cursor and after a later
-   non-quarter frame transform, checks that each renderer changes pixels from the untransformed
-   baseline, and compares the final result with a frame-only control. Next cover the open angles,
-   retained-affine combinations, source/tool variants, text styling/rotation, frame sequences, and
-   exact fractional materialized bounds. Keep `SET_DOCUMENT_FRAME_ACTION` out of durable
-   publication until that matrix is explicit; add cursor checks without changing publication,
-   cursor, or lease ownership. The same raster fixture's frame-only control exposed a one-pixel,
-   two-channel delta (maximum channel difference 1); it is an open parity case, not a passing
-   cross-renderer control.
-4. Continue source-backed ownership and parity by family. Image/blank layer creates now request
-   background presentation after asset finalization, with whole-document compatibility and freshness
-   checks. Tool-source creates, source replacement, merge and document replacement still need their
-   own explicit proofs. Keep unsupported-source refusal and do not promote another family from
-   the create fixtures.
+3. Continue parity-only frame work. The raster fixture in `e2e/crop-history.spec.ts` covers two
+   retained affine layer transforms and two successive non-quarter frame transforms with fractional
+   origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
+   control, and byte-identical composites. A styled paragraph-text fixture covers its retained
+   affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. The mixed-source
+   three-transition fixture applies two sequential retained affines to an opaque blank, one retained
+   affine to a 45%-opacity blank, and one each to vector, paint, and point text, then checks exact
+   per-layer pixels, bounds, and bitmap dimensions at all six affine cursors and after each frame
+   transition. A fractional-frame probe of this mix preserved per-layer parity but found a one-pixel
+   composite mismatch at the first transition; investigate it before broadening fractional coverage.
+   These fixtures close only their listed combinations. Next cover the
+   open angles, additional retained-affine combinations, other text styling/rotation, blank opacity
+   variants, and exact fractional materialized bounds across the wider source matrix. Keep
+   `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
+   cursor checks without changing publication, cursor, or lease ownership.
+4. Keep the image/blank create exception scoped to the current append. It may request background
+   composition after asset finalization only when the preceding active cursor prefix passes the
+   ownership and frame gates. The create's own navigation cursor and later appends remain on the
+   current legacy fallback until the broader source-ownership proof is explicit. Continue source-backed
+   import/replacement ownership and parity as the other independent gate; keep unsupported-source
+   refusal explicit and do not use either gate's differential to promote broader surfaces.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
@@ -152,14 +182,15 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 - Luna's final follow-up found no remaining actionable issues in the fixture or updated sequence.
 - Reports that composite release was missing or that replay cursors were offset did not reproduce
   when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
-- Exact materialized bounds remain an open frame-parity item. The frame-only control's
-  one-pixel/two-channel difference remains open in `e2e/OPEN_PROBLEMS.md`; it is not counted as a
-  parity pass.
+- Exact fractional bounds across the wider frame and source matrix remain unproven. The mixed-source
+  fixture pins exact bounds for its listed integer-origin frame cases; a fractional-frame probe keeps
+  per-layer bounds and pixels exact but differs in its first composite transition by one pixel. The
+  raster and styled paragraph-text fixtures cover fractional frame origins and extents.
 
-## Continuation plan
+## Current continuation plan
 
-The closeout branch is already an ancestor of verified `main` at `eaeb1734`; its old landing
-blocker is obsolete. The current implementation slices, source/frame ownership boundaries,
-acceptance criteria and explicit unproven handoff are in
-[`history-migration-continuation-20261027.md`](../.kilo/plans/history-migration-continuation-20261027.md).
-Recheck live main and repository state before each landing.
+The source of truth for this migration's implementation slices and acceptance gates is
+[the durable history continuation plan](../.kilo/plans/history-migration-continuation-20261027.md).
+The prepared main-into-branch merge targets local main at
+`3ccccba083eab71df75971bcb4037d7df1fb9f13`. It is staged but not committed; finish and validate
+the merge before treating this as the branch's durable baseline.

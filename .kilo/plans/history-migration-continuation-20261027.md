@@ -1,29 +1,84 @@
 # Continue durable history from current main
 
+## Current-main sync and active decision record — 2026-10-28
+
+The actual local `refs/heads/main` is checked out at
+`/Users/bkalynovskyi/ph/.kilo/worktrees/main-landing-selection-20261028`, not the root
+`main-sync` checkout. The reviewed main pin for this sync is
+`3ccccba083eab71df75971bcb4037d7df1fb9f13`. The migration branch is
+`docs/history-migration-plan-20261027` in
+`/Users/bkalynovskyi/ph/.kilo/worktrees/history-migration-plan-20261027`.
+
+The main-into-branch merge is prepared in this task worktree with that exact `MERGE_HEAD`;
+its four conflicts are resolved and staged here. `git cherry` found the implementation and checkpoint
+commits `eeed3af4` and `d6968c47` are unique to this branch. `git range-diff` shows the
+40 current-main commits and two branch commits have no corresponding patches, so this is
+a real sync merge, not a replay of equivalent commits.
+
+Conflict resolution ledger:
+
+- `src/contexts/StoreContext.tsx`: keep main's cursor-prefix gate for navigation and all
+  later appends. Preserve a narrow exception for the current image/blank `NEW_LAYER_ACTION`
+  background composition only when the prior active prefix passes that existing ownership
+  and frame gate. The newly created cursor remains legacy-gated for navigation; this does
+  not authorize another create or ordinary edit to skip a source-backed event.
+- `HANDOFF.md`, `docs/HISTORY-MIGRATION-NEXT.md`, and `docs/HISTORY-MIGRATION.md`: keep
+  current main's newer frame matrix and its exact remaining mixed-source fractional
+  composite mismatch. Add the bounded create behavior and its fallback rule from this plan.
+  Do not retain the older one-raster frame status as current evidence.
+
+The inventory snapshot at `2026-10-28T17:41Z` was generated before this merge changed the
+task checkout. It recorded main at `3ccccba`, 41 worktrees, no ready-to-land candidates,
+and two live writer chats. `branches:orphan` reported 13 refs; no orphan or unrelated
+worktree was changed. `repo:state` still reports an open `AUTO_MERGE`/`MERGE_HEAD` in
+`dispose-worktree-main-ref-20261028`, whose working-tree status is clean. Do not inspect or
+resolve its content on this task. The actual-main checkout also has the unrelated
+untracked `HANDOFF-OPERATIONAL-20261028.md`; do not stage it. The fractional-frame
+root-cause worktree and source-backed import/replacement worktree are still marked in use;
+their files are outside this task's write set.
+
+The migration issue `ph-12` is reclaimed by this branch. Files held: `StoreContext.tsx`,
+the source-backed presentation unit and E2E specs, the document-reset regression test, the
+history migration/handoff docs, and this plan. Earlier validation and review evidence below
+applies to the pre-sync candidate only.
+
 ## Restart checkpoint: preserve this work first
 
-Status: **Slice 1 implemented and validated; broader migration remains unproven**.
-Implementation checkpoint: `eeed3af4b613d7a14e2821016038e7ee05508769`. Verify landing
-by Git ancestry and swarm issue `ph-12`; a branch commit alone is not a landed change.
+Status: **Slice 1's bounded unit contract is implemented and current-main sync validation
+is complete; its positive path is still unproven in normal UI flows; the merge commit is
+pending; broader migration remains unproven**.
+Implementation checkpoint: `eeed3af4b613d7a14e2821016038e7ee05508769`. This commit and
+the prior handoff commit are not ancestors of current main.
 This is the durable handoff if the coordinating session loses quota. Resume in the
 absolute task worktree below, never in the root `main-sync` checkout. Do not recreate
 the changes or harvest the separate active frame task.
 
 Implemented files:
 
-- `src/contexts/StoreContext.tsx`: only image/blank `NEW_LAYER_ACTION` entries gain
-  background durable presentation eligibility. Both the fast append and reconversion
-  paths retain existing transaction, freshness, renderer compatibility and whole-document
-  coverage gates. Tool-source creates, merge, source replacement and frame commits stay gated.
-- `src/contexts/__tests__/StoreContext.source-backed-presentation.test.tsx`: six
+- `src/contexts/StoreContext.tsx`: only a current image/blank `NEW_LAYER_ACTION` may
+  compose in the background, and only if the preceding active cursor prefix passes main's
+  existing ownership and frame gates. The new entry keeps legacy navigation fallback.
+  The actual app boot path starts with a blank `NEW_LAYER_ACTION`, which main's gate marks
+  `ownership-unproven`; imported raster baselines are gated too. The exception therefore
+  has no proven normal UI entry point yet. Do not relax the cursor gate to make it reachable.
+  Transaction ordering, freshness, renderer compatibility and whole-document coverage
+  gates remain intact. Tool-source creates, later source-backed edits, merge, replacement
+  and frame commits stay gated.
+- `src/contexts/__tests__/StoreContext.source-backed-presentation.test.tsx`: eight
   tests cover image/blank success, ownership-before-composition, borrowed input lifetime,
   exactly-once lease disposal, stale document replacement, incomplete materialization,
-  tool-source refusal and finalization failure without a duplicate logical append.
-- `e2e/source-backed-history.spec.ts`: actual paste and Background conversion. Paste
-  uses a deterministic page-local clipboard reader, preserving the host clipboard.
-  The oracle specifies an opaque white 800x600 document and a centered 32x24 red/blue
-  source independently; it checks immediate durable publication, undo/redo pixel identity,
-  exact PSD composite and layer pixels, and exact native-resolution PNG pixels.
+  tool-source refusal, prior-prefix refusal and finalization failure without a duplicate
+  logical append.
+- `src/hooks/__tests__/useApp.document-reset.test.tsx`: the outgoing-document fixture now
+  asserts the current main contract for its active source-backed prefix: navigation reports
+  `ownership-unproven` and retains the legacy layer presentation.
+- `e2e/source-backed-history.spec.ts`: actual paste and Background conversion on the app's
+  default blank document. Paste uses a deterministic page-local clipboard reader, preserving
+  the host clipboard. The oracle specifies an opaque white 800x600 document and a centered
+  32x24 red/blue source independently; it checks exact legacy pixels, ownership-gated undo/redo,
+  exact PSD composite and layer pixels, and exact native-resolution PNG pixels. These flows
+  do not claim durable presentation: the initial blank `NEW_LAYER_ACTION` already gates the
+  active prefix, so append status stays unpublished and navigation falls back to legacy.
 - `src/contexts/__tests__/useLayer.lifecycle.test.tsx`: immutable import now forbids
   copying the original input, while permitting separate background render outputs;
   it also requires runtime and editable-source bitmap identity to remain the input.
@@ -42,9 +97,10 @@ Verified evidence so far:
 - `npm run tsc`, `npm run build`, and `npm run lint:check` passed. The repository
   lint count is 64 warnings, zero errors. Explicit ESLint on new files caught a promise
   executor returning `toBlob()`; the executor now has a block body and its focused check passed.
-- Final full unit suite passed: **399 files, 11423 tests passed, 219 established expected
-  failures**, no failures; duration 155 seconds. The documentation-index follow-up also
-  passed all 10 tests after this plan was registered in `docs/README.md`.
+- The pre-sync full unit suite passed: **399 files, 11423 tests passed, 219 established
+  expected failures**, no failures; duration 155 seconds. The documentation-index follow-up
+  also passed all 10 tests after this plan was registered in `docs/README.md`. These counts
+  do not validate the current-main merge composition.
 - Validation pitfalls are resolved: a fresh `npm ci --ignore-scripts` checkout needs
   `node scripts/install-tsc-guard.mjs`, and import identity tests must allow independent
   render output allocation. No compiler guard, pixel tolerance, expected-failure list,
@@ -54,28 +110,71 @@ Verified evidence so far:
   cost and `NO_BLOCKING_FINDINGS`: ownership/publication and eligibility/browser proof.
   A follow-up of the lifecycle assertion also found no blocking issue; its speculative
   suggestion to copy an editable raster is contrary to the existing immutable-input contract.
-  These were completion reviews of supplied code, not tool-using agents.
+  These were completion reviews of the old candidate, not tool-using agents; fresh review
+  of the current-main composition is still required.
 
-Remaining landing checks, in order:
+Current reachability finding — 2026-10-28: `App.tsx` creates the default blank document via
+`setBlankImage()`, and `useLayer.ts` records that document's initial baseline as a
+`NEW_LAYER_ACTION` with a blank source. Main's `durablePresentationGateReason()` treats every
+active `NEW_LAYER_ACTION` as `ownership-unproven`. Consequently both actual paste and
+Background conversion start from an already-gated prefix. The narrow append exception is
+unit-tested against a gate-free `OPEN_DOCUMENT_ACTION` blank baseline, but that baseline has
+not been shown reachable through the product UI. Keep the implementation bounded and mark
+this product migration unproven until the history/ownership contract is deliberately resolved.
 
-1. Regenerate `node scripts/worktree-inventory.mjs` after tests and commits stop, then
-   run `npm run branches:orphan`. Earlier inventories refused their snapshot when the
-   roster changed during tests or commits; this is not metadata corruption. Reports
-   are `/tmp/ph-history-migration-inventory.txt` and `/tmp/ph-history-migration-orphans.txt`.
-   Check exit status, inspect this task/main and reported operations/owners, and leave
-   unrelated live worktrees and orphan branches untouched.
-2. Recheck live `main`; if it advanced, sync that exact SHA into this task branch with
-   `--no-commit --no-ff`, resolve only here, then validate/review the new composition.
-   If main is still the baseline ancestor, no new composition needs resolution.
-3. Follow `docs/ORCHESTRATION.md` and `.skills/worktree-merge-harvest.md`'s pinned
-   landing procedure. Verify mappings before every Git mutation. Pin both parents,
-   source branch, reviewed tree and native chat; require clean main/task checkouts.
-   Prepare `git merge --no-commit --no-ff <reviewed-full-sha>` in the designated main
-   worktree, then use `scripts/commit-reviewed-landing.mjs` with all `KILO_EXPECTED_*`
-   pins. Never resolve a main conflict, bypass hooks, stash, or alter another owner's files.
-4. Record the final landing and passing evidence in the swarm record, then resolve/release
-   this task's claims. Keep this checkpoint. No worktree deletion or cleanup sweep is
-   authorized by this task. Resume the unproven slices below from current main.
+The boot path uses `REPLACE_DOCUMENT`, which builds the durable shadow and requests temporary
+layer presentation but does not call `publishDurableAppendPresentation()`. That background
+publisher is called for committed appends. Thus the initial blank source does not exercise the
+positive append exception; later paste and Background commits encounter that source in their
+prior active prefix and remain gated. The targeted browser spec confirms unpublished status and
+legacy fallback while checking exact visible and exported pixels.
+
+The focused Sol audit reached the same boundary: on ordinary active startup and raster-import
+paths the positive exception is not reachable, and no fully proven narrow fix was identified.
+Exempting only the initial blank bedrock remains a possible design question, but it requires
+product-flow E2E plus cursor and asset-ownership proof under the authority plan. A disabled
+startup entry was not investigated, so do not claim impossibility across every UI state.
+
+Sync-tree evidence after the main merge: the four focused StoreContext/presentation suites pass
+96 tests; the document-reset suite passes 15 tests after its stale durable-cache expectation was
+aligned with main's ownership fallback; the full unit suite passes 399 files, 11,489 tests, and
+215 established expected failures. `npm run tsc`, `npm run build`, and `npm run lint:check`
+pass. The targeted headless `e2e/source-backed-history.spec.ts` passes its two fallback and
+pixel/export cases. A focused paid Sol audit and two separately prompted read-only reviews via
+`kilo/poolside/laguna-s-2.1:free` report no blocking code defect; the second review explicitly
+confirms that `REPLACE_DOCUMENT` never calls the durable append publisher and the gate-free unit
+fixture does not prove normal UI reachability. Both Kilo calls completed with `finish_reason=stop`,
+`cost=0`, and no OpenRouter requests. No further model review is planned; broader authority and
+product-flow proof remain open.
+After this plan update, the citation suite passed 24 checks and `npm run lint:check` passed with
+64 existing warnings, zero errors, and clean Prettier formatting.
+
+The five silent-loss sweeps are complete on the staged merge: the marker scan is clean across
+50 staged paths; heading counts are HANDOFF 46/46/46/46 and TEST-FLAKES 14/14/14/14
+(base/branch/main/index); `e2e/OPEN_PROBLEMS.md` severity headings are 14/14/12/12, with main
+and the index matching after main removed the resolved 37-degree control and disabled-option
+findings; duplicate-key review found no overlapping map, registry, switch, barrel, or object-key
+additions across the four files changed on both sides (`HANDOFF.md`, both history migration docs,
+and `StoreContext.tsx`); citation tests pass 24 checks; and semantic re-anchoring confirms the
+source gate, append caller, startup producer, navigation behavior, and fallback E2E expectations.
+
+Current next steps:
+
+1. The staged candidate is clean: 50 paths, no conflict markers or unmerged entries, no unstaged
+   edits, and the expected `MERGE_HEAD`. Preserve the active unrelated `AUTO_MERGE` operation and
+   leave the main worktree's untracked operational handoff alone.
+2. With current-main tests, the paid Sol audit, two zero-cost read-only reviews, citation checks,
+   lint and formatting closed, commit this main-into-branch merge after the required Git mapping
+   preflight. The message must name the four conflict decisions and use the current native Chat
+   trailer. Do not land it onto main.
+3. Regenerate inventory only after
+   tests and commits stop changing the roster; run `npm run branches:orphan` and inspect
+   without disposing or modifying unrelated work.
+4. Do not widen this create gate to force UI reachability. Continue with an unowned,
+   independently provable source-backed family only after
+   checking live ownership. The frame fractional-composite and import/replacement tasks
+   remain with their active owners. Keep Slice 3 and Slice 4 unstarted until their explicit
+   proof gates are met. Landing this branch onto main is a separate pinned procedure.
 
 For subsequent edits, stage only owned paths. This ignored plan needs `git add -f`.
 Commits require `Chat: 01a17f24-9224-7aa0-a412-3afafa09f797` and normal
@@ -90,11 +189,11 @@ before the first task commit and was not landing evidence; the claim was reacqui
 The frame task owns `materialization.ts` and its affine
 E2E file; this slice does not edit them or `e2e/OPEN_PROBLEMS.md`.
 
-Provider state: the long second-review attempt timed out three Kilo candidates and
-received OpenRouter **429**; do not retry OpenRouter in this run. OpenCode CLI was
-absent. A shorter, independent Kilo-only completion then succeeded with a 45-second
-timeout and no paid fallback. Review output files are under `/tmp/ph-history-migration-*review*`;
-the accepted findings are recorded above so their loss does not erase the handoff.
+Provider state refreshed 2026-10-28: two required current-candidate reviews resolved to
+`kilo/poolside/laguna-s-2.1:free`, each with zero reported cost; the last live OpenRouter
+snapshot was `817/1000` used with `183` remaining at 18:16:48Z, and no OpenRouter call was made.
+No Groq key or Free-plan opt-in is present. The operator has since instructed: do not use free
+models for further reviews; use Luna or stronger. The completed free calls predate that instruction.
 
 ## Goal and baseline
 
@@ -106,10 +205,12 @@ Owner: Codex session `01a17f24-9224-7aa0-a412-3afafa09f797`, branch
 `docs/history-migration-plan-20261027`, worktree
 `/Users/bkalynovskyi/ph/.kilo/worktrees/history-migration-plan-20261027`.
 
-Baseline: actual `refs/heads/main` at `eaeb1734a03cccfd1e8886a326cc7ae9236409d3`,
-checked out in `main-restored-20261024`. The workspace root is `main-sync` and is
-not the baseline. `repo:state` reported no operations in progress. Recheck both facts
-before each implementation slice and landing.
+Baseline at the start of this sync was actual `refs/heads/main` at
+`3ccccba083eab71df75971bcb4037d7df1fb9f13`, checked out in
+`main-landing-selection-20261028`. The workspace root is `main-sync` and is not the
+baseline. `repo:state` reports an unrelated open operation in
+`dispose-worktree-main-ref-20261028`; check it without resolving or editing it before
+any later landing.
 
 Current source confirms that `HistoryItem[]` and `replayHistory()` remain logical
 authority. Durable navigation and eligible append/reorder stage presentation;
@@ -117,12 +218,13 @@ raster/PSD export use their guarded durable adapter. `durablePresentationMismatc
 admits only raster, blank, and vector sources without retained operations and with
 matching bounds. A current durable conversion alone does not prove presentation.
 
-`7cf69dca` is outside this baseline. It changes final composite drawing, not tight
-per-layer/export materialization. The separate `resolve-frame-control-raster-delta-20261027`
-worktree has active uncommitted materialization and frame-parity work. Preserve that
-owner's files and obtain a reviewed, pinned candidate before considering integration.
-The previous review-closeout branch is already an ancestor of this main; its old
-landing warning must not be reused as a current blocker.
+Current main contains the broader frame-parity matrix, a pure-affine compositor change,
+source-backed cursor gating and imported-bitmap lifecycle work. Exact composite parity in
+the listed cases does not clear the separate mixed-source fractional composite mismatch at
+canvas pixel `(5, 26)` (legacy red/alpha `188/122`, durable `190/121`). The active
+`frame-fractional-composite-root-cause-20261028` worktree owns that investigation; do not
+edit or harvest it here. The active source-backed import/replacement worktree also remains
+outside this task's write set.
 
 ## Slice 1: supported source-backed create presentation
 
@@ -137,7 +239,7 @@ source replacements, merge, and frame-changing commits on their existing gates.
 The whole-document renderer compatibility check remains mandatory; a supported new
 layer does not make unsupported pre-existing layers eligible.
 
-Proof:
+Current proof and remaining acceptance gap:
 
 - Register image assets under the current document before composing; retain borrowed
   legacy source ownership and independent disposable materialization leases.
@@ -145,8 +247,14 @@ Proof:
 - Reject incomplete materialization for the whole publication while retaining the
   committed legacy layer, timeline, and input asset.
 - Do not compose after asset finalization failure or for tool-source creates.
-- Exercise actual paste and Background conversion, durable publication, exact undo/redo
-  pixels, native-resolution PNG export, and PSD composite plus layer pixels.
+- Actual paste and Background conversion are exercised headlessly. They prove exact legacy
+  undo/redo pixels, native-resolution PNG pixels, and PSD composite plus layer pixels while
+  asserting `unpublished` status and `ownership-unproven` legacy fallback. They do not prove
+  durable publication because the default blank baseline is already gated.
+- Before claiming this slice as a product migration, identify a supported product flow whose
+  prior active prefix is proven gate-free, or resolve baseline ownership under the authority
+  plan; then exercise that flow's durable publication and navigation with exact pixels. Do not
+  weaken the existing prefix gate to manufacture reachability.
 - Preserve existing renderer preview tests and raster/PSD adapter tests.
 
 Handoff: this is presentation progress only. Logical undo/redo remains legacy-owned.
@@ -268,5 +376,8 @@ legacy path and record an explicit blocked/unproven handoff with the next action
 ## Remaining status
 
 Broader migration: **unproven**. Slices 2A through 4 require the evidence above. Slice 1
-has passing validation and two completed independent reviews; its final landing/release
-is recorded through Git ancestry and swarm issue `ph-12`.
+passed validation and two independent reviews on the pre-sync candidate, but its commits
+are not ancestors of current main. The current-main merge composition needs fresh tests and
+two fresh independent reviews before its sync commit. Swarm issue `ph-12` is open and claimed
+by this branch; no landing or release is recorded. Keep Slices 2A through 4 unproven until
+their listed evidence is complete.

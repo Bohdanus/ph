@@ -71,20 +71,6 @@ independent of how they were moved into this repository: each was reproducible
 with no changes to the specs or to `src/`. The current failures above are separate
 from that fixed history.
 
-### P2 — the 37-degree frame-only raster control differs by one pixel
-
-In `e2e/crop-history.spec.ts`, the frame-only control for `a retained layer transform matches
-legacy before and after a later frame transform` uses the same two raster layers and 37-degree frame
-change with no retained layer transform. Run `2026-10-26T18-36-15-473Z-15825` measured
-`differingBytes=2`, `differingPixels=1`, and `maxChannelDelta=1`: at pixel `(36, 26)`, the legacy
-green/blue channels were `97/158` and the durable channels were `98/157`.
-
-The control is only used to prove the retained affine operation changes each renderer's final
-pixels; it is not counted as a parity pass. Frame-changing commits remain on the legacy path, so
-this does not change current presentation. It is still an open durable frame-parity case. Reproduce
-the fixture, determine the source of the one-pixel delta, and add exact pixel/bounds coverage before
-considering frame publication. Do not hide it with a tolerance.
-
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
@@ -245,51 +231,6 @@ backdrop mask) so it can exclude backdrop by position without excluding black in
 document. Otherwise, keep dark-theme captures out of color-only helper calls. Regression
 coverage for a future fix must retain true `#000` document ink while excluding dark cells,
 dark gaps, and antialiased checkerboard edges.
-
-## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
-
-`@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
-
-Every options bar in this repository wraps its own control in a `<label>`
-(the `<label htmlFor="eraser-mode">` in
-`src/components/ToolbarsRight/Eraser/Eraser.tsx` and every sibling bar), so the
-markup that makes a control's accessible name is the same markup that defeats the
-assertion on it. Playwright's `disabled` state does not test the element the locator
-resolved: `retarget` first walks a non-form-control up to
-`button, [role=button], [role=checkbox], [role=radio]`, and then — for the
-`follow-label` behaviour it uses for `disabled` — up to `element.closest('label')` and
-returns `enclosingLabel.control`. An `<option>` is neither a form control nor a member
-of that first selector list, and its ancestor _is_ the label, so the check is made
-against the `<select>`, which carries no `disabled` attribute. The result is
-`Received: enabled` for an option that demonstrably has `disabled=""` and
-`option.disabled === true`.
-
-This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
-cannot render, would still be reported as correct. It is also invisible in jsdom —
-`it('offers the three Photoshop modes, all of them selectable')` in
-`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx` asserts
-`expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
-because that matcher reads the DOM property directly and has no retarget step. A
-jsdom pass is therefore not evidence that the browser assertion works.
-
-Workaround used by `test('the eraser mode select offers all three Photoshop modes, and the
-select is live')` in `e2e/erase-fill-eyedropper.spec.ts`: assert the attribute and
-the enabled set, both read straight off the DOM.
-
-```ts
-await expect(brushOption).toHaveAttribute('disabled', '');
-const selectable = await mode
-  .locator('option')
-  .evaluateAll((nodes) =>
-    nodes.filter((n) => !(n as HTMLOptionElement).disabled).map((n) => (n as HTMLOptionElement).value)
-  );
-expect(selectable).toEqual(['pencil', 'block']);
-```
-
-`toHaveAttribute` is unaffected (it reads the resolved element), and the enabled set is
-the same fact stated as what a user can actually choose. No fix is proposed here: the
-retarget is upstream behaviour, and the only way to remove it from the assertions is
-to stop wrapping the control in its label, which is the repo's markup convention.
 
 ## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
 
@@ -635,9 +576,13 @@ still worth having.
 
 `compareScreenshots` is called with `threshold: 0.01` and `maxDiffPixels: 100` over an
 800x600 baseline — 100 pixels is 0.021%, and four of the seven compared formats are lossy
-(JPEG, WebP, GIF, AVIF). `channel: 'chrome'` is the **system** browser and CI installs
-`google-chrome-stable` with no version, so any encoder change is a hard red on a blocking
-gate.
+(JPEG, WebP, GIF, AVIF). `channel: 'chrome'` selects branded Google Chrome Stable rather
+than Playwright's bundled Chromium. CI invokes `npx playwright install chrome` (with
+`--with-deps` on Linux); neither the project configuration nor those install commands
+specify an exact Chrome revision. See Playwright's
+[Chrome and Edge channel guidance](https://playwright.dev/docs/browsers#google-chrome--microsoft-edge).
+The resolved stable version can therefore differ across OS runners and drift from the
+visual baselines.
 
 The tolerance question has been answered: the 100-pixel budget is a **tripwire, not a
 tolerance**, and the argument is written out at the call site so it is not widened later to

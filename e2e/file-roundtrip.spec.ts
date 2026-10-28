@@ -1,10 +1,12 @@
 import { expect, test, type Page, type TestInfo } from './fixtures/extended-test';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { writePsdBuffer } from 'ag-psd';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import {
   dominantRed,
   drawLine,
+  drawLineFromDocument,
   getColorAtPoint,
   getWorkspaceCanvas,
   hasRedPixels,
@@ -13,15 +15,16 @@ import {
   LINE_END_Y,
   LINE_START_X,
   LINE_START_Y,
+  type ImageDataResult,
   type BoundingBox,
   type CanvasPixelPredicate,
   type ClipOptions,
-  type ImageDataResult,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
-import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { acceptDiscardPrompt, expectNoDiscardPrompt } from './helpers/discard-prompt';
+import { getRedoButton, getUndoButton } from './helpers/history-helpers';
 import {
   fillSaveDialog,
   INTEGRATION_TEST_TIMEOUT_MS,
@@ -42,6 +45,8 @@ const FIXTURE_DOCUMENT_SIZE = 64;
 const FIXTURE_LEFT_RGB = { red: 255, green: 0, blue: 0 };
 /** Columns [32, 63] of the fixture: rgb(0, 0, 255), alpha 255. */
 const FIXTURE_RIGHT_RGB = { red: 0, green: 0, blue: 255 };
+const IMPORT_PSD_LEFT_RGB = { red: 23, green: 167, blue: 71 };
+const IMPORT_PSD_RIGHT_RGB = { red: 179, green: 61, blue: 137 };
 
 /**
  * Sampling radius, in image pixels, for the fixture's exact-colour reads. The
@@ -151,6 +156,50 @@ const fixtureHalvesRendered: CanvasPixelPredicate = async (capture) => {
     isExactly(await sampleFixtureColor(capture, FIXTURE_RIGHT_SAMPLE_X, FIXTURE_SAMPLE_Y), FIXTURE_RIGHT_RGB)
   );
 };
+
+const importedPsdHalvesRendered: CanvasPixelPredicate = async (capture) => {
+  return (
+    isExactly(await sampleFixtureColor(capture, FIXTURE_LEFT_SAMPLE_X, FIXTURE_SAMPLE_Y), IMPORT_PSD_LEFT_RGB) &&
+    isExactly(await sampleFixtureColor(capture, FIXTURE_RIGHT_SAMPLE_X, FIXTURE_SAMPLE_Y), IMPORT_PSD_RIGHT_RGB)
+  );
+};
+
+function solidPsdLayer(name: string, left: number, color: { red: number; green: number; blue: number }) {
+  const width = FIXTURE_DOCUMENT_SIZE / 2;
+  const height = FIXTURE_DOCUMENT_SIZE;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let offset = 0; offset < data.length; offset += 4) {
+    data.set([color.red, color.green, color.blue, 255], offset);
+  }
+  return {
+    name,
+    left,
+    top: 0,
+    right: left + width,
+    bottom: height,
+    imageData: { width, height, data },
+  };
+}
+
+function twoHalfRaster(
+  left: { red: number; green: number; blue: number },
+  right: { red: number; green: number; blue: number }
+): ImageDataResult {
+  const width = FIXTURE_DOCUMENT_SIZE;
+  const height = FIXTURE_DOCUMENT_SIZE;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const color = x < width / 2 ? left : right;
+      const index = (y * width + x) * 4;
+      data[index] = color.red;
+      data[index + 1] = color.green;
+      data[index + 2] = color.blue;
+      data[index + 3] = 255;
+    }
+  }
+  return { width, height, data };
+}
 
 /**
  * Where the two fixture halves meet, as a fraction of the capture's width, measured
@@ -429,6 +478,15 @@ async function openDocumentViaFileMenu(page: Page, filePath: string): Promise<vo
   await fileChooser.setFiles(filePath);
 }
 
+async function openDocumentFromCleanState(page: Page, filePath: string): Promise<void> {
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-open-button').click();
+  await expectNoDiscardPrompt(page);
+  const fileChooser = await chooser;
+  await fileChooser.setFiles(filePath);
+}
+
 test.describe('File round trip', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -495,6 +553,79 @@ test.describe('File round trip', () => {
     test('a PNG this app saves re-imports to the same pixels', async ({ page }, testInfo) => {
       await verifyPngRoundTrip(page, testInfo, 2);
     });
+  });
+
+  test('imported PSD rasters survive replacement and legacy undo/redo', async ({ page }, testInfo) => {
+    test.setTimeout(ROUNDTRIP_TEST_TIMEOUT_MS);
+
+    await openDocumentViaFileMenu(page, path.join(testInfo.config.rootDir, FIXTURE_PATH_FROM_ROOT));
+    const canvas = getWorkspaceCanvas(page);
+    const sourceBox = await canvas.boundingBox();
+    if (!sourceBox) throw new Error('Canvas not found after opening the outgoing raster document');
+    await waitForCanvasPixels(
+      page,
+      integralClip(documentContentRect(sourceBox, FIXTURE_DOCUMENT_SIZE)),
+      fixtureHalvesRendered,
+      { description: 'the outgoing raster document before PSD replacement' }
+    );
+
+    const psdPath = testInfo.outputPath('two-layer-owner-lifecycle.psd');
+    await mkdir(path.dirname(psdPath), { recursive: true });
+    const psd = writePsdBuffer({
+      width: FIXTURE_DOCUMENT_SIZE,
+      height: FIXTURE_DOCUMENT_SIZE,
+      children: [
+        solidPsdLayer('Imported green half', 0, IMPORT_PSD_LEFT_RGB),
+        solidPsdLayer('Imported blue half', FIXTURE_DOCUMENT_SIZE / 2, IMPORT_PSD_RIGHT_RGB),
+      ],
+    });
+    await writeFile(psdPath, psd);
+    await openDocumentFromCleanState(page, psdPath);
+
+    const importedBox = await canvas.boundingBox();
+    if (!importedBox) throw new Error('Canvas not found after importing the layered PSD');
+    const importedContent = integralClip(documentContentRect(importedBox, FIXTURE_DOCUMENT_SIZE));
+    await waitForCanvasPixels(page, importedContent, importedPsdHalvesRendered, {
+      description: 'the two exact raster layers from the replacement PSD',
+    });
+    const importedRaster = await readWorkspaceDocumentRaster(page, 1);
+    expect(importedRaster).toEqual(twoHalfRaster(IMPORT_PSD_LEFT_RGB, IMPORT_PSD_RIGHT_RGB));
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, STROKE_HEX, true);
+    await drawLineFromDocument(
+      page,
+      importedBox,
+      42,
+      20,
+      58,
+      20,
+      { steps: 12 },
+      { width: FIXTURE_DOCUMENT_SIZE, height: FIXTURE_DOCUMENT_SIZE }
+    );
+    await waitForCanvasPixels(page, importedContent, hasRedPixels, {
+      description: 'a committed red stroke on the imported PSD document',
+    });
+    const editedRaster = await readWorkspaceDocumentRaster(page, 1);
+    await expect(getUndoButton(page), 'the imported-document edit should be undoable').toBeEnabled();
+
+    await getUndoButton(page).click();
+    await waitForCanvasPixels(page, importedContent, importedPsdHalvesRendered, {
+      description: 'legacy undo should replay both owned PSD raster layers',
+    });
+    const statusStrip = page.getByTestId('dev-status-strip');
+    await expect(statusStrip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+    await expect(statusStrip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
+    expect((await readWorkspaceDocumentRaster(page, 1)).data).toEqual(importedRaster.data);
+
+    await expect(getRedoButton(page), 'undo should leave the imported-document edit redoable').toBeEnabled();
+    await getRedoButton(page).click();
+    await waitForCanvasPixels(page, importedContent, hasRedPixels, {
+      description: 'legacy redo should restore the edit over both imported PSD layers',
+    });
+    await expect(statusStrip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+    await expect(statusStrip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
+    expect((await readWorkspaceDocumentRaster(page, 1)).data).toEqual(editedRaster.data);
   });
 
   test('the exact pixel oracle detects a translated stroke with unchanged aggregate colour', async () => {

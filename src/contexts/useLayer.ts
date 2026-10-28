@@ -52,6 +52,8 @@ import {
   UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
 import { clearTextDraftArgs, type TextToolArgs } from '../tools/text.ts';
+import { normalizeColorsToolArgs } from '../tools/colors.ts';
+import { normalizeLevelsToolArgs } from '../tools/levels.ts';
 import { canvasRectToLocal } from '../util/rect.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
@@ -274,7 +276,14 @@ function isTransformArgs(args: ToolArgs): args is TransformToolArgs {
   return args.toolName === 'transform';
 }
 
+function normalizeToolArgs(args: ToolArgs): ToolArgs {
+  if (args.toolName === 'color') return normalizeColorsToolArgs(args);
+  if (args.toolName === 'levels') return normalizeLevelsToolArgs(args);
+  return args;
+}
+
 function normalizeCommittedToolArgs(layer: Layer, args: ToolArgs): ToolArgs | object | null {
+  args = normalizeToolArgs(args);
   if (!isTransformArgs(args)) return args;
   const retained = normalizeTransformHistoryArgs(args, layer.pos);
   if (retained && isIdentityAffineTransform(retained.transform)) return null;
@@ -562,14 +571,24 @@ export const useLayers = () => {
     );
   };
 
-  const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
+  const createLayerFromBitmap = async (
+    params: FileImageParams,
+    replaceDocument = false,
+    isCurrentRequest?: () => boolean
+  ) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
     if (currentLayers === null) return false;
 
+    const ownsMaterializedBitmap = typeof (params.bitmap as { close?: unknown }).close !== 'function';
+    const bitmap = await immutableRaster(params.bitmap);
+    if (isCurrentRequest && !isCurrentRequest()) {
+      if (ownsMaterializedBitmap) (bitmap as ImageBitmap).close();
+      return false;
+    }
     const source: ImageLayerSource = {
       kind: 'image',
       ...params,
-      bitmap: await immutableRaster(params.bitmap),
+      bitmap,
     };
     const newLayer = createLayerSource({ layers: currentLayers, source });
 
@@ -710,8 +729,9 @@ export const useLayers = () => {
     return nextLayer;
   };
 
-  const updateLayerByTool = async ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
-    const toolArgsToolName = (toolArgs as ToolArgs).toolName;
+  const updateLayerByTool = async ({ id = activeLayerId, toolArgs: inputToolArgs }: LayerEditParams) => {
+    const toolArgs = normalizeToolArgs(inputToolArgs);
+    const toolArgsToolName = toolArgs.toolName;
     const processor = findToolProcessor(toolArgsToolName);
     // Statically enforced, not by convention: a tool with no processor (`PIXEL_FREE_TOOLS`) has no
     // pixel operation, so it is not reachable through this path at all.
@@ -1187,10 +1207,10 @@ export const useLayers = () => {
   // THE MAIN POINT IS THAT THIS method does not leave any trace in history and REACT lifecycle
   //
   // The `boolean` is load-bearing: `updateLayerByTool` appends the `TOOL_ACTION` history entry
-  // right after calling this, and `normalizeCommittedToolArgs` returns a non-transform tool's args
-  // unchanged, so a `false` here that the caller ignored would still record a history state with
-  // no layer change behind it.
-  function tempUpdateLayer({ id = activeLayerId, toolArgs }: LayerEditParams): boolean {
+  // only after this succeeds. Colors and Levels args are normalized before the operation is
+  // rendered, and the same normalized args are what their history entries record.
+  function tempUpdateLayer({ id = activeLayerId, toolArgs: inputToolArgs }: LayerEditParams): boolean {
+    const toolArgs = normalizeToolArgs(inputToolArgs);
     if (!id) return false;
 
     const layer = layers[id];

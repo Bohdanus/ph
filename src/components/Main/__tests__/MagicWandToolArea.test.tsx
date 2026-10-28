@@ -4,6 +4,7 @@ import type { Selection } from '../../../contexts/general-types.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
 import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
+import * as magicWandUtil from '../../../util/magicWand.ts';
 import { MagicWandToolArea } from '../MagicWandToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -12,7 +13,8 @@ const storeState = vi.hoisted(
   (): {
     selections: Selection[];
     documentFrame: { x: number; y: number; width: number; height: number } | null;
-  } => ({ selections: [], documentFrame: null })
+    renderSelector: { source: 'legacy' | 'pending' | 'durable' };
+  } => ({ selections: [], documentFrame: null, renderSelector: { source: 'legacy' } })
 );
 const toolState = vi.hoisted(
   (): { toolArgs: { contiguous: boolean; smoothing: number; tolerance: number; toolName: string } } => ({
@@ -42,6 +44,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       activeSelectionId: null,
       totalSize: { width: 6, height: 6 },
       documentFrame: storeState.documentFrame,
+      renderSelector: storeState.renderSelector,
       history: [],
       historyIndex: 0,
     },
@@ -160,11 +163,14 @@ function singleSelectionEdit(): SelectionEdit {
 
 describe('MagicWandToolArea', () => {
   let getContextSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let createSelectionSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 
   beforeEach(() => {
-    dispatchMock.mockClear();
+    dispatchMock.mockReset();
     storeState.selections = [];
     storeState.documentFrame = null;
+    storeState.renderSelector = { source: 'legacy' };
     toolState.toolArgs = { contiguous: true, smoothing: 1, tolerance: 0, toolName: 'magic-wand' };
     sourceCanvas.width = 6;
     sourceCanvas.height = 6;
@@ -176,6 +182,10 @@ describe('MagicWandToolArea', () => {
   afterEach(() => {
     getContextSpy?.mockRestore();
     getContextSpy = null;
+    createSelectionSpy?.mockRestore();
+    createSelectionSpy = null;
+    consoleErrorSpy?.mockRestore();
+    consoleErrorSpy = null;
   });
 
   it('commits a magic wand polygon selection with metadata on click', () => {
@@ -303,6 +313,19 @@ describe('MagicWandToolArea', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
+  it('does not read stale canvas pixels while replay is pending', () => {
+    storeState.renderSelector = { source: 'pending' };
+    const { container } = render(
+      <MagicWandToolArea overlayCtxRef={{ current: createMockContext() }} className="test-magic-wand-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(getContextSpy).not.toHaveBeenCalled();
+  });
+
   it('ignores clicks when the current tool is not the magic wand', () => {
     toolState.toolArgs = { contiguous: true, smoothing: 1, tolerance: 0, toolName: 'rectangular-selection' };
     const mockCtx = createMockContext();
@@ -337,6 +360,44 @@ describe('MagicWandToolArea', () => {
     // is the only path that appends one, so this is the guard that survived the move
     // off the raw `COMMIT_SELECTION` action.
     expect(selectionEdits()).toEqual([]);
+  });
+
+  it('cancels the draft when selection processing throws before commit', () => {
+    createSelectionSpy = vi.spyOn(magicWandUtil, 'createMagicWandSelectionFromCanvas').mockImplementation(() => {
+      throw new RangeError('simulated allocation failure');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(
+      <MagicWandToolArea overlayCtxRef={{ current: createMockContext() }} className="test-magic-wand-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
+
+    expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: 'magic-wand' },
+    });
+    expect(dispatchMock).toHaveBeenNthCalledWith(2, { type: 'CANCEL_SELECTION_DRAFT' });
+    expect(selectionEdits()).toEqual([]);
+  });
+
+  it('cancels the draft when the selection writer throws during commit', () => {
+    dispatchMock.mockImplementation((action: { type: string }) => {
+      if (action.type === 'COMMIT_DOCUMENT_EDIT') throw new Error('simulated selection writer failure');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(
+      <MagicWandToolArea overlayCtxRef={{ current: createMockContext() }} className="test-magic-wand-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.filter((action) => action.type === 'START_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.filter((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toHaveLength(1);
+    expect(selectionEdits()).toHaveLength(2);
   });
 
   it('records the seed in document space', () => {

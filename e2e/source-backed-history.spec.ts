@@ -19,7 +19,7 @@ function expectedPixels() {
   return expected;
 }
 
-test('a pasted raster publishes durably and survives undo, redo, and exact PNG/PSD export', async ({ page }) => {
+test('a pasted raster preserves exact pixels behind the source-backed cursor gate', async ({ page }) => {
   await page.goto('/');
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
@@ -52,9 +52,9 @@ test('a pasted raster publishes durably and survives undo, redo, and exact PNG/P
   await page.keyboard.press('ControlOrMeta+v');
   await expect(rows).toHaveCount(2);
   const strip = page.getByTestId('dev-status-strip');
-  await expect(strip).toHaveAttribute('data-presentation-status', 'durable');
+  await expect(strip).toHaveAttribute('data-status', 'current');
+  await expect(strip).toHaveAttribute('data-presentation-status', 'unpublished');
   await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
-  const createdIds = await strip.getAttribute('data-durable-layer-ids');
   const pasted = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
   expect(pasted).not.toEqual(baseline);
 
@@ -98,12 +98,13 @@ test('a pasted raster publishes durably and survives undo, redo, and exact PNG/P
 
   await getUndoButton(page).click();
   await expect(rows).toHaveCount(1);
-  await expect(strip).toHaveAttribute('data-presentation-status', 'durable');
+  await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+  await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
   await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(baseline);
   await getRedoButton(page).click();
   await expect(rows).toHaveCount(2);
-  await expect(strip).toHaveAttribute('data-presentation-status', 'durable');
-  await expect(strip).toHaveAttribute('data-durable-layer-ids', createdIds!);
+  await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+  await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
   await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(pasted);
 
   await openSaveDialog(page);
@@ -129,15 +130,24 @@ test('a pasted raster publishes durably and survives undo, redo, and exact PNG/P
   );
 });
 
-test('Background conversion publishes the raster create before navigation', async ({ page }) => {
+test('Background conversion retains exact pixels behind the source-backed cursor gate', async ({ page }) => {
   await page.goto('/');
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
   const before = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
   await page.getByTestId('layers-convert-background-button').click();
   const strip = page.getByTestId('dev-status-strip');
-  await expect(strip).toHaveAttribute('data-presentation-status', 'durable');
+  await expect(strip).toHaveAttribute('data-status', 'current');
+  await expect(strip).toHaveAttribute('data-presentation-status', 'unpublished');
   await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
   await expect(page.getByTitle('Click to go back to this state')).toHaveCount(2);
+  expect(await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(before);
+  await getUndoButton(page).click();
+  await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+  await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
+  expect(await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(before);
+  await getRedoButton(page).click();
+  await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+  await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
   expect(await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(before);
 });

@@ -534,10 +534,10 @@ real accessibility property — not because Adobe specifies it.
   this revision)_
 - `HAVE` — **tracking**, `-1000..1000` in 1/1000 em, applied as `ctx.letterSpacing`, with a
   measured manual fallback (`text.ts` — `trackingPx`, `applyTextStyle`'s letterSpacing arm,
-  `fillLine`, and the faux-small-caps path in `fillFauxSmallCaps`). §20 and §21.
+  `fillLine`, and the manual caps measurement/drawing helpers). §20 and §21.
 - `HAVE` — **All Caps** uppercases text at full size; **Small Caps** leaves existing capitals full
-  size and synthesises lowercase characters. Canvas uses native small caps only when measured
-  metrics show the variant works, otherwise it draws faux small caps per grapheme (§20).
+  size and synthesises lowercase characters. Canvas uses native small caps only when a raster proof shows the variant changes pixels; otherwise it draws grapheme-safe faux
+  small caps (§20).
 - `HAVE` — **underline** and **strikethrough**, drawn in the type colour with `ctx.fillRect` at a
   thickness of `fontSize / 16` (`text.ts` — `decorationThickness`, and `renderText`'s decoration
   arm). **Their vertical positions are a RECONSTRUCTION of this app — §21.6. No Adobe page
@@ -988,20 +988,20 @@ are in `src/contexts/psd-utils.ts`, which the old row did not name.
 
 Canvas 2D, and what each Photoshop feature costs there:
 
-| Photoshop feature      | Canvas 2D                                    | Status                                                                                                        |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Kerning                | `ctx.fontKerning`                            | Available; **default metrics kerning matches Adobe's default**, no control                                    |
-| Tracking               | `ctx.letterSpacing`                          | **Used, feature-detected, with a measured fallback** (§19, §20, §21)                                          |
-| Word spacing           | `ctx.wordSpacing`                            | Baseline 2025 — feature-detect; **not used yet** (it is §6's `wordSpacingDesired`)                            |
-| Small caps / all caps  | Canvas caps property or CSS `font` shorthand | **Native small caps first; all caps stays full size; faux caps only if Canvas ignores both paths** (§19, §20) |
-| Condensed / expanded   | `ctx.fontStretch`                            | Available                                                                                                     |
-| Baseline direction     | `ctx.direction`                              | Direction only, not bidi shaping                                                                              |
-| Language for shaping   | `ctx.lang`                                   | Available                                                                                                     |
-| Ligature control       | `ctx.textRendering`                          | Limited availability                                                                                          |
-| **Auto-leading 120%**  | —                                            | Reproduced as a constant; **"font-independent, therefore exact" is WITHDRAWN** (§6)                           |
-| **Anti-aliasing mode** | —                                            | **Unavailable** (§5)                                                                                          |
-| **OpenType features**  | —                                            | **Unavailable** (§10)                                                                                         |
-| **Hyphenation**        | —                                            | Needs shipped patterns (§13)                                                                                  |
+| Photoshop feature      | Canvas 2D                                                    | Status                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Kerning                | `ctx.fontKerning`                                            | Available; **default metrics kerning matches Adobe's default**, no control                                                   |
+| Tracking               | `ctx.letterSpacing`                                          | **Used, feature-detected, with a measured fallback** (§19, §20, §21)                                                         |
+| Word spacing           | `ctx.wordSpacing`                                            | Baseline 2025 — feature-detect; **not used yet** (it is §6's `wordSpacingDesired`)                                           |
+| Small caps / all caps  | Metric-verified `fontVariantCaps`; transformed fallback runs | **All Caps stays full size; Small Caps uses native metrics when effective, otherwise synthesized lowercase runs** (§19, §20) |
+| Condensed / expanded   | `ctx.fontStretch`                                            | Available                                                                                                                    |
+| Baseline direction     | `ctx.direction`                                              | Direction only, not bidi shaping                                                                                             |
+| Language for shaping   | `ctx.lang`                                                   | Available                                                                                                                    |
+| Ligature control       | `ctx.textRendering`                                          | Limited availability                                                                                                         |
+| **Auto-leading 120%**  | —                                                            | Reproduced as a constant; **"font-independent, therefore exact" is WITHDRAWN** (§6)                                          |
+| **Anti-aliasing mode** | —                                                            | **Unavailable** (§5)                                                                                                         |
+| **OpenType features**  | —                                                            | **Unavailable** (§10)                                                                                                        |
+| **Hyphenation**        | —                                                            | Needs shipped patterns (§13)                                                                                                 |
 
 **Baseline 2025 is not a floor to assume.** `letterSpacing` and `wordSpacing` shipped in March
 2025, and the e2e suite runs system **Chrome** only (`playwright.config.ts` — the sole project,
@@ -1429,20 +1429,22 @@ identical on both.**
 
 `all-small-caps` is measured for browser comparison, not used for Photoshop All Caps. All Caps
 uppercases at the full type size; only Small Caps uses the small-cap variant or faux-cap fallback.
-When Canvas has no separate `fontVariantCaps` property, the renderer requests `small-caps` in the
-Canvas `font` shorthand. The HTML Canvas standard parses that attribute as a CSS `font` value, whose
-legacy shorthand grammar includes `small-caps`; the pixel probe keeps the grapheme-safe faux path for
-engines that ignore both forms. The live editor uses CSS `font-variant-caps: small-caps`, so both
-paths select the same native or synthesized font behavior when Canvas supports the shorthand
-([HTML Canvas text styles](https://html.spec.whatwg.org/multipage/canvas.html#text-styles),
-[CSS Fonts `font` shorthand](https://www.w3.org/TR/css-fonts-4/#font-prop)).
+The Canvas renderer uses `fontVariantCaps` only when a raster probe shows the property changes
+pixels. When the property is missing or ignored (raster readback is unavailable or unchanged), it
+draws uppercase runs for lowercase graphemes and scales those runs by the renderer's measured
+fallback factor; existing capitals retain their normal size. This path also avoids depending on
+whether an engine accepts `small-caps` in the Canvas `font` shorthand. The live editor uses
+CSS `font-variant-caps: small-caps`, so preview and committed text still request the same
+typographic variant. The fallback factor reproduces the measured browser behavior for the tested
+font; Adobe does not specify a universal faux-small-caps scale.
 
 Assigning `ctx.font` **resets** `fontVariantCaps` to `'normal'`; `letterSpacing`, `wordSpacing` and
 `fontKerning` **survive** a font assignment. Where the separate caps property exists, that is the
 ordering rule inside `applyTextStyle` (`text.ts`) — font first, caps last — and it is pinned by
 reading `ctx.font` at the moment of the caps assignment (`text.test.ts`'s
 `it('assigns fontVariantCaps AFTER ctx.font, because assigning the font resets it')`). Where the
-property is missing, the native `small-caps` token is part of the font shorthand itself.
+property is missing or ignored, `applyTextStyle` selects manual fallback drawing rather than a
+`small-caps` Canvas font shorthand.
 
 **Text metrics — all available.** Arial at 64px: `fontBoundingBoxAscent` **58**, `fontBoundingBoxDescent`
 **14**, cap height **45.81250** (`0.715820em`), x-height **33.18750** (`0.518555em`),

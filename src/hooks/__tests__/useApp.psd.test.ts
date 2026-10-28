@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp } from '../useApp.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
@@ -108,6 +108,10 @@ describe('useApp PSD replacement', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('replaces the document atomically with an independent, metadata-preserving history baseline', async () => {
     const { document, state, dispatch, adoptLayerBitmaps } = setup();
     const confirm = vi.spyOn(window, 'confirm');
@@ -204,8 +208,88 @@ describe('useApp PSD replacement', () => {
     expect(dispatch.mock.calls[0][0].payload.updates.layers).toEqual(document.layers);
   });
 
+  it('closes every newly materialized raster when any layer conversion fails', async () => {
+    const { document, dispatch, adoptLayerBitmaps } = setup();
+    const canvases = Object.values(document.layers).map(() => ({ width: 20, height: 30 }) as OffscreenCanvas);
+    Object.values(document.layers).forEach((layer, index) => {
+      layer.bitmap = canvases[index] as unknown as ImageBitmap;
+      (layer.source as ImageLayerSource).bitmap = canvases[index] as unknown as ImageBitmap;
+    });
+    const materialized = { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap;
+    const conversionError = new Error('raster conversion failed');
+    const createImageBitmap = vi.fn().mockResolvedValueOnce(materialized).mockRejectedValueOnce(conversionError);
+    vi.stubGlobal('createImageBitmap', createImageBitmap);
+
+    await expect(useApp().setImageFromUpload({ fileName: 'design.psd', document })).rejects.toBe(conversionError);
+
+    expect(createImageBitmap).toHaveBeenCalledTimes(2);
+    expect(materialized.close).toHaveBeenCalledOnce();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(adoptLayerBitmaps).not.toHaveBeenCalled();
+  });
+
+  it('discards an older PSD import that finishes after a newer import', async () => {
+    const olderStore = setup();
+    const olderApp = useApp();
+    const makeMutable = (document: PsdDocument) => {
+      const canvases = Object.values(document.layers).map(() => ({ width: 20, height: 30 }) as OffscreenCanvas);
+      Object.values(document.layers).forEach((layer, index) => {
+        layer.bitmap = canvases[index] as unknown as ImageBitmap;
+        (layer.source as ImageLayerSource).bitmap = canvases[index] as unknown as ImageBitmap;
+      });
+      return canvases;
+    };
+    const olderCanvases = makeMutable(olderStore.document);
+    let resolveOlderTop!: (bitmap: ImageBitmap) => void;
+    let resolveOlderBottom!: (bitmap: ImageBitmap) => void;
+    const olderTopPromise = new Promise<ImageBitmap>((resolve) => {
+      resolveOlderTop = resolve;
+    });
+    const olderBottomPromise = new Promise<ImageBitmap>((resolve) => {
+      resolveOlderBottom = resolve;
+    });
+    const olderRasters = [
+      { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+      { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+    ];
+    const newerRasters = [
+      { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+      { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+    ];
+    const newerStore = setup();
+    const newerApp = useApp();
+    const newerCanvases = makeMutable(newerStore.document);
+    const conversions = new Map<OffscreenCanvas, Promise<ImageBitmap>>([
+      [olderCanvases[0], olderTopPromise],
+      [olderCanvases[1], olderBottomPromise],
+      ...newerCanvases.map((canvas, index) => [canvas, Promise.resolve(newerRasters[index])] as const),
+    ]);
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn((canvas: OffscreenCanvas) => conversions.get(canvas)!)
+    );
+
+    const olderImport = olderApp.setImageFromUpload({ fileName: 'older.psd', document: olderStore.document });
+    await newerApp.setImageFromUpload({ fileName: 'newer.psd', document: newerStore.document });
+    resolveOlderTop(olderRasters[0]);
+    resolveOlderBottom(olderRasters[1]);
+    await olderImport;
+
+    expect(olderStore.dispatch).not.toHaveBeenCalled();
+    expect(newerStore.dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ updates: expect.objectContaining({ fileName: 'newer.psd' }) }),
+      })
+    );
+    expect(olderRasters[0].close).toHaveBeenCalledOnce();
+    expect(olderRasters[1].close).toHaveBeenCalledOnce();
+    expect(newerRasters[0].close).not.toHaveBeenCalled();
+    expect(newerRasters[1].close).not.toHaveBeenCalled();
+  });
+
   it('retains the raster upload path rather than creating a PSD baseline', async () => {
     const { dispatch } = setup();
+    mocks.createLayerFromBitmap.mockResolvedValue(true);
     const image = {
       width: 80,
       height: 40,
@@ -222,10 +306,50 @@ describe('useApp PSD replacement', () => {
         size: { width: 80, height: 40 },
         isBedrock: true,
       },
-      true
+      true,
+      expect.any(Function)
     );
+    expect(mocks.createLayerFromBitmap.mock.calls[0][2]?.()).toBe(true);
     expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
     expect(dispatch.mock.calls.every(([action]) => !action.payload?.history)).toBe(true);
+  });
+
+  it('does not resize or rename the document when a raster replacement is stale', async () => {
+    const { document, state, dispatch } = setup();
+    const app = useApp();
+    let resolveRasterMaterialization!: (materialized: boolean) => void;
+    const rasterMaterialization = new Promise<boolean>((resolve) => {
+      resolveRasterMaterialization = resolve;
+    });
+    mocks.createLayerFromBitmap.mockImplementation(async (_params, _replaceDocument, isCurrentRequest) => {
+      const materialized = await rasterMaterialization;
+      return materialized && (isCurrentRequest?.() ?? true);
+    });
+    const image = {
+      width: 80,
+      height: 40,
+      src: '',
+      complete: true,
+      naturalWidth: 80,
+      naturalHeight: 40,
+    } as HTMLImageElement;
+
+    const staleRasterUpload = app.setImageFromUpload({ fileName: 'stale.png', image });
+    await app.setImageFromUpload({ fileName: 'newer.psd', document });
+
+    expect(mocks.createLayerFromBitmap.mock.calls[0][2]?.()).toBe(false);
+    resolveRasterMaterialization(true);
+    await staleRasterUpload;
+
+    expect(state.canvasRef.current).toEqual({ width: 320, height: 180 });
+    expect(state.toolOverlayRef.current).toEqual({ width: 320, height: 180 });
+    expect(state.rectOverlayRef.current).toEqual({ width: 320, height: 180 });
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: 'REPLACE_DOCUMENT',
+        payload: expect.objectContaining({ updates: expect.objectContaining({ fileName: 'newer.psd' }) }),
+      })
+    );
   });
 
   it('clears the active selection and records the clear in history when switching tools', () => {

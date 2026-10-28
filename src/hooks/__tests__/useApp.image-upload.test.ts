@@ -138,6 +138,7 @@ describe('useApp setImageFromUpload', () => {
     });
     layerMocks.createLayerFromBitmap.mockImplementation(async () => {
       harness.events.push('createLayerFromBitmap');
+      return true;
     });
   });
 
@@ -163,7 +164,8 @@ describe('useApp setImageFromUpload', () => {
         size: { width: 80, height: 40 },
         isBedrock: true,
       },
-      true
+      true,
+      expect.any(Function)
     );
     expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
     expect(harness.canvasSize).toEqual({ width: 80, height: 40 });
@@ -172,6 +174,7 @@ describe('useApp setImageFromUpload', () => {
   it('keeps the current canvas size until the new layer has been created', async () => {
     layerMocks.createLayerFromBitmap.mockImplementation(async () => {
       harness.events.push(`createLayerFromBitmap(canvas=${harness.canvasSize.width}x${harness.canvasSize.height})`);
+      return true;
     });
 
     await useApp().setImageFromUpload({ fileName: 'sized.png', image: createImage(120, 90) });
@@ -182,6 +185,32 @@ describe('useApp setImageFromUpload', () => {
       'resizeCanvas:120x90',
       'SET_FILE_NAME',
     ]);
+  });
+
+  it('discards an upload that was pending when a blank document was created', async () => {
+    const app = useApp();
+    let resolveRasterMaterialization!: (materialized: boolean) => void;
+    const rasterMaterialization = new Promise<boolean>((resolve) => {
+      resolveRasterMaterialization = resolve;
+    });
+    layerMocks.createLayerFromBitmap.mockImplementation(async (_params, _replaceDocument, isCurrentRequest) => {
+      const materialized = await rasterMaterialization;
+      return materialized && (isCurrentRequest?.() ?? true);
+    });
+
+    const staleRasterUpload = app.setImageFromUpload({ fileName: 'stale.png', image: createImage(80, 40) });
+    app.setBlankImage({ color: '#ffffff', opacity: 1, size: { width: 100, height: 50 }, isBedrock: true });
+
+    expect(layerMocks.createLayerFromBitmap.mock.calls[0][2]?.()).toBe(false);
+    expect(layerMocks.createBlankLayer).toHaveBeenCalledExactlyOnceWith(
+      { color: '#ffffff', opacity: 1, size: { width: 100, height: 50 }, isBedrock: true },
+      true
+    );
+    resolveRasterMaterialization(true);
+    await staleRasterUpload;
+
+    expect(harness.canvasSize).toEqual({ width: 100, height: 50 });
+    expect(harness.dispatch).not.toHaveBeenCalled();
   });
 
   it('renames the rendered document once the image layer exists', async () => {

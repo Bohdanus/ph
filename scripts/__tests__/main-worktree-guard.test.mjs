@@ -247,15 +247,20 @@ describe('the guard tells a main worktree from a linked one on a real repository
     expect(beforeDetach).toMatchObject({ isMainWorktree: true, isDesignatedMainWorktree: true });
     expect(git(mainLinked, ['switch', '--detach'])).not.toBeNull();
 
-    const detached = resolveWorktree(mainLinked);
-    expect(detached).toMatchObject({
-      branchRef: null,
-      isPrimaryWorktree: false,
-      isMainWorktree: false,
-      isDesignatedMainWorktree: true,
-      isProtectedWorktree: true,
-    });
-    expect(decide({ worktree: detached })).toEqual({ action: 'refuse' });
+    try {
+      const detached = resolveWorktree(mainLinked);
+      expect(detached).toMatchObject({
+        branchRef: null,
+        isPrimaryWorktree: false,
+        isMainWorktree: false,
+        isDesignatedMainWorktree: true,
+        isProtectedWorktree: true,
+      });
+      expect(decide({ worktree: detached })).toEqual({ action: 'refuse' });
+    } finally {
+      const restoreMain = spawnSync('git', ['switch', '--quiet', 'main'], { cwd: mainLinked, encoding: 'utf8' });
+      expect(restoreMain.status, restoreMain.stderr).toBe(0);
+    }
   });
 
   it('protects the primary checkout and allows a feature-linked worktree', () => {
@@ -278,11 +283,8 @@ describe('the guard tells a main worktree from a linked one on a real repository
     expect(decide({ worktree: feature })).toEqual({ action: 'allow', reason: 'linked worktree' });
   });
 
-  it('recognizes this repository’s designated main checkout', () => {
-    const records = git(REPO_ROOT, ['worktree', 'list', '--porcelain']);
-    const mainRecord = records.split('\n\n').find((record) => /(?:^|\n)branch refs\/heads\/main(?:\n|$)/.test(record));
-    const mainPath = mainRecord?.match(/^worktree (.+)$/m)?.[1];
-    expect(mainPath).toBeTruthy();
+  it('recognizes the designated main checkout with the guard command on a real worktree', () => {
+    const mainPath = mainLinked;
     expect(resolveWorktree(mainPath)).toMatchObject({ branchRef: 'refs/heads/main', isMainWorktree: true });
 
     const check = spawnSync(process.execPath, [join(REPO_ROOT, 'scripts', 'main-worktree-guard.mjs')], {
