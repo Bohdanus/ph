@@ -195,12 +195,15 @@ variant or an equivalent atomic history action.
    legacy/durable composition for a 90-degree single-raster crop (exact `0,0,64,64` materialized
    bounds), a non-quarter 37-degree crop with two differently positioned raster layers, Arial point
    text, serif paragraph text, non-centered right-aligned monospace point text, blank, vector-shape,
-   and Draw paint sources. A three-transition mixed-source case checks each durable cursor against
-   the matching legacy frame: 37-degree transform, frame-only transition, then -17-degree transform.
+   and Draw paint sources. A three-transition mixed-source case checks the durable cursor after each
+   transition against the matching legacy frame: 37-degree transform, frame-only transition, then
+   -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. Within this source/tool matrix, only the 90-degree fixture pins exact materialized
-   bounds; the other cases assert byte-identical pixels and materialized-layer presence. The
+   pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
+   mixed-source fixture pin exact materialized bounds; the latter also checks bitmap dimensions and
+   pixels for its blank, vector, paint, and point-text layers after each transition. The other source-only
+   cases assert byte-identical pixels and materialized-layer presence. The
    retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
    styled-text combinations.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool

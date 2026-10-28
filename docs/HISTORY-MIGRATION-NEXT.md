@@ -51,9 +51,11 @@ is for this review closeout.
    covers two retained affine layer transforms across two successive non-quarter frame transforms
    with fractional origins and extents, including exact per-layer bounds and pixels at every cursor
    and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
-   affine and a two-frame sequence with exact per-layer comparisons. These fixtures close
-   only their listed combinations: other retained source/tool variants, transform combinations,
-   angles, and exact fractional bounds across the wider source matrix remain open. Do not publish
+   affine and a two-frame sequence with exact per-layer comparisons. A three-transition mixed-source
+   frame sequence also compares exact per-layer bounds and pixels for blank, vector, paint, and
+   point-text sources. These fixtures close only their listed combinations: retained-affine behavior
+   for those sources, other transform combinations, angles, and exact fractional bounds across the
+   wider source matrix remain open. Do not publish
    frame-changing commits durably until the full frame gate is explicit.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
@@ -76,10 +78,11 @@ priority or dependency. They may be pursued in either order or in parallel.
    retained affine layer transforms and two successive non-quarter frame transforms with fractional
    origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
    control, and byte-identical composites. A styled paragraph-text fixture covers its retained
-   affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. These fixtures
-   close only their listed combinations. Next cover the open angles, retained-affine combinations,
-   source/tool variants, other text styling/rotation, and exact fractional materialized bounds across
-   the wider source matrix. Keep
+   affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. The mixed-source
+   three-transition fixture also checks exact per-layer pixels and bounds after each transition for
+   blank, vector, paint, and point-text layers. These fixtures close only their listed combinations. Next cover the open
+   angles, retained-affine combinations for the additional sources, other text styling/rotation, and
+   exact fractional materialized bounds across the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
    cursor checks without changing publication, cursor, or lease ownership.
 4. Establish source-backed import/replacement ownership and parity as the other independent gate.

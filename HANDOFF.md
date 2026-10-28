@@ -86,20 +86,22 @@ undo/redo restores the exact pixels. Its direct browser differentials now prove 
 legacy/durable composition for a 90-degree single-raster crop (materialized bounds `0,0,64,64`), a
 non-quarter 37-degree crop with two differently positioned raster layers, Arial point text, serif
 paragraph text, non-centered right-aligned monospace point text, blank, vector-shape, and Draw paint
-sources, plus a three-transition mixed-source sequence. The sequence checks every durable cursor
-against its corresponding legacy composition: a 37-degree frame transform, a frame-only transition,
-and a -17-degree frame transform. The text cases cover left, center and right alignment; the rotated
-fixtures use non-zero frame origins. Exact quarter-turn matrices avoid a phantom edge from
+sources, plus a three-transition mixed-source sequence. The sequence checks the durable cursor after
+each of the three transitions against its corresponding legacy composition: a 37-degree frame
+transform, a frame-only transition, and a -17-degree frame transform. These fixtures use non-zero
+frame origins. Exact quarter-turn matrices avoid a phantom edge from
 `cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; the plain
-90-degree case pins exact bounds, while the wider source-only cases assert source pixels and
-materialized-layer presence. The retained-affine raster fixture now checks two transformed layers
-through two successive non-quarter frame transforms with fractional origins and extents, including
-composite parity and exact per-layer bounds and pixels at every cursor plus a frame-only control. A
-second fixture applies a retained affine to a bold-italic serif paragraph text layer through a
-two-frame sequence, with exact per-layer comparisons. These fixtures pin fractional bounds only
-for the listed raster and styled-text combinations; other retained source/tool variants, transform
-combinations and angles, blank opacities, paint/vector cases, and exact fractional bounds across the
-wider source matrix remain unproven. Do not add `SET_DOCUMENT_FRAME_ACTION` to background
+90-degree case pins exact bounds, while most source-only cases assert source pixels and
+materialized-layer presence. The mixed-source three-transition fixture additionally checks exact
+per-layer bounds and pixels after each transition for blank, vector, paint, and point-text layers. The retained-affine
+raster fixture checks two transformed layers through two successive non-quarter frame transforms
+with fractional origins and extents, including composite parity and exact per-layer bounds and
+pixels at every cursor plus a frame-only control. A second fixture applies a retained affine to a
+bold-italic serif paragraph text layer through a two-frame sequence, with exact per-layer
+comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
+combinations; retained-affine paint/vector/blank variants, other transform combinations and angles,
+blank opacity variants, and exact fractional bounds across the wider source matrix remain unproven.
+Do not add `SET_DOCUMENT_FRAME_ACTION` to background
 presentation until the full frame gate is explicit.
 The UI test intentionally continues to observe legacy presentation on commit and
 renderer-incompatible fallback on redo.
@@ -121,8 +123,10 @@ pixel preservation when that stroke commits. These are preview-interleaving and 
 they do not move previews to durable authority or permit removal of legacy logical replay. The
 retained-affine/frame differentials now establish exact layer bounds and pixel parity for two raster
 layers across successive fractional frame transforms, and for a styled paragraph-text layer across
-two frame transforms. Next expand the frame matrix across open angles, retained-affine combinations,
-source/tool variants, other text styling/rotation, and exact fractional bounds. Establish
+two frame transforms. A three-transition mixed-source differential also checks exact per-layer bounds
+and pixels for blank, vector, paint, and point-text sources after each transition. Next expand the frame matrix across open
+angles, retained-affine combinations for those sources, other text styling/rotation, and exact
+fractional bounds. Establish
 source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
 are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
 failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
