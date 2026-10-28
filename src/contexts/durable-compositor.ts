@@ -1,6 +1,6 @@
 import type { BitmapSource } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
-import type { DurableReplayResult } from './durable-replay.ts';
+import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.ts';
 import {
   materializeDocument,
   type MaterializationRequest,
@@ -8,6 +8,7 @@ import {
   type MaterializedLayer,
 } from './materialization.ts';
 import { toOwnedBitmap } from './materialization-bitmap.ts';
+import { drawEvaluatedPresentation, evaluatePresentationForDraw } from './presentation-evaluator.ts';
 
 export type DurableCompositorRequest = Omit<MaterializationRequest, 'frame'> &
   Readonly<{
@@ -79,6 +80,68 @@ function orderedLayers(replay: DurableReplayResult): readonly string[] {
     .map((layer) => layer.snapshot.id);
 }
 
+function hasOnlyAffineOperations(layer: DurableReplayLayer): boolean {
+  return (
+    layer.operations.length > 0 && layer.operations.every((operation) => operation.kind === 'apply-affine-transform')
+  );
+}
+
+function assertCompositionCurrent(request: MaterializationRequest): void {
+  if (request.signal?.aborted) throw new DOMException('Durable composition aborted', 'AbortError');
+  if (request.assetRegistry.getDocumentGeneration(request.documentId) !== request.baselineAssetGeneration) {
+    throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
+  }
+}
+
+/**
+ * Draws pure-affine raster layers into the final document composite. Rasterizing
+ * each layer to tight bounds first adds an antialiasing pass at transformed edges.
+ * The materialized layer remains available to StoreContext and export consumers.
+ */
+async function drawAffineRasterLayer(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  layer: DurableReplayLayer,
+  frame: DocumentFrame,
+  request: MaterializationRequest
+): Promise<boolean> {
+  if (layer.snapshot.source.kind !== 'raster' || !hasOnlyAffineOperations(layer)) return false;
+
+  assertCompositionCurrent(request);
+  const source = await request.assetRegistry.resolve(layer.snapshot.source.assetId, request.signal);
+  try {
+    assertCompositionCurrent(request);
+    const operations = layer.operations.map((operation) => {
+      if (operation.kind !== 'apply-affine-transform') {
+        throw new Error(`Unexpected non-affine operation ${operation.kind} on layer ${layer.snapshot.id}`);
+      }
+      return { kind: 'affine-transform' as const, transform: operation.transform };
+    });
+    const position = layer.snapshot.pos;
+    const evaluation = evaluatePresentationForDraw(
+      {
+        position,
+        sourceSize: { width: position.width, height: position.height },
+        operations,
+        mode: 'layer-bounds',
+      },
+      { kind: 'document', frame }
+    );
+
+    context.save();
+    try {
+      context.globalAlpha = layer.snapshot.opacity;
+      context.globalCompositeOperation = layer.snapshot.blendMode;
+      drawEvaluatedPresentation(context, source.bitmap, evaluation, { kind: 'document', frame });
+    } finally {
+      context.restore();
+    }
+  } finally {
+    source.release();
+  }
+
+  return true;
+}
+
 /**
  * A durable presentation is publishable only when every visible replay layer
  * materialized. Callers that adapt a composite into runtime records reuse this
@@ -148,6 +211,8 @@ export async function composeDurableDocument(
         throw new Error(`Unable to compose durable layer ${layerId}: materialization was refused`);
       }
       if (!layer.visible) continue;
+
+      if (await drawAffineRasterLayer(context, replayLayer, frame, materializationRequest)) continue;
 
       context.save();
       try {
