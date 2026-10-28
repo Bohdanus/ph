@@ -258,9 +258,8 @@ describe('buildLevelsFilter', () => {
   });
 
   it('propagates a non-finite adjustment into the emitted string rather than sanitising it', () => {
-    // `presentation-evaluator.ts` — `numericFilterArg()` owns the refusal. The `it.fails`
-    // tripwire in `image-processors.test.ts` asserts that nothing upstream quietly turns a
-    // non-finite value into a number, so this must stay `NaN`.
+    // This low-level builder remains unsanitized: the Levels tool normalizes its inputs before
+    // calling it, while `presentation-evaluator.ts` refuses malformed retained operations.
     expect(buildLevelsFilter({ brightness: Number.NaN, contrast: 0 })).toBe('brightness(NaN%) contrast(100%)');
     expect(buildLevelsFilter({ brightness: 0, contrast: Number.NaN })).toBe('brightness(100%) contrast(NaN%)');
   });
