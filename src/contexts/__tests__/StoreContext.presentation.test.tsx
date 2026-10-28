@@ -17,7 +17,7 @@ import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests_
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 import { createAffineLayerOperation } from '../layer-utils.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
+import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
 import type { BitmapSource } from '../general-types.ts';
 import {
@@ -499,7 +499,7 @@ describe('durable navigation presentation freshness', () => {
     const sourceBitmap = createMockImageBitmap(100, 80);
     const staged = canvas(100, 80);
     const pos = { x: 0, y: 0, width: 100, height: 80 };
-    const source: ImageLayerSource = { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos };
+    const source = { kind: 'blank' as const, color: '#ffffff', opacity: 1, isBedrock: false as const, pos };
     const existingLayer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
@@ -609,7 +609,7 @@ describe('durable navigation presentation freshness', () => {
     const sourceBitmap = createMockImageBitmap(100, 80);
     const staged = canvas(100, 80);
     const pos = { x: 0, y: 0, width: 100, height: 80 };
-    const source: ImageLayerSource = { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos };
+    const source = { kind: 'blank' as const, color: '#ffffff', opacity: 1, isBedrock: false as const, pos };
     const existingLayer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
@@ -892,7 +892,7 @@ describe('renderSelector contract', () => {
     const layer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
-      source: { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos },
+      source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
     };
     const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
     const releaseMaterialized = vi.fn();
@@ -941,7 +941,9 @@ describe('renderSelector contract', () => {
 
   function rasterLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): Layer {
     const bitmap = createMockImageBitmap(pos.width, pos.height);
-    const source: ImageLayerSource = { kind: 'image', bitmap, isBedrock: false, pos };
+    // These publication tests use a bitmap cache on an eligible blank source;
+    // imported image ownership is covered by history-presentation-authority.
+    const source = { kind: 'blank' as const, color: '#ffffff', opacity: 1, isBedrock: false as const, pos };
     return { ...createMockLayer({ id, pos }), bitmap, source };
   }
 
@@ -1558,7 +1560,7 @@ describe('renderSelector contract', () => {
     const layer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
-      source: { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos },
+      source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
     };
     const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
     const releaseMaterialized = vi.fn();
