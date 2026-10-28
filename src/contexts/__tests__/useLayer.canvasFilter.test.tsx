@@ -217,6 +217,62 @@ describe('a refused ctx.filter tool leaves no history state and no operation', (
     errorSpy.mockRestore();
   });
 
+  it('clamps grayscale/sepia and preserves finite saturation before committing the operation', () => {
+    overrideCanvasFilterSupport(true);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = setupToolWithLayer('color');
+    let previewed = false;
+
+    act(() => {
+      previewed = result.current.layers.tempUpdateLayer({
+        id: 'layer-1',
+        toolArgs: { toolName: 'color', grayscale: -30, sepia: 400, saturation: 200 },
+      });
+      result.current.layers.commitDirtyTool();
+    });
+
+    const layer = result.current.store.layers['layer-1'];
+    const operation = layer.operations[0];
+    expect(previewed).toBe(true);
+    if (!operation || operation.kind === 'affine-transform') throw new Error('expected a Colors filter operation');
+    expect(operation.args).toEqual({ toolName: 'color', grayscale: 0, sepia: 100, saturation: 200 });
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: TOOL_ACTION,
+      args: { toolName: 'color', grayscale: 0, sepia: 100, saturation: 200 },
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('normalizes invalid Colors args before updateLayerByTool history', async () => {
+    overrideCanvasFilterSupport(true);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = setupToolWithLayer('color');
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'layer-1',
+        toolArgs: {
+          toolName: 'color',
+          grayscale: -30,
+          sepia: Number.POSITIVE_INFINITY,
+          saturation: Number.NaN,
+        },
+      });
+    });
+
+    const layer = result.current.store.layers['layer-1'];
+    const operation = layer.operations[0];
+    if (!operation || operation.kind === 'affine-transform') throw new Error('expected a Colors filter operation');
+    expect(operation.args).toEqual({ toolName: 'color', grayscale: 0, sepia: 0, saturation: 0 });
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: TOOL_ACTION,
+      args: { toolName: 'color', grayscale: 0, sepia: 0, saturation: 0 },
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it('a non-filter tool is unaffected by an absent filter support', async () => {
     overrideCanvasFilterSupport(false);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
