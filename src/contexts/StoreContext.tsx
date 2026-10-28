@@ -15,6 +15,7 @@ import {
   DEFAULT_TOOL,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
   REORDER_ACTION,
   REPLACE_LAYER_SOURCE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
@@ -146,7 +147,13 @@ type DurableProjection = {
 
 export type DurablePresentationStatus = 'unpublished' | 'durable' | 'legacy-fallback';
 export type DurablePresentationReason =
-  'unsupported-source' | 'materialization-refused' | 'layer-coverage' | 'renderer-incompatible' | 'stale';
+  | 'unsupported-source'
+  | 'ownership-unproven'
+  | 'frame-parity-unproven'
+  | 'materialization-refused'
+  | 'layer-coverage'
+  | 'renderer-incompatible'
+  | 'stale';
 
 export type DurablePresentationRecord = Readonly<{
   status: DurablePresentationStatus;
@@ -1277,6 +1284,31 @@ function imageSourceBitmap(value: unknown): BitmapSource | null {
   return candidate.kind === 'image' && candidate.bitmap ? candidate.bitmap : null;
 }
 
+function durablePresentationGateReason(
+  history: readonly HistoryItem[],
+  cursor: number
+): DurablePresentationReason | null {
+  for (const entry of history.slice(0, Math.min(cursor + 1, history.length))) {
+    if (entry.disabled) continue;
+    if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) return 'frame-parity-unproven';
+    if (
+      entry.actionName === NEW_LAYER_ACTION ||
+      entry.actionName === MERGE_ACTION ||
+      entry.actionName === REPLACE_LAYER_SOURCE_ACTION
+    ) {
+      return 'ownership-unproven';
+    }
+    if (
+      entry.actionName === OPEN_DOCUMENT_ACTION &&
+      entry.documentSource &&
+      Object.values(entry.documentSource.layers).some((layer) => layer.source?.kind === 'image')
+    ) {
+      return 'ownership-unproven';
+    }
+  }
+  return null;
+}
+
 function collectLivePresentationBitmaps(
   next: LayersRecord,
   history: readonly HistoryItem[],
@@ -1540,6 +1572,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       rawDispatch(action);
       return true;
     };
+
+    const gateReason = durablePresentationGateReason(state.history, state.historyIndex);
+    if (gateReason) {
+      const accepted = publishRecord({
+        status: 'legacy-fallback',
+        cursor: durableCursor,
+        reason: gateReason,
+      });
+      return accepted
+        ? { status: 'legacy-fallback', reason: gateReason, cursor: durableCursor }
+        : { status: 'stale', reason: 'stale', cursor: durableCursor };
+    }
 
     // Legacy-tool sources remain an explicitly unsupported durable source. Keep
     // navigation on the legacy presentation until that source adapter exists.
@@ -1932,14 +1976,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
       const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
-      // Source-backed appends and all frame-changing commits remain on the legacy
-      // selector until their ownership or frame-parity gates are explicit.
-      const allowBackgroundPresentation = ![
-        NEW_LAYER_ACTION,
-        MERGE_ACTION,
-        REPLACE_LAYER_SOURCE_ACTION,
-        SET_DOCUMENT_FRAME_ACTION,
-      ].includes(action.payload.historyItem.actionName);
+      // Apply the same cursor-prefix policy to background publication and
+      // navigation so a later ordinary edit cannot bypass a legacy-only event.
+      const allowBackgroundPresentation = durablePresentationGateReason(timeline.entries, timeline.cursor) === null;
       // One append, one durable entry: the boundary's plan is published when the
       // store's durable document still describes the timeline it was planned
       // against, and the whole timeline is reconverted otherwise.
