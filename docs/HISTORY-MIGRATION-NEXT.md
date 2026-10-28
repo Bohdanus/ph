@@ -52,9 +52,9 @@ is for this review closeout.
    with fractional origins and extents, including exact per-layer bounds and pixels at each tested
    affine or frame-transition cursor and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
    affine and a two-frame sequence with exact per-layer comparisons. A three-transition mixed-source
-   frame sequence also applies one retained affine to each blank, vector, paint, and point-text source,
-   comparing exact per-layer bounds, bitmap dimensions, and pixels at each affine cursor and after
-   each frame transition. These fixtures close only their listed combinations: other transform
+   frame sequence applies two sequential retained affines to blank and one each to vector, paint, and
+   point text, comparing exact per-layer bounds, bitmap dimensions, and pixels at all five affine
+   cursors and after each frame transition. These fixtures close only their listed combinations: other transform
    combinations, angles, text styling/rotation variants, blank opacity variants, and exact fractional
    bounds across the wider source matrix remain open. Do not publish
    frame-changing commits durably until the full frame gate is explicit.
@@ -80,9 +80,9 @@ priority or dependency. They may be pursued in either order or in parallel.
    origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
    control, and byte-identical composites. A styled paragraph-text fixture covers its retained
    affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. The mixed-source
-   three-transition fixture applies one retained affine to each blank, vector, paint, and point-text
-   layer, then checks exact per-layer pixels, bounds, and bitmap dimensions at each affine cursor and
-   after each frame transition. These fixtures close only their listed combinations. Next cover the
+   three-transition fixture applies two sequential retained affines to blank and one each to vector,
+   paint, and point-text, then checks exact per-layer pixels, bounds, and bitmap dimensions at all five
+   affine cursors and after each frame transition. These fixtures close only their listed combinations. Next cover the
    open angles, additional retained-affine combinations, other text styling/rotation, blank opacity
    variants, and exact fractional materialized bounds across the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
