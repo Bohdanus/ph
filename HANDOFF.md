@@ -2065,45 +2065,61 @@ already-landed patch-equivalence logic.
 `scripts/lib/worktree-inventory/classify.mjs`; `scripts/dispose-worktree.mjs`;
 `scripts/__tests__/worktree-inventory.test.mjs`; `scripts/__tests__/dispose-worktree.test.mjs`.
 
-## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
+## 193. Paragraph overflow at the document edge has no verified raster contract
 
-**Problem.** `calculateNewRect`'s paragraph arm returns `trimRect2(newRect, imageSize)`, so every
-edge of a paragraph box is clamped into the document. That clamp is what makes Adobe's overflow icon
-reachable — the icon reports the lines against the box's height, and a box that could grow past the
-document's bottom edge could never outgrow its own height — and `e2e/text-tool.spec.ts` pins it.
+**Confirmed app behavior.** `calculateNewRect` replaces an empty paragraph draft's dragged height
+with one line of height, then grows `y2` to the measured text height as the user types and clamps the
+result to the document with `trimRect2`. At the document edge, `renderTextInto` still lays out the full
+text, but the committed layer's `OffscreenCanvas` is sized from the clamped `pos`, so ink beyond that
+canvas is clipped. `TextEditOverlay` sets its editor element to `overflow: visible`, so that element
+does not clip content at its own box; whether excess ink remains visible outside the document workspace
+is not established.
 
-The consequence is that a paragraph box whose content needs more height than remains in the document is
-clamped at the document edge, and lines beyond the clamped `y2` are cropped rather than retained past
-the edge. The layer canvas is sized from the resulting `pos` (`createLayerFromTool` and
-`createLayerSource`), and `renderTextInto` lays out against that bounded height; drawing beyond the
-OffscreenCanvas is clipped. A point box follows a different path: it clamps its origin and lets its
-extent grow with the content, so ink beyond the document edge remains in the layer raster.
+The current tool-layer source retains the text and its paragraph rectangle in `source.args`;
+`textLayerEditTarget` hydrates those values for editing. The text data is therefore not deleted by
+this raster crop in the editor's source-backed path. This does not establish Photoshop export or
+serialization behavior. The unresolved question is whether Photoshop clips committed overflow to
+the paragraph boundary or renders any of it beyond that boundary, and whether canvas expansion reveals
+it.
 
-**Coverage gap.** `e2e/text-tool.spec.ts` tests the draft overflow icon, but its fixture leaves 40px of
-document space below the paragraph box, so the document-edge clamp is not exercised. It checks that the
-icon is not baked into the layer, not that overflow text is retained. The inspected `rect.test.ts`
-paragraph cases also keep their boxes away from the document edge; there is no unit or E2E assertion for
-the clamped-commit case.
+**Adobe contract.** Adobe describes paragraph type as text inside a user-created bounding box that
+wraps to the box dimensions, shows an overflow icon when the content does not fit, permits resizing
+the box after creating the layer, and lists committing the layer as the next step without requiring
+overflow to be cleared. Adobe also says converting paragraph type to point type deletes characters
+that overflow the box. The UXP `TextItem` reference exposes the `contents` string and whether the
+layer is paragraph type. Together with the conversion warning, these sources support preserving all
+text and allowing Apply with overflow. Treating the authored rectangle as a fixed layout boundary
+while typing is a reasonable inference, but Adobe does not explicitly guarantee that the box stays at
+its original size as the text changes. The Canvas Size guide describes
+adding workspace while preserving image pixels, but does not say whether enlarging the document reveals
+paragraph text that was previously outside the canvas.
 
-**What would close it.** This is a product/serialization decision, not a local renderer tweak:
+Sources: [Adobe, create point and paragraph type](https://helpx.adobe.com/photoshop/desktop/text-typography/type-layers-creation/create-point-type-and-paragraph-type.html);
+[Adobe, paragraph overflow and commit](https://helpx.adobe.com/in/photoshop/using/creating-type.html);
+[Adobe UXP, `TextItem`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem);
+[Adobe, change canvas size](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/resize-adjust-resolution/change-the-canvas-size.html).
 
-- Let the paragraph box grow past the document's bottom edge. Closes the crop, and makes the
-  overflow icon unreachable — a box that always grows to fit cannot overflow — which deletes a
-  shipped Photoshop feature and its e2e.
-- Keep the clamp and disable Apply while the draft overflows. Keeps the icon, costs the user a
-  control they cannot use until they make room, and invents a gate Adobe does not document.
-- Report the overflow against the box the user DRAGGED rather than the grown one, so the icon
-  survives a growing box. `renderText` is handed only the final rect and has no knowledge of the
-  drag, so `calculateNewRect`'s return type would have to carry it.
-- Separate the text layout/drawing extent from the boundary used for the overflow indicator, and
-  preserve both through the committed layer representation. This may retain content while keeping the
-  icon, but requires tracing serialization and later edit behavior; it is not established as a safe
-  fix by the current audit.
+**Decision and blocker.** Adobe documents a user-created paragraph boundary that controls wrapping,
+shows overflow when text does not fit, and can be resized to reflow. The app's content-driven height
+growth is not described in those sources. Still, do not change code yet: the exact committed raster
+behavior is undocumented, and the current live draft (`overflow: visible`) and committed layer (canvas
+bounded by `pos`) can disagree. Choosing a shared fixed extent or separate layout and raster extents
+without checking Photoshop would encode an unverified behavior and may add unneeded serialization
+state.
 
-**Provenance.** Found by review of the Type tool against its own requirements document, not by a
-failing test. An independent code-path audit confirms the clamp reaches the commit canvas, while the
-existing E2E fixture does not reach that boundary. Adobe's exact document-edge/overflow behavior was
-not independently verified in this pass; see the cited Adobe type documentation in the tool notes.
+**Coverage.** The current overflow E2E does reach the document's bottom edge: its original box ends at
+row 560 of a 600-row document, and three lines grow it to the edge. It verifies the draft overflow icon
+and checks that the icon is not baked into the committed layer. Its pixel check only establishes that
+some in-frame text ink remains after commit; it does not establish whether the overflow line survives,
+re-editing restores it, or canvas expansion reveals it. The earlier claim that this fixture stays
+40px from the edge is stale.
+
+**Next step.** Verify in Photoshop before implementing: create paragraph text with known overflow
+inside the document and at its bottom edge; record whether overflow ink is visible outside the box
+while editing and after commit; expand the canvas without resizing the box and check whether any ink
+appears; then re-enter the layer, resize the box, and confirm all text remains. Use that observation to
+choose between a single fixed layout/raster extent and separate retained layout/raster extents. Until
+then, leave the product code and tests unchanged.
 
 ## 197. Multi-layer bedrock conversion remains intentionally unavailable
 
