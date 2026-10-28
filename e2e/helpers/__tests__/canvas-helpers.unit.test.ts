@@ -1,7 +1,6 @@
 import { afterEach, describe, it, expect } from 'vitest';
+import { ANTIALIASED_FLANGE_CSS_PX, DRAW_HALF_WIDTH_DOC_PX, toleranceFor } from '../viewport-tolerance';
 import {
-  ANTIALIASED_FLANGE_CSS_PX,
-  DRAW_HALF_WIDTH_DOC_PX,
   buildClip,
   canvasOffsetToDocument,
   containFit,
@@ -19,7 +18,6 @@ import {
   screenshotBoundsToCss,
   STROKE_ANALYSIS,
   takeLineScreenshot,
-  toleranceFor,
   waitForCanvasPixels,
   type BoundingBox,
   type ClipOptions,

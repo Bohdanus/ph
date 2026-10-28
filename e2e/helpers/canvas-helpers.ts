@@ -355,50 +355,6 @@ export function documentStrokeBoundaryMargin(
   );
 }
 
-/**
- * Half of the Draw tool's default `lineWidth`, which is 10 DOCUMENT pixels
- * (`src/tools/settings.ts:38`, `pen: { alpha: 0.9, lineWidth: 10 }`, spread into the `draw`
- * args at `:68-74`). A stroke's painted extent therefore runs half a stroke WIDER than the
- * point that was asked for on each side, and `getDarkPixelBounds` reports the whole painted
- * extent rather than its centre line. That is the entire legitimate reason a stroke's edge
- * is not at the cursor, and it is why the bound below is a function of the fit scale rather
- * than a constant: the same 10 document pixels scale to more CSS pixels in a wider window
- * and fewer in a narrower one, so any single constant is either loose or tight depending on
- * the viewport.
- */
-export const DRAW_HALF_WIDTH_DOC_PX = 5;
-
-/**
- * What is left after the geometric half-width: the faint antialiased fringe of the round
- * cap, and the one-image-pixel convention of `imageBoundsToCss`, which maps an inclusive
- * pixel index to the CENTRE of that pixel (see its JSDoc, `screenshot-scale.ts:153-176`) and
- * so under-reports a covered span by half a CSS pixel on a 1:1 capture. `getDarkPixelBounds`
- * also applies a DARK THRESHOLD, so it discards the faintest fringe pixels entirely, which
- * is why the measured deviation lands a little UNDER `DRAW_HALF_WIDTH_DOC_PX * scale` rather
- * than on it. 2px covers both; the measured slack over it is a margin and not a fit.
- */
-export const ANTIALIASED_FLANGE_CSS_PX = 2;
-
-/**
- * How far the stroke's painted edge may sit from the cursor point that asked for it: the
- * brush's own half-width converted to CSS by the app's contain fit, plus the fringe above.
- *
- * Derived from `containFit`, which is the suite's single implementation of the app's fit and
- * is asserted equal to the app's own published `data-fit-*` at more than one rect size by
- * `e2e/export/visual-regression.spec.ts`. So the bound moves WITH the viewport instead of
- * being a constant that happened to hold.
- *
- * What it does NOT absorb is any mapping error, and that is the load-bearing property. A
- * contain-scale mismatch (the `drawLine` coordinate gap) is worth tens of CSS pixels: the
- * difference between painting the document stretched across the box and painting it
- * contained is the box's letterbox margin on each axis. A tolerance of this magnitude still
- * catches that with an order of magnitude to spare, so this number can absorb the stroke's
- * own width and nothing else.
- */
-export function toleranceFor(box: BoundingBox): number {
-  return DRAW_HALF_WIDTH_DOC_PX * containFit(box, DEFAULT_DOCUMENT_SIZE).scale + ANTIALIASED_FLANGE_CSS_PX;
-}
-
 /** `[ms]` — the shared default timeout of every redraw wait below. Not a coordinate. */
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 /** `[ms]` — the shared default poll interval of every redraw wait below. */

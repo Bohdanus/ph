@@ -7,9 +7,9 @@ import {
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
-  toleranceFor,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
+import { LEGACY_FIXED_SLACK_CSS_PX, MAX_BOX_DRIFT_CSS_PX, toleranceFor } from './helpers/viewport-tolerance';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
@@ -21,21 +21,6 @@ const VIEWPORTS = [
   { name: 'wide', width: 1600, height: 900 },
   { name: 'narrow', width: 900, height: 700 },
 ] as const;
-
-/**
- * The fixed constant this test used before, kept ONLY as a ceiling the derived tolerance is
- * asserted against. It is not the tolerance; see `expect(toleranceFor(...)).toBeLessThan`
- * below. It is here so that a future edit which replaces the derived bound with a literal
- * fails loudly instead of quietly re-widening the gate.
- */
-const LEGACY_FIXED_SLACK_CSS_PX = 25;
-
-/**
- * How far the canvas box may drift between the gesture and the capture that photographs it.
- * Nothing: the two have to describe the same rectangle, and layout here is pixel-quantised,
- * so anything above sub-pixel noise means the page was re-laid-out in between.
- */
-const MAX_BOX_DRIFT_CSS_PX = 0.5;
 
 interface ViewportMeasurement {
   name: string;

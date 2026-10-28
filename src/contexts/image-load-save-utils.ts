@@ -1,6 +1,18 @@
 import generateCss from 'css-tree/generator';
 import parseCss from 'css-tree/parser';
 import walkCss from 'css-tree/walker';
+
+interface CssNode {
+  type: string;
+  name?: string;
+  value?: string;
+  property?: string;
+  children?: {
+    toArray: () => CssNode[];
+    slice: (start: number) => CssNode[];
+  };
+  [key: string]: unknown;
+}
 import type { ImageUploadResponse } from './useFile.tsx';
 import { resolveImageFormat, withFileExtension } from '../constants/imageFormats.ts';
 import { MAX_CREATABLE_DOCUMENT_PIXELS } from './raster-utils.ts';
@@ -460,9 +472,9 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
     const fallbackValues: string[] = [];
     let invalidVar = false;
     try {
-      walkCss(valueAst, (node) => {
-        if (node.type !== 'Function' || decodeCssEscapes(node.name).toLowerCase() !== 'var') return;
-        const children = node.children.toArray();
+      walkCss(valueAst, (node: CssNode) => {
+        if (node.type !== 'Function' || !node.name || decodeCssEscapes(node.name).toLowerCase() !== 'var') return;
+        const children = node.children?.toArray() ?? [];
         let name: string | undefined;
         let commaIndex = -1;
         for (let index = 0; index < children.length; index += 1) {
@@ -472,7 +484,7 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
             break;
           }
           if (child.type === 'WhiteSpace' || child.type === 'Comment') continue;
-          if (!name && child.type === 'Identifier') {
+          if (!name && child.type === 'Identifier' && child.name) {
             name = decodeCssEscapes(child.name);
             continue;
           }
@@ -491,7 +503,7 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
         }
         if (commaIndex >= 0) {
           for (const child of children.slice(commaIndex + 1)) {
-            if (child.type === 'Raw') fallbackValues.push(child.value);
+            if (child.type === 'Raw' && child.value) fallbackValues.push(child.value);
           }
         }
         return undefined;
@@ -621,14 +633,14 @@ function collectCssSource(
 
   const stopWalk = Symbol('stop CSS resource walk');
   try {
-    walkCss(root, (node) => {
+    walkCss(root, (node: CssNode) => {
       analysis.nodeCount += 1;
       if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) throw stopWalk;
-      if (node.type === 'Declaration') {
+      if (node.type === 'Declaration' && node.property) {
         if (collectCssDeclaration(analysis, node.property, generateCss(node.value), dataBaseInScope)) {
           throw stopWalk;
         }
-      } else if (node.type === 'Atrule') {
+      } else if (node.type === 'Atrule' && node.name) {
         if (collectCssAtRule(analysis, node.name, node.prelude ? generateCss(node.prelude) : '', dataBaseInScope)) {
           throw stopWalk;
         }
