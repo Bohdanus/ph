@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { AssetRegistry } from '../asset-registry.ts';
+import { composeDurableDocument } from '../durable-compositor.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
 import type { MaterializationRequest } from '../materialization.ts';
@@ -1469,5 +1470,91 @@ describe('materialization operation ordering (P1.10)', () => {
 
     void close;
     registry.shutdown();
+  });
+
+  it('reuses one compositor frame surface while materializing multiple affine layers', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 8, y: 9, width: 80, height: 60 };
+    const frameAllocations: Array<{ width: number; height: number }> = [];
+    class FrameAllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        super(width, height);
+        if (width === frame.width && height === frame.height) frameAllocations.push({ width, height });
+      }
+    }
+    const layer = (id: string, translateX: number) =>
+      makeBlankLayer(id, 20, 16, [
+        Object.freeze({
+          kind: 'apply-affine-transform' as const,
+          layerId: id,
+          transform: Object.freeze({ a: 1, b: 0, c: 0, d: 1, e: translateX, f: 12 }),
+        }),
+      ]);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', FrameAllocationCountingCanvas);
+      const composite = await composeDurableDocument(
+        makeReplay({
+          first: layer('first', 12),
+          second: layer('second', 28),
+        }),
+        { ...makeRequest(registry), frame }
+      );
+
+      expect(frameAllocations).toEqual([{ width: frame.width, height: frame.height }]);
+      expect(composite.layers.first?.bounds).not.toEqual({
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+      });
+      expect(composite.layers.second?.bounds).not.toEqual({
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+      });
+      composite.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('keeps direct frame-aligned affine materialization supported and releases its local surface', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 8, y: 9, width: 80, height: 60 };
+    const frameSurfaces: CallRecordingOffscreenCanvas[] = [];
+    class FrameAllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        super(width, height);
+        if (width === frame.width && height === frame.height) frameSurfaces.push(this);
+      }
+    }
+    const affineLayer = makeBlankLayer('standalone-affine', 20, 16, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'standalone-affine',
+        transform: Object.freeze({ a: 1, b: 0, c: 0, d: 1, e: 12.25, f: 12.5 }),
+      }),
+    ]);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', FrameAllocationCountingCanvas);
+      vi.stubGlobal('createImageBitmap', undefined);
+      const materialized = await materializeLayer(affineLayer, {
+        ...makeRequest(registry),
+        pixelGridFrame: frame,
+      });
+
+      expect(materialized.bounds.x - frame.x).toBeCloseTo(Math.floor(materialized.bounds.x - frame.x), 8);
+      expect(materialized.bounds.y - frame.y).toBeCloseTo(Math.floor(materialized.bounds.y - frame.y), 8);
+      expect(frameSurfaces).toHaveLength(1);
+      expect(frameSurfaces[0]).toMatchObject({ width: 1, height: 1 });
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
   });
 });

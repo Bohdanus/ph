@@ -69,16 +69,15 @@ priority or dependency. They may be pursued in either order or in parallel.
    layer base while append composition is pending or accepted, then reveal the durable base only
    after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
-3. Expand parity-only frame work. The retained-affine fixture in `e2e/crop-history.spec.ts` is now
-   a tripwire: it compares both renderers at the layer-transform cursor and after a later
-   non-quarter frame transform, checks that each renderer changes pixels from the untransformed
-   baseline, and compares the final result with a frame-only control. Next cover the open angles,
+3. Expand parity-only frame work. The retained-affine fixture in `e2e/crop-history.spec.ts` compares
+   both renderers at the layer-transform cursor and after a later non-quarter frame transform,
+   checks that each renderer changes pixels from the untransformed baseline, and compares the
+   final result with an exact frame-only control. For its two raster layers, it also asserts exact
+   frame-aligned bounds and pixels at both cursors and the control. Next cover the open angles,
    retained-affine combinations, source/tool variants, text styling/rotation, frame sequences, and
-   exact fractional materialized bounds. Keep `SET_DOCUMENT_FRAME_ACTION` out of durable
-   publication until that matrix is explicit; add cursor checks without changing publication,
-   cursor, or lease ownership. The same raster fixture's frame-only control exposed a one-pixel,
-   two-channel delta (maximum channel difference 1); it is an open parity case, not a passing
-   cross-renderer control.
+   exact fractional materialized bounds across the wider source matrix. Keep
+   `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
+   cursor checks without changing publication, cursor, or lease ownership.
 4. Establish source-backed import/replacement ownership and parity as the other independent gate.
    Keep the unsupported-source refusal explicit, and do not treat either gate's passing differential
    as authority to promote that surface.
@@ -149,14 +148,5 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 - Luna's final follow-up found no remaining actionable issues in the fixture or updated sequence.
 - Reports that composite release was missing or that replay cursors were offset did not reproduce
   when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
-- Exact materialized bounds remain an open frame-parity item. The frame-only control's
-  one-pixel/two-channel difference remains open in `e2e/OPEN_PROBLEMS.md`; it is not counted as a
-  parity pass.
-
-## Landing Status
-
-The reviewed closeout is committed on `task/history-migration-review-closeout-20261026`, but it is
-not yet on `main`. Landing is blocked because the designated `main` worktree at `362d0656` has an
-unrelated untracked `ci-bypass-comparison.md`. Leave that file untouched; resume landing after its
-owner clears it, then repeat the pinned landing checks in `docs/ORCHESTRATION.md` in case `main` has
-advanced.
+- Exact fractional bounds across the wider frame and source matrix remain unproven. The current
+  retained-affine fixture pins frame-aligned bounds for two raster layers only.
