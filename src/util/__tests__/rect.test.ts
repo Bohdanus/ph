@@ -10,10 +10,42 @@ import {
   posToSortedRect,
   hexToRgb,
   calculateNewRect,
+  angleFromCenter,
+  rectCenter,
+  rotatePointAround,
 } from '../rect.ts';
 import type { RectXY, RectXYSorted, Pos, Size } from '../../contexts/general-types.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
 import { TEXT_PADDING } from '../constants.ts';
+
+describe('rectangle rotation helpers', () => {
+  it('rotates a point around the rectangle centre and reports its angle', () => {
+    const rect = { x1: 0, y1: 0, x2: 100, y2: 100 };
+    const center = rectCenter(rect);
+    const rotated = rotatePointAround({ x: 100, y: 50 }, center, 90);
+
+    expect(rotated.x).toBeCloseTo(50);
+    expect(rotated.y).toBeCloseTo(100);
+    expect(angleFromCenter(center, rotated)).toBeCloseTo(90);
+  });
+
+  it('reports an infinite centre for a rect whose edges sit at the extended-real extremes', () => {
+    expect(rectCenter({ x1: 0, y1: 0, x2: Infinity, y2: Infinity })).toEqual({ x: Infinity, y: Infinity });
+  });
+
+  it('propagates a NaN edge into the centre rather than throwing', () => {
+    const result = rectCenter({ x1: NaN, y1: 0, x2: 10, y2: 20 });
+    expect(result.x).toBeNaN();
+    expect(result.y).toBe(10);
+  });
+
+  it('does not throw when rotating a point carrying a NaN coordinate', () => {
+    // NaN survives the affine math; the only requirement is that the rotation never throws.
+    const result = rotatePointAround({ x: NaN, y: 50 }, { x: 50, y: 50 }, 45);
+    expect(result.x).toBeNaN();
+    expect(result.y).toBeNaN();
+  });
+});
 
 describe('sortRect', () => {
   it('returns the rect unchanged when already sorted', () => {
@@ -29,6 +61,26 @@ describe('sortRect', () => {
   it('handles equal coordinates', () => {
     const rect = { x1: 3, y1: 3, x2: 3, y2: 3 };
     expect(sortRect(rect)).toEqual({ x1: 3, y1: 3, x2: 3, y2: 3 });
+  });
+
+  it('propagates a NaN coordinate without throwing, because Math.min/max return NaN', () => {
+    // A corrupt upstream record can inject NaN; sortRect must stay total and never throw,
+    // so the NaN surfaces in the affected edge alone rather than crashing the drag.
+    const result = sortRect({ x1: NaN, y1: 0, x2: 10, y2: 20 });
+    expect(result.x1).toBeNaN();
+    expect(result.x2).toBeNaN();
+    expect(result.y1).toBe(0);
+    expect(result.y2).toBe(20);
+  });
+
+  it('sorts Infinity and -Infinity as ordinary extended reals', () => {
+    const result = sortRect({ x1: Infinity, y1: -Infinity, x2: 10, y2: 20 });
+    expect(result).toEqual({ x1: 10, y1: -Infinity, x2: Infinity, y2: 20 });
+  });
+
+  it('treats a fully inverted pair as a normal drag once sorted', () => {
+    const rect = { x1: -500, y1: -500, x2: -100, y2: -100 };
+    expect(sortRect(rect)).toEqual({ x1: -500, y1: -500, x2: -100, y2: -100 });
   });
 });
 
@@ -94,6 +146,44 @@ describe('trimRect', () => {
     expect(result.x + result.width).toBe(20);
     expect(result.y + result.height).toBe(Math.round(60.4));
   });
+
+  it('clamps a rect that extends far past the far edge to the image boundary', () => {
+    const huge: RectXY = { x1: 0, y1: 0, x2: 1e9, y2: 1e9 };
+    expect(trimRect(huge, imageSize)).toEqual({ x: 0, y: 0, width: 100, height: 100, isTrimmed: true });
+  });
+
+  it('clamps a deeply inverted rect whose far edge lies beyond the image', () => {
+    // x1 > x2 and x2 is off the bottom-right: sortRect re-orders, then both clamp.
+    const inverted: RectXY = { x1: 2000, y1: 2000, x2: 50, y2: 10 };
+    expect(trimRect(inverted, imageSize)).toEqual({ x: 50, y: 10, width: 50, height: 90, isTrimmed: true });
+  });
+
+  it('collapses a zero-WIDTH but positive-HEIGHT degenerate rect into a zero-width span', () => {
+    // x1 === x2 means no width; the height is content, so the point survives as a vertical span.
+    const degenerate: RectXY = { x1: 50, y1: 50, x2: 50, y2: 60 };
+    expect(trimRect(degenerate, imageSize)).toEqual({ x: 50, y: 50, width: 0, height: 10, isTrimmed: false });
+  });
+
+  it('collapses a zero-HEIGHT but positive-WIDTH degenerate rect into a zero-height span', () => {
+    const degenerate: RectXY = { x1: 50, y1: 50, x2: 60, y2: 50 };
+    expect(trimRect(degenerate, imageSize)).toEqual({ x: 50, y: 50, width: 10, height: 0, isTrimmed: false });
+  });
+
+  it('does not throw on a NaN coordinate and propagates it through the result', () => {
+    // NaN is never < 0 and never > imageLength, so isTrimmed stays false; the NaN
+    // then flows through clampEdge and roundedPos untouched.
+    const result = trimRect({ x1: NaN, y1: NaN, x2: NaN, y2: NaN }, imageSize);
+    expect(result.isTrimmed).toBe(false);
+    expect(result.x).toBeNaN();
+    expect(result.y).toBeNaN();
+    expect(result.width).toBeNaN();
+    expect(result.height).toBeNaN();
+  });
+
+  it('clamps Infinity down to the image boundary and -Infinity up to zero', () => {
+    const result = trimRect({ x1: -Infinity, y1: -Infinity, x2: Infinity, y2: Infinity }, imageSize);
+    expect(result).toEqual({ x: 0, y: 0, width: 100, height: 100, isTrimmed: true });
+  });
 });
 
 describe('trimRect2', () => {
@@ -128,6 +218,29 @@ describe('trimRect2', () => {
     const wide: Size = { width: 800, height: 800 };
     const rect: RectXY = { x1: 700, y1: 700, x2: 850, y2: 850 };
     expect(trimRect2(rect, wide)).toEqual({ x1: 700, y1: 700, x2: 800, y2: 800 });
+  });
+
+  it('clamps a rect extending far past the far edge to the image boundary', () => {
+    const huge: RectXY = { x1: 0, y1: 0, x2: 1e9, y2: 1e9 };
+    expect(trimRect2(huge, imageSize)).toEqual({ x1: 0, y1: 0, x2: 100, y2: 100 });
+  });
+
+  it('does not throw on a NaN coordinate and leaves the unaffected edges intact', () => {
+    // One NaN edge collapses to NaN; the other axis, untouched by NaN, still clamps.
+    const result = trimRect2({ x1: NaN, y1: -5, x2: 150, y2: 20 }, imageSize);
+    expect(result.x1).toBeNaN();
+    expect(result.x2).toBeNaN();
+    expect(result.y1).toBe(0);
+    expect(result.y2).toBe(20);
+  });
+
+  it('clamps Infinity to the boundary and -Infinity to zero, matching clampEdge', () => {
+    expect(trimRect2({ x1: -Infinity, y1: 0, x2: Infinity, y2: 50 }, imageSize)).toEqual({
+      x1: 0,
+      y1: 0,
+      x2: 100,
+      y2: 50,
+    });
   });
 });
 
@@ -166,6 +279,27 @@ describe('sortRoundRect', () => {
     sortRoundRect(frozen);
     expect(frozen).toEqual(rect);
   });
+
+  it('does not clamp, so Infinity keeps an unbounded extent', () => {
+    // sortRoundRect is crop's "grow the canvas" arm: it never clamps, so an
+    // edge at Infinity survives as a rounded Infinity extent.
+    const result = sortRoundRect({ x1: 0, y1: 0, x2: Infinity, y2: Infinity });
+    expect(result).toEqual({ x: 0, y: 0, width: Infinity, height: Infinity });
+  });
+
+  it('does not throw on a NaN coordinate and propagates it into the extent', () => {
+    const result = sortRoundRect({ x1: NaN, y1: 0, x2: 10, y2: 20 });
+    expect(result.x).toBeNaN();
+    expect(result.width).toBeNaN();
+    expect(result.y).toBe(0);
+    expect(result.height).toBe(20);
+  });
+
+  it('sorts an inverted rect whose edges are at the extended-realm extremes', () => {
+    // x1 > x2 and y1 > y2, each at an extreme: sortRect re-orders before rounding.
+    const result = sortRoundRect({ x1: Infinity, y1: 90, x2: -Infinity, y2: 10 });
+    expect(result).toEqual({ x: -Infinity, y: 10, width: Infinity, height: 80 });
+  });
 });
 
 describe('sortedRectToPos', () => {
@@ -178,6 +312,18 @@ describe('sortedRectToPos', () => {
     const rect: RectXYSorted = { x1: 5, y1: 5, x2: 5, y2: 5 };
     expect(sortedRectToPos(rect)).toEqual({ x: 5, y: 5, width: 0, height: 0 });
   });
+
+  it('produces a zero-width span for a rect whose x-edges meet but y-edges differ', () => {
+    const rect: RectXYSorted = { x1: 50, y1: 20, x2: 50, y2: 80 };
+    expect(sortedRectToPos(rect)).toEqual({ x: 50, y: 20, width: 0, height: 60 });
+  });
+
+  it('reports a negative width for an inverted input, since it trusts its sorted contract', () => {
+    // RectXYSorted is an alias with no runtime enforcement, so a negative extent reaches here;
+    // the function derives the span directly, so the negative surfaces rather than throwing.
+    const inverted: RectXYSorted = { x1: 100, y1: 50, x2: 70, y2: 90 };
+    expect(sortedRectToPos(inverted)).toEqual({ x: 100, y: 50, width: -30, height: 40 });
+  });
 });
 
 describe('reduceRect', () => {
@@ -185,6 +331,16 @@ describe('reduceRect', () => {
     const rect: RectXYSorted = { x1: 10, y1: 20, x2: 30, y2: 60 };
     const pos: Pos = { x: 5, y: 10, width: 5, height: 5 };
     expect(reduceRect(rect, pos)).toEqual({ x1: 5, y1: 10, x2: 25, y2: 50 });
+  });
+
+  it('does not throw on a NaN offset and propagates it to the matching axis', () => {
+    const rect: RectXYSorted = { x1: 10, y1: 20, x2: 30, y2: 60 };
+    const pos: Pos = { x: NaN, y: 10, width: 5, height: 5 };
+    const result = reduceRect(rect, pos);
+    expect(result.x1).toBeNaN();
+    expect(result.x2).toBeNaN();
+    expect(result.y1).toBe(10);
+    expect(result.y2).toBe(50);
   });
 });
 
@@ -197,6 +353,22 @@ describe('posToSortedRect', () => {
   it('works with zero dimensions', () => {
     const pos: Pos = { x: 0, y: 0, width: 0, height: 0 };
     expect(posToSortedRect(pos)).toEqual({ x1: 0, y1: 0, x2: 0, y2: 0 });
+  });
+
+  it('produces an inverted rect when the pos carries a negative width or height', () => {
+    // The caller is responsible for the sign; posToSortedRect only adds, so a negative
+    // extent lands as x2 < x1 (and later as a negative width from sortedRectToPos).
+    const pos: Pos = { x: 100, y: 50, width: -30, height: 40 };
+    expect(posToSortedRect(pos)).toEqual({ x1: 100, y1: 50, x2: 70, y2: 90 });
+  });
+
+  it('does not throw on a NaN origin and propagates it to the matching edges', () => {
+    const pos: Pos = { x: NaN, y: 50, width: 30, height: 40 };
+    const result = posToSortedRect(pos);
+    expect(result.x1).toBeNaN();
+    expect(result.x2).toBeNaN();
+    expect(result.y1).toBe(50);
+    expect(result.y2).toBe(90);
   });
 });
 
@@ -227,6 +399,69 @@ describe('hexToRgb', () => {
   });
 });
 
+/** Test-only copy of `clampTextOrigin` (`src/util/rect.ts:112`), which is private. */
+function clampTextOrigin(rect: RectXYSorted, imageSize: Size): RectXYSorted {
+  const sorted = sortRect(rect);
+  const x1 = Math.min(Math.max(0, sorted.x1), imageSize.width);
+  const y1 = Math.min(Math.max(0, sorted.y1), imageSize.height);
+  return { x1, y1, x2: Math.max(x1, sorted.x2), y2: Math.max(y1, sorted.y2) };
+}
+
+describe('clampTextOrigin', () => {
+  const size: Size = { width: 1000, height: 800 };
+
+  it('leaves a rect fully inside the document untouched', () => {
+    const rect: RectXYSorted = { x1: 100, y1: 50, x2: 400, y2: 300 };
+    expect(clampTextOrigin(rect, size)).toEqual(rect);
+  });
+
+  it('clamps an origin that sits outside the document to the boundary', () => {
+    const rect: RectXYSorted = { x1: -50, y1: -30, x2: 400, y2: 300 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 0, y1: 0, x2: 400, y2: 300 });
+  });
+
+  it('clamps an origin past the far edge to the document boundary', () => {
+    const rect: RectXYSorted = { x1: 1200, y1: 900, x2: 1500, y2: 1200 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 1000, y1: 800, x2: 1500, y2: 1200 });
+  });
+
+  it('clamps an origin exactly at the document boundary and leaves the far edge alone', () => {
+    const rect: RectXYSorted = { x1: 1000, y1: 800, x2: 1500, y2: 1200 };
+    expect(clampTextOrigin(rect, size)).toEqual(rect);
+  });
+
+  it('floors the far edge at the clamped origin, so a rect wholly on the negative side does not report a negative extent', () => {
+    const rect: RectXYSorted = { x1: -200, y1: -150, x2: -100, y2: -50 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 0, y1: 0, x2: 0, y2: 0 });
+  });
+
+  it('sorts an inverted input before clamping, so a right-to-left drag keeps a positive extent', () => {
+    const rect: RectXYSorted = { x1: 400, y1: 300, x2: 100, y2: 50 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 100, y1: 50, x2: 400, y2: 300 });
+  });
+
+  it('preserves the far edge beyond the document, which is the point of the clamp', () => {
+    const rect: RectXYSorted = { x1: 950, y1: 100, x2: 1400, y2: 300 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 950, y1: 100, x2: 1400, y2: 300 });
+  });
+
+  it('clamps an origin at -Infinity to zero and floors the far edge at that origin', () => {
+    // -Infinity sorts to the min, then clampEdge maps it to 0; the far edge is floored at 0, so a
+    // wholly-negative box collapses onto the origin rather than inverting.
+    const rect: RectXYSorted = { x1: -Infinity, y1: -Infinity, x2: -100, y2: -50 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 0, y1: 0, x2: 0, y2: 0 });
+  });
+
+  it('does not throw on a NaN origin and propagates NaN to that axis', () => {
+    const rect: RectXYSorted = { x1: NaN, y1: 100, x2: 400, y2: 300 };
+    const result = clampTextOrigin(rect, size);
+    expect(result.x1).toBeNaN();
+    expect(result.x2).toBeNaN();
+    expect(result.y1).toBe(100);
+    expect(result.y2).toBe(300);
+  });
+});
+
 describe('calculateNewRect', () => {
   const imageSize: Size = { width: 1000, height: 1000 };
   const baseArgs = {
@@ -252,17 +487,58 @@ describe('calculateNewRect', () => {
    * `applyTextStyle` wrote.
    */
   function makeCanvasRef(measureWidth?: number) {
+    const mockDOMMatrix = {
+      a: 1,
+      b: 0,
+      c: 0,
+      d: 1,
+      e: 0,
+      f: 0,
+      m11: 1,
+      m12: 0,
+      m13: 0,
+      m14: 0,
+      m21: 0,
+      m22: 1,
+      m23: 0,
+      m24: 0,
+      m31: 0,
+      m32: 0,
+      m33: 1,
+      m34: 0,
+      m41: 0,
+      m42: 0,
+      m43: 0,
+      m44: 0,
+      is2D: true,
+      isIdentity: true,
+      multiply: vi.fn(),
+      preMultiply: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      rotate: vi.fn(),
+      rotateFromVector: vi.fn(),
+      flipX: vi.fn(),
+      flipY: vi.fn(),
+      inverse: vi.fn(),
+      rotateAxisAngle: vi.fn(),
+      skewX: vi.fn(),
+      skewY: vi.fn(),
+      toFloat32Array: vi.fn(),
+      toFloat64Array: vi.fn(),
+      toJSON: vi.fn(),
+      toString: vi.fn(),
+    } as unknown as DOMMatrix;
+
     const ctx = {
       font: '10px sans-serif',
       measureText: vi.fn((text: string) => ({
         width: measureWidth ?? text.length * (parseFloat(ctx.font) || 10),
       })),
-      // `getTextWidth` brackets its `applyTextStyle` in save/restore because it is handed the live
-      // tool overlay by `calculateNewRect` and would otherwise leave that context wearing the Type
-      // tool's typography. These are `vi.fn()`s and so are not real state, but they have to be
-      // present for the bracket to be callable at all.
       save: vi.fn(),
       restore: vi.fn(),
+      getTransform: vi.fn(() => mockDOMMatrix),
+      setTransform: vi.fn(),
     };
     return { current: { getContext: vi.fn(() => ctx) } } as unknown as RefObject<HTMLCanvasElement | null>;
   }

@@ -4,7 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
-import type { Layer, LayerId } from '../../contexts/layer-types.ts';
+import { isLayerBlendMode, LAYER_BLEND_MODES, type Layer, type LayerId } from '../../contexts/layer-types.ts';
 import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import { useApp } from '../../hooks/useApp.ts';
@@ -12,27 +12,138 @@ import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts'
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
+import { BedrockIcon } from '../Icons/BedrockIcon.tsx';
+import { LayerTypeIcon } from '../Icons/LayerTypeIcon.tsx';
 import {
   ICON_TOGGLE_BUTTON_VISIBLE,
   ICON_TOGGLE_BUTTON_HIDDEN,
   DELETE_BUTTON_ICON,
 } from '../ToolbarsRight/buttonStyles.ts';
-import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+import {
+  LOCK_LAYER_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  UNLOCK_LAYER_ACTION,
+} from '../../util/constants.ts';
 import LayerThumbnail from './LayerThumbnail.tsx';
+
+type UpdateLayer = ReturnType<typeof useLayers>['updateLayer'];
+
+function LayerLockIcon({ locked, className = 'h-4 w-4' }: { locked: boolean; className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d={locked ? 'M7.5 10V7.8a4.5 4.5 0 0 1 9 0V10' : 'M7.5 10V7.8a4.5 4.5 0 0 1 8-2.8'}
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <rect
+        x="5"
+        y="10"
+        width="14"
+        height="11"
+        rx="1.8"
+        fill={locked ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path d="M12 14v3" stroke={locked ? 'white' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function LayerBlendModeSelect({
+  layer,
+  updateLayer,
+  className = '',
+}: {
+  layer: Layer;
+  updateLayer: UpdateLayer;
+  className?: string;
+}) {
+  const supported = isLayerBlendMode(layer.blendMode);
+
+  return (
+    <select
+      aria-label={`Blend mode for ${layer.name}`}
+      value={supported ? layer.blendMode : ''}
+      disabled={layer.isBedrock || layer.locked}
+      onChange={(event) => {
+        if (!layer.isBedrock && !layer.locked && isLayerBlendMode(event.currentTarget.value)) {
+          updateLayer(layer.id, { blendMode: event.currentTarget.value }, SET_LAYER_BLEND_MODE_ACTION);
+        }
+      }}
+      className={`min-w-0 rounded border border-gray-300 bg-white px-2 text-sm text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-white ${className}`}
+    >
+      {!supported && (
+        <option value="" disabled>
+          Unsupported mode
+        </option>
+      )}
+      {LAYER_BLEND_MODES.map(({ value, label }) => (
+        <option key={value} value={value}>
+          {label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function LayerLockToggle({
+  layer,
+  updateLayer,
+  textEditActive = false,
+  className = '',
+}: {
+  layer: Layer;
+  updateLayer: UpdateLayer;
+  textEditActive?: boolean;
+  className?: string;
+}) {
+  const action = layer.locked ? UNLOCK_LAYER_ACTION : LOCK_LAYER_ACTION;
+  const lockDisabled = layer.isBedrock || (!layer.locked && textEditActive);
+
+  return (
+    <button
+      type="button"
+      aria-label={`${layer.locked ? 'Unlock' : 'Lock'} ${layer.name}`}
+      aria-pressed={layer.locked}
+      disabled={lockDisabled}
+      title={
+        layer.locked
+          ? 'Unlock layer'
+          : textEditActive
+            ? 'Finish text editing before locking layers'
+            : 'Lock all layer properties'
+      }
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!lockDisabled) updateLayer(layer.id, { locked: !layer.locked }, action);
+      }}
+      className={`inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700 ${className}`}
+    >
+      <LayerLockIcon locked={layer.locked} />
+      <span className="sr-only">{layer.locked ? 'Locked' : 'Unlocked'}</span>
+    </button>
+  );
+}
 
 type LayerOpacityControlProps = {
   layer: Layer;
   updateLayer: ReturnType<typeof useLayers>['updateLayer'];
+  textEditActive: boolean;
 };
 
-function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
+function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacityControlProps) {
   const [draftPercent, setDraftPercent] = useState<number | null>(null);
   const opacityPercent = draftPercent ?? Math.round(layer.opacity * 100);
 
   function finishGesture() {
     const opacity = draftPercent;
     setDraftPercent(null);
-    if (layer.locked || opacity === null) return;
+    if (layer.locked || layer.isBedrock || opacity === null) return;
     const nextOpacity = opacity / 100;
     if (layer.opacity !== nextOpacity) {
       updateLayer(layer.id, { opacity: nextOpacity }, SET_LAYER_OPACITY_ACTION);
@@ -40,33 +151,44 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
   }
 
   return (
-    <div className="flex items-center justify-end gap-2 px-1">
-      <span className="text-xs text-gray-600 dark:text-gray-300">Opacity:</span>
-      <details className="relative">
-        <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
-          {opacityPercent}%
-        </summary>
-        <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
-          <input
-            aria-label="Layer opacity"
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            value={opacityPercent}
-            disabled={layer.locked}
-            onChange={(event) => {
-              if (!layer.locked) setDraftPercent(Number(event.currentTarget.value));
-            }}
-            onPointerUp={finishGesture}
-            onPointerCancel={() => setDraftPercent(null)}
-            onKeyUp={finishGesture}
-            onBlur={finishGesture}
-            className="min-w-0 flex-1"
-          />
-          <output aria-live="polite">{opacityPercent}%</output>
+    <div className="flex flex-col gap-1 px-1">
+      <div className="flex items-center justify-between gap-2">
+        <LayerBlendModeSelect layer={layer} updateLayer={updateLayer} className="min-h-8 flex-1" />
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-gray-600 dark:text-white">Opacity:</span>
+          <details className="relative">
+            <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm text-gray-800 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700">
+              {opacityPercent}%
+            </summary>
+            <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
+              <input
+                aria-label="Layer opacity"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={opacityPercent}
+                disabled={layer.locked || layer.isBedrock}
+                onChange={(event) => {
+                  if (!layer.locked && !layer.isBedrock) setDraftPercent(Number(event.currentTarget.value));
+                }}
+                onPointerUp={finishGesture}
+                onPointerCancel={() => setDraftPercent(null)}
+                onKeyUp={finishGesture}
+                onBlur={finishGesture}
+                className="min-w-0 flex-1"
+              />
+              <output aria-live="polite" className="text-gray-800 dark:text-white">
+                {opacityPercent}%
+              </output>
+            </div>
+          </details>
         </div>
-      </details>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-white">
+        <span>Lock:</span>
+        <LayerLockToggle layer={layer} updateLayer={updateLayer} textEditActive={textEditActive} />
+      </div>
     </div>
   );
 }
@@ -81,8 +203,11 @@ export default function LayersTab() {
     updateLayer,
     convertBedrockLayer,
     beginTextLayerEdit,
+    commitDirtyTool,
   } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
+  const textEditActive = toolArgs.toolName === 'text' && Boolean(toolArgs.rect);
+  const textEditingLayerId = textEditActive && toolArgs.toolName === 'text' ? (toolArgs.editingLayerId ?? null) : null;
   const { goToTool } = useApp();
 
   const isMovableLayer = (layerId: LayerId | null): layerId is LayerId => {
@@ -96,11 +221,29 @@ export default function LayersTab() {
 
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
 
+  // Touch and pen input do not start HTML5 drag events, so keep a separate pointer-capture
+  // gesture while leaving the desktop data-transfer path unchanged.
+  const pointerDragRef = useRef<{
+    pointerId: number;
+    layerId: LayerId;
+    startX: number;
+    startY: number;
+    active: boolean;
+    targetId: LayerId | null;
+    overBottom: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const LAYER_REORDER_DRAG_THRESHOLD = 3;
+
   const [animatingLayerId, setAnimatingLayerId] = useState<LayerId | null>(null);
   const [isShrinking, setIsShrinking] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
 
   const selectLayer = (id: LayerId) => {
+    if (textEditActive && toolArgs.toolName === 'text') {
+      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
+      if (commitDirtyTool() === null) return;
+    }
     setActiveLayer(id);
     const source = layers[id]?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
@@ -121,7 +264,12 @@ export default function LayersTab() {
     if (!layer) return;
     const target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
     if (!target) return;
-    if (toolArgs.toolName !== 'text') goToTool('text');
+    if (textEditActive && toolArgs.toolName === 'text') {
+      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
+      if (commitDirtyTool() === null) return;
+    } else if (toolArgs.toolName !== 'text' && goToTool('text') === false) {
+      return;
+    }
     setActiveLayer(id);
     beginTextLayerEdit(target.layerId);
     setToolArgs(target.args);
@@ -155,6 +303,23 @@ export default function LayersTab() {
         lockedRef.current = false;
         unlockDragCursor();
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const cancelPointerDrag = () => {
+      if (!pointerDragRef.current) return;
+      pointerDragRef.current = null;
+      suppressClickRef.current = false;
+      setDraggedLayerId(null);
+      setDropTargetId(null);
+      setIsOverBottom(false);
+    };
+    window.addEventListener('blur', cancelPointerDrag);
+    document.addEventListener('visibilitychange', cancelPointerDrag);
+    return () => {
+      window.removeEventListener('blur', cancelPointerDrag);
+      document.removeEventListener('visibilitychange', cancelPointerDrag);
     };
   }, []);
   /////
@@ -198,6 +363,7 @@ export default function LayersTab() {
   }
 
   function handleConfirmRemove(layerId: LayerId) {
+    if (textEditingLayerId === layerId) return;
     // todo: draw a "undo" button that disappears in few seconds
     removeLayer(layerId);
   }
@@ -218,9 +384,80 @@ export default function LayersTab() {
     setEditingLayerId(null);
   }
 
+  function clearPointerDrag(event?: React.PointerEvent<HTMLDivElement>) {
+    const pointerDrag = pointerDragRef.current;
+    if (!pointerDrag) return;
+    if (event && event.pointerId !== pointerDrag.pointerId) return;
+    try {
+      event?.currentTarget.releasePointerCapture(pointerDrag.pointerId);
+    } catch {
+      // Capture may already have been released before pointerup/pointercancel arrives.
+    }
+    pointerDragRef.current = null;
+    setDraggedLayerId(null);
+    setDropTargetId(null);
+    setIsOverBottom(false);
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLDivElement>, layerId: LayerId) {
+    if (event.pointerType === 'mouse' || editingLayerId === layerId || !isMovableLayer(layerId)) return;
+    pointerDragRef.current = {
+      pointerId: event.pointerId,
+      layerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      targetId: null,
+      overBottom: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const pointerDrag = pointerDragRef.current;
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    if (!pointerDrag.active) {
+      const distance = Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY);
+      if (distance < LAYER_REORDER_DRAG_THRESHOLD) return;
+      pointerDrag.active = true;
+      suppressClickRef.current = true;
+      setDraggedLayerId(pointerDrag.layerId);
+    }
+
+    const pointed = document.elementFromPoint(event.clientX, event.clientY);
+    const target = pointed?.closest<HTMLElement>('[data-testid="layer-row"]');
+    const overBottom = Boolean(!target && pointed?.closest<HTMLElement>('[data-testid="layers-bottom-drop-target"]'));
+    const targetId = (target?.dataset.layerId as LayerId | undefined) ?? null;
+    const targetIndex = targetId ? sortedLayers.findIndex((layer) => layer.id === targetId) : -1;
+    const sourceIsImmediatelyAboveTarget = targetIndex > 0 && sortedLayers[targetIndex - 1]?.id === pointerDrag.layerId;
+    pointerDrag.targetId =
+      targetId && targetId !== pointerDrag.layerId && !sourceIsImmediatelyAboveTarget && layers[targetId]
+        ? targetId
+        : null;
+    pointerDrag.overBottom = overBottom;
+    setDropTargetId(pointerDrag.targetId);
+    setIsOverBottom(overBottom);
+    event.preventDefault();
+  }
+
+  function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    const pointerDrag = pointerDragRef.current;
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    const { active, layerId, targetId, overBottom } = pointerDrag;
+    clearPointerDrag(event);
+    if (active && isMovableLayer(layerId) && (targetId || overBottom)) animateMove(layerId, targetId ?? undefined);
+  }
+
   return (
     <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
-      {activeLayer && <LayerOpacityControl key={activeLayer.id} layer={activeLayer} updateLayer={updateLayer} />}
+      {activeLayer && (
+        <LayerOpacityControl
+          key={activeLayer.id}
+          layer={activeLayer}
+          updateLayer={updateLayer}
+          textEditActive={textEditActive}
+        />
+      )}
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
@@ -242,6 +479,7 @@ export default function LayersTab() {
               <li
                 key={layer.id}
                 data-testid="layer-row"
+                data-layer-id={layer.id}
                 ref={(el) => {
                   listItemRefs.current[layer.id] = el;
                 }}
@@ -302,7 +540,20 @@ export default function LayersTab() {
                     e.preventDefault();
                     animateMove(draggedLayerId, layer.id);
                   }}
-                  onClick={() => selectLayer(layer.id)}
+                  onPointerDown={(event) => handlePointerDown(event, layer.id)}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={(event) => {
+                    clearPointerDrag(event);
+                    suppressClickRef.current = false;
+                  }}
+                  onClick={() => {
+                    if (suppressClickRef.current) {
+                      suppressClickRef.current = false;
+                      return;
+                    }
+                    selectLayer(layer.id);
+                  }}
                   onDoubleClick={() => enterTextLayer(layer.id)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
@@ -330,6 +581,8 @@ export default function LayersTab() {
 
                   <LayerThumbnail layer={previewLayer} />
 
+                  {layer.isBedrock ? <BedrockIcon /> : <LayerTypeIcon source={layer.source} />}
+
                   <DragHandleIcon disabled={isPickedLayer || layer.isBedrock || layer.locked} />
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
@@ -337,6 +590,11 @@ export default function LayersTab() {
                       data-testid="layer-name"
                       contentEditable={isEditable}
                       suppressContentEditableWarning
+                      onPointerDown={(e) => {
+                        if (e.pointerType === 'mouse') return;
+                        e.stopPropagation();
+                        if (!isEditable) setEditingLayerId(layer.id);
+                      }}
                       onMouseDown={(e: React.MouseEvent<HTMLDivElement>) => {
                         e.stopPropagation();
                         if (isEditable) return;
@@ -383,15 +641,25 @@ export default function LayersTab() {
                       {layer.name}
                     </span>
                   </div>
+                  {layer.locked && (
+                    <span title="Layer locked" className="text-gray-600 dark:text-gray-300">
+                      <LayerLockIcon locked />
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleConfirmRemove(layer.id);
                     }}
+                    disabled={textEditingLayerId === layer.id}
                     className={DELETE_BUTTON_ICON}
                     aria-label="Remove layer"
-                    title="Remove layer"
+                    title={
+                      textEditingLayerId === layer.id
+                        ? 'Finish text editing before removing this layer'
+                        : 'Remove layer'
+                    }
                   >
                     <TrashIcon />
                   </button>
@@ -418,6 +686,7 @@ export default function LayersTab() {
         </button>
       )}
       <div
+        data-testid="layers-bottom-drop-target"
         className="flex-1 min-h-[20px]"
         onDragOver={(e) => {
           e.stopPropagation();

@@ -7,6 +7,7 @@ import { useSelectionClipboard } from '../useSelectionClipboard.ts';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const createLayerFromBitmapMock = vi.hoisted(() => vi.fn());
+const readImageFromClipboardMock = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(
   (): {
     activeSelectionId: string | null;
@@ -48,10 +49,15 @@ vi.mock('../useLayer.ts', () => ({
   }),
 }));
 
+vi.mock('../../util/clipboard.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../util/clipboard.ts')>()),
+  readImageFromClipboard: readImageFromClipboardMock,
+}));
+
 let lastPaste: Promise<boolean> | null = null;
 
 const ClipboardProbe = () => {
-  const { copyActiveSelection, pasteSelectionClipboard } = useSelectionClipboard();
+  const { copyActiveSelection, pasteSelectionClipboard, pasteSystemClipboardImage } = useSelectionClipboard();
 
   return (
     <div>
@@ -62,6 +68,13 @@ const ClipboardProbe = () => {
         }}
       >
         Paste
+      </button>
+      <button
+        onClick={() => {
+          lastPaste = pasteSystemClipboardImage();
+        }}
+      >
+        Paste System Image
       </button>
     </div>
   );
@@ -104,6 +117,8 @@ const paste = () => {
 const resetStoreState = () => {
   dispatchMock.mockClear();
   createLayerFromBitmapMock.mockReset();
+  readImageFromClipboardMock.mockReset();
+  readImageFromClipboardMock.mockResolvedValue(null);
   lastPaste = null;
   storeState.activeSelectionId = 'selection-1';
   storeState.documentFrame = undefined;
@@ -135,6 +150,27 @@ describe('useSelectionClipboard', () => {
     expect(dispatchMock).toHaveBeenCalledWith({ type: 'MARK_SELECTION_COPIED', payload: { id: 'selection-1' } });
   });
 
+  it('rejects an oversized clipboard image before cloning or creating a layer', async () => {
+    const OriginalOffscreenCanvas = globalThis.OffscreenCanvas;
+    const allocations = vi.fn();
+    class RecordingOffscreenCanvas extends OriginalOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations(width, height);
+        super(width, height);
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas);
+    storeState.selectionClipboard = createClipboard({
+      bitmap: createMockImageBitmap(10_001, 10_000),
+      pos: { x: 0, y: 0, width: 10_001, height: 10_000 },
+    });
+    render(<ClipboardProbe />);
+
+    await expect(paste()).resolves.toBe(false);
+    expect(allocations).not.toHaveBeenCalled();
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
+  });
+
   it('pastes the in-app clipboard bitmap as an independent new layer at the copied selection position', () => {
     const clipboardBitmap = createMockImageBitmap(30, 40);
     storeState.selectionClipboard = {
@@ -156,6 +192,55 @@ describe('useSelectionClipboard', () => {
       pos: { x: 35, y: 30, width: 30, height: 40 },
     });
     expect(createLayerFromBitmapMock.mock.calls[0][0].bitmap).not.toBe(clipboardBitmap);
+  });
+
+  it('pastes a system clipboard image as a centered new layer', async () => {
+    const bitmap = createMockImageBitmap(20, 10);
+    readImageFromClipboardMock.mockResolvedValue({ bitmap, mimeType: 'image/png' });
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(true);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith({
+      bitmap,
+      name: 'Layer 1',
+      pos: { x: 40, y: 45, width: 20, height: 10 },
+    });
+    expect(bitmap.close).not.toHaveBeenCalled();
+  });
+
+  it('closes a system clipboard bitmap when layer creation rejects', async () => {
+    const bitmap = createMockImageBitmap(20, 10);
+    const failure = new Error('layer creation failed');
+    readImageFromClipboardMock.mockResolvedValue({ bitmap, mimeType: 'image/png' });
+    createLayerFromBitmapMock.mockRejectedValueOnce(failure);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(bitmap.close).toHaveBeenCalledExactlyOnceWith();
+    expect(consoleErrorSpy).toHaveBeenCalledExactlyOnceWith('Unable to paste system clipboard image', failure);
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('closes an oversized system clipboard bitmap before creating a layer', async () => {
+    const bitmap = createMockImageBitmap(10_001, 10_000);
+    readImageFromClipboardMock.mockResolvedValue({ bitmap, mimeType: 'image/png' });
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(bitmap.close).toHaveBeenCalledExactlyOnceWith();
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a system clipboard image when no image item is available', async () => {
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
   });
 });
 

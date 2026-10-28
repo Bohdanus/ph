@@ -35,7 +35,8 @@ for the desktop and tablet shell:
 - `HAVE` — The right dock width is adjustable from its canvas-facing edge and is persisted with the
   workspace. Both panels inherit that width.
 - `HAVE` — The Tools rail remains pinned to the left window edge and the History/Layers dock remains
-  pinned to the right window edge. Rail and panel headers do not re-dock, float, or reorder by drag.
+  pinned to the right window edge. Rail and panel headers do not re-dock or float; panel tabs may
+  reorder within the pinned dock by drag.
 - `HAVE` — Layer rows render a thumbnail preview using the same layer presentation renderer as the
   document. History rows remain text-only; history previews are not invented.
 
@@ -48,22 +49,21 @@ still retained because Adobe documents resizing panel edges and dividers.
 
 ## 1. Current state
 
-| Area                      | File                                                                               | Notes                                                                                                                                 |
-| ------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | Layer rows plus `LayerThumbnail`, using the existing presentation renderer                                                            |
-| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Pinned dock, tabs, collapse, width resize, shared vertical split. `PanelId = 'history' \| 'layers'` in `src/contexts/PanelLayout.tsx` |
-| Layer model               | `src/contexts/layer-types.ts` — `Layer`, `LayerSource`, `LayerOperation`           | `Layer` is a flat record; `LayerSource` is a 3-way union; `LayerOperation` a 2-way union                                              |
-| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `getSortedLayersArray()`, `reorderLayers()`                                                                                           |
-| Mutations                 | `src/contexts/useLayer.ts`                                                         | `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`                                        |
-| Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                                   |
-| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked only from `updateLayerByTool()` and `tempUpdateLayer()`; the **only** source of `locked: true` is PSD import                  |
-| History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Per-action arms: the layer arms, plus the document-frame and selection arms                                                           |
-| Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | `LayerPropertyKey = 'visible' \| 'name'` — the closed set                                                                             |
-| Tablet touch panel        | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | Tablet touch surface: new-layer, delete, rename, move up/down; handheld phones are out of scope                                       |
-| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | What each suite pins is in [§16](#16-test-coverage-that-exists)                                                                       |
+| Area                      | File                                                                               | Notes                                                                                                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | Layer rows plus `LayerThumbnail`, using the existing presentation renderer                                                                                                          |
+| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Pinned dock, tabs, collapse, width resize, shared vertical split. `PanelId = 'history' \| 'layers'` in `src/contexts/PanelLayout.tsx`                                               |
+| Layer model               | `src/contexts/layer-types.ts` — `Layer`, `LayerSource`, `LayerOperation`           | `Layer` is a flat record; `LayerSource` is a 3-way union; `LayerOperation` a 2-way union                                                                                            |
+| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `getSortedLayersArray()`, `reorderLayers()`                                                                                                                                         |
+| Mutations                 | `src/contexts/useLayer.ts`, `LayersTab.tsx`                                        | `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`, `convertBedrockLayer()`, text re-entry, opacity, blend mode, and full-lock controls |
+| Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                                                                                 |
+| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked by tool edits, temporary edits, `replaceLayerSource()`, and `moveLayerAfter()`; PSD import and the Layers panel can set the full-lock boolean                               |
+| History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Per-action arms: the layer arms, plus the document-frame and selection arms                                                                                                         |
+| Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | Explicit actions derive and validate `visible`, `name`, `opacity`, `blendMode`, and `locked` patches                                                                                |
+| Tablet touch panel        | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | Tablet touch surface: new-layer, delete, rename, move up/down, opacity, blend mode, and full lock; handheld phones are out of scope                                                 |
+| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | What each suite pins is in [§16](#16-test-coverage-that-exists)                                                                                                                     |
 
-The panel today is **a list of names with an eye, thumbnail, and bin**. Everything else in this document is a
-requirement on top of that list. Two facts drive most of what follows:
+The panel today is **a list of names with visibility, live thumbnails, opacity, blend mode, full lock, and removal controls**. The remaining requirements below distinguish actual model gaps from missing panel affordances. Two facts drive most of what follows:
 
 <!-- `docs/TOOLS.md` is GENERATED by `npm run docs:tools`, and a test fails on drift, so
      its line numbers move on every regeneration. Cite its section headings instead: a
@@ -71,10 +71,12 @@ requirement on top of that list. Two facts drive most of what follows:
      `docs/TOOLS-TOO-HARD.md`, which is hand-maintained and grows for the same reason. -->
 
 1. **`Layer` is flat and untyped by kind.** There is no `parentId`, no `kind` discriminator on the
-   layer itself, no `fillOpacity`, no `mask`, no `clipping`. `LayerSource` in
+   layer itself, no `fillOpacity`, no `mask`, no `clipping`. Runtime `LayerSource` in
    `src/contexts/layer-types.ts` has exactly three kinds (`blank`, `image`, `tool`) and
-   `LayerOperation` in the same file exactly two (three filter args, plus affine). Photoshop's own
-   taxonomy is Image, Adjustment, Fill, Type, Shape, Smart Object, Video, Background.
+   `LayerOperation` in the same file exactly two (three filter args, plus affine). This is not the
+   same union as durable replay's `DurableLayerSource`, which distinguishes raster, vector, text,
+   paint, blank, and legacy-tool sources. Photoshop's own taxonomy is Image, Adjustment, Fill, Type,
+   Shape, Smart Object, Video, Background.
 2. **A stroke is a layer.** `DrawToolArea` commits through `createLayerFromTool`, so a canvas with
    many brush strokes has many layers. `docs/TOOLS-TOO-HARD.md` §"Layer opacity, and the paint model"
    records that this is deliberate and expensive to reverse, and
@@ -101,7 +103,8 @@ version-sensitive if a source disagrees with it.
 ### 2.1 The tab group — Layers, Channels, Paths
 
 - `HAVE` (partially) — Two tabs, `History` and `Layers`, each a `PanelGroup` with its own roll-up
-  and split ratio. Relocation drag is intentionally disabled by the operator requirement.
+  and split ratio. Relocation drag is intentionally disabled by the operator requirement; in-dock
+  tab reordering remains available.
 - `GAP` — **Channels and Paths do not exist.** `PanelId` is the closed union
   `'history' | 'layers'` (`src/contexts/PanelLayout.tsx`). The omission is a recorded decision,
   not an oversight: the same file's `## Deliberately NOT modelled` note on **Panel tab GROUPS**
@@ -120,10 +123,11 @@ version-sensitive if a source disagrees with it.
 
 ### 2.2 The filter row
 
-One control: a filter-kind selector whose default is **`Kind`**, immediately below the tab strip. The
-nine filter kinds are `Kind`, `Name`, `Effect`, `Mode`, `Attribute`, `Color`, `Smart Object`,
-`Selected`, `Artboard`. The number and meaning of the icons beside the selector change with the
-selected kind.
+One control: a filter-kind selector whose default is **`Kind`**, immediately below the tab strip. Adobe
+principal designer Julieanne Kost enumerates the nine filter kinds as `Kind`, `Name`, `Effect`, `Mode`,
+`Attribute`, `Color`, `Smart Object`, `Selected`, and `Artboard`. The taxonomy is therefore Adobe-sourced;
+the separate icon glyphs and their ordering remain corroborated reconstruction rather than settled Adobe
+truth.
 
 - `GAP` — There is no filter state in the panel at all. `LayersTab.tsx` — `LayersTab()` — holds
   **seven** `useState` values (`draggedLayerId`, `dropTargetId`, `isOverBottom`,
@@ -156,9 +160,11 @@ named by Adobe itself ("Use **Turn layer filtering on or off** to turn filtering
 as a **light switch** — a rounded track with a circle, **red and raised when filtering is on, grey
 and lowered when off** (Adobe principal designer Julieanne Kost, whose write-up is the only source
 found that describes the glyph). The icons are multi-select toggles, and filtering is off by default.
-Adobe's own `Kind` list is exactly five: "1. Pixel, 2. Adjustment, 3. Type, 4. Shape, 5. Smart
-Objects." **There is no video-layer filter icon** — checked directly, because a video layer arrived
-in CC 2018 and it is a plausible addition that no source in 2015-2026 mentions.
+Adobe's own older `Kind` list is five: "1. Pixel, 2. Adjustment, 3. Type, 4. Shape, 5. Smart
+Objects." The current official Smart Object page instead documents five Smart Object link states:
+library-linked, locally linked, out-of-date linked, missing linked, and embedded. **There is no
+primary confirmation here of a video-layer filter icon**; do not treat its absence as a guaranteed
+Photoshop rule without rechecking the live panel.
 
 - `GAP` — none of the six exist. Corroborating only: no Adobe page enumerates this row.
 - **The last control is the filter switch, not a transparency toggle.** This is a live trap: the
@@ -172,11 +178,10 @@ in CC 2018 and it is a plausible addition that no source in 2015-2026 mentions.
 Two controls on one row: an unlabelled blend-mode pop-up on the left (default **`Normal`**), and the
 `Opacity:` field on the right (default **100%**), itself a pop-up slider with a drop-down of presets.
 
-- `GAP` — no blend-mode control. `Layer.blendMode` is a data field
-  (`src/contexts/layer-types.ts`) that `layer-renderer.ts` — `drawLayer()` — applies, that the paint
-  tool's own Mode select writes, and that PSD import sets. `docs/TOOLS.md` §Smudge Tool states the
-  consequence for the Smudge tool: "a grep for `blendMode` across `src/components/` finds only that
-  select - the Layers panel has no blend-mode control at all."
+- `HAVE` — the panel blend-mode selector edits the active layer through the dedicated
+  `SET_LAYER_BLEND_MODE_ACTION`. The selector lists the 16 Photoshop modes supported by this
+  renderer and leaves unsupported imported canvas modes unchanged until the user chooses a supported
+  mode. Background and full-locked layers cannot change blend mode.
 - `PARTIAL` — an `Opacity:` pop-up slider writes the selected, unlocked layer from 0–100%. A completed
   gesture creates one titled `SET_LAYER_OPACITY_ACTION` history entry that is derived, append-validated,
   and replayable. The Adobe-documented preset drop-down is not included: its exact values are
@@ -201,9 +206,16 @@ order:
 | 3   | Lock Position           | "Prevents the layer's pixels from being moved."                                                                                                         | crossed arrows    |
 | 4   | Lock All                | "Click the Lock All option in the Layers panel."                                                                                                        | padlock           |
 
-Lock All is the sum of the other three: it is the one lock that maps onto Photoshop's "prevent
-everything", and on this model it is equivalent to the single `locked` boolean `Layer` has today.
-That is why the import collapse in `psd-utils.ts` — `loadPsd()` — is lossy in only one direction —
+Lock All is the full-layer lock represented by the single `locked` boolean `Layer` has today.
+`loadPsd()` treats `transparencyProtected` or any truthy member of ag-psd's `protected` object as
+that full lock and emits a warning, so it cannot preserve which protection scope was originally
+set. This also includes ag-psd's `protected.artboards` field, which is not one of Photoshop's four
+visible lock-row controls. `savePsd()` writes the boolean as `transparencyProtected: locked` and
+`protected: { transparency: false, composite: locked, position: locked }`. The pinned
+[`ag-psd@31.0.2` format guide](https://app.unpkg.com/ag-psd@31.0.2/files/README_PSD.md#layer)
+defines `transparencyProtected: true` with `protected.transparency: false` as the canonical
+"Lock All" representation. Therefore an app full lock round-trips, while a partial PSD lock
+becomes full-layer-locked and its original scope cannot be recovered.
 four flags in, one out, never the reverse.
 
 The three partial locks are primary-sourced twice each (the `moving-stacking-locking-layers` help page
@@ -212,15 +224,13 @@ corroborated by a third-party source that agrees.
 Note that four visible controls do not imply four model fields: Adobe's UXP `Layer` class exposes
 **five** lock booleans, so the UXP surface is a superset of this row.
 
-- `GAP` — no lock control, and the model cannot express one. `Layer.locked` is a single boolean
-  (`src/contexts/layer-types.ts`): it is `true` only when a PSD import collapses Photoshop's
-  per-property protection into a full lock (`src/contexts/psd-utils.ts` — `loadPsd()`), and
-  `isLayerLocked()` (`src/contexts/useLayer.ts`) is checked in exactly two places —
-  `updateLayerByTool()` and `tempUpdateLayer()`. There is no UI anywhere that sets it, and
-  `src/contexts/__tests__/useLayer.locked.test.tsx` says so in the test's own words.
+- `PARTIAL` — the panel can apply and remove Photoshop's full lock through distinct
+  `LOCK_LAYER_ACTION` and `UNLOCK_LAYER_ACTION` history entries. The locked state is shown beside the
+  layer name, and tablet rows expose a 44px lock control. The model still cannot represent the three
+  partial lock flags independently; PSD import collapses any such flag to full-layer-locked.
 - `GAP` — no Fill control. `Fill:` is not a synonym for Opacity; see [§9.1](#91-opacity-and-fill-are-not-the-same-field).
-- The panel lock state renders **on the row**: a padlock to the right of the layer name, **solid** when
-  fully locked, **hollow** when partially locked, and **greyed out** for layers inside a locked group.
+- The panel lock state renders **on the row** as a solid padlock when fully locked. Partial-lock and
+  locked-group rendering remain unavailable because neither state exists in the flat layer model.
   (Adobe, primary)
 - Photoshop's keyboard shortcut for lock/unlock is `Cmd+/` (macOS) or `Ctrl+/` (Windows). A bare `/`
   toggles the most recently applied lock. (Adobe primary for the first; Adobe Elements primary for
@@ -320,30 +330,50 @@ Left to right, on a Photoshop layer row:
 
 1. **Visibility eye** — leftmost column, before the thumbnail.
 2. **Disclosure triangle** — indented right of the eye column, left of the thumbnail, for anything
-   that has children: a group, an adjustment layer, a Smart Object with Smart Filters.
+   that has children: a group, or a layer with expandable Smart Filters/effects. Do not infer that
+   every adjustment layer has child rows; Adobe's current panel documentation does not establish that.
 3. **Thumbnail** — a live preview of the layer, checkerboard where empty, auto-updated as you edit.
-   Carries a `T` badge for a type layer and a page icon for a Smart Object.
+   Photoshop carries a `T` badge for a type layer and a page icon for a Smart Object; those badges
+   require a layer-kind discriminator that this app does not have yet.
 4. **Mask thumbnails** — to the right of the layer thumbnail, linked by a chain icon.
 5. **Name** — double-click to rename.
 6. **`fx`** — to the right of the name, when a layer style is applied. Expandable so each effect is
    its own row.
 7. **Padlock** — to the right of the name, when locked.
 
-What this app renders today, in the same order: eye, drag handle, name, delete. The drag handle has
+What this app renders today, in the same order: eye, thumbnail, drag handle, name, delete. The thumbnail
+uses `previewLayers.current[layer.id]?.layer ?? layer` and `LayerThumbnail`, which draws through the
+same `drawLayerSource()` presentation path as the document. The drag handle has
 no Photoshop counterpart — Photoshop's row is draggable as a whole. This is a fidelity gap, not a
 sanctioned divergence: **the row itself is the drag handle in Photoshop, and a `DragHandleIcon`
 between the eye and the name is a control that Photoshop does not have.**
 
-| Element     | Status | Evidence                                                                                                                            |
-| ----------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Eye         | `HAVE` | `LayersTab.tsx` — the row's eye button (`aria-label` `Hide layer`); `toggleVisibility()` in `useLayer.ts`                           |
-| Drag handle | `GAP`  | Decorative only, `aria-hidden` (`src/components/Icons/DragHandleIcon.tsx` — `DragHandleIcon()`)                                     |
-| Thumbnail   | `GAP`  | Nothing renders one. The repo has no layer-thumbnail code.                                                                          |
-| `T` badge   | `GAP`  | Text source arguments are retained, but the panel renders no type thumbnail or `T` badge; see `docs/TOOLS.md` §Horizontal Type Tool |
-| Disclosure  | `GAP`  | No layer has children to disclose                                                                                                   |
-| Name        | `HAVE` | `LayersTab.tsx` — the `layer-name` span; see [§7](#7-rename) for the mousedown gap                                                  |
-| `fx`        | `GAP`  | `Layer.operations` (`layer-types.ts` — `LayerOperation`) holds three filter args plus affine, not layer styles                      |
-| Padlock     | `GAP`  | `Layer.locked` exists and is never set by the UI                                                                                    |
+| Element     | Status | Evidence                                                                                                                                                                                                                                     |
+| ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Eye         | `HAVE` | `LayersTab.tsx` — the row's eye button (`aria-label` `Hide layer`); `toggleVisibility()` in `useLayer.ts`                                                                                                                                    |
+| Drag handle | `GAP`  | Decorative only, `aria-hidden` (`src/components/Icons/DragHandleIcon.tsx` — `DragHandleIcon()`)                                                                                                                                              |
+| Thumbnail   | `HAVE` | `LayerThumbnail` draws a 48x32 checkerboard-backed preview from the live preview layer or committed layer through `drawLayerSource()`. `LayersTab.test.tsx` — `it('renders one preview thumbnail for every layer row')` — pins row coverage. |
+| `T` badge   | `GAP`  | Text source arguments are retained, but the panel renders no type thumbnail or `T` badge; see `docs/TOOLS.md` §Horizontal Type Tool                                                                                                          |
+| Disclosure  | `GAP`  | No layer has children to disclose                                                                                                                                                                                                            |
+| Name        | `HAVE` | `LayersTab.tsx` — the `layer-name` span; see [§7](#7-rename) for the mousedown gap                                                                                                                                                           |
+| `fx`        | `GAP`  | `Layer.operations` (`layer-types.ts` — `LayerOperation`) holds three filter args plus affine, not layer styles                                                                                                                               |
+| Padlock     | `GAP`  | `Layer.locked` exists and is never set by the UI                                                                                                                                                                                             |
+
+The desktop preview is a **row preview**, not a second document compositor. `LayerThumbnail` calls
+`drawLayerSource()` for the chosen layer presentation; it does not call `drawLayer()` and therefore
+does not independently apply the layer's opacity/blend composition against neighboring rows. During
+an in-flight `tempUpdateLayer()` preview, the ref can change without a store update or a React render,
+so this document must not promise that thumbnails repaint for every pointer sample. The committed
+layer preview is the supported contract today.
+
+`MobileLayersDrawer` does not render `LayerThumbnail`; the tablet drawer currently exposes eye, name,
+rename, move, delete, and opacity controls without a layer preview. This is a documented tablet parity
+gap, not permission to describe the desktop thumbnail as available on both surfaces.
+
+Adobe updates visible layer thumbnails as the document changes and Panel Options can reduce their size
+or choose `None`. The clone currently exposes neither preference. `Option`/`Alt`-clicking an eye to
+temporarily isolate one layer is also an Adobe panel behavior; the clone's eye button only toggles the
+clicked layer.
 
 - `PARTIAL` — the active row. Photoshop distinguishes the **active** layer (the one edits apply to)
   from merely-**selected** layers: "Some actions, like painting or tonal adjustments, **apply only to
@@ -374,6 +404,8 @@ between the eye and the name is a control that Photoshop does not have.**
   that groups layers replays with the group collapsed.)
 - A group created from the bottom-bar folder button is **empty** — see
   [§2.6](#26-the-bottom-action-bar).
+- Dragging a layer into a closed group inserts it at the top of that group. Groups can also receive
+  masks and adjustment layers whose effects target the group or its contents.
 - A group has **Opacity and Blend Mode but not Fill** — "(If you selected a group, only Opacity is
   available.)" (Adobe, primary)
 - A group's default blend mode is **`Pass Through`**, and choosing anything else flattens the group
@@ -404,6 +436,9 @@ Photoshop's model, in Adobe's words:
 - **Contiguous range**: "Select the first layer, then Shift+select the last layer."
 - **Non-contiguous**: "Ctrl+select (Windows) or Command+select (macOS) each layer in the panel."
 - **All**: `Select > All Layers`.
+- **Similar**: `Select > Similar Layers` selects layers matching the active layer's kind.
+- Clicking a **thumbnail** selects the layer's non-transparent pixels; clicking the row selects the
+  layer itself. These are distinct gestures and must not collapse into one hit target.
 
 (Adobe, primary — the `select-layers` help page, corroborated by the `ps-layers-basics` learn page.)
 
@@ -419,8 +454,11 @@ Photoshop's model, in Adobe's words:
   scanning the timeline. **Do not add `LayerId`s to `selections`, and do not reuse
   `activeSelectionId` for the active layer.** That would retype a structure three subsystems assume
   holds `Selection` geometry, and it would corrupt replay.
-- `GAP` — the **layer** selection. The panel has `activeLayerId: LayerId | null` and no layer set;
-  the row's `onClick` in `LayersTab.tsx` is a bare `setActiveLayer(layer.id)`.
+- `PARTIAL` — the **layer** selection. The panel has `activeLayerId: LayerId | null` and no layer set.
+  A row click calls `selectLayer()` rather than only setting the id: when the selected layer's tool
+  matches the current tool it hydrates `toolArgs`, and a text source enters text editing through
+  `textLayerEditTarget()` / `beginTextLayerEdit()`. The test
+  `it('hydrates a selected text layer into canvas space for re-entry')` pins that behavior.
 - **Requirement.** The store must be able to hold layer _selected_ (a set) and layer _active_ (one
   member of it) **separately**, or multi-select cannot be added without renaming every consumer of
   `activeLayerId`. Name the new fields so they cannot be confused with the two above —
@@ -555,27 +593,27 @@ the Delete key**." (Adobe, primary; corroborated by the Elements shortcut page a
 
 Every panel requirement in this document reduces to a field. This is the table to implement against.
 
-| Photoshop concept | `Layer` field today                   | Status | Consequence of the gap                                                                                                     |
-| ----------------- | ------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Backing image     | `isBedrock`                           | `HAVE` | Tool areas refuse edits and the desktop panel refuses drag-reordering — [§12](#12-the-background-layer)                    |
-| Background layer  | none                                  | `GAP`  | Not the same thing as `isBedrock`, which is the document's backing image                                                   |
-| Layer selection   | `selectedLayerIds` (proposed)         | `GAP`  | Singular only. **Must not reuse `selections`** — [§5](#5-selection)                                                        |
-| Visibility        | `visible: boolean`                    | `HAVE` | —                                                                                                                          |
-| Opacity           | `opacity: number`                     | `GAP`  | Field exists, renderer honours it (`layer-renderer.ts` — `drawLayer()`); three construction sites write it, **no UI does** |
-| Fill opacity      | none                                  | `GAP`  | Folded into `opacity` on import — `psd-utils.ts` — `loadPsd()` — warns "Fill opacity is approximated as layer opacity"     |
-| Blend mode        | `blendMode: GlobalCompositeOperation` | `GAP`  | No writer in any UI; unsupported values fall back to `source-over` on import (`psd-utils.ts` — `loadPsd()`)                |
-| Full lock         | `locked: boolean`                     | `GAP`  | Import collapses four Photoshop flags into one (`psd-utils.ts` — `loadPsd()`)                                              |
-| Partial locks (3) | none                                  | `GAP`  | Lock All and Lock Position are not the same rule and cannot share a boolean                                                |
-| Layer kind        | `source?.kind` (3-way union)          | `GAP`  | Cannot render a type badge, a folder, or a filter-by-kind without it                                                       |
-| Group parent      | none                                  | `GAP`  | No nesting, no group opacity, no `Pass Through`                                                                            |
-| Mask              | none                                  | `GAP`  | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`, one arm of a 16-key loop)                                    |
-| Clipping          | none                                  | `GAP`  | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`)                                                              |
-| Linked layers     | none                                  | `GAP`  | —                                                                                                                          |
-| Layer styles      | `operations` (filters + affine)       | `GAP`  | Not layer styles. A filter is not an effect; they share a menu, nothing else                                               |
-| Smart Object      | none                                  | `GAP`  | Import degrades to a raster preview (`psd-utils.ts` — `loadPsd()`)                                                         |
-| Color label       | none                                  | `GAP`  | —                                                                                                                          |
-| Blend If          | none                                  | `GAP`  | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`)                                                              |
-| Video layer       | none                                  | `OUT`  | Not a browser-canvas capability; see [§19](#19-platform-constraints)                                                       |
+| Photoshop concept | `Layer` field today                   | Status    | Consequence of the gap                                                                                                                                                                                |
+| ----------------- | ------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backing image     | `isBedrock`                           | `HAVE`    | Tool areas refuse edits and the desktop panel refuses drag-reordering — [§12](#12-the-background-layer)                                                                                               |
+| Background layer  | none                                  | `GAP`     | Not the same thing as `isBedrock`, which is the document's backing image                                                                                                                              |
+| Layer selection   | `selectedLayerIds` (proposed)         | `GAP`     | Singular only. **Must not reuse `selections`** — [§5](#5-selection)                                                                                                                                   |
+| Visibility        | `visible: boolean`                    | `HAVE`    | —                                                                                                                                                                                                     |
+| Opacity           | `opacity: number`                     | `PARTIAL` | Desktop and tablet panels edit the single field and replay `SET_LAYER_OPACITY_ACTION`; Photoshop's separate Fill opacity and layer-kind rules remain absent                                           |
+| Fill opacity      | none                                  | `GAP`     | Folded into `opacity` on import — `psd-utils.ts` — `loadPsd()` — warns "Fill opacity is approximated as layer opacity"                                                                                |
+| Blend mode        | `blendMode: GlobalCompositeOperation` | `PARTIAL` | Desktop and tablet selectors write one of 16 supported Photoshop modes; unsupported values fall back to `source-over` on import (`psd-utils.ts` — `loadPsd()`)                                        |
+| Full lock         | `locked: boolean`                     | `PARTIAL` | Panel Lock All is replayable; PSD import still collapses Photoshop's four protection flags into one (`psd-utils.ts` — `loadPsd()`)                                                                    |
+| Partial locks (3) | none                                  | `GAP`     | Lock All and Lock Position are not the same rule and cannot share a boolean                                                                                                                           |
+| Layer kind        | `source?.kind` (3-way union)          | `PARTIAL` | The source union distinguishes blank, image, and tool layers, but not Photoshop's type, shape, adjustment, fill, Smart Object, group, or Background kinds; badges and kind filters remain unavailable |
+| Group parent      | none                                  | `GAP`     | No nesting, no group opacity, no `Pass Through`                                                                                                                                                       |
+| Mask              | none                                  | `GAP`     | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`, one arm of a 16-key loop)                                                                                                               |
+| Clipping          | none                                  | `GAP`     | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`)                                                                                                                                         |
+| Linked layers     | none                                  | `GAP`     | —                                                                                                                                                                                                     |
+| Layer styles      | `operations` (filters + affine)       | `GAP`     | Not layer styles. A filter is not an effect; they share a menu, nothing else                                                                                                                          |
+| Smart Object      | none                                  | `GAP`     | Import degrades to a raster preview (`psd-utils.ts` — `loadPsd()`)                                                                                                                                    |
+| Color label       | none                                  | `GAP`     | —                                                                                                                                                                                                     |
+| Blend If          | none                                  | `GAP`     | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`)                                                                                                                                         |
+| Video layer       | none                                  | `OUT`     | Not a browser-canvas capability; see [§19](#19-platform-constraints)                                                                                                                                  |
 
 ### 9.1 Opacity and Fill are not the same field
 
@@ -598,6 +636,53 @@ affecting the opacity of layer effects such as drop shadows.**" (Adobe, primary.
 
 ---
 
+### 9.2 Layer editability and rasterization gates
+
+The Layers panel must describe whether the active layer accepts a pixel edit; a thumbnail alone does
+not make every row paintable. Adobe's rules are type-specific:
+
+| Photoshop layer or protection | Direct pixel paint/filter operation                                                                                                                                                       | Photoshop path                                                                                                         | Clone status and documentation rule                                                                                                                                                                         |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type layer                    | Raster-only filters and many pixel writers cannot edit the live text directly. **Current Photoshop's Brush exception creates a new transparent layer instead of prompting to rasterize.** | Rasterize the type only when the chosen operation requires it; rasterization makes the text no longer editable as text | `PARTIAL`: `textLayerEditTarget()` preserves editable text sources, while presentation is rasterized. Do not claim the clone enforces Photoshop's warning, new-layer Brush exception, or rasterize command. |
+| Shape layer                   | Vector shape content is not a pixel layer for pixel-only edits. The current Brush exception creates a new transparent layer rather than rasterizing the shape.                            | Rasterize the shape for operations that require pixels; otherwise edit its vector fill, stroke, or path                | `PARTIAL`: shape tool output is retained as a tool source and rendered to pixels; there is no Photoshop shape-layer kind or rasterize command.                                                              |
+| Smart Object                  | The embedded object is edited through its contents or Smart Filters; direct pixel editing of the object layer requires rasterizing it                                                     | Double-click the thumbnail to edit contents, use a Smart Filter, or rasterize the object                               | `GAP` on import fidelity: `loadPsd()` warns that placed layers become raster previews and object data is not preserved. Never call an imported preview a Smart Object.                                      |
+| Adjustment or fill layer      | It is not a paintable pixel layer; target the layer's properties or its mask instead                                                                                                      | Create or edit the adjustment/fill layer and paint black, white, or gray on its mask for localized coverage            | `GAP`: the model has no adjustment, fill, or mask kind. Route this to the model work rather than inventing paint behavior in the panel.                                                                     |
+| Lock Image Pixels             | Painting tools cannot modify pixels                                                                                                                                                       | Toggle the image-pixel lock in the Layers panel                                                                        | `PARTIAL`: Lock All prevents layer edits, but a separate image-pixel lock is not modeled.                                                                                                                   |
+| Lock Transparent Pixels       | Paint is confined to existing opaque pixels                                                                                                                                               | Toggle the transparent-pixel lock                                                                                      | `GAP`: there is no transparency-lock field or control.                                                                                                                                                      |
+| Lock Position                 | Pixels cannot be moved or reordered                                                                                                                                                       | Toggle the position lock                                                                                               | `GAP`: position protection is not represented separately from full lock.                                                                                                                                    |
+| Layer mask                    | Paint black, white, or gray on the mask to hide, reveal, or partially reveal pixels without rasterizing the underlying layer                                                              | Select the mask thumbnail before painting; rasterizing the vector mask is a separate destructive conversion            | `GAP`: masks and mask thumbnails are not modeled.                                                                                                                                                           |
+| Vector mask                   | A path mask is not a paint surface; rasterize the vector mask when pixelwise mask editing is required                                                                                     | Use `Layer > Rasterize > Vector Mask`                                                                                  | `GAP`: no vector-mask or raster-mask kind exists.                                                                                                                                                           |
+| Linked layers                 | Linking constrains move/transform relationships; it does not independently prohibit painting, which targets the active layer                                                              | Link or unlink from the Layers panel                                                                                   | `GAP`: no linked-layer set exists. Do not confuse this with linked Smart Object source data.                                                                                                                |
+| Background layer              | Position, opacity, and masks are restricted; convert it before ordinary layer edits                                                                                                       | Use `Layer from Background`                                                                                            | `PARTIAL`: `isBedrock` blocks several tool edits and reorder, but is deliberately not a Photoshop Background-layer kind; see [§12](#12-the-background-layer).                                               |
+
+These distinctions are not optional explanatory detail. A future Layers-panel row needs a kind and
+protection state before it can safely expose paint, mask, opacity, blend, or conversion controls. The
+panel must disable or route an operation according to the selected layer's state; it must not offer a
+button that silently rasterizes, silently edits a different layer, or silently discards editable text
+or Smart Object data. A control that is not implemented is `GAP`, not permission to describe the
+Photoshop operation as available.
+
+The current clone has an important narrower behavior: ordinary paint gestures create their own tool
+layers rather than painting into the selected layer. Raster processors can also silently bake a
+processed canvas into a special layer, while retained filter operations do not apply Photoshop's
+kind-specific refusal checks. That is an app architecture fact, not Photoshop parity. Documentation
+for a future direct-paint feature must state the target layer, the Brush-new-layer exception, and the
+rasterization gate explicitly, and must add history/replay coverage for both the refusal and the accepted
+path.
+
+Adobe sources: [Edit text in Photoshop](https://helpx.adobe.com/photoshop/using/editing-text.html),
+[Painting tools](https://helpx.adobe.com/photoshop/using/painting-tools.html),
+[Rasterize type and shape layers](https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer),
+[Rasterize Smart Objects](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/smart-objects/rasterize-smart-objects.html),
+[Adjustment and fill layers overview](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/color-adjustment-fill-layers/adjustment-and-fill-layers-overview.html),
+[Create embedded Smart Objects](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/smart-objects/create-embedded-smart-objects.html),
+[Work with adjustment layers](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/color-adjustment-fill-layers/work-with-adjustment-and-fill-layers.html),
+[Add and edit layer masks](https://helpx.adobe.com/photoshop/desktop/create-masks/layer-masks/add-layer-masks.html),
+[Link and unlink layers](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/link-and-unlink-layers.html),
+and [Move, stack, and lock layers](https://helpx.adobe.com/photoshop/using/moving-stacking-locking-layers.html).
+
+---
+
 ## 10. History and undo
 
 This app's architecture decides what a panel requirement costs, so the rules are stated here rather
@@ -611,11 +696,12 @@ than repeated in every section.
   (`src/contexts/useLayer.ts` — `updateLayer()`)**, and that function plans a durable append **only**
   when `isSetLayerPropertiesAction(actionName)` is true. The whitelist is
   `LAYER_PROPERTY_BY_ACTION` (`src/contexts/history-adapter.ts`) and its key type is the
-  closed set `LayerPropertyKey = 'visible' | 'name' | 'opacity'`.
+  closed set `LayerPropertyKey = 'visible' | 'name' | 'opacity' | 'blendMode' | 'locked'`.
 - `DurableLayerPropertyPatch` admits `opacity`, `locked`, `blendMode` and `pos`
   (`src/contexts/history-model.ts`). A property is supported only when its dedicated action has an
   explicit branch in `LAYER_PROPERTY_BY_ACTION`, its derivation and append validation, legacy replay,
-  and a History title. Its currently supported keys are `'visible' | 'name' | 'opacity'`.
+  and a History title. The panel supports `'visible' | 'name' | 'opacity' | 'blendMode' | 'locked'`;
+  `pos` remains reserved for geometry actions.
 - `LAYER_TRANSPARENCY_ACTION` already exists in `src/util/constants.ts`, carrying the comment
   `// todo this is not triggered not recorded nor replayed yet`. It is a placeholder, not a
   half-implementation.
@@ -682,10 +768,9 @@ From Background`, or clicking its padlock. (Adobe, primary.)
   fields of that name and they do not always agree**, which is the part worth knowing before touching
   anything:
   - The **layer** field (`Layer.isBedrock`) is `true` for a new blank document
-    (`src/App.tsx` — `DEFAULT_BLANK_IMAGE`), an opened image file (`src/hooks/useApp.ts` —
-    `setImageFromUpload()`) and the mobile drawer's New
-    Layer (`src/components/Mobile/MobileLayersDrawer.tsx` — the `createBlankLayer()` call behind its
-    `New Layer` button).
+    (`src/App.tsx` — `DEFAULT_BLANK_IMAGE`) and an opened image file (`src/hooks/useApp.ts` —
+    `setImageFromUpload()`). The tablet drawer's `New Layer` action creates an ordinary blank layer
+    and does not set `isBedrock`.
   - The **source** field (`LayerSource.isBedrock`) is what `psd-utils.ts` — `loadPsd()` — sets: PSD
     import
     marks every layer it reads `false`, and the flattened composite carries `false` on the
@@ -743,9 +828,10 @@ document and pinned-panel rules as desktop.
 is currently **richer** than the desktop panel: it has a `New Layer` button, a delete button, rename,
 and explicit move-up / move-down, all with 44px hit targets.
 
-- Each mobile layer row has an opacity slider. It edits the same single opacity field as desktop,
-  disables for locked layers, and commits one `SET_LAYER_OPACITY_ACTION` when the pointer or keyboard
-  gesture ends. The dedicated action has a durable replay entry and a history title; the old
+- Each mobile layer row has an opacity slider, full-lock toggle, and the active row's blend-mode selector.
+  They edit the same fields as desktop; lock and blend changes each create one dedicated durable action.
+  Opacity is disabled for locked/background layers and commits one `SET_LAYER_OPACITY_ACTION` when the
+  pointer or keyboard gesture ends. The dedicated action has a durable replay entry and a history title; the old
   `TOOL_ACTION` patch path is not used.
 - The mobile drawer's row is a plain `div` (`MobileLayersDrawer.tsx` — the row whose `onClick` calls
   `setActiveLayer(layer.id)`) with `onClick` and **no
@@ -776,15 +862,15 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 
 ## 16. Test coverage that exists
 
-| Suite                                                      | What it pins                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SidebarRight/__tests__/LayersTab.test.tsx` (798 lines)    | Empty state, top-first order, active highlight, eye states, trash, rename (all branches), the blank-rename label write-back, and the full drag guard set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `SidebarRight/__tests__/LayersTab.dispatch.test.tsx` (381) | The **exact dispatched action objects** for hide, show, select, rename, remove, and both reorder intents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `SidebarRight/__tests__/LayersTab.store.test.tsx` (425)    | Live-subscription rendering: store changes reach the DOM, a **refused drop** leaves order untouched (`it('leaves the stacking order untouched when a drop is refused')`), and so does an **abandoned drag** (`it('leaves the stacking order untouched when the drag is abandoned')`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `SidebarRight/__tests__/SidebarRight.test.tsx` (591)       | Dock gating, collapse, roll-up, panel reorder, re-dock (`it('drags a tab at the opposite workspace edge to move the whole dock')`), resize                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `e2e/layers-panel.spec.ts` (711, **10 tests**)             | Hide removes composited pixels (`test('hiding a layer removes its pixels from the composited canvas')`) · rename on Enter (`test('renaming a layer commits the new name when Enter is pressed')`) · Escape reverts (`test('abandoning a rename with Escape keeps the original name')`) · **Merge all collapses (`test('Merge all collapses the document to one layer and keeps the artwork')`)** · **layer rows are distinguishable from History rows (`test('finds layer rows without matching History rows')`)** · eye round-trip (`test('the eye takes a layer off the canvas and puts it back')`) · hide is one undo entry (`test('hiding a layer is a history entry of its own')`) · row click retargets the next gesture (`test('clicking a row makes that layer the one the next tool gesture edits')`) · **rename is one history entry (`test('renaming a layer is one history entry')`)** · **removing the last layer shows the empty state (`test('removing the last layer shows the panel empty state')`)** |
-| `e2e/layers.spec.ts` (303)                                 | A **four**-layer stack (seeded `Blank 1` + three strokes): `test('layers change order and are deleted sequentially')` pins drag reorder changing composited pixels and all four being deleted sequentially, and `test('a layer keeps its hidden state across a reorder')` pins hidden state surviving a reorder                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `Mobile/__tests__/MobileLayersDrawer.test.tsx` (36 cases)  | Move up/down exactness, 44px targets, ARIA structure, single-entry opacity gestures and locked-layer behavior, history-rewind (`it('rewinds the timeline from a history row')`) and history-title (`it('titles history steps with the real getHistoryItemTitle, not an identity function')`) groups, and a second `describe('MobileLayersDrawer document gesture gate')` gating the document gesture                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Suite                                                | What it pins                                                                                                                                                               |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SidebarRight/__tests__/LayersTab.test.tsx`          | Empty state, top-first order, active highlight, eye states, **one live preview thumbnail per row**, trash, rename (all branches), blank-rename write-back, and drag guards |
+| `SidebarRight/__tests__/LayersTab.dispatch.test.tsx` | Exact dispatched action objects for hide, show, select, rename, remove, blend mode, full lock, and both reorder intents                                                    |
+| `SidebarRight/__tests__/LayersTab.store.test.tsx`    | Live-subscription rendering, refused drops, and abandoned drags leave stacking order untouched                                                                             |
+| `SidebarRight/__tests__/SidebarRight.test.tsx`       | Dock gating, collapse, roll-up, pinned-panel behavior, and resize                                                                                                          |
+| `e2e/layers-panel.spec.ts`                           | Hide/show compositing, rename, Merge all, layer-vs-History row identity, row selection, history entries, and empty state                                                   |
+| `e2e/layers.spec.ts`                                 | Four-layer drag reorder, deletion, and hidden-state preservation                                                                                                           |
+| `Mobile/__tests__/MobileLayersDrawer.test.tsx`       | Move up/down exactness, 44px targets, ARIA structure, opacity gestures, blend mode, full lock, locked-layer behavior, and history groups                                   |
 
 > The `openWorkspace` helper these specs use is **file-local**, not shared.
 > `e2e/erase-fill-eyedropper.spec.ts` carries its own `openWorkspace`, and it is the only e2e
@@ -794,18 +880,18 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 
 ## 17. Priorities
 
-Ordered by what each one unblocks, **not** by Photoshop's own order — which would put a thumbnail
-before the model that makes a thumbnail meaningful. Every row's prerequisite is either earlier in
+Ordered by what each one unblocks, **not** by Photoshop's own order. Completed rows remain in place
+so the dependency history is readable; their current status is authoritative. Every row's prerequisite is either earlier in
 this table or explicitly marked as not blocking.
 
 | #   | Requirement                                 | Unblocks                                                                                                                                                                                               |
 | --- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1   | **Honor `isBedrock` in the panel** (`HAVE`) | The desktop panel now refuses to drag/reorder the backing layer, matching the canvas. No new model needed ([§12](#12-the-background-layer))                                                            |
 | 2   | **Layer kind discriminator**                | The `T` badge, the folder, the filter icons, the mask column, and every type-specific rule. One field, and half the visual requirements become reachable ([§9](#9-the-layer-model-the-panel-requires)) |
-| 3   | **Layer thumbnail**                         | The most-read element in the panel, and the only one that makes a 60-stroke stack navigable ([§3](#3-layer-row-anatomy))                                                                               |
+| 3   | **Layer thumbnail** (`HAVE`)                | Live 48x32 previews are implemented; future work is thumbnail-size preference and type-specific badges ([§3](#3-layer-row-anatomy))                                                                    |
 | 4   | **Bottom action bar**                       | New layer and delete-as-a-drag-target. **New layer and delete only** — the new-group button needs #8 ([§2.6](#26-the-bottom-action-bar))                                                               |
-| 5   | **Opacity + blend mode**                    | The desktop opacity slider is implemented; blend mode remains a separate gap. Preset values remain unverified and are intentionally absent. ([§2.4](#24-blend-mode-and-opacity))                       |
-| 6   | **Lock controls**                           | Four flags, not one boolean. Unblocks the PSD lock round-trip ([§2.5](#25-the-lock-row-and-fill))                                                                                                      |
+| 5   | **Opacity + blend mode** (`PARTIAL`)        | Opacity and 16 supported blend modes are editable on desktop and tablet; Photoshop's exact opacity presets and unsupported blend modes remain absent ([§2.4](#24-blend-mode-and-opacity))              |
+| 6   | **Lock controls** (`PARTIAL`)               | Lock All is replayable; three partial flags and full PSD lock round-trip remain unimplemented ([§2.5](#25-the-lock-row-and-fill))                                                                      |
 | 7   | **Selection set**                           | The Move tool's Shift-click row (`docs/TOOLS.md` §Move Tool) and Shift-click-to-extend selection ([§5](#5-selection))                                                                                  |
 | 8   | **Group nesting**                           | The new-group button, the folder row, the filter icons, the mask column, and the `Pass Through` default. The largest model change, so it gates rather than follows ([§4](#4-groups))                   |
 | 9   | **Panel menu + Panel Options**              | Routes Merge out of two tool bars and into the panel it belongs in ([§2.7](#27-the-panel-menu))                                                                                                        |
@@ -836,9 +922,10 @@ A requirement is not done until a test fails without the change. For this panel 
   and 3 unit files in [§7](#7-rename) — silently.
 - Any **history count** claim needs an e2e that counts History rows, not a unit test — the unit test
   sees one dispatch, the user sees one row per step.
-- **Not pinned by a test, and not pinnable here:** the drawing of an eye, a padlock and a thumbnail
-  is DOM and CSS, and a jsdom assertion on class names passes for the wrong reason. Pin the state,
-  not the glyph.
+- **Not pinned by a test:** thumbnail pixel fidelity, checkerboard geometry, and the drawing of an eye
+  or padlock. The unit test pins thumbnail presence and row coverage; a jsdom assertion on canvas pixels
+  would not prove browser rendering. Pin state and renderer inputs, then use a headless visual test for
+  the pixels when that surface is stabilized.
 
 ---
 
@@ -846,17 +933,17 @@ A requirement is not done until a test fails without the change. For this panel 
 
 `In a browser?` is a **platform** verdict, not an app-status one — the app status lives in §3 and §9, and several rows below are `yes` there while the feature is `GAP`.
 
-| Photoshop feature           | Browser capability         | In a browser? | App status | Note                                                                                                                                                                                                                                                      |
-| --------------------------- | -------------------------- | ------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Layer panel rows and scroll | yes                        | yes           | `HAVE`     |                                                                                                                                                                                                                                                           |
-| Live thumbnails             | yes                        | yes           | `GAP`      | `Layer.bitmap` is already a `BitmapSource`; the cost is a repaint per commit                                                                                                                                                                              |
-| Drag-to-reorder             | yes                        | yes           | `HAVE`     | Bedrock rows cannot be dragged or reordered; other rows remain reorderable                                                                                                                                                                                |
-| Mask thumbnails             | yes                        | yes           | `GAP`      | Needs a compositing change, not a platform one                                                                                                                                                                                                            |
-| Panel drag / re-dock        | Pointer Events             | yes           | `HAVE`     | `SidebarRight.tsx` — `SidebarRight`, whose `onPanelDragStart()` / `onPanelDrag()` / `onPanelDragEnd()` trio `renderPanel()` passes to `PanelGroup`                                                                                                        |
-| Color labels                | yes                        | yes           | `GAP`      |                                                                                                                                                                                                                                                           |
-| Blend modes                 | `globalCompositeOperation` | **partial**   | `GAP`      | Canvas supports fewer modes than Photoshop's 27; the `04-blend-modes-and-brush-spec.md` row in `docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching" is the catalogue row pointing at the research file that enumerates them |
-| **Video layers**            | **no**                     | **no**        | `OUT`      | A browser canvas has no video layer and no timeline. Record it in `docs/TOOLS-TOO-HARD.md`, do not stub it                                                                                                                                                |
-| **Artboard filtering**      | **no**                     | **no**        | `OUT`      | The app has no artboards, so one of the nine filter kinds has nothing to filter                                                                                                                                                                           |
+| Photoshop feature                | Browser capability         | In a browser? | App status | Note                                                                                                                               |
+| -------------------------------- | -------------------------- | ------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Layer panel rows and scroll      | yes                        | yes           | `HAVE`     |                                                                                                                                    |
+| Live thumbnails                  | yes                        | yes           | `HAVE`     | `LayerThumbnail` draws the live preview layer through `drawLayerSource`; Panel Options size/None preferences remain a separate gap |
+| Drag-to-reorder                  | yes                        | yes           | `HAVE`     | Bedrock rows cannot be dragged or reordered; other rows remain reorderable                                                         |
+| Mask thumbnails                  | yes                        | yes           | `GAP`      | Needs a compositing change, not a platform one                                                                                     |
+| Panel tab drag (in-dock reorder) | Pointer Events             | yes           | `HAVE`     | `SidebarRight.tsx` — tabs reorder within the pinned dock; relocation/re-docking is retired                                         |
+| Color labels                     | yes                        | yes           | `GAP`      |                                                                                                                                    |
+| Blend modes                      | `globalCompositeOperation` | **partial**   | `PARTIAL`  | The panel exposes the 16 Photoshop modes supported by Canvas; unsupported Photoshop modes remain unavailable                       |
+| **Video layers**                 | **no**                     | **no**        | `OUT`      | A browser canvas has no video layer and no timeline. Record it in `docs/TOOLS-TOO-HARD.md`, do not stub it                         |
+| **Artboard filtering**           | **no**                     | **no**        | `OUT`      | The app has no artboards, so one of the nine filter kinds has nothing to filter                                                    |
 
 ---
 
@@ -910,8 +997,15 @@ Every claim marked "Adobe, primary" traces to one of these.
   — show/hide, drag to reorder, rename, create.
 - [Select layers](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/select-layers.html)
   — single / range / non-contiguous selection, and the active-versus-selected distinction.
+- [Organize layers with groups](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/get-started-layers/organize-layers-with-layer-groups.html)
+  — closed-group insertion and group disclosure behavior.
+- [Layers overview](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/get-started-layers/layers-overview.html)
+  and [Video layers](https://helpx.adobe.com/photoshop/using/video-animation-overview.html) — the
+  current layer taxonomy and video-layer indicator.
 - [Filter the Layers panel by Smart Objects](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/smart-objects/filter-the-layers-panel-by-smart-objects.html)
   — "Use Turn layer filtering on or off"; the five Smart-Object filter icons.
+- [Select and Filter Layer Options in Photoshop CC](https://jkost.com/blog/2018/03/select-and-filter-layer-options-in-photoshop-cc.html)
+  — Adobe principal designer Julieanne Kost's enumeration of the nine Layers-panel filter kinds.
 - [How to unlock layers in Photoshop](https://www.adobe.com/products/photoshop/unlock-layers.html) —
   the three partial locks, the keyboard shortcut, the Background layer's partial lock.
 - [Create layers and groups](https://helpx.adobe.com/photoshop/using/create-layers-groups.html) — the
@@ -926,6 +1020,9 @@ Every claim marked "Adobe, primary" traces to one of these.
   Background.
 - [Manage preset styles](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/apply-layer-effects/manage-preset-styles.html)
   — "Select Add a layer style icon"; the drop-down on that control.
+- [Duplicate layers](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/get-started-layers/duplicate-layers.html)
+  and [Quick Export](https://helpx.adobe.com/photoshop/desktop/save-and-export/export-files-to-different-formats/export-your-work-using-the-quick-export-as-option.html)
+  — row context-menu actions that are distinct from the panel's core row controls.
 - [Convert background and regular layers](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/get-started-layers/convert-background-and-regular-layers.html)
   — `Layer From Background`, `Background From Layer`.
 - [Keyboard shortcuts for the Layers panel](https://helpx.adobe.com/photoshop-elements/desktop/keyboard-shortcuts/keys-layers-panel.html)
@@ -936,6 +1033,16 @@ Every claim marked "Adobe, primary" traces to one of these.
 - [UXP `Layer` class](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/layer) — the
   five lock booleans, and the 24.2 change where a Background layer rejects a blend mode instead of
   silently converting.
+- [Painting tools](https://helpx.adobe.com/photoshop/using/painting-tools.html) — the current Brush
+  behavior that creates a new transparent layer when brushing over a type, shape, Smart Object, or
+  adjustment layer; do not generalize that exception to every pixel writer.
+- [Rasterize type and shape layers](https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer)
+  and [Rasterize Smart Objects](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/smart-objects/rasterize-smart-objects.html)
+  — destructive conversion boundaries for vector/generated content.
+- [Adjustment and fill layers overview](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/color-adjustment-fill-layers/adjustment-and-fill-layers-overview.html),
+  [Add and edit layer masks](https://helpx.adobe.com/photoshop/desktop/create-masks/layer-masks/add-layer-masks.html),
+  and [Link and unlink layers](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/link-and-unlink-layers.html)
+  — non-destructive masks, generated layer content, and linked-layer relationships.
 
 **Corroborating — third party.** Used only where no Adobe page enumerates the thing: the quick-filter
 icon row's order and count, `Panel Options` contents, the tab group's rendering, the insertion bar, and

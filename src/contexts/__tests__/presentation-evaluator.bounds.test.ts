@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { MAX_AFFINE_COORDINATE, MAX_AFFINE_PIXELS, type AffineTransform } from '../affine-transform.ts';
 import {
+  MAX_AFFINE_COORDINATE,
+  MAX_AFFINE_PIXELS,
+  transformToolArgsToAffine,
+  type AffineTransform,
+} from '../affine-transform.ts';
+import {
+  drawEvaluatedPresentation,
   getPresentationFilter,
   evaluatePresentation,
   evaluatePresentationForDraw,
@@ -10,6 +16,7 @@ import {
   retainedPresentationOperations,
   stageProcessorInput,
 } from '../presentation-evaluator.ts';
+import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { FilterArgumentUnrenderableError } from '../../util/canvas-filter.ts';
 
 const position = { x: 0, y: 0, width: 9000, height: 9000 };
@@ -220,6 +227,44 @@ describe('the processor input boundary', () => {
     expect(staged.operations).toHaveLength(1);
   });
 
+  it.each([
+    [2, 1, 1, 2],
+    [1, 2, 2, 1],
+    [8, 1, 1, 8],
+    [1, 8, 8, 1],
+  ])(
+    'does not allocate a phantom edge pixel for a %sx%s Transform-tool quarter turn',
+    (width, height, stagedWidth, stagedHeight) => {
+      const size = { width, height };
+      const transform = transformToolArgsToAffine(
+        {
+          toolName: 'transform',
+          rotate: 90,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 0,
+          resizeX: 100,
+          resizeY: 100,
+        },
+        size
+      );
+      if (!transform) throw new Error('Affine Transform-tool rotation must produce a matrix');
+      const rasterLayer = layerWith({ x: 0, y: 0, width, height }, [affine(transform)]);
+      const staged = stageProcessorInput(rasterLayer, { width, height } as ImageBitmap);
+
+      expect(staged.bounds).toEqual({
+        x: (width - height) / 2,
+        y: (height - width) / 2,
+        width: height,
+        height: width,
+      });
+      expect((staged.bitmap as OffscreenCanvas).width).toBe(stagedWidth);
+      expect((staged.bitmap as OffscreenCanvas).height).toBe(stagedHeight);
+    }
+  );
+
   it('still refuses to stage a surface past the affine raster caps', () => {
     // The origin helper deliberately does NOT cap, because it allocates nothing; this one does
     // allocate a surface from the extent, and the caps are what bound that allocation.
@@ -229,5 +274,58 @@ describe('the processor input boundary', () => {
     expect(() => stageProcessorInput(rasterLayer, { width: big.width, height: big.height } as ImageBitmap)).toThrow(
       /raster bounds/
     );
+  });
+});
+
+describe('drawEvaluatedPresentation compositing', () => {
+  it('disables image smoothing before the identity-affine blit, so a fractional layer box is not bilinearly resampled', () => {
+    // §163: nothing in the composite path sets imageSmoothingEnabled, so it defaults to
+    // true and a drawImage at a different size bilinearly stretches every stroke. The
+    // intended behaviour is a pixel-perfect blit — no smoothing.
+    const ctx = makeMockCtx();
+    const smoothingAtBlit: boolean[] = [];
+    vi.spyOn(ctx, 'drawImage').mockImplementation(() => {
+      smoothingAtBlit.push(ctx.imageSmoothingEnabled);
+      return undefined as never;
+    });
+
+    const evaluation = evaluatePresentationForDraw(
+      {
+        position: { x: 0, y: 0, width: 40, height: 20 },
+        sourceSize: { width: 40, height: 20 },
+        operations: [],
+        mode: 'layer-bounds',
+      },
+      documentTarget
+    );
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+    drawEvaluatedPresentation(ctx, bitmap, evaluation, documentTarget);
+
+    expect(smoothingAtBlit).toEqual([false]);
+  });
+
+  it('disables image smoothing before the affine-transformed blit', () => {
+    const ctx = makeMockCtx();
+    const smoothingAtBlit: boolean[] = [];
+    vi.spyOn(ctx, 'drawImage').mockImplementation(() => {
+      smoothingAtBlit.push(ctx.imageSmoothingEnabled);
+      return undefined as never;
+    });
+
+    const evaluation = evaluatePresentationForDraw(
+      {
+        position: { x: 0, y: 0, width: 40, height: 20 },
+        sourceSize: { width: 40, height: 20 },
+        operations: [{ kind: 'affine-transform', transform: scale }],
+        mode: 'layer-bounds',
+      },
+      documentTarget
+    );
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+    drawEvaluatedPresentation(ctx, bitmap, evaluation, documentTarget);
+
+    expect(smoothingAtBlit).toEqual([false]);
   });
 });

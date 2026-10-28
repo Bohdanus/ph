@@ -321,19 +321,19 @@ describe('StoreContext layer action table', () => {
     expect(store().durableStatus).toBe('stale');
   });
 
-  it('keeps the sidecar unavailable instead of downgrading to stale when an edit follows a failure', () => {
+  it('keeps the sidecar partial instead of downgrading to stale after a conversion diagnostic', () => {
     const { store, dispatch } = renderWithProbe();
 
     act(() => {
       dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('pen-edit', 'pen') } });
     });
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
 
     act(() => {
       dispatch()({ type: 'BATCH_UPDATES', payload: { fileName: 'still-broken.psd' } });
     });
 
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
   });
 });
 
@@ -804,6 +804,217 @@ describe('StoreContext document frame derivation', () => {
 
     expect(store().documentFrame).toEqual(keptFrame);
     expect(store().totalSize).toEqual({ width: 400, height: 300 });
+  });
+
+  describe('REPLACE_DOCUMENT fast-path seven-field identity', () => {
+    const freshHistory = [baselineItem('base-1'), baselineItem('base-2')];
+
+    it('sets documentId to the payload documentId', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-identity', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().documentId).toBe('doc-identity');
+    });
+
+    it('increments documentRevision by one from current state', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-rev-1', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      const firstRev = store().documentRevision;
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-rev-2', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().documentRevision).toBe(firstRev + 1);
+    });
+
+    it('resets branchRevision to zero', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-branch', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      act(() => {
+        dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('edit-1', 'blur') } });
+      });
+      expect(store().branchRevision).toBeGreaterThan(0);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-branch-2', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().branchRevision).toBe(0);
+    });
+
+    it('replaces history with the payload history array', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-hist-1', history: [baselineItem('h1')], updates: { totalSize: initialSize } },
+        });
+      });
+      act(() => {
+        dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('edit-1', 'blur') } });
+      });
+      expect(store().history).toHaveLength(2);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-hist-2', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().history).toEqual(freshHistory);
+    });
+
+    it('sets historyIndex to the payload historyIndex or last index', () => {
+      const { store, dispatch } = renderWithProbe();
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: {
+            documentId: 'doc-idx-explicit',
+            history: freshHistory,
+            historyIndex: 0,
+            updates: { totalSize: initialSize },
+          },
+        });
+      });
+      expect(store().historyIndex).toBe(0);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-idx-implicit', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().historyIndex).toBe(freshHistory.length - 1);
+    });
+
+    it('sets documentFrame from updates.documentFrame or replacementFrame fallback', () => {
+      const { store, dispatch } = renderWithProbe();
+      const customFrame = { x: 10, y: 20, width: 100, height: 80 };
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: {
+            documentId: 'doc-frame-explicit',
+            history: freshHistory,
+            updates: { documentFrame: customFrame, totalSize: { width: 100, height: 80 } },
+          },
+        });
+      });
+      expect(store().documentFrame).toEqual(customFrame);
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-frame-fallback', history: freshHistory, updates: { totalSize: initialSize } },
+        });
+      });
+      expect(store().documentFrame).toEqual(defaultFrame);
+    });
+
+    it('sets totalSize from documentFrame size', () => {
+      const { store, dispatch } = renderWithProbe();
+      const customFrame = { x: 0, y: 0, width: 123, height: 456 };
+      act(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: { documentId: 'doc-size', history: freshHistory, updates: { documentFrame: customFrame } },
+        });
+      });
+      expect(store().totalSize).toEqual({ width: 123, height: 456 });
+    });
+  });
+
+  describe('REPLACE_DOCUMENT disposal guard', () => {
+    it('disposes the previous document id when documentId changes', () => {
+      const dispose = vi.spyOn(getAssetRegistry(), 'disposeDocument');
+      try {
+        const { dispatch } = renderWithProbe();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-dispose-a', history: [baselineItem()], updates: { totalSize: initialSize } },
+          });
+        });
+        dispose.mockClear();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: {
+              documentId: 'doc-dispose-b',
+              history: [baselineItem('b2')],
+              updates: { totalSize: initialSize },
+            },
+          });
+        });
+        expect(dispose).toHaveBeenCalledWith('doc-dispose-a');
+        expect(dispose).not.toHaveBeenCalledWith('doc-dispose-b');
+      } finally {
+        dispose.mockRestore();
+      }
+    });
+
+    it('does not dispose when documentId stays the same', () => {
+      const dispose = vi.spyOn(getAssetRegistry(), 'disposeDocument');
+      try {
+        const { dispatch } = renderWithProbe();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-same', history: [baselineItem()], updates: { totalSize: initialSize } },
+          });
+        });
+        dispose.mockClear();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-same', history: [baselineItem('b2')], updates: { totalSize: initialSize } },
+          });
+        });
+        expect(dispose).not.toHaveBeenCalled();
+      } finally {
+        dispose.mockRestore();
+      }
+    });
+
+    it('uses currentState.documentId for disposal decision not the outgoing documentId', () => {
+      const dispose = vi.spyOn(getAssetRegistry(), 'disposeDocument');
+      try {
+        const { store, dispatch } = renderWithProbe();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-first', history: [baselineItem()], updates: { totalSize: initialSize } },
+          });
+        });
+        const firstId = store().documentId;
+        dispose.mockClear();
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: { documentId: 'doc-second', history: [baselineItem('b2')], updates: { totalSize: initialSize } },
+          });
+        });
+        expect(dispose).toHaveBeenCalledWith(firstId);
+        expect(dispose).not.toHaveBeenCalledWith('doc-second');
+      } finally {
+        dispose.mockRestore();
+      }
+    });
   });
 });
 

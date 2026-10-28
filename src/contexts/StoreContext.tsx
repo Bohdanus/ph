@@ -15,6 +15,7 @@ import {
   NEW_LAYER_ACTION,
   REORDER_ACTION,
   REPLACE_LAYER_SOURCE_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
 } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
@@ -65,12 +66,14 @@ import {
 } from './history-append.ts';
 import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
 import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
+import { projectDurableRender, type DurableRenderProjection } from './durable-render-projection.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
   DocumentPresentationScope,
   isSamePresentationCanvas,
   layersDifferOnlyByPresentation,
+  layersDifferOnlyByPresentationAndIdentityAffine,
   materializePresentationBitmap,
   type LayerPresentationBatch,
   type LayerPresentationPromotion,
@@ -103,11 +106,12 @@ import {
  *    can therefore only enter the document through a `SELECTION_ACTION` history
  *    entry, and a layer operation only through a history entry. This holds
  *    whichever rule seeds the baseline, because both read the timeline.
- * 2. `stale` is sticky. Every action that writes one of the six inputs either
- *    marks `stale` or reconverts and writes the resulting status, so no
- *    non-reconverting transition can ever clear a `stale` that a durable input
- *    produced. A transition that stops marking `stale` therefore cannot unblock
- *    a publication that a genuine divergence had blocked.
+ * 2. Non-current statuses are sticky. Every action that writes one of the six
+ *    inputs either marks a current shadow `stale` or reconverts and writes the
+ *    resulting status, so no non-reconverting transition can clear a `stale`,
+ *    `partial`, or `unavailable` state. A transition that stops marking `stale`
+ *    therefore cannot unblock a publication that a genuine divergence or
+ *    conversion diagnostic had blocked.
  *
  * The append gate (`decideDurableAppend`, reached at the `base:` argument of the
  * `COMMIT_DOCUMENT_EDIT` dispatcher branch) additionally re-checks
@@ -133,12 +137,27 @@ export type DurablePresentationRecord = Readonly<{
   status: DurablePresentationStatus;
   cursor: number | null;
   reason: DurablePresentationReason | null;
+  detail?: string;
 }>;
 
 export type DurableNavigationPresentationOutcome =
   | Readonly<{ status: 'durable'; layers: LayersRecord; frame: DocumentFrame; cursor: number }>
   | Readonly<{ status: 'legacy-fallback'; reason: DurablePresentationReason; cursor: number }>
   | Readonly<{ status: 'stale'; reason: 'stale'; cursor: number }>;
+
+/**
+ * Canvas navigation has exactly one complete presentation authority. `pending`
+ * deliberately writes nothing, preserving the prior canvas until publication
+ * accepts either the durable projection or the replayed legacy layers.
+ */
+export type RenderSelector = Readonly<{
+  source: 'legacy' | 'pending' | 'durable';
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  historyCursor: number;
+  frame: DocumentFrame;
+}>;
 
 const EMPTY_DURABLE_PRESENTATION: DurablePresentationRecord = Object.freeze({
   status: 'unpublished',
@@ -152,19 +171,33 @@ type DurablePresentationPublication = Readonly<{
   branchRevision: number;
   historyIndex: number;
   durableRevision: number;
+  /** Background append publication may accept the already-visible legacy selector. */
+  allowLegacySelector: boolean;
   record: DurablePresentationRecord;
 }>;
+
+export function durablePresentationMismatch(
+  replayLayer: DurableReplayLayer,
+  existing: Layer,
+  bounds: Layer['pos']
+): string | null {
+  const sourceSupported =
+    replayLayer.snapshot.source.kind === 'raster' ||
+    replayLayer.snapshot.source.kind === 'blank' ||
+    replayLayer.snapshot.source.kind === 'vector';
+  if (!sourceSupported) return `source kind ${replayLayer.snapshot.source.kind} is unsupported`;
+  if (replayLayer.operations.length > 0) {
+    return `durable layer operations are not pixel-parity approved (${replayLayer.operations.map(({ kind }) => kind).join(', ')})`;
+  }
+  return isEqual(bounds, existing.pos) ? null : 'materialized bounds differ from the untransformed layer position';
+}
 
 export function durablePresentationIsRendererIdentical(
   replayLayer: DurableReplayLayer,
   existing: Layer,
   bounds: Layer['pos']
 ): boolean {
-  return (
-    replayLayer.operations.length === 0 &&
-    isEqual(bounds, existing.pos) &&
-    (replayLayer.snapshot.source.kind === 'raster' || replayLayer.snapshot.source.kind === 'blank')
-  );
+  return durablePresentationMismatch(replayLayer, existing, bounds) === null;
 }
 
 export type StoreData = {
@@ -227,6 +260,13 @@ export type StoreData = {
   durableDiagnostics: readonly MigrationDiagnostic[];
   /** Dev-only evidence of the last durable navigation publication decision. */
   durablePresentation: DurablePresentationRecord;
+  /**
+   * A leased, runtime-shaped durable render snapshot. Canvas navigation may
+   * select it, but export and logical replay remain legacy-authoritative.
+   */
+  durableRenderProjection: DurableRenderProjection | null;
+  /** The complete authority selected for desktop/tablet canvas navigation. */
+  renderSelector: RenderSelector;
   viewStateRef: { current: ViewState };
   viewState: ViewState;
   setViewState: (partial: Partial<ViewState>) => void;
@@ -251,6 +291,7 @@ type StoreUpdates = Partial<
     | 'durableDocument'
     | 'durableStatus'
     | 'durableDiagnostics'
+    | 'durableRenderProjection'
     | 'promoteLayerPresentation'
     | 'publishRuntimePresentation'
     | 'adoptLayerBitmaps'
@@ -308,6 +349,8 @@ type ApplyHistoryReplayIntentPayload = {
   updates: StoreUpdates;
   timeline: HistoryTimeline;
   durableDiagnostics?: readonly MigrationDiagnostic[];
+  /** Compensation-only: restore the dirty state captured before a refused replay. */
+  preserveHasUnsavedChanges?: boolean;
   durableDocument?: never;
   durableStatus?: never;
 };
@@ -316,6 +359,8 @@ type ApplyHistoryReplayCommittedPayload = Omit<ApplyHistoryReplayIntentPayload, 
   durableDocument: DurableDocument | null;
   durableStatus: DurableDocumentStatus;
   durableDiagnostics: readonly MigrationDiagnostic[];
+  /** Dispatcher-owned: only navigation starts in a hold-before-paint state. */
+  renderSelector?: RenderSelector;
 };
 
 type ReplaceDocumentIntentPayload = {
@@ -387,7 +432,7 @@ type InternalAction =
   | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
   | {
       type: 'SET_DURABLE_PRESENTATION';
-      payload: DurablePresentationPublication;
+      payload: DurablePresentationPublication & { projection: DurableRenderProjection | null };
     };
 
 type StoreAction = Action | InternalAction;
@@ -472,12 +517,24 @@ const initialState: StoreData = {
   durableStatus: 'unavailable',
   durableDiagnostics: [],
   durablePresentation: EMPTY_DURABLE_PRESENTATION,
+  durableRenderProjection: null,
+  renderSelector: {
+    source: 'legacy',
+    documentId: 'uninitialized',
+    documentRevision: 0,
+    branchRevision: 0,
+    historyCursor: 0,
+    frame: { x: 0, y: 0, width: 0, height: 0 },
+  },
 
   color: '#000000',
   backgroundColor: '#ffffff',
 };
 
 function normalizeDurableProjection(projection: DurableProjection): DurableProjection {
+  // Partial and unavailable projections are diagnostic states only. Keeping
+  // their document out of StoreData prevents navigation, export, reorder, and
+  // tool hydration from treating an inexact shadow as authoritative.
   return projection.status === 'current' ? projection : { ...projection, document: null };
 }
 
@@ -492,9 +549,91 @@ function appendBoundaryDiagnostics(
   // Boundary errors describe an append that the durable side cannot trust. A
   // warning is deliberately retained without changing a current document into
   // an unavailable one; severity is part of the diagnostic contract.
-  return diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-    ? { ...merged, document: null, status: 'unavailable' }
-    : normalizeDurableProjection(merged);
+  const hasError = diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+  if (!hasError) return normalizeDurableProjection(merged);
+
+  // Entry-level conversion failures describe an inexact history projection and
+  // use the diagnostic-only partial state. Append-contract mismatches and
+  // thrown conversion failures are stronger boundary/infrastructure failures
+  // and remain unavailable. Both paths withhold the document.
+  const hasInfrastructureFailure = diagnostics.some(
+    (diagnostic) => diagnostic.code === 'conversion-failed' || diagnostic.code === 'durable-append-mismatch'
+  );
+  return {
+    ...merged,
+    document: null,
+    status: hasInfrastructureFailure ? 'unavailable' : 'partial',
+  };
+}
+
+function projectionMatchesPresentation(
+  projection: DurableRenderProjection | null,
+  publication: DurablePresentationPublication
+): boolean {
+  if (publication.record.status !== 'durable') return projection === null;
+  return (
+    projection !== null &&
+    projection.status === 'durable' &&
+    projection.documentId === publication.documentId &&
+    projection.documentRevision === publication.documentRevision &&
+    projection.branchRevision === publication.branchRevision &&
+    projection.historyCursor === publication.record.cursor &&
+    projection.durableRevision === publication.durableRevision
+  );
+}
+
+function legacyRenderSelector(
+  documentId: string,
+  documentRevision: number,
+  branchRevision: number,
+  historyCursor: number,
+  frame: DocumentFrame
+): RenderSelector {
+  return {
+    source: 'legacy',
+    documentId,
+    documentRevision,
+    branchRevision,
+    historyCursor,
+    frame: cloneDocumentFrame(frame),
+  };
+}
+
+function pendingRenderSelector(state: StoreData): RenderSelector {
+  return {
+    ...legacyRenderSelector(
+      state.documentId,
+      state.documentRevision,
+      state.branchRevision,
+      state.historyIndex,
+      state.documentFrame
+    ),
+    source: 'pending',
+  };
+}
+
+function selectorMatchesPublication(
+  state: StoreData,
+  publication: DurablePresentationPublication,
+  projection: DurableRenderProjection | null
+): boolean {
+  const selector = state.renderSelector;
+  // Navigation must arm a pending selector first; only background append
+  // publication may accept the legacy selector that is already painting.
+  if (
+    (selector.source !== 'pending' && !(publication.allowLegacySelector && selector.source === 'legacy')) ||
+    selector.documentId !== publication.documentId ||
+    selector.documentRevision !== publication.documentRevision ||
+    selector.branchRevision !== publication.branchRevision ||
+    selector.historyCursor !== publication.historyIndex ||
+    !documentFrameEquals(selector.frame, state.documentFrame)
+  ) {
+    return false;
+  }
+  return (
+    publication.record.status !== 'durable' ||
+    (projection !== null && documentFrameEquals(projection.frame, selector.frame))
+  );
 }
 
 /**
@@ -517,10 +656,13 @@ function projectPublishedTimeline(
     durableDocument: DurableDocument | null;
     durableStatus: DurableDocumentStatus;
     durableDiagnostics: readonly MigrationDiagnostic[];
+    preserveHasUnsavedChanges?: boolean;
+    renderSelector?: RenderSelector;
   }
 ): StoreData {
   const updates = payload.updates ?? {};
   const nextFrame = updates.documentFrame;
+  const documentFrame = nextFrame ? cloneDocumentFrame(nextFrame) : state.documentFrame;
   const durable = normalizeDurableProjection({
     document: payload.durableDocument,
     status: payload.durableStatus,
@@ -529,7 +671,7 @@ function projectPublishedTimeline(
   return {
     ...state,
     ...updates,
-    ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
+    ...(nextFrame ? { documentFrame, totalSize: documentFrameSize(documentFrame) } : {}),
     history: [...payload.timeline.entries],
     historyIndex: payload.timeline.cursor,
     branchRevision: payload.timeline.branchRevision,
@@ -537,7 +679,19 @@ function projectPublishedTimeline(
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
     durablePresentation: EMPTY_DURABLE_PRESENTATION,
-    hasUnsavedChanges: true,
+    durableRenderProjection: null,
+    renderSelector:
+      payload.renderSelector ??
+      legacyRenderSelector(
+        state.documentId,
+        state.documentRevision,
+        payload.timeline.branchRevision,
+        payload.timeline.cursor,
+        documentFrame
+      ),
+    hasUnsavedChanges: payload.preserveHasUnsavedChanges
+      ? (updates.hasUnsavedChanges ?? state.hasUnsavedChanges)
+      : true,
   };
 }
 
@@ -575,6 +729,14 @@ function projectReplacedDocument(
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
     durablePresentation: EMPTY_DURABLE_PRESENTATION,
+    durableRenderProjection: null,
+    renderSelector: legacyRenderSelector(
+      payload.documentId,
+      state.documentRevision + 1,
+      0,
+      payload.historyIndex ?? payload.history.length - 1,
+      nextFrame
+    ),
     history: payload.history,
     historyIndex: payload.historyIndex ?? payload.history.length - 1,
   };
@@ -719,8 +881,16 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         totalSize: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'SET_TOOL_NAME':
       return { ...state, toolName: action.payload };
@@ -734,8 +904,16 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         layers: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'SET_ACTIVE_LAYER':
       if (state.activeLayerId === action.payload) {
@@ -751,15 +929,23 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         ...state,
         layers: action.payload.layers,
         activeLayerId: action.payload.activeLayerId,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
         hasUnsavedChanges: true,
       };
     case 'PUBLISH_RUNTIME_PRESENTATION':
       // Presentation-only publication of already-known layer records. The
       // dispatcher proves the payload differs from the stored layers only by a
       // promoted cache, so this transition cannot move durable logical state,
-      // records no history, and does not invalidate the durable shadow.
+      // records no history, and does not invalidate the durable projection.
       return { ...state, layers: action.payload.layers };
     case 'SET_DURABLE_PRESENTATION': {
       const publication = action.payload;
@@ -769,13 +955,25 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         state.branchRevision !== publication.branchRevision ||
         state.historyIndex !== publication.historyIndex ||
         state.durableStatus !== 'current' ||
-        state.durableDocument?.durableRevision !== publication.durableRevision
+        state.durableDocument?.durableRevision !== publication.durableRevision ||
+        !projectionMatchesPresentation(action.payload.projection, publication) ||
+        !selectorMatchesPublication(state, publication, action.payload.projection)
       ) {
         return state;
       }
+      const renderSelector: RenderSelector = {
+        ...state.renderSelector,
+        source: publication.record.status === 'durable' ? 'durable' : 'legacy',
+        frame:
+          publication.record.status === 'durable'
+            ? cloneDocumentFrame(action.payload.projection!.frame)
+            : cloneDocumentFrame(state.documentFrame),
+      };
       return {
         ...state,
         durablePresentation: Object.freeze({ ...publication.record }),
+        durableRenderProjection: action.payload.projection,
+        renderSelector,
       };
     }
     case 'PROMOTE_LAYER_PRESENTATIONS': {
@@ -807,8 +1005,16 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         ...action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'REORDER_LAYERS': {
       if (!action.historyItem || !action.durableProjection) return state;
@@ -874,6 +1080,14 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         durableStatus: action.payload.status,
         durableDiagnostics: action.payload.diagnostics,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
+        renderSelector: legacyRenderSelector(
+          state.documentId,
+          state.documentRevision,
+          state.branchRevision,
+          state.historyIndex,
+          state.documentFrame
+        ),
       };
     case 'SET_SELECTIONS':
       // Selection state only; no durable input moves.
@@ -967,6 +1181,10 @@ function buildDurableDocument(
       initialSize: state.totalSize,
       initialFrame: state.documentFrame,
     });
+    // A partial conversion may expose an exact prefix for diagnostics, but the
+    // store has no partial authority. Release that independent asset owner
+    // before returning the diagnostic-only projection.
+    converted.safePrefix?.release();
     const cursor =
       Number.isInteger(historyCursor) && historyCursor >= 0
         ? (converted.legacyCursorToDurableCursor[historyCursor] ?? -1)
@@ -1018,7 +1236,11 @@ function imageSourceBitmap(value: unknown): BitmapSource | null {
   return candidate.kind === 'image' && candidate.bitmap ? candidate.bitmap : null;
 }
 
-function collectLivePresentationBitmaps(next: LayersRecord, history: readonly HistoryItem[]): Set<BitmapSource> {
+function collectLivePresentationBitmaps(
+  next: LayersRecord,
+  history: readonly HistoryItem[],
+  projection: DurableRenderProjection | null
+): Set<BitmapSource> {
   const live = new Set<BitmapSource>();
   const add = (bitmap: BitmapSource | null | undefined) => {
     if (bitmap) live.add(bitmap);
@@ -1029,6 +1251,9 @@ function collectLivePresentationBitmaps(next: LayersRecord, history: readonly Hi
     add(imageSourceBitmap(layer.source));
   };
   for (const layer of Object.values(next)) addLayerAliases(layer);
+  if (projection) {
+    for (const layer of Object.values(projection.layers)) addLayerAliases(layer);
+  }
   for (const entry of history) {
     add(imageSourceBitmap(entry.layerSource));
     add(imageSourceBitmap(entry.args));
@@ -1058,7 +1283,9 @@ function retireDepartedPresentationBitmaps(
   // record, and a document the scope has published nothing for has nothing to
   // retire, so walking the unbounded history to answer a question that cannot change
   // the outcome is the regression this defers behind the scope's ownership check.
-  presentationScope.retireUnreferenced(documentId, () => collectLivePresentationBitmaps(state.layers, state.history));
+  presentationScope.retireUnreferenced(documentId, () =>
+    collectLivePresentationBitmaps(state.layers, state.history, state.durableRenderProjection)
+  );
 }
 
 /** Ids whose candidate record is not the stored record, added or removed ids included. */
@@ -1104,13 +1331,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     latestStateRef.current = storeState;
   }, [storeState]);
 
-  const publishDurableNavigationPresentation = async (
+  const publishDurablePresentation = async (
     state: StoreData,
     document: DurableDocument,
-    durableCursor: number
+    durableCursor: number,
+    allowLegacySelector: boolean
   ): Promise<DurableNavigationPresentationOutcome> => {
     const replay = replayDurableAtCursor(document, durableCursor);
-    const publishRecord = (record: DurablePresentationRecord): boolean => {
+    const publishRecord = (
+      record: DurablePresentationRecord,
+      projection: DurableRenderProjection | null = null
+    ): boolean => {
       const action: Extract<InternalAction, { type: 'SET_DURABLE_PRESENTATION' }> = {
         type: 'SET_DURABLE_PRESENTATION',
         payload: {
@@ -1119,7 +1350,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           branchRevision: document.branchRevision,
           historyIndex: state.historyIndex,
           durableRevision: document.durableRevision,
+          allowLegacySelector,
           record,
+          projection,
         },
       };
       const latest = latestStateRef.current;
@@ -1159,7 +1392,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         !documentFrameEquals(latest.documentFrame, replay.frame)
       ) {
         failureReason = 'stale';
-        throw new Error('Durable navigation presentation became stale before publication');
+        throw new Error('Durable presentation became stale before publication');
       }
     };
 
@@ -1178,6 +1411,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .filter(({ snapshot }) => snapshot.visible)
         .sort((left, right) => left.snapshot.order - right.snapshot.order)
         .map(({ snapshot }) => snapshot.id);
+      const replayLayerIds = Object.values(replay.layers)
+        .sort((left, right) => left.snapshot.order - right.snapshot.order)
+        .map(({ snapshot }) => snapshot.id);
+      const runtimeLayerIds = Object.values(latest.layers)
+        .sort((left, right) => left.order - right.order)
+        .map(({ id }) => id);
+      if (!isEqual(runtimeLayerIds, replayLayerIds)) {
+        failureReason = 'renderer-incompatible';
+        throw new DurableCompositionRefusal(
+          'renderer-incompatible',
+          'Durable presentation layer sequence or set differs from the runtime layer set'
+        );
+      }
       const materializedLayerIds = Object.keys(detached.layers);
       if (
         materializedLayerIds.length !== visibleLayerIds.length ||
@@ -1186,30 +1432,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         failureReason = 'layer-coverage';
         throw new DurableCompositionRefusal(
           'layer-coverage',
-          'Durable navigation presentation did not cover every visible replay layer'
+          'Durable presentation did not cover every visible replay layer'
         );
       }
       for (const layerId of visibleLayerIds) {
         const materialized = detached.layers[layerId];
         if (!materialized || !materialized.bitmap) {
           failureReason = 'layer-coverage';
-          throw new DurableCompositionRefusal('layer-coverage', `Durable navigation layer ${layerId} is missing`);
+          throw new DurableCompositionRefusal('layer-coverage', `Durable presentation layer ${layerId} is missing`);
         }
         const existing = nextLayers[layerId];
         if (!existing) {
           failureReason = 'layer-coverage';
           throw new DurableCompositionRefusal(
             'layer-coverage',
-            `Durable navigation layer ${layerId} is absent from legacy replay`
+            `Durable presentation layer ${layerId} is absent from legacy replay`
           );
         }
         const replayLayer = replay.layers[layerId];
-        const isRendererIdentical = durablePresentationIsRendererIdentical(replayLayer, existing, materialized.bounds);
-        if (!isRendererIdentical) {
+        const rendererMismatch = durablePresentationMismatch(replayLayer, existing, materialized.bounds);
+        if (rendererMismatch) {
           failureReason = 'renderer-incompatible';
           throw new DurableCompositionRefusal(
             'renderer-incompatible',
-            `Durable navigation layer ${layerId} is not renderer-identical`
+            `Durable presentation layer ${layerId} is not renderer-identical: ${rendererMismatch}`
           );
         }
         nextLayers[layerId] = {
@@ -1223,9 +1469,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         failureReason = 'renderer-incompatible';
         throw new DurableCompositionRefusal(
           'renderer-incompatible',
-          'Durable navigation presentation changed logical layer state'
+          'Durable presentation changed logical layer state'
         );
       }
+      const projection = projectDurableRender(replay, {
+        status: 'durable',
+        materializedLayers: detached.layers,
+      });
 
       for (const layerId of visibleLayerIds) {
         const materialized = detached.layers[layerId];
@@ -1238,24 +1488,49 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       latestStateRef.current = reducer(latest, action);
       rawDispatch(action);
-      publishRecord({
-        status: 'durable',
-        cursor: durableCursor,
-        reason: null,
-      });
+      const published = publishRecord(
+        {
+          status: 'durable',
+          cursor: durableCursor,
+          reason: null,
+        },
+        projection
+      );
+      if (!published) {
+        // The runtime cache may already be visible through the legacy layer
+        // record, but the durable authority gate rejected this publication.
+        // Keep the cache owned by that record and report the refusal so the
+        // caller can preserve or restore the complete legacy presentation.
+        failureReason = 'stale';
+        detached = undefined;
+        return { status: 'stale', reason: 'stale', cursor: durableCursor };
+      }
       retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
       detached = undefined;
-      return { status: 'durable', layers: nextLayers, frame: replay.frame, cursor: durableCursor };
+      return { status: 'durable', layers: projection.layers, frame: projection.frame, cursor: durableCursor };
     } catch (error) {
       detached?.release();
       const reason: DurablePresentationReason = error instanceof DurableCompositionRefusal ? error.code : failureReason;
-      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, reason });
+      const detail = error instanceof Error ? error.message : String(error);
+      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, reason, detail });
       if (!accepted || String(reason) === 'stale') return { status: 'stale', reason: 'stale', cursor: durableCursor };
       return { status: 'legacy-fallback', reason, cursor: durableCursor };
     } finally {
       composite?.release();
     }
   };
+
+  const publishDurableNavigationPresentation = (state: StoreData, document: DurableDocument, durableCursor: number) =>
+    publishDurablePresentation(state, document, durableCursor, false);
+
+  /**
+   * A committed append is already visible through the legacy layer records. Compose its
+   * durable projection in the background and accept it only if the legacy selector still
+   * names the same logical state. This keeps pointer previews paintable while the durable
+   * cache is in flight; navigation remains the only path that requires a pending selector.
+   */
+  const publishDurableAppendPresentation = (state: StoreData, document: DurableDocument) =>
+    publishDurablePresentation(state, document, document.cursor, true);
 
   const dispatchAction = (action: StoreAction) => {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
@@ -1316,7 +1591,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (action.type === 'PUBLISH_RUNTIME_PRESENTATION') {
-      if (!layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)) {
+      const payloadLayers = action.payload.layers;
+      // First check: pure presentation-only difference (caches only).
+      const purePresentation = layersDifferOnlyByPresentation(currentState.layers, payloadLayers);
+      // Second check: presentation-only plus identity affine operations.
+      const presentationWithIdentityAffine = layersDifferOnlyByPresentationAndIdentityAffine(
+        currentState.layers,
+        payloadLayers
+      );
+      if (!purePresentation && !presentationWithIdentityAffine) {
         // A refused publication is a contained no-op: the layer keeps rendering
         // from its tmpCanvas and no logical state moves. Two refusals share that
         // outcome and mean different things, so only one of them is reported.
@@ -1332,12 +1615,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         console.error(
           'Refused a runtime presentation publication that also changes durable layer state ' +
             '(invariant: PUBLISH_RUNTIME_PRESENTATION carries presentation caches only, never logical layer state). ' +
-            `Offending layer ids: ${divergentLayerIds(currentState.layers, action.payload.layers).join(', ')}`
+            `Offending layer ids: ${divergentLayerIds(currentState.layers, payloadLayers).join(', ')}`
         );
         return;
       }
-      latestStateRef.current = reducer(currentState, action);
-      rawDispatch(action);
+      // If the only durable difference is identity affine operations, publish the
+      // stored record with the payload's presentation caches instead of the payload
+      // itself. This prevents identity affine operations from polluting the durable
+      // layer state while still allowing the presentation cache promotion to proceed.
+      let layersToPublish = payloadLayers;
+      if (presentationWithIdentityAffine && !purePresentation) {
+        layersToPublish = { ...currentState.layers };
+        for (const [id, payloadLayer] of Object.entries(payloadLayers)) {
+          const storedLayer = currentState.layers[id];
+          if (!storedLayer) continue;
+          layersToPublish[id] = {
+            ...storedLayer,
+            bitmap: payloadLayer.bitmap,
+            tmpCanvas: payloadLayer.tmpCanvas,
+            presentationBounds: payloadLayer.presentationBounds,
+          };
+        }
+      }
+      latestStateRef.current = reducer(currentState, {
+        ...action,
+        payload: { layers: layersToPublish },
+      });
+      rawDispatch({ ...action, payload: { layers: layersToPublish } });
       return;
     }
     if (action.type === 'REORDER_LAYERS') {
@@ -1413,6 +1717,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       latestStateRef.current = nextState;
       rawDispatch(committedAction);
       retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
+      if (converted.status === 'current' && converted.document) {
+        void publishDurableAppendPresentation(nextState, converted.document);
+      }
       return;
     }
     if (action.type === 'COMMIT_DOCUMENT_EDIT') {
@@ -1427,6 +1734,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
       const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
+      // Source-backed appends and all frame-changing commits remain on the legacy
+      // selector until their ownership or frame-parity gates are explicit.
+      const allowBackgroundPresentation = ![
+        NEW_LAYER_ACTION,
+        MERGE_ACTION,
+        REPLACE_LAYER_SOURCE_ACTION,
+        SET_DOCUMENT_FRAME_ACTION,
+      ].includes(action.payload.historyItem.actionName);
       // One append, one durable entry: the boundary's plan is published when the
       // store's durable document still describes the timeline it was planned
       // against, and the whole timeline is reconverted otherwise.
@@ -1550,6 +1865,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // deferred to the next transition that consults the scope, which is
           // safe because the same walk would have closed nothing the store still
           // reaches.
+          let durableAppendReady = false;
           try {
             published.transaction.commit();
             if (published.converted.document) {
@@ -1558,11 +1874,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 collectDurableAssetIds(published.converted.document)
               );
             }
+            durableAppendReady = true;
             // Retirement runs after the transition is published, and only against
             // the record that transition actually produced.
             retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, published.state);
           } catch (error) {
             console.error('Unable to finalize a published durable append; the append itself is committed', error);
+          }
+          if (
+            allowBackgroundPresentation &&
+            durableAppendReady &&
+            published.converted.status === 'current' &&
+            published.converted.document
+          ) {
+            void publishDurableAppendPresentation(published.state, published.converted.document);
           }
           return;
         }
@@ -1612,6 +1937,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // commit that swaps a layer's cache all leave a published bitmap behind
       // with no remaining reference.
       retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
+      if (allowBackgroundPresentation && converted.status === 'current' && converted.document) {
+        void publishDurableAppendPresentation(nextState, converted.document);
+      }
       return;
     }
     if (action.type === 'APPLY_HISTORY_REPLAY') {
@@ -1640,8 +1968,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         durableDocument: converted.document,
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
+        preserveHasUnsavedChanges: action.payload.preserveHasUnsavedChanges,
       });
-      latestStateRef.current = nextState;
+      const renderSelector =
+        converted.status === 'current' && converted.document
+          ? pendingRenderSelector(nextState)
+          : nextState.renderSelector;
+      const navigationState = { ...nextState, renderSelector };
+      latestStateRef.current = navigationState;
       rawDispatch({
         type: 'APPLY_HISTORY_REPLAY',
         payload: {
@@ -1650,6 +1984,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDocument: converted.document,
           durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
+          preserveHasUnsavedChanges: action.payload.preserveHasUnsavedChanges,
+          renderSelector,
         },
       });
       // Replay is the other way a cache leaves the record, and the identity case
@@ -1657,7 +1993,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // under the same id with no cache at all, or with a different one. The
       // replayed record is already painted, so retiring against it cannot blank
       // a layer that is still on screen.
-      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
+      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, navigationState);
       return;
     }
     if (action.type === 'REPLACE_DOCUMENT') {

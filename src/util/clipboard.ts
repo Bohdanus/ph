@@ -9,6 +9,11 @@ type CopyRectToClipboardParams = {
   ClipboardItemCtor?: typeof ClipboardItem | null;
 };
 
+type ReadImageFromClipboardParams = {
+  clipboard?: Pick<Clipboard, 'read'> | null;
+  createImageBitmap?: (image: ImageBitmapSource) => Promise<ImageBitmap>;
+};
+
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => {
     canvas.toBlob((blob) => resolve(blob), 'image/png');
@@ -45,4 +50,26 @@ export async function copyRectToClipboard({
   } catch {
     return false;
   }
+}
+
+export async function readImageFromClipboard({
+  clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null,
+  createImageBitmap: decode = globalThis.createImageBitmap,
+}: ReadImageFromClipboardParams = {}): Promise<{ bitmap: ImageBitmap; mimeType: string } | null> {
+  if (!clipboard?.read || !decode) return null;
+
+  try {
+    const items = await clipboard.read();
+    for (const item of items) {
+      const mimeType = item.types.find((type) => type.startsWith('image/'));
+      if (!mimeType) continue;
+
+      const bitmap = await decode(await item.getType(mimeType));
+      return { bitmap, mimeType };
+    }
+  } catch {
+    // Permission denial and browsers without clipboard-read support are normal fallback cases.
+  }
+
+  return null;
 }

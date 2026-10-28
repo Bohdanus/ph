@@ -1,4 +1,5 @@
 import {
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
@@ -38,11 +39,17 @@ import {
   type SelectionSnapshot,
 } from './history-model.ts';
 import { durableEntryProvenance } from './history-provenance.ts';
-import { isTrapezoidOnlyTransform, multiplyAffineTransforms, type AffineTransform } from './affine-transform.ts';
+import {
+  isIdentityAffineTransform,
+  isTrapezoidOnlyTransform,
+  multiplyAffineTransforms,
+  validateAffineTransform,
+  type AffineTransform,
+} from './affine-transform.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
-import type { Layer, LayerId, LayerSource, ToolLayerSource } from './layer-types.ts';
+import { isLayerBlendMode, type Layer, type LayerId, type LayerSource, type ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ToolName } from './tool-types.ts';
 
@@ -308,7 +315,7 @@ function translate(
     // Layer presence is deliberately not a precondition here or in validation:
     // conversion and both replay models retain unknown removals as no-ops, and
     // `replayHistory` filters the id out of the layer record rather than
-    // refusing the entry (`history-replay.ts:158`). The derivation is the parity
+    // refusing the entry (`replayHistory`'s `REMOVE_ACTION` arm filters the id). The derivation is the parity
     // path, so it has no refusal to make for a layer the document never held.
     // This guard is therefore a narrowing guard, not a check: the derivation
     // returns null only for an action that is not a removal, which this arm has
@@ -558,7 +565,11 @@ function validateTimeline(entry: HistoryItem, timeline: HistoryTimeline): Migrat
       message: 'A history entry id must be unique within a document timeline.',
     };
   }
-  if (!Number.isInteger(timeline.cursor) || timeline.cursor < 0 || timeline.cursor >= timeline.entries.length) {
+  const validAppendPoint =
+    Number.isInteger(timeline.cursor) &&
+    timeline.cursor >= 0 &&
+    (timeline.entries.length === 0 ? timeline.cursor === 0 : timeline.cursor < timeline.entries.length);
+  if (!validAppendPoint) {
     return {
       historyId: entry.id,
       actionName: entry.actionName,
@@ -730,7 +741,7 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * the two deep-copied it is.
  *
  * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory` (`history-replay.ts:122`) read a key-absent id as `null`.
+ * and `replayHistory`'s `SELECTION_ACTION` arm read a key-absent id as `null`.
  * A strict `!==` would report a mismatch between a legacy arg that omits the key
  * and the normalized planned entry, degrading a correct append to reconversion.
  */
@@ -1160,10 +1171,11 @@ export function validatePlannedDurableEntry(
   })();
 
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
-    if (planned.operation.kind !== 'set-document-frame') {
+    if (planned.operation.kind !== 'set-document-frame' && planned.operation.kind !== 'transform-document') {
       return `a document frame change produced a "${planned.operation.kind}" operation`;
     }
-    const args = entry.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
+    const args = entry.args as
+      { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame; transform?: AffineTransform } | undefined;
     if (!args?.nextFrame) return 'a document frame change has no next frame';
     // Whether the planned `next` is a DOCUMENT FRAME is a separate question from
     // whether it equals the legacy arg, and `sameFrame` cannot answer it: it
@@ -1187,6 +1199,36 @@ export function validatePlannedDurableEntry(
       return 'the durable next frame does not match the legacy entry';
     if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
       return 'the durable previous frame does not match the legacy entry';
+    }
+    if (args.transform !== undefined) {
+      let expectedTransform: AffineTransform;
+      try {
+        expectedTransform = validateAffineTransform(args.transform);
+      } catch {
+        return 'the legacy document transform is invalid';
+      }
+      if (isIdentityAffineTransform(expectedTransform)) {
+        if (planned.operation.kind === 'transform-document') {
+          return 'an identity document transform produced a transform-document operation';
+        }
+      } else {
+        if (planned.operation.kind !== 'transform-document') {
+          return 'a non-identity document transform produced a frame-only operation';
+        }
+        const actualTransform = planned.operation.transform;
+        if (
+          actualTransform.a !== expectedTransform.a ||
+          actualTransform.b !== expectedTransform.b ||
+          actualTransform.c !== expectedTransform.c ||
+          actualTransform.d !== expectedTransform.d ||
+          actualTransform.e !== expectedTransform.e ||
+          actualTransform.f !== expectedTransform.f
+        ) {
+          return 'the durable document transform does not match the legacy entry';
+        }
+      }
+    } else if (planned.operation.kind === 'transform-document') {
+      return 'a document transform has no legacy transform matrix';
     }
     return provenanceMismatch;
   }
@@ -1270,6 +1312,19 @@ export function validatePlannedDurableEntry(
         return patch.opacity === opacity
           ? provenanceMismatch
           : 'the durable layer opacity does not match the legacy entry';
+      }
+      case 'blendMode': {
+        const blendMode = (entry.args as { blendMode?: unknown } | undefined)?.blendMode;
+        if (!isLayerBlendMode(blendMode)) return 'the layer-property value is invalid';
+        return patch.blendMode === blendMode
+          ? provenanceMismatch
+          : 'the durable layer blend mode does not match the legacy entry';
+      }
+      case 'locked': {
+        const locked = entry.actionName === LOCK_LAYER_ACTION;
+        return patch.locked === locked
+          ? provenanceMismatch
+          : 'the durable layer lock state does not match the legacy entry';
       }
       default:
         return 'the action does not own a durable layer property';
@@ -1402,6 +1457,12 @@ export function decideDurableAppend({
   registry: suppliedRegistry,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
+  if (prior.entries.some((candidate) => candidate.id === entry.id)) {
+    return {
+      outcome: 'preconditions',
+      reason: 'the appended history entry id already exists in the legacy timeline',
+    };
+  }
   if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
   if (base.documentId !== documentId) return { outcome: 'preconditions', reason: 'the durable document is stale' };
   if (base.documentRevision !== documentRevision) {
@@ -1409,6 +1470,9 @@ export function decideDurableAppend({
   }
   if (base.branchRevision !== prior.branchRevision) {
     return { outcome: 'preconditions', reason: 'the durable document was built for another branch' };
+  }
+  if (base.history.some((candidate) => candidate.id === entry.id)) {
+    return { outcome: 'preconditions', reason: 'the appended history entry id already exists in the durable document' };
   }
   if (prior.cursor !== prior.entries.length - 1) {
     return { outcome: 'preconditions', reason: 'the append is not at the tip of the legacy timeline' };
@@ -1445,7 +1509,6 @@ export function decideDurableAppend({
   if (next.entries[next.entries.length - 1] !== entry) {
     return { outcome: 'preconditions', reason: 'the appended entry is not the one that was planned' };
   }
-
   // A reorder is the only publication whose correctness depends on the whole
   // layer order, so it is the only one that has to prove it. The refusal is a
   // precondition rather than a mismatch: it describes a store that cannot answer

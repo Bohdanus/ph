@@ -1,6 +1,14 @@
 import { act, renderHook } from '@testing-library/react';
+import { createElement } from 'react';
+import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MOBILE_MEDIA_QUERY, TABLET_MEDIA_QUERY, useIsMobileViewport, useIsTabletViewport } from '../useMediaQuery.ts';
+import {
+  MOBILE_MEDIA_QUERY,
+  TABLET_MEDIA_QUERY,
+  useIsMobileViewport,
+  useIsTabletViewport,
+  useMediaQuery,
+} from '../useMediaQuery.ts';
 import { setViewportWidth } from '../../test/setup.ts';
 
 const DESKTOP_WIDTH = 1280;
@@ -163,5 +171,55 @@ describe('useMediaQuery', () => {
     expect(result.current).toBe(false);
     unmount();
     expect(removeListener).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it('returns false for a malformed media query rather than throwing', () => {
+    setViewportWidth(DESKTOP_WIDTH);
+    const { result } = renderHook(() => useMediaQuery('this is not a media query'));
+    expect(result.current).toBe(false);
+  });
+
+  it('returns false when a range feature uses a non-numeric length', () => {
+    setViewportWidth(DESKTOP_WIDTH);
+    const { result } = renderHook(() => useMediaQuery('(width < px)'));
+    expect(result.current).toBe(false);
+  });
+
+  it('renders the desktop shell on the server, where matchMedia is absent', () => {
+    const original = window.matchMedia;
+    // @ts-expect-error model a server host that has no matchMedia primitive
+    delete window.matchMedia;
+    try {
+      // `useSyncExternalStore` reads `getServerSnapshot` (the third argument, the same
+      // `matches` function the client uses) while `renderToString` walks the tree. With no
+      // `matchMedia` the snapshot is the safe desktop answer, so the server markup must not
+      // claim the viewport matches the mobile shell.
+      function ServerProbe() {
+        const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+        return createElement('span', { 'data-mobile': String(isMobile) });
+      }
+      const html = renderToString(createElement(ServerProbe));
+      expect(html).toContain('data-mobile="false"');
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it.fails('defaults a degenerate empty query to desktop (false) rather than match-all', () => {
+    // A query string with no media features is not a real constraint, yet it currently
+    // resolves to `true` — the match-all outcome a missing `matchMedia` is explicitly
+    // documented as *not* allowed to produce. Until the hook guards degenerate input, this
+    // tripwire expects the safe desktop default and fails against the live behaviour.
+    setViewportWidth(DESKTOP_WIDTH);
+    const { result } = renderHook(() => useMediaQuery(''));
+    expect(result.current).toBe(false);
+  });
+
+  it.fails('defaults a whitespace-only query to desktop (false)', () => {
+    // Like the empty string, whitespace-only input carries no media features and must not
+    // silently select the mobile shell; it should fall back to the safe desktop answer.
+    setViewportWidth(DESKTOP_WIDTH);
+    const { result } = renderHook(() => useMediaQuery('   '));
+    expect(result.current).toBe(false);
   });
 });

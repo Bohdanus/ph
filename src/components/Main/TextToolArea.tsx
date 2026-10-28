@@ -74,6 +74,9 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
      * overlay over their box and keep the straddling grip this repository documents for them.
      */
     handlesOutside: true,
+    rotationEnabled: true,
+    rotation: args.angle ?? 0,
+    onRotationChange: (angle: number) => setToolArgs({ ...argsRef.current, angle }),
     onRepaint: redrawDraftChrome,
     onChangeEnd: (rect: RectXYSorted) => {
       // Whether this press PLACED a box or merely acted on one that was already there. A press that
@@ -132,7 +135,13 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
        * Paths, Actions, History, or Styles panel; or select any available menu command"
        * (https://helpx.adobe.com/photoshop/using/creating-type.html).
        */
-      if (placing && args.text && args.rect) flushSync(() => commitDirtyTool());
+      if (placing && args.text && args.rect) {
+        let committed = false;
+        flushSync(() => {
+          committed = commitDirtyTool() !== null;
+        });
+        if (!committed) return;
+      }
 
       // Adobe's placeholder, born with the box rather than typed into it: "A layer is created
       // immediately, containing placeholder text that previews font, size and colour, and that is
@@ -273,5 +282,5 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     if (overflow) drawOverflowIndicator(ctx as Ctx2D, rect as RectXYSorted, style.color);
   }
 
-  return <div className={`${className} cursor-text`} {...trackedPointerHandlers} />;
+  return <div className={`${className} cursor-text`} data-rotation={args.angle ?? 0} {...trackedPointerHandlers} />;
 };

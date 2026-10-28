@@ -19,6 +19,7 @@ import type { ImageLayerSource, Layer, LayersRecord, ToolLayerSource } from '../
 import type { DocumentFrame } from '../document-frame.ts';
 import {
   HIDE_LAYER_ACTION,
+  MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
@@ -94,7 +95,7 @@ function renderWithProbe() {
 }
 
 function openDocument(documentId = 'doc-1') {
-  const { store, dispatch } = renderWithProbe();
+  const { store, dispatch, unmount } = renderWithProbe();
   act(() => {
     dispatch()({
       type: 'REPLACE_DOCUMENT',
@@ -106,7 +107,7 @@ function openDocument(documentId = 'doc-1') {
       },
     });
   });
-  return { store, dispatch };
+  return { store, dispatch, unmount };
 }
 
 function commitCrop(
@@ -159,6 +160,36 @@ function commitProperty(
     });
   });
 }
+
+describe('APPLY_HISTORY_REPLAY compensation state', () => {
+  it('preserves hasUnsavedChanges through the real StoreContext reducer', () => {
+    const probe = openDocument();
+
+    try {
+      const before = probe.store();
+      expect(before.hasUnsavedChanges).toBe(false);
+
+      act(() => {
+        probe.dispatch()({
+          type: 'APPLY_HISTORY_REPLAY',
+          payload: {
+            updates: { layers: before.layers, hasUnsavedChanges: false },
+            timeline: {
+              entries: before.history,
+              cursor: before.historyIndex,
+              branchRevision: before.branchRevision,
+            },
+            preserveHasUnsavedChanges: true,
+          },
+        });
+      });
+
+      expect(probe.store().hasUnsavedChanges).toBe(false);
+    } finally {
+      probe.unmount();
+    }
+  });
+});
 
 /**
  * A layer removal, in the shape `useLayer.removeLayer` produces it: the layer
@@ -360,6 +391,45 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable removal', () => {
 });
 
 describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
+  it('publishes a supported append when the base has only disabled-row error diagnostics', () => {
+    const { store, dispatch } = renderWithProbe();
+    const baseline = baselineItem({ [layerId]: layer() });
+    const disabledUnsupported: HistoryItem = {
+      id: 'disabled-pen',
+      actionName: TOOL_ACTION,
+      layerId,
+      args: { toolName: 'pen' },
+      disabled: true,
+    };
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-disabled-append',
+          history: [baseline, disabledUnsupported],
+          historyIndex: 1,
+          updates: { layers: { [layerId]: layer() }, totalSize: initialSize, documentFrame: defaultFrame },
+        },
+      });
+    });
+
+    expect(store().durableStatus).toBe('current');
+    expect(store().durableDiagnostics).toEqual([
+      expect.objectContaining({ historyId: disabledUnsupported.id, severity: 'error' }),
+    ]);
+
+    const entry = cropItem('crop-after-disabled');
+    commitCrop(dispatch(), entry, plannedFor(entry));
+
+    const after = store();
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDocument?.history.map((published) => published.id)).toEqual([entry.id]);
+    expect(after.durableDiagnostics).toEqual([
+      expect.objectContaining({ historyId: disabledUnsupported.id, severity: 'error' }),
+    ]);
+  });
+
   it('appends the planned entry and advances the durable cursor by exactly one', () => {
     const { store, dispatch } = openDocument();
     const before = store().durableDocument!;
@@ -494,7 +564,7 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
     expect(store().durableDiagnostics).toEqual([warning]);
   });
 
-  it('voids the durable projection when the boundary reports an error', () => {
+  it('marks the durable projection partial when the boundary reports a conversion error', () => {
     const { store, dispatch } = openDocument();
     const error: MigrationDiagnostic = {
       severity: 'error',
@@ -504,7 +574,7 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
 
     commitCrop(dispatch(), crop(), null, [error]);
 
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
     expect(store().durableDocument).toBeNull();
     expect(store().durableDiagnostics).toContainEqual(error);
   });
@@ -846,6 +916,122 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
       begin.mockRestore();
       reconcile.mockRestore();
       registry.disposeDocument(store().documentId);
+    }
+  });
+
+  it('withholds a source-backed append whose history id already exists in the legacy timeline', async () => {
+    const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
+    const { store, dispatch, unmount } = openDocument();
+    conversion.mockClear();
+    const registry = getAssetRegistry();
+    const bitmap = createMockImageBitmap(40, 30);
+    const source: ImageLayerSource = {
+      kind: 'image',
+      bitmap,
+      name: 'Duplicate photo',
+      isBedrock: false,
+      pos: { x: 10, y: 20, width: 40, height: 30 },
+    };
+    const duplicateLayerId = 'duplicate-layer';
+    const entry: HistoryItem = {
+      id: 'baseline',
+      actionName: NEW_LAYER_ACTION,
+      layerId: duplicateLayerId,
+      layerSource: source,
+    };
+
+    try {
+      await act(async () => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: {
+              layers: {
+                [layerId]: layer(),
+                [duplicateLayerId]: {
+                  ...createMockLayer({ id: duplicateLayerId, pos: source.pos }),
+                  source,
+                  bitmap,
+                },
+              },
+            },
+            historyItem: entry,
+            durableEntry: null,
+          },
+        });
+        await Promise.resolve();
+      });
+
+      expect(store().history.map(({ id }) => id)).toEqual(['baseline', 'baseline']);
+      expect(store().durableStatus).toBe('partial');
+      expect(store().durableDocument).toBeNull();
+      expect(store().durableDiagnostics).toContainEqual(
+        expect.objectContaining({ code: 'invalid-history-entry', historyId: 'baseline', severity: 'error' })
+      );
+      expect(conversion).toHaveBeenCalledOnce();
+    } finally {
+      conversion.mockRestore();
+      unmount();
+      registry.reconcileDocumentAssets('doc-1', new Set());
+      registry.disposeDocument('doc-1');
+    }
+  });
+
+  it('withholds a source-backed merge append whose history id already exists in the legacy timeline', async () => {
+    const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
+    const { store, dispatch, unmount } = openDocument();
+    conversion.mockClear();
+    const registry = getAssetRegistry();
+    const bitmap = createMockImageBitmap(40, 30);
+    const source: ImageLayerSource = {
+      kind: 'image',
+      bitmap,
+      name: 'Merged photo',
+      isBedrock: false,
+      pos: { x: 10, y: 20, width: 40, height: 30 },
+    };
+    const mergedLayerId = 'merged-layer';
+    const entry: HistoryItem = {
+      id: 'baseline',
+      actionName: MERGE_ACTION,
+      layerId: mergedLayerId,
+      layerSource: source,
+    };
+
+    try {
+      await act(async () => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: {
+              layers: {
+                [layerId]: layer(),
+                [mergedLayerId]: {
+                  ...createMockLayer({ id: mergedLayerId, pos: source.pos }),
+                  source,
+                  bitmap,
+                },
+              },
+            },
+            historyItem: entry,
+            durableEntry: null,
+          },
+        });
+        await Promise.resolve();
+      });
+
+      expect(store().history.map(({ id }) => id)).toEqual(['baseline', 'baseline']);
+      expect(store().durableStatus).toBe('partial');
+      expect(store().durableDocument).toBeNull();
+      expect(store().durableDiagnostics).toContainEqual(
+        expect.objectContaining({ code: 'invalid-history-entry', historyId: 'baseline', severity: 'error' })
+      );
+      expect(conversion).toHaveBeenCalledOnce();
+    } finally {
+      conversion.mockRestore();
+      unmount();
+      registry.reconcileDocumentAssets('doc-1', new Set());
+      registry.disposeDocument('doc-1');
     }
   });
 

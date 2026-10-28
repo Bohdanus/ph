@@ -283,6 +283,7 @@ describe('decideDurableAppend: retained tool operations', () => {
   it.each([
     { toolName: 'transform' as const },
     { toolName: 'transform' as const, rotate: 30 },
+    { toolName: 'transform' as const, rotate: 90 },
     { toolName: 'transform' as const, rotate: -22.5, skewX: 12 },
     { toolName: 'transform' as const, resizeX: 140, resizeY: 60 },
     { toolName: 'transform' as const, mirrorH: true },

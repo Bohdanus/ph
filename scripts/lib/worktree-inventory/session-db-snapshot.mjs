@@ -17,6 +17,7 @@ import { boundSessionSinceMs } from './session-audit-limits.mjs';
 
 const SNAPSHOT_PREFIX = 'worktree-inventory-session-';
 const SESSION_BATCH_SIZE = 250;
+const PART_SCAN_BATCH_SIZE = 1_000;
 
 const yieldToWriter = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -86,31 +87,30 @@ function readRecentSessions(source, sinceMs) {
 
 /**
  * Find sessions whose part activity is recent even when the session row itself
- * was not updated. `part` has no time index, but it is append-oriented, so a
- * descending rowid walk reaches the recent tail without a full table scan.
- * Every batch is a separate statement and the walk stops once the tail is old.
+ * was not updated. `part` has no time index, so this scans only its metadata in
+ * small rowid batches. Every batch is a separate statement and yields before
+ * the next one; this is longer than a single scan but never holds its read lock
+ * across the full database.
  */
 async function readRecentPartSessionIds(source, sinceMs) {
   const sessionIds = new Set();
-  let beforeRowid = null;
+  let afterRowid = 0;
   for (;;) {
     const rows = source
       .prepare(
         `SELECT rowid AS row_id, session_id, time_created, time_updated
            FROM part
-          ${beforeRowid === null ? '' : 'WHERE rowid < ?'}
-          ORDER BY rowid DESC
-          LIMIT ${SESSION_BATCH_SIZE}`
+          WHERE rowid > ?
+          ORDER BY rowid ASC
+          LIMIT ${PART_SCAN_BATCH_SIZE}`
       )
-      .all(...(beforeRowid === null ? [] : [beforeRowid]));
+      .all(afterRowid);
     if (rows.length === 0) break;
 
     for (const row of rows) {
       if (row.time_created >= sinceMs || row.time_updated >= sinceMs) sessionIds.add(row.session_id);
     }
-    const oldest = rows[rows.length - 1];
-    if (oldest.time_created < sinceMs && oldest.time_updated < sinceMs) break;
-    beforeRowid = oldest.row_id;
+    afterRowid = rows[rows.length - 1].row_id;
     await yieldToWriter();
   }
   return sessionIds;

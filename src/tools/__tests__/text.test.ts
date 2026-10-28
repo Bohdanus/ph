@@ -9,6 +9,7 @@ import {
   TRACKING_MAX,
   TRACKING_MIN,
   domOverlayStyle,
+  drawOverflowIndicator,
   fontShorthand,
   getTextLineCount,
   getTextWidth,
@@ -17,6 +18,7 @@ import {
   requiredHeightForLines,
   resolveTextKind,
   resolveTextStyle,
+  clearTextRasterCache,
   text,
   textWrapWidth,
   trackingPx,
@@ -702,11 +704,47 @@ describe('layoutText', () => {
     // about — and it is the collapsible space's behaviour that is the control.
     expect(layoutText(ctx, style, 'ab\u00A0', 2 * CH).overflow).toBe(true);
     expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(false);
-    expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(true);
+  });
+
+  it('treats an empty body as one empty line, whatever the wrap width', () => {
+    // `text.split('\n')` on `''` yields `['']` — one line, not zero — and that line measures nothing.
+    // The empty line must never be read as a WIDTH overflow: a box with no usable interior used to raise
+    // Adobe's icon for a body with no ink in it at all.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    expect(layoutText(ctx, style, '', 5 * CH).lines).toEqual(['']);
+    expect(layoutText(ctx, style, '', 5 * CH).overflow).toBe(false);
+    // A zero-height box overflows because the required line step (size * leading + padding) exceeds 0,
+    // even though the empty line carries no ink horizontally.
+    expect(layoutText(ctx, style, '', 5 * CH, 0).overflow).toBe(true);
+    // A box tall enough to hold one line does not overflow an empty body.
+    expect(layoutText(ctx, style, '', 5 * CH, 100).overflow).toBe(false);
+  });
+
+  it('splits a body of only newlines into that many empty lines, never merging them', () => {
+    // Each `\n` is a hard break and the canvas has no hard break of its own: a body of bare newlines
+    // is the degenerate case where a splitter that collapsed them would report one line instead of
+    // three, and a renderer that drew them would ink a single line with spaces where the breaks are.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    expect(layoutText(ctx, style, '\n\n\n', Infinity).lines).toEqual(['', '', '', '']);
+    expect(layoutText(ctx, style, '\n\n\n', 5 * CH).lines).toEqual(['', '', '', '']);
   });
 });
 
 describe('renderText', () => {
+  it('rotates text around the centre of its box', () => {
+    const ctx = makeTextCtx();
+
+    renderText(ctx, { ...baseArgs, angle: 30 });
+
+    expect(ctx.translate).toHaveBeenNthCalledWith(1, 100, 60);
+    expect(ctx.rotate).toHaveBeenCalledWith((30 * Math.PI) / 180);
+    expect(ctx.translate).toHaveBeenNthCalledWith(2, -100, -60);
+  });
+
   describe('the guard on a draft with nothing to draw', () => {
     it('draws nothing at all for an empty string', () => {
       // The guard is `!text`, so an empty draft returns before `resetOverlayAlpha` and before any
@@ -1528,6 +1566,7 @@ describe('getTextWidth', () => {
 
 describe('text processor', () => {
   beforeEach(() => {
+    clearTextRasterCache();
     RecordingOffscreenCanvas.instances = [];
     vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
   });
@@ -1578,33 +1617,54 @@ describe('text processor', () => {
     expect(result).toBeTruthy();
   });
 
-  it('documents the current cost: a fresh full-document canvas and a fresh fillText pass on every replay (src/tools/text.ts:334-339)', () => {
-    const params = { size: { width: 40, height: 20 } };
-    const processor = text(params);
+  it('returns a blank canvas when the platform provides no 2D context', () => {
+    const getContext = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockReturnValue(null as never);
+    try {
+      const [result] = text({ size: { width: 300, height: 150 } })(baseArgs);
 
-    const first = processor(baseArgs);
-    const second = processor(baseArgs);
-
-    // Each replay allocates a fresh canvas and re-runs the font rasterization, so an
-    // N-step undo history re-renders the same glyphs N times. There is no vector-durable
-    // source to re-materialize from, so this cost is structural, not a caching oversight.
-    expect(RecordingOffscreenCanvas.instances).toHaveLength(2);
-    expect(first[0]).not.toBe(second[0]);
-    expect((first[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
-    expect((second[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
+      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
+      expect(canvas.ctx.fillText).not.toHaveBeenCalled();
+    } finally {
+      getContext.mockRestore();
+    }
   });
 
-  it.fails('replays text from a durable vector source without re-rasterizing (src/tools/text.ts:331-340)', () => {
+  it('reuses a cached raster for an identical replay instead of re-rasterizing', () => {
     const params = { size: { width: 40, height: 20 } };
     const processor = text(params);
 
     const first = processor(baseArgs);
     const second = processor(baseArgs);
 
-    // Desired: an identical replay reuses the already-rasterized source instead of
-    // allocating a second full-document OffscreenCanvas and re-running renderText.
+    // An identical replay reuses the already-rasterized canvas from the module-level
+    // cache: no second allocation, no second renderText pass.
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(first[0]).toBe(second[0]);
+    expect((first[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
+  });
+
+  it('rasterizes with no rect at all, because renderText guards on it and the canvas is still built', () => {
+    // A text layer outlives the drag that made it, and `rect` is optional on the args. The creator
+    // must still allocate and return a canvas — the guard in `renderText` draws nothing, but the
+    // layer has to be constructible from a record that never carried a box.
+    const [result] = text({ size: { width: 200, height: 120 } })({ ...baseArgs, rect: null });
+
+    const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+    expect(canvas.width).toBe(200);
+    expect(canvas.ctx.fillText).not.toHaveBeenCalled();
+    expect(result).toBeTruthy();
+  });
+
+  it('does not reuse an unrotated raster for a rotated replay', () => {
+    const params = { size: { width: 40, height: 20 } };
+    const processor = text(params);
+
+    processor(baseArgs);
+    const [rotated] = processor({ ...baseArgs, angle: 90 });
+
+    expect(RecordingOffscreenCanvas.instances).toHaveLength(2);
+    expect((rotated as unknown as RecordingOffscreenCanvas).ctx.rotate).toHaveBeenCalledWith(Math.PI / 2);
   });
 });
 
@@ -1970,5 +2030,48 @@ describe('PLACEHOLDER_TEXT and domOverlayStyle', () => {
       expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('1.6px');
       expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('all-small-caps');
     });
+  });
+});
+
+describe('drawOverflowIndicator', () => {
+  it('strokes at the arithmetic corner of a zero-width box rather than clamping or skipping', () => {
+    // A zero-width box has no bottom-right corner to sit in: the icon still strokes, at coordinates
+    // derived from `x2 - TEXT_PADDING - size`, which is the honest arithmetic rather than a clamp.
+    // What this pins is the bracket: the icon writes `strokeStyle` and `lineWidth`, and both must be
+    // restored to the seed so the shared overlay is not left wearing them.
+    const ctx = makeTextCtx();
+    const zeroRect: RectXYSorted = { x1: 0, y1: 0, x2: 0, y2: 0 };
+
+    drawOverflowIndicator(ctx, zeroRect, '#ff0000');
+
+    expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
+    expect(ctx.strokeStyle).toBe(SEED_STROKE_STYLE);
+    expect(ctx.lineWidth).toBe(1);
+  });
+
+  it('strokes with an empty colour string, because the colour is assigned unconditionally', () => {
+    // The icon takes whatever colour it is handed — the draft's type colour, always — and assigns it
+    // to `strokeStyle` without a guard. An empty string is a transparent stroke, which is the honest
+    // outcome; a branch that skipped the draw on a falsy colour would be a second place for the
+    // colour to disagree with the ink.
+    const ctx = makeTextCtx();
+
+    drawOverflowIndicator(ctx, rect, '');
+
+    expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the caller stroke state even when the box is degenerate', () => {
+    // The icon's own bracket is the assertion, not a particular coordinate: `strokeStyle` and
+    // `lineWidth` are written only by this function, so a restored seed is that bracket closing.
+    // Without it the stroke colour outlived the call on the shared overlay.
+    const ctx = makeTextCtx();
+    const degenerate: RectXYSorted = { x1: 100, y1: 100, x2: 101, y2: 101 };
+
+    drawOverflowIndicator(ctx, degenerate, '#00ff00');
+
+    expect(ctx.strokeStyle).toBe(SEED_STROKE_STYLE);
+    expect(ctx.lineWidth).toBe(1);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 });

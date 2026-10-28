@@ -1,12 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import { ANTIALIASED_FLANGE_CSS_PX, DRAW_HALF_WIDTH_DOC_PX, toleranceFor } from '../viewport-tolerance';
 import {
-  isBuffer,
   buildClip,
-  scanPixelsForBounds,
-  screenshotBoundsToCss,
+  canvasOffsetToDocument,
+  containFit,
+  DEFAULT_DOCUMENT_SIZE,
+  documentToCanvasOffset,
+  dominantRed,
+  getColorAtPoint,
+  getDarkPixelBounds,
   getSelectionBounds,
   getStrokeAnalysis,
+  hasDarkPixels,
+  hasRedPixels,
+  isBuffer,
+  scanPixelsForBounds,
+  screenshotBoundsToCss,
   STROKE_ANALYSIS,
+  takeLineScreenshot,
+  waitForCanvasPixels,
   type BoundingBox,
   type ClipOptions,
   type ImageDataResult,
@@ -20,9 +32,13 @@ import {
   TRANSPARENT,
   WHITE,
   captureRegionOf,
+  cleanupTempDirs,
   createImageData,
+  createScrollablePage,
+  createTestInfoMock,
   fillAll,
   fillRect,
+  makeOutputDir,
   setPixel,
   type Color,
 } from './canvas-helpers.fixtures';
@@ -394,5 +410,459 @@ describe('getSelectionBounds default thresholds', () => {
     expect(result).not.toBeNull();
     expect(result!.left).toBe(0);
     expect(result!.bottom).toBe(3);
+  });
+});
+
+/**
+ * `onScreenClip` is module-private, so these tests drive it through its two public gates,
+ * `waitForCanvasPixels` and `takeLineScreenshot`, and assert on the throw. That is the
+ * contract: a clip taller than the viewport is refused BEFORE anything is scrolled or
+ * photographed, so a caller asking for a region the page cannot render gets an error
+ * naming both numbers instead of a short image at exit 0. See `HANDOFF.md` §242.
+ *
+ * The default `createScrollablePage` geometry is a window that holds its whole page, so
+ * every clip here is already on screen; the only thing under test is the height guard,
+ * which runs before the visibility check. The fixture's viewport is 1280x1080 by default,
+ * so the short-clip cases below are the ordinary path and exist to prove the guard does
+ * not over-refuse.
+ */
+describe('onScreenClip refuses an over-tall clip', () => {
+  const SHORT_VIEWPORT = 720;
+  const overTall: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
+
+  it('throws naming the requested height and the viewport height', async () => {
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+
+    await expect(waitForCanvasPixels(harness.page, overTall, async () => true, { timeoutMs: 1_000 })).rejects.toThrow(
+      `onScreenClip: a screenshot clip cannot be taller than the viewport: requested 900px in a ${SHORT_VIEWPORT}px window`
+    );
+    // Nothing was scrolled and nothing was photographed: the refusal is at the gate.
+    expect(harness.screenshot).not.toHaveBeenCalled();
+    expect(harness.scroll.scrollRequests()).toEqual([]);
+  });
+
+  it('refuses even when the region is already fully on screen', async () => {
+    // The guard runs before the `alreadyVisible` check, so a clip that fits vertically
+    // in the page but not in the window is refused regardless of scroll position.
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+
+    await expect(waitForCanvasPixels(harness.page, overTall, async () => true, { timeoutMs: 1_000 })).rejects.toThrow(
+      /cannot be taller than the viewport/
+    );
+    expect(harness.screenshot).not.toHaveBeenCalled();
+  });
+
+  it('refuses through takeLineScreenshot, which routes every clip the same way', async () => {
+    const outputDir = await makeOutputDir('over-tall-line');
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+    const { testInfo } = createTestInfoMock(outputDir);
+
+    await expect(
+      takeLineScreenshot(harness.page, { x: 0, y: 0, width: 1280, height: 1280 }, 'over-tall', testInfo, {
+        x: 0,
+        y: 0,
+        width: 1280,
+        height: 900,
+      })
+    ).rejects.toThrow(/cannot be taller than the viewport/);
+    expect(harness.screenshot).not.toHaveBeenCalled();
+  });
+
+  it('admits a clip exactly the viewport height', async () => {
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+    const exact: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: SHORT_VIEWPORT };
+
+    await expect(
+      waitForCanvasPixels(harness.page, exact, async () => true, { timeoutMs: 1_000 })
+    ).resolves.toBeUndefined();
+    expect(harness.screenshot).toHaveBeenCalledTimes(1);
+    expect(harness.clips()).toEqual([exact]);
+  });
+
+  it('admits a clip shorter than the viewport and photographs it as given', async () => {
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+    const short: Required<ClipOptions> = { x: 10, y: 20, width: 120, height: 100 };
+
+    await waitForCanvasPixels(harness.page, short, async () => true, { timeoutMs: 1_000 });
+    expect(harness.clips()).toEqual([short]);
+  });
+
+  it('admits a clip shorter than the viewport that needs scrolling into view', async () => {
+    // Below the fold but NOT over-tall: the guard must not refuse a region the page can
+    // render, only one it cannot.
+    const harness = createScrollablePage({
+      viewportHeight: SHORT_VIEWPORT,
+      documentHeight: 1_177,
+      initialScrollY: 0,
+    });
+    const belowTheFold: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
+
+    await expect(
+      waitForCanvasPixels(harness.page, belowTheFold, async () => true, { timeoutMs: 1_000 })
+    ).resolves.toBeUndefined();
+    expect(harness.screenshot).toHaveBeenCalledTimes(1);
+    expect(harness.clips()[0].y + belowTheFold.height).toBeLessThanOrEqual(SHORT_VIEWPORT);
+  });
+
+  afterEach(async () => {
+    await cleanupTempDirs();
+  });
+});
+
+const COORD_BOX: BoundingBox = { x: 100, y: 50, width: 400, height: 300 };
+
+describe('non-finite coordinates', () => {
+  describe('containFit', () => {
+    it('propagates NaN box dimensions as NaN scale and offsets', () => {
+      const result = containFit({ width: Number.NaN, height: 300 });
+      expect(result.scale).toBeNaN();
+      expect(result.offsetX).toBeNaN();
+      expect(result.offsetY).toBeNaN();
+    });
+
+    it('propagates Infinity on both axes as an Infinity scale with NaN offsets', () => {
+      // Infinity - Infinity is NaN in IEEE 754, so the offset collapses even
+      // though the scale is finite-infinite.
+      const result = containFit({ width: Infinity, height: Infinity });
+      expect(result.scale).toBe(Infinity);
+      expect(result.offsetX).toBeNaN();
+      expect(result.offsetY).toBeNaN();
+    });
+
+    it('collapses to a zero scale from a zero-width box', () => {
+      const result = containFit({ width: 0, height: 300 });
+      expect(result.scale).toBe(0);
+      expect(result.offsetX).toBe(0);
+      expect(result.offsetY).toBe(150);
+    });
+  });
+
+  describe('documentToCanvasOffset', () => {
+    it('propagates NaN document coordinates as NaN canvas offsets', () => {
+      const result = documentToCanvasOffset(COORD_BOX, Number.NaN, 300);
+      expect(result.x).toBeNaN();
+      expect(result.y).not.toBeNaN();
+    });
+
+    it('propagates Infinity document coordinates', () => {
+      const result = documentToCanvasOffset(COORD_BOX, Number.POSITIVE_INFINITY, 300);
+      expect(result.x).toBe(Infinity);
+      expect(result.y).not.toBe(Infinity);
+    });
+
+    it('propagates -Infinity document coordinates', () => {
+      const result = documentToCanvasOffset(COORD_BOX, Number.NEGATIVE_INFINITY, 300);
+      expect(result.x).toBe(-Infinity);
+    });
+  });
+
+  describe('canvasOffsetToDocument', () => {
+    it('propagates NaN canvas coordinates as NaN document coordinates', () => {
+      const result = canvasOffsetToDocument(COORD_BOX, Number.NaN, 300);
+      expect(result.x).toBeNaN();
+      expect(result.y).not.toBeNaN();
+    });
+
+    it('propagates Infinity canvas coordinates', () => {
+      const result = canvasOffsetToDocument(COORD_BOX, Number.POSITIVE_INFINITY, 300);
+      expect(result.x).toBe(Infinity);
+    });
+
+    it('propagates -Infinity canvas coordinates', () => {
+      const result = canvasOffsetToDocument(COORD_BOX, Number.NEGATIVE_INFINITY, 300);
+      expect(result.x).toBe(-Infinity);
+    });
+  });
+
+  describe('getColorAtPoint', () => {
+    const image = createImageData(100, 100);
+    fillAll(image, RED);
+
+    it('returns null for a NaN pointX', async () => {
+      expect(await getColorAtPoint(image, Number.NaN, 50, 5)).toBeNull();
+    });
+
+    it('returns null for a NaN pointY', async () => {
+      expect(await getColorAtPoint(image, 50, Number.NaN, 5)).toBeNull();
+    });
+
+    it('returns null for an Infinity pointX', async () => {
+      expect(await getColorAtPoint(image, Number.POSITIVE_INFINITY, 50, 5)).toBeNull();
+      expect(await getColorAtPoint(image, Number.NEGATIVE_INFINITY, 50, 5)).toBeNull();
+    });
+
+    it('returns null for an Infinity pointY', async () => {
+      expect(await getColorAtPoint(image, 50, Number.POSITIVE_INFINITY, 5)).toBeNull();
+    });
+  });
+});
+
+describe('zero-sized images', () => {
+  const EMPTY_0x0 = createImageData(0, 0);
+  const EMPTY_0xN = createImageData(0, 10);
+  const EMPTY_Nx0 = createImageData(10, 0);
+
+  it('dominantRed returns null for a 0x0 image', async () => {
+    expect(await dominantRed(EMPTY_0x0)).toBeNull();
+  });
+
+  it('dominantRed returns null for a zero-width image', async () => {
+    expect(await dominantRed(EMPTY_0xN)).toBeNull();
+  });
+
+  it('dominantRed returns null for a zero-height image', async () => {
+    expect(await dominantRed(EMPTY_Nx0)).toBeNull();
+  });
+
+  it('getColorAtPoint returns null for a 0x0 image', async () => {
+    expect(await getColorAtPoint(EMPTY_0x0, 0, 0, 5)).toBeNull();
+  });
+
+  it('getColorAtPoint returns null for a zero-width image', async () => {
+    expect(await getColorAtPoint(EMPTY_0xN, 0, 0, 5)).toBeNull();
+  });
+
+  it('getColorAtPoint returns null for a zero-height image', async () => {
+    expect(await getColorAtPoint(EMPTY_Nx0, 0, 0, 5)).toBeNull();
+  });
+
+  it('scanPixelsForBounds returns the not-found sentinel for a 0x0 image', async () => {
+    // left = width = 0, top = height = 0
+    expect(await scanPixelsForBounds(EMPTY_0x0, () => true)).toEqual({
+      left: 0,
+      top: 0,
+      right: -1,
+      bottom: -1,
+      found: false,
+    });
+  });
+
+  it('scanPixelsForBounds returns the not-found sentinel for a zero-width image', async () => {
+    // left = width = 0, top = height = 10
+    expect(await scanPixelsForBounds(EMPTY_0xN, () => true)).toEqual({
+      left: 0,
+      top: 10,
+      right: -1,
+      bottom: -1,
+      found: false,
+    });
+  });
+
+  it('scanPixelsForBounds returns the not-found sentinel for a zero-height image', async () => {
+    // left = width = 10, top = height = 0
+    expect(await scanPixelsForBounds(EMPTY_Nx0, () => true)).toEqual({
+      left: 10,
+      top: 0,
+      right: -1,
+      bottom: -1,
+      found: false,
+    });
+  });
+
+  it('getDarkPixelBounds returns null for a 0x0 image', async () => {
+    expect(await getDarkPixelBounds(EMPTY_0x0)).toBeNull();
+  });
+
+  it('hasDarkPixels returns false for a 0x0 image', async () => {
+    expect(await hasDarkPixels(EMPTY_0x0)).toBe(false);
+  });
+
+  it('hasRedPixels returns false for a 0x0 image', async () => {
+    expect(await hasRedPixels(EMPTY_0x0)).toBe(false);
+  });
+
+  it('getSelectionBounds returns null for a 0x0 image', async () => {
+    expect(await getSelectionBounds(EMPTY_0x0)).toBeNull();
+  });
+});
+
+describe('dominantRed edge cases', () => {
+  it('returns null when every red pixel is fully transparent', async () => {
+    // The skip condition is alpha === 0; transparency alone excludes a red
+    // pixel regardless of how dominant its channels are.
+    const image = createImageData(3, 3);
+    fillAll(image, RED, TRANSPARENT);
+    expect(await dominantRed(image)).toBeNull();
+  });
+
+  it('excludes a pixel where red equals green * RED_DOMINANCE_FACTOR exactly', async () => {
+    // RED_DOMINANCE_FACTOR = 2; the skip test is red <= green * 2.
+    // 200 <= 200 is true, so this pixel is skipped and not dominant.
+    const image = createImageData(1, 1);
+    setPixel(image, 0, 0, { red: 200, green: 100, blue: 100 });
+    expect(await dominantRed(image)).toBeNull();
+  });
+
+  it('includes one pixel past the dominance boundary', async () => {
+    // 201 <= 200 is false on both channels, so the pixel is kept.
+    const image = createImageData(1, 1);
+    setPixel(image, 0, 0, { red: 201, green: 100, blue: 100 });
+    expect(await dominantRed(image)).toEqual({ red: 201, green: 100, blue: 100, count: 1 });
+  });
+
+  it('excludes a pixel that dominates green but not blue', async () => {
+    // 200 > 10*2 = 20 (dominates green), but 200 <= 100*2 = 200 (not dominant over blue).
+    const image = createImageData(1, 1);
+    setPixel(image, 0, 0, { red: 200, green: 10, blue: 100 });
+    expect(await dominantRed(image)).toBeNull();
+  });
+
+  it('breaks ties by first-encountered colour, not by channel values', async () => {
+    // Two reds with equal pixel counts. The stable sort keeps the first-inserted
+    // (first-encountered in the scan) colour as the winner.
+    const image = createImageData(4, 1);
+    setPixel(image, 0, 0, { red: 255, green: 0, blue: 0 });
+    setPixel(image, 1, 0, { red: 255, green: 0, blue: 0 });
+    setPixel(image, 2, 0, { red: 200, green: 50, blue: 50 });
+    setPixel(image, 3, 0, { red: 200, green: 50, blue: 50 });
+    expect(await dominantRed(image)).toEqual({ red: 255, green: 0, blue: 0, count: 2 });
+  });
+
+  it('reports a single red pixel with count 1', async () => {
+    const image = createImageData(5, 5);
+    setPixel(image, 2, 2, RED);
+    expect(await dominantRed(image)).toEqual({ red: 255, green: 0, blue: 0, count: 1 });
+  });
+});
+
+describe('getColorAtPoint edge cases', () => {
+  it('returns the sole pixel colour on a 1x1 image', async () => {
+    const image = createImageData(1, 1);
+    setPixel(image, 0, 0, RED);
+    expect(await getColorAtPoint(image, 0, 0, 0)).toEqual({ red: 255, green: 0, blue: 0 });
+  });
+
+  it('samples the only pixel regardless of a large radius', async () => {
+    // Every out-of-range pixel is skipped by the bounds guard inside the loop,
+    // so the centre pixel is the sole contributor.
+    const image = createImageData(1, 1);
+    setPixel(image, 0, 0, RED);
+    expect(await getColorAtPoint(image, 0, 0, 50)).toEqual({ red: 255, green: 0, blue: 0 });
+  });
+
+  it('uses the default capture radius when none is supplied', async () => {
+    const image = createImageData(100, 100);
+    fillAll(image, RED);
+    const defaulted = await getColorAtPoint(image, 50, 50);
+    const explicit = await getColorAtPoint(image, 50, 50, STROKE_ANALYSIS.COLOR_SAMPLE_RADIUS);
+    expect(defaulted).toEqual(explicit);
+  });
+
+  it('returns null on a 1x1 image when the sole pixel is transparent', async () => {
+    const image = createImageData(1, 1);
+    setPixel(image, 0, 0, RED, TRANSPARENT);
+    expect(await getColorAtPoint(image, 0, 0, 5)).toBeNull();
+  });
+
+  it('rounds the averaged channels to the nearest integer', async () => {
+    // Two pixels with red 0 and red 1: average = 0.5; Math.round(0.5) rounds up.
+    const image = createImageData(2, 1);
+    setPixel(image, 0, 0, { red: 0, green: 0, blue: 0 });
+    setPixel(image, 1, 0, { red: 1, green: 0, blue: 0 });
+    expect(await getColorAtPoint(image, 0, 0, 1)).toEqual({ red: 1, green: 0, blue: 0 });
+  });
+});
+
+describe('toleranceFor', () => {
+  /**
+   * Pins `toleranceFor` to the formula its JSDoc commits to: the brush half-width
+   * (5 doc px) scaled by the contain fit, plus the antialiased fringe (2 CSS px).
+   * The scale is derived from `containFit(box, DEFAULT_DOCUMENT_SIZE)`, which is
+   * already covered by its own describe block above; these tests assert the
+   * WIRING — that toleranceFor multiplies and adds the right constants — at
+   * representative box sizes rather than trusting a single hand-computed value.
+   */
+
+  const CASES: { name: string; box: BoundingBox }[] = [
+    { name: 'box exactly the document size', box: { x: 0, y: 0, width: 800, height: 600 } },
+    { name: 'box half the document size', box: { x: 0, y: 0, width: 400, height: 300 } },
+    { name: 'wide canvas (width drives the fit)', box: { x: 0, y: 0, width: 1600, height: 600 } },
+    { name: 'tall canvas (height drives the fit)', box: { x: 0, y: 0, width: 800, height: 1200 } },
+    { name: 'narrow viewport-like canvas', box: { x: 98, y: 100, width: 974, height: 583 } },
+  ];
+
+  it.each(CASES)('equals DRAW_HALF_WIDTH_DOC_PX * scale + ANTIALIASED_FLANGE_CSS_PX for $name', ({ box }) => {
+    const scale = containFit(box, DEFAULT_DOCUMENT_SIZE).scale;
+    const expected = DRAW_HALF_WIDTH_DOC_PX * scale + ANTIALIASED_FLANGE_CSS_PX;
+    expect(toleranceFor(box)).toBeCloseTo(expected, 10);
+  });
+
+  it('grows with the box scale (wider viewport yields larger tolerance)', () => {
+    const small: BoundingBox = { x: 0, y: 0, width: 400, height: 300 };
+    const large: BoundingBox = { x: 0, y: 0, width: 1600, height: 1200 };
+    expect(toleranceFor(large)).toBeGreaterThan(toleranceFor(small));
+  });
+
+  it('is independent of the box origin (x and y must not affect the result)', () => {
+    const atOrigin: BoundingBox = { x: 0, y: 0, width: 600, height: 450 };
+    const offset: BoundingBox = { x: 100, y: 200, width: 600, height: 450 };
+    expect(toleranceFor(atOrigin)).toBeCloseTo(toleranceFor(offset), 10);
+  });
+
+  it('pins the documented constant values that the formula depends on', () => {
+    expect(DRAW_HALF_WIDTH_DOC_PX).toBe(5);
+    expect(ANTIALIASED_FLANGE_CSS_PX).toBe(2);
+  });
+
+  it('equals 7.0 for a 1:1 box (scale 1, the minimum non-letterboxed fit)', () => {
+    const box: BoundingBox = { x: 0, y: 0, width: 800, height: 600 };
+    expect(toleranceFor(box)).toBe(7.0);
+  });
+
+  it('equals 4.5 for a half-scale box', () => {
+    const box: BoundingBox = { x: 0, y: 0, width: 400, height: 300 };
+    expect(toleranceFor(box)).toBe(4.5);
+  });
+});
+
+describe('known gaps (it.fails tripwires)', () => {
+  // Each tripwire asserts the behaviour we WANT but the helper does NOT yet deliver.
+  // Wrapped in `it.fails`, it stays green while the gap is open; the moment the
+  // guard lands and the assertion starts passing, `it.fails` flips and reports an
+  // unexpected pass, which is the signal to promote it to a plain `it`.
+
+  const box: BoundingBox = { x: 100, y: 50, width: 400, height: 300 };
+
+  describe('containFit input validation', () => {
+    // containFit is deliberately the shared arithmetic; guards live at callers.
+    // These tripwires catch any addition of a throw guard that would change
+    // that contract — the same pattern used in contain-fit.test.ts.
+
+    it.fails('throws on a non-finite box dimension', () => {
+      expect(() => containFit({ width: Number.NaN, height: 300 })).toThrow();
+    });
+
+    it.fails('throws on a zero box dimension', () => {
+      expect(() => containFit({ width: 0, height: 300 })).toThrow();
+    });
+
+    it.fails('throws on a negative box dimension', () => {
+      expect(() => containFit({ width: -100, height: 300 })).toThrow();
+    });
+  });
+
+  describe('document coordinate mapping input validation', () => {
+    it.fails('throws on a non-finite document coordinate', () => {
+      expect(() => documentToCanvasOffset(box, Number.NaN, 300)).toThrow();
+    });
+
+    it.fails('throws on a non-finite canvas coordinate', () => {
+      expect(() => canvasOffsetToDocument(box, Number.NaN, 300)).toThrow();
+    });
+  });
+
+  describe('getColorAtPoint input validation', () => {
+    // NaN radius: Math.max(0, NaN) yields NaN, so the loop bounds NaN <= NaN are
+    // false and the body never runs — the result is null, correct only by accident.
+    //
+    // NOTE: an Infinity radius is NOT tripwired here because it would enter an
+    // infinite loop — pointY - Infinity is -Infinity and -Infinity + 1 stays
+    // -Infinity in IEEE 754, so the sampling loop never advances. A guard that
+    // rejects non-finite radii before the loop would fix both NaN and Infinity.
+    it.fails('throws on a NaN radius', async () => {
+      const image = createImageData(10, 10);
+      fillAll(image, RED);
+      await expect(getColorAtPoint(image, 5, 5, Number.NaN)).rejects.toThrow();
+    });
   });
 });

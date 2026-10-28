@@ -13,14 +13,18 @@ import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts'
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   REORDER_ACTION,
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_OPACITY_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 
@@ -97,21 +101,21 @@ function makeLayer(id: string, order: number): Layer {
 const documentSize = { width: 800, height: 600 };
 
 /** A layer the durable model can convert, so an append is decided against a real shadow. */
-function documentLayer(id: string, order: number): Layer {
+function documentLayer(id: string, order: number, isBedrock = true): Layer {
   return {
     ...createMockLayer({
       id,
       name: id,
       order,
-      isBedrock: true,
+      isBedrock,
       pos: { x: 0, y: 0, width: 800, height: 600 },
     }),
     source: {
       kind: 'blank',
       color: '#ffffff',
       opacity: 1,
-      isBedrock: true,
-      size: { width: 800, height: 600 },
+      isBedrock,
+      ...(isBedrock ? { size: { width: 800, height: 600 } } : { pos: { x: 0, y: 0, width: 800, height: 600 } }),
     },
   } as Layer;
 }
@@ -143,6 +147,11 @@ function setupWithDocument(layers: LayersRecord = { [documentLayer('layer-1', 0)
     });
   });
   return result;
+}
+
+function setupWithEditableLayer() {
+  const editableLayer = documentLayer('editable', 0, false);
+  return setupWithDocument({ [editableLayer.id]: editableLayer });
 }
 
 beforeAll(async () => {
@@ -404,7 +413,7 @@ describe('useLayers removeLayer', () => {
 
 describe('useLayers layer-property writers', () => {
   it('routes opacity through the append boundary and publishes one canonical entry', () => {
-    const result = setupWithDocument();
+    const result = setupWithEditableLayer();
     const id = Object.keys(result.current.store.layers)[0]!;
 
     act(() => {
@@ -433,6 +442,130 @@ describe('useLayers layer-property writers', () => {
       operation: { kind: 'set-layer-properties', layerId: id, patch: { opacity: 0.42 } },
     });
     expect(store.durableDocument!.cursor).toBe(0);
+  });
+
+  it('routes a blend-mode edit through the append boundary and durable property operation', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { blendMode: 'multiply' }, SET_LAYER_BLEND_MODE_ACTION);
+    });
+
+    expect(result.current.store.layers[id].blendMode).toBe('multiply');
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: SET_LAYER_BLEND_MODE_ACTION,
+      layerId: id,
+      args: { blendMode: 'multiply' },
+    });
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDocument!.history.at(-1)?.operation).toEqual({
+      kind: 'set-layer-properties',
+      layerId: id,
+      patch: { blendMode: 'multiply' },
+    });
+  });
+
+  it('records full lock and unlock as separate durable property actions', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => result.current.layers.updateLayer(id, { locked: true }, LOCK_LAYER_ACTION));
+    act(() => result.current.layers.updateLayer(id, { locked: false }, UNLOCK_LAYER_ACTION));
+
+    expect(result.current.store.layers[id].locked).toBe(false);
+    expect(result.current.store.history.slice(-2)).toMatchObject([
+      { actionName: LOCK_LAYER_ACTION, layerId: id, args: { locked: true } },
+      { actionName: UNLOCK_LAYER_ACTION, layerId: id, args: { locked: false } },
+    ]);
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDocument!.history.slice(-2).map((entry) => entry.operation)).toEqual([
+      { kind: 'set-layer-properties', layerId: id, patch: { locked: true } },
+      { kind: 'set-layer-properties', layerId: id, patch: { locked: false } },
+    ]);
+  });
+
+  it('refuses invalid blend modes and opacity/blend edits on a full-locked layer', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    const before = result.current.store.history;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { blendMode: 'destination-in' }, SET_LAYER_BLEND_MODE_ACTION);
+    });
+    expect(result.current.store.history).toBe(before);
+
+    act(() => {
+      result.current.layers.updateLayer(id, { locked: true }, LOCK_LAYER_ACTION);
+    });
+    const lockedHistory = result.current.store.history;
+    act(() => {
+      result.current.layers.updateLayer(id, { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+      result.current.layers.updateLayer(id, { blendMode: 'screen' }, SET_LAYER_BLEND_MODE_ACTION);
+    });
+    expect(result.current.store.history).toBe(lockedHistory);
+  });
+
+  it('refuses opacity, blend-mode, and lock edits on a background layer', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    const history = result.current.store.history;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+      result.current.layers.updateLayer(id, { blendMode: 'multiply' }, SET_LAYER_BLEND_MODE_ACTION);
+      result.current.layers.updateLayer(id, { locked: true }, LOCK_LAYER_ACTION);
+    });
+
+    expect(result.current.store.history).toBe(history);
+    expect(result.current.store.layers[id]).toMatchObject({ opacity: 1, blendMode: 'source-over', locked: false });
+  });
+
+  it('commits a rotated crop and all layer transforms as one document history entry', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    let committed = false;
+
+    act(() => {
+      committed = result.current.layers.applyDocumentCrop({ x1: 30, y1: 40, x2: 300, y2: 250 }, 17);
+    });
+
+    expect(committed).toBe(true);
+    const entry = result.current.store.history.at(-1)!;
+    const durableEntry = result.current.store.durableDocument!.history.at(-1)!;
+    expect(entry).toMatchObject({
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      layerId: 'document',
+      args: {
+        previousFrame: { x: 0, y: 0, width: 800, height: 600 },
+        nextFrame: { x: 30, y: 40, width: 270, height: 210 },
+        transform: expect.objectContaining({ a: expect.any(Number), b: expect.any(Number) }),
+      },
+    });
+    expect(durableEntry.operation).toMatchObject({
+      kind: 'transform-document',
+      previous: { x: 0, y: 0, width: 800, height: 600 },
+      next: { x: 30, y: 40, width: 270, height: 210 },
+    });
+    expect(result.current.store.layers[id].operations).toHaveLength(1);
+    expect(result.current.store.layers[id].operations[0]?.kind).toBe('affine-transform');
+  });
+
+  it('keeps an unrotated crop as the existing frame-only history operation', () => {
+    const result = setupWithEditableLayer();
+    let committed = false;
+
+    act(() => {
+      committed = result.current.layers.applyDocumentCrop({ x1: 30, y1: 40, x2: 300, y2: 250 });
+    });
+
+    expect(committed).toBe(true);
+    expect(result.current.store.durableDocument!.history.at(-1)?.operation).toMatchObject({
+      kind: 'set-document-frame',
+      next: { x: 30, y: 40, width: 270, height: 210 },
+    });
+    const id = Object.keys(result.current.store.layers)[0]!;
+    expect(result.current.store.layers[id].operations).toEqual([]);
   });
 
   it('routes a rename through the append boundary and publishes one entry under the legacy id', () => {
@@ -607,8 +740,8 @@ describe('useLayers layer-property writers', () => {
   });
 
   it('publishes a reorder through the store and carries the diagnostics a publication carries', () => {
-    const bottom = documentLayer('bottom', 0);
-    const top = documentLayer('top', 1);
+    const bottom = documentLayer('bottom', 0, true);
+    const top = documentLayer('top', 1, false);
     const result = setupWithDocument({ bottom, top });
     expect(planHistoryAppend).not.toHaveBeenCalled();
 
@@ -640,7 +773,7 @@ describe('useLayers layer-property writers', () => {
     ]);
 
     act(() => {
-      result.current.layers.moveLayerAfter('bottom', 'top');
+      result.current.layers.moveLayerAfter('top', 'bottom');
     });
 
     // The writer still asks the hook boundary for nothing, because a reorder's
@@ -650,8 +783,8 @@ describe('useLayers layer-property writers', () => {
     const store = result.current.store;
     expect(store.history.at(-1)).toMatchObject({
       actionName: REORDER_ACTION,
-      layerId: 'bottom',
-      args: { layerToMoveId: 'bottom', afterWhichLayerId: 'top' },
+      layerId: 'top',
+      args: { layerToMoveId: 'top', afterWhichLayerId: 'bottom' },
     });
     // The carried diagnostic is the proof the append published rather than
     // reconverting: a reconversion would have replaced the list with its own.
@@ -662,5 +795,174 @@ describe('useLayers layer-property writers', () => {
       'reorder-layers',
     ]);
     expect(store.durableDocument!.cursor).toBe(1);
+  });
+
+  describe('durable projection publication identity', () => {
+    it('selects the durable projection when its publication identity matches the live document', () => {
+      const result = setupWithDocument();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      // Establish a durable document with cursor at 0 (baseline + one entry)
+      act(() => {
+        result.current.layers.updateLayer(id, { name: 'First' }, RENAME_LAYER_ACTION);
+      });
+      const afterFirst = result.current.store;
+      expect(afterFirst.durableDocument!.cursor).toBe(0);
+      expect(afterFirst.historyIndex).toBe(1);
+      expect(afterFirst.durableDocument!.cursor).toBeLessThan(afterFirst.historyIndex);
+
+      // Capture the durable document's publication identity
+      const durableDoc = afterFirst.durableDocument!;
+      const matchingHistoryItem: HistoryItem = {
+        id: 'rename-second',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: id,
+        args: { name: 'Second' },
+      };
+      const matchingPayload = {
+        updates: { layers: { [id]: { ...afterFirst.layers[id], name: 'Second' } } },
+        historyItem: matchingHistoryItem,
+        durableEntry: {
+          id: 'rename-second',
+          schemaVersion: 1,
+          enabled: true,
+          operation: { kind: 'set-layer-properties', layerId: id, patch: { name: 'Second' } },
+        } as DurableHistoryEntry,
+        durableDocument: durableDoc,
+        durableStatus: 'current' as const,
+        durableDiagnostics: [],
+      };
+
+      // Dispatch with matching publication identity - the projection should be selected
+      act(() => {
+        result.current.dispatch({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: matchingPayload,
+        });
+      });
+
+      const store = result.current.store;
+      // The durable projection was published: cursor advanced, history grew by one
+      expect(store.durableStatus).toBe('current');
+      expect(store.durableDocument!.cursor).toBe(1);
+      expect(store.durableDocument!.history).toHaveLength(2);
+      expect(store.durableDocument!.history[1]!.id).toBe('rename-second');
+      // The legacy timeline also advanced
+      expect(store.historyIndex).toBe(2);
+    });
+
+    it('falls back to legacy reconversion when the durable projection identity mismatches', () => {
+      const result = setupWithDocument();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      // Establish a durable document
+      act(() => {
+        result.current.layers.updateLayer(id, { name: 'First' }, RENAME_LAYER_ACTION);
+      });
+      const afterFirst = result.current.store;
+      const durableDoc = afterFirst.durableDocument!;
+
+      // Create a mismatched projection: different documentId
+      const mismatchedHistoryItem: HistoryItem = {
+        id: 'rename-mismatch',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: id,
+        args: { name: 'Mismatched' },
+      };
+      const mismatchedPayload = {
+        updates: { layers: { [id]: { ...afterFirst.layers[id], name: 'Mismatched' } } },
+        historyItem: mismatchedHistoryItem,
+        durableEntry: {
+          id: 'rename-second',
+          schemaVersion: 1,
+          enabled: true,
+          operation: { kind: 'set-layer-properties' as const, layerId: id, patch: { name: 'Second' } },
+        } as DurableHistoryEntry,
+        durableDocument: {
+          ...durableDoc,
+          documentId: 'different-document-id',
+        },
+        durableStatus: 'current' as const,
+        durableDiagnostics: [],
+      };
+
+      // Dispatch with mismatched publication identity - should fall back to legacy
+      act(() => {
+        result.current.dispatch({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: mismatchedPayload,
+        });
+      });
+
+      const store = result.current.store;
+      // The fallback reconversion produces a new durable document (not the mismatched one)
+      expect(store.durableStatus).toBe('current');
+      // The mismatched projection was rejected, so the durable document was rebuilt from legacy
+      expect(store.durableDocument!.documentId).toBe(afterFirst.documentId);
+      expect(store.durableDocument!.history.map((e) => e.id)).toContain('rename-mismatch');
+    });
+
+    it('falls back to legacy when the durable cursor would lead the legacy cursor', () => {
+      const result = setupWithDocument();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      // Establish a durable document with cursor at 0
+      act(() => {
+        result.current.layers.updateLayer(id, { name: 'First' }, RENAME_LAYER_ACTION);
+      });
+      const afterFirst = result.current.store;
+      const durableDoc = afterFirst.durableDocument!;
+
+      // Manually advance the durable cursor beyond what the legacy timeline allows
+      // by creating a projection with cursor at tip of durable history but legacy cursor lagging
+      const advancedDurableDoc = {
+        ...durableDoc,
+        cursor: durableDoc.history.length, // cursor at tip (would be 1), but legacy is at 1
+        history: [
+          ...durableDoc.history,
+          {
+            id: 'phantom',
+            schemaVersion: 1,
+            enabled: true,
+            operation: { kind: 'set-layer-properties' as const, layerId: id, patch: { name: 'Phantom' } },
+          },
+        ],
+      };
+
+      const mismatchedHistoryItem: HistoryItem = {
+        id: 'rename-second',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: id,
+        args: { name: 'Second' },
+      };
+      const mismatchedPayload = {
+        updates: { layers: { [id]: { ...afterFirst.layers[id], name: 'Second' } } },
+        historyItem: mismatchedHistoryItem,
+        durableEntry: {
+          id: 'rename-second',
+          schemaVersion: 1,
+          enabled: true,
+          operation: { kind: 'set-layer-properties', layerId: id, patch: { name: 'Second' } },
+        } as DurableHistoryEntry,
+        durableDocument: advancedDurableDoc,
+        durableStatus: 'current' as const,
+        durableDiagnostics: [],
+      };
+
+      // Dispatch with a projection whose durable cursor would lead legacy
+      act(() => {
+        result.current.dispatch({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: mismatchedPayload,
+        });
+      });
+
+      const store = result.current.store;
+      // The projection was rejected (precondition: durable cursor would lead legacy)
+      // Fallback reconversion produces a current document with the new entry
+      expect(store.durableStatus).toBe('current');
+      expect(store.durableDocument!.cursor).toBeLessThanOrEqual(store.historyIndex);
+      expect(store.durableDocument!.history.map((e) => e.id)).toContain('rename-second');
+    });
   });
 });

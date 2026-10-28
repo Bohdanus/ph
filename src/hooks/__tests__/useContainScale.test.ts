@@ -78,4 +78,69 @@ describe('useContainScale', () => {
 
     expect(getBoundingClientRect.mock.calls.length).toBe(afterMount);
   });
+
+  describe('edge cases: non-finite and zero/negative dimensions', () => {
+    /**
+     * NaN is falsy, so the guard `!rect.width` catches it before it reaches
+     * `containFit`. The scale holds at 1 — the identity divisor — rather than
+     * dividing by a NaN and propagating it through every painter.
+     */
+    it('holds at 1 when the container reports NaN in both dimensions', () => {
+      const ref = { current: container(Number.NaN, Number.NaN) };
+      const { result } = renderHook(() => useContainScale(ref, IMAGE));
+
+      expect(result.current.current).toBe(1);
+    });
+
+    it('holds at 1 when the document reports NaN in either dimension', () => {
+      const ref = { current: container(400, 200) };
+      const { result } = renderHook(() => useContainScale(ref, { width: Number.NaN, height: 100 }));
+
+      expect(result.current.current).toBe(1);
+    });
+
+    it('holds at 1 when only the container width is zero', () => {
+      const ref = { current: container(0, 200) };
+      const { result } = renderHook(() => useContainScale(ref, IMAGE));
+
+      expect(result.current.current).toBe(1);
+    });
+
+    it('holds at 1 when only the image height is zero', () => {
+      const ref = { current: container(400, 200) };
+      const { result } = renderHook(() => useContainScale(ref, { width: 100, height: 0 }));
+
+      expect(result.current.current).toBe(1);
+    });
+
+    it('holds at 1 when a NaN and a valid dimension are mixed in the container', () => {
+      const ref = { current: container(Number.NaN, 300) };
+      const { result } = renderHook(() => useContainScale(ref, IMAGE));
+
+      expect(result.current.current).toBe(1);
+    });
+  });
+
+  /**
+   * Tripwires: each asserts the guard we WANT but the current `!width || !height`
+   * check does NOT yet deliver. Infinity and negative values are both truthy, so
+   * they slip through and reach `containFit` — producing a non-finite or negative
+   * scale. Wrapped in `it.fails`: when a guard is added and the hook holds at 1,
+   * the assertion passes and flips to an unexpected-pass signal.
+   */
+  describe('tripwires (it.fails: desired guards not yet implemented)', () => {
+    it.fails('holds at 1 for a non-finite (Infinity) container dimension', () => {
+      const ref = { current: container(Infinity, Infinity) };
+      const { result } = renderHook(() => useContainScale(ref, IMAGE));
+
+      expect(result.current.current).toBe(1);
+    });
+
+    it.fails('holds at 1 for a negative container dimension', () => {
+      const ref = { current: container(-400, 200) };
+      const { result } = renderHook(() => useContainScale(ref, IMAGE));
+
+      expect(result.current.current).toBe(1);
+    });
+  });
 });

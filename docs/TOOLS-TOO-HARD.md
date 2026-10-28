@@ -571,8 +571,8 @@ reconstruct the same pixels from the recorded args. Dwell accumulation makes the
 wall-clock time as well, so the same args replay to a different image. That is a different half of
 the replay contract from the one the presentation boundary covers — a promoted cache reaches a
 published layer only inside the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm
-(`StoreContext.tsx`), and `AGENTS.md`'s Architecture status section is the one
-home for that — so what dwell accumulation breaks is commit purity, not cache publication. Changing
+(`StoreContext.tsx`), and `docs/ARCHITECTURE.md` §"The presentation cache" is the
+one home for that — so what dwell accumulation breaks is commit purity, not cache publication. Changing
 the commit discipline for dwell tools is a history-architecture change with a migration attached,
 not a processor edit.
 
@@ -691,7 +691,11 @@ never creates a layer, unlike the Brush.
 ### Layer opacity, and the paint model
 
 **What Photoshop does.** Every layer carries an opacity the user sets, and a brush stroke paints
-into the layer that is already there.
+into the layer that is already there, subject to the layer's kind and protection state. Current
+Photoshop's Brush has a documented exception for type, shape, Smart Object, and adjustment layers:
+it creates a new transparent layer rather than prompting to rasterize. The full editability,
+rasterization, mask, and lock matrix belongs in [`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates),
+not in this tool difficulty record.
 
 **What this app does.** `Layer.opacity` is a required field (`layer-types.ts` — `Layer.opacity`),
 populated by PSD import (`psd-utils.ts` — the layer record `loadPsd()`'s `visit()` walk builds).
@@ -826,12 +830,11 @@ too hard (above), so one of the two Photoshop controls has no honest replacement
 The rail does not carry a number of Adobe tools. The full roster, keyed by Adobe's own
 identity for each tool — name, group, shortcut, headline options, and a source — is
 [`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md), which took this list over. That file also records
-the roster counts that disagree — the 30 names this section used to carry against "34 to
-add" in `HANDOFF.md` §74 — and leaves the discrepancy unresolved for the operator. **One addition to
-its arithmetic, from this pass:** `HANDOFF.md` §74 names a **sixth** absent tool the 30 never listed,
-**Content-Aware Move**, so the
-union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` now carries
-that name, at its Selection row.
+the current candidate rows and the unresolved default-roster evidence. The older 30-entry list and
+`HANDOFF.md` §74's 34-to-add arithmetic are historical, not a current target: Adobe publishes no
+complete numbered default Tools-panel roster. `TOOLS-INVENTORY.md` now separates the current
+non-preview candidates from the default-off Content-Aware Tracing preview and records the source-backed
+map counts instead of adding historical totals.
 
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
@@ -848,6 +851,4 @@ need implementation and verification.
 Path Selection and Direct Selection would edit. Object Selection needs an edge-following
 segmentation comparable to the Quick Selection entry. History Brush and Art History Brush
 need the retained-raster history model that Erase to History needs. Perspective Crop is the
-Crop entry's transform work. Zoom is worth one note of accuracy: the app has a zoom
-_interaction mode_ on the canvas, and no Zoom _tool_ — the registry at
-`tool-types.ts` — the `ToolArgsByName` map — has no entry for it, and the rail has none either.
+Crop entry's transform work.

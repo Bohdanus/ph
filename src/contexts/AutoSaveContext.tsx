@@ -234,6 +234,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
 
     const currentStore = storeRef.current;
     const committedLayers = commitDirtyToolRef.current();
+    if (!committedLayers) return;
 
     savePsd(committedLayers, currentStore.totalSize, currentStore.documentFrame)
       .then((buffer) => {

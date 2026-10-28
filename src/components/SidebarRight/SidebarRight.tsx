@@ -9,7 +9,7 @@ import HistoryTab from './HistoryTab.tsx';
 import PanelGroup from './PanelGroup.tsx';
 
 /**
- * The right-hand dock: two panel groups you can resize, reorder, roll up and re-dock.
+ * The right-hand dock: two panel groups you can resize, reorder and roll up.
  *
  * ## Why the width lives on the element and not on the grid track
  *
@@ -33,20 +33,11 @@ import PanelGroup from './PanelGroup.tsx';
  * did, and `overflow: hidden` would therefore not have clipped it. The e2e measurement says so
  * directly — the handle lands 1px inside the 1px border.
  *
- * The clipping moved inward anyway, to the column that genuinely needs it, and the reason is
- * not the handle. The dock-edge drop line is `position: fixed` and renders as a SIBLING of that
- * column; an `overflow: hidden` aside is not a containing block for it either, but it is one
- * step closer to becoming one, and the aside is the element most likely to acquire a transform
- * if the rail's re-dock ever animates. The panel groups keep exactly the clipping they had.
+ * The clipping moved inward anyway, to the column that genuinely needs it. The panel groups keep
+ * exactly the clipping they had.
  *
- * ## The panel drag does two things
- *
- * One gesture, two destinations, because that is the gesture Photoshop has. Dragging a tab
- * vertically inside the column reorders it; dragging it at the opposite workspace edge moves
- * the whole dock to that edge. Adobe: "To dock a panel, drag it by it's tab to the edge of
- * another panel or panel group. Release the tab when a blue highlight appears" and "To create
- * a dock, move panels to the right edge of the workspace until a drop zone appears." Both drop
- * targets are drawn as a blue line before the release, never after.
+ * A panel tab drag previews and commits an in-dock reorder. Panel relocation is intentionally
+ * retired by `PanelLayout`; the dock remains pinned to the right edge.
  */
 
 /**
@@ -62,9 +53,6 @@ import PanelGroup from './PanelGroup.tsx';
  * on the window the user happened to have.
  */
 const PANEL_MIN_HEIGHT = 88;
-
-/** How far out toward the opposite edge a tab has to travel before the dock will follow it. */
-const RE_DOCK_ZONE = 0.25;
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 
@@ -115,12 +103,9 @@ const SidebarRight = () => {
   /** Panel whose tab is being dragged, plus where that drag would currently land. */
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null);
-  const [edgeTarget, setEdgeTarget] = useState<'left' | 'right' | null>(null);
-  const dragOriginXRef = useRef(0);
-  // The same three, for the commit to read. See `onPanelDragEnd`.
+  // The same two, for the commit to read. See `onPanelDragEnd`.
   const draggingPanelRef = useRef<PanelId | null>(null);
   const insertionIndexRef = useRef<number | null>(null);
-  const edgeTargetRef = useRef<'left' | 'right' | null>(null);
 
   /** Where the column was and how tall when a divider drag began, so deltas convert to a ratio. */
   const splitterStartRef = useRef<{ ratio: number; height: number } | null>(null);
@@ -172,54 +157,32 @@ const SidebarRight = () => {
       // ratio. The clamp below would absorb it, but the arithmetic is better not to happen.
       if (start === null || start.height <= 0) return;
       const floor = Math.min(0.5, PANEL_MIN_HEIGHT / start.height);
-      const next = start.ratio - dy / start.height;
+      const next = start.ratio + dy / start.height;
       layout.setSplitRatio(clamp(next, floor, 1 - floor));
     },
     [layout]
   );
 
   const onPanelDragStart = useCallback(
-    (id: PanelId) => (event: React.PointerEvent<HTMLElement>) => {
+    (id: PanelId) => () => {
       draggingPanelRef.current = id;
       setDraggingPanel(id);
-      dragOriginXRef.current = event.clientX;
       // `null` until the pointer has actually MOVED. Setting it on the press showed a blue
       // drop line on a bare click, which promises a drop target for a gesture that is not
       // happening and is not going to.
       insertionIndexRef.current = null;
       setInsertionIndex(null);
-      edgeTargetRef.current = null;
-      setEdgeTarget(null);
     },
     []
   );
 
   const onPanelDrag = useCallback(
     (id: PanelId) =>
-      ({ dx, dy }: { dx: number; dy: number }) => {
+      ({ dy }: { dx: number; dy: number }) => {
         const order = layout.panelOrder;
         const index = order.indexOf(id);
         const dock = dockRef.current;
         const height = dock?.getBoundingClientRect().height ?? 0;
-
-        // The edge test comes first and wins: past the threshold the dock is being thrown at the
-        // other side of the window, and a reorder indicator on top of that would be a lie about
-        // what the drop will do.
-        const pointerX = dragOriginXRef.current + dx;
-        const viewportWidth = document.documentElement.clientWidth;
-        const wantsLeft =
-          layout.dockSide === 'left'
-            ? pointerX > viewportWidth * (1 - RE_DOCK_ZONE)
-            : pointerX < viewportWidth * RE_DOCK_ZONE;
-        if (wantsLeft) {
-          edgeTargetRef.current = layout.dockSide === 'left' ? 'right' : 'left';
-          setEdgeTarget(edgeTargetRef.current);
-          insertionIndexRef.current = null;
-          setInsertionIndex(null);
-          return;
-        }
-        edgeTargetRef.current = null;
-        setEdgeTarget(null);
 
         if (height <= 0) return;
         // Past the middle of the column is the other slot. A threshold rather than a live
@@ -230,7 +193,7 @@ const SidebarRight = () => {
         insertionIndexRef.current = next;
         setInsertionIndex(next);
       },
-    [layout.dockSide, layout.panelOrder]
+    [layout.panelOrder]
   );
 
   // `cancelled` is honoured for BOTH destinations, and it is not optional bookkeeping. A panel
@@ -241,25 +204,16 @@ const SidebarRight = () => {
       if (cancelled) {
         draggingPanelRef.current = null;
         insertionIndexRef.current = null;
-        edgeTargetRef.current = null;
         setDraggingPanel(null);
         setInsertionIndex(null);
-        setEdgeTarget(null);
-        dragOriginXRef.current = 0;
         return;
       }
       // Read through refs, for the reason `SidebarLeft` gives at length: the hook refreshes
       // its callback ref in a PASSIVE effect, and a `pointerup` that arrives before that effect
-      // flushes would commit the previous gesture's target — a silently dropped re-dock, or a
-      // reorder into the wrong slot. The outcome is previewed continuously on screen, so the
+      // flushes would commit the previous gesture's target — a reorder into the wrong slot. The
+      // outcome is previewed continuously on screen, so the
       // commit is reading which preview is showing, and the preview is state.
-      if (edgeTargetRef.current !== null) {
-        // The dock's own destination, mapped straight through. It used to be inverted, because
-        // one shared flag said which of the TWO columns was on the left rather than where the
-        // dock was, so throwing the dock at an edge had to write the rail's position to say so.
-        // `setDockSide` writes the dock's edge, so nothing is inverted here.
-        layout.setDockSide(edgeTargetRef.current);
-      } else if (draggingPanelRef.current !== null && insertionIndexRef.current !== null) {
+      if (draggingPanelRef.current !== null && insertionIndexRef.current !== null) {
         const order = [...layout.panelOrder];
         const from = order.indexOf(draggingPanelRef.current);
         // `splice` on a copy, because `PanelOrder` is a readonly tuple: the state is the order,
@@ -272,11 +226,8 @@ const SidebarRight = () => {
       }
       draggingPanelRef.current = null;
       insertionIndexRef.current = null;
-      edgeTargetRef.current = null;
       setDraggingPanel(null);
       setInsertionIndex(null);
-      setEdgeTarget(null);
-      dragOriginXRef.current = 0;
     },
     [layout]
   );
@@ -360,7 +311,7 @@ const SidebarRight = () => {
         className={index === 0 ? 'border-b border-gray-300 dark:border-gray-600' : ''}
         id={id}
         isDragging={draggingPanel === id}
-        isDraggable={false}
+        isDraggable
         isRolledUp={isRolledUp}
         key={id}
         onDrag={onPanelDrag(id)}
@@ -494,10 +445,8 @@ const SidebarRight = () => {
           </>
         )}
 
-        {/* The drop target for a tab drag, drawn before the release. A blue line at the column
-            edge is Photoshop's "blue line" docking zone, as distinct from the blue outline that
-            means "join this group as another tab". */}
-        {insertionIndex !== null && edgeTarget === null && !layout.isIconOnly && (
+        {/* The drop target for an in-dock tab reorder, drawn before the release. */}
+        {insertionIndex !== null && !layout.isIconOnly && (
           <div
             aria-hidden="true"
             className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-blue-500 ${
@@ -507,19 +456,6 @@ const SidebarRight = () => {
           />
         )}
       </div>
-
-      {/* Moving the dock to the other edge. "To create a dock, move panels to the right edge of
-          the workspace until a drop zone appears." Fixed, so it paints against the viewport the
-          way the drop zone does rather than against this column. */}
-      {edgeTarget !== null && (
-        <div
-          aria-hidden="true"
-          className={`pointer-events-none fixed inset-y-0 z-[60] w-1 bg-blue-500 ${
-            edgeTarget === 'left' ? 'left-0' : 'right-0'
-          }`}
-          data-testid="dock-edge-line"
-        />
-      )}
     </aside>
   );
 };

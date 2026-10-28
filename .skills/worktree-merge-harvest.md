@@ -63,11 +63,13 @@ Regenerate. Never read the committed `WORKTREES.json`, and never hand-edit it �
 it is a generated artifact and untracked, so an edit is lost on the next run.
 
 ```bash
-cd /Users/bkalynovskyi/ph
-node scripts/worktree-inventory.mjs --quiet
+cd <verified-task-worktree>
+node scripts/worktree-inventory.mjs
+npm run branches:orphan
 ```
 
-Add `--no-live-writers "<why>"` when you know every chat is gone — an editor
+The first report covers worktree-backed branches; the second covers branch-only refs. Classify
+every orphan before ending the harvest. Add `--no-live-writers "<why>"` when you know every chat is gone — an editor
 restart takes them all with it, and the recency heuristics keep reporting an owner
 for thirty minutes afterwards. It is a declared hard state, recorded in
 `ownership.suppressed` beside the signals it overrode.
@@ -294,13 +296,12 @@ of the chat that wrote it.
   the platform contract — **not** the author's justification. A reviewer told
   "this is needed because of X" stops looking for X.
 - **Model, per `AGENTS.md`:** pass `model` AND `provider` together. Omitting them
-  inherits this session's model, which on a free orchestrator has resolved onto a
-  paid GPT id and killed the subagent at zero tokens with `Add credits to
-continue`. Two rules ride with that: **a free session must never launch a GPT
-  subagent**, so the free default is
-  `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'`; and
-  `agent_manager` inherits the current turn's model unless both fields are set, so
-  a main turn on a paid model silently spawns paid worktrees. The subagent also
+  inherits this session's model, which on a free orchestrator can resolve onto a
+  paid GPT id and kill the subagent at zero tokens. **A free session must never launch a GPT
+  subagent.** Resolve the current free model/provider pair with `agent_manager_models` and use
+  the current table in `AGENTS.md`; do not copy an expired model name from an old transcript.
+  `agent_manager` inherits the current turn's model unless both fields are set, so a main turn on
+  a paid model silently spawns paid worktrees. The subagent also
   **inherits the working directory** — so launch reviews with the branch's absolute
   worktree path in the brief, and never from the main checkout, or the review's own
   notes land in `main`.
@@ -483,8 +484,9 @@ so a branch it kept is anchored and recoverable.
 worktree, so the refusal is about you or about nobody in particular — only the write arm names a
 chat, and only for thirty minutes. `--no-live-writers` does not clear it.
 `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is the
-one home for the mechanism, and `HANDOFF.md` §224 is the one home for the flag that _would_ clear it,
-which a sweep must not reach for.
+one home for the mechanism. There is no supported flag that clears this refusal; leave the landed
+directory in place, record that removal is pending, and establish complete death evidence before
+retrying disposal.
 
 This is the gate working: the same signal caught a worktree with agents editing it an hour earlier
 reading `action: "dispose"` with every git fact correct. Do not reach for the removal command by

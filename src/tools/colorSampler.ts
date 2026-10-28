@@ -15,8 +15,9 @@ import { EYEDROPPER_SAMPLE_SIZE_OPTIONS, type EyedropperSampleSize } from './eye
  * in this app writes it anywhere a commit could be recorded from.
  *
  * **The unit is the document pixel**, exactly as it is for the Ruler and for the Eyedropper beside
- * it: the composited workspace canvas is sized to the document frame, so a document-space point IS
- * a canvas pixel and a sample size is a square of document pixels.
+ * it: the composited workspace canvas is sized to the document frame, so the canvas's own pixel (0,0)
+ * IS the frame origin, a frame-space point is a canvas pixel, and a sample size is a square of
+ * document pixels.
  */
 export type ColorSamplerToolArgs = {
   /**
@@ -139,7 +140,7 @@ export const sampleColorAt = (
   width: number,
   height: number,
   point: Point,
-  sampleSize: EyedropperSampleSize
+  sampleSize: number
 ): string | null => {
   const centerX = Math.floor(point.x);
   const centerY = Math.floor(point.y);

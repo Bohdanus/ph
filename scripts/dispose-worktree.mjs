@@ -175,6 +175,8 @@ export const REFUSALS = {
         : `${Math.round(offsetFromNowMs / 60000)} min ago`;
     return `WORKTREES.json was generated ${relativeTime} (${generatedAt}), outside the ${MAX_INVENTORY_AGE_MS / 60000} min limit. Re-run \`node scripts/worktree-inventory.mjs\` and read the new verdict; a decision about a live worktree is exactly the one that goes stale.`;
   },
+  'inventory-base-moved': (inventoryHead, currentHead) =>
+    `The no-op merge proof was recorded against main ${inventoryHead ?? '(unknown)'}, but main is now ${currentHead ?? '(unknown)'}. Regenerate the inventory and re-evaluate the merge result before removing this branch.`,
   'inventory-evaluation-stale': (offsetFromNowMs, evaluationAt) => {
     const relativeTime = !Number.isFinite(offsetFromNowMs)
       ? 'at an invalid time'
@@ -466,7 +468,8 @@ export function preflight({
   // agreeing — the inventory is a regenerable file, so a second read after a
   // regeneration would be a second answer.
   const keepBranch = preserveBranch || inventory?.record?.action === ACTION.LEGACY;
-  let deleteAbsorbedBranch = false;
+  let deleteUnmergedBranch = false;
+  let deleteReason = null;
 
   if (!gitState?.found) {
     refuse('unknown-worktree', target);
@@ -514,8 +517,7 @@ export function preflight({
       // a live, dirty or in-flight worktree applies to it unchanged; the only
       // thing that differs is whether the BRANCH goes with the directory, and
       // `dispose()` answers that.
-      const staleBranchRemoval =
-        preserveBranch && (inventory.record.action === ACTION.AT_RISK || inventory.record.action === ACTION.LAND);
+      const staleBranchRemoval = preserveBranch && inventory.record.action === ACTION.AT_RISK;
       if (
         inventory.record.action !== ACTION.DISPOSE &&
         inventory.record.action !== ACTION.LEGACY &&
@@ -526,8 +528,23 @@ export function preflight({
       if (inventory.record.action === ACTION.DISPOSE && inventory.record.prunable !== true) {
         refuse('inventory-not-prunable');
       }
-      deleteAbsorbedBranch =
-        inventory.record.action === ACTION.DISPOSE && inventory.record.patchEquivalence === 'absorbed';
+      const noOpMerge =
+        inventory.record.action === ACTION.DISPOSE &&
+        inventory.record.mergedIntoMain === false &&
+        inventory.record.patchEquivalence !== 'absorbed' &&
+        inventory.record.mergeResultMatchesBase === true;
+      const noOpMergeBaseMatches =
+        inventory.base === 'main' && typeof inventory.mainHead === 'string' && inventory.mainHead === gitState.mainHead;
+      if (noOpMerge && !noOpMergeBaseMatches) {
+        refuse('inventory-base-moved', inventory.mainHead, gitState.mainHead);
+      }
+      deleteUnmergedBranch =
+        inventory.record.action === ACTION.DISPOSE &&
+        inventory.record.mergedIntoMain === false &&
+        (inventory.record.patchEquivalence === 'absorbed' || (noOpMerge && noOpMergeBaseMatches));
+      if (deleteUnmergedBranch) {
+        deleteReason = inventory.record.patchEquivalence === 'absorbed' ? 'patch-absorbed' : 'merge-tree-no-op';
+      }
       if (inventory.record.mustNotPrune) refuse('must-not-prune');
       // The liveness arm this guard used to re-derive from two channels that
       // structurally cannot see the chat in question, while the signal was
@@ -644,7 +661,9 @@ export function preflight({
     failures,
     record: inventory?.record ?? null,
     keepBranch,
-    deleteAbsorbedBranch,
+    deleteUnmergedBranch,
+    deleteReason,
+    expectedBaseHead: inventory?.mainHead ?? null,
   };
 }
 
@@ -726,6 +745,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   }
 
   let tip = null;
+  let mainHead = null;
   let modified = 0;
   let untracked = 0;
   let dirtyPaths = [];
@@ -736,6 +756,11 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     tip = run(absolutePath, ['rev-parse', 'HEAD']).stdout.trim();
   } catch {
     tip = null;
+  }
+  try {
+    mainHead = run(cwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() || null;
+  } catch {
+    mainHead = null;
   }
   try {
     const status = run(absolutePath, ['status', '--porcelain']).stdout;
@@ -786,6 +811,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     locked: match.locked ?? false,
     prunableReason: match.prunableReason ?? null,
     tip,
+    mainHead,
     isPrimary: commonDir !== '' && gitDir === commonDir,
     commonDir,
     modified,
@@ -1119,6 +1145,8 @@ export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locate
     ok: true,
     reason: null,
     path,
+    base: doc.base ?? null,
+    mainHead: doc.mainHead ?? null,
     generatedAt: doc.generatedAt ?? null,
     generatedAtMs: Number.isNaN(generatedAtMs) ? NaN : generatedAtMs,
     evaluationAt,
@@ -1483,14 +1511,23 @@ function firstLine(err) {
  * caller can pass one.
  *
  * `git branch -d` rather than `-D` for ordinary disposal: it refuses an
- * unmerged branch, and that refusal is the guard. The generated absorbed-patch
- * exception is passed explicitly as `deleteAbsorbedBranch`; it anchors first
- * and then uses `-D`, never accepting a caller-supplied force flag.
+ * unmerged branch, and that refusal is the guard. Two independently verified
+ * cases may use `-D` only after an anchor exists: patch absorption, and a
+ * conflict-free merge whose result tree equals the exact main snapshot. The
+ * latter rechecks main before removal and before branch deletion.
  */
 export function dispose(
   cwd,
   gitState,
-  { run = defaultRun, fs = defaultFs, tar = defaultTar, keepBranch = false, deleteAbsorbedBranch = false } = {}
+  {
+    run = defaultRun,
+    fs = defaultFs,
+    tar = defaultTar,
+    keepBranch = false,
+    deleteUnmergedBranch = false,
+    deleteReason = null,
+    expectedBaseHead = null,
+  } = {}
 ) {
   const steps = [];
   // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
@@ -1511,6 +1548,28 @@ export function dispose(
       anchorRef: null,
       salvage: null,
       branchKept: false,
+    };
+  }
+
+  const noOpMergeBaseIsCurrent = () => {
+    if (deleteReason !== 'merge-tree-no-op') return true;
+    try {
+      return run(cwd, ['rev-parse', '--verify', 'main^{commit}']).stdout.trim() === expectedBaseHead;
+    } catch {
+      return false;
+    }
+  };
+  if (!noOpMergeBaseIsCurrent()) {
+    steps.push(
+      `KEPT worktree ${gitState.absolutePath}: main moved or became unreadable after the no-op merge proof; branch remains anchored at ${ref}`
+    );
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: ref,
+      salvage: null,
+      branchKept: true,
     };
   }
 
@@ -1565,6 +1624,20 @@ export function dispose(
     }
   }
 
+  if (!noOpMergeBaseIsCurrent()) {
+    steps.push(
+      `KEPT worktree ${gitState.absolutePath}: main moved or became unreadable before removal; branch remains anchored at ${ref}`
+    );
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: ref,
+      salvage: saved,
+      branchKept: true,
+    };
+  }
+
   // Catching git's refusal rather than propagating it. An uncaught throw here
   // produced a stack trace AFTER the anchor ref had already been written — an
   // orphan ref plus a crash, and the crash is what gets the guard bypassed.
@@ -1595,18 +1668,24 @@ export function dispose(
     // and its `dist/`.
     steps.push(`KEPT branch ${gitState.branch}: the branch-preserving disposal mode leaves its ref in place`);
   } else {
+    if (!noOpMergeBaseIsCurrent()) {
+      steps.push(
+        `KEPT branch ${gitState.branch}: main moved or became unreadable after worktree removal; its commits remain at ${ref}`
+      );
+      return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: true };
+    }
     try {
-      const deleteFlag = deleteAbsorbedBranch ? '-D' : '-d';
+      const deleteFlag = deleteUnmergedBranch ? '-D' : '-d';
       run(cwd, ['branch', deleteFlag, gitState.branch]);
       branchDeleted = true;
-      steps.push(
-        deleteAbsorbedBranch
-          ? `deleted absorbed branch ${gitState.branch} with guarded \`-D\` after patch-equivalence verification`
-          : `deleted branch ${gitState.branch}`
-      );
+      if (deleteUnmergedBranch) {
+        steps.push(
+          `deleted ${deleteReason === 'merge-tree-no-op' ? 'net-no-op merge' : 'patch-absorbed'} branch ${gitState.branch} with guarded \`-D\` after anchoring its recovery ref`
+        );
+      } else steps.push(`deleted branch ${gitState.branch}`);
     } catch (err) {
       steps.push(
-        `KEPT branch ${gitState.branch}: git refused \`${deleteAbsorbedBranch ? '-D' : '-d'}\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+        `KEPT branch ${gitState.branch}: git refused \`${deleteUnmergedBranch ? '-D' : '-d'}\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
       );
     }
   }
@@ -1644,7 +1723,7 @@ const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [
 
 For a registered worktree, refuses unless the generated inventory calls it
 \`action: "dispose"\` or \`action: "legacy"\`, or \`--keep-branch\` explicitly selects
-an \`at-risk\` or \`land\` worktree. No board claim, lock or live agent may name it, no session
+ an \`at-risk\` worktree. No board claim, lock or live agent may name it, no session
 may have it as its directory inside the live window, and ignored content or Git
 operations in progress always refuse removal.
 
@@ -1664,8 +1743,8 @@ with no worktree, so the directory, its node_modules and its dist/ go while the
 ref survives. No anchor ref is written, because the branch is the copy being
 kept. See docs/ORCHESTRATION.md.
 
-\`--keep-branch\` explicitly permits a freshly inventoried \`action: "at-risk"\` or
-\`action: "land"\` worktree to be removed while retaining its branch. Tracked edits
+\`--keep-branch\` explicitly permits a freshly inventoried \`action: "at-risk"\`
+worktree to be removed while retaining its branch. Tracked edits
 and untracked files are archived under the common git directory first. It still
 refuses live ownership, unreadable state, ignored content, operations in
 progress, \`mustNotPrune\`, and \`undecided\` worktrees. Review with \`--dry-run\` first.
@@ -1819,14 +1898,16 @@ function main(argv) {
     process.stdout.write(
       verdict.keepBranch
         ? `dispose: ${gitState.name} (${gitState.branch}) is clear to remove, and the branch will be KEPT.\n  would archive tracked edits and untracked files under the common git directory\n  would remove ${gitState.absolutePath}\n  would NOT run git branch -d ${gitState.branch}\n`
-        : `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch ${verdict.deleteAbsorbedBranch ? '-D' : '-d'} ${gitState.branch}${verdict.deleteAbsorbedBranch ? ' (all non-merge patches are already on the base)' : ''}\n`
+        : `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch ${verdict.deleteUnmergedBranch ? '-D' : '-d'} ${gitState.branch}${verdict.deleteReason === 'merge-tree-no-op' ? ' (merge result equals the recorded main tree)' : verdict.deleteReason === 'patch-absorbed' ? ' (all non-merge patches are already on the base)' : ''}\n`
     );
     return 0;
   }
 
   const result = dispose(cwd, gitState, {
     keepBranch: verdict.keepBranch,
-    deleteAbsorbedBranch: verdict.deleteAbsorbedBranch,
+    deleteUnmergedBranch: verdict.deleteUnmergedBranch,
+    deleteReason: verdict.deleteReason,
+    expectedBaseHead: verdict.expectedBaseHead,
   });
   for (const step of result.steps) process.stdout.write(`  ${step}\n`);
   if (!result.worktreeRemoved) {

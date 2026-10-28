@@ -17,6 +17,8 @@ type TextArgs = {
   text?: string;
   rect: Rect | null;
   toolName: 'text';
+  angle?: number;
+  editingLayerId?: string;
 };
 
 /**
@@ -48,6 +50,7 @@ const h = vi.hoisted(() => ({
   totalSize: { width: 100, height: 100 },
   containerRef: { current: null as HTMLDivElement | null },
   toolOverlayRef: { current: null as HTMLCanvasElement | null },
+  layers: {} as Record<string, unknown>,
 }));
 
 let toolArgs: TextArgs;
@@ -66,6 +69,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       },
       get toolName() {
         return h.toolName;
+      },
+      get layers() {
+        return h.layers;
       },
     },
     h.dispatch,
@@ -248,6 +254,7 @@ describe('TextEditOverlay', () => {
     h.commitDirtyTool.mockReset();
     h.toolName = 'text';
     h.toolOverlayRef.current = document.createElement('canvas');
+    h.layers = {};
     containerOf(200, 200);
     toolArgs = makeTextArgs({ text: PLACEHOLDER });
     vi.mocked(calculateNewRect).mockReset();
@@ -368,6 +375,171 @@ describe('TextEditOverlay', () => {
       // `left` that happens to come out right for the wrong reason: with `scale` 1 the two
       // `left - rect.x1` is exactly the term under test, and a deleted `offsetX` reads 0.
       expect(parseFloat(el.style.left) - RECT.x1, 'the horizontal letterbox did not reach `left`').toBe(50);
+    });
+  });
+
+  describe('affine transform — the overlay mirrors a transformed layer', () => {
+    it('applies no CSS transform when the layer has no affine and no text angle', () => {
+      containerOf(200, 200);
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT });
+
+      renderOverlay();
+      const el = overlay();
+
+      expect(el.style.transform).toBe('');
+      expect(el.style.transformOrigin).toBe('center center');
+    });
+
+    it('applies a CSS matrix for a layer with a 2x scale affine op, scaling e/f by fit scale', () => {
+      // Container 200x200 against a 100x100 document = `scale` 2, gap 0.
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      const sourceRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 100, height: 50 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: sourceRect },
+            pos: { x: 10, y: 20, width: 100, height: 50 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      toolArgs = makeTextArgs({
+        text: PLACEHOLDER,
+        rect: { x1: 10, y1: 20, x2: 110, y2: 70 },
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+      const el = overlay();
+
+      // The affine's e/f (10, 20) × fit scale 2 = (20, 40). The linear part is dimensionless.
+      expect(el.style.transform).toBe('matrix(2,0,0,2,20,40)');
+      expect(el.style.transformOrigin).toBe('0 0');
+    });
+
+    it('applies only rotate(angle) when there is no affine op', () => {
+      containerOf(200, 200);
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT, angle: 45 });
+
+      renderOverlay();
+      const el = overlay();
+
+      expect(el.style.transform).toBe('rotate(45deg)');
+      expect(el.style.transformOrigin).toBe('center center');
+    });
+
+    it('composes angle rotation under the affine matrix into a single CSS matrix', () => {
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      const sourceRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 100, height: 50 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: sourceRect, angle: 90 },
+            pos: { x: 10, y: 20, width: 100, height: 50 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      toolArgs = makeTextArgs({
+        text: PLACEHOLDER,
+        rect: { x1: 10, y1: 20, x2: 110, y2: 70 },
+        angle: 90,
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+      const el = overlay();
+
+      // 90° rotation around rect centre (35, 45) gives {a:0,b:1,c:-1,d:0,...}.
+      // Composed under scale-2: multiplyAffineTransforms(scale2x, rotate90)
+      // = {a:0, b:2, c:-2, d:0, e:...}. e/f scaled by 2 for fit.
+      expect(el.style.transformOrigin).toBe('0 0');
+      const matrixMatch = el.style.transform.match(/matrix\(([^)]+)\)/);
+      expect(matrixMatch).not.toBeNull();
+      const vals = matrixMatch![1].split(',').map(Number);
+      // Rotating the local rect around (50,25) then applying scale/translation produces e/f
+      // (160,-30); the fit scale doubles those translations in CSS pixels.
+      expect(vals[0]).toBeCloseTo(0, 5);
+      expect(vals[1]).toBeCloseTo(2, 5);
+      expect(vals[2]).toBeCloseTo(-2, 5);
+      expect(vals[3]).toBeCloseTo(0, 5);
+      expect(vals[4]).toBeCloseTo(320, 5);
+      expect(vals[5]).toBeCloseTo(-60, 5);
+    });
+
+    it('pivots text angle around the current edit rect rather than the original source rect', () => {
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      const sourceRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 100, height: 50 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: sourceRect, angle: 90 },
+            pos: { x: 10, y: 20, width: 100, height: 50 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      // The current text grew after re-entry: the edit rect is 200x80 in canvas space, while the
+      // retained source rect is still 100x50 in layer-local space.
+      toolArgs = makeTextArgs({
+        text: 'a much longer edit',
+        rect: { x1: 10, y1: 20, x2: 210, y2: 100 },
+        angle: 90,
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+      const match = overlay().style.transform.match(/matrix\(([^)]+)\)/);
+      expect(match).not.toBeNull();
+      const values = match![1].split(',').map(Number);
+
+      // Current local rect center (100,40) -> rotated translation (140,-60), then scale-2 affine
+      // and 2x contain-fit produce e/f of (580,-200). The old source rect center would yield (320,-60).
+      expect(values[0]).toBeCloseTo(0, 5);
+      expect(values[1]).toBeCloseTo(2, 5);
+      expect(values[2]).toBeCloseTo(-2, 5);
+      expect(values[3]).toBeCloseTo(0, 5);
+      expect(values[4]).toBeCloseTo(580, 5);
+      expect(values[5]).toBeCloseTo(-200, 5);
+    });
+
+    it('conjugates the affine translation to a nonzero text-box origin', () => {
+      containerOf(200, 200);
+      const scale2xAffine = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 };
+      h.layers = {
+        'text-layer': {
+          id: 'text-layer',
+          pos: { x: 10, y: 20, width: 150, height: 80 },
+          source: {
+            kind: 'tool' as const,
+            args: { toolName: 'text' as const, rect: { x1: 20, y1: 10, x2: 120, y2: 60 } },
+            pos: { x: 10, y: 20, width: 150, height: 80 },
+          },
+          operations: [{ id: 'affine-1', kind: 'affine-transform' as const, transform: scale2xAffine, enabled: true }],
+        },
+      };
+      toolArgs = makeTextArgs({
+        text: PLACEHOLDER,
+        rect: { x1: 30, y1: 30, x2: 130, y2: 80 },
+        editingLayerId: 'text-layer',
+      });
+
+      renderOverlay();
+
+      expect(overlay().style.transform).toBe('matrix(2,0,0,2,60,60)');
+      expect(overlay().style.transformOrigin).toBe('0 0');
     });
   });
 

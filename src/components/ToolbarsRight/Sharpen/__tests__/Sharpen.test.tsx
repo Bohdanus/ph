@@ -355,10 +355,10 @@ describe('Sharpen toolbar', () => {
     ];
 
     it.each(CASES)('renders %s at the range bound rather than the raw value', (_label, overrides, get, expected) => {
-      // Settings round-trip through `localStorage` and are restored before anything clamps
-      // them, so a hand-edited or legacy value CAN be out of range. A controlled range input
-      // whose `value` is outside its own min/max pins the thumb to the bound while the
-      // readout shows the raw number, so the bar clamps before it renders.
+      // Tool arguments are per-session module state, so a hand-edited or legacy value CAN be
+      // out of range. A controlled range input whose `value` is outside its own min/max pins
+      // the thumb to the bound while the readout shows the raw number, so the bar clamps
+      // before it renders.
       resetToolArgs(overrides);
       render(<Sharpen />);
 

@@ -8,6 +8,8 @@ const storeState = vi.hoisted(() => ({
   canvasRef: { current: null },
   color: '#000000',
   currentArgs: { current: null },
+  layers: {} as Record<string, unknown>,
+  activeLayerId: null as string | null,
   totalSize: { width: 800, height: 600 },
 }));
 
@@ -37,10 +39,13 @@ const toolArgs = vi.hoisted(() => ({
   underline: false,
   strikethrough: false,
   tracking: 0,
+  editingLayerId: undefined as string | undefined,
 }));
 
 const mockCreateLayerFromTool = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
+const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
+const mockReplaceLayerSource = vi.hoisted(() => vi.fn());
 
 /**
  * `hasPendingText` is the one predicate the bar and the canvas both derive edit mode from, so the
@@ -65,6 +70,8 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     createLayerFromTool: mockCreateLayerFromTool,
+    replaceLayerSource: mockReplaceLayerSource,
+    cancelLayerPreview: mockCancelLayerPreview,
   }),
 }));
 
@@ -80,6 +87,8 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
     canvasRef: { current: null },
     color: '#000000',
     currentArgs: { current: null },
+    layers: {},
+    activeLayerId: null,
     totalSize: { width: 800, height: 600 },
     ...overrides,
   });
@@ -103,6 +112,7 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
     underline: false,
     strikethrough: false,
     tracking: 0,
+    editingLayerId: undefined,
     ...overrides,
   });
 }
@@ -126,7 +136,13 @@ function dropOptionalStyleFields() {
  * than the DOM: the mocked store hands back the same object until something republishes it, so a
  * test that re-read `toolArgs` would be reading back its own fixture.
  */
-const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
+const lastToolArgs = () =>
+  mockSetToolArgs.mock.lastCall?.[0] as {
+    rect?: { x1: number; y1: number; x2: number; y2: number };
+    bold?: boolean;
+    underline?: boolean;
+    [key: string]: unknown;
+  };
 
 /**
  * A range input does not move under an arrow key in jsdom, so the value is stepped by hand and
@@ -170,6 +186,8 @@ describe('Text toolbar', () => {
     // case in the file would be asserting against a mock left pointing at a dead array.
     mockCreateLayerFromTool.mockReset();
     mockSetToolArgs.mockReset();
+    mockCancelLayerPreview.mockReset();
+    mockReplaceLayerSource.mockReset();
     pendingTextOverride.value = null;
   });
 
@@ -1011,6 +1029,119 @@ describe('Text toolbar', () => {
     });
   });
 
+  describe('font size input validation', () => {
+    /**
+     * The clamp is applied at COMMIT, not while the value is being typed, so every out-of-range
+     * input the field can receive is held verbatim in the draft and resolved on blur. These four
+     * cases are the four ways a size can be invalid: negative, exactly zero, below the minimum
+     * (which is `0.01`, not `0`), and above the maximum. Each asserts the draft survives the
+     * keystroke and the published size is the clamped one.
+     */
+    it('clamps a negative size up to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '-40' } });
+      expect(size.value).toBe('-40');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('clamps a zero size up to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '0' } });
+      expect(size.value).toBe('0');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('clamps a sub-minimum size up to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      // Between zero and the minimum: a value that is positive but still below the floor.
+      fireEvent.change(size, { target: { value: '0.005' } });
+      expect(size.value).toBe('0.005');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('clamps an above-maximum size down to FONT_SIZE_MAX at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '5000' } });
+      expect(size.value).toBe('5000');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 1296 }));
+    });
+  });
+
+  describe('Commit flow when createLayerFromTool throws', () => {
+    /**
+     * A throw out of `createLayerFromTool` reaches `window.onerror`, not an error boundary, because
+     * `ToolbarHorizontal` sits outside every boundary in the tree. The old handler cleared the draft
+     * BEFORE the create, so a failure left the user's text gone with no layer, no message, and the
+     * commit disabled — and worse, the re-entrancy guard was armed before the create, so it stayed
+     * armed against a `toolArgs` identity nothing had changed and every later Commit did nothing.
+     *
+     * These two cases pin the two halves of the fix: the draft survives a throw, and the guard is
+     * not consumed by it, so the next Commit works. The swallow is local to this describe — it is
+     * the only place the throw is caught, and `preventDefault` is what marks it handled.
+     */
+    const swallowThrow = (event: ErrorEvent) => event.preventDefault();
+
+    it('leaves the draft untouched when createLayerFromTool throws', () => {
+      window.addEventListener('error', swallowThrow);
+      try {
+        mockCreateLayerFromTool.mockImplementationOnce(() => {
+          throw new Error('Layer width and height must be greater than 0');
+        });
+        renderWithProvider(<Text />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+        // The create was attempted and failed.
+        expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
+        // Nothing was cleared: the draft's text and rect are still the ones the bar holds.
+        expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+        expect(toolArgs.text).toBe('Hello');
+        expect(toolArgs.rect).not.toBeNull();
+      } finally {
+        window.removeEventListener('error', swallowThrow);
+      }
+    });
+
+    it('re-arms the guard so a second Commit succeeds after a throw', () => {
+      window.addEventListener('error', swallowThrow);
+      try {
+        mockCreateLayerFromTool.mockImplementationOnce(() => {
+          throw new Error('Layer width and height must be greater than 0');
+        });
+        renderWithProvider(<Text />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+        expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
+        expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+
+        // The second click, with a create that works this time.
+        mockCreateLayerFromTool.mockImplementation(() => undefined);
+        fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+        expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(2);
+        expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+      } finally {
+        window.removeEventListener('error', swallowThrow);
+      }
+    });
+  });
+
   describe('keyboard navigation', () => {
     it('walks the bar left to right, with the style toggles between Italic and Commit', async () => {
       // The pair is Adobe's edit-mode tell, so it is on the tab path only while a draft is open —
@@ -1226,6 +1357,190 @@ describe('Text toolbar', () => {
       await user.keyboard('{Escape}');
       expect(fontSizeField).toHaveFocus();
       expect(screen.queryByRole('button', { name: 'Georgia' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('edge-case coverage', () => {
+    it('calls createLayerFromTool when editingLayerId is absent, not replaceLayerSource', () => {
+      renderWithProvider(<Text />);
+      expect(toolArgs.editingLayerId).toBeUndefined();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+      expect(mockCreateLayerFromTool).toHaveBeenCalledWith(
+        expect.objectContaining({ args: expect.objectContaining({ text: 'Hello' }) })
+      );
+      expect(mockReplaceLayerSource).not.toHaveBeenCalled();
+    });
+
+    it('keeps the edit draft when replacing its source fails', () => {
+      resetToolArgs({ editingLayerId: 'text-layer-1' });
+      resetStoreState({
+        activeLayerId: 'text-layer-1',
+        layers: {
+          'text-layer-1': {
+            id: 'text-layer-1',
+            pos: { x: 0, y: 0, width: 100, height: 50 },
+            source: { kind: 'tool', args: { toolName: 'text', text: 'Original' } },
+          },
+        },
+      });
+      mockReplaceLayerSource.mockReturnValueOnce(null);
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+      expect(mockReplaceLayerSource).toHaveBeenCalledOnce();
+      expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(toolArgs.text).toBe('Hello');
+      expect(toolArgs.rect).not.toBeNull();
+    });
+
+    it('clears an orphaned edit instead of creating a duplicate layer', () => {
+      resetToolArgs({ editingLayerId: 'missing-layer' });
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+      expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+      expect(mockReplaceLayerSource).not.toHaveBeenCalled();
+      expect(mockCancelLayerPreview).toHaveBeenCalledExactlyOnceWith('missing-layer');
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: '', rect: null }));
+    });
+
+    it('calls cancelLayerPreview for the editing layer when Cancel is clicked', () => {
+      resetToolArgs({ editingLayerId: 'text-layer-1' });
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(mockCancelLayerPreview).toHaveBeenCalledWith('text-layer-1');
+      expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    });
+
+    it('does not call cancelLayerPreview when Cancel is clicked without an editing layer', () => {
+      expect(toolArgs.editingLayerId).toBeUndefined();
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    });
+
+    it('commits a font size typed at exactly FONT_SIZE_MIN (0.01)', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '0.01' } });
+      expect(size.value).toBe('0.01');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('commits a font size typed at exactly FONT_SIZE_MAX (1296)', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '1296' } });
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 1296 }));
+    });
+
+    it('clamps a negative font size to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '-40' } });
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('restores the published font size when Escape abandons an out-of-range draft', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '5000' } });
+      expect(size.value).toBe('5000');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(size, { key: 'Escape' });
+
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(size.value).toBe('64');
+    });
+
+    it('publishes the line height slider value and recomputes the rect', () => {
+      renderWithProvider(<Text />);
+      const lineHeightSlider = screen.getByLabelText(/Line Height/) as HTMLInputElement;
+
+      fireEvent.change(lineHeightSlider, { target: { value: '1.5' } });
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lineHeight: 1.5 }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    });
+
+    it('enables Align for paragraph kind and disables it for point kind', () => {
+      resetToolArgs({ kind: 'paragraph' });
+      const { unmount } = renderWithProvider(<Text />);
+      expect(screen.getByLabelText('Align')).toBeEnabled();
+
+      unmount();
+      resetToolArgs({ kind: 'point' });
+      renderWithProvider(<Text />);
+      expect(screen.getByLabelText('Align')).toBeDisabled();
+    });
+
+    it('routes an alignment change through publishStyle for point type', () => {
+      renderWithProvider(<Text />);
+      const alignSelect = screen.getByLabelText('Align');
+      expect(alignSelect).toBeDisabled();
+
+      fireEvent.change(alignSelect, { target: { value: 'center' } });
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ align: 'center' }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    });
+
+    it('publishes colour swatch changes into the tool args', () => {
+      renderWithProvider(<Text />);
+      const swatch = screen.getByLabelText('Color') as HTMLInputElement;
+
+      fireEvent.change(swatch, { target: { value: '#123456' } });
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ color: '#123456' }));
+      expect(lastToolArgs()).toMatchObject({ color: '#123456', text: 'Hello', fontSize: 64 });
+    });
+
+    it('toggles Bold from true to false and recomputes the rect', () => {
+      resetToolArgs({ bold: true });
+      renderWithProvider(<Text />);
+
+      const boldButton = screen.getByRole('button', { name: 'Bold' });
+      expect(boldButton).toHaveAttribute('aria-pressed', 'true');
+
+      fireEvent.click(boldButton);
+
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ bold: false }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    });
+
+    it('toggles Italic from true to false and recomputes the rect like Bold', () => {
+      resetToolArgs({ italic: true });
+      renderWithProvider(<Text />);
+
+      const italicButton = screen.getByRole('button', { name: 'Italic' });
+      expect(italicButton).toHaveAttribute('aria-pressed', 'true');
+
+      fireEvent.click(italicButton);
+
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ italic: false }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
     });
   });
 });

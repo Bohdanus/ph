@@ -300,3 +300,101 @@ describe('resampleThroughHomographyRowByRow', () => {
     expect(recording.stripHeights).toEqual([]);
   });
 });
+
+describe('non-finite matrix values', () => {
+  const nanMatrix: Homography = { a: Number.NaN, b: 0, c: 0, d: 0, e: 1, f: 0, g: 0, h: 0, i: 1 };
+  const infinityMatrix: Homography = {
+    a: Number.POSITIVE_INFINITY,
+    b: 0,
+    c: 0,
+    d: 0,
+    e: 1,
+    f: 0,
+    g: 0,
+    h: 0,
+    i: 1,
+  };
+  const nanGMatrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: Number.NaN, h: 0, i: 1 };
+  const infinityGMatrix: Homography = {
+    a: 1,
+    b: 0,
+    c: 0,
+    d: 0,
+    e: 1,
+    f: 0,
+    g: Number.POSITIVE_INFINITY,
+    h: 0,
+    i: 1,
+  };
+
+  it('resampleThroughHomography clears every pixel when the matrix has a NaN entry', () => {
+    const source = solidImage(4, 4, [255, 0, 0, 255]);
+    const destination = resample(source, 4, 4, nanMatrix);
+
+    for (let x = 0; x < 4; x++) {
+      for (let y = 0; y < 4; y++) {
+        expect(pixelAt(destination, x, y)).toEqual([0, 0, 0, 0]);
+      }
+    }
+  });
+
+  it('resampleThroughHomography clears every pixel when the matrix has an Infinity entry', () => {
+    const source = solidImage(4, 4, [255, 0, 0, 255]);
+    const destination = resample(source, 4, 4, infinityMatrix);
+
+    for (let x = 0; x < 4; x++) {
+      for (let y = 0; y < 4; y++) {
+        expect(pixelAt(destination, x, y)).toEqual([0, 0, 0, 0]);
+      }
+    }
+  });
+
+  it('resampleThroughHomography clears every pixel when g is NaN or Infinity', () => {
+    const source = solidImage(4, 4, [255, 0, 0, 255]);
+
+    for (const matrix of [nanGMatrix, infinityGMatrix]) {
+      const destination = resample(source, 4, 4, matrix);
+      for (let x = 0; x < 4; x++) {
+        for (let y = 0; y < 4; y++) {
+          expect(pixelAt(destination, x, y)).toEqual([0, 0, 0, 0]);
+        }
+      }
+    }
+  });
+
+  it('resampleThroughHomographyRowByRow clears every pixel when the matrix has a NaN entry', () => {
+    const source = solidImage(4, 4, [255, 0, 0, 255]);
+    const destination = resampleRowByRow(source, 4, 4, nanMatrix);
+
+    for (let x = 0; x < 4; x++) {
+      for (let y = 0; y < 4; y++) {
+        expect(pixelAt(destination, x, y)).toEqual([0, 0, 0, 0]);
+      }
+    }
+  });
+
+  it('resampleThroughHomographyRowByRow clears every pixel when the matrix has an Infinity entry', () => {
+    const source = solidImage(4, 4, [255, 0, 0, 255]);
+    const destination = resampleRowByRow(source, 4, 4, infinityMatrix);
+
+    for (let x = 0; x < 4; x++) {
+      for (let y = 0; y < 4; y++) {
+        expect(pixelAt(destination, x, y)).toEqual([0, 0, 0, 0]);
+      }
+    }
+  });
+});
+
+describe('known limitations (it.fails tripwires)', () => {
+  it.fails('resampleThroughHomography rejects a singular matrix instead of resampling through it', () => {
+    const source = solidImage(4, 4, [255, 0, 0, 255]);
+    const singular: Homography = { a: 1, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 1 };
+    const destination = resample(source, 4, 4, singular);
+
+    for (let x = 0; x < 4; x++) {
+      for (let y = 0; y < 4; y++) {
+        expect(pixelAt(destination, x, y)).toEqual([0, 0, 0, 0]);
+      }
+    }
+  });
+});

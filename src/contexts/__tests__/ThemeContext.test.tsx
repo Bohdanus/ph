@@ -42,6 +42,7 @@ describe('ThemeContext', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   const renderWithProvider = (children: React.ReactNode) => {
@@ -187,6 +188,38 @@ describe('ThemeContext', () => {
 
     expect(screen.getByTestId('theme')).toHaveTextContent('dark');
     expect(localStorageMock.getItem).toHaveBeenCalledWith('theme');
+  });
+
+  it('uses VITE_TEST_THEME env var as fallback when no preference is stored', () => {
+    // When localStorage has no stored theme, VITE_TEST_THEME can override the default.
+    // This lets unit tests force a theme without mocking localStorage.
+    localStorageMock.getItem.mockReturnValue(null);
+    vi.stubEnv('VITE_TEST_THEME', 'light');
+
+    const TestComponent = () => {
+      const { theme } = useTheme();
+      return <span data-testid="theme">{theme}</span>;
+    };
+
+    renderWithProvider(<TestComponent />);
+
+    expect(screen.getByTestId('theme')).toHaveTextContent('light');
+    expect(document.documentElement.classList.contains('light')).toBe(true);
+  });
+
+  it('prefers a stored theme over VITE_TEST_THEME', () => {
+    // A real user preference in localStorage must win over the test override.
+    localStorageMock.getItem.mockReturnValue('dark');
+    vi.stubEnv('VITE_TEST_THEME', 'light');
+
+    const TestComponent = () => {
+      const { theme } = useTheme();
+      return <span data-testid="theme">{theme}</span>;
+    };
+
+    renderWithProvider(<TestComponent />);
+
+    expect(screen.getByTestId('theme')).toHaveTextContent('dark');
   });
 
   it('reads a stored light preference', () => {

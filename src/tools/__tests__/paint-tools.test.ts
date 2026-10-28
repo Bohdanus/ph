@@ -5,11 +5,11 @@ import { toolProcessors } from '../toolProcessors.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { drawShape } from '../shape.ts';
 import { createLayerSource } from '../../contexts/layer-utils.ts';
-import { drawSpray } from '../../util/draw.ts';
+import { drawLine, drawPen, drawSpray } from '../../util/draw.ts';
 import { hexToRgb } from '../../util/rect.ts';
 import { toolbarMap } from '../../../toolbar-mapping.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
-import type { DrawToolArgs, PaintToolArgs, PaintToolName } from '../draw.ts';
+import { setupDrawCtx, type DrawToolArgs, type PaintToolArgs, type PaintToolName } from '../draw.ts';
 import type { FigureType } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -249,6 +249,7 @@ describe('paint tool rasterization', () => {
     expect(result).toHaveLength(1);
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(result[0]).not.toBe(bitmap);
+    expect(RecordingOffscreenCanvas.instances[0].ctx.imageSmoothingEnabled).toBe(false);
     expect(RecordingOffscreenCanvas.instances[0].ctx.drawImage).toHaveBeenCalledWith(
       bitmap,
       0,
@@ -749,5 +750,295 @@ describe('shape figure dispatch fall-through', () => {
     ]) {
       expect(call).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('paint tool input hardening', () => {
+  describe('lineWidth', () => {
+    /**
+     * Only the pencil processor (`toolProcessors.ts:366-367`) narrows `lineWidth`: a non-finite
+     * value falls back to the constant `DEFAULT_PENCIL_LINE_WIDTH` (3), and zero or negative is
+     * clamped to the canvas minimum of 1. The brush processor and every tool that reaches
+     * `setupDrawCtx` write `lineWidth` through verbatim, so a NaN there becomes `ctx.lineWidth = NaN`
+     * — the canvas would silently ignore it, but no guard in this code path stops it.
+     */
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'pencil falls back to width 3 for non-finite lineWidth %p',
+      (lineWidth) => {
+        const canvas = runProcessor('pencil', { ...paintToolArgsWithPoints('pencil', stroke), lineWidth });
+        expect(canvas.ctx.lineWidth).toBe(3);
+      }
+    );
+
+    it.each([0, -1, -100])('pencil clamps zero or negative lineWidth %p to 1', (lineWidth) => {
+      const canvas = runProcessor('pencil', { ...paintToolArgsWithPoints('pencil', stroke), lineWidth });
+      expect(canvas.ctx.lineWidth).toBe(1);
+    });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, -100])(
+      'brush passes lineWidth %p straight to the context without clamping',
+      (lineWidth) => {
+        const canvas = runProcessor('brush', { ...paintToolArgsWithPoints('brush', stroke), lineWidth });
+        expect(canvas.ctx.lineWidth).toBe(lineWidth);
+      }
+    );
+
+    it('setupDrawCtx writes lineWidth verbatim — NaN included', () => {
+      const ctx = createMockCanvasContext();
+      for (const lineWidth of [Number.NaN, Number.POSITIVE_INFINITY, 0, -10]) {
+        setupDrawCtx(ctx as unknown as Ctx2D, {
+          toolName: 'draw',
+          penType: 'pen',
+          color: '#000000',
+          alpha: 1,
+          lineWidth,
+        });
+        expect(ctx.lineWidth).toBe(lineWidth);
+      }
+    });
+
+    it.fails('clamps non-finite lineWidth before it reaches the brush context', () => {
+      const canvas = runProcessor('brush', { ...paintToolArgsWithPoints('brush', stroke), lineWidth: Number.NaN });
+      expect(Number.isFinite(canvas.ctx.lineWidth)).toBe(true);
+    });
+  });
+
+  describe('alpha', () => {
+    /**
+     * `setupDrawCtx` (`src/tools/draw.ts:97`) assigns `ctx.globalAlpha = alpha` with no
+     * sanitization, so NaN, ±Infinity and out-of-range values all land on the context unchanged.
+     * The pencil processor clamps `lineWidth` but leaves `alpha` alone, and the spray pen
+     * carries `alpha` straight into the gradient's color stops via `drawSpray`
+     * (`src/util/draw.ts:218`).
+     */
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -0.5, 1.5])(
+      'pen tools pass alpha %p straight to globalAlpha without clamping',
+      (alpha) => {
+        for (const toolName of paintToolNames) {
+          const canvas = runProcessor(toolName, { ...paintToolArgsWithPoints(toolName, stroke), alpha });
+          expect(canvas.ctx.globalAlpha, `${toolName} alpha ${alpha}`).toBe(alpha);
+        }
+      }
+    );
+
+    it('drawSpray propagates non-finite alpha into the gradient color stops', () => {
+      const ctx = createMockCanvasContext();
+      drawSpray({
+        args: {
+          toolName: 'draw',
+          penType: 'spray',
+          color: '#ff0000',
+          alpha: Number.NaN,
+          lineWidth: 10,
+          points: [{ x: 5, y: 5 }],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+
+      const gradient = vi.mocked(ctx.createRadialGradient).mock.results[0]?.value as
+        { addColorStop: ReturnType<typeof vi.fn> } | undefined;
+      expect(gradient).toBeDefined();
+
+      const stops = gradient!.addColorStop.mock.calls as [number, string][];
+      expect(stops[0]).toEqual([0, `rgba(255, 0, 0, NaN)`]);
+      expect(stops[1]).toEqual([0.25, `rgba(255, 0, 0, NaN)`]);
+      expect(stops[2]).toEqual([1, `rgba(255, 0, 0, 0)`]);
+    });
+
+    it.fails('clamps non-finite alpha into [0, 1] before it reaches globalAlpha', () => {
+      for (const toolName of paintToolNames) {
+        const canvas = runProcessor(toolName, {
+          ...paintToolArgsWithPoints(toolName, stroke),
+          alpha: Number.NaN,
+        });
+        expect(Number.isFinite(canvas.ctx.globalAlpha), toolName).toBe(true);
+      }
+    });
+
+    it.fails('sanitizes non-finite alpha out of the spray gradient color stops', () => {
+      const ctx = createMockCanvasContext();
+      drawSpray({
+        args: {
+          toolName: 'draw',
+          penType: 'spray',
+          color: '#ff0000',
+          alpha: Number.NaN,
+          lineWidth: 10,
+          points: [{ x: 5, y: 5 }],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+
+      const gradient = vi.mocked(ctx.createRadialGradient).mock.results[0]?.value as
+        { addColorStop: ReturnType<typeof vi.fn> } | undefined;
+      expect(gradient).toBeDefined();
+      const stops = gradient!.addColorStop.mock.calls as [number, string][];
+      for (const call of stops) {
+        expect(call[1]).not.toMatch('NaN');
+      }
+    });
+  });
+
+  describe('empty points', () => {
+    /**
+     * `drawLine` dispatches to `drawPen` or `drawSpray` after smoothing, and both early-return
+     * on `points.length === 0` (`src/util/draw.ts:116-117` for the guard, `:165` and `:213` for
+     * the no-op returns). No canvas method may fire — not even `beginPath`, which would leave
+     * an empty path pending on a shared context.
+     */
+    it('drawLine is a no-op for pen when points are empty', () => {
+      const ctx = createMockCanvasContext();
+      drawLine({
+        args: {
+          toolName: 'draw',
+          penType: 'pen',
+          color: '#000000',
+          alpha: 1,
+          lineWidth: 10,
+          points: [],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+      expect(ctx.beginPath).not.toHaveBeenCalled();
+      expect(ctx.moveTo).not.toHaveBeenCalled();
+      expect(ctx.lineTo).not.toHaveBeenCalled();
+      expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+      expect(ctx.stroke).not.toHaveBeenCalled();
+    });
+
+    it('drawLine is a no-op for pen-dashed when points are empty', () => {
+      const ctx = createMockCanvasContext();
+      drawLine({
+        args: {
+          toolName: 'draw',
+          penType: 'pen-dashed',
+          color: '#000000',
+          alpha: 1,
+          lineWidth: 10,
+          lineDash: [5, 5],
+          points: [],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+      expect(ctx.beginPath).not.toHaveBeenCalled();
+      expect(ctx.moveTo).not.toHaveBeenCalled();
+      expect(ctx.stroke).not.toHaveBeenCalled();
+    });
+
+    it('drawLine is a no-op for spray when points are empty', () => {
+      const ctx = createMockCanvasContext();
+      drawLine({
+        args: {
+          toolName: 'draw',
+          penType: 'spray',
+          color: '#ff0000',
+          alpha: 0.8,
+          lineWidth: 10,
+          points: [],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+      expect(ctx.createRadialGradient).not.toHaveBeenCalled();
+      expect(ctx.arc).not.toHaveBeenCalled();
+      expect(ctx.beginPath).not.toHaveBeenCalled();
+      expect(ctx.fill).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('single-point strokes', () => {
+    /**
+     * A single sample is a click, not a drag. `drawPen` still opens a path, moves to the point,
+     * and strokes — the `beginPath`/`moveTo`/`stroke` count stays at one each
+     * (`src/util/draw.ts:163-176`), which is the same invariant the committed export baselines
+     * depend on. The interior `lineTo` from `bezierSmoothedLine` is degenerate (same point), but
+     * it still fires so the path is closed and the line cap is painted.
+     */
+    it('drawPen opens one path, moves to the point, and strokes once', () => {
+      const ctx = createMockCanvasContext();
+      drawPen({
+        args: {
+          toolName: 'draw',
+          penType: 'pen',
+          color: '#000000',
+          alpha: 1,
+          lineWidth: 10,
+          points: [{ x: 5, y: 5 }],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+      expect(ctx.beginPath).toHaveBeenCalledTimes(1);
+      expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+      expect(ctx.moveTo).toHaveBeenCalledWith(5, 5);
+      expect(ctx.lineTo).toHaveBeenCalledTimes(1);
+      expect(ctx.lineTo).toHaveBeenCalledWith(5, 5);
+      expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    });
+
+    it('drawLine reaches drawPen for a single point at every smoothing value', () => {
+      const point = { x: 3, y: 7 };
+      for (const smoothing of [0, 50, 100]) {
+        const ctx = createMockCanvasContext();
+        drawLine({
+          args: {
+            toolName: 'draw',
+            penType: 'pen',
+            color: '#000000',
+            alpha: 1,
+            lineWidth: 10,
+            points: [point],
+            smoothing,
+          },
+          ctx: ctx as unknown as Ctx2D,
+        });
+        // Smoothing is a no-op on fewer than 3 points (src/tools/brush.ts:128), so the
+        // single-point path is identical at 0%, 50% and 100%.
+        expect(ctx.beginPath, `smoothing ${smoothing}`).toHaveBeenCalledTimes(1);
+        expect(ctx.moveTo, `smoothing ${smoothing}`).toHaveBeenCalledWith(3, 7);
+        expect(ctx.lineTo, `smoothing ${smoothing}`).toHaveBeenCalledTimes(1);
+        expect(ctx.stroke, `smoothing ${smoothing}`).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('drawSpray deposits exactly one dab for a single sample', () => {
+      const ctx = createMockCanvasContext();
+      drawSpray({
+        args: {
+          toolName: 'draw',
+          penType: 'spray',
+          color: '#ff0000',
+          alpha: 0.8,
+          lineWidth: 10,
+          points: [{ x: 5, y: 5 }],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+      expect(ctx.createRadialGradient).toHaveBeenCalledTimes(1);
+      expect(ctx.createRadialGradient).toHaveBeenCalledWith(5, 5, 0, 5, 5, 5);
+      expect(ctx.arc).toHaveBeenCalledTimes(1);
+      expect(ctx.arc).toHaveBeenCalledWith(5, 5, 5, 0, Math.PI * 2);
+      expect(ctx.fill).toHaveBeenCalledTimes(1);
+    });
+
+    it('drawSpray still emits one dab for a single sample even with non-finite lineWidth', () => {
+      const ctx = createMockCanvasContext();
+      drawSpray({
+        args: {
+          toolName: 'draw',
+          penType: 'spray',
+          color: '#ff0000',
+          alpha: 0.8,
+          lineWidth: Number.NaN,
+          points: [{ x: 5, y: 5 }],
+        },
+        ctx: ctx as unknown as Ctx2D,
+      });
+      // radius = NaN * 0.5 = NaN; the mock records it verbatim rather than coercing.
+      expect(ctx.createRadialGradient).toHaveBeenCalledTimes(1);
+      expect(ctx.arc).toHaveBeenCalledTimes(1);
+      expect(ctx.fill).toHaveBeenCalledTimes(1);
+      const arcArgs = vi.mocked(ctx.arc).mock.calls[0] as [number, number, number, number, number];
+      expect(arcArgs[2]).toBe(Number.NaN);
+    });
   });
 });

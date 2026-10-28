@@ -6,13 +6,19 @@ import { findToolProcessor } from '../tools/toolProcessors.ts';
 import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { replayHistory } from './history-replay.ts';
-import { SET_DOCUMENT_FRAME_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from '../util/constants.ts';
+import {
+  OPEN_DOCUMENT_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  TOOL_ACTION,
+} from '../util/constants.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
 import type { DurableDocument } from './history-model.ts';
 import { durableEntryTitle } from './history-provenance.ts';
 import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
+import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -130,8 +136,12 @@ export const useHistory = () => {
       canvasRef,
       history,
       historyIndex,
+      layers,
       deletedLayers,
       activeLayerId,
+      selections,
+      activeSelectionId,
+      hasUnsavedChanges,
       totalSize: currentSize,
       documentFrame: currentDocumentFrame,
       branchRevision = 0,
@@ -144,6 +154,8 @@ export const useHistory = () => {
     },
     dispatch,
   ] = useStore();
+
+  const dpr = useDevicePixelRatio();
 
   function canUndo() {
     return historyIndex > 0;
@@ -167,9 +179,9 @@ export const useHistory = () => {
   //   return history.filter((item) => item.layerId === layerId);
   // }
 
-  function drawReplay(layers: LayersRecord, frame: DocumentFrame) {
+  function drawReplay(replayLayers: LayersRecord, frame: DocumentFrame) {
     const canvas = canvasRef.current;
-    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(layers), frame);
+    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(replayLayers), frame, undefined, dpr, true);
   }
 
   async function resetHistoryTo(
@@ -178,6 +190,25 @@ export const useHistory = () => {
     _branchRevision = branchRevision
   ) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return Promise.resolve();
+    const target = _history[targetIndex];
+    // A disabled opening row has no prior document state. Legacy replay skips
+    // it, which would otherwise publish an empty canvas from a clickable row.
+    if (targetIndex === 0 && target?.disabled && target.actionName === OPEN_DOCUMENT_ACTION) return Promise.resolve();
+    const previousReplay = {
+      updates: {
+        layers,
+        deletedLayers,
+        activeLayerId,
+        totalSize: currentSize,
+        documentFrame: currentDocumentFrame,
+        selections,
+        activeSelectionId,
+        hasUnsavedChanges,
+      },
+      timeline: { entries: history, cursor: historyIndex, branchRevision },
+      preserveHasUnsavedChanges: true,
+    };
+    let replayDispatched = false;
     // Legacy replay remains the structural substrate and complete fallback. The
     // durable publication paints the normal path when every identity, coverage,
     // and materialization gate succeeds.
@@ -190,7 +221,8 @@ export const useHistory = () => {
         {
           // Replay layers keep their tmpCanvas: a cache is promoted only when the
           // user commits an edit, and the renderer draws from the canvas.
-          createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
+          createLayer: ({ layerId, layers: runtimeLayers, source }) =>
+            createLayerSource({ layerId, layers: runtimeLayers, source }),
           applyRasterTool: (layer, args) => {
             const bitmap = layer.tmpCanvas ?? layer.bitmap;
             if (!bitmap) return layer;
@@ -243,18 +275,33 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      replayDispatched = true;
       const outcome = publishDurableNavigationPresentation
         ? await publishDurableNavigationPresentation()
         : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
-      if (outcome.status === 'stale') return;
+      if (outcome.status === 'stale') {
+        return;
+      }
       const painted =
         outcome.status === 'durable'
           ? (() => {
               const canvas = canvasRef.current;
-              return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame);
+              return (
+                !canvas ||
+                drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame, undefined, dpr, true)
+              );
             })()
           : drawReplay(replay.layers, replay.documentFrame);
-      if (!painted) throw new Error('Unable to publish replayed history presentation');
+      if (!painted) {
+        // APPLY_HISTORY_REPLAY advances logical history before the asynchronous
+        // durable presentation gate can finish. Restore the prior timeline when
+        // the final legacy/durable draw cannot be accepted, so an unavailable
+        // presentation never leaves the cursor pointing at pixels the user did
+        // not see.
+        dispatch({ type: 'APPLY_HISTORY_REPLAY', payload: previousReplay });
+        replayDispatched = false;
+        throw new Error('Unable to publish replayed history presentation');
+      }
       // Dropped HERE, after the replay has been published and applied, and not
       // ahead of it. A navigation that throws — a converter refusal, a tool
       // processor, a refused publication — leaves the visible canvas and the
@@ -278,6 +325,12 @@ export const useHistory = () => {
         console.error(`History replay skipped an entry (${diagnostic.code})`, diagnostic.error);
       }
     } catch (error) {
+      if (replayDispatched) {
+        // The replay has already moved logical state, but the final presentation
+        // can throw before it paints. Restore the prior cursor/layers before
+        // reporting the failed target as unavailable.
+        dispatch({ type: 'APPLY_HISTORY_REPLAY', payload: previousReplay });
+      }
       const item = _history[targetIndex];
       const reason = error instanceof Error ? error.message : String(error);
       const diagnostic: MigrationDiagnostic = {
@@ -296,6 +349,9 @@ export const useHistory = () => {
 
   function toggleDisabled(historyId: string) {
     // todo commit dirty tool
+    const entry = history.find((item) => item.id === historyId);
+    if (entry && history[0] === entry && entry.actionName === OPEN_DOCUMENT_ACTION && !entry.disabled)
+      return Promise.resolve();
     const timeline = updateHistoryTimeline(
       { entries: history, cursor: historyIndex, branchRevision },
       { type: 'toggle-disabled', entryId: historyId }

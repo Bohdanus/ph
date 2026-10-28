@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -119,7 +120,14 @@ const REAL_COMPILER = OWNER_ROOT ? join(OWNER_ROOT, 'node_modules', 'typescript'
  * test planted into the shared main checkout, and main was left with no working
  * `tsc` at all until an install repaired it.
  */
-const OWNS_BIN_DIR = BIN_DIR !== null && BIN_DIR.startsWith(`${REPO_ROOT}/`);
+function checkoutOwnsBinDir(repoRoot, binDir) {
+  if (!binDir) return false;
+  const physicalRepoRoot = realpathSync(repoRoot);
+  const physicalBinDir = realpathSync(binDir);
+  return physicalBinDir.startsWith(`${physicalRepoRoot}${sep}`);
+}
+
+const OWNS_BIN_DIR = checkoutOwnsBinDir(REPO_ROOT, BIN_DIR);
 
 function runBin(args) {
   return spawnSync(process.execPath, [TSC_BIN, ...args], { encoding: 'utf8', cwd: REPO_ROOT });
@@ -351,12 +359,30 @@ describe('the tsc guard installer', () => {
    */
   function requireOwnership() {
     if (OWNS_BIN_DIR) return true;
-    expect(
-      existsSync(join(REPO_ROOT, 'node_modules', '.bin', 'tsc')),
-      'this checkout does not own its bin entry, so there is nothing here it may write'
-    ).toBe(false);
+    // A symlinked node_modules may expose a shared bin entry. Its existence does
+    // not make this checkout the owner, so leave the shared checkout untouched.
     return false;
   }
+
+  it('does not treat shared symlinked node_modules as owned', () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'tsc-guard-owner-'));
+    const ownedBinDir = join(repoRoot, 'node_modules', '.bin');
+    const sharedRepoRoot = mkdtempSync(join(tmpdir(), 'tsc-guard-shared-repo-'));
+    const sharedModules = mkdtempSync(join(tmpdir(), 'tsc-guard-shared-modules-'));
+    try {
+      mkdirSync(ownedBinDir, { recursive: true });
+      expect(checkoutOwnsBinDir(repoRoot, ownedBinDir)).toBe(true);
+
+      mkdirSync(join(sharedModules, '.bin'));
+      symlinkSync(sharedModules, join(sharedRepoRoot, 'node_modules'), 'dir');
+
+      expect(checkoutOwnsBinDir(sharedRepoRoot, join(sharedRepoRoot, 'node_modules', '.bin'))).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(sharedRepoRoot, { recursive: true, force: true });
+      rmSync(sharedModules, { recursive: true, force: true });
+    }
+  });
 
   it('is idempotent, so `npm install` can be run any number of times', async () => {
     if (!requireOwnership()) return;
@@ -389,7 +415,7 @@ describe('the tsc guard installer', () => {
         realpathSync(REAL_COMPILER)
       );
       expect(install(), 'so the installer must not report nothing to do').toEqual({ installed: true, changed: true });
-      expect(realpathSync(TSC_BIN), 'and it must actually put the guard back').toBe(realpathSync(GUARD));
+      expect(realpathSync(TSC_BIN), 'and it must actually put the guard back').toBe(realpathSync(OWNER_GUARD));
     } finally {
       install();
     }
@@ -422,7 +448,7 @@ describe('the tsc guard installer', () => {
       install();
 
       expect(realpathSync(TSC_BIN), 'and the installer leaves a link that resolves, to the guard').toBe(
-        realpathSync(GUARD)
+        realpathSync(OWNER_GUARD)
       );
     } finally {
       // Repaired even when the assertions above fail. Without this a red run

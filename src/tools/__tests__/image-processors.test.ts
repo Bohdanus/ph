@@ -356,16 +356,11 @@ describe('tool image processors', () => {
       expect(canvas).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
-    it('produces a 0x0 canvas for a zero-area rect instead of clamping to 1x1 (src/tools/crop.ts:19-20)', () => {
-      // `canvas.width`/`canvas.height` are assigned *after* construction, so the
-      // `Math.max(1, …)` clamp every other canvas path relies on never runs. A degenerate
-      // crop therefore yields an unusable 0x0 document.
-      const [canvas, pos] = crop(params)({ rect: rect(7, 7, 7, 7), toolName: 'crop' });
+    it('returns the source unchanged for a zero-area rect instead of creating a 0x0 bitmap', () => {
+      const [result] = crop(params)({ rect: rect(7, 7, 7, 7), toolName: 'crop' });
 
-      expect(pos).toEqual({ width: 0, height: 0 });
-      expect(lastCanvas().width).toBe(0);
-      expect(lastCanvas().height).toBe(0);
-      expect(canvas).toBe(lastCanvas() as unknown as OffscreenCanvas);
+      expect(result).toBe(bitmap);
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
     });
 
     it('honours a one-pixel rect, so the 1x1 minimum only breaks for a zero-area rect', () => {
@@ -378,35 +373,37 @@ describe('tool image processors', () => {
       expect(canvas).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
-    it('documents the clamp asymmetry against a sibling processor that does clamp (src/tools/crop.ts:19-20)', () => {
-      // Both processors allocate a fresh document-sized canvas; only crop's post-construction
-      // width/height assignment skips the minimum-size clamp, so a degenerate crop is the
-      // single path in this file that can produce a 0-pixel document.
-      const [cropped] = crop(params)({ rect: rect(7, 7, 7, 7), toolName: 'crop' });
-      const cropCanvas = lastCanvas();
-      const [selected] = selection(params)({ points: [], mode: 'fill', toolName: 'selection' });
-      const selectionCanvas = lastCanvas();
-
-      expect(cropCanvas.width).toBe(0);
-      expect(selectionCanvas.width).toBe(1);
-      expect(selectionCanvas.height).toBe(1);
-      expect(cropped).toBe(cropCanvas as unknown as OffscreenCanvas);
-      expect(selected).toBe(selectionCanvas as unknown as OffscreenCanvas);
-    });
-
-    it('throws a TypeError for the tool default null rect (src/tools/crop.ts:17)', () => {
-      // `crop.ts:17` asserts `rect!` while `defaultSettings.crop.rect` is null
-      // (`src/tools/settings.ts:51`). The type lie is the assertion; the throw itself is
-      // raised by the destructure inside `trimRect` (`src/util/rect.ts:28`).
+    it('treats the default null rect as a no-op copy instead of throwing', () => {
       expect(defaultSettings.crop.rect).toBeNull();
-      expect(() => crop(params)({ rect: defaultSettings.crop.rect, toolName: 'crop' })).toThrow(TypeError);
-      expect(() => crop(params)({ rect: null, toolName: 'crop' })).toThrow(
-        /Cannot destructure property 'x1' of 'rectSorted' as it is null/
-      );
+      const [result] = crop(params)({ rect: defaultSettings.crop.rect, toolName: 'crop' });
+      const [explicitNull] = crop(params)({ rect: null, toolName: 'crop' });
+
+      expect(result).toBe(bitmap);
+      expect(explicitNull).toBe(bitmap);
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
     });
 
-    it.fails('treats the default null rect as a no-op copy instead of throwing (src/tools/crop.ts:17)', () => {
-      expect(() => crop(params)({ rect: null, toolName: 'crop' })).not.toThrow();
+    it.each([
+      rect(Number.NaN, 0, 10, 10),
+      rect(0, Number.POSITIVE_INFINITY, 10, 10),
+      rect(0, 0, Number.NEGATIVE_INFINITY, 10),
+    ])('treats a non-finite rect as a no-op copy', (badRect) => {
+      const [result] = crop(params)({ rect: badRect, toolName: 'crop' });
+
+      expect(result).toBe(bitmap);
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    it('returns the source unchanged when the platform provides no 2D context', () => {
+      const getContext = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockReturnValue(null as never);
+      try {
+        const [result] = crop(params)({ rect: rect(4, 6, 20, 18), toolName: 'crop' });
+
+        expect(result).toBe(bitmap);
+        expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
+      } finally {
+        getContext.mockRestore();
+      }
     });
   });
 

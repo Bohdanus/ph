@@ -7,13 +7,16 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 
 ## Authority
 
-The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
-now stages a durable-composed presentation cache into those legacy layers, and
-render and export consume that cache through `getLayerBitmap()`; logical
-undo/redo remains legacy-authoritative. `durableDocument` is a mounted
-navigation presentation cache as well as the durable state model. The migration
-is not complete until one replay/materialization authority feeds undo, redo,
-navigation, render, export and history-panel state without a second logical
+The legacy `HistoryItem[]` timeline remains the logical authority. Navigation and
+eligible committed append/reorder transitions stage a complete durable render
+projection beside the legacy logical layers; `renderSelector` holds the
+pending/durable/legacy canvas authority, while export consumes its own guarded
+durable projection. Logical undo/redo remains legacy-authoritative. Append and
+reorder keep the already-visible legacy selector active while composition runs,
+so transient previews do not wait behind durable publication. `durableDocument`
+is a mounted presentation projection as well as the durable state model. The
+migration is not complete until one replay/materialization authority feeds undo,
+redo, navigation, render, export and history-panel state without a second logical
 state writer.
 
 The durable model is not disposable scaffolding. Its action log, typed layer
@@ -40,25 +43,25 @@ than create a replacement layer and leave the old one behind.
 `DurableLayerPropertyPatch` still deliberately omits `source`, so the
 capability needs its own operation: `create-layer` and `merge-document` carry
 complete layer snapshots, while the property, position, order, filter, affine,
-raster-processor, frame and selection operations change something other than a
-layer's arguments.
+raster-processor, frame, document-transform and selection operations change
+something other than a layer's arguments.
 
 **The authorized operation has landed and is named.** `replace-layer-source`
 carries a `layerId`, an `EditableDurableLayerSource` and the layer's `pos`, and
 `source` and `pos` travel together deliberately: a source edit re-measures the
 layer box, so a legacy entry that moved both must produce ONE operation or the
 legacy-to-durable cursor map grows by two for one edit. `DurableOperation` holds
-twelve kinds. The operation is derived by `deriveReplaceLayerSourceEntry()`
+thirteen kinds. The operation is derived by `deriveReplaceLayerSourceEntry()`
 (`history-adapter.ts`), reached from `legacyHistoryToDurable`, planned at the
 append boundary (`history-append.ts`), replayed by the `'replace-layer-source'`
 case in `durable-replay.ts`, and deep-frozen by `cloneOperation`
 (`history-model.ts`). Its retained operations deliberately survive a source
 rewrite, so a live filter or transform is not dropped when the text is retyped.
 
-**What the requirement still owes.** The production options bar reads
-`toolArgs` from legacy replay, so source rehydration is a cutover-time
-requirement governed by RQ-4's differential and ownership gates, not a gap in the
-operation itself. The affine-resampling divergence found by the pixel differential
+**What the requirement still owes.** `CurrentToolProvider` now rehydrates matching
+text and vector source arguments from the durable navigation document while
+protecting pending text and active gestures; saved settings remain the fallback
+for unsupported sources. The affine-resampling divergence found by the pixel differential
 is fixed; the remaining differential obligations are listed under Sequencing.
 The pinned `args.enabled` divergence also remains open.
 
@@ -77,10 +80,11 @@ no recorded override for this requirement; agents must not invent one or write
 
 The earlier proposal for an automatic `rasterize-layer` escape hatch — one more
 durable operation, whichever number it would have taken — is superseded.
-`DurableOperation` now holds twelve kinds, eleven from the finalisation audit plus
-the authorized `replace-layer-source`. That source-edit operation is a different
-requirement: it preserves editable text and shape sources and is not a
-rasterization path. Count the union in `history-model.ts`, not from this
+`DurableOperation` now holds thirteen kinds: eleven from the finalisation audit,
+the authorized `replace-layer-source`, and `transform-document` for atomic rotated
+crop replay. The source-edit operation preserves editable text and shape sources;
+the document transform stays behind the frame-presentation gate until its browser
+pixel parity is proven. Count the union in `history-model.ts`, not from this
 sentence.
 The count is also derived by `history-model.reachability.test.ts`'s
 `it('declares exactly the kinds the DurableOperation union declares')`, rather
@@ -156,24 +160,48 @@ variant or an equivalent atomic history action.
    raster append path and the navigation presentation mount are closed, and the
    §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
-   planned, replayed and cloned. Logical replay parity, history-panel parity, and
-   the browser authority seam now exist alongside the pixel/export differential;
-   what is still owed is the two scenarios jsdom cannot render in either direction,
-   options-bar rehydration, and the pinned `args.enabled` divergence.
-   Do not read the landed operation as a closed requirement; the
-   operator's ruling was that the operation and its visible consumer land as one
-   slice, and the consumer is still legacy-sourced.
+   planned, replayed and cloned. Logical replay parity, history-panel parity, the
+   browser authority seam, options-bar rehydration, and the pixel/export
+   differential now exist alongside it. The production `durableExportRecords()`
+   adapter is exercised by the cursor matrix, and FileProvider coverage proves
+   raster/PSD routing, refusal fallback, stale fallback, and exactly-once release.
+   Unsupported-source fallback is now pinned at the StoreContext publication seam.
+   The browser seam's raster/blank forced durable-publication case is pinned by
+   `e2e/undo-redo.spec.ts`, and nested `args.enabled` parity is pinned by
+   `history-adapter.branches.test.ts`; vector and broader text pixel gaps remain proof gaps,
+   not permission to weaken the authority gate.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Transfer RENDER AUTHORITY, which render already reads, through the staged
-   durable projection. Keep both raster and PSD EXPORT legacy-authoritative until
-   their shared differential is green for every layer kind (§206), then transfer
-   them together. Stage successfully before publication and delete each old
-   authority only after its differential and failure-contract gates pass. This is
-   no longer a mounting question: durable pixels already reach both surfaces
-   through `getLayerBitmap()`, and what is unmounted is durable STATE authority.
+6. Keep the staged durable projection as the authority for supported runtime
+   presentation and both raster/PSD export paths. Ownership checks, production
+   adapter parity, and atomic failure fallback are closed; supported committed
+   eligible append/reorder presentation now composes in the background with legacy
+   as the immediate selector; source-backed imports/replacements and frame-changing
+   commits remain legacy until their ownership or frame-parity gates are explicit. A
+   rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
+   operation, and legacy plus durable logical replay both transform every extant layer.
+   `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
+   publication intentionally remains legacy. Direct browser differentials now prove byte-identical
+   legacy/durable composition for a 90-degree single-raster crop (exact `0,0,64,64` materialized
+   bounds), a non-quarter 37-degree crop with two differently positioned raster layers, Arial point
+   text, serif paragraph text, non-centered right-aligned monospace point text, blank, vector-shape,
+   and Draw paint sources. A three-transition mixed-source case checks each durable cursor against
+   the matching legacy frame: 37-degree transform, frame-only transition, then -17-degree transform.
+   The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
+   origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
+   pixel grid. Only the 90-degree fixture pins exact materialized bounds; the remaining cases assert
+   byte-identical pixels and materialized-layer presence, not exact fractional per-layer bounds.
+   These fixtures close only their listed cases, not the frame gate: other angles and source/tool
+   variants, additional text styling/rotation combinations, other frame sequences and the full
+   retained-affine operation surface still need parity proof. Previews and unsupported documents
+   still use the complete legacy compatibility path.
+   Unsupported-source
+   fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
+   then retire legacy logical replay only after
+   durable replay can provide the same complete state for append, branch, preview,
+   and compatibility fallback.
 
 ## Operator rulings
 

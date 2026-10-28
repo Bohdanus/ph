@@ -117,6 +117,18 @@ describe('useApp failure paths', () => {
     expect(harness.layerMocks.createBlankLayer).toHaveBeenCalledExactlyOnceWith({ ...params }, true);
   });
 
+  it('rejects an oversized blank document before resizing or creating its layer', () => {
+    const params: Parameters<UseAppType['setBlankImage']>[0] = {
+      color: '#ff0000',
+      opacity: 1,
+      size: { width: 10_001, height: 10_000 },
+      isBedrock: true,
+    };
+
+    expect(() => useApp().setBlankImage(params)).toThrow('Document is too large');
+    expect(harness.layerMocks.createBlankLayer).not.toHaveBeenCalled();
+  });
+
   it('resizes every owned canvas and clears the tool state before replacing the document', async () => {
     const canvas = document.createElement('canvas');
     const toolOverlay = document.createElement('canvas');

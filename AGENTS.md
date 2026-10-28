@@ -1,207 +1,40 @@
-Photoshop clone
+Photoshop clone. The toolbar is a Photoshop clone — HARD REQUIREMENT.
 
-#️ CRITICAL: ALL WORK HAPPENS IN WORKTREE — NEVER IN THE MAIN CHECKOUT
+## Worktrees
 
-**Every command you run — git, tests — MUST run inside worktree directory under `.kilo/worktrees/`.**
+- Make tracked edits and run Git/npm commands only in `.kilo/worktrees/`; `main` is read-only except for landing.
+- Before any other Git command, run `git worktree list --porcelain`, choose the `refs/heads/main` worktree, and create a task branch. Verify the new checkout with `git rev-parse --show-toplevel`.
+- Create the worktree before editing or starting subagents.
+- Commits require a `Chat: <native-session-id>` trailer; merges into `main` require `Branch: <source-branch>`. Resolve chat IDs with `npm run session:id -- "distinctive phrase"`.
+- Follow [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) for landing, recovery, and disposal.
 
-The main checkout is **READ-ONLY**.
-Running `git status`, `git rev-parse`, `npm test` - will break.
+## Product Boundary
 
-**Copilot can start in the bare repository at the workspace root.** Git commands
-that require a working tree, including `git status` and
-`git rev-parse --show-toplevel`, fail there with the
-`this operation must be run in a work tree` error. Do not use them until you have
-selected a real worktree. Start with
-`git -C "$PWD" worktree list --porcelain`, find the entry whose branch is
-`refs/heads/main` as shown below, and run subsequent Git commands with
-`git -C "$MAIN"` (or after changing into a worktree).
+Support desktop and tablet/touch devices, including Retina/high-DPI. Do not add phone layouts or phone-specific interactions.
 
-**Once in a worktree, verify it before editing tracked files or running project commands:**
+## Agents And Reviews
 
-```bash
-# Run this from a worktree, never from the bare startup directory.
-git rev-parse --show-toplevel
-# MUST print a path under .kilo/worktrees/
-```
+- Use `task` for research and `agent_manager` only for visible sessions/worktrees. Give each subagent an absolute worktree path and exclusive write set.
+- Pass `model` and `provider` together. Free sessions must not launch GPT subagents or perform Git operations; the coordinator owns branch, merge, commit, reset, and disposal work.
+- See [MODELS.md](MODELS.md) for model/provider guidance.
+- Photoshop behavior, UX, and non-trivial algorithms require Adobe or other primary-source research. Non-trivial changes require a fresh read-only review; cross-module or high-risk changes require two. See [`docs/ORCHESTRATION.md#the-task-lifecycle`](docs/ORCHESTRATION.md#the-task-lifecycle) and [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md).
 
-Every tracked-file change happens in worktree. `main` is for reading
-and merging. The exceptions are listed in [`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
-If a task starts outside a worktree, the setup commands below are the only git
-commands to run before creating one.
+## Browser And Validation
 
-```bash
-# Find the checkout actually on main; the first listed worktree can be bare.
-MAIN="$(git -C "$PWD" worktree list --porcelain | awk '
-  /^worktree / { path = substr($0, 10) }
-  /^branch refs\/heads\/main$/ { print path; found = 1; exit }
-  END { if (!found) exit 1 }
-')" || { printf 'Could not find a worktree on refs/heads/main\n' >&2; exit 1; }
+- Never open a browser. Use `npm run test:e2e` for headless E2E and `npm run probe:console` for one page load. Do not add browser MCPs or weaken console/theme gates.
+- Run npm commands only in a worktree. Use `npm run tsc` for typechecking and `npm run build` for production builds; do not use `npx tsc --noEmit` as project validation.
+- E2E specs use `./fixtures/extended-test`, not `@playwright/test`. Do not spread `useRect` return groups onto DOM elements.
 
-# Verify and create the task worktree from the real main checkout.
-git -C "$MAIN" rev-parse --show-toplevel
+## Coordination And Cleanup
 
-# Pick a task-specific slug that is not already a branch or directory.
-SLUG=task-specific-name
-BRANCH="fix/$SLUG"
-TARGET="$MAIN/.kilo/worktrees/$SLUG"
-if git -C "$MAIN" show-ref --verify --quiet "refs/heads/$BRANCH" || [ -e "$TARGET" ]; then
-  printf 'Branch or worktree path already exists; choose another SLUG\n' >&2
-  exit 1
-fi
-git -C "$MAIN" worktree add -b "$BRANCH" "$TARGET"
-# Run subsequent commands from "$TARGET" (or prefix them with git -C "$TARGET").
-```
+- Before takeover, harvest, or cleanup, verify the worktree, run `npm run repo:state`, inspect status, and read the relevant handoff. Cleanup also requires `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`.
+- Never run `node scripts/worktree-inventory.mjs -- --quiet`; use documented inventory commands and check their exit status. Use `npm run swarm` for repository ownership, not session-only board tools.
+- `board_post` caps the FORMATTED message at **4096 bytes**, not the body at 4096 characters: the budget is **3800 ASCII characters**, or 1200 if any may be non-ASCII. Put longer evidence in a file and reference it from the board. Details live in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
+- Never merge into dirty `main`, stage another agent's paths, or use `git stash`. Dispose only with `npm run dispose -- <name>` after proving ownership, confirming descendant agents are dead, checking the live overlay, and previewing `npm run swarm -- doctor --dry-run`.
+- A task is complete only when reviewed work is landed/released or a durable handoff marks it `blocked`, `unproven`, or `obsolete`.
 
-Every commit must carry a `Chat: <native-session-id>` trailer; resolve it as described in
-[`docs/CHAT-ID.md`](docs/CHAT-ID.md). Do not infer or translate one host's session ID into another.
-Every merge into `main` must carry `Branch: <source-branch>`.
-Resolve the session ID before the first commit. `ses_…` is the Kilo format; it is accepted by
-the Kilo swarm command when needed, but swarm identity otherwise defaults to the branch.
+## Gates And Documentation
 
-## Device support boundary
-
-**This product supports desktop and tablet-sized touch devices, including high-DPI/Retina tablets.
-It does not support handheld phone layouts such as iPhone-sized screens.**
-
-Use “tablet/touch” for responsive work and tests. Do not create handheld-mobile features, phone
-breakpoints, or phone-specific interaction models. Tablet touch input must preserve desktop-quality
-tools, panels, and canvas fidelity; Retina/high-DPI rendering is a first-class requirement.
-
-## Subagents
-
-- Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
-- **A task subagent inherits the caller's working directory.** You MUST give it the absolute worktree path in the prompt. Never let two agents edit the same file.
-
-- **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
-- A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
-- GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
-- `agent_manager` inherits the current model unless both values are explicit, so a main turn on a paid model spawns paid worktrees; `explore` cannot run commands, so use `general` when execution is needed.
-- Findings need evidence. Board messages cap at 4096 bytes (~3800 ASCII or ~1200 with non-ASCII). Put longer findings in a file or swarm issue.
-
-### Free-model Git restriction
-
-Nemotron and every other free model can misbehave when handling Git. NEVER assign free-model agents Git operations, branch or worktree creation/deletion, rebases, merges, commits, resets, or conflict resolution. Deny free-model agents Git work; perform Git operations in the coordinator or a trusted non-free agent.
-
-## Browser rule
-
-Never open a browser window. E2E runs are headless; read [`docs/TESTING.md#never-open-a-browser-window`](docs/TESTING.md#never-open-a-browser-window)
-before any Playwright command. The only operator-approved headed command is
-`npm run test:e2e:headed`; never switch modes to hide a failure.
-
-Use `npm run probe:console` for a headless page probe. It reports deduplicated console,
-page, and request failures. Its only options are `--url`, `--viewport`, `--dsf`, `--allow`,
-and `--out`; headless mode is hardcoded. Do not add a browser MCP server: it bypasses the
-repository's browser protections.
-
-## Commands
-
-**ALL git/npm COMMANDS MUST RUN IN YOUR WORKTREE.**
-
-`npm run tsc` is the only trustworthy typecheck. `npx tsc --noEmit` checks the empty root
-solution and can exit successfully without checking the projects; see [`docs/TESTING.md#running-commands`](docs/TESTING.md#running-commands).
-Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for one headless page load.
-
-## Worktrees and dev servers
-
-- Run slow inventory commands asynchronously; wait for that run to finish before relying on its report. See [`docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson`](docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson).
-- `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
-- `npm run branches:orphan` reports every branch `main` does not contain that no worktree holds, with its behind-count, its commits `main` lacks, and its conflict count. The inventory and `repo:state` enumerate worktrees; `dispose` acts on one, so none sees unmerged branches without a worktree. [`docs/ORCHESTRATION.md#branches-nobody-holds`](docs/ORCHESTRATION.md#branches-nobody-holds) is the detailed source.
-- Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
-- Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
-
-## Test traps
-
-E2E specs import `test` from `./fixtures/extended-test`, not `@playwright/test`. Its `auto`
-fixtures enforce `consolePolice` and `pinnedTheme`; expected console messages require a
-reasoned `ACCEPTED_CONSOLE_ERRORS` entry. Do not add skips, thresholds, or suppressions to
-make a test pass. `useRect` must expose `pointerHandlers`, `rectHandles`, and `pointerState`
-explicitly; spreading its whole return onto a DOM element creates invalid props.
-
-## Gates
-
-The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TESTING.md#gates).
-
-| Command               | Runs from           | Contents                                                       |
-| --------------------- | ------------------- | -------------------------------------------------------------- |
-| `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
-| `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
-| `npm run test:staged` | nowhere             | manual `vitest related` command                                |
-| `npm run gate:push`   | `.husky/pre-push`   | stale-branch check, then full app suite                        |
-
-- The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
-- CI has independent `ci`, `e2e-unit`, and a cross-platform `e2e` matrix (Linux,
-  Windows, macOS) jobs. The `e2e` matrix runs with `fail-fast: false` and `retries: 2`;
-  `failOnFlakyTests` turns a pass-after-retry into a failure. CI audits high-severity
-  vulnerabilities but does not enforce dependency licences. CI is read-only: the
-  workflow sets `permissions: contents: read`, and every checkout uses
-  `persist-credentials: false`.
-- Never weaken a gate with a skip, raised threshold, deleted assertion, or re-recorded baseline. A baseline is re-recorded only with `--update-snapshots=all`.
-- Hooks dispatch from `<common-dir>/.git/hooks-gate/`, not each worktree's `.husky/_`; `HUSKY=0` bypasses them. A blocked commit may leave `.git/lint-staged_unstaged.patch`.
-- Reference timings: `build` 1.7s, `test:e2e:unit` 1.1s, `tsc -b` 5s, `gate:commit` about 9s, `test:staged` 2.8s, and the full test about 7-14s.
-
-## Known failures
-
-The latest recorded full headless run passed with three declared skips; this is
-one machine's observation, not a guarantee of current status. Read
-[`docs/TESTING.md#e2e-failures`](docs/TESTING.md#e2e-failures) and
-[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) for the recorded result and open
-E2E issues; run the suite for its current status.
-
-A CI E2E result marked flaky is a failed run even if a retry passed; investigate it rather
-than treating it as green. See [`docs/TESTING.md#ci`](docs/TESTING.md#ci) for the retry policy.
-
-A pin or `it.fails(...)` test is a tripwire for known broken behavior, not a skip. When the
-defect is fixed, remove its pin in the same change. Read failure artifacts from disk; never
-open a trace viewer or another browser window.
-
-## Documentation
-
-`docs/README.md` indexes the documents and their single jobs. The authority ladder is:
-operator, then Adobe for Photoshop behavior, then this repository for code, then judgement.
-The in-app documents are the source of truth for what code must do; code is the source of
-what it does now. If a browser cannot implement a requirement, document that limitation.
-
-One fact has one home: link instead of restating it. `docs/TOOLS.md` is generated; never edit it.
-
-## Citations
-
-Do not cite line numbers in prose. Cite a declared identifier in call form, a dispatched
-string literal, a test title, a file, or a document heading/quote/`§N`. A range names one
-enclosing unit, never two endpoints. This rule is enforced by
-`scripts/__tests__/agents-citations.test.mjs`; do not weaken it with exclusions or thresholds.
-
-Quotation in a fenced block is the only exemption. The check covers retired symbols in all
-maintained documents. Line-number checks cover `AGENTS.md`, `docs/DOCUMENTATION.md`, and
-`docs/README.md`; call-form and `§N` checks cover `AGENTS.md` alone. The exact scope is
-deliberate and described in [`docs/DOCUMENTATION.md#citations`](docs/DOCUMENTATION.md#citations).
-
-## Handoff documents
-
-`HANDOFF.md`, `.kilo/plans/`, and `e2e/OPEN_PROBLEMS.md` are problem-focused and todo-oriented:
-no changelogs, completion summaries, or status reports. Verify every claim against the tree;
-each entry needs a validated problem, affected files, and an actionable fix. Fixed and verified deletes the entry.
-
-## Architecture status
-
-`HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**. The durable document is mounted only
-as a **navigation presentation cache**; it remains subordinate to legacy replay, while render,
-export, and logical replay stay legacy-authoritative. Re-read the code,
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
-designing across this legacy/durable boundary.
-
-`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
-SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
-them. Sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a tool
-that left the paint panel must not be widened back for a new bar. A group that persists one key
-may not absorb a tool that has more than one.
-
-## Free subagent models
-
-Poolside Laguna S 2.1 is preferred for subagents. Note: rate-limited — at most 2 subagents using it may run at a time.
-
-| Model                   | Provider | Variant  | Note                              |
-| ----------------------- | -------- | -------- | --------------------------------- |
-| Poolside Laguna S 2.1   | kilo     | thinking | Best                              |
-| Nemotron 3 Ultra (free) | kilo     | high     | Thorough, slower                  |
-| Dots3-Note Preview      | kilo     | thinking | Alternative, good summaries, fast |
-| Step 3.7 Flash          | kilo     | high     | Fast, accurate                    |
+- Commit runs lint-staged, then typecheck/build; push runs the full suite. Never weaken gates or casually re-record baselines. See [`docs/TESTING.md#gates`](docs/TESTING.md).
+- Do not cite line numbers in prose; use identifiers, test titles, files, headings, or `§N`. Do not edit generated `docs/TOOLS.md`.
+- Keep `HANDOFF.md`, `.kilo/plans/`, and `e2e/OPEN_PROBLEMS.md` problem-focused, not changelogs. Remove fixed, verified entries. Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`HANDOFF.md`](HANDOFF.md) §1 before crossing replay/durable boundaries.

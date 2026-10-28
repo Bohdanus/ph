@@ -1,6 +1,7 @@
 import { expect, type Page, test } from './fixtures/extended-test';
-import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { drawLineFromDocument, getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { SEARCH_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * Below 768 CSS pixels the mobile chrome is shown and the desktop chrome is hidden —
@@ -82,7 +83,10 @@ test.describe('Mobile shell', () => {
     await expect(picker.getByRole('button', { name: 'Pencil Tool' })).toHaveAttribute('aria-pressed', 'true');
     // The bar's own tile lights for the whole group, so it is the pressed member of the
     // picker, not the tile, that says which tool within the group is now active.
-    await expect(bottomBar(page).getByRole('button', { name: 'Brush Tool' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(bottomBar(page).getByRole('button', { name: 'Brush Tool', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
     await expect(sheet).toContainText('pencil Options');
 
     await toggle.click();
@@ -134,6 +138,57 @@ test.describe('Mobile shell', () => {
     await expect(root).toHaveClass(/\bdark\b/);
   });
 
+  /**
+   * P1 — brush collision dark theme: on dark mode the brush tile must keep a
+   * distinguishing style that does NOT merge with the hover state of a neighbour.
+   *
+   * The active class on `MobileBottomBar` tiles is `bg-blue-50 font-bold text-blue-600`
+   * in light mode and `dark:bg-blue-500/15 dark:text-blue-400` in dark — the hover-only
+   * class is `dark:hover:bg-gray-800 dark:hover:text-gray-200`. A regression that drops
+   * the dark active variant (or makes it identical to the hover variant) renders the
+   * brush's focus indistinguishable from a plain tile on a dark background.
+   *
+   * This test pins the active class string on the brush tile itself, so a CSS regression
+   * that merges the two states in dark mode surfaces here rather than as a silent UX
+   * bug that a pixel diff would only catch after a release.
+   */
+  test('the brush tile keeps a dark-mode-active style distinct from hover', async ({ page }) => {
+    // Switch to dark mode via the header drawer (the same path `theme toggle` tests).
+    await page.getByTestId('mobile-menu-button').click();
+    await page.getByTestId('mobile-menu-theme-button').click();
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+    // Close the drawer before touching the bottom bar — the overlay intercepts
+    // pointer events while the drawer is open. Escape is handled by `useModalA11y`.
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Mobile Navigation Menu' })).toBeHidden();
+
+    // Select the brush tool. The bottom bar groups tools, so the brush tile lights up
+    // for the whole group — the same `aria-pressed` contract the bottom-bar test asserts.
+    const brushTile = bottomBar(page).getByRole('button', { name: 'Brush Tool', exact: true });
+    await brushTile.click();
+    await expect(brushTile).toHaveAttribute('aria-pressed', 'true');
+
+    // The active class must carry the dark-mode variant. If a future refactor drops
+    // `dark:bg-blue-500/15` from the active branch — leaving only `dark:text-gray-400`,
+    // which is the same text colour the inactive hover branch uses — this assertion
+    // catches it. We read the class list directly rather than asserting a computed
+    // colour, because the spec pins the STYLING CONTRACT (the Tailwind variant that
+    // encodes it) rather than a value the browser resolves through a variable.
+    const brushClass = (await brushTile.getAttribute('class')) ?? '';
+    expect(brushClass, 'active brush tile must carry a dark-mode active style').toContain('dark:text-blue-400');
+    expect(brushClass).toContain('dark:bg-blue-500/15');
+
+    // A neighbour tile must NOT carry the active style, proving the two are
+    // distinguishable — the brush tile does not inherit its sibling's hover class
+    // and vice-versa.
+    const otherTile = bottomBar(page).getByTestId('mobile-tool-options-toggle');
+    const otherClass = (await otherTile.getAttribute('class')) ?? '';
+    expect(otherClass, 'a non-active tile must not carry the active dark-mode style').not.toContain(
+      'dark:bg-blue-500/15'
+    );
+    expect(otherClass).not.toContain('dark:text-blue-400');
+  });
+
   test('the layers drawer hides a layer, and the header badge counts the layers', async ({ page }) => {
     const toggle = page.getByTestId('mobile-layers-toggle-button');
     await expect(toggle, 'one layer is too few for a badge to be worth drawing').toContainText('📑');
@@ -171,7 +226,7 @@ test.describe('Mobile shell', () => {
     const canvas = getWorkspaceCanvas(page);
     const box = await canvas.boundingBox();
     if (!box) throw new Error('The workspace canvas has no box on a phone');
-    await drawLine(page, box, 60, 100, 200, 100);
+    await drawLineFromDocument(page, box, 150, 150, 350, 150);
 
     await expect(undo, 'the stroke is a history entry the header can reach').toBeEnabled();
     await undo.click();
@@ -179,5 +234,103 @@ test.describe('Mobile shell', () => {
     await expect(redo).toBeEnabled();
     await redo.click();
     await expect(redo).toBeDisabled();
+  });
+
+  /**
+   * P2 — the mobile bottom bar scrolls 615px with no affordance. `nav[data-testid="mobile-
+   * bottom-bar"]` overflows its width by 615px at 390×844 and carries `scrollbar-none`, so
+   * the only cue that most tiles are off-screen is gone. This is the reachability test the
+   * OPEN_PROBLEMS.md entry calls for: scroll the bar to its last tile and assert that tile
+   * is inside the bar's CLIENT box, the same shape as the rail's swatch test in
+   * `no-document-overflow.spec.ts`. No `scrollTo` exists for a horizontal flex row in
+   * Tailwind's `overflow-x-auto`, so the scroll is driven through the DOM `scrollLeft`
+   * property the way the rail test drives the vertical scroll container.
+   */
+  test('the bottom bar is reachable end-to-end: its last tile is inside the client box', async ({ page }) => {
+    test.setTimeout(SEARCH_TEST_TIMEOUT_MS);
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await expect(bottomBar(page)).toBeVisible();
+
+    // Non-vacuity: the bar must actually overflow, or this test cannot mean anything.
+    const overflow = await bottomBar(page).evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, 'the bottom bar must overflow its own width, or the reachability is untested').toBeGreaterThan(0);
+
+    // The bar carries 18 tiles (16 groups + Options + Layers). The last is Layers, and it
+    // is the one a user reaching the end of the list must find.
+    const lastTile = bottomBar(page).getByRole('button').last();
+
+    // Scroll to the end in a bounded poll: `scrollLeft = scrollWidth` is the target, but the
+    // bar may not reach it in one step on a slow render, so retry until the last tile's right
+    // edge is at or past the client box's right edge.
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => {
+          const bar = document.querySelector('[data-testid="mobile-bottom-bar"]') as HTMLElement | null;
+          if (!bar) return;
+          bar.scrollLeft = bar.scrollWidth;
+        });
+
+        const tile = await lastTile.boundingBox();
+        const barBox = await bottomBar(page).boundingBox();
+        if (!tile || !barBox) return false;
+
+        // The tile's right edge must be at or inside the bar's client right edge, so a
+        // user at the end of the scroll sees it rather than a blank gap.
+        const tileRight = tile.x + tile.width;
+        const barRight = barBox.x + barBox.width;
+        return tileRight <= barRight + 1;
+      })
+      .toBe(true);
+  });
+
+  test('the export button is visible and opens the save dialog on a document with content', async ({ page }) => {
+    const exportButton = page.getByTestId('mobile-export-button');
+    await expect(exportButton, 'the export button lives in the mobile header').toBeVisible();
+
+    // `handleExport` bails when `commitDirtyTool` has nothing committed, so the draw
+    // must land as a real entry first — the same gesture the undo/redo test makes.
+    await bottomBar(page).getByRole('button', { name: 'Draw Tool' }).click();
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('The workspace canvas has no box on a phone');
+    await drawLineFromDocument(page, box, 150, 150, 350, 150);
+    await expect(exportButton, 'enabled once the document carries committed content').toBeEnabled();
+
+    await exportButton.click();
+    await expect(
+      page.getByTestId('save-dialog'),
+      'the header export button opens the same save dialog the desktop path does'
+    ).toBeVisible();
+  });
+
+  test('the delete-layer button appears once there are two layers, and removes the active one', async ({ page }) => {
+    const toggle = page.getByTestId('mobile-layers-toggle-button');
+    await toggle.click();
+    const drawer = page.getByTestId('mobile-layers-drawer');
+    await expect(drawer).toBeVisible();
+    await page.getByTestId('mobile-tab-layers').click();
+    await expect(page.getByRole('list', { name: 'Layers' })).toBeVisible();
+
+    // The delete button renders only when `activeLayerId && sortedLayers.length > 1`
+    // (`MobileLayersDrawer.tsx`), so a single layer must not surface it.
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'absent with one layer').toHaveCount(0);
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'absent with one layer').toBeHidden();
+
+    // Adding a second layer surfaces the delete button — the same trigger the layers
+    // test above asserts for the badge count.
+    await page.getByTestId('mobile-add-layer-button').click();
+    await expect(toggle).toContainText('2');
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'present with two layers').toHaveCount(1);
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'present with two layers').toBeVisible();
+
+    // Clicking the button calls `removeLayer(activeLayerId)`, which drops the count
+    // back to one and retracts the button with no confirmation prompt — `removeLayer`
+    // has no guard (`useLayer.ts`).
+    await page.getByTestId('mobile-delete-layer-button').click();
+    await expect(toggle, 'the layer was removed, so the toggle no longer shows a multi-layer count').not.toContainText(
+      '2'
+    );
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'retracted after removal').toHaveCount(0);
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'retracted after removal').toBeHidden();
   });
 });

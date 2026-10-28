@@ -1,7 +1,7 @@
 import { expect, test, type Page } from './fixtures/extended-test';
 
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
+import { DEFAULT_TEST_TIMEOUT_MS, SEARCH_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * The app must not show a scrollbar anywhere on its outer chrome.
@@ -372,7 +372,7 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
   test('the tool rail FITS rather than overflowing, and the band that must scroll does so with no scrollbar', async ({
     page,
   }) => {
-    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    test.setTimeout(SEARCH_TEST_TIMEOUT_MS);
 
     // This test used to assert that the rail OVERFLOWS at iPad 10.2 portrait and that scrolling
     // it keeps the last control reachable, and it even carried the message "if it no longer

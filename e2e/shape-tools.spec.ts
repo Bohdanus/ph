@@ -1,4 +1,4 @@
-import { expect, type Page, test } from './fixtures/extended-test';
+import { expect, type Page, type TestInfo, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   type ClipOptions,
@@ -11,6 +11,7 @@ import {
   loadImageData,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
@@ -31,6 +32,36 @@ const STROKE_BLACK = '#000000';
 
 type Point = { x: number; y: number };
 type Rect = { from: Point; to: Point };
+
+type Figure = { label: string; toolName: string; slug: string; rect: Rect };
+
+const FIGURES: readonly Figure[] = [
+  {
+    label: 'Rectangle Tool',
+    toolName: 'shape',
+    slug: 'rectangle',
+    rect: { from: { x: 40, y: 40 }, to: { x: 250, y: 180 } },
+  },
+  {
+    label: 'Ellipse Tool',
+    toolName: 'shape',
+    slug: 'ellipse',
+    rect: { from: { x: 300, y: 40 }, to: { x: 510, y: 180 } },
+  },
+  { label: 'Line Tool', toolName: 'shape', slug: 'line', rect: { from: { x: 560, y: 40 }, to: { x: 760, y: 180 } } },
+  {
+    label: 'Triangle Tool',
+    toolName: 'shape',
+    slug: 'triangle',
+    rect: { from: { x: 40, y: 260 }, to: { x: 250, y: 400 } },
+  },
+  {
+    label: 'Polygon Tool',
+    toolName: 'shape',
+    slug: 'polygon',
+    rect: { from: { x: 300, y: 260 }, to: { x: 510, y: 400 } },
+  },
+];
 
 /**
  * The half-width of the square the sample window averages, in capture pixels. 3 is a 7x7
@@ -138,6 +169,30 @@ async function measureShape(page: Page, rect: Rect, name: string): Promise<{ wid
   const bounds = await getDarkPixelBounds(await page.screenshot({ clip }));
   expect(bounds, `${name} has to leave something on the canvas`).not.toBeNull();
   return { width: bounds!.width, height: bounds!.height };
+}
+
+/** Selects a member of the Shape flyout. */
+async function selectFigure(page: Page, figure: { label: string; toolName: string }): Promise<void> {
+  await openToolFlyout(page, 'shape');
+  await selectFromFlyout(page, { toolName: figure.toolName, label: figure.label });
+}
+
+const toolMode = (page: Page) => page.getByRole('combobox', { name: 'Tool mode' });
+const cornerRadius = (page: Page) => page.locator('#corner-radius-slider');
+
+/**
+ * Captures the toolbar thumbnail separately from the document. The matching names put both
+ * images beside each other in the Playwright report, making it possible to compare the preview
+ * a user was shown with the figure that their drag actually committed.
+ */
+async function captureShapeThumbnail(page: Page, testInfo: TestInfo, name: string): Promise<Buffer> {
+  const thumbnail = page.getByRole('region', { name: 'shape tool options' }).locator('canvas');
+  await expect(thumbnail, 'the Shape options bar exposes its drawing thumbnail').toBeVisible();
+  const box = await thumbnail.boundingBox();
+  if (!box) throw new Error('The Shape options thumbnail has no box');
+  const screenshot = await page.screenshot({ clip: box });
+  await testInfo.attach(`${name}-toolbar-preview`, { body: screenshot, contentType: 'image/png' });
+  return screenshot;
 }
 
 test.describe('Shape tools', () => {
@@ -322,6 +377,78 @@ test.describe('Shape tools', () => {
     const bounds = await measureShape(page, star, 'the star');
     expect(bounds.width).toBeGreaterThan(0);
     expect(bounds.height).toBeGreaterThan(0);
+  });
+
+  test('Rectangle Path mode thumbnail matches its rounded unfilled result', async ({ page }, testInfo) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const before = await captureShapeThumbnail(page, testInfo, 'shape-rectangle-default');
+
+    await toolMode(page).selectOption('path');
+    await cornerRadius(page).fill('54');
+    await thickness(page).fill('20');
+    await filledToggle(page).check();
+    await page.locator('#alpha-slider').fill('0.5');
+    await expect(toolMode(page)).toHaveValue('path');
+    await expect(cornerRadius(page)).toHaveValue('54');
+    await expect(filledToggle(page)).toBeChecked();
+    await expect(page.locator('#alpha-slider')).toHaveValue('0.5');
+
+    const configured = await captureShapeThumbnail(page, testInfo, 'shape-rectangle-path-rounded');
+    expect(configured, 'changing the Shape settings must redraw the toolbar thumbnail').not.toEqual(before);
+
+    const rectangle: Rect = { from: { x: 40, y: 80 }, to: { x: 340, y: 280 } };
+    await dragShape(page, rectangle, 'the rounded Path-mode rectangle');
+    const canvas = await canvasBox(page);
+    await captureCanvasScreenshot(
+      page,
+      canvas,
+      testInfo,
+      'shape-rectangle-path-rounded-document',
+      documentClip(canvas, rectangle)
+    );
+
+    const roundedCorner = await sampleDocumentPoint(page, 45, 85);
+    const topStroke = await sampleDocumentPoint(page, 190, 85);
+    const interior = await sampleDocumentPoint(page, 190, 180);
+    expect(roundedCorner, 'the rounded corner is reachable').toBeTruthy();
+    expect(topStroke, 'the top stroke is reachable').toBeTruthy();
+    expect(interior, 'the rectangle interior is reachable').toBeTruthy();
+    expect(
+      roundedCorner!.red,
+      'a 54px radius leaves the drag-box corner substantially lighter than the top stroke'
+    ).toBeGreaterThan(topStroke!.red + 40);
+    expect(interior!.red, 'Path mode suppresses the fill, just as the thumbnail shows').toBeGreaterThan(220);
+  });
+
+  test('all figures preview during one held drag and remain after release', async ({ page }, testInfo) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    for (const figure of FIGURES) {
+      // Each gesture starts with one pointerdown and ends with one pointerup. The capture
+      // between them proves the user can see the figure before deciding where to release.
+      await selectFigure(page, figure);
+      await captureShapeThumbnail(page, testInfo, `shape-${figure.slug}`);
+      const box = await canvasBox(page);
+      const clip = documentClip(box, figure.rect, 12);
+      const baseline = await page.screenshot({ clip });
+      const start = documentToCanvasOffset(box, figure.rect.from.x, figure.rect.from.y);
+      const end = documentToCanvasOffset(box, figure.rect.to.x, figure.rect.to.y);
+
+      await page.mouse.move(box.x + start.x, box.y + start.y);
+      await page.mouse.down();
+      await page.mouse.move(box.x + end.x, box.y + end.y, { steps: 10 });
+
+      await expect
+        .poll(() => regionChanged(page, clip, baseline), { message: `${figure.label} is visible before pointerup` })
+        .toBe(true);
+      await captureCanvasScreenshot(page, box, testInfo, `shape-${figure.slug}-preview`, clip);
+
+      await page.mouse.up();
+      await expect
+        .poll(() => regionChanged(page, clip, baseline), { message: `${figure.label} remains visible after pointerup` })
+        .toBe(true);
+      await captureCanvasScreenshot(page, box, testInfo, `shape-${figure.slug}-committed`, clip);
+    }
   });
 });
 

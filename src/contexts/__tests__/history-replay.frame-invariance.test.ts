@@ -9,7 +9,7 @@
  * as a document-size authority, and `documentFrameFromSize` hard-codes `x: 0, y: 0`
  * (`document-frame.ts:5-7`), so an ordinary layer commit dragged a cropped document
  * back to the origin. The rule is now gated to `index === 0`
- * (`history-replay.ts:103`); the cases below are the shapes production can write.
+ * by `replayHistory`'s initial-entry bedrock-source guard; the cases below are the shapes production can write.
  *
  * `history-replay.branches.test.ts` covers the same rule from the other side — which
  * sources DO reframe, and which do not resize. What is pinned here is the ORIGIN:
@@ -340,8 +340,8 @@ describe('replayHistory document frame invariance', () => {
     // from anywhere in the timeline, the same class of defect as the mid-history
     // bedrock source, and the durable converter already refuses it as
     // `document-replacement` (`history-adapter.ts:641`). Replay refuses it too
-    // (`history-replay.ts:89`).
-    // `history-replay.branches.test.ts:76` still pins the pre-refusal behaviour and is
+    // through the `documentSource` branch in `replayHistory`.
+    // `history-replay.branches.test.ts` still pins the pre-refusal behaviour and is
     // being re-pointed separately; this is the replacement.
     const dependencies = createDependencies();
     const replacementFrame = { x: 7, y: 8, width: 640, height: 480 };

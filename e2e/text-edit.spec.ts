@@ -12,6 +12,8 @@ import {
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
+import { clickToolButton } from './helpers/toolbar-helpers';
+import { getUndoButton, getRedoButton } from './helpers/history-helpers';
 
 /**
  * Photoshop's IN-PLACE type editor, and what it claims about the string being typed.
@@ -1448,5 +1450,109 @@ test.describe('Text tool in-place editing', () => {
         )}\n  layoutText: ${JSON.stringify(sample.canvas)}`
       ).toEqual(sample.canvas);
     }
+  });
+
+  /**
+   * The keypad Enter key (`code: 'NumpadEnter'`) commits, while the main Enter
+   * (`code: 'Enter'`) inserts a line break. The two share `key: 'Enter'`, and the
+   * app distinguishes them solely by `event.nativeEvent.code`, which is the
+   * browser's only way to tell them apart — both report the same `key` and `keyCode`.
+   *
+   * This is a SEPARATE test from `Control+Enter commits` and `Escape commits`:
+   * one `it` per commit key is what says each is wired. A regression that removed the
+   * `NumpadEnter` arm would leave Escape and Control+Enter committing and the test
+   * green.
+   *
+   * Adobe's rule is stated in `TextEditOverlay`: "Press the Enter key on the numeric
+   * keypad" commits, and the main Enter "begins a new line".
+   */
+  test('the numeric keypad Enter commits the draft', async ({ page }) => {
+    const layerRows = page.getByTitle('Drag to reorder');
+    const commit = page.getByRole('button', { name: 'Commit', exact: true });
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, CARET_CLICK);
+    await expect(overlay(page)).toBeVisible();
+    await page.keyboard.type('Kept');
+
+    // NumpadEnter, not Enter: `page.keyboard.press('NumpadEnter')` sends an event
+    // with `code: 'NumpadEnter'` and `key: 'Enter'`, which the handler splits on.
+    await page.keyboard.press('NumpadEnter');
+
+    // Three pieces of evidence: the overlay is unmounted, a layer exists, and it is
+    // a text layer. An empty text layer passes the first two and fails the third.
+    await expect(overlay(page), 'the draft outlived the numeric keypad Enter').toHaveCount(0);
+    await expect(commit, 'Commit is still mounted after the draft was committed').toHaveCount(0);
+    await expect(layerRows).toHaveCount(2);
+    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+  });
+
+  /**
+   * Switching tools commits the open draft: `goToTool` calls `commitDirtyTool()`
+   * before dispatching the new tool, and `commitDirtyTool`'s text arm creates a layer
+   * for any non-empty, non-placeholder draft.
+   *
+   * This is the IMPLICIT commit path — the draft is committed by an action other than
+   * the Commit button, Escape, Control+Enter, or a canvas click elsewhere. It is
+   * distinct from `a click elsewhere on the canvas COMMITS the open draft` because
+   * that test commits a point box through the rect overlay's pointer-up handler,
+   * while this test commits through the tool-bar's `goToTool` path. A regression
+   * that broke only the pointer-up commit would leave this passing, and vice versa.
+   */
+  test('switching tools commits the open draft', async ({ page }) => {
+    const layerRows = page.getByTitle('Drag to reorder');
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, CARET_CLICK);
+    await expect(overlay(page)).toBeVisible();
+    await page.keyboard.type('ToolSwitch');
+    await expect(layerRows, 'the open draft is not a layer yet').toHaveCount(1);
+
+    // Switch to the Draw tool. `clickToolButton` resolves the tile through the
+    // overflow flyout if the rail does not fit it, and `goToTool('draw')` calls
+    // `commitDirtyTool()` before the dispatch — so the draft is committed by the
+    // switch, not discarded.
+    await clickToolButton(page, 'draw');
+
+    await expect(overlay(page), 'the draft outlived the tool switch').toHaveCount(0);
+    await expect(layerRows, 'the tool switch did not commit the draft').toHaveCount(2);
+    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+  });
+
+  /**
+   * Undo removes a committed text layer and redo restores it.
+   *
+   * The Layers panel row count is the primary assertion — the panel shows a layer's
+   * NAME, never its text. But for THIS test the row count is the claim: one undo
+   * removes the layer the user just committed, and one redo brings it back. A history
+   * cursor that is off by one in either direction would leave the count unchanged or
+   * wrong, and the two assertions together pin the forward and back edges of the
+   * text layer's history entry.
+   */
+  test('undo removes a committed text layer and redo restores it', async ({ page }) => {
+    const layerRows = page.getByTitle('Drag to reorder');
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, CARET_CLICK);
+    await expect(overlay(page)).toBeVisible();
+    await page.keyboard.type('UndoRedo');
+    await page.keyboard.press('Escape');
+
+    // The commit that undo will remove.
+    await expect(overlay(page), 'the draft outlived its commit').toHaveCount(0);
+    await expect(layerRows, 'the text was not committed').toHaveCount(2);
+    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+
+    // Undo removes the layer created by the commit above.
+    const undo = getUndoButton(page);
+    await expect(undo, 'undo is unavailable after a commit').toBeEnabled();
+    await undo.click();
+    await expect(layerRows, 'undo did not remove the text layer').toHaveCount(1);
+    await expect(getRedoButton(page), 'redo is unavailable after an undo').toBeEnabled();
+
+    // Redo restores it.
+    await getRedoButton(page).click();
+    await expect(layerRows, 'redo did not restore the text layer').toHaveCount(2);
+    await expect(layerRows.nth(0), 'the restored layer is not a text layer').toHaveText(/^text \d+$/);
   });
 });

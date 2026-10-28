@@ -43,7 +43,8 @@ function documentFor(entries: readonly DurableHistoryEntry[] = history.map(entry
 function project(
   sourceHistory: readonly HistoryItem[] = history,
   durableDocument: DurableDocument | null = documentFor(),
-  historyIndex = 1
+  historyIndex = 1,
+  durableStatus = 'current'
 ) {
   return selectHistoryPanelProjection({
     history: sourceHistory,
@@ -51,7 +52,7 @@ function project(
     documentId: 'document-1',
     documentRevision: 3,
     branchRevision: 4,
-    durableStatus: 'current',
+    durableStatus,
     durableDocument,
   });
 }
@@ -72,6 +73,10 @@ describe('selectHistoryPanelProjection', () => {
     expect(project(history, documentFor([withoutProvenance, entries[1]] as DurableHistoryEntry[])).source).toBe(
       'legacy'
     );
+  });
+
+  it('falls back when durable status is partial even with a valid safe-prefix document', () => {
+    expect(project(history, documentFor(), 1, 'partial').source).toBe('legacy');
   });
 
   it('falls back for duplicate legacy or durable ids', () => {

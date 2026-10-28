@@ -326,6 +326,74 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
   });
 
+  it('preserves the active preview and refuses a duplicate when replacement rendering fails', () => {
+    const result = setupTextTool();
+    const originalArgs = makeTextArgs();
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    act(() => result.current.layers.beginTextLayerEdit(originalLayer.id));
+
+    const editedArgs = makeTextArgs({ text: 'Updated', editingLayerId: originalLayer.id });
+    result.current.store.currentArgs.current = editedArgs;
+    vi.mocked(createLayerSource).mockImplementationOnce(() => {
+      throw new Error('render failed');
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let committed: ReturnType<typeof result.current.layers.commitDirtyTool> = null;
+    try {
+      act(() => {
+        committed = result.current.layers.commitDirtyTool();
+      });
+    } finally {
+      error.mockRestore();
+    }
+
+    expect(committed).toBeNull();
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
+    expect(Object.keys(result.current.store.layers)).toEqual([originalLayer.id]);
+    expect(result.current.store.layers[originalLayer.id]?.source).toEqual(originalLayer.source);
+    expect(result.current.store.previewLayers.current[originalLayer.id]?.layer.source).toEqual(originalLayer.source);
+    expect(result.current.store.currentArgs.current).toBe(editedArgs);
+    expect(result.current.store.history.filter((item) => item.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+    expect(result.current.store.history.filter((item) => item.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(
+      0
+    );
+  });
+
+  it('clears a stale explicit text edit target without creating a duplicate layer', () => {
+    const result = setupTextTool();
+    const originalArgs = makeTextArgs();
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+    const before = vi.mocked(createLayerSource).mock.calls.length;
+    const editedArgs = makeTextArgs({ text: 'Updated', editingLayerId: 'missing-layer' });
+    act(() => result.current.layers.beginTextLayerEdit('mock-layer-1'));
+    const stalePreview = result.current.store.previewLayers.current['mock-layer-1'];
+    if (!stalePreview) throw new Error('no preview for existing text layer');
+    delete result.current.store.previewLayers.current['mock-layer-1'];
+    result.current.store.previewLayers.current['missing-layer'] = stalePreview;
+    result.current.store.currentArgs.current = editedArgs;
+    expect(Object.keys(result.current.store.previewLayers.current)).toEqual(['missing-layer']);
+
+    let committed: ReturnType<typeof result.current.layers.commitDirtyTool> = null;
+    act(() => {
+      committed = result.current.layers.commitDirtyTool();
+    });
+
+    expect(committed).toEqual(result.current.store.layers);
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(before);
+    expect(Object.keys(result.current.store.layers)).toEqual(['mock-layer-1']);
+    expect(result.current.store.currentArgs.current).toMatchObject({ text: '', rect: null });
+    expect(result.current.store.currentArgs.current).not.toHaveProperty('editingLayerId');
+    expect(result.current.store.previewLayers.current).not.toHaveProperty('missing-layer');
+  });
+
   it('commits nothing while the draft rect is cleared even if the text survives', () => {
     const result = setupTextTool();
 

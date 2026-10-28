@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { SmudgeToolArea } from '../SmudgeToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { SmudgeToolArgs } from '../../../tools/smudge.ts';
+import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
@@ -250,6 +251,7 @@ const paintedMethods = (context: SpyContext): string[] =>
 
 describe('SmudgeToolArea', () => {
   beforeEach(() => {
+    resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
     createLayerFromToolMock.mockClear();

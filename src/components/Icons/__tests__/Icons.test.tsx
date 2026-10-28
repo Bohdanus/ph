@@ -1,7 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import type { LayerSource } from '../../../contexts/layer-types.ts';
+import { BedrockIcon } from '../BedrockIcon.tsx';
 import { DragHandleIcon } from '../DragHandleIcon.tsx';
 import { EyeIcon } from '../EyeIcon.tsx';
+import { LayerTypeIcon } from '../LayerTypeIcon.tsx';
 import { TrashIcon } from '../TrashIcon.tsx';
 
 function svgOf(container: HTMLElement) {
@@ -91,5 +94,28 @@ describe('DragHandleIcon', () => {
   it('is not exposed to the accessibility tree as a labelled graphic', () => {
     render(<DragHandleIcon />);
     expect(screen.queryByRole('img')).toBeNull();
+  });
+});
+
+describe('layer type icons', () => {
+  it('renders the bedrock glyph as decorative SVG', () => {
+    const { container } = render(<BedrockIcon />);
+    expect(svgOf(container)).toHaveAttribute('aria-hidden', 'true');
+    expect(svgOf(container).querySelector('rect')).not.toBeNull();
+  });
+
+  it('renders distinct glyphs for blank, image, and tool sources', () => {
+    const position = { x: 0, y: 0, width: 1, height: 1 };
+    const blankSource = { kind: 'blank', color: '#000000', opacity: 1, pos: position } as LayerSource;
+    const imageSource = { kind: 'image', bitmap: {} as never, pos: position } as LayerSource;
+    const toolSource = { kind: 'tool', args: {} as never, pos: position } as LayerSource;
+    const { container: blank } = render(<LayerTypeIcon source={blankSource} />);
+    const { container: image } = render(<LayerTypeIcon source={imageSource} />);
+    const { container: tool } = render(<LayerTypeIcon source={toolSource} />);
+
+    expect(svgOf(blank)).toHaveAttribute('aria-hidden', 'true');
+    expect(svgOf(image).innerHTML).not.toBe(svgOf(blank).innerHTML);
+    expect(svgOf(tool).innerHTML).not.toBe(svgOf(blank).innerHTML);
+    expect(svgOf(tool).innerHTML).not.toBe(svgOf(image).innerHTML);
   });
 });

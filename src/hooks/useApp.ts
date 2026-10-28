@@ -7,6 +7,7 @@ import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
+import { assertWithinDocumentPixelBudget } from '../contexts/raster-utils.ts';
 import { setRefValue } from '../util/ref.ts';
 import { createHistoryItem } from '../contexts/history-utils.ts';
 import { documentFrameFromSize } from '../contexts/document-frame.ts';
@@ -18,7 +19,7 @@ export interface UseAppType {
 
   handleImageSave: (data: ImageSaveResponse) => void;
 
-  goToTool: (toolName: ToolName) => void;
+  goToTool: (toolName: ToolName) => boolean;
 }
 
 async function immutableRaster(bitmap: BitmapSource): Promise<BitmapSource> {
@@ -76,6 +77,7 @@ export const useApp = (): UseAppType => {
   }
 
   function setBlankImage(params: NewDocumentBlankParams) {
+    assertWithinDocumentPixelBudget(params.size, 'Document');
     handleImageCreate(params.size);
     createBlankLayer({ ...params }, true);
   }
@@ -164,7 +166,7 @@ export const useApp = (): UseAppType => {
 
   function goToTool(nextToolName: ToolName) {
     // commit any dirty tool changes before switching
-    commitDirtyTool();
+    if (commitDirtyTool() === null) return false;
 
     if (nextToolName !== toolName && nextToolName !== 'patch' && activeSelectionId) {
       // The same single writer the Clear/Deselect controls use, so this deselect
@@ -192,6 +194,7 @@ export const useApp = (): UseAppType => {
     }
 
     dispatch({ type: 'SET_TOOL_NAME', payload: nextToolName });
+    return true;
   }
 
   return {

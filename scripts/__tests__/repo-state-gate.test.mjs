@@ -296,6 +296,17 @@ describe('readOperations reads what git actually writes', () => {
     expect(readOperations(resolveGitDir(repo))).toEqual([]);
   });
 
+  it('reports AUTO_MERGE as an unnamed in-progress operation when no primary marker exists', () => {
+    // The interrupted-merge shape: `AUTO_MERGE` and `MERGE_MSG` present with no
+    // `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, or any rebase/bisect marker.
+    // A hand-written fixture is legitimate here because the claim is "this file,
+    // when present alone, is reported" — not "git creates this file", which the
+    // real-merge cases above prove for the primary markers.
+    expect(readOperations(makeGitDirWith({ AUTO_MERGE: 'resolve in f.txt\n', MERGE_MSG: 'Merge branch x\n' }))).toEqual(
+      [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }]
+    );
+  });
+
   it('reports nothing for a directory that is not a git directory', () => {
     expect(readOperations(null)).toEqual([]);
     expect(readOperations(scratch())).toEqual([]);
@@ -385,6 +396,14 @@ describe('abortCommand names a command that exists', () => {
       'git am --abort',
       'git bisect reset',
     ]);
+  });
+
+  it('returns null for the unnamed in-progress operation, because no command can name an unknown', () => {
+    // AUTO_MERGE is written by merge, cherry-pick AND revert. The fallback in
+    // readOperations reports the operation as `in-progress` without claiming which.
+    // `abortCommand` must not guess — `git in-progress --abort` is not a command, and
+    // handing it to the operator is the same defect as a report that calls the state clean.
+    expect(abortCommand({ operation: 'in-progress', marker: 'AUTO_MERGE' })).toBeNull();
   });
 });
 
@@ -553,6 +572,26 @@ describe('findings separates the two shapes that need opposite remedies', () => 
     expect(findings([mergeInProgress])[0]).toMatchObject({ destructive: true });
   });
 
+  it('does not call an unnamed AUTO_MERGE-destructive, because there is no command to name', () => {
+    // The interrupted-merge shape: AUTO_MERGE present without a primary marker.
+    // `findings` must still include the worktree (it has unmerged paths), but it
+    // must not print a `CAREFUL: … DISCARDS` block, because `abortCommand` returns
+    // null for the unnamed operation and no specific discard command exists.
+    const inProgress = {
+      name: 'w',
+      path: '/w',
+      branch: null,
+      present: true,
+      operations: [{ operation: 'in-progress', marker: 'AUTO_MERGE', value: null }],
+      unmerged: ['f.txt'],
+      readError: null,
+    };
+    const f = findings([inProgress])[0];
+    expect(f).toMatchObject({ destructive: false });
+    expect(f.operations).toHaveLength(1);
+    expect(f.operations[0].marker).toBe('AUTO_MERGE');
+  });
+
   it('does not call a bisect destructive, because there is nothing to discard', () => {
     const bisect = {
       name: 'w',
@@ -619,26 +658,29 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(unmergedPaths(repo)).toEqual([]);
   });
 
-  it('names the unmerged paths and says a marker-less one is not cleaned by abort', () => {
+  it('names the unmerged paths and detects AUTO_MERGE as an unnamed in-progress operation', () => {
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const path = addWorktree(repo, 'linked');
     // The merge is started IN the linked worktree, so the conflict belongs to it, and
     // then `MERGE_HEAD` is removed by hand — the shape a half-finished `git merge
     // --quit`, a hand-unwound merge, or an `am` with a gone queue leaves behind.
+    // `AUTO_MERGE` survives this removal, so the fallback reports the operation
+    // as in-progress rather than as marker-less.
     git(path, 'checkout', '-B', 'wt/linked');
     mergeThatConflicts(path, 'theirs');
     rmSync(join(resolveGitDir(path), 'MERGE_HEAD'), { force: true });
 
     const r = report(repo);
     expect(r.code).toBe(1);
-    expect(r.err).toContain('no operation marker');
+    // The operation IS detected — AUTO_MERGE is present even with no primary marker.
+    expect(r.err).toContain('AUTO_MERGE');
+    expect(r.err).toContain('in-progress');
     expect(r.err).toContain('f.txt');
-    // The line NAMES the command while saying it will not work, so the assertion is
-    // on the warning and the remedy block, not on the command being absent: naming
-    // it is the useful part, because the reader's first instinct is to run it.
-    expect(r.err).toContain('no `git merge --abort` will clean this up');
+    // No abort command is named for the unnamed operation, so no destructive
+    // warning fires — the operator is told to decide by hand.
     expect(r.err).not.toContain('CAREFUL');
     expect(r.err).not.toContain('DISCARDS resolution state');
+    expect(r.err).toMatch(/decide by hand/);
   });
 
   it('emits findings as JSON with no prose mixed in', () => {

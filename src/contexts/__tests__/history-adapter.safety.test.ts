@@ -17,7 +17,7 @@ import {
 } from '../history-model.ts';
 import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
-import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 
 const layerId = 'layer-1';
@@ -251,14 +251,25 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
 });
 
 describe('convertLegacyHistorySafely boundary (P0.1)', () => {
-  it('returns unavailable status with a diagnostic and null document for an unsupported tool entry', () => {
+  it('requires a document id before converting a legacy history array', () => {
+    const registry = new AssetRegistry();
+    const beginTransaction = vi.spyOn(registry, 'beginDocumentAssetTransaction');
+
+    expect(() => convertLegacyHistorySafely(baselineHistory(), { registry })).toThrow(
+      'documentId is required when converting a legacy history array'
+    );
+    expect(beginTransaction).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
+  it('returns partial status with a diagnostic and null document for an unsupported tool entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
@@ -269,7 +280,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     });
   });
 
-  it('returns unavailable status for an unknown processor entry', () => {
+  it('returns partial status for an unknown processor entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [
@@ -283,7 +294,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'unknown-tool',
@@ -293,7 +304,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     });
   });
 
-  it('returns unavailable status for non-finite transform values', () => {
+  it('returns partial status for non-finite transform values', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [
@@ -307,7 +318,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'nan-transform',
@@ -345,12 +356,21 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
           layerId: 'img-layer',
           args: { toolName: 'pen' },
         },
+        {
+          id: 'after-unsupported',
+          actionName: RENAME_LAYER_ACTION,
+          layerId: 'img-layer',
+          args: { name: 'Renamed after unsupported entry' },
+        },
       ],
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
+    // A rejected conversion must not expose a cursor map whose suffix was
+    // derived after the unsupported entry from stale fold state.
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
     expect(close).not.toHaveBeenCalled();
   });
 
@@ -361,7 +381,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
       registry
     );
-    expect(badResult.status).toBe('unavailable');
+    expect(badResult.status).toBe('partial');
     expect(badResult.document).toBeNull();
 
     const goodResult = convertSafely(
@@ -460,11 +480,14 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(reconcile).not.toHaveBeenCalled();
     const registeredIds = register.mock.results.map((call) => call.value as AssetId);
-    expect(registeredIds).toHaveLength(1);
+    expect(registeredIds).toHaveLength(2);
     expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
+    expect(registry.getRecord(registeredIds[1]!)).toBeDefined();
+    result.safePrefix?.release();
+    expect(registry.getRecord(registeredIds[1]!)).toBeUndefined();
     expect(close).not.toHaveBeenCalled();
   });
 });
@@ -579,7 +602,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     const registry = new AssetRegistry();
     const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
@@ -596,7 +619,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.diagnostics[0]?.message).toContain('unreadable-selection');
   });
 

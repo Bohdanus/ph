@@ -58,7 +58,7 @@ const SENTINEL_FOREGROUND = '#00ff00';
 const COLOR_CHANNEL_TOLERANCE = 6;
 /** How long a negative assertion samples before concluding "never". Every "must not happen" claim in this file is a poll window, not an instant: a commit that is about to be dispatched has not been at the instant after the gesture. */
 const NEGATIVE_WINDOW_MS = 1_200;
-const NEGATIVE_POLL_MS = 120;
+const NEGATIVE_POLL_MS = 50;
 /** Client-side margin added around a small capture so a sample at its exact centre is never on the clip edge, and a 1px capture rounding cannot reach it. */
 const PROBE_CLIP_PX = 16;
 /** Draw-tool brush width for the specs that need a fat, flat interior to sample and to grow a region from. */
@@ -96,13 +96,17 @@ async function scrollToTop(page: Page): Promise<void> {
 /**
  * The workspace canvas box, measured at a known scroll position.
  *
- * The app is taller than Playwright's 720px default window, so the WINDOW scrolls, and
- * `boundingBox()` is viewport-relative: every `fill()` on a colour or slider input scrolls
- * its element into view first, and the sidebar's colour pickers sit near the bottom of a
- * tall page. A box measured before such an interaction describes a point 440px above where
- * the canvas actually is, and a drag built from it lands on the header — silently, with no
- * error anywhere. Scrolling to a fixed position first makes the box a function of the layout
- * rather than of the interaction history, and every other measurement here assumes scroll 0.
+ * `boundingBox()` is viewport-relative, so scroll state at measurement matters. The app
+ * no longer scrolls at document level (see `e2e/OPEN_PROBLEMS.md`); non-zero offsets in
+ * this file come from explicit test scrolls. `clickToolButton`, `openToolFlyout`,
+ * `selectFromFlyout`, and `openFlyoutFromTile` wrap their tool clicks in
+ * `preservingScroll` (`toolbar-helpers.ts:126`), so those do not change scroll, but `fill()`
+ * calls on colour/slider inputs scroll their element into view via the scroll container.
+ * A box measured after an un-preserved scroll (e.g. a `fill()`) describes a point 440px
+ * away from the canvas's true position — a drag from it lands on the header, silently, with
+ * no error anywhere. Scrolling to a known position first makes the box a function of the
+ * layout rather than interaction history, after which every measurement here assumes scroll 0
+ * (re-established by `scrollToTop` in `measureCanvas`, not assumed).
  *
  * This is also the OPEN_PROBLEMS re-measure rule, for the same reason: the options panel
  * lands in the toolbar row and the canvas box is only valid after it has settled.
@@ -757,11 +761,18 @@ test.describe('Elliptical marquee', () => {
     expect.soft(dragAspect, 'the drag is deliberately not square').not.toBeCloseTo(1, 1);
     // The circle constraint grows the SHORT side and leaves the long one alone, so the width
     // is the only part of the committed geometry that still matches the drag.
-    expect.soft(Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
+    expect
+      .soft(
+        Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        'Shift constraint should leave the width unchanged, matching the drag'
+      )
+      .toBe(true);
     expect
       .soft(outlineAspect(outline!), 'Shift should have squared the committed ellipse off a 2:1 drag')
       .toBeCloseTo(1, 1);
-    expect.soft(outlineHeight(outline!)).toBeGreaterThan(rect.height);
+    expect
+      .soft(outlineHeight(outline!), 'Shift should have grown the committed height, squaring the ellipse')
+      .toBeGreaterThan(rect.height);
   });
 
   test('holding Alt draws an elliptical marquee from its press point outwards', async ({ page }) => {
@@ -779,8 +790,18 @@ test.describe('Elliptical marquee', () => {
     // but centred on the press point rather than laid out from it towards the pointer.
     const centre = outlineCenter(outline!);
     const absolutePress = inCanvas(box, rect);
-    expect.soft(Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
-    expect.soft(Math.abs(outlineHeight(outline!) - rect.height) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
+    expect
+      .soft(
+        Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        'Alt constraint should preserve the drag width'
+      )
+      .toBe(true);
+    expect
+      .soft(
+        Math.abs(outlineHeight(outline!) - rect.height) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        'Alt constraint should preserve the drag height'
+      )
+      .toBe(true);
     expect.soft(Math.abs(centre.x - absolutePress.left) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre x').toBe(true);
     expect.soft(Math.abs(centre.y - absolutePress.top) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre y').toBe(true);
   });
@@ -838,12 +859,16 @@ test.describe('Elliptical marquee', () => {
   test('an elliptical marquee is reachable with the M shortcut', async ({ page }) => {
     // M is the marquee TILE, not the elliptical member of it: the tile's primary tool is the
     // rectangular marquee, and Shift+M cycles within the group. Reaching the elliptical tool
-    // therefore needs both keys, and asserting the elliptical bar is what proves the cycle
-    // advanced rather than merely re-selecting the primary.
+    // therefore needs both keys; the distinct contextual hint proves the cycle advanced.
     await page.keyboard.press('m');
-    await expect(page.getByText('Draw a rectangle and copy selected bitmap area.')).toBeVisible();
-    await expect(marqueeBar(page)).toHaveCount(0);
+    await expect(
+      page.getByText('Drag to draw a rectangle. Hold Shift for a square, Alt to draw from the centre.')
+    ).toBeVisible();
+    await expect(marqueeBar(page)).toBeVisible();
     await page.keyboard.press('Shift+m');
+    await expect(
+      page.getByText('Drag to draw an ellipse. Hold Shift for a circle, Alt to draw from the centre.')
+    ).toBeVisible();
     await expect(marqueeBar(page)).toBeVisible();
   });
 

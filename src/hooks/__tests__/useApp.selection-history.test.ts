@@ -147,4 +147,12 @@ describe('goToTool selection history', () => {
     expect(commitEdits()).toHaveLength(0);
     expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_TOOL_NAME', payload: 'blur' });
   });
+
+  it('keeps the current tool when its pending text edit cannot be committed', () => {
+    harness.layerMocks.commitDirtyTool.mockReturnValueOnce(null);
+
+    expect(useApp().goToTool('blur')).toBe(false);
+
+    expect(harness.dispatch).not.toHaveBeenCalled();
+  });
 });

@@ -25,7 +25,7 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
   const backgroundColorInputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <nav
+    <div
       role="toolbar"
       aria-label="Mobile Bottom Toolbar"
       aria-orientation="horizontal"
@@ -168,6 +168,6 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
         </span>
         <span className="text-[11px] leading-tight">Layers</span>
       </button>
-    </nav>
+    </div>
   );
 };

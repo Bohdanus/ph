@@ -64,6 +64,8 @@ const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right', xAnc
 
   const description = toolName === null ? null : toolTooltips[toolName];
   const implementationNote = description === null ? undefined : IMPLEMENTATION_NOTE[description.implementation];
+  // The tile's declared shortcut is authoritative: description records also document
+  // family-cycling keys and menu commands that do not select this toolbar entry.
 
   useEffect(() => {
     return () => {
@@ -95,7 +97,15 @@ const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right', xAnc
     >
       {cloneElement(children, { 'aria-describedby': isVisible ? tooltipId : undefined })}
       {isVisible && (
-        <AnchoredOverlay align="center" anchor={anchor} gap={12} measureKey={tooltipId} side={side} xAnchor={xAnchor}>
+        <AnchoredOverlay
+          align="center"
+          anchor={anchor}
+          gap={12}
+          label="Tooltip"
+          measureKey={tooltipId}
+          side={side}
+          xAnchor={xAnchor}
+        >
           <span
             // The label line is `whitespace-nowrap` and the summary below it wraps: a
             // tool's name is never worth a second line, but its description is. The cap is

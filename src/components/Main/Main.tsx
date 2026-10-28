@@ -44,6 +44,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
 import { DEFAULT_VIEW_STATE } from '../../contexts/view-state.ts';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 
 /**
  * The interaction modes whose tool owns a selection, which is every mode that can have a
@@ -228,6 +229,7 @@ const Main = () => {
   // have to answer it identically: the canvas is the ants' only output, so a `display: none`
   // beside a running loop would run 60 frames a second into a canvas nobody can see.
   const selectionToolActive = SELECTION_INTERACTION_MODES.has(interactionMode);
+  const dpr = useDevicePixelRatio();
 
   useEffect(() => {
     drawAllLayers();
@@ -236,24 +238,8 @@ const Main = () => {
   useLayoutEffect(() => {
     const { width, height } = totalSize;
     if (toolOverlayRef.current) {
-      resizeCanvas(toolOverlayRef.current, width, height);
+      resizeCanvas(toolOverlayRef.current, width, height, dpr);
 
-      // `getContext('2d')` returns null when the canvas has no 2D context, and the
-      // `!` here used to turn that into a TypeError on the next line. It threw inside
-      // this layout effect, so it escaped render and landed in the `Canvas`
-      // ErrorBoundary: the whole canvas region became the fallback, the layer stack
-      // and the tool rail stopped responding, and nothing retried.
-      //
-      // Nothing downstream needs it not to be null. `toolCtxRef` is declared
-      // `CanvasRenderingContext2D | null`, it is handed to the tool areas as
-      // `overlayCtxRef: RefObject<CanvasRenderingContext2D | null>`, and they all
-      // already handle the null case — `DrawToolArea.tsx:81` returns early and
-      // `DrawToolArea.tsx:146` optional-chains. So publishing the null is the
-      // contract; throwing on it was the bug.
-      //
-      // `e2e/error-boundary.spec.ts` reaches this line deliberately by making
-      // `getContext('2d')` return null, so the fallback's behaviour stays pinned
-      // while this line stops feeding it.
       const toolCtx = toolOverlayRef.current.getContext('2d');
       toolCtxRef.current = toolCtx;
       if (toolCtx) {
@@ -263,17 +249,16 @@ const Main = () => {
     }
 
     if (rectOverlayRef.current) {
-      resizeCanvas(rectOverlayRef.current, width, height);
-      // Same null-tolerance as the tool overlay above, and the same reason.
+      resizeCanvas(rectOverlayRef.current, width, height, dpr);
       const rectCtx = rectOverlayRef.current.getContext('2d');
       if (rectCtx) {
         rectCtx.imageSmoothingEnabled = false;
       }
     }
     if (selectionAntsOverlayRef.current) {
-      resizeCanvas(selectionAntsOverlayRef.current, width, height);
+      resizeCanvas(selectionAntsOverlayRef.current, width, height, dpr);
     }
-  }, [rectOverlayRef, toolOverlayRef, totalSize]);
+  }, [rectOverlayRef, toolOverlayRef, totalSize, dpr]);
 
   const handleDragOver = (event: React.DragEvent) => {
     if (event.dataTransfer.types.includes('Files')) {
@@ -470,10 +455,9 @@ const Main = () => {
         )}
         {/*
          * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so
-         * the last child paints on top. The in-place editor has to receive the pointer, because
-         * placing a caret is a click INSIDE the box — which is the `absolute inset-0` tool area's
-         * territory — so it cannot sit below `EventHandler`. It covers exactly the type box and
-         * nothing else, so every canvas gesture outside it still reaches the tool area.
+         * the last child paints on top. Its full-size coordinate plane mirrors the canvas's view
+         * transform; only the contenteditable child receives pointers, so clicks outside the type
+         * box still reach `EventHandler`.
          *
          * Gated on the text mode for the same reason `EventHandler` gates the tool areas: the
          * editor reads `useCurrentTool`, and a hook that throws outside its provider takes the whole
@@ -481,7 +465,15 @@ const Main = () => {
          * fit for every one of the twenty-odd tools would also be work no tool but this one needs.
          * See `TextEditOverlay.tsx`.
          */}
-        {interactionMode === 'text' && <TextEditOverlay />}
+        {interactionMode === 'text' && (
+          <div
+            data-testid="text-edit-view-transform"
+            className="pointer-events-none absolute inset-0"
+            style={{ transform: viewTransform, transformOrigin: 'center center' }}
+          >
+            <TextEditOverlay />
+          </div>
+        )}
       </div>
     );
   };

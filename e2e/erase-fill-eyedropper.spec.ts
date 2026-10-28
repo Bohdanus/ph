@@ -49,15 +49,9 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *
  * Toolbar placement (`toolbar-mapping.ts`): `eyedropper` is the tile of the `I` family and at the
  * suite's 1280x720 the rail fills its slot, so its seven visible tiles are the first seven of its
- * fifteen groups and the eyedropper — the fifth — is one of them: `clickToolButton(page,
- * 'eyedropper')` selects it directly. Its flyout now exists (the Ruler joined it) but nothing here
- * needs it, because the Eyedropper is its own first entry and a tile click selects that. The other three share ONE
- * flyout whose primary tool is `brush` (six entries: brush, pencil, color-replacement, eraser,
- * magic-eraser, paint-bucket), so `clickToolButton(page, 'brush')` only ever selects the Brush
- * and the other three need `openToolFlyout` + `selectFromFlyout` — through the BRUSH TILE at that
- * window, because the brush group is the SEVENTH of the fifteen and so is the LAST tile the rail
- * shows there: it is on the rail, and `openToolFlyout` long-presses that tile instead of taking
- * its three-dots branch. The fold begins one group further down, at the Clone Stamp (the eighth).
+ * groups and the eyedropper is one of them. Eraser, Paint Bucket and Spot Healing now own distinct
+ * Photoshop-faithful groups, so this spec uses `clickToolButton` for every target; that helper
+ * handles either a visible tile or the three-dots overflow without encoding the rail fold point.
  *
  * Geometry: the app seeds an 800x600 opaque white `Blank 1` base layer on load (there is no
  * file input and no "open image" gesture), so every colour a tool acts on in this spec is
@@ -74,6 +68,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 const BLACK = '#000000';
 const RED = '#cc0000';
+const BLUE = '#0000cc';
 const GREEN = '#00aa00';
 
 const LINE_Y = 200;
@@ -325,43 +320,12 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
   );
 }
 
-/**
- * Selects one of the three eraser-family tools out of the six-item `brush` flyout.
- *
- * `from` is the tile that currently owns the group, because the tile's `data-testid` follows its
- * CURRENT primary tool (`SidebarLeft.tsx:238`). It is `brush` until one of the family is chosen,
- * and that chosen tool's own name afterwards: the flyout is only reachable again from whichever
- * tile currently leads it.
- *
- * At 1280x720 that tile IS on the rail: the rail folds a SUFFIX, the brush group is the SEVENTH
- * of the fifteen, and seven tiles fit at that window, so the Brush is the LAST of them. This
- * helper's `openToolFlyout` therefore reaches the flyout by long-pressing the Brush's own tile
- * rather than through its collapse branch, and the selection is proved on `aria-pressed` of that
- * tile. The fold begins at the Clone Stamp (the eighth), and it is the three-dots tile that
- * stands for a collapsed tool and nothing else.
- *
- * That tile is read as SELECTION STATE, not as an accessible name, and `expectToolSelected` picks
- * the right channel for whichever of the two kinds of tile it is handed. It is the Brush's own
- * tile on this spec's path; the three-dots tile is the helper's other branch, and it deliberately
- * renders NO `aria-pressed` (`SidebarLeft.tsx:635` — a control that opens a menu must
- * not also claim to be a pressed toggle for a tool the user cannot see), so what it does still
- * render for the selected member of the collapsed set is the lit class
- * `TOOL_BUTTON_ACTIVE_CLASS`, painted off the same `group.some(tool => tool.name === toolName)`
- * predicate the attribute used to expose. Its failure message therefore names the tool by slug;
- * `label` remains what the flyout item itself is matched on.
- *
- * `verifyPrimaryTool` cannot answer the same question for a different reason: it asserts a tile's
- * ACCESSIBLE NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name
- * is "More Tools" and never the tool's label. It now says exactly that when a tool has no tile of
- * its own, instead of failing on an empty text content. The eyedropper tests below do NOT share
- * that reason: the eyedropper is the fifth of the fifteen and the fifth of the seven the rail
- * shows at 720, so it has a tile of its own and the helper selects it directly. They confirm the
- * selection through the eyedropper's own options bar all the same, because that is the one
- * element in the document driven by `toolName` itself.
- */
-async function selectBrushFamilyTool(page: Page, from: string, toolName: string, label: string): Promise<void> {
-  await openToolFlyout(page, from);
-  await selectFromFlyout(page, { toolName, label });
+/** Selects a raster tool regardless of whether its tile is visible or in overflow. */
+async function selectBrushFamilyTool(page: Page, _from: string, toolName: string, _label: string): Promise<void> {
+  // The family members now occupy separate groups. `clickToolButton` handles both a visible tile
+  // and the overflow flyout, while preserving the old call sites' intent without assuming a
+  // particular group owner.
+  await clickToolButton(page, toolName);
   await expectToolSelected(page, toolName);
 }
 
@@ -505,7 +469,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await openWorkspace(page);
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
 
-    const mode = page.getByRole('combobox', { name: 'Mode' });
+    const mode = page.getByRole('combobox', { name: 'Mode', exact: true });
     await expect(mode).toBeVisible();
     // The seeded default is Brush, because a soft tip is what Photoshop's eraser opens on and a
     // hard first stroke is the defect this replaced.
@@ -872,5 +836,152 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     ).toBeGreaterThan(30);
     expect(averaged.green, 'the average must mix the two sides of the boundary').toBeGreaterThan(20);
     expect(averaged.green).toBeLessThan(235);
+  });
+
+  // eyedropper: reads the top opaque layer where two strokes overlap on separate layers
+  test('the eyedropper samples the top layer where two opaque layers overlap', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+    await drawSlab(page, RED, SLAB, hasRedPixels);
+
+    // A second opaque stroke on its own layer, offset in Y so the slabs overlap
+    // rather than coincide: red spans y=150..250, blue spans y=190..290.
+    const LINE_Y_BLUE = LINE_Y + 40;
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, BLUE, true);
+    const sizeSlider = page.getByRole('slider', { name: /^Size/ });
+    await expect(sizeSlider).toBeVisible();
+    await sizeSlider.fill(String(SLAB));
+    await expect(sizeSlider).toHaveValue(String(SLAB));
+    const opacitySlider = page.getByRole('slider', { name: /^Opacity/ });
+    await opacitySlider.fill('1');
+    await expect(opacitySlider).toHaveValue('1');
+    const box = await canvasBox(page);
+    await drawLine(page, box, LINE_START_X, LINE_Y_BLUE, ERASE_LINE_END_X, LINE_Y_BLUE, { steps: 8 });
+    await expect(page.getByTestId('undo-button'), 'the blue stroke to commit one history entry').toBeEnabled();
+
+    const hasBluePixels = async (screenshot: Buffer): Promise<boolean> => {
+      const imageData = await loadImageData(screenshot);
+      const { data } = imageData;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] !== 0 && data[i] < 100 && data[i + 1] < 100 && data[i + 2] > 180) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    await waitForCanvasPixels(page, await slabClip(page), hasBluePixels, {
+      description: 'the blue line',
+    });
+
+    await clickToolButton(page, 'eyedropper');
+    await expect(
+      page.getByRole('combobox', { name: 'Sample Size' }),
+      'the eyedropper is the active tool'
+    ).toBeVisible();
+
+    // At y=220 both slabs overlap; blue is the top layer and fully opaque, so the
+    // composite pixel is pure blue.
+    await setForegroundColor(page, '#ff00ff', true);
+    await clickAt(page, { x: LINE_CENTRE_X, y: LINE_Y + 20 });
+    await expect
+      .poll(async () => swatchDelta(page, { red: 0, green: 0, blue: 204 }), {
+        message: 'the eyedropper to read the top (blue) layer at the overlap',
+        timeout: 5_000,
+      })
+      .toBeLessThanOrEqual(8);
+
+    // At y=160 only the red slab covers; blue's lower edge is at 190.
+    await setForegroundColor(page, '#ff00ff', true);
+    await clickAt(page, { x: LINE_CENTRE_X, y: LINE_Y - 40 });
+    await expect
+      .poll(async () => swatchDelta(page, { red: 204, green: 0, blue: 0 }), {
+        message: 'the eyedropper to read the red layer outside the overlap',
+        timeout: 5_000,
+      })
+      .toBeLessThanOrEqual(8);
+  });
+
+  // eyedropper: must sample the composited result of multiple layers with blend modes
+  test('the eyedropper samples the composited result of overlaid layers with blend modes', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+
+    // Draw a red slab using the Draw tool (Normal blend mode, opacity 1)
+    await drawSlab(page, RED, SLAB, hasRedPixels);
+
+    // Switch to Pencil tool for the second layer with Multiply blend mode.
+    // Clicking the brush group tile selects the Brush; the pencil comes out of
+    // the flyout — same pattern `paint-options.spec.ts` follows.
+    await openToolFlyout(page, 'brush');
+    await selectFromFlyout(page, { toolName: 'pencil', label: 'Pencil Tool' });
+    await expectToolSelected(page, 'pencil');
+
+    // Set foreground color to blue; setForegroundColor with verifySwatch=true
+    // already polls until the swatch matches, so no explicit wait is needed.
+    await setForegroundColor(page, BLUE, true);
+
+    // Set pencil size and opacity to 100%
+    const sizeSlider = page.getByRole('slider', { name: /^Size/ });
+    await expect(sizeSlider).toBeVisible();
+    await sizeSlider.fill(String(SLAB));
+    await expect(sizeSlider).toHaveValue(String(SLAB));
+    const opacitySlider = page.getByRole('slider', { name: /^Opacity/ });
+    await opacitySlider.fill('100');
+    await expect(opacitySlider).toHaveValue('100');
+
+    // Set blend mode to Multiply
+    const modeSelect = page.getByRole('combobox', { name: 'Mode', exact: true });
+    await expect(modeSelect).toBeVisible();
+    await modeSelect.selectOption({ label: 'Multiply' });
+    await expect(modeSelect).toHaveValue('multiply');
+
+    // Draw the blue slab on top — one history entry must be committed
+    const box = await canvasBox(page);
+    await drawLine(page, box, LINE_START_X, LINE_Y, ERASE_LINE_END_X, LINE_Y, { steps: 8 });
+    await expect(
+      page.getByTestId('undo-button'),
+      'the blue stroke must commit one history entry before compositing is verified'
+    ).toBeEnabled();
+
+    // Wait for the composited result: Multiply of blue (0,0,204) over red (204,0,0) = black (0,0,0)
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot) => {
+        const image = await loadImageData(screenshot);
+        const centerX = Math.floor(image.width / 2);
+        const centerY = Math.floor(image.height / 2);
+        const index = (centerY * image.width + centerX) * 4;
+        return image.data[index] < 50 && image.data[index + 1] < 50 && image.data[index + 2] < 50;
+      },
+      { description: 'the multiply blend to produce black' }
+    );
+
+    // Now use the eyedropper to sample the overlapping area
+    await clickToolButton(page, 'eyedropper');
+    await expect(
+      page.getByRole('combobox', { name: 'Sample Size' }),
+      'the eyedropper is the active tool'
+    ).toBeVisible();
+
+    // Set the swatch to fuchsia — delta ~204 from black, so the poll below cannot be
+    // satisfied by a dead eyedropper leaving the swatch at its pre-click value.
+    await setForegroundColor(page, '#ff00ff', true);
+
+    // Click at the center of the slab where the layers overlap
+    await clickAt(page, { x: LINE_CENTRE_X, y: LINE_Y });
+
+    // The eyedropper should sample the composited result (black from multiply).
+    // Threshold of 8 matches the sibling tests: a fully opaque multiply at the
+    // stroke centre has no anti-aliasing, so the readback is exact up to
+    // sub-pixel sampling variance.
+    await expect
+      .poll(async () => swatchDelta(page, { red: 0, green: 0, blue: 0 }), {
+        message: 'the foreground swatch to show the composited black from multiply blend',
+        timeout: 5_000,
+      })
+      .toBeLessThanOrEqual(8);
   });
 });

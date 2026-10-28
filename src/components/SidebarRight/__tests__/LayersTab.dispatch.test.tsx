@@ -1,7 +1,14 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
-import { HIDE_LAYER_ACTION, REMOVE_ACTION, RENAME_LAYER_ACTION, SHOW_LAYER_ACTION } from '@/util/constants.ts';
+import {
+  HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
+  REMOVE_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SHOW_LAYER_ACTION,
+} from '@/util/constants.ts';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
 import { createMockLayer, createMockLayers } from '@/__tests__/fixtures/layer.ts';
 import { createMockCanvas } from '@/__tests__/fixtures/canvas.ts';
@@ -204,6 +211,78 @@ describe('LayersTab actions reaching the store', () => {
             kind: 'set-layer-properties',
             layerId: 'only-layer',
             patch: { visible: true },
+          },
+        },
+      },
+    });
+  });
+
+  it('commits the selected layer blend mode as one durable history action', () => {
+    render(<LayersTab />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Blend mode for Layer 2' }), {
+      target: { value: 'multiply' },
+    });
+
+    expect(onlyDispatched()).toEqual({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: {
+          layers: expect.objectContaining({
+            'layer-2': expect.objectContaining({ id: 'layer-2', blendMode: 'multiply' }),
+          }),
+        },
+        historyItem: {
+          id: 'history-id',
+          layerId: 'layer-2',
+          actionName: SET_LAYER_BLEND_MODE_ACTION,
+          args: { blendMode: 'multiply' },
+        },
+        durableDiagnostics: [],
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          provenance: { actionName: SET_LAYER_BLEND_MODE_ACTION },
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'layer-2',
+            patch: { blendMode: 'multiply' },
+          },
+        },
+      },
+    });
+  });
+
+  it('commits full lock as one durable history action', () => {
+    render(<LayersTab />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock Layer 2' }));
+
+    expect(onlyDispatched()).toEqual({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: {
+          layers: expect.objectContaining({
+            'layer-2': expect.objectContaining({ id: 'layer-2', locked: true }),
+          }),
+        },
+        historyItem: {
+          id: 'history-id',
+          layerId: 'layer-2',
+          actionName: LOCK_LAYER_ACTION,
+          args: { locked: true },
+        },
+        durableDiagnostics: [],
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          provenance: { actionName: LOCK_LAYER_ACTION },
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'layer-2',
+            patch: { locked: true },
           },
         },
       },

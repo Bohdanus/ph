@@ -78,6 +78,7 @@ function greenState(overrides = {}) {
     locked: false,
     prunableReason: null,
     tip: 'abc1234',
+    mainHead: 'base-sha',
     isPrimary: false,
     commonDir: '/repo/.git',
     modified: 0,
@@ -98,9 +99,14 @@ function greenInventory(overrides = {}) {
     generatedAtMs: NOW - 60_000,
     evaluationAt: new Date(NOW - 60_000).toISOString(),
     evaluationAtMs: NOW - 60_000,
+    base: 'main',
+    mainHead: 'base-sha',
     record: {
       action: ACTION.DISPOSE,
       prunable: true,
+      mergedIntoMain: true,
+      mergeResultMatchesBase: false,
+      patchEquivalence: 'not-applicable',
       mustNotPrune: false,
       derivedLive: false,
       writeHistory: { derivedChatIds: [] },
@@ -154,6 +160,64 @@ describe('dispose preflight', () => {
     expect(verdict.ok).toBe(true);
   });
 
+  it('permits a net-no-op non-ancestor only with a matching main snapshot and recovery deletion proof', () => {
+    const inventory = greenInventory({
+      record: {
+        action: ACTION.DISPOSE,
+        prunable: true,
+        mergedIntoMain: false,
+        mergeResultMatchesBase: true,
+        patchEquivalence: 'unmerged',
+        mustNotPrune: false,
+        derivedLive: false,
+        writeHistory: { derivedChatIds: [] },
+      },
+    });
+    const verdict = green({ inventory });
+    expect(verdict.ok).toBe(true);
+    expect(verdict.deleteUnmergedBranch).toBe(true);
+    expect(verdict.deleteReason).toBe('merge-tree-no-op');
+    expect(verdict.expectedBaseHead).toBe('base-sha');
+  });
+
+  it('refuses a net-no-op deletion when main advanced since the inventory snapshot', () => {
+    const inventory = greenInventory({
+      record: {
+        action: ACTION.DISPOSE,
+        prunable: true,
+        mergedIntoMain: false,
+        mergeResultMatchesBase: true,
+        patchEquivalence: 'unmerged',
+        mustNotPrune: false,
+        derivedLive: false,
+        writeHistory: { derivedChatIds: [] },
+      },
+    });
+    const verdict = green({ inventory, gitState: greenState({ mainHead: 'advanced-main-sha' }) });
+    expect(codes(verdict)).toContain('inventory-base-moved');
+    expect(verdict.deleteUnmergedBranch).toBe(false);
+  });
+
+  it('keeps patch-absorbed deletion independent of the no-op merge snapshot', () => {
+    const inventory = greenInventory({
+      mainHead: 'old-main-sha',
+      record: {
+        action: ACTION.DISPOSE,
+        prunable: true,
+        mergedIntoMain: false,
+        mergeResultMatchesBase: true,
+        patchEquivalence: 'absorbed',
+        mustNotPrune: false,
+        derivedLive: false,
+        writeHistory: { derivedChatIds: [] },
+      },
+    });
+    const verdict = green({ inventory, gitState: greenState({ mainHead: 'advanced-main-sha' }) });
+    expect(codes(verdict)).not.toContain('inventory-base-moved');
+    expect(verdict.deleteUnmergedBranch).toBe(true);
+    expect(verdict.deleteReason).toBe('patch-absorbed');
+  });
+
   it('permits an explicitly selected at-risk worktree while preserving its branch and dirty edits for salvage', () => {
     const verdict = green({
       preserveBranch: true,
@@ -173,7 +237,7 @@ describe('dispose preflight', () => {
     expect(verdict.keepBranch).toBe(true);
   });
 
-  it('permits an explicitly selected land worktree with --keep-branch, preserving the branch for later merge', () => {
+  it('refuses --keep-branch for a land worktree: landing must delete the branch, not preserve it', () => {
     const verdict = green({
       preserveBranch: true,
       gitState: greenState({ modified: 0, untracked: 0 }),
@@ -187,9 +251,8 @@ describe('dispose preflight', () => {
       }),
     });
 
-    expect(verdict.failures).toEqual([]);
-    expect(verdict.ok).toBe(true);
-    expect(verdict.keepBranch).toBe(true);
+    expect(codes(verdict)).toContain('action-not-dispose');
+    expect(verdict.ok).toBe(false);
   });
 
   it('does not let branch-preserving removal decide an undecided worktree', () => {
@@ -557,6 +620,8 @@ describe('inventory schema', () => {
       JSON.stringify({
         schemaVersion: SCHEMA_VERSION,
         generatedAt: new Date(NOW).toISOString(),
+        base: 'main',
+        mainHead: 'main-sha',
         ownership: { asOf: new Date(NOW).toISOString() },
         worktrees: [],
       })
@@ -564,6 +629,8 @@ describe('inventory schema', () => {
     expect(readInventory('/repo', greenState(), { nowMs: NOW, path })).toMatchObject({
       ok: true,
       reason: null,
+      base: 'main',
+      mainHead: 'main-sha',
       evaluationAtMs: NOW,
       record: null,
     });
@@ -622,9 +689,15 @@ describe('dispose execution', () => {
   function harness(answers = {}) {
     const calls = [];
     const writes = [];
+    const answerCounts = new Map();
     const run = (cwd, args, opts = {}) => {
       calls.push(args);
-      const answer = answers[args.join(' ')] ?? answers[`${args[0]} ${args[1]}`];
+      const key = args.join(' ');
+      const answerKey = answers[key] === undefined ? `${args[0]} ${args[1]}` : key;
+      const configured = answers[answerKey];
+      const count = answerCounts.get(answerKey) ?? 0;
+      answerCounts.set(answerKey, count + 1);
+      const answer = Array.isArray(configured) ? configured[Math.min(count, configured.length - 1)] : configured;
       if (answer instanceof Error) throw answer;
       return { stdout: typeof answer === 'string' ? answer : '' };
     };
@@ -875,15 +948,72 @@ describe('dispose execution', () => {
     expect(refused.steps.join('\n')).toContain(KEEP_REF_PREFIX);
   });
 
-  it('uses guarded -D only for a patch-absorbed branch after anchoring it', () => {
+  it('uses guarded -D only for a verified absorbed branch after anchoring it', () => {
     const h = harness();
-    const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs, deleteAbsorbedBranch: true });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'patch-absorbed',
+    });
     const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
     const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
     expect(anchorAt).toBeGreaterThanOrEqual(0);
     expect(deleteAt).toBeGreaterThan(anchorAt);
     expect(result.branchDeleted).toBe(true);
-    expect(result.steps.join('\n')).toContain('patch-equivalence verification');
+    expect(result.steps.join('\n')).toContain('after anchoring its recovery ref');
+  });
+
+  it('deletes a net-no-op merge branch with guarded -D after checking main and anchoring it', () => {
+    const h = harness({ 'rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'base-sha'] });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'merge-tree-no-op',
+      expectedBaseHead: 'base-sha',
+    });
+    const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
+    const removeAt = h.calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
+    expect(anchorAt).toBeGreaterThanOrEqual(0);
+    expect(removeAt).toBeGreaterThan(anchorAt);
+    expect(deleteAt).toBeGreaterThan(removeAt);
+    expect(result.branchDeleted).toBe(true);
+    expect(h.calls.filter((c) => c.join(' ') === 'rev-parse --verify main^{commit}')).toHaveLength(3);
+    expect(result.steps.join('\n')).toContain('deleted net-no-op merge branch fix/task');
+  });
+
+  it('keeps the worktree when main advances before net-no-op disposal', () => {
+    const h = harness({ 'rev-parse --verify main^{commit}': 'new-main-sha' });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'merge-tree-no-op',
+      expectedBaseHead: 'base-sha',
+    });
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
+    expect(h.calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
+    expect(result.steps.join('\n')).toContain('main moved or became unreadable');
+  });
+
+  it('keeps the branch anchored if main advances during net-no-op disposal', () => {
+    const h = harness({ 'rev-parse --verify main^{commit}': ['base-sha', 'base-sha', 'new-main-sha'] });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      deleteUnmergedBranch: true,
+      deleteReason: 'merge-tree-no-op',
+      expectedBaseHead: 'base-sha',
+    });
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    expect(result.branchKept).toBe(true);
+    expect(h.calls.some((c) => c.join(' ') === 'branch -D fix/task')).toBe(false);
+    expect(result.steps.join('\n')).toContain('main moved or became unreadable after worktree removal');
+    expect(result.anchorRef).toContain(KEEP_REF_PREFIX);
   });
 
   it('salvages a binary-safe patch and an untracked archive, and lists what it wrote', () => {

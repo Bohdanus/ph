@@ -56,7 +56,7 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
   --stdout            print the inventory instead of writing it
   --base <branch>     compare against <branch> (default: main)
   --window-hours <n>  chat window in hours (default: 24, maximum: 72; the session database is never read older than 3 days)
-  --now <ms>          pin recency evaluation; generatedAt stays on the wall clock
+  --now <ms>          pin recency evaluation; must not be in the future; generatedAt stays on the wall clock
   --out <path>        write somewhere other than WORKTREES.json
   --no-live-writers   declare that NO chat is writing to any worktree right now,
                       and record WHY in the file. Overrides the recency
@@ -87,7 +87,12 @@ function takeValue(argv, i, inline) {
   return { value: next, next: i + 1 };
 }
 
-function parseArgs(argv) {
+export function validatePinnedNow(nowMs, wallNowMs = Date.now()) {
+  if (!Number.isFinite(nowMs)) throw new Error('--now must be a finite millisecond timestamp');
+  if (nowMs > wallNowMs) throw new Error('--now cannot be in the future');
+}
+
+export function parseArgs(argv) {
   const opts = { base: 'main', windowHours: 24, now: null, out: null, noLiveWriters: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -119,6 +124,10 @@ function parseArgs(argv) {
       `--window-hours cannot exceed ${MAX_SESSION_DB_WINDOW_HOURS} (the session database safety limit is 3 days)`
     );
   }
+  if (opts.out !== null && (typeof opts.out !== 'string' || opts.out.trim() === '')) {
+    throw new Error('--out requires a non-empty path');
+  }
+  if (opts.now !== null) validatePinnedNow(opts.now);
   return opts;
 }
 
@@ -365,8 +374,16 @@ async function runAsyncMain(opts) {
   }
   opts.base = base;
 
-  // Use async collectWorktrees for parallel execution
-  const worktrees = await collectWorktrees(root, { base: opts.base });
+  // Pin every ancestry and merge-tree calculation to the exact commit recorded
+  // below. If the branch ref moved during collection, the disposer will compare
+  // this snapshot with current main and refuse the no-op proof.
+  const mainHead = execFileSync('git', ['rev-parse', '--verify', `${opts.base}^{commit}`], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim();
+
+  // Use async collectWorktrees for parallel execution against the pinned base.
+  const worktrees = await collectWorktrees(root, { base: mainHead, baseName: opts.base });
   const missing = findMissingWorktrees(root);
   // Compare PATHS, not records. `collectWorktrees` and `findMissingWorktrees`
   // each build their own objects, so `missing.includes(w)` is reference
@@ -374,11 +391,6 @@ async function runAsyncMain(opts) {
   // stayed in `existingPaths` and their sessions could never be `orphaned`.
   const missingPaths = new Set(missing.map((w) => w.path));
   const existingPaths = new Set(worktrees.map((w) => w.path).filter((p) => !missingPaths.has(p)));
-
-  const mainHead = execFileSync('git', ['rev-parse', opts.base], {
-    cwd: root,
-    encoding: 'utf8',
-  }).trim();
 
   // Never run the expensive JSON audits against the live Kilo database. The
   // snapshot helper copies only the bounded recent session/part projection and
@@ -432,7 +444,7 @@ async function runAsyncMain(opts) {
 
   // Resolved BEFORE the inventory is built, because the reader watermark is an
   // INPUT to it, not a post-hoc edit of the output.
-  const target = resolve(process.cwd(), opts.out ?? 'WORKTREES.json');
+  const target = inventoryTarget(root, opts.out);
   let readsReleasedBeforeMs;
   try {
     readsReleasedBeforeMs = resolveReadsReleasedBefore(target, opts.releaseReads, nowMs);
@@ -506,6 +518,11 @@ async function runAsyncMain(opts) {
   printSummary(inventory, opts.quiet);
 }
 
+/** Resolve the repository-wide inventory, even when invoked from a task worktree. */
+export function inventoryTarget(root, out) {
+  return resolve(root, out ?? 'WORKTREES.json');
+}
+
 /**
  * Are two documents the same apart from their generation and evaluation times?
  *
@@ -566,6 +583,7 @@ function describeDrift(currentText, nextText) {
     'untracked',
     'mergeConflict',
     'mergeConflictFiles',
+    'mergeResultMatchesBase',
     'mergeChecked',
     'patchEquivalence',
     'patchEquivalenceReason',

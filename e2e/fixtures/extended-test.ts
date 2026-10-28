@@ -138,6 +138,8 @@ export * from '@playwright/test';
 
 /** The `localStorage` key `ThemeProvider` reads (`src/contexts/ThemeContext.tsx:31`). */
 const THEME_STORAGE_KEY = 'theme';
+const FIRST_USE_TOUR_STORAGE_KEY = 'ph.firstUseTourSeen';
+const FIRST_USE_TOUR_RELEASE_KEY = 'e2e-first-use-tour-released';
 
 /** The theme this suite runs under. A property of the pixel oracle above, not of the app. */
 const PINNED_THEME = 'light';
@@ -155,7 +157,11 @@ const PINNED_THEME = 'light';
  */
 const THEME_PIN_RELEASE_KEY = 'e2e-theme-pin-released';
 
-export const test = base.extend<{ consolePolice: ConsolePolice; pinnedTheme: null }>({
+export const test = base.extend<{
+  consolePolice: ConsolePolice;
+  pinnedTheme: null;
+  firstUseTourSuppressed: null;
+}>({
   consolePolice: [
     async ({ page }, use, testInfo) => {
       const police = new ConsolePolice(page);
@@ -190,7 +196,38 @@ export const test = base.extend<{ consolePolice: ConsolePolice; pinnedTheme: nul
     },
     { auto: true },
   ],
+  firstUseTourSuppressed: [
+    async ({ page }, use) => {
+      await page.addInitScript(
+        ({ storageKey, releaseKey }) => {
+          try {
+            if (window.sessionStorage.getItem(releaseKey) === '1') return;
+            if (window.localStorage.getItem(storageKey) === null) {
+              window.localStorage.setItem(storageKey, 'true');
+            }
+          } catch {
+            // An opaque origin has no storage to seed.
+          }
+        },
+        { storageKey: FIRST_USE_TOUR_STORAGE_KEY, releaseKey: FIRST_USE_TOUR_RELEASE_KEY }
+      );
+      await use(null);
+    },
+    { auto: true },
+  ],
 });
+
+/** Show the first-use tour for a dedicated E2E test in this tab. */
+export async function showFirstUseTour(page: Page): Promise<void> {
+  await page.evaluate(
+    ({ storageKey, releaseKey }) => {
+      window.sessionStorage.setItem(releaseKey, '1');
+      window.localStorage.removeItem(storageKey);
+    },
+    { storageKey: FIRST_USE_TOUR_STORAGE_KEY, releaseKey: FIRST_USE_TOUR_RELEASE_KEY }
+  );
+  await page.reload();
+}
 
 /**
  * Releases the pin for the rest of this tab, so the next load starts from whatever the

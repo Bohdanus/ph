@@ -3,7 +3,9 @@ import { fireEvent, render } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { CloneStampToolArea } from '../CloneStampToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
+import type { Selection } from '../../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
+import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
@@ -57,11 +59,15 @@ const storeState = vi.hoisted(
     layers: LayersRecord;
     activeLayerId: string | null;
     containerRef: { current: HTMLDivElement };
+    selections: Selection[];
+    activeSelectionId: string | null;
   } => ({
     documentFrame: null,
     layers: {},
     activeLayerId: null,
     containerRef: { current: document.createElement('div') },
+    selections: [],
+    activeSelectionId: null,
   })
 );
 
@@ -93,6 +99,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       },
       get documentFrame() {
         return storeState.documentFrame;
+      },
+      get selections() {
+        return storeState.selections;
+      },
+      get activeSelectionId() {
+        return storeState.activeSelectionId;
       },
     },
     vi.fn(),
@@ -198,6 +210,31 @@ const cloneArgs = (overrides: Partial<CloneStampToolArgs> = {}): CloneStampToolA
   points: [],
   ...overrides,
 });
+
+const ACTIVE_SELECTION: Selection = {
+  id: 'selection-1',
+  points: [
+    { x: 0, y: 0 },
+    { x: 20, y: 0 },
+    { x: 20, y: 20 },
+  ],
+  isActive: true,
+  pos: { x: 10, y: 15, width: 20, height: 20 },
+  geometry: 'polygon',
+  sourceTool: 'feather-magnetic-lasso',
+  metadata: {
+    featherRadius: 7,
+    magneticLasso: {
+      width: 5,
+      contrast: 40,
+      frequency: 50,
+      snapStrength: 0.8,
+      smoothing: 2,
+      antiAlias: false,
+      pathPointCount: 3,
+    },
+  },
+};
 
 /** Every paint-family method a raster tool or the overlay chrome could reach for, as spies. */
 const CONTEXT_METHODS = [
@@ -330,6 +367,7 @@ afterEach(() => {
 
 describe('CloneStampToolArea', () => {
   beforeEach(() => {
+    resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
     createLayerFromToolMock.mockClear();
@@ -345,6 +383,8 @@ describe('CloneStampToolArea', () => {
     storeState.containerRef = { current: document.createElement('div') };
     storeState.layers = { base: makeLayer('base') };
     storeState.activeLayerId = 'base';
+    storeState.selections = [];
+    storeState.activeSelectionId = null;
     toolState.toolArgs = cloneArgs();
     vi.stubGlobal('requestAnimationFrame', rafMock);
     vi.stubGlobal('cancelAnimationFrame', cancelFrameMock);
@@ -387,6 +427,26 @@ describe('CloneStampToolArea', () => {
         },
       ]);
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
+    });
+
+    it('snapshots the active selection into both preview and committed clone args', () => {
+      storeState.selections = [ACTIVE_SELECTION];
+      storeState.activeSelectionId = ACTIVE_SELECTION.id;
+      const { toolArea } = renderArea();
+
+      stroke(toolArea, [20, 20], [100, 60]);
+
+      const expectedSelection = {
+        points: [
+          { x: 10, y: 15 },
+          { x: 30, y: 15 },
+          { x: 30, y: 35 },
+        ],
+        featherRadius: 7,
+        antiAlias: false,
+      };
+      expect(previewCalls()[0]?.toolArgs.selection).toEqual(expectedSelection);
+      expect(commitCalls()[0]?.toolArgs.selection).toEqual(expectedSelection);
     });
 
     it('rebases the source and the stroke by the layer origin, in one translation', () => {
@@ -637,6 +697,32 @@ describe('CloneStampToolArea', () => {
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
       expect(pointerState.activePointer).toBeNull();
       strokeAndProve(view, toolArea);
+    });
+
+    it('proves usePaintStroke is disabled on a bedrock layer and enabled on a non-bedrock layer', () => {
+      // Bedrock: `enabled` is false, so `usePaintStroke` returns from every handler before
+      // reaching a callback — nothing claims the pointer, and both writers are silent.
+      storeState.layers = { base: makeLayer('base', { isBedrock: true }) };
+      storeState.activeLayerId = 'base';
+      const { toolArea } = renderArea(NO_OVERLAY);
+
+      stroke(toolArea, [20, 20], [100, 60]);
+
+      expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+      expect(updateLayerByToolMock).not.toHaveBeenCalled();
+      expect(pointerState.activePointer).toBeNull();
+
+      // Non-bedrock: `enabled` is true, so `usePaintStroke` captures the pointer and fires
+      // both the preview and the commit callbacks exactly once.
+      storeState.layers = { base: makeLayer('base') };
+      storeState.activeLayerId = 'base';
+      const { toolArea: toolArea2 } = renderArea(NO_OVERLAY);
+
+      stroke(toolArea2, [20, 20], [100, 60]);
+
+      expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
+      expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
+      expect(pointerState.activePointer).toBeNull();
     });
 
     it('commits nothing when there is no active layer', () => {

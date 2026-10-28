@@ -144,7 +144,7 @@ describe('DevStatusStrip', () => {
     expect(strip).toHaveAttribute('data-durable-layer-ids', 'visible-layer');
   });
 
-  it.each(['stale', 'unavailable'] as const)('reports a %s shadow even with no diagnostic', (status) => {
+  it.each(['partial', 'stale', 'unavailable'] as const)('reports a %s shadow even with no diagnostic', (status) => {
     storeState.durableStatus = status;
 
     render(<DevStatusStrip />);

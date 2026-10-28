@@ -48,6 +48,7 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
     moveLayerAfter: vi.fn(),
     setActiveLayer: vi.fn(),
     beginTextLayerEdit: vi.fn(),
+    commitDirtyTool: vi.fn(),
     updateLayer: vi.fn(),
   };
   return {
@@ -65,7 +66,14 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
   };
 });
 
-const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+const currentToolState = vi.hoisted(() => ({
+  toolArgs: { toolName: 'move' } as {
+    toolName: string;
+    rect?: { x1: number; y1: number; x2: number; y2: number } | null;
+    editingLayerId?: string;
+  },
+  setToolArgs: vi.fn(),
+}));
 
 vi.mock('@/contexts/StoreContext.tsx', async () => {
   const { useSyncExternalStore } = await import('react');
@@ -271,6 +279,56 @@ describe('LayersTab', () => {
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
+  it('disables Lock All while a text edit is active', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+    };
+    render(<LayersTab />);
+
+    const lockButton = screen.getByRole('button', { name: 'Lock Layer 2' });
+    expect(lockButton).toBeDisabled();
+    expect(lockButton).toHaveAttribute('title', 'Finish text editing before locking layers');
+    fireEvent.click(lockButton);
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+  });
+
+  it('disables removal of the text layer while that layer is being edited', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+      editingLayerId: 'layer-2',
+    };
+    render(<LayersTab />);
+
+    const removeButton = getListItemFor('Layer 2').querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove layer"]'
+    );
+    if (!removeButton) throw new Error('no remove button for Layer 2');
+    expect(removeButton).toBeDisabled();
+    expect(removeButton).toHaveAttribute('title', 'Finish text editing before removing this layer');
+    fireEvent.click(removeButton);
+
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+  });
+
+  it('keeps layer selection when the active text edit cannot be committed', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+    };
+    layerMocks.commitDirtyTool.mockReturnValueOnce(null);
+    render(<LayersTab />);
+
+    const row = getListItemFor('Top Layer').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Top Layer');
+    fireEvent.click(row);
+
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+  });
+
   it('toggles visibility on eye button click', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
@@ -463,6 +521,17 @@ describe('LayersTab inline rename', () => {
 
     expect(span).toHaveAttribute('contenteditable', 'true');
     expect(span).toHaveStyle({ background: '#fff' });
+  });
+
+  it('turns the name span into an editable region on a touch press', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.pointerDown(span, { pointerId: 9, pointerType: 'touch' });
+    });
+
+    expect(span).toHaveAttribute('contenteditable', 'true');
   });
 
   it('suspends dragging for the layer that is being renamed', () => {
@@ -679,6 +748,83 @@ describe('LayersTab drag and drop guards', () => {
     });
 
     expect(document.body).toHaveClass('cursor-grabbing');
+  });
+
+  it('reorders a movable layer from a touch pointer gesture', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const target = screen.getAllByRole('listitem')[2]!;
+    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
+    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    const elementFromPoint = vi.fn(() => target);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(source, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 10 });
+        fireEvent.pointerMove(source, { pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 20 });
+        fireEvent.pointerUp(source, { pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 20 });
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(elementFromPoint).toHaveBeenCalledWith(20, 20);
+      expect(layerMocks.moveLayerAfter).toHaveBeenCalledWith('layer-3', 'layer-1');
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
+  });
+
+  it('supports dropping a touch drag after the last layer', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const target = screen.getByTestId('layers-bottom-drop-target');
+    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
+    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    const elementFromPoint = vi.fn(() => target);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(source, { pointerId: 8, pointerType: 'touch', clientX: 10, clientY: 10 });
+        fireEvent.pointerMove(source, { pointerId: 8, pointerType: 'touch', clientX: 20, clientY: 20 });
+        fireEvent.pointerUp(source, { pointerId: 8, pointerType: 'touch', clientX: 20, clientY: 20 });
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(layerMocks.moveLayerAfter).toHaveBeenCalledWith('layer-3', undefined);
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
+  });
+
+  it('releases a touch drag when the window loses focus', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const target = screen.getAllByRole('listitem')[2]!;
+    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
+    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => target) });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(source, { pointerId: 9, pointerType: 'touch', clientX: 10, clientY: 10 });
+        fireEvent.pointerMove(source, { pointerId: 9, pointerType: 'touch', clientX: 20, clientY: 20 });
+      });
+      expect(document.body).toHaveClass('cursor-grabbing');
+
+      act(() => {
+        fireEvent.blur(window);
+        fireEvent.pointerUp(source, { pointerId: 9, pointerType: 'touch', clientX: 20, clientY: 20 });
+      });
+
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
   });
 
   it('publishes the dragged layer id and drag image through the data transfer', () => {

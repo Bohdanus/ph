@@ -76,11 +76,11 @@ export const mobileToolGroups: MobileToolGroup[] = toolbarMap.flatMap((section, 
  */
 export const makeSelectTool =
   (
-    goToTool: (name: ToolName) => void,
+    goToTool: (name: ToolName) => boolean | void,
     patchToolArgs: (name: ToolName, args: { figure: string }) => void
   ): ((tool: ToolbarTool) => void) =>
   (tool) => {
-    goToTool(tool.name);
+    if (goToTool(tool.name) === false) return;
     if (tool.figure) patchToolArgs('shape', { figure: tool.figure });
   };
 

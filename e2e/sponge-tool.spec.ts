@@ -774,7 +774,7 @@ test.describe('Sponge tool', () => {
     await expect(modeSelect(page)).toBeVisible();
 
     await expect(page.getByRole('slider'), 'three sliders: Flow, Size, Hardness').toHaveCount(3);
-    await expect(page.getByRole('combobox'), 'one dropdown: Mode').toHaveCount(1);
+    await expect(modeSelect(page), 'one tool-bar dropdown: Mode').toHaveCount(1);
     await expect(page.getByRole('checkbox'), 'one checkbox: Vibrance').toHaveCount(1);
     for (const name of ['Flow', 'Size', 'Hardness']) {
       await expect(page.getByRole('slider', { name }), `${name} is this bar's control`).toBeVisible();
@@ -793,7 +793,11 @@ test.describe('Sponge tool', () => {
     await selectTonal(page, DODGE_ITEM);
     await expect(
       page.getByRole('slider', { name: 'Exposure' }),
-      'the Tonal bar carries an Exposure slider: the positive both absences below are stated against'
+      'the Tonal bar carries exactly one Exposure slider: the positive both absences below are stated against'
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole('slider', { name: 'Exposure' }),
+      'and that slider is on screen, not merely in the DOM'
     ).toBeVisible();
 
     await selectTonal(page, SPONGE_ITEM);
@@ -803,6 +807,10 @@ test.describe('Sponge tool', () => {
       page.getByRole('slider', { name: 'Exposure' }),
       'the Sponge has neither Tonal control, and the locator was shown to resolve on the Dodge'
     ).toHaveCount(0);
+    await expect(
+      page.getByRole('slider', { name: 'Exposure' }),
+      'the Sponge carries no Exposure slider, visible or otherwise, so the bar control set below is read against a real absence'
+    ).toBeHidden();
 
     const options = await modeSelect(page).locator('option').allTextContents();
     expect

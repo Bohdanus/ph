@@ -166,7 +166,7 @@ describe('StoreContext durable diagnostic contract', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Commit unsupported edit' }));
 
-    expect(screen.getByTestId('durable-status').textContent).toBe('unavailable');
+    expect(screen.getByTestId('durable-status').textContent).toBe('partial');
     const diagnostics: unknown = JSON.parse(screen.getByTestId('durable-diagnostics').textContent ?? '[]');
     expect(Array.isArray(diagnostics)).toBe(true);
     expect(diagnostics).toHaveLength(1);

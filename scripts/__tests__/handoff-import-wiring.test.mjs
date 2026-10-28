@@ -83,6 +83,21 @@ describe('the import of the handoff documents', () => {
     ).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
     expect(first.dead).toContain('HANDOFF.md#3');
     expect(first.dead).toContain('HANDOFF.md#4');
+    expect(first.retired).toEqual([]);
+  });
+
+  it('reports existing board issues whose document entries were retired', async () => {
+    writeFileSync(join(dir, 'HANDOFF.md'), ['## 1. A live item', '', 'Body.', ''].join('\n'));
+    const board = boardFor();
+    await importDocuments({ board, files: ['HANDOFF.md'], cwd: dir });
+    const issue = board.listIssues()[0];
+
+    writeFileSync(join(dir, 'HANDOFF.md'), ['### Items 1 — deleted', '', 'Fixed.', ''].join('\n'));
+    const result = await importDocuments({ board, files: ['HANDOFF.md'], cwd: dir });
+
+    expect(result.dead).toEqual(['HANDOFF.md#1']);
+    expect(result.retired).toEqual([{ origin: 'HANDOFF.md#1', id: issue.id }]);
+    expect(board.getIssue(issue.id).status).toBe('open');
   });
 
   it('reports duplicate headings and leaves their ambiguous origin unfiled', async () => {
@@ -117,6 +132,20 @@ describe('the import of the handoff documents', () => {
       /HANDOFF\.md:5 \(HANDOFF\.md#31\).*dialog-closed assertion is fixed/
     );
     expect(board.listIssues()).toHaveLength(0);
+  });
+
+  it('refuses the entire import when a numbered heading has an unsupported letter suffix', async () => {
+    writeFileSync(
+      join(dir, 'HANDOFF.md'),
+      ['## 15a. An old item — deleted', '', 'It must not become item 15.', ''].join('\n')
+    );
+    const board = boardFor();
+
+    await expect(importDocuments({ board, files: ['HANDOFF.md'], cwd: dir })).rejects.toThrow(
+      /letter suffixes have no supported origin[\s\S]*HANDOFF\.md:1/
+    );
+    expect(board.listIssues()).toHaveLength(0);
+    expect(board.events()).toHaveLength(0);
   });
 
   it('takes no file locks for imported items', async () => {
@@ -161,6 +190,21 @@ describe('the import of the handoff documents', () => {
     await importDocuments({ board, files: ['e2e/OPEN_PROBLEMS.md'], cwd: dir });
     expect(board.listIssues().map((issue) => issue.priority)).toEqual(['critical', 'normal']);
     expect(board.readyIssues().map((issue) => issue.title)).toEqual(['P0 — the worst thing', 'P2 — the smaller thing']);
+  });
+
+  it('matches retired issues from subdirectory documents by their stored basename origin', async () => {
+    mkdirSync(join(dir, 'e2e'), { recursive: true });
+    writeFileSync(join(dir, 'e2e/OPEN_PROBLEMS.md'), ['## 1. A live problem', '', 'Body.', ''].join('\n'));
+    const board = boardFor();
+    await importDocuments({ board, files: ['e2e/OPEN_PROBLEMS.md'], cwd: dir });
+    const issue = board.listIssues()[0];
+    expect(issue.origin).toBe('OPEN_PROBLEMS.md#1');
+
+    writeFileSync(join(dir, 'e2e/OPEN_PROBLEMS.md'), ['### Items 1 — deleted', '', 'Fixed.', ''].join('\n'));
+    const result = await importDocuments({ board, files: ['e2e/OPEN_PROBLEMS.md'], cwd: dir });
+
+    expect(result.dead).toEqual(['OPEN_PROBLEMS.md#1']);
+    expect(result.retired).toEqual([{ origin: 'OPEN_PROBLEMS.md#1', id: issue.id }]);
   });
 
   /**

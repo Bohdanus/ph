@@ -26,8 +26,36 @@ page explicitly calls them thumbnail previews:
 > Channels panels."
 
 It also says Panel Options can choose a smaller thumbnail size or `None`. This repo currently ships
-one useful preview size, rendered by `LayerThumbnail`, while retaining the future preference as a
-display-only setting rather than document state.
+one 48x32 preview size, rendered by `LayerThumbnail`; thumbnail-size and `None` preferences are not
+implemented. When added, they must remain display-only settings rather than document state.
+
+## Layer editability and rasterization
+
+Layer-row previews do not imply that every row is a paint surface. Adobe's current rules distinguish
+live/generated content from ordinary pixel layers:
+
+- Type layers stay editable text, and Adobe documents rasterizing type when a chosen pixel operation
+  requires it. The current Brush documentation is an important exception: on a type, shape, Smart
+  Object, or adjustment layer, Brush creates a new transparent layer rather than prompting to
+  rasterize. That exception is specific to Brush and must not be generalized to every pixel writer.
+- Shape layers contain vector data; rasterize the shape for pixel-only edits, or edit its vector fill,
+  stroke, or path.
+- Smart Objects are edited through their contents or Smart Filters; rasterizing converts them to
+  ordinary pixels and loses the editable object representation.
+- Adjustment and fill layers store non-destructive instructions or generated content. Their masks are
+  where black, white, and gray painting targets coverage; the adjustment itself is not an ordinary
+  pixel layer.
+- Lock Image Pixels, Lock Transparent Pixels, Lock Position, and Lock All are separate protections.
+  A single generic lock flag is not Photoshop's model. Background layers additionally cannot change
+  stacking position, opacity, or masks until converted.
+
+Sources: [Painting tools](https://helpx.adobe.com/photoshop/using/painting-tools.html),
+[Edit text](https://helpx.adobe.com/photoshop/using/editing-text.html),
+[Rasterize type and shape layers](https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer),
+[Rasterize Smart Objects](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/smart-objects/rasterize-smart-objects.html),
+[Adjustment and fill layers overview](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/color-adjustment-fill-layers/adjustment-and-fill-layers-overview.html),
+[Add and edit layer masks](https://helpx.adobe.com/photoshop/desktop/create-masks/layer-masks/add-layer-masks.html),
+and [Move, stack, and lock layers](https://helpx.adobe.com/photoshop/using/moving-stacking-locking-layers.html).
 
 ## History panel
 

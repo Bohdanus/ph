@@ -30,11 +30,13 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
+import { inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import {
   __testables,
   collectWorktrees,
   findMissingWorktrees,
+  historicalNameCollisions,
   listWorktrees,
   mergeConflict,
   PATCH_EQUIVALENCE,
@@ -332,6 +334,46 @@ describe('git.mjs against a real repository', () => {
       const [side] = await collectWorktrees(dir, { base: 'main' });
       expect(side.ahead).toBe(2);
       expect(side.mergedIntoBase).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the base branch name out of collision advisories when history uses a pinned SHA', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['commit', '--allow-empty', '--quiet', '-m', "Merge branch 'main' into topic"], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+      const mainHead = execFileSync('git', ['rev-parse', 'main'], { cwd: dir, encoding: 'utf8' }).trim();
+      const collisions = historicalNameCollisions(dir, mainHead, 'main');
+
+      expect(collisions.has('main')).toBe(false);
+      expect(collisions.has('topic')).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not label a patch-absorbed branch as a merge-result proof', async () => {
+    const dir = makeRepo();
+    try {
+      const absorbedCommits = execFileSync('git', ['rev-list', '--reverse', 'main..side'], {
+        cwd: dir,
+        encoding: 'utf8',
+      })
+        .trim()
+        .split('\n');
+      execFileSync('git', ['checkout', '--quiet', 'main'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['cherry-pick', '--quiet', ...absorbedCommits], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+
+      const [worktree] = await collectWorktrees(dir, { base: 'main' });
+      expect(worktree.ahead).toBe(2);
+      expect(worktree.patchEquivalence).toBe(PATCH_EQUIVALENCE.ABSORBED);
+      expect(worktree.merge.conflict).toBe(null);
+      expect(worktree.mergeResultMatchesBase).toBe(null);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -986,6 +1028,14 @@ describe('blocked-question detection', () => {
 });
 
 describe('the pinned clock', () => {
+  it('rejects a future or invalid pinned clock before it can affect liveness', () => {
+    expect(() => validatePinnedNow(NOW + 1, NOW)).toThrow('--now cannot be in the future');
+    expect(() => validatePinnedNow(Number.NaN, NOW)).toThrow('--now must be a finite millisecond timestamp');
+    expect(() => validatePinnedNow(NOW - 1, NOW)).not.toThrow();
+    expect(() => parseArgs(['--now', String(Date.now() + 60_000)])).toThrow('--now cannot be in the future');
+    expect(() => parseArgs(['--now', 'not-a-number'])).toThrow('--now must be a finite millisecond timestamp');
+  });
+
   it('does not let --now in the past reclassify worktrees as in-use', () => {
     const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
     const lastActivity = NOW;
@@ -1048,6 +1098,35 @@ describe('the pinned clock', () => {
   });
 });
 
+describe('the inventory output target', () => {
+  it('resolves the default output in the repository root, not the invoking worktree', () => {
+    expect(inventoryTarget('/repo', undefined)).toBe('/repo/WORKTREES.json');
+    expect(inventoryTarget('/repo', null)).toBe('/repo/WORKTREES.json');
+    expect(inventoryTarget('/repo', 'reports/WORKTREES.json')).toBe('/repo/reports/WORKTREES.json');
+    expect(inventoryTarget('/repo', '/tmp/WORKTREES.json')).toBe('/tmp/WORKTREES.json');
+  });
+
+  it('rejects an empty output path before attempting to write', () => {
+    expect(() => parseArgs(['--out'])).toThrow('--out requires a non-empty path');
+    expect(() => parseArgs(['--out', '   '])).toThrow('--out requires a non-empty path');
+  });
+
+  it('uses the root-relative target at the CLI write boundary', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../worktree-inventory.mjs'), 'utf8');
+
+    expect(source).toContain('const target = inventoryTarget(root, opts.out);');
+  });
+
+  it('pins merge calculations to the same base commit that the inventory records', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../worktree-inventory.mjs'), 'utf8');
+    const resolveMain = source.indexOf("const mainHead = execFileSync('git', ['rev-parse', '--verify'");
+    const collect = source.indexOf('collectWorktrees(root, { base: mainHead, baseName: opts.base })');
+
+    expect(resolveMain).toBeGreaterThanOrEqual(0);
+    expect(collect).toBeGreaterThan(resolveMain);
+  });
+});
+
 describe('mergeConflict, against a real repository', () => {
   /** `repo` has main at 3 commits; `side` adds 2 and never sees main\'s 3rd. */
   function repo() {
@@ -1058,7 +1137,51 @@ describe('mergeConflict, against a real repository', () => {
     const dir = repo();
     try {
       execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
-      expect(mergeConflict(dir, 'main')).toEqual({ conflict: false, files: [] });
+      const result = mergeConflict(dir, 'main');
+      expect(result).toMatchObject({ conflict: false, files: [] });
+      expect(result.mergeTree).toMatch(/^(?:[a-f\d]{40}|[a-f\d]{64})$/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes the base tree when a conflict-free merge has no net tree change', () => {
+    const dir = repo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', '-b', 'net-no-op', 'main'], { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'temporary.txt'), 'temporary');
+      execFileSync('git', ['add', 'temporary.txt'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'add temporary file'], { cwd: dir, stdio: 'ignore' });
+      rmSync(join(dir, 'temporary.txt'));
+      execFileSync('git', ['add', '-u'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'remove temporary file'], { cwd: dir, stdio: 'ignore' });
+
+      const baseTree = execFileSync('git', ['rev-parse', 'main^{tree}'], { cwd: dir, encoding: 'utf8' }).trim();
+      const ahead = execFileSync('git', ['rev-list', '--count', 'main..HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+      const result = mergeConflict(dir, 'main');
+
+      expect(ahead).toBe('2');
+      expect(result).toMatchObject({ conflict: false, mergeTree: baseTree });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('marks an unmerged worktree as net-no-op only when the computed merge tree equals the base tree', async () => {
+    const dir = repo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', '-b', 'net-no-op', 'main'], { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'temporary.txt'), 'temporary');
+      execFileSync('git', ['add', 'temporary.txt'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'add temporary file'], { cwd: dir, stdio: 'ignore' });
+      rmSync(join(dir, 'temporary.txt'));
+      execFileSync('git', ['add', '-u'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'remove temporary file'], { cwd: dir, stdio: 'ignore' });
+
+      const [worktree] = await collectWorktrees(dir, { base: 'main' });
+      expect(worktree.ahead).toBe(2);
+      expect(worktree.mergeResultMatchesBase).toBe(true);
+      expect(worktree.merge.conflict).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1171,6 +1294,49 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
     expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
     expect(v.action).toBe(ACTION.DISPOSE);
     expect(v.prunable).toBe(true);
+  });
+
+  it('calls a clean branch with a conflict-free merge result equal to main a disposal candidate', () => {
+    const v = classify(
+      unmergedClean({
+        patchEquivalence: PATCH_EQUIVALENCE.UNMERGED,
+        mergeResultMatchesBase: true,
+      }),
+      args()
+    );
+    expect(v.status).toBe(STATUS.LANDED);
+    expect(v.patchEquivalence).toBe(PATCH_EQUIVALENCE.UNMERGED);
+    expect(v.mergeResultMatchesBase).toBe(true);
+    expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
+    expect(v.action).toBe(ACTION.DISPOSE);
+    expect(v.prunable).toBe(true);
+  });
+
+  it('does not trust a base-tree flag when the merge check itself was not clean', () => {
+    const v = classify(
+      unmergedClean({
+        merge: { conflict: null },
+        mergeResultMatchesBase: true,
+      }),
+      args()
+    );
+    expect(v.mergeResultMatchesBase).toBe(null);
+    expect(v.status).toBe(STATUS.UNMERGED_WORK);
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('does not dispose a net-no-op branch whose working tree is dirty', () => {
+    const v = classify(
+      unmergedClean({
+        mergeResultMatchesBase: true,
+        workingTree: { modified: 1, untracked: 0, paths: ['changed.txt'] },
+      }),
+      args()
+    );
+    expect(v.status).toBe(STATUS.UNMERGED_WORK);
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.prunable).toBe(false);
   });
 
   it('keeps an unreadable working-tree status out of every destructive verdict', () => {
@@ -1785,6 +1951,32 @@ describe('buildInventory', () => {
     expect(inv.totals.prunable).toBe(inv.worktrees.filter((w) => w.prunable).length);
   });
 
+  it('publishes the exact-base merge proof needed by the guarded disposer', () => {
+    const inv = buildInventory({
+      worktrees: [
+        wt({
+          ahead: 2,
+          mergedIntoBase: false,
+          patchEquivalence: PATCH_EQUIVALENCE.UNMERGED,
+          merge: { conflict: false },
+          mergeResultMatchesBase: true,
+        }),
+      ],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'fixture-main-head',
+      board,
+      chatAudit,
+      nowMs: NOW,
+    });
+
+    expect(inv.worktrees[0]).toMatchObject({
+      mergeResultMatchesBase: true,
+      action: ACTION.DISPOSE,
+      prunable: true,
+    });
+  });
+
   it('sorts the highest-risk worktree first, so the list opens with what is at risk', () => {
     const inv = buildInventory({
       worktrees: [
@@ -2068,8 +2260,18 @@ describe('the transcript read audit', () => {
     // The falsifiable part of "all 105 sessions were read". Exact window
     // membership is NOT reproducible — `time_updated` keeps moving on a live
     // session — so this pins what is actually checkable: every id exists, is
-    // top-level, and falls after the documented window start.
+    // top-level, and falls after the documented window start. The session DB is
+    // deliberately bounded to MAX_SESSION_DB_WINDOW_MS, so an older hand-read
+    // audit is historical evidence rather than a claim that those ids remain
+    // queryable today.
     const a = loadChatAudit(dataPath);
+    const auditAge = Date.now() - Date.parse(a.asOf);
+    if (auditAge > MAX_SESSION_DB_WINDOW_MS) {
+      expect(auditAge, 'the hand-read audit is outside the session DB retention window').toBeGreaterThan(
+        MAX_SESSION_DB_WINDOW_MS
+      );
+      return;
+    }
     const startMs = Date.parse(a.windowStart);
     let db;
     try {

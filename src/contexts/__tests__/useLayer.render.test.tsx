@@ -1,10 +1,17 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as durableCompositor from '../durable-compositor.ts';
+import type { DurableComposite } from '../durable-compositor.ts';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { useLayers } from '../useLayer.ts';
 import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
+import type { MaterializedLayer } from '../materialization.ts';
+import type { HistoryItem } from '../history-types.ts';
+import { OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
+import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
+import type { Pos } from '../general-types.ts';
 
 // drawAllLayers owns the composition contract only: the renderer stages and
 // publishes. Assert the delegation instead of re-testing drawLayersToCanvas —
@@ -83,6 +90,40 @@ function drawnFrame(callIndex = 0): DocumentFrame {
   return drawLayersToCanvas.mock.calls[callIndex][2];
 }
 
+function makeComposite(pos: Pos, id = 'layer-1', frame: DocumentFrame): DurableComposite {
+  const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
+  const releaseMaterialized = vi.fn();
+  const materialized: MaterializedLayer = {
+    layerId: id,
+    bitmap: materializedBitmap,
+    bounds: pos,
+    visible: true,
+    opacity: 1,
+    blendMode: 'source-over',
+    lease: {
+      key: 'render-all-layers-test',
+      bitmap: materializedBitmap,
+      byteSize: pos.width * pos.height * 4,
+      metadata: pos,
+      release: releaseMaterialized,
+    },
+  };
+  const layers = { [id]: materialized };
+  const releaseDetached = vi.fn(() => releaseMaterialized());
+  const releaseComposite = vi.fn(() => releaseMaterialized());
+  return {
+    bitmap: materializedBitmap,
+    frame,
+    layers,
+    takeLayers: () => ({ layers, release: releaseDetached }),
+    release: releaseComposite,
+  };
+}
+
+function createBlankLayerSource(pos: Pos) {
+  return { kind: 'blank' as const, color: '#ffffff', opacity: 1, isBedrock: false, pos } as const;
+}
+
 describe('useLayers drawAllLayers', () => {
   beforeEach(() => {
     drawLayersToCanvas.mockClear();
@@ -90,6 +131,7 @@ describe('useLayers drawAllLayers', () => {
 
   afterEach(() => {
     drawLayersToCanvas.mockReset();
+    vi.restoreAllMocks();
   });
 
   it('delegates publication to the renderer with the mounted canvas, sorted layers, and document frame', () => {
@@ -237,5 +279,145 @@ describe('useLayers drawAllLayers', () => {
 
     expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation');
     consoleError.mockRestore();
+  });
+
+  it('keeps live previews on complete legacy layers after durable selection, then returns to the durable projection once they clear', async () => {
+    const layerId = 'layer-1';
+    const layerPos = { x: 0, y: 0, width: 40, height: 20 };
+    const secondLayerId = 'layer-2';
+    const secondLayerPos = { x: 40, y: 0, width: 40, height: 20 };
+    const docSize = { width: 800, height: 600 };
+    const docFrame = documentFrameFromSize(docSize);
+
+    const blankSource = createBlankLayerSource(layerPos);
+    const committedLayer = makeLayer(layerId, 1, { source: blankSource });
+    const secondCommittedLayer = makeLayer(secondLayerId, 2, {
+      source: createBlankLayerSource(secondLayerPos),
+      pos: secondLayerPos,
+      visible: false,
+    });
+    const layerWithSource: LayersRecord = { [layerId]: committedLayer, [secondLayerId]: secondCommittedLayer };
+
+    const baseline: HistoryItem = {
+      id: 'baseline',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId,
+      documentSource: { layers: layerWithSource, size: docSize, frame: docFrame },
+    };
+
+    const canvas = document.createElement('canvas');
+    const { result } = renderHook(useLayerHarness, { wrapper: StoreProvider });
+
+    act(() => {
+      result.current.store.canvasRef.current = canvas;
+      result.current.store.previewLayers.current = {};
+      result.current.dispatch({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-1',
+          history: [baseline],
+          historyIndex: 0,
+          updates: {
+            layers: layerWithSource,
+            activeLayerId: layerId,
+            totalSize: { ...docSize },
+            documentFrame: docFrame,
+            hasImage: true,
+          },
+        },
+      });
+    });
+
+    expect(result.current.store.renderSelector.source).toBe('legacy');
+
+    const previewLayer = makeLayer(layerId, 1, {
+      tmpCanvas: { width: 12, height: 8 } as unknown as Layer['tmpCanvas'],
+    });
+
+    act(() => {
+      result.current.store.previewLayers.current = {
+        [layerId]: { layer: previewLayer },
+      };
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(1);
+    const phase1Rendered = drawnLayers(0);
+    expect(phase1Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
+    expect(phase1Rendered[0]).toBe(previewLayer);
+    expect(phase1Rendered[1]).toBe(secondCommittedLayer);
+
+    act(() => {
+      result.current.store.previewLayers.current = {};
+      result.current.dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: { layers: layerWithSource, activeLayerId: layerId },
+          timeline: { entries: [baseline], cursor: 0, branchRevision: 0 },
+        },
+      });
+    });
+
+    expect(result.current.store.renderSelector.source).toBe('pending');
+
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+
+    // The logical replay is staged, but no presentation authority has been
+    // accepted yet, so repainting would replace the last visible document.
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(1);
+
+    const composite = makeComposite(layerPos, layerId, docFrame);
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(composite);
+
+    await act(async () => {
+      await result.current.store.publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(result.current.store.renderSelector.source).toBe('durable');
+    expect(result.current.store.durableRenderProjection).not.toBeNull();
+    expect(result.current.store.durablePresentation.status).toBe('durable');
+
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(2);
+    const phase2Rendered = drawnLayers(1);
+    expect(phase2Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
+    expect(phase2Rendered[0].operations).toEqual([]);
+    expect(phase2Rendered[0].tmpCanvas).toBeNull();
+    expect(phase2Rendered[0].source).toBeUndefined();
+    expect(phase2Rendered[1].source).toBeUndefined();
+
+    act(() => {
+      result.current.store.previewLayers.current = {
+        [layerId]: { layer: previewLayer },
+      };
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(3);
+    const phase3Rendered = drawnLayers(2);
+    expect(phase3Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
+    expect(phase3Rendered[0]).toBe(previewLayer);
+    // A publication can promote disposable pixels into the legacy record, but a
+    // preview must retain that record's editable source instead of mixing with
+    // the durable projection selected just beforehand.
+    expect(phase3Rendered[1].source).toBe(secondCommittedLayer.source);
+
+    act(() => {
+      result.current.store.previewLayers.current = {};
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(4);
+    const phase4Rendered = drawnLayers(3);
+    expect(phase4Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
+    expect(phase4Rendered[0].tmpCanvas).toBeNull();
+    expect(phase4Rendered[0].source).toBeUndefined();
+    expect(phase4Rendered[1].source).toBeUndefined();
   });
 });

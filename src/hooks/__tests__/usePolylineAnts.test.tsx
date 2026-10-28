@@ -198,4 +198,265 @@ describe('useMarchingPath basic behavior', () => {
     const lastClearRect = (mockCtx.clearRect as unknown as Mock).mock.calls.slice(-1)[0];
     expect(lastClearRect).toEqual([0, 0, 42, 42]);
   });
+
+  it('handles non-finite points (NaN) without crashing and still clears canvas', () => {
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
+    const mockCtx = makeCtx();
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => mockCtx,
+    } as unknown as HTMLCanvasElement;
+
+    function TestComp() {
+      const canvasRef = useRef<HTMLCanvasElement | null>(mockCanvas);
+      const api = useMarchingPath({
+        canvasRef,
+        points: [
+          { x: NaN, y: 0 },
+          { x: 10, y: NaN },
+        ],
+        isPaused: true,
+      });
+      useEffect(() => {
+        apiRef.current = api;
+      }, [api]);
+      return null;
+    }
+
+    render(<TestComp />);
+
+    act(() => {
+      apiRef.current!.draw();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBeGreaterThan(0);
+    expect((mockCtx.clearRect as unknown as Mock).mock.calls[0]).toEqual([0, 0, 100, 100]);
+    const drawnPath = (mockCtx.stroke as unknown as Mock).mock.calls[0][0] as { moveTo: Mock; lineTo: Mock };
+    expect(drawnPath.moveTo).toHaveBeenCalledWith(NaN, 0);
+    expect(drawnPath.lineTo).toHaveBeenCalledWith(10, NaN);
+  });
+
+  it('handles non-finite points (Infinity / -Infinity) without crashing', () => {
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
+    const mockCtx = makeCtx();
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => mockCtx,
+    } as unknown as HTMLCanvasElement;
+
+    function TestComp() {
+      const canvasRef = useRef<HTMLCanvasElement | null>(mockCanvas);
+      const api = useMarchingPath({
+        canvasRef,
+        points: [
+          { x: Infinity, y: -Infinity },
+          { x: 0, y: 10 },
+        ],
+        isPaused: true,
+      });
+      useEffect(() => {
+        apiRef.current = api;
+      }, [api]);
+      return null;
+    }
+
+    render(<TestComp />);
+
+    act(() => {
+      apiRef.current!.draw();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBeGreaterThan(0);
+    const drawnPath = (mockCtx.stroke as unknown as Mock).mock.calls[0][0] as { moveTo: Mock; lineTo: Mock };
+    expect(drawnPath.moveTo).toHaveBeenCalledWith(Infinity, -Infinity);
+    expect(drawnPath.lineTo).toHaveBeenCalledWith(0, 10);
+  });
+
+  it('does not stroke when the polyline is empty', () => {
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
+    const mockCtx = makeCtx();
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => mockCtx,
+    } as unknown as HTMLCanvasElement;
+
+    function TestComp() {
+      const canvasRef = useRef<HTMLCanvasElement | null>(mockCanvas);
+      const api = useMarchingPath({
+        canvasRef,
+        points: [],
+        isPaused: true,
+      });
+      useEffect(() => {
+        apiRef.current = api;
+      }, [api]);
+      return null;
+    }
+
+    render(<TestComp />);
+
+    act(() => {
+      apiRef.current!.draw();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect((mockCtx.stroke as unknown as Mock).mock.calls.length).toBe(0);
+  });
+
+  it('does not stroke when the polyline has a single point', () => {
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
+    const mockCtx = makeCtx();
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => mockCtx,
+    } as unknown as HTMLCanvasElement;
+
+    function TestComp() {
+      const canvasRef = useRef<HTMLCanvasElement | null>(mockCanvas);
+      const api = useMarchingPath({
+        canvasRef,
+        points: [{ x: 5, y: 5 }],
+        isPaused: true,
+      });
+      useEffect(() => {
+        apiRef.current = api;
+      }, [api]);
+      return null;
+    }
+
+    render(<TestComp />);
+
+    act(() => {
+      apiRef.current!.draw();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect((mockCtx.stroke as unknown as Mock).mock.calls.length).toBe(0);
+  });
+
+  it('draw() and clear() are safe when canvasRef.current is null', () => {
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
+
+    function TestComp() {
+      const canvasRef = useRef<HTMLCanvasElement | null>(null);
+      const api = useMarchingPath({
+        canvasRef,
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 10 },
+        ],
+        isPaused: true,
+      });
+      useEffect(() => {
+        apiRef.current = api;
+      }, [api]);
+      return null;
+    }
+
+    expect(() => {
+      render(<TestComp />);
+    }).not.toThrow();
+
+    act(() => {
+      expect(() => apiRef.current!.draw()).not.toThrow();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    act(() => {
+      expect(() => apiRef.current!.clear()).not.toThrow();
+    });
+  });
+
+  it.fails('filters out non-finite points so only finite coordinates are passed to Path2D', () => {
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
+    const mockCtx = makeCtx();
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => mockCtx,
+    } as unknown as HTMLCanvasElement;
+
+    function TestComp() {
+      const canvasRef = useRef<HTMLCanvasElement | null>(mockCanvas);
+      const api = useMarchingPath({
+        canvasRef,
+        points: [
+          { x: 0, y: 0 },
+          { x: NaN, y: 10 },
+          { x: 20, y: 20 },
+        ],
+        isPaused: true,
+      });
+      useEffect(() => {
+        apiRef.current = api;
+      }, [api]);
+      return null;
+    }
+
+    render(<TestComp />);
+
+    const Path2DMock = globalThis.Path2D as unknown as Mock;
+    expect(Path2DMock.mock.results.length).toBe(1);
+    const pathInstance = Path2DMock.mock.results[0]!.value;
+    expect(pathInstance.moveTo).toHaveBeenCalledTimes(1);
+    expect(pathInstance.moveTo).toHaveBeenCalledWith(0, 0);
+    expect(pathInstance.lineTo).toHaveBeenCalledTimes(1);
+    expect(pathInstance.lineTo).toHaveBeenCalledWith(20, 20);
+  });
+
+  it.fails('does not call setLineDash when there are fewer than 2 points', () => {
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
+    const mockCtx = makeCtx();
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => mockCtx,
+    } as unknown as HTMLCanvasElement;
+
+    function TestComp() {
+      const canvasRef = useRef<HTMLCanvasElement | null>(mockCanvas);
+      const api = useMarchingPath({
+        canvasRef,
+        points: [],
+        isPaused: true,
+      });
+      useEffect(() => {
+        apiRef.current = api;
+      }, [api]);
+      return null;
+    }
+
+    render(<TestComp />);
+
+    act(() => {
+      apiRef.current!.draw();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect((mockCtx.setLineDash as unknown as Mock).mock.calls.length).toBe(0);
+  });
 });
