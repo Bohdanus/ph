@@ -648,6 +648,19 @@ recommend the command that destroys it.
 `git merge --squash` writes no `MERGE_HEAD` and git cannot abandon a squash at all, so
 its remedy is nothing rather than a plausible-looking command that fatals.
 
+**An orphan `AUTO_MERGE` has one narrow recovery path, not a guessed abort.** When it is
+the only operation marker, `git status` is clean, the index has no unresolved paths,
+and the marker names exactly `HEAD^{tree}`, the remaining file can be a stale artifact
+from a completed rebase. `npm run repo:state:recover-auto-merge -- --expected-head <full-sha>`
+performs a read-only preflight from the target task worktree. Only after independently
+establishing that its owner has stopped may the operator repeat the exact command with
+`--apply --confirm-owner-stopped`; it rechecks every predicate and removes only that
+worktree's `AUTO_MERGE` file. It refuses `main`, dirty trees, conflicts, other operation
+markers, changed HEAD, malformed markers, and tree mismatches. It never resets files or
+the index. Do not use it for a live or unresolved merge. Board file claims are separate:
+wait for their leases to expire or release them as their owner; Git recovery never
+overrides or clears board locks.
+
 ## The list of worktrees: `WORKTREES.json`
 
 `WORKTREES.json` at the canonical checkout root is a generated inventory of every
