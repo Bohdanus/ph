@@ -194,6 +194,8 @@ interface Fit {
   readonly rectY: number;
   readonly rectWidth: number;
   readonly rectHeight: number;
+  readonly scrollLeft: number;
+  readonly scrollTop: number;
   readonly viewZoom: number;
   readonly viewPanX: number;
   readonly viewPanY: number;
@@ -258,6 +260,8 @@ async function readFit(page: Page): Promise<Fit> {
       rectY: read('data-fit-rect-y'),
       rectWidth: read('data-fit-outer-width'),
       rectHeight: read('data-fit-outer-height'),
+      scrollLeft: Number.isFinite(node.scrollLeft) ? node.scrollLeft : 0,
+      scrollTop: Number.isFinite(node.scrollTop) ? node.scrollTop : 0,
       viewZoom: read('data-view-effective-zoom'),
       viewPanX: read('data-view-pan-x'),
       viewPanY: read('data-view-pan-y'),
@@ -316,9 +320,35 @@ function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoin
   const rotatedX = relativeX * Math.cos(angle) - relativeY * Math.sin(angle);
   const rotatedY = relativeX * Math.sin(angle) + relativeY * Math.cos(angle);
   return {
-    x: fit.rectX + centerX + fit.viewPanX + fit.viewZoom * rotatedX,
-    y: fit.rectY + centerY + fit.viewPanY + fit.viewZoom * rotatedY,
+    x: fit.rectX + centerX + fit.viewPanX + fit.viewZoom * rotatedX - fit.scrollLeft,
+    y: fit.rectY + centerY + fit.viewPanY + fit.viewZoom * rotatedY - fit.scrollTop,
   };
+}
+
+/**
+ * Start just outside a real crop corner and rotate 90 degrees clockwise around the visible box
+ * center. CSS-pixel offsets keep the gesture inside the UI's fixed-size rotation hot zone at every
+ * document zoom; a fixed document-space offset silently leaves that hot zone on larger canvases.
+ */
+async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint; end: PagePoint }> {
+  const corner = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
+  const outline = page.getByTestId('crop-selection-outline');
+  await expect(corner, 'the top-left crop handle is rendered').toBeVisible();
+  const cornerBounds = await corner.boundingBox();
+  const outlineBounds = await outline.boundingBox();
+  if (!cornerBounds || !outlineBounds) throw new Error('the crop rotation gesture has no visible bounds');
+
+  const start = {
+    x: cornerBounds.x + cornerBounds.width / 2 - 8,
+    y: cornerBounds.y + cornerBounds.height / 2 - 8,
+  };
+  const center = {
+    x: outlineBounds.x + outlineBounds.width / 2,
+    y: outlineBounds.y + outlineBounds.height / 2,
+  };
+  const dx = start.x - center.x;
+  const dy = start.y - center.y;
+  return { start, end: { x: center.x - dy, y: center.y + dx } };
 }
 
 /**
@@ -2428,15 +2458,14 @@ test.describe('Crop history', () => {
         .toEqual([255, 0, 0, 255]);
 
       const surface = page.locator('.cursor-crop');
-      const rotationHandle = documentPoint(croppedFit, -3.2, 0.2);
-      const rotatedCorner = documentPoint(croppedFit, 54.3, -1.7);
-      await page.mouse.move(rotationHandle.x, rotationHandle.y);
+      const rotation = await cropRotationGesturePoints(page);
+      await page.mouse.move(rotation.start.x, rotation.start.y);
       await expect(surface, 'the expanded corner still exposes the rotation handle').toHaveCSS(
         'cursor',
         /url.*ew-resize/
       );
       await page.mouse.down();
-      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
       await expect(surface, 'the recrop can be rotated after expanding its bounds').toHaveAttribute(
         'data-rotation',
@@ -2613,13 +2642,12 @@ test.describe('Crop history', () => {
       await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
 
       const surface = page.locator('.cursor-crop');
-      const corner = documentPoint(fit, CROP_LEFT_X - 10, CROP_TOP_Y - 10);
-      await page.mouse.move(corner.x, corner.y);
+      const rotation = await cropRotationGesturePoints(page);
+      await page.mouse.move(rotation.start.x, rotation.start.y);
       await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
 
       await page.mouse.down();
-      const rotatedCorner = documentPoint(fit, CROP_RIGHT_X - 160, CROP_TOP_Y - 180);
-      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
 
       await expect(surface, 'the pending crop keeps the rotated angle').toHaveAttribute(
@@ -2670,11 +2698,10 @@ test.describe('Crop history', () => {
       const cropFit = await openCropTool(page);
       await dragOnCanvas(page, cropFit, { x: 16, y: 16 }, { x: 48, y: 48 });
       const surface = page.locator('.cursor-crop');
-      const rotationHandle = documentPoint(cropFit, 15.5, 15.5);
-      await page.mouse.move(rotationHandle.x, rotationHandle.y);
+      const rotation = await cropRotationGesturePoints(page);
+      await page.mouse.move(rotation.start.x, rotation.start.y);
       await page.mouse.down();
-      const rotatedCorner = documentPoint(cropFit, 48.5, 15.5);
-      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
       await expect(surface, 'the pending crop has a nonzero rotation').toHaveAttribute(
         'data-rotation',
