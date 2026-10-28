@@ -61,7 +61,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
 
     dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'magic-wand' } });
 
-    let selection: Selection | null = null;
+    let selection: Selection | null;
     try {
       const result = createMagicWandSelectionFromCanvas(canvasRef.current, seed, totalSize, {
         smoothing: args.smoothing,
