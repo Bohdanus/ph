@@ -590,9 +590,13 @@ still worth having.
 
 `compareScreenshots` is called with `threshold: 0.01` and `maxDiffPixels: 100` over an
 800x600 baseline — 100 pixels is 0.021%, and four of the seven compared formats are lossy
-(JPEG, WebP, GIF, AVIF). `channel: 'chrome'` is the **system** browser and CI installs
-`google-chrome-stable` with no version, so any encoder change is a hard red on a blocking
-gate.
+(JPEG, WebP, GIF, AVIF). `channel: 'chrome'` selects branded Google Chrome Stable rather
+than Playwright's bundled Chromium. CI invokes `npx playwright install chrome` (with
+`--with-deps` on Linux); neither the project configuration nor those install commands
+specify an exact Chrome revision. See Playwright's
+[Chrome and Edge channel guidance](https://playwright.dev/docs/browsers#google-chrome--microsoft-edge).
+The resolved stable version can therefore differ across OS runners and drift from the
+visual baselines.
 
 The tolerance question has been answered: the 100-pixel budget is a **tripwire, not a
 tolerance**, and the argument is written out at the call site so it is not widened later to
