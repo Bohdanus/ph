@@ -431,9 +431,8 @@ describe('expAdjustment', () => {
   });
 
   it('propagates a non-finite input rather than silently sanitising it', () => {
-    // Pin: nothing clamps here. The `it.fails` sanitiser declarations in
-    // image-processors.test.ts assert that a non-finite adjustment survives all the way
-    // into the composed CSS filter string, so this must stay `NaN`.
+    // This is the low-level math helper. The Colors processor normalizes tool args before it
+    // reaches this function; the raw helper and filter builder stay unsanitized.
     expect(expAdjustment(Number.NaN, SATURATION_EXPONENT)).toBeNaN();
   });
 
