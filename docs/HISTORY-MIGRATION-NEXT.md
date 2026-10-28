@@ -48,10 +48,13 @@ is for this review closeout.
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
-   now covers a retained affine layer transform before a later frame transform at both history
-   cursors. This adds one case only; other angles, retained-affine combinations, source/tool
-   variants, text styling/rotation, frame sequences, and fractional materialized bounds remain open.
-   Do not publish frame-changing commits durably until the full frame gate is explicit.
+   covers two retained affine layer transforms across two successive non-quarter frame transforms
+   with fractional origins and extents, including exact per-layer bounds and pixels at every cursor
+   and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
+   affine and a two-frame sequence with exact per-layer comparisons. These fixtures close
+   only their listed combinations: other retained source/tool variants, transform combinations,
+   angles, and exact fractional bounds across the wider source matrix remain open. Do not publish
+   frame-changing commits durably until the full frame gate is explicit.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
@@ -69,13 +72,14 @@ priority or dependency. They may be pursued in either order or in parallel.
    layer base while append composition is pending or accepted, then reveal the durable base only
    after the preview clears; `useLayer.render.test.tsx` pins accepted and refused append cases, and
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
-3. Expand parity-only frame work. The retained-affine fixture in `e2e/crop-history.spec.ts` compares
-   both renderers at the layer-transform cursor and after a later non-quarter frame transform,
-   checks that each renderer changes pixels from the untransformed baseline, and compares the
-   final result with an exact frame-only control. For its two raster layers, it also asserts exact
-   frame-aligned bounds and pixels at both cursors and the control. Next cover the open angles,
-   retained-affine combinations, source/tool variants, text styling/rotation, frame sequences, and
-   exact fractional materialized bounds across the wider source matrix. Keep
+3. Continue parity-only frame work. The raster fixture in `e2e/crop-history.spec.ts` covers two
+   retained affine layer transforms and two successive non-quarter frame transforms with fractional
+   origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
+   control, and byte-identical composites. A styled paragraph-text fixture covers its retained
+   affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. These fixtures
+   close only their listed combinations. Next cover the open angles, retained-affine combinations,
+   source/tool variants, other text styling/rotation, and exact fractional materialized bounds across
+   the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
    cursor checks without changing publication, cursor, or lease ownership.
 4. Establish source-backed import/replacement ownership and parity as the other independent gate.
@@ -148,5 +152,5 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 - Luna's final follow-up found no remaining actionable issues in the fixture or updated sequence.
 - Reports that composite release was missing or that replay cursors were offset did not reproduce
   when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
-- Exact fractional bounds across the wider frame and source matrix remain unproven. The current
-  retained-affine fixture pins frame-aligned bounds for two raster layers only.
+- Exact fractional bounds across the wider frame and source matrix remain unproven. Current
+  retained-affine fixtures pin bounds for the listed raster layers and styled paragraph-text layer.
