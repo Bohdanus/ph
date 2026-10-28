@@ -3474,6 +3474,68 @@ test.describe('Crop history', () => {
         caseName: 'multi-step mixed-source crop',
         documentId: 'multi-step-mixed-source-crop-pixel-parity',
         materializedLayerIds: ['blank', 'vector', 'paint', 'text'],
+        layerTransforms: [
+          {
+            id: 'blank-affine',
+            layerId: 'blank',
+            args: {
+              toolName: 'transform',
+              rotate: 13,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 2,
+              skewY: -1,
+              trapezoid: 0,
+              resizeX: 105,
+              resizeY: 90,
+            },
+          },
+          {
+            id: 'vector-affine',
+            layerId: 'vector',
+            args: {
+              toolName: 'transform',
+              rotate: -9,
+              mirrorH: true,
+              mirrorV: false,
+              skewX: 3,
+              skewY: 2,
+              trapezoid: 0,
+              resizeX: 92,
+              resizeY: 108,
+            },
+          },
+          {
+            id: 'paint-affine',
+            layerId: 'paint',
+            args: {
+              toolName: 'transform',
+              rotate: 17,
+              mirrorH: false,
+              mirrorV: false,
+              skewX: -4,
+              skewY: 1,
+              trapezoid: 0,
+              resizeX: 112,
+              resizeY: 84,
+            },
+          },
+          {
+            id: 'point-text-affine',
+            layerId: 'text',
+            args: {
+              toolName: 'transform',
+              rotate: -6,
+              mirrorH: false,
+              mirrorV: false,
+              skewX: 1,
+              skewY: 3,
+              trapezoid: 0,
+              resizeX: 99,
+              resizeY: 106,
+            },
+          },
+        ],
         transitions: [
           { angleDegrees: 37, nextFrame: { x: 4, y: 4, width: 56, height: 56 } },
           { angleDegrees: 0, nextFrame: { x: 5, y: 6, width: 54, height: 52 } },
@@ -3545,6 +3607,33 @@ test.describe('Crop history', () => {
         ],
       });
 
+      const assertMixedLayerParity = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
+        expect(comparisons, `${stage} materialized layer count`).toHaveLength(4);
+        expect(comparisons.map((comparison) => comparison.layerId)).toEqual(['blank', 'vector', 'paint', 'text']);
+        for (const comparison of comparisons) {
+          expect(comparison.materializedBounds, `${comparison.layerId} bounds at ${stage}`).toEqual(
+            comparison.expectedBounds
+          );
+          expect(comparison.bitmapSize, `${comparison.layerId} bitmap size at ${stage}`).toEqual({
+            width: comparison.expectedBounds.width,
+            height: comparison.expectedBounds.height,
+          });
+          expect(
+            comparison.frameDifferingBytes,
+            `${comparison.layerId} pixels at ${stage} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
+          ).toBe(0);
+        }
+      };
+
+      expect(result.layerTransformResults).toHaveLength(4);
+      for (const transform of result.layerTransformResults) {
+        expect(transform.differingBytes, `retained affine ${transform.id} composite parity`).toBe(0);
+        expect(transform.legacyDiffersFromUntransformed).toBe(true);
+        expect(transform.durableDiffersFromUntransformed).toBe(true);
+        expect(transform.legacyDiffersFromPrevious).toBe(true);
+        expect(transform.durableDiffersFromPrevious).toBe(true);
+        assertMixedLayerParity(transform.materializedLayerComparisons, `retained affine ${transform.id}`);
+      }
       expect(result.transitionResults).toHaveLength(3);
       for (const transition of result.transitionResults) {
         expect(transition.durableFrame).toEqual(transition.frame);
@@ -3554,27 +3643,7 @@ test.describe('Crop history', () => {
           transition.differingBytes,
           `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
         ).toBe(0);
-        expect(transition.materializedLayerComparisons).toHaveLength(4);
-        expect(transition.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual([
-          'blank',
-          'vector',
-          'paint',
-          'text',
-        ]);
-        for (const comparison of transition.materializedLayerComparisons) {
-          expect(
-            comparison.materializedBounds,
-            `${comparison.layerId} bounds at transition ${transition.index}`
-          ).toEqual(comparison.expectedBounds);
-          expect(comparison.bitmapSize, `${comparison.layerId} bitmap size at transition ${transition.index}`).toEqual({
-            width: comparison.expectedBounds.width,
-            height: comparison.expectedBounds.height,
-          });
-          expect(
-            comparison.frameDifferingBytes,
-            `${comparison.layerId} pixels at transition ${transition.index} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
-          ).toBe(0);
-        }
+        assertMixedLayerParity(transition.materializedLayerComparisons, `frame transition ${transition.index}`);
       }
       for (const [color, presence] of Object.entries(result.colorPresence)) {
         expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);

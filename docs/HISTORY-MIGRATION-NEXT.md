@@ -49,13 +49,14 @@ is for this review closeout.
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
    covers two retained affine layer transforms across two successive non-quarter frame transforms
-   with fractional origins and extents, including exact per-layer bounds and pixels at every cursor
-   and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
+   with fractional origins and extents, including exact per-layer bounds and pixels at each tested
+   affine or frame-transition cursor and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
    affine and a two-frame sequence with exact per-layer comparisons. A three-transition mixed-source
-   frame sequence also compares exact per-layer bounds and pixels for blank, vector, paint, and
-   point-text sources. These fixtures close only their listed combinations: retained-affine behavior
-   for those sources, other transform combinations, angles, and exact fractional bounds across the
-   wider source matrix remain open. Do not publish
+   frame sequence also applies one retained affine to each blank, vector, paint, and point-text source,
+   comparing exact per-layer bounds, bitmap dimensions, and pixels at each affine cursor and after
+   each frame transition. These fixtures close only their listed combinations: other transform
+   combinations, angles, text styling/rotation variants, blank opacity variants, and exact fractional
+   bounds across the wider source matrix remain open. Do not publish
    frame-changing commits durably until the full frame gate is explicit.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
@@ -79,10 +80,11 @@ priority or dependency. They may be pursued in either order or in parallel.
    origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
    control, and byte-identical composites. A styled paragraph-text fixture covers its retained
    affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. The mixed-source
-   three-transition fixture also checks exact per-layer pixels and bounds after each transition for
-   blank, vector, paint, and point-text layers. These fixtures close only their listed combinations. Next cover the open
-   angles, retained-affine combinations for the additional sources, other text styling/rotation, and
-   exact fractional materialized bounds across the wider source matrix. Keep
+   three-transition fixture applies one retained affine to each blank, vector, paint, and point-text
+   layer, then checks exact per-layer pixels, bounds, and bitmap dimensions at each affine cursor and
+   after each frame transition. These fixtures close only their listed combinations. Next cover the
+   open angles, additional retained-affine combinations, other text styling/rotation, blank opacity
+   variants, and exact fractional materialized bounds across the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
    cursor checks without changing publication, cursor, or lease ownership.
 4. Establish source-backed import/replacement ownership and parity as the other independent gate.
@@ -155,5 +157,6 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 - Luna's final follow-up found no remaining actionable issues in the fixture or updated sequence.
 - Reports that composite release was missing or that replay cursors were offset did not reproduce
   when checked against the shared `finally` block and inclusive `replayHistory` cursor loop.
-- Exact fractional bounds across the wider frame and source matrix remain unproven. Current
-  retained-affine fixtures pin bounds for the listed raster layers and styled paragraph-text layer.
+- Exact fractional bounds across the wider frame and source matrix remain unproven. The mixed-source
+  fixture pins exact bounds for its listed integer-origin frame cases; the raster and styled
+  paragraph-text fixtures cover fractional frame origins and extents.
