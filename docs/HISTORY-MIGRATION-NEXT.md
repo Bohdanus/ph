@@ -79,8 +79,8 @@ priority or dependency. They may be pursued in either order or in parallel.
    origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
    control, and byte-identical composites. A styled paragraph-text fixture covers its retained
    affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. The mixed-source
-   three-transition fixture also checks exact per-layer pixels and bounds for blank, vector, paint,
-   and point-text layers. These fixtures close only their listed combinations. Next cover the open
+   three-transition fixture also checks exact per-layer pixels and bounds after each transition for
+   blank, vector, paint, and point-text layers. These fixtures close only their listed combinations. Next cover the open
    angles, retained-affine combinations for the additional sources, other text styling/rotation, and
    exact fractional materialized bounds across the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
