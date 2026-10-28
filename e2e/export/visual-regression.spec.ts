@@ -169,11 +169,11 @@ test.describe('Export visual regression', () => {
        *         change", and it is now answerable from the run output rather than guessed.
        *
        * WHY THE CHROME VERSION IS NOT PINNED IN CI, which is the other half of this
-       * finding and a deliberate non-action. `playwright.config.ts` uses
-       * `channel: 'chrome'` - the system browser - and the `e2e` job installs it with
-       * `npx playwright install --with-deps chrome`, which resolves to whatever
-       * `google-chrome-stable` currently is. Pinning a version in the workflow would
-       * be a guess, not a fix: nothing in this repository records which Chrome produced
+       * finding and a deliberate non-action. `playwright.config.ts` selects branded
+       * `channel: 'chrome'`. The CI matrix runs `npx playwright install chrome`, adding
+       * `--with-deps` on Linux; neither config nor installer selects an exact revision.
+       * Pinning a version in the workflow would be a guess, not a fix: nothing in this
+       * repository records which Chrome produced
        * the committed baselines, so a pin that does not match the recording version
        * turns a green gate red for a reason no one can diagnose from the tree, and a
        * pin that does match it asserts a reproducibility this repository cannot
