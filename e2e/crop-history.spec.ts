@@ -3491,6 +3491,21 @@ test.describe('Crop history', () => {
             },
           },
           {
+            id: 'blank-affine-follow-up',
+            layerId: 'blank',
+            args: {
+              toolName: 'transform',
+              rotate: -5,
+              mirrorH: true,
+              mirrorV: false,
+              skewX: -1,
+              skewY: 2,
+              trapezoid: 0,
+              resizeX: 96,
+              resizeY: 103,
+            },
+          },
+          {
             id: 'vector-affine',
             layerId: 'vector',
             args: {
@@ -3625,7 +3640,7 @@ test.describe('Crop history', () => {
         }
       };
 
-      expect(result.layerTransformResults).toHaveLength(4);
+      expect(result.layerTransformResults).toHaveLength(5);
       for (const transform of result.layerTransformResults) {
         expect(transform.differingBytes, `retained affine ${transform.id} composite parity`).toBe(0);
         expect(transform.legacyDiffersFromUntransformed).toBe(true);

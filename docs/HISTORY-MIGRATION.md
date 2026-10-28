@@ -203,14 +203,15 @@ variant or an equivalent atomic history action.
    pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
    mixed-source fixture pin exact materialized bounds; the latter also checks bitmap dimensions and
    pixels for its blank, vector, paint, and point-text layers at each affine cursor and after each
-   transition. It applies one retained affine to each of those layers and checks per-layer bounds,
-   dimensions, and pixels at all seven changed cursors. The other source-only cases assert
+   transition. It applies two sequential retained affines to blank and one each to the other layers,
+   checking per-layer bounds, dimensions, and pixels at all eight changed cursors. The other source-only cases assert
    byte-identical pixels and materialized-layer presence. The
    retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
    styled-text combinations.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
    variants, additional text styling/rotation combinations, other frame sequences and other
-   retained-affine operation combinations still need parity proof. Previews and unsupported documents
+   retained-affine operation combinations still need parity proof. The blank pair closes only that
+   tested sequence. Previews and unsupported documents
    still use the complete legacy compatibility path.
    Unsupported-source fallback is pinned by the StoreContext publication seam. Preview safety is
    also pinned at the renderer boundary: while a preview is live, `drawAllLayers` receives the

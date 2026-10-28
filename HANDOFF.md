@@ -93,8 +93,8 @@ frame origins. Exact quarter-turn matrices avoid a phantom edge from
 `cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; the plain
 90-degree case pins exact bounds, while most source-only cases assert source pixels and
 materialized-layer presence. The mixed-source three-transition fixture additionally checks exact
-per-layer bounds and pixels after one retained affine per blank, vector, paint, and point-text layer,
-at each affine cursor and after each of the three frame transitions. The retained-affine raster
+per-layer bounds and pixels after two sequential retained affines on blank, and one retained affine
+each on vector, paint, and point-text, at each affine cursor and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
 with fractional origins and extents, including composite parity and exact per-layer bounds and
 pixels at each tested affine or frame-transition cursor plus a frame-only control. A second fixture applies a retained affine to a
@@ -125,9 +125,9 @@ they do not move previews to durable authority or permit removal of legacy logic
 retained-affine/frame differentials now establish exact layer bounds and pixel parity for two raster
 layers across successive fractional frame transforms, and for a styled paragraph-text layer across
 two frame transforms. A three-transition mixed-source differential also checks exact per-layer bounds
-and pixels after one retained affine per blank, vector, paint, and point-text source at each affine
-cursor and after each of the three frame transitions. Next expand the frame matrix across open angles,
-other affine combinations, blank opacity variants, other text styling/rotation, and exact fractional
+and pixels after two sequential retained affines on blank and one each on vector, paint, and point text,
+at all five affine cursors and after each of the three frame transitions. Next expand the frame matrix
+across open angles, other affine combinations, blank opacity variants, other text styling/rotation, and exact fractional
 bounds. Establish
 source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
 are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
