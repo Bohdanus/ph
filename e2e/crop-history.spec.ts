@@ -3473,6 +3473,7 @@ test.describe('Crop history', () => {
       const result = await compareCropRenderers(page, {
         caseName: 'multi-step mixed-source crop',
         documentId: 'multi-step-mixed-source-crop-pixel-parity',
+        materializedLayerIds: ['blank', 'vector', 'paint', 'text'],
         transitions: [
           { angleDegrees: 37, nextFrame: { x: 4, y: 4, width: 56, height: 56 } },
           { angleDegrees: 0, nextFrame: { x: 5, y: 6, width: 54, height: 52 } },
@@ -3553,6 +3554,27 @@ test.describe('Crop history', () => {
           transition.differingBytes,
           `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
         ).toBe(0);
+        expect(transition.materializedLayerComparisons).toHaveLength(4);
+        expect(transition.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual([
+          'blank',
+          'vector',
+          'paint',
+          'text',
+        ]);
+        for (const comparison of transition.materializedLayerComparisons) {
+          expect(
+            comparison.materializedBounds,
+            `${comparison.layerId} bounds at transition ${transition.index}`
+          ).toEqual(comparison.expectedBounds);
+          expect(comparison.bitmapSize, `${comparison.layerId} bitmap size at transition ${transition.index}`).toEqual({
+            width: comparison.expectedBounds.width,
+            height: comparison.expectedBounds.height,
+          });
+          expect(
+            comparison.frameDifferingBytes,
+            `${comparison.layerId} pixels at transition ${transition.index} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
+          ).toBe(0);
+        }
       }
       for (const [color, presence] of Object.entries(result.colorPresence)) {
         expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);
