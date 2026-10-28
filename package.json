@@ -10,6 +10,7 @@
     "dist": "vite build",
     "swarm": "node scripts/agent-board.mjs",
     "repo:state": "node scripts/repo-state-gate.mjs",
+    "repo:state:recover-auto-merge": "node scripts/recover-stale-auto-merge.mjs",
     "branches:orphan": "node scripts/orphan-branches.mjs",
     "swarm:release-merged": "node scripts/merge-release.mjs",
     "dispose": "node scripts/dispose-worktree.mjs",
