@@ -209,12 +209,13 @@ because `scripts/lib/worktree-inventory/curated.mjs` keys on their paths.
 **A citation is a claim about the tree you are standing in.** Re-derive it from the
 sentence that needs it. Never copy one forward from a document you just read.
 
-**Cite the unit, never the line.** A line number is a position in a file that
+**Cite the unit, never the line.** This applies to prose in maintained documents and to
+human-written source, configuration, and markup comments. A line number is a position in a file that
 everything above it moves. An audit of `HANDOFF.md` found 36% of its hand-checked
 `file.ts:NNN` citations pointing at the wrong code — mostly off by one or two, some
 by 146 — and a 42-minute session once burned chasing nothing but that drift, one
-reviewer finding a stale citation per round. So the format is banned in tracked
-documents, and what replaces it is a name that can be re-derived onto the code:
+reviewer finding a stale citation per round. So the format is banned in tracked prose and
+comments, and what replaces it is a name that can be re-derived onto the code:
 
 | Instead of                                                  | Write                                                  |
 | ----------------------------------------------------------- | ------------------------------------------------------ |
@@ -241,11 +242,15 @@ unit has not been located yet, and citing a line number is how that was hidden.
 **Why a name and not a number.** A number cannot be checked: a test that fails on a
 number having moved trains people to regenerate citations instead of re-deriving
 them, which is what produced the clusters. A name can be checked, and this
-repository checks it — `scripts/__tests__/agents-citations.test.mjs` reads every
-tracked markdown document and fails on a backticked call the program does not
-contain, a retired symbol named in any of them, a `§N` that is not a live
-`HANDOFF.md` heading, and a `file.ext:‹line›` citation anywhere outside a fence.
-This test runs in CI and blocks merges with citation violations.
+repository checks it — `scripts/__tests__/agents-citations.test.mjs` enumerates tracked Markdown,
+then checks every maintained document for a backticked call the program does not contain, a retired
+symbol, a `§N` that is not a live `HANDOFF.md` heading, or a `file.ext:‹line›` citation outside a
+fence. Generated and point-in-time documents are excluded from those maintained-document checks.
+This test runs in CI and blocks merges with maintained-document citation violations. Structured
+`implementationRefs` in tool-description data are machine-readable metadata, not prose; they remain
+separately governed until that data format is migrated. Both CI and pre-commit reject new line-number
+citations in tracked Markdown prose and comments in source/configuration/markup files, except generated `docs/TOOLS.md`; historical
+citations remain a migration backlog.
 
 **The one exemption is quotation.** A finding whose SUBJECT is a drifted line-number
 citation cannot be stated without one — "`history-replay.ts` cites 47 lines past its

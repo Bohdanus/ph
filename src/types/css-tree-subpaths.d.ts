@@ -6,9 +6,7 @@ declare module 'css-tree/generator' {
 }
 
 declare module 'css-tree/parser' {
-  import type { CssNode, ParseOptions } from 'css-tree';
-
-  const parse: (text: string, options?: ParseOptions) => CssNode;
+  const parse: typeof import('css-tree').parse;
   export default parse;
 }
 

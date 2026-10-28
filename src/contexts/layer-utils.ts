@@ -143,10 +143,10 @@ type LayerSourceParams = {
  *
  * The layer is created before the stroke is rasterized, so the options bar's `Mode`
  * has to be resolved here rather than while drawing. Replay re-enters this function
- * with the same history entry's args (`src/contexts/useHistory.ts:97`), which is
+ * with the same history entry's args during `resetHistoryTo()`, which is
  * what keeps undo, redo and the durable shadow in agreement: the mode rides in
  * `layerSource.args`, so it is already carried by both
- * (`src/contexts/history-adapter.ts:181-187`).
+ * through `history-adapter`'s recursive plain-value conversion.
  *
  * Gated on the paint tool names on purpose. `kind: 'tool'` covers every creator
  * tool, and no other one of them exposes a `Mode` control, so an unrecognised value
@@ -236,9 +236,11 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     layer.bitmap = source.bitmap;
   } else if (kind === 'blank') {
     const canvas = new OffscreenCanvas(width, height);
+    // Initialize even a transparent source so the browser can materialize its presentation bitmap.
+    const ctx = canvas.getContext('2d');
 
     if (source.opacity > 0) {
-      const ctx = canvas.getContext('2d')!;
+      if (!ctx) throw new Error('Unable to initialize blank layer canvas');
       ctx.fillStyle = source.color;
       if (source.opacity !== 1) {
         ctx.globalAlpha = source.opacity;
@@ -283,6 +285,34 @@ export function getLayerIdByPoint(layers: LayersRecord, { x, y }: Point): LayerI
   return null;
 }
 
+/** Apply the historical layer-order arithmetic used by replayHistory. */
+export function reorderLayerOrderValues({
+  orderByLayerId,
+  layerToMoveId,
+  afterWhichLayerId,
+}: {
+  orderByLayerId: Record<LayerId, number>;
+  layerToMoveId: LayerId;
+  afterWhichLayerId?: LayerId | null;
+}): Record<LayerId, number> | null {
+  if (!Object.hasOwn(orderByLayerId, layerToMoveId)) return null;
+  if (afterWhichLayerId && !Object.hasOwn(orderByLayerId, afterWhichLayerId)) return null;
+
+  const next = { ...orderByLayerId };
+  if (!afterWhichLayerId) {
+    const minOrder = Object.values(next).reduce((minimum, order) => Math.min(minimum, order), Infinity);
+    next[layerToMoveId] = minOrder - 1;
+    return next;
+  }
+
+  const targetOrder = next[afterWhichLayerId]!;
+  for (const id in next) {
+    if (next[id]! > targetOrder) next[id] += 2;
+  }
+  next[layerToMoveId] = targetOrder + 1;
+  return next;
+}
+
 export function reorderLayers({
   layers,
   layerToMoveId,
@@ -292,32 +322,21 @@ export function reorderLayers({
   layerToMoveId: LayerId;
   afterWhichLayerId?: LayerId | null;
 }) {
-  const layer = layers[layerToMoveId];
-  if (!layer) {
+  if (!layers[layerToMoveId]) {
     console.error('Layer not found');
     return;
   }
 
-  if (!afterWhichLayerId) {
-    // Move to the bottom (beginning)
-    const minOrder = minLayerOrder(layers);
-    layer.order = minOrder - 1;
-  } else {
-    // Place after the specified layer
-    const moveAfterLayer = layers[afterWhichLayerId];
-    if (!moveAfterLayer) {
-      console.error('Target layer not found');
-      return;
-    }
-
-    const targetOrder = moveAfterLayer.order;
-
-    for (const id in layers) {
-      if (layers[id].order > targetOrder) {
-        layers[id].order += 2; // shift up layers starting from targetOrder
-      }
-    }
-
-    layer.order = targetOrder + 1;
+  if (afterWhichLayerId && !layers[afterWhichLayerId]) {
+    console.error('Target layer not found');
+    return;
   }
+
+  const orderByLayerId = reorderLayerOrderValues({
+    orderByLayerId: Object.fromEntries(Object.values(layers).map((layer) => [layer.id, layer.order])),
+    layerToMoveId,
+    afterWhichLayerId,
+  });
+  if (!orderByLayerId) return;
+  for (const [id, order] of Object.entries(orderByLayerId)) layers[id]!.order = order;
 }

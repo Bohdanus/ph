@@ -1,7 +1,9 @@
 import React, {
   createContext,
   useContext,
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useReducer,
@@ -17,6 +19,7 @@ import {
   REPLACE_LAYER_SOURCE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
 } from '../util/constants.ts';
+import { readClientViewportRect } from '../util/client-viewport.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
@@ -29,7 +32,16 @@ import type {
   SelectionSourceTool,
   Size,
 } from './general-types.ts';
-import { DEFAULT_VIEW_STATE, viewStateRef, type ViewState } from './view-state.ts';
+import {
+  absoluteViewZoom,
+  clampAbsoluteViewZoom,
+  DEFAULT_VIEW_STATE,
+  minimumSliderZoomForDocumentSize,
+  preserveViewScaleCompensationAcrossDisplayScaleChange,
+  relativeViewZoomForMagnification,
+  viewStateRef,
+  type ViewState,
+} from './view-state.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
@@ -68,6 +80,9 @@ import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer }
 import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
 import { projectDurableRender, type DurableRenderProjection } from './durable-render-projection.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
+import { containFit } from '../util/contain-fit.ts';
+import { useResizeObserverRAF } from '../hooks/useResizeObserver.ts';
+import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 import {
   closePresentationBitmap,
   DocumentPresentationScope,
@@ -176,6 +191,14 @@ type DurablePresentationPublication = Readonly<{
   record: DurablePresentationRecord;
 }>;
 
+type HistoryReplayPresentationToken = Readonly<{
+  attemptId: number;
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  historyIndex: number;
+}>;
+
 export function durablePresentationMismatch(
   replayLayer: DurableReplayLayer,
   existing: Layer,
@@ -220,7 +243,17 @@ export type StoreData = {
   publishRuntimePresentation: (layers: LayersRecord) => void;
   /** Internal adoption registration; the action is not part of public dispatch. */
   adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => void;
-  publishDurableNavigationPresentation: () => Promise<DurableNavigationPresentationOutcome>;
+  publishDurableNavigationPresentation: (attemptId?: number) => Promise<DurableNavigationPresentationOutcome>;
+  /** Starts a unique replay attempt scoped to a document generation. */
+  beginHistoryReplayPresentation: (documentId: string, documentRevision: number) => number;
+  /** True only while the supplied attempt is the current, unfinished replay. */
+  isHistoryReplayPresentationCurrent: (attemptId: number) => boolean;
+  /** Whether this document generation has replay work waiting for publication or finalization. */
+  hasPendingHistoryReplayPresentation: (documentId: string, documentRevision: number) => boolean;
+  /** Ends the current attempt without retiring caches when its publication became stale. */
+  cancelHistoryReplayPresentation: (attemptId: number) => void;
+  /** Retire replay-departed caches after accepted pixels or a completed rollback. */
+  finalizeHistoryReplayPresentation: (token: HistoryReplayPresentationToken) => boolean;
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
@@ -295,6 +328,8 @@ type StoreUpdates = Partial<
     | 'promoteLayerPresentation'
     | 'publishRuntimePresentation'
     | 'adoptLayerBitmaps'
+    | 'beginHistoryReplayPresentation'
+    | 'finalizeHistoryReplayPresentation'
   >
 >;
 
@@ -488,6 +523,11 @@ const initialState: StoreData = {
   publishRuntimePresentation: () => undefined,
   adoptLayerBitmaps: () => undefined,
   publishDurableNavigationPresentation: async () => ({ status: 'legacy-fallback', reason: 'stale', cursor: -1 }),
+  beginHistoryReplayPresentation: () => 0,
+  isHistoryReplayPresentationCurrent: () => true,
+  hasPendingHistoryReplayPresentation: () => false,
+  cancelHistoryReplayPresentation: () => undefined,
+  finalizeHistoryReplayPresentation: () => false,
   previewLayers: { current: {} },
 
   hasImage: false,
@@ -753,7 +793,8 @@ function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
 /**
  * The live record's layer order, bottom first: index 0 is the bottom of the
  * stack, which is the same sequence `reorderLayers` mutates, `replayHistory`
- * replays, and the durable converter normalizes its own snapshots into.
+ * replays, and the durable converter processes in the same sequence. Numeric
+ * values stay sparse because older source-backed creates derive names from them.
  *
  * Read here, at the store, rather than in the hook: a drag dispatches 200 ms
  * after the row that started it was rendered, so a closure's copy of the layer
@@ -1296,6 +1337,7 @@ function divergentLayerIds(current: LayersRecord, next: LayersRecord): string[] 
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
+  const devicePixelRatio = useDevicePixelRatio();
   // refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const toolOverlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -1303,7 +1345,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [, forceViewStateUpdate] = useState(0);
   const setViewState = (partial: Partial<ViewState>) => {
-    viewStateRef.current = { ...viewStateRef.current, ...partial };
+    const changesViewTransform = ['panX', 'panY', 'zoom', 'rotation'].some((key) => key in partial);
+    const fitToScreen = partial.fitToScreen ?? (changesViewTransform ? false : viewStateRef.current.fitToScreen);
+    const nextViewState = { ...viewStateRef.current, ...partial, fitToScreen };
+    if (fitToScreen) delete nextViewState.minimumZoomOverride;
+    viewStateRef.current = nextViewState;
     forceViewStateUpdate((value) => value + 1);
   };
 
@@ -1315,7 +1361,135 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Keep live DOM refs out of the reducer initializer; expose them after state updates.
   const [storeState, rawDispatch] = useReducer(reducer, initialState);
+  const previousPresentedFrameRef = useRef({
+    documentId: storeState.documentId,
+    documentRevision: storeState.documentRevision,
+    frame: storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize),
+    viewport: null as Size | null,
+    devicePixelRatio,
+  });
+  const reconcileViewScaleForWorkspace = useCallback(() => {
+    const nextFrame = storeState.documentFrame ?? documentFrameFromSize(storeState.totalSize);
+    const previous = previousPresentedFrameRef.current;
+    const rect = containerRef.current ? readClientViewportRect(containerRef.current) : null;
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+    const viewport = { width: rect.width, height: rect.height };
+    const sameDocument = previous.documentId === storeState.documentId;
+    const sameFrame = documentFrameEquals(previous.frame, nextFrame);
+    const viewportChanged =
+      previous.viewport !== null &&
+      (previous.viewport.width !== viewport.width || previous.viewport.height !== viewport.height);
+    const devicePixelRatioChanged = previous.devicePixelRatio !== devicePixelRatio;
+    const frameChanged = !sameFrame;
+    const shouldPreserveMagnification =
+      previous.viewport !== null &&
+      sameDocument &&
+      ((sameFrame && !viewStateRef.current.fitToScreen && (viewportChanged || devicePixelRatioChanged)) ||
+        (frameChanged && previous.documentRevision === storeState.documentRevision));
+
+    if (shouldPreserveMagnification) {
+      const previousFitScale = containFit(previous.viewport!, documentFrameSize(previous.frame)).scale;
+      const nextFitScale = containFit(viewport, documentFrameSize(nextFrame)).scale;
+      const nextCompensation = preserveViewScaleCompensationAcrossDisplayScaleChange(
+        viewStateRef.current.zoom,
+        viewStateRef.current.fitScaleCompensation,
+        previousFitScale,
+        nextFitScale,
+        previous.devicePixelRatio,
+        devicePixelRatio
+      );
+      const currentViewState = viewStateRef.current;
+      const nextFitToScreen = frameChanged ? false : currentViewState.fitToScreen;
+      const priorMagnification = absoluteViewZoom(currentViewState, previousFitScale, previous.devicePixelRatio);
+      const priorMinimumZoom = minimumSliderZoomForDocumentSize(previous.frame);
+      const preservesSubpixelScale =
+        currentViewState.fitToScreen ||
+        currentViewState.minimumZoomOverride !== undefined ||
+        priorMagnification < priorMinimumZoom * (1 - 1e-9);
+      const nextMagnification = absoluteViewZoom(
+        { ...currentViewState, fitScaleCompensation: nextCompensation },
+        nextFitScale,
+        devicePixelRatio
+      );
+      const nextMinimumZoom = minimumSliderZoomForDocumentSize(nextFrame);
+      const carriesMinimumZoomOverride = currentViewState.minimumZoomOverride !== undefined;
+      const startsMinimumZoomOverride =
+        !carriesMinimumZoomOverride &&
+        (priorMagnification < priorMinimumZoom * (1 - 1e-9) ||
+          (preservesSubpixelScale && nextMagnification < nextMinimumZoom));
+      const nextMinimumZoomOverride = frameChanged
+        ? carriesMinimumZoomOverride
+          ? currentViewState.minimumZoomOverride
+          : startsMinimumZoomOverride
+            ? priorMagnification
+            : undefined
+        : currentViewState.minimumZoomOverride;
+      const boundedMagnification =
+        frameChanged && !preservesSubpixelScale
+          ? clampAbsoluteViewZoom(nextMagnification, nextMinimumZoom)
+          : nextMagnification;
+      const nextZoom =
+        boundedMagnification === nextMagnification
+          ? currentViewState.zoom
+          : relativeViewZoomForMagnification(boundedMagnification, nextFitScale, nextCompensation, devicePixelRatio);
+      if (
+        nextCompensation !== currentViewState.fitScaleCompensation ||
+        nextZoom !== currentViewState.zoom ||
+        nextFitToScreen !== currentViewState.fitToScreen ||
+        nextMinimumZoomOverride !== currentViewState.minimumZoomOverride
+      ) {
+        const nextViewState = {
+          ...currentViewState,
+          zoom: nextZoom,
+          fitScaleCompensation: nextCompensation,
+          fitToScreen: nextFitToScreen,
+          minimumZoomOverride: nextMinimumZoomOverride,
+        };
+        if (nextMinimumZoomOverride === undefined) delete nextViewState.minimumZoomOverride;
+        viewStateRef.current = nextViewState;
+        forceViewStateUpdate((value) => value + 1);
+      }
+    }
+
+    previousPresentedFrameRef.current = {
+      documentId: storeState.documentId,
+      documentRevision: storeState.documentRevision,
+      frame: nextFrame,
+      viewport,
+      devicePixelRatio,
+    };
+  }, [
+    containerRef,
+    devicePixelRatio,
+    storeState.documentFrame,
+    storeState.documentId,
+    storeState.documentRevision,
+    storeState.totalSize,
+  ]);
+  useLayoutEffect(() => {
+    reconcileViewScaleForWorkspace();
+  }, [reconcileViewScaleForWorkspace]);
+  // ResizeObserver is a trigger; view-scale preservation must use the same client viewport as fit.
+  useResizeObserverRAF(containerRef, () => reconcileViewScaleForWorkspace());
   const latestStateRef = useRef(storeState);
+  const historyReplayAttemptRef = useRef(0);
+  const historyReplayAttemptPendingRef = useRef(false);
+  const historyReplayAttemptDocumentIdRef = useRef<string | null>(null);
+  const historyReplayAttemptDocumentRevisionRef = useRef<number | null>(null);
+  const isHistoryReplayPresentationCurrent = (attemptId: number) =>
+    historyReplayAttemptPendingRef.current && attemptId === historyReplayAttemptRef.current;
+  const hasPendingHistoryReplayPresentation = (documentId: string, documentRevision: number) =>
+    historyReplayAttemptPendingRef.current &&
+    historyReplayAttemptDocumentIdRef.current === documentId &&
+    historyReplayAttemptDocumentRevisionRef.current === documentRevision;
+  const cancelHistoryReplayPresentation = (attemptId: number) => {
+    if (attemptId === historyReplayAttemptRef.current) {
+      historyReplayAttemptPendingRef.current = false;
+      historyReplayAttemptDocumentIdRef.current = null;
+      historyReplayAttemptDocumentRevisionRef.current = null;
+    }
+  };
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before
   // it, so a per-document scope would dispose a bitmap the new document
@@ -1335,7 +1509,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state: StoreData,
     document: DurableDocument,
     durableCursor: number,
-    allowLegacySelector: boolean
+    allowLegacySelector: boolean,
+    historyReplayAttemptId?: number
   ): Promise<DurableNavigationPresentationOutcome> => {
     const replay = replayDurableAtCursor(document, durableCursor);
     const publishRecord = (
@@ -1356,6 +1531,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
       };
       const latest = latestStateRef.current;
+      if (historyReplayAttemptId !== undefined && !isHistoryReplayPresentationCurrent(historyReplayAttemptId)) {
+        return false;
+      }
       const next = reducer(latest, action);
       if (next === latest) return false;
       latestStateRef.current = next;
@@ -1383,6 +1561,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const assertFresh = () => {
       const latest = latestStateRef.current;
       if (
+        (historyReplayAttemptId !== undefined && !isHistoryReplayPresentationCurrent(historyReplayAttemptId)) ||
         latest.documentId !== state.documentId ||
         latest.historyIndex !== state.historyIndex ||
         latest.documentRevision !== document.documentRevision ||
@@ -1505,7 +1684,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         detached = undefined;
         return { status: 'stale', reason: 'stale', cursor: durableCursor };
       }
-      retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      // Navigation has only published a candidate projection here. Its caller
+      // still has to draw that projection onto the visible canvas; a refusal
+      // must be able to roll back to the current layer caches without finding
+      // that their ImageBitmaps were already closed. The accepted append path
+      // remains safe to retire here because its legacy frame is already visible.
+      if (allowLegacySelector) {
+        retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      }
       detached = undefined;
       return { status: 'durable', layers: projection.layers, frame: projection.frame, cursor: durableCursor };
     } catch (error) {
@@ -1520,8 +1706,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const publishDurableNavigationPresentation = (state: StoreData, document: DurableDocument, durableCursor: number) =>
-    publishDurablePresentation(state, document, durableCursor, false);
+  const publishDurableNavigationPresentation = (
+    state: StoreData,
+    document: DurableDocument,
+    durableCursor: number,
+    attemptId?: number
+  ) => publishDurablePresentation(state, document, durableCursor, false, attemptId);
 
   /**
    * A committed append is already visible through the legacy layer records. Compose its
@@ -1656,16 +1846,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A reorder's durable operation names the resulting order of every layer,
       // so it is planned here, where the pre-append record is authoritative, and
       // it is checked against a second, independent copy of the rule. The
-      // shadow's OWN layer order is supplied too, and compared as a sequence: a
-      // published map is a fresh normalisation of the order, so publishing one
-      // while the two models already disagree about the order would overwrite
-      // that disagreement with a document no reconversion would reproduce.
+      // shadow's own sequence and exact numeric values are supplied too: its
+      // sparse values affect future source-backed layer naming, so matching only
+      // the visible sequence cannot prove a publication matches reconversion.
       const base = currentState.durableStatus === 'current' ? currentState.durableDocument : null;
       const preLayerOrder = layerOrderBottomFirst(currentState.layers);
-      const durableLayerOrder = base
-        ? Object.values(replayDurableDocument(base, base.cursor).layers)
+      const preLayerOrders = Object.fromEntries(
+        Object.values(currentState.layers).map((layer) => [layer.id, layer.order])
+      );
+      const durableLayers = base ? Object.values(replayDurableDocument(base, base.cursor).layers) : null;
+      const durableLayerOrder = durableLayers
+        ? [...durableLayers]
             .sort((left, right) => left.snapshot.order - right.snapshot.order)
             .map((layer) => layer.snapshot.id)
+        : null;
+      const durableLayerOrders = durableLayers
+        ? Object.fromEntries(durableLayers.map((layer) => [layer.snapshot.id, layer.snapshot.order]))
         : null;
       // The record is reordered by `intent` while the durable map is derived from
       // the history item's args, because that is what a replay reads. Production
@@ -1684,10 +1880,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         prior,
         next: timeline,
         entry: historyItem,
-        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
+        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder, preLayerOrders) : null,
         documentRevision: currentState.documentRevision,
         preLayerOrder,
+        preLayerOrders,
         durableLayerOrder,
+        durableLayerOrders,
       });
       const converted =
         decision.outcome === 'published'
@@ -1778,6 +1976,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         planned: plannedEntry,
         documentRevision: currentState.documentRevision,
         preLayers: sourceContext?.preLayers,
+        liveLayers: sourceContext?.liveLayers,
       });
       const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
       const publishPlanned = planned.outcome === 'published' && !boundaryHasError;
@@ -1988,12 +2187,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           renderSelector,
         },
       });
-      // Replay is the other way a cache leaves the record, and the identity case
-      // is the common one: navigating back over a removal re-creates the layer
-      // under the same id with no cache at all, or with a different one. The
-      // replayed record is already painted, so retiring against it cannot blank
-      // a layer that is still on screen.
-      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, navigationState);
+      // The target record is not painted yet. `useHistory` finalizes retirement
+      // only after drawing succeeds; a refused draw must keep the previous
+      // caches alive until its rollback has restored the visible state.
       return;
     }
     if (action.type === 'REPLACE_DOCUMENT') {
@@ -2045,12 +2241,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   const dispatchInternalAction = (action: InternalAction) => dispatchAction(action);
   const dispatch: StoreDispatch = (action) => dispatchAction(action);
-  const publishDurableNavigation = (): Promise<DurableNavigationPresentationOutcome> => {
+  const publishDurableNavigation = (attemptId?: number): Promise<DurableNavigationPresentationOutcome> => {
     const latest = latestStateRef.current;
+    if (attemptId !== undefined && !isHistoryReplayPresentationCurrent(attemptId)) {
+      return Promise.resolve({ status: 'stale', reason: 'stale', cursor: latest.historyIndex });
+    }
     if (latest.durableStatus !== 'current' || !latest.durableDocument) {
       return Promise.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: latest.historyIndex });
     }
-    return publishDurableNavigationPresentation(latest, latest.durableDocument, latest.durableDocument.cursor);
+    return publishDurableNavigationPresentation(
+      latest,
+      latest.durableDocument,
+      latest.durableDocument.cursor,
+      attemptId
+    );
+  };
+  const beginHistoryReplayPresentation = (documentId: string, documentRevision: number): number => {
+    historyReplayAttemptRef.current += 1;
+    historyReplayAttemptPendingRef.current = true;
+    historyReplayAttemptDocumentIdRef.current = documentId;
+    historyReplayAttemptDocumentRevisionRef.current = documentRevision;
+    return historyReplayAttemptRef.current;
+  };
+  const finalizeHistoryReplayPresentation = (token: HistoryReplayPresentationToken): boolean => {
+    const latest = latestStateRef.current;
+    if (token.attemptId !== historyReplayAttemptRef.current || !historyReplayAttemptPendingRef.current) return false;
+    if (
+      latest.documentId !== token.documentId ||
+      latest.documentRevision !== token.documentRevision ||
+      historyReplayAttemptDocumentIdRef.current !== token.documentId ||
+      historyReplayAttemptDocumentRevisionRef.current !== token.documentRevision ||
+      latest.branchRevision !== token.branchRevision ||
+      latest.historyIndex !== token.historyIndex
+    ) {
+      return false;
+    }
+    historyReplayAttemptPendingRef.current = false;
+    historyReplayAttemptDocumentIdRef.current = null;
+    historyReplayAttemptDocumentRevisionRef.current = null;
+    retireDepartedPresentationBitmaps(presentationScope, latest.documentId, latest);
+    return true;
   };
   const publishRuntimePresentation = (layers: LayersRecord) =>
     dispatchInternalAction({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers } });
@@ -2107,6 +2337,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     publishRuntimePresentation,
     adoptLayerBitmaps,
     publishDurableNavigationPresentation: publishDurableNavigation,
+    beginHistoryReplayPresentation,
+    isHistoryReplayPresentationCurrent,
+    hasPendingHistoryReplayPresentation,
+    cancelHistoryReplayPresentation,
+    finalizeHistoryReplayPresentation,
     previewLayers: previewLayersRef,
     viewStateRef,
     viewState: viewStateRef.current,

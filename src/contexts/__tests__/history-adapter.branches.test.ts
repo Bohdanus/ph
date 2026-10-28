@@ -335,7 +335,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
 
     const operation = converted.document.history[1]?.operation;
     expect(operation).toMatchObject({ kind: 'reorder-layers' });
-    expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual({ 'layer-1': 0, 'layer-b': 1 });
+    expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual({ 'layer-1': -1, 'layer-b': 1 });
     registry.shutdown();
   });
 
@@ -486,7 +486,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
       selections: [
         {
           id: 'sel',
-          points: [{ x: 1, y: 2 }],
+          points: [[{ x: 1, y: 2 }]],
           isActive: true,
           pos: { x: 1, y: 2, width: 3, height: 4 },
           metadata: { featherRadius: 2 },
@@ -514,7 +514,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
   it('records a disabled selection action without changing the converted selection state', () => {
     const registry = new AssetRegistry();
     const nextSelection = {
-      selections: [{ id: 'sel', points: [{ x: 0, y: 0 }], isActive: true, pos: { x: 0, y: 0, width: 1, height: 1 } }],
+      selections: [{ id: 'sel', points: [[{ x: 0, y: 0 }]], isActive: true, pos: { x: 0, y: 0, width: 1, height: 1 } }],
       activeSelectionId: 'sel',
     };
 
@@ -1875,9 +1875,9 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
 
     const operation = converted.document.history[2]?.operation;
     expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual({
-      'layer-b': 0,
-      'layer-c': 1,
-      'layer-1': 2,
+      'layer-b': 1,
+      'layer-c': 2,
+      'layer-1': 3,
     });
     registry.shutdown();
   });
@@ -1954,12 +1954,12 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     {
       label: 'moves a layer to the bottom when no anchor is named',
       afterWhichLayerId: null,
-      expectedOrder: { 'layer-1': 0, 'layer-b': 1 },
+      expectedOrder: { 'layer-1': -1, 'layer-b': 1 },
     },
     {
       label: 'places a layer directly after a present anchor',
       afterWhichLayerId: 'layer-b',
-      expectedOrder: { 'layer-b': 0, 'layer-1': 1 },
+      expectedOrder: { 'layer-b': 1, 'layer-1': 2 },
     },
   ] satisfies ReadonlyArray<{
     label: string;
@@ -2085,6 +2085,61 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     // `initialFrame` and `initialSize` never reach the baseline derivation, so a
     // document source without a frame and without a size yields a 0x0 frame.
     expect(converted.document.baseline.frame).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    registry.shutdown();
+  });
+
+  it('rejects a document source with a null size as non-canonical data', () => {
+    const registry = new AssetRegistry();
+    const initialFrame = { x: 1, y: 2, width: 33, height: 44 };
+
+    const converted = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId: 'layer-1',
+          documentSource: {
+            layers: { 'layer-1': blankLayer('layer-1') },
+            size: null as unknown as { width: number; height: number },
+          },
+        },
+      ],
+      { documentId: 'test-doc', registry, initialFrame }
+    );
+
+    expect(converted.diagnostics.map(({ message }) => message)).toContain(
+      'Legacy document source is not canonical data.'
+    );
+    registry.shutdown();
+  });
+
+  it('ignores malformed document sources after the opening baseline', () => {
+    const registry = new AssetRegistry();
+    const ignoredSource: HistoryItem = {
+      id: 'ignored-replacement',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'layer-2',
+      documentSource: {
+        layers: { 'layer-2': blankLayer('layer-2') },
+        size: null as unknown as { width: number; height: number },
+      },
+    };
+
+    const converted = convertLegacyHistorySafely([...baselineHistory(), ignoredSource], {
+      documentId: 'test-doc',
+      registry,
+    });
+
+    expect(converted.status).toBe('current');
+    expect(converted.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'ignored-replacement',
+        severity: 'warning',
+        code: 'document-replacement',
+      }),
+    ]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, -1]);
+    expect(converted.document?.history).toEqual([]);
     registry.shutdown();
   });
 

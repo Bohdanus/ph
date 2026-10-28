@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { AssetRegistry } from '../asset-registry.ts';
+import { composeDurableDocument } from '../durable-compositor.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
 import type { MaterializationRequest } from '../materialization.ts';
@@ -112,11 +113,16 @@ function makeReplay(layers: Record<string, DurableReplayLayer>): DurableReplayRe
 function makeRequest(registry: AssetRegistry, signal?: AbortSignal): MaterializationRequest {
   return {
     documentId: 'test-doc',
-    baselineAssetGeneration: 0,
+    baselineAssetGeneration: registry.getDocumentGeneration('test-doc'),
     operationSetRevision: 0,
     assetRegistry: registry,
     ...(signal ? { signal } : {}),
   };
+}
+
+function requireProcessorBitmap(params: Parameters<typeof toolProcessors.blur.imageProcessor>[0]): BitmapSource {
+  if (!('bitmap' in params)) throw new Error('Expected a raster processor input');
+  return params.bitmap;
 }
 
 /** The calls `renderRetainedSegment` makes on its context, in the order it made them. */
@@ -257,6 +263,259 @@ describe('materializeLayer safety (P0.3)', () => {
     await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/Unknown raster processor/);
   });
 
+  it('enforces durable raster processor staging budgets before allocating a presentation surface', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const originalImageProcessor = toolProcessors['red-eye'].imageProcessor;
+    const imageProcessor = vi.spyOn(toolProcessors['red-eye'], 'imageProcessor');
+    const { bitmap } = createOwnedBitmap(100, 80);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
+    const rasterLayer = makeRasterLayer('layer-1', assetId, 100, 80, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'red-eye',
+        version: 1,
+        args: Object.freeze({ toolName: 'red-eye', pupilSize: 50, darkenAmount: 50 }),
+      }),
+    ]);
+    const layer = Object.freeze({
+      ...rasterLayer,
+      snapshot: makeSnapshot('layer-1', rasterSource(assetId, 100, 80), { x: 0, y: 0, width: 5000, height: 4000 }),
+    });
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/pixel staging budget/);
+      expect(allocations).toEqual([]);
+      expect(imageProcessor).not.toHaveBeenCalled();
+    } finally {
+      toolProcessors['red-eye'].imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('refuses an over-budget generated source before allocating its initial raster', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const originalImageProcessor = toolProcessors['red-eye'].imageProcessor;
+    const imageProcessor = vi.spyOn(toolProcessors['red-eye'], 'imageProcessor');
+    const layer = makeBlankLayer('layer-1', 5000, 4000, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'red-eye',
+        version: 1,
+        args: Object.freeze({ toolName: 'red-eye', pupilSize: 50, darkenAmount: 50 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/pixel staging budget/);
+      expect(allocations).toEqual([]);
+      expect(imageProcessor).not.toHaveBeenCalled();
+    } finally {
+      toolProcessors['red-eye'].imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('does not allocate a duplicate bitmap for a generated source with a document frame', async () => {
+    const registry = new AssetRegistry();
+    const createdBitmap = createOwnedBitmap(20, 20);
+    const createImageBitmap = vi.fn(async () => createdBitmap.bitmap);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      vi.stubGlobal('createImageBitmap', createImageBitmap);
+      const materialized = await materializeLayer(makeBlankLayer('layer-1', 20, 20), {
+        ...makeRequest(registry),
+        frame: { x: 0, y: 0, width: 20, height: 20 },
+      });
+
+      expect(createImageBitmap).toHaveBeenCalledTimes(1);
+      expect(materialized.bitmap).toBe(createdBitmap.bitmap);
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('skips a historical zero-opacity Color Replacement without rejecting an oversized raster', async () => {
+    const registry = new AssetRegistry();
+    const imageProcessor = vi.spyOn(toolProcessors['color-replacement'], 'imageProcessor');
+    const layer = makeBlankLayer('layer-1', 4096, 4096, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'color-replacement',
+        version: 1,
+        args: Object.freeze({
+          toolName: 'color-replacement',
+          alpha: 0,
+          lineWidth: 18,
+          color: '#ff0000',
+          tolerance: 30,
+          limits: 'contiguous',
+          sampling: 'current-layer',
+          smoothness: 10,
+          sampleColor: { r: 0, g: 0, b: 0, a: 255 },
+          points: [{ x: 20, y: 20 }],
+        }),
+      }),
+    ]);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(imageProcessor).not.toHaveBeenCalled();
+      expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 4096, height: 4096 });
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('still rejects an unsupported zero-opacity Color Replacement version before allocating its source', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const layer = makeBlankLayer('layer-1', 20, 20, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'color-replacement',
+        version: 99,
+        args: Object.freeze({ toolName: 'color-replacement', alpha: 0 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(
+        'Unsupported raster processor color-replacement v99'
+      );
+      expect(allocations).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('reuses a matching generated fractional raster without an extra staging resample', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const processorInputs: Array<{ bitmap: BitmapSource; size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    const layer = makeBlankLayer('layer-1', 40.5, 20.25, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(allocations).toEqual([{ width: 41, height: 21 }]);
+      expect(processorInputs).toHaveLength(1);
+      expect(processorInputs[0]?.size).toEqual({ width: 41, height: 21 });
+      expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 40.5, height: 20.25 });
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('enforces each processor budget when consecutive processors reuse an owned raster', async () => {
+    const registry = new AssetRegistry();
+    const allocations: Array<{ width: number; height: number }> = [];
+    const originalBlurProcessor = toolProcessors.blur.imageProcessor;
+    const originalRedEyeProcessor = toolProcessors['red-eye'].imageProcessor;
+    const blurProcessor = vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      return () => [bitmap];
+    });
+    const redEyeProcessor = vi.spyOn(toolProcessors['red-eye'], 'imageProcessor');
+    const { bitmap } = createOwnedBitmap(5000, 4000);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
+    const layer = makeRasterLayer('layer-1', assetId, 5000, 4000, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'red-eye',
+        version: 1,
+        args: Object.freeze({ toolName: 'red-eye', pupilSize: 50, darkenAmount: 50 }),
+      }),
+    ]);
+    class AllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+        super(width, height);
+      }
+    }
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/pixel staging budget/);
+      expect(allocations).toEqual([{ width: 5000, height: 4000 }]);
+      expect(blurProcessor).toHaveBeenCalledTimes(1);
+      expect(redEyeProcessor).not.toHaveBeenCalled();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalBlurProcessor;
+      toolProcessors['red-eye'].imageProcessor = originalRedEyeProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
   it('rejects cleanly for a raster source with invalid (zero) dimensions', async () => {
     const registry = new AssetRegistry();
     const { bitmap } = createOwnedBitmap(10, 10);
@@ -379,6 +638,240 @@ describe('materializeLayer safety (P0.3)', () => {
     }
 
     registry.shutdown();
+  });
+
+  it('passes staged pixel dimensions to processors while retaining fractional document bounds', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ width: number; height: number }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      processorInputs.push({ ...params.size });
+      const bitmap = requireProcessorBitmap(params);
+      return () => [bitmap];
+    });
+
+    const layer = makeBlankLayer('layer-1', 40, 20, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'layer-1',
+        transform: Object.freeze({ a: 1.0125, b: 0, c: 0, d: 1.0125, e: 0, f: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toEqual([{ width: 41, height: 21 }]);
+      expect(materialized.bitmap.width).toBe(41);
+      expect(materialized.bitmap.height).toBe(21);
+      expect(materialized.bounds.width).toBeCloseTo(40.5);
+      expect(materialized.bounds.height).toBeCloseTo(20.25);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      registry.shutdown();
+    }
+  });
+
+  it('preserves staged pixels across consecutive processors after a fractional affine', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{
+      processorId: string;
+      bitmap: BitmapSource;
+      size: { width: number; height: number };
+    }> = [];
+    const originalBlurProcessor = toolProcessors.blur.imageProcessor;
+    const originalSharpenProcessor = toolProcessors.sharpen.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ processorId: 'blur', bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    vi.spyOn(toolProcessors.sharpen, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ processorId: 'sharpen', bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+
+    const layer = makeBlankLayer('layer-1', 40, 20, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'layer-1',
+        transform: Object.freeze({ a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'sharpen',
+        version: 1,
+        args: Object.freeze({ toolName: 'sharpen', amount: 0 }),
+      }),
+    ]);
+
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toHaveLength(2);
+      expect(processorInputs.map(({ processorId }) => processorId)).toEqual(['blur', 'sharpen']);
+      expect(processorInputs[0]?.size).toEqual({ width: 41, height: 20 });
+      expect(processorInputs[1]?.size).toEqual({ width: 41, height: 20 });
+      expect(processorInputs[1]?.bitmap).toBe(processorInputs[0]?.bitmap);
+      expect(materialized.bitmap).toBe(processorInputs[1]?.bitmap);
+      expect(materialized.bounds.width).toBeCloseTo(40.5);
+      expect(materialized.bounds.height).toBe(20);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalBlurProcessor;
+      toolProcessors.sharpen.imageProcessor = originalSharpenProcessor;
+      registry.shutdown();
+    }
+  });
+
+  it('copies a borrowed raw raster at intrinsic pixel dimensions before its first processor', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ bitmap: BitmapSource; size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    const { bitmap: sourceBitmap } = createOwnedBitmap(41, 20);
+    const assetId = registry.registerBaseline('test-doc', sourceBitmap, { ownership: 'borrow' });
+    const rasterLayer = makeRasterLayer('layer-1', assetId, 41, 20, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    const layer = Object.freeze({
+      ...rasterLayer,
+      snapshot: makeSnapshot('layer-1', rasterSource(assetId, 41, 20), { x: 0, y: 0, width: 40.5, height: 20 }),
+    });
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toHaveLength(1);
+      expect(processorInputs[0]?.size).toEqual({ width: 41, height: 20 });
+      expect(processorInputs[0]?.bitmap).not.toBe(sourceBitmap);
+      expect(recordedRenderCalls[0]?.find(({ op }) => op === 'drawImage')?.args).toEqual([sourceBitmap, 0, 0, 41, 20]);
+      expect(materialized.bounds.width).toBe(40.5);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('resizes a borrowed raster to logical bounds before durable pixel processing', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ bitmap: BitmapSource; size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push({ bitmap, size: { ...params.size } });
+      return () => [bitmap];
+    });
+    const { bitmap: sourceBitmap } = createOwnedBitmap(40, 20);
+    const assetId = registry.registerBaseline('test-doc', sourceBitmap, { ownership: 'borrow' });
+    const rasterLayer = makeRasterLayer('layer-1', assetId, 40, 20, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    const layer = Object.freeze({
+      ...rasterLayer,
+      snapshot: makeSnapshot('layer-1', rasterSource(assetId, 40, 20), { x: 10, y: 5, width: 80, height: 40 }),
+    });
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toHaveLength(1);
+      expect(processorInputs[0]?.bitmap).not.toBe(sourceBitmap);
+      expect(processorInputs[0]?.size).toEqual({ width: 80, height: 40 });
+      const drawImageArgs = recordedRenderCalls[0]?.find(({ op }) => op === 'drawImage')?.args;
+      expect(drawImageArgs?.[0]).toBe(sourceBitmap);
+      expect(drawImageArgs?.slice(-2)).toEqual([80, 40]);
+      expect(materialized.bounds).toEqual({ x: 10, y: 5, width: 80, height: 40 });
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('draws a processed fractional raster directly into a requested frame', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: BitmapSource[] = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      const bitmap = requireProcessorBitmap(params);
+      processorInputs.push(bitmap);
+      return () => [bitmap];
+    });
+    const { bitmap } = createOwnedBitmap(40, 20);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'borrow' });
+    const layer = makeRasterLayer('layer-1', assetId, 40, 20, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'layer-1',
+        transform: Object.freeze({ a: 1.0125, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      }),
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 0 }),
+      }),
+    ]);
+    const frame: DocumentFrame = { x: 0, y: 0, width: 100, height: 80 };
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, { ...makeRequest(registry), frame });
+
+      expect(materialized.bitmap.width).toBe(frame.width);
+      expect(materialized.bitmap.height).toBe(frame.height);
+      expect(recordedRenderCalls).toHaveLength(2);
+      const frameDraw = recordedRenderCalls[1]?.find(({ op }) => op === 'drawImage');
+      expect(frameDraw?.args[0]).toBe(processorInputs[0]);
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
   });
 
   it('materializes a blank layer with no operations successfully', async () => {
@@ -514,6 +1007,168 @@ describe('materializeDocument safety (P0.3)', () => {
     registry.shutdown();
   });
 
+  it('stops a batch before later layers when document disposal advances its captured generation', async () => {
+    const registry = new AssetRegistry();
+    const request = makeRequest(registry);
+    const originalMaterialize = registry.materialize.bind(registry);
+    let disposed = false;
+    const materialize = vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      if (!disposed) {
+        disposed = true;
+        registry.disposeDocument(request.documentId);
+      }
+      return lease;
+    });
+
+    await expect(
+      materializeDocument(
+        makeReplay({
+          'layer-first': makeBlankLayer('layer-first', 40, 40),
+          'layer-late': makeBlankLayer('layer-late', 40, 50),
+        }),
+        request
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(disposed).toBe(true);
+    expect(materialize).toHaveBeenCalledOnce();
+    expect(materialize.mock.calls[0]?.[0].expectedDocumentGeneration).toBe(request.baselineAssetGeneration);
+    registry.shutdown();
+  });
+
+  it('rejects a document disposed during the final cooperative yield', async () => {
+    const registry = new AssetRegistry();
+    const request = makeRequest(registry);
+    const originalMaterialize = registry.materialize.bind(registry);
+    const release = vi.fn();
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      registry.disposeDocument(request.documentId);
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+
+    await expect(
+      materializeDocument(makeReplay({ 'layer-final': makeBlankLayer('layer-final', 40, 40) }), request)
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(release).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
+  it('releases materialized layers when cancellation arrives during the final yield', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    const request = makeRequest(registry, controller.signal);
+    const originalMaterialize = registry.materialize.bind(registry);
+    const yieldScheduled = deferred<void>();
+    const originalSetTimeout = globalThis.setTimeout;
+    const release = vi.fn();
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+    vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce((callback, delay, ...args) => {
+      const timer = originalSetTimeout(callback, delay, ...args);
+      yieldScheduled.resolve();
+      return timer;
+    });
+
+    const materialization = materializeDocument(
+      makeReplay({ 'layer-final': makeBlankLayer('layer-final', 40, 40) }),
+      request
+    );
+    await yieldScheduled.promise;
+    controller.abort();
+
+    await expect(materialization).rejects.toMatchObject({ name: 'AbortError' });
+    expect(release).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
+  it('propagates a cross-realm AbortError and releases earlier layer leases', async () => {
+    const registry = new AssetRegistry();
+    const request = makeRequest(registry);
+    const originalMaterialize = registry.materialize.bind(registry);
+    const release = vi.fn();
+    let calls = 0;
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      calls += 1;
+      if (calls === 2) {
+        const frame = document.createElement('iframe');
+        document.body.append(frame);
+        const ForeignDOMException = (frame.contentWindow as unknown as { DOMException?: typeof DOMException } | null)
+          ?.DOMException;
+        frame.remove();
+        if (!ForeignDOMException) throw new Error('The iframe DOMException constructor is unavailable');
+        throw new ForeignDOMException('Materialization aborted in another realm', 'AbortError');
+      }
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      materializeDocument(
+        makeReplay({
+          'layer-first': makeBlankLayer('layer-first', 40, 40),
+          'layer-second': makeBlankLayer('layer-second', 40, 50),
+        }),
+        request
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(release).toHaveBeenCalledOnce();
+    expect(consoleError).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
+  it('does not treat spoofed values as cross-realm AbortErrors', async () => {
+    const registry = new AssetRegistry();
+    const spoofedAbortError = new Error('ordinary failure') as Error & { [Symbol.toStringTag]: string };
+    spoofedAbortError.name = 'AbortError';
+    Object.defineProperty(spoofedAbortError, Symbol.toStringTag, { value: 'DOMException' });
+    const spoofedDomException = Object.create(DOMException.prototype) as DOMException;
+    Object.defineProperty(spoofedDomException, 'name', { value: 'AbortError' });
+    vi.spyOn(registry, 'materialize')
+      .mockRejectedValueOnce(spoofedAbortError)
+      .mockRejectedValueOnce(spoofedDomException);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await materializeDocument(
+      makeReplay({
+        'layer-failed': makeBlankLayer('layer-failed', 40, 40),
+        'layer-also-failed': makeBlankLayer('layer-also-failed', 40, 50),
+      }),
+      makeRequest(registry)
+    );
+
+    expect(result.layers).toEqual({});
+    expect(consoleError).toHaveBeenCalledTimes(2);
+    result.release();
+    registry.shutdown();
+  });
+
   it('aborts early when the signal is aborted before processing layers', async () => {
     const registry = new AssetRegistry();
     const controller = new AbortController();
@@ -524,6 +1179,53 @@ describe('materializeDocument safety (P0.3)', () => {
     });
 
     await expect(materializeDocument(replay, makeRequest(registry, controller.signal))).rejects.toThrow(/aborted/);
+  });
+
+  it('does not start a blank layer materialization for a pre-aborted signal', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    controller.abort();
+    const materialize = vi.spyOn(registry, 'materialize');
+
+    await expect(
+      materializeLayer(makeBlankLayer('layer-pre-aborted', 40, 40), makeRequest(registry, controller.signal))
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(materialize).not.toHaveBeenCalled();
+  });
+
+  it('releases a blank layer lease when cancellation arrives before materializeLayer returns', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    const originalMaterialize = registry.materialize.bind(registry);
+    const release = vi.fn();
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      controller.abort();
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+
+    await expect(
+      materializeLayer(makeBlankLayer('layer-cancelled', 40, 40), makeRequest(registry, controller.signal))
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(release).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
+  it('aborts an empty document when its signal is already aborted', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(materializeDocument(makeReplay({}), makeRequest(registry, controller.signal))).rejects.toMatchObject({
+      name: 'AbortError',
+    });
   });
 
   it('returns a release handle that releases all layer leases', async () => {
@@ -768,5 +1470,91 @@ describe('materialization operation ordering (P1.10)', () => {
 
     void close;
     registry.shutdown();
+  });
+
+  it('reuses one compositor frame surface while materializing multiple affine layers', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 8, y: 9, width: 80, height: 60 };
+    const frameAllocations: Array<{ width: number; height: number }> = [];
+    class FrameAllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        super(width, height);
+        if (width === frame.width && height === frame.height) frameAllocations.push({ width, height });
+      }
+    }
+    const layer = (id: string, translateX: number) =>
+      makeBlankLayer(id, 20, 16, [
+        Object.freeze({
+          kind: 'apply-affine-transform' as const,
+          layerId: id,
+          transform: Object.freeze({ a: 1, b: 0, c: 0, d: 1, e: translateX, f: 12 }),
+        }),
+      ]);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', FrameAllocationCountingCanvas);
+      const composite = await composeDurableDocument(
+        makeReplay({
+          first: layer('first', 12),
+          second: layer('second', 28),
+        }),
+        { ...makeRequest(registry), frame }
+      );
+
+      expect(frameAllocations).toEqual([{ width: frame.width, height: frame.height }]);
+      expect(composite.layers.first?.bounds).not.toEqual({
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+      });
+      expect(composite.layers.second?.bounds).not.toEqual({
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+      });
+      composite.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('keeps direct frame-aligned affine materialization supported and releases its local surface', async () => {
+    const registry = new AssetRegistry();
+    const frame: DocumentFrame = { x: 8, y: 9, width: 80, height: 60 };
+    const frameSurfaces: CallRecordingOffscreenCanvas[] = [];
+    class FrameAllocationCountingCanvas extends CallRecordingOffscreenCanvas {
+      constructor(width: number, height: number) {
+        super(width, height);
+        if (width === frame.width && height === frame.height) frameSurfaces.push(this);
+      }
+    }
+    const affineLayer = makeBlankLayer('standalone-affine', 20, 16, [
+      Object.freeze({
+        kind: 'apply-affine-transform' as const,
+        layerId: 'standalone-affine',
+        transform: Object.freeze({ a: 1, b: 0, c: 0, d: 1, e: 12.25, f: 12.5 }),
+      }),
+    ]);
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', FrameAllocationCountingCanvas);
+      vi.stubGlobal('createImageBitmap', undefined);
+      const materialized = await materializeLayer(affineLayer, {
+        ...makeRequest(registry),
+        pixelGridFrame: frame,
+      });
+
+      expect(materialized.bounds.x - frame.x).toBeCloseTo(Math.floor(materialized.bounds.x - frame.x), 8);
+      expect(materialized.bounds.y - frame.y).toBeCloseTo(Math.floor(materialized.bounds.y - frame.y), 8);
+      expect(frameSurfaces).toHaveLength(1);
+      expect(frameSurfaces[0]).toMatchObject({ width: 1, height: 1 });
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
   });
 });

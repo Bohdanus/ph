@@ -53,15 +53,25 @@ the image" as you paint, so a stroke over a subject snaps to the subject's bound
 spreading across everything of a similar tone.
 <https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html>
 
-**What this app does.** Each dab runs a contiguous flood fill and nothing else
-(`quickSelection.ts` — the `floodFill()` call inside `growAlongStroke()`):
+**What this app does.** Each brush stamp samples nine seed points inside its round tip
+(the centre, four axial points and four diagonal points); each seed runs a contiguous
+flood fill, and the resulting regions are combined. Size therefore changes both the
+distance between stamps and the area from which those regions are seeded. This sparse
+sampling is an app-level approximation inferred from Adobe's adjustable brush tip, not a
+description of Photoshop's unpublished segmentation implementation. The bar also exposes
+an app-specific Tolerance control; Adobe's current desktop Quick Selection page documents
+brush settings instead.
+
+Each seed still uses only colour distance from the seed, not edge strength or gradient
+structure (`quickSelection.ts` — `growAlongStroke()`):
 
 ```ts
 const result = floodFill(imageData, seed, { tolerance, contiguous: true });
 ```
 
 Growth is a function of colour similarity to the seed and of nothing in the image's neighbourhood, so
-there is no term that can stop it at an edge. On any gradient the selection bleeds across the object.
+there is no term that can stop it at an edge. Across a gradient, each additional stamp can grow a
+different region; this can extend a selection but still does not reproduce Photoshop's edge-following.
 
 **Why it is too hard.** Edge-following is not a threshold to tune; it is a different algorithm. It
 needs a gradient or structure tensor over the image, a per-dab decision about whether the local
@@ -69,9 +79,10 @@ neighbourhood supports expansion, and the confidence model that decides when a b
 when it is texture. None of that exists in the app, and every layer of it would sit under the growth
 loop above rather than beside it.
 
-**What the app does instead.** A tolerance-driven flood fill that merges everything within tolerance
-of the seed. Users tune Tolerance to keep it from bleeding, which trades a leaking edge for a ragged
-one. The bar's controls match Photoshop's; the segmentation underneath does not.
+**What the app does instead.** A tolerance-driven union of contiguous fills, with a sparse brush-tip
+seed pattern. Users tune Tolerance to keep it from bleeding, which trades a leaking edge for a ragged
+one. The brush size has a real spatial effect, but this selection growth and the Tolerance control do
+not match Photoshop's documented edge-following behavior.
 
 ### Selection combination modes
 
@@ -81,30 +92,31 @@ and Shift+Alt/Option can set the same modes during a drag on tools that support 
 
 **What this app does.** Quick Selection's Mode dropdown offers Add and Subtract. No bar implements
 the complete Photoshop set; the other selection tools do not render combination controls. On tools
-without a mode selector, a second selection appends and activates. The union is not a missing
-control over a present model — it is a change to the model.
-`Selection` is a single point path (`general-types.ts` — `Selection`):
+without a mode selector, a second selection replaces the active one. Quick Selection rasterizes the
+active contour paths and applies Add or Subtract before committing the result.
+`Selection` stores compound contour paths (`general-types.ts` — `Selection`):
 
 ```ts
 export type Selection = {
   id: string;
-  points: Point[];
+  points: Point[][];
   isActive: boolean;
   // …pos, lifecycle, geometry, sourceTool, metadata
 ```
 
-Union and intersect are per-pixel operations, and a single point path cannot express them without
-rasterising. The shared module `src/util/selection.ts` is where a committed polygon becomes a
-selection, and every selection tool area, the clipboard and the pixel utilities read through it, so the
-change is not confined to one tool.
+Union and intersect are per-pixel operations, so combination modes rasterize the contours before
+applying the boolean operation. The shared module `src/util/selection.ts` creates committed paths,
+derives alpha masks, and owns clipboard clipping and hit testing; the marching-ants renderer also reads
+every contour. A change to the selection model therefore crosses all these consumers.
 
-**Why it is too hard.** It is a change to the type every selection consumer reads, made by tools that
-each own a different geometry (an axis-aligned box, an inscribed ring, a traced contour, a freehand
-lasso path). Booleans need a mask; the app has a polygon. The `metadata` field on `Selection` is where
-a hidden mask would have to ride, and every writer of `points` would then have to write it in step.
+**Why it is too hard.** A complete shared selection operator needs one coverage rule across the
+different geometry writers, history snapshots, copy, hit testing, marching ants and pixel tools.
+The current model stores contours and derives masks on demand; adding a second persistent mask beside
+those paths would create two authorities that could drift.
 
-**What the app does instead.** New-selection semantics only. Making a second selection replaces the
-first in practice for every workflow the app supports, because there is no way to express a union.
+**What the app does instead.** Quick Selection can add to or subtract from its current compound path.
+Other selection tools create a replacement selection. There is no Intersect mode or shared mode
+control across the selection family.
 
 ### Select and Mask, and the Select menu
 
@@ -153,47 +165,40 @@ type change.
 fact. A selection is what the last tool drew, and the only edits available are copy, paste and deselect
 from the marquee's bar.
 
-### Regions with holes
+### Persistent pixel-channel selection behavior
 
-**What Photoshop does.** Selects a donut, a mug handle or a face correctly: the selection is the
-material inside the region, and the enclosed background inside it stays unselected.
+**What Photoshop does.** Adobe's current [desktop Magic Wand guide](https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/select-areas-by-color-with-the-magic-wand-tool.html)
+says Contiguous selects only adjacent areas of similar color. Adobe's [Magic Wand guide for Photoshop on the web](https://helpx.adobe.com/id_en/photoshop/web/edit-images/make-selections/enhance-selections-with-magic-wand-tool.html)
+states that, with Contiguous off, all pixels in the image using the sampled colors are selected.
+Separately, the [UXP Selection reference](https://developer.adobe.com/photoshop/uxp/ps_reference/classes/selection/)
+describes a pixel-based selection that can represent "area or areas" with 8-bit transparency. The
+expectation that a differently colored hole remains unselected follows from those color-match and
+pixel-selection descriptions; Adobe does not prescribe a contour representation.
 
-**What this app does.** Refuses. The boundary tracer classifies loops and then rejects the whole
-region if any of them is a hole (`magicWand.ts` — `createMagicWandSelectionFromImageData()`):
+**What this app does.** `Selection` stores one authoritative form: ordinary selections use compound
+contour paths; highly fragmented Magic Wand and Quick Selection results use a cropped, row-major,
+one-bit-per-pixel mask when their exposed boundary exceeds the safe vector budget. The mask-backed
+form has no point paths, so hit-testing, copying, processor clipping, history replay and marching ants
+read that mask directly. Vector selections retain every traced loop, including disconnected
+components, enclosed holes and nested islands; exact pixel round trips are tested for those shapes.
+Fill, Eraser and Clone Stamp derive alpha masks from either selection form when they clip pixel
+operations. The packed representation is binary and exists to keep large boundaries bounded; it is
+not Photoshop's general 8-bit selection channel.
 
-```ts
-if (holes.length > 0) return null;
-```
+**What remains missing.** Photoshop's selection is a pixel channel, so partial alpha can remain part of
+the active selection. This app does not store per-pixel coverage or expose Quick Mask, selection
+channels, save/load, invert, expand, contract or general combination controls. Quick Selection alone
+provides Add and Subtract. Before combining a stroke, Quick Selection rasterizes the active selection
+by testing destination pixel centers. A fractional position or antialiased edge therefore becomes
+binary pixel membership, and the committed one-bit mask cannot retain the previous partial alpha.
+Vector-backed Magic Wand results apply the app's nonzero Smooth value by simplifying the paths, which
+can differ from the original color-match mask. The high-complexity mask-backed path keeps exact
+matched pixels and currently bypasses that simplification.
 
-The quick selection reaches the same conclusion by a different route and reports it rather than
-resolving it. `hasHoles` is carried on the result and explained in `quickSelection.ts` —
-`createQuickSelectionPolygon()`'s doc comment:
-
-> `hasHoles` is reported rather than resolved, because this data model cannot resolve it: a
-> `Selection` carries one point path, so committing the outer contour of a region with a hole would
-> cover pixels the mask reports as unselected — the user would drag a brush around a mug handle and
-> select the handle's background with it.
-
-The tool area acts on the flag and drops the stroke, logging the reason
-(`QuickSelectionToolArea.tsx` — the `polygon.hasHoles` guard in `handlePointerUp()`):
-
-```ts
-if (polygon?.hasHoles) {
-  console.warn(
-    `quick-selection: the grown region has an enclosed hole, which a single-polygon selection cannot ` +
-      `represent, so nothing was committed (${polygon.pixelCount} pixels grown)`
-  );
-}
-```
-
-**Why it is too hard.** Refusing is the only correct answer a single-polygon model can give, and the
-comment says so. Supporting a hole means `Selection` becomes multi-polygon — the same type change the
-combination modes need — plus a rasteriser that honours outer-plus-holes rather than outer-only, on
-every path that turns a polygon into pixels.
-
-**What the app does instead.** The stroke is dropped, the warning names the reason, and a selection
-is never wrong. It is missing, not silently degenerate: a user who draws a ring gets nothing rather
-than a filled disc.
+**Architectural boundary.** The stored geometry is mutually exclusive: a committed selection has
+either vector points or one authoritative packed mask, never both. History, undo/redo, copy, marching
+ants, hit-testing and the supported pixel tools all consume the same form. This binary fallback does
+not provide Photoshop's partial alpha, saved selection channels, or general selection operations.
 
 ### The Pen family
 
@@ -219,8 +224,8 @@ every unrouted tool gets.
 
 **Why it is too hard.** A work path is a first-class document object: anchors, bezier direction
 handles, open and closed state, and the Auto Add/Delete and Rubber Band gestures that decide what a
-click means. The app has no path model at all — `Selection` is one point path and a shape is a
-rasterised polygon — so the Pen family is not six tools to implement but a document layer to design,
+click means. The app has no work-path model — selections are raster-bound compound contour paths
+and shapes are rasterised polygons — so the Pen family is not six tools to implement but a document layer to design,
 and the Path Type entry below is the same work seen from the shape tools.
 
 **What the app does instead.** The six tools are in the rail under Adobe's names and mount a stub
@@ -242,11 +247,14 @@ entry — the same null-bitmap stub, and no gesture surface. The tool is in the 
 library itself, and the authoring and management surfaces. None of the format's structure is present,
 so drawing a built-in or imported Custom Shape is not implemented by adding a single preset.
 
-**What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), with Custom Shape present and Star absent.
-Star is a separate parametric shape tool, not a Custom Shape preset; its separate implementation
-does not require the `.csh` parser or library described above. Its behavior and options are already
-researched in `src/tools/descriptions/shape.notes.md` and the generated shape documentation.
+**What the app does instead.** A stub bar. The shape flyout carries seven entries
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout): Rectangle, Ellipse, Line, Triangle,
+Polygon, Star and Custom Shape. Star is implemented — it renders via the shared `shape` processor
+with `figure: 'star'` (see `src/tools/descriptions/shape.notes.md`); only Custom Shape remains
+absent, behind the `commit: 'unimplemented'` stub. Star is a separate parametric shape tool, not a
+Custom Shape preset; its implementation did not require the `.csh` parser or library described
+above. Its behavior and options are researched in `src/tools/descriptions/shape.notes.md` and the
+generated shape documentation.
 
 ### Live type
 
@@ -361,9 +369,10 @@ const { x, y, width, height } = sortRoundRect(rect);
 
 The crop is registered as a `document-operation` (`toolProcessors.ts` — its `crop` entry's
 `commit: 'document-operation'`), so the commit is a frame edit and not a raster: it dispatches no
-fill of any kind, and the band the growth adds is covered by no layer and left transparent whatever
-the bottom layer is — the operator's
-decision, recorded as OVR-1 in [`OVERRIDES.md`](./OVERRIDES.md).
+fill or synthesis of any kind. Existing layer-source pixels outside the old frame still render
+when the frame expands; only areas with no retained source pixels remain transparent. The latter
+empty-band behavior is the operator's decision, recorded as OVR-1 in [`OVERRIDES.md`](./OVERRIDES.md),
+and it does not block recovery of pixels hidden by an earlier crop.
 
 The **Fill** control is not rendered at all: the bar carries an `Aspect Ratio` select and two buttons,
 `Apply` and `Clear` (`Crop.tsx` — the `Crop` options bar), and the only file under
@@ -382,15 +391,16 @@ processor signature), which is the shape a server round trip and three returned 
 take.
 
 **What the app does instead.** An axis-aligned rect with a ratio lock, which may be dragged past the
-image edge: the canvas grows and the added band is transparent. The commit path is honest about what
-it takes — a rect, the current frame, and one document edit — and it says so by writing no fill.
+image edge: the frame grows and retained off-frame source pixels are revealed. Newly exposed areas
+with no source pixels remain transparent. The commit path is honest about what it takes — a rect,
+the current frame, and one document edit — and it says so by writing no fill.
 
 **The frame growth is not this entry's missing capability.** The app can grow the document frame and
-leaves the added band transparent; that current behaviour is recorded by OVR-1 in
-`docs/OVERRIDES.md`. Frame growth is not a Photoshop Fill choice. What this entry records is the
-missing Straighten gesture, Content-Aware Fill, and Generative Expand. Patch-based synthesis and a
-cloud generative call are not landing, so this entry stays open under the lifecycle rule in the
-preamble.
+reveals any retained layer pixels that extend beyond it. Transparent fill applies only to newly
+exposed areas without source pixels; that behavior is OVR-1 in `docs/OVERRIDES.md`. Frame growth is
+not a Photoshop Fill choice. What this entry records is the missing Straighten gesture,
+Content-Aware Fill, and Generative Expand. Patch-based synthesis and a cloud generative call are not
+landing, so this entry stays open under the lifecycle rule in the preamble.
 
 ### Black and White as a hue-sextant weighted mix
 
@@ -839,13 +849,14 @@ map counts instead of adding historical totals.
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
 
-**Star is the strongest documented absent rail entry**, and it is a separate candidate from Custom
-Shape. The flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), while Adobe documents Star as a separate tool
-with its own points and inner/outer radii. The sourced behavior and app-side gap are in
-`src/tools/descriptions/shape.notes.md` and `docs/TOOLS-INVENTORY.md`. The `.csh` parser and preset
-library that block Custom Shape do not block Star; the Star geometry, controls and integration still
-need implementation and verification.
+**Custom Shape is now the only absent rail entry among the shape tools.** It is the strongest
+documented absent rail entry, and it is a separate candidate from Star. The flyout carries Rectangle,
+Ellipse, Line, Triangle, Polygon and Star (all implemented via the shared `shape` processor) plus
+Custom Shape (absent — `commit: 'unimplemented'`) (`toolbar-mapping.ts` — `toolbarMap`'s shape flyout),
+while Adobe documents Star as a separate tool with its own points and inner/outer radii. Star's
+sourced behavior and implementation are in `src/tools/descriptions/shape.notes.md`; the `.csh`
+parser and preset library that block Custom Shape do not block Star. The Star geometry, controls
+and integration are already implemented; only Custom Shape remains unimplemented.
 
 **The rest follow from this file.** The Pen family and Path Type are the work-path object that
 Path Selection and Direct Selection would edit. Object Selection needs an edge-following

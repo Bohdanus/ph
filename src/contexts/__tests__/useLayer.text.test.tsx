@@ -7,7 +7,8 @@ import type { Layer } from '../layer-types.ts';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { useLayers } from '../useLayer.ts';
-import { documentFrameFromSize } from '../document-frame.ts';
+import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
+import { textLayerEditTarget } from '../text-layer-edit.ts';
 import { NEW_LAYER_ACTION, REPLACE_LAYER_SOURCE_ACTION } from '../../util/constants.ts';
 import { createLayerSource } from '../layer-utils.ts';
 
@@ -24,22 +25,25 @@ const mockLayerId = vi.hoisted(() => ({ counter: 0 }));
 
 vi.mock('../layer-utils.ts', async (importActual) => {
   const actual = await importActual<typeof import('../layer-utils.ts')>();
-  const mockCreateLayerSource = vi.fn((params: { source: unknown }): Layer => ({
-    id: `mock-layer-${++mockLayerId.counter}`,
-    name: 'Mock',
-    isBedrock: false,
-    tmpCanvas: null,
-    bitmap: null,
-    visible: true,
-    opacity: 1,
-    locked: false,
-    blendMode: 'source-over',
-    order: 0,
-    pos: { x: 0, y: 0, width: 100, height: 50 },
-    presentationBounds: null,
-    operations: [],
-    source: params.source as Layer['source'],
-  }));
+  const mockCreateLayerSource = vi.fn((params: { source: unknown }): Layer => {
+    const sourcePos = (params.source as { pos?: Layer['pos'] } | null)?.pos;
+    return {
+      id: `mock-layer-${++mockLayerId.counter}`,
+      name: 'Mock',
+      isBedrock: false,
+      tmpCanvas: null,
+      bitmap: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: sourcePos ? { ...sourcePos } : { x: 0, y: 0, width: 100, height: 50 },
+      presentationBounds: null,
+      operations: [],
+      source: params.source as Layer['source'],
+    };
+  });
   return { ...actual, createLayerSource: mockCreateLayerSource as typeof actual.createLayerSource };
 });
 
@@ -47,6 +51,7 @@ function makeTextArgs(overrides: Partial<ToolArgs> = {}): ToolArgs {
   return {
     toolName: 'text',
     text: 'Hello',
+    angle: 0,
     fontSize: 64,
     lineHeight: 1.1,
     rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
@@ -57,6 +62,15 @@ function makeTextArgs(overrides: Partial<ToolArgs> = {}): ToolArgs {
     align: 'left',
     ...overrides,
   } as ToolArgs;
+}
+
+function editArgsForExistingLayer(
+  layer: Layer,
+  frame: DocumentFrame = documentFrameFromSize({ width: 800, height: 600 })
+): TextToolArgs {
+  const target = textLayerEditTarget(layer, frame);
+  if (!target) throw new Error('existing layer could not be entered as text');
+  return target.args;
 }
 
 function useLayerHarness() {
@@ -144,6 +158,41 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
   });
 
+  it('reports refusal when an uncommittable text edit blocks bitmap layer creation', async () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    act(() => result.current.layers.beginTextLayerEdit(layer.id));
+
+    result.current.store.currentArgs.current = {
+      ...editArgsForExistingLayer(layer),
+      text: 'Updated',
+    };
+    vi.mocked(createLayerSource).mockImplementationOnce(() => {
+      throw new Error('render failed');
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let created: boolean | undefined;
+    try {
+      await act(async () => {
+        created = await result.current.layers.createLayerFromBitmap({
+          bitmap: new OffscreenCanvas(20, 10),
+          name: 'Clipboard image',
+          pos: { x: 0, y: 0, width: 20, height: 10 },
+        });
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(created).toBe(false);
+    expect(Object.keys(result.current.store.layers)).toEqual([layer.id]);
+  });
+
   it('creates only one layer when Apply fires after commitDirtyTool on the same args', () => {
     const result = setupTextTool();
     const args = makeTextArgs();
@@ -191,6 +240,41 @@ describe('useLayers text commit idempotency boundary', () => {
     const draft = result.current.store.currentArgs.current as TextToolArgs;
     expect(draft.text).toBe('');
     expect(draft.rect).toBeNull();
+  });
+
+  it('keeps a committed layer angle through re-entry but clears the next draft angle', () => {
+    const result = setupTextTool();
+    const args = makeTextArgs({ angle: 37, fontSize: 48, tracking: 120, color: '#123456' });
+
+    act(() => {
+      result.current.store.currentArgs.current = args;
+      result.current.layers.commitDirtyTool();
+    });
+
+    const layer = Object.values(result.current.store.layers)[0];
+    expect(layer?.source).toMatchObject({ kind: 'tool', args: { angle: 37, fontSize: 48, tracking: 120 } });
+    expect(result.current.store.currentArgs.current).toMatchObject({
+      text: '',
+      rect: null,
+      angle: 0,
+      fontSize: 48,
+      tracking: 120,
+      color: '#123456',
+    });
+
+    if (!layer) throw new Error('the committed text layer is missing');
+    act(() => result.current.layers.beginTextLayerEdit(layer.id));
+    const editingArgs = editArgsForExistingLayer(layer);
+    expect(editingArgs.angle).toBe(37);
+
+    act(() => {
+      result.current.store.currentArgs.current = { ...editingArgs, text: 'Edited' };
+      result.current.layers.commitDirtyTool();
+    });
+
+    const replacedLayer = Object.values(result.current.store.layers)[0];
+    expect(replacedLayer?.source).toMatchObject({ kind: 'tool', args: { angle: 37, text: 'Edited' } });
+    expect(result.current.store.currentArgs.current).toMatchObject({ text: '', rect: null, angle: 0 });
   });
 
   it('creates only one layer when commitDirtyTool fires after a direct Apply commit', () => {
@@ -269,7 +353,7 @@ describe('useLayers text commit idempotency boundary', () => {
   it('replaces the selected text layer for distinct text args', () => {
     const result = setupTextTool();
     const argsA = makeTextArgs();
-    const argsB = makeTextArgs({ text: 'World', rect: { x1: 0, y1: 0, x2: 200, y2: 60 } });
+    const argsB = makeTextArgs({ text: 'World', angle: 29, rect: { x1: 0, y1: 0, x2: 200, y2: 60 } });
 
     act(() => {
       result.current.store.currentArgs.current = argsA;
@@ -294,6 +378,10 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(Object.values(result.current.store.layers)[0]?.source).toMatchObject({
       kind: 'tool',
       args: { ...argsB, rect: { ...(argsB as TextToolArgs).rect, y2: 80.4 } },
+    });
+    expect(result.current.store.currentArgs.current).toMatchObject({
+      angle: 0,
+      fontSize: (argsB as TextToolArgs).fontSize,
     });
     expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
     expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
@@ -324,6 +412,139 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
     expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
     expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
+  });
+
+  it('commits an empty existing text edit through one replacement with its original geometry', () => {
+    const result = setupTextTool();
+    const originalArgs = makeTextArgs({ rect: { x1: 100, y1: 50, x2: 200, y2: 100 } });
+
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    act(() => result.current.layers.beginTextLayerEdit(originalLayer.id));
+
+    const editingArgs = editArgsForExistingLayer(originalLayer);
+    const emptiedArgs = { ...editingArgs, text: '' };
+    act(() => {
+      result.current.store.currentArgs.current = emptiedArgs;
+      result.current.layers.commitDirtyTool();
+    });
+
+    const committedLayer = result.current.store.layers[originalLayer.id];
+    const originalSource = originalLayer.source;
+    if (originalSource?.kind !== 'tool' || originalSource.args.toolName !== 'text') {
+      throw new Error('created source was not a text layer');
+    }
+    const originalRect = originalSource.args.rect;
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
+    expect(Object.keys(result.current.store.layers)).toEqual([originalLayer.id]);
+    expect(committedLayer?.source).toMatchObject({
+      kind: 'tool',
+      args: { text: '', rect: originalRect },
+    });
+    expect(committedLayer?.pos).toEqual(originalLayer.pos);
+    expect(committedLayer?.pos.width).toBeGreaterThan(0);
+    expect(committedLayer?.pos.height).toBeGreaterThan(0);
+    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
+    expect(result.current.store.currentArgs.current).toMatchObject({ text: '', rect: null });
+    expect(result.current.store.currentArgs.current).not.toHaveProperty('editingLayerId');
+    expect(result.current.store.previewLayers.current).not.toHaveProperty(originalLayer.id);
+
+    act(() => result.current.layers.commitDirtyTool());
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
+    expect(result.current.store.layers[originalLayer.id]?.source).toMatchObject({
+      kind: 'tool',
+      args: { text: '' },
+    });
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
+  });
+
+  it('closes a new empty text draft without creating an empty layer', () => {
+    const result = setupTextTool();
+    const emptyDraft = makeTextArgs({ text: '' });
+
+    act(() => {
+      result.current.store.currentArgs.current = emptyDraft;
+      result.current.layers.commitDirtyTool();
+    });
+
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+    expect(result.current.store.layers).toEqual({});
+    expect(result.current.store.history).toEqual([]);
+    expect(result.current.store.currentArgs.current).toMatchObject({ text: '', rect: null });
+  });
+
+  it('preserves an empty edit preview and draft when replacement rendering fails', () => {
+    const result = setupTextTool();
+    const originalArgs = makeTextArgs({ rect: { x1: 100, y1: 50, x2: 200, y2: 100 } });
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    act(() => result.current.layers.beginTextLayerEdit(originalLayer.id));
+
+    const editingArgs = editArgsForExistingLayer(originalLayer);
+    const emptiedArgs = { ...editingArgs, text: '' };
+    result.current.store.currentArgs.current = emptiedArgs;
+    vi.mocked(createLayerSource).mockImplementationOnce(() => {
+      throw new Error('render failed');
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let committed: ReturnType<typeof result.current.layers.commitDirtyTool> = null;
+    try {
+      act(() => {
+        committed = result.current.layers.commitDirtyTool();
+      });
+    } finally {
+      error.mockRestore();
+    }
+
+    expect(committed).toBeNull();
+    expect(result.current.store.currentArgs.current).toBe(emptiedArgs);
+    expect(result.current.store.layers[originalLayer.id]?.source).toEqual(originalLayer.source);
+    expect(result.current.store.previewLayers.current[originalLayer.id]?.layer.source).toEqual(originalLayer.source);
+    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(0);
+  });
+
+  it('refuses an empty replacement with invalid committed geometry and preserves the edit', () => {
+    const result = setupTextTool();
+    const originalArgs = makeTextArgs();
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    const originalSource = originalLayer.source;
+    if (originalSource?.kind !== 'tool' || originalSource.args.toolName !== 'text') {
+      throw new Error('created source was not a text layer');
+    }
+    const invalidRect = { x1: 0, y1: 0, x2: 0, y2: 50 };
+    result.current.store.layers[originalLayer.id] = {
+      ...originalLayer,
+      source: { ...originalSource, args: { ...originalSource.args, rect: invalidRect } },
+    };
+    const emptiedArgs = makeTextArgs({ text: '', editingLayerId: originalLayer.id });
+    result.current.store.currentArgs.current = emptiedArgs;
+
+    let committed: ReturnType<typeof result.current.layers.commitDirtyTool> = null;
+    act(() => {
+      committed = result.current.layers.commitDirtyTool();
+    });
+
+    expect(committed).toBeNull();
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
+    expect(result.current.store.currentArgs.current).toBe(emptiedArgs);
+    expect(result.current.store.layers[originalLayer.id]?.source).toMatchObject({
+      kind: 'tool',
+      args: { text: 'Hello', rect: invalidRect },
+    });
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(0);
   });
 
   it('preserves the active preview and refuses a duplicate when replacement rendering fails', () => {
@@ -500,5 +721,121 @@ describe('useLayers text commit publishes the cleared draft', () => {
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
+  });
+});
+
+describe('useLayers text commit with a nonzero document frame', () => {
+  /**
+   * The frame shifts the document origin off the canvas top-left. These cases pin that text
+   * layer replacement reduces measured rects through the frame (canvasRectToLocal) rather
+   * than by the raw document-space layer pos, which was the defect.
+   */
+  const FRAME_CASES = [
+    {
+      name: 'negative',
+      frame: { x: -100, y: -50, width: 800, height: 600 },
+      expectedLayerPos: { x: -100, y: -50 },
+    },
+    {
+      name: 'positive',
+      frame: { x: 100, y: 50, width: 800, height: 600 },
+      expectedLayerPos: { x: 100, y: 50 },
+    },
+  ] as const;
+
+  beforeEach(() => {
+    vi.mocked(createLayerSource).mockClear();
+    mockLayerId.counter = 0;
+  });
+
+  it.each(FRAME_CASES)(
+    'stores a layer-local rect for a non-empty replacement through a $name frame',
+    ({ frame, expectedLayerPos }) => {
+      const result = setupTextTool();
+      act(() => {
+        result.current.dispatch({
+          type: 'BATCH_UPDATES',
+          payload: { documentFrame: frame },
+        });
+      });
+
+      const argsA = makeTextArgs();
+      act(() => {
+        result.current.store.currentArgs.current = argsA;
+        result.current.layers.commitDirtyTool();
+      });
+
+      const originalLayer = result.current.store.layers['mock-layer-1'];
+      if (originalLayer?.source?.kind !== 'tool' || originalLayer.source.args.toolName !== 'text') {
+        throw new Error('created source was not a text layer');
+      }
+      expect(originalLayer.source.args.rect).toEqual({ x1: 0, y1: 0, x2: 100, y2: 50 });
+
+      // A distinct edit on the same layer triggers the replacement path.
+      const argsB = makeTextArgs({ text: 'World', rect: { x1: 0, y1: 0, x2: 200, y2: 60 } });
+      act(() => {
+        result.current.store.currentArgs.current = argsB;
+        result.current.layers.commitDirtyTool();
+      });
+
+      const layer = result.current.store.layers['mock-layer-1'];
+      expect(layer?.source).toMatchObject({
+        kind: 'tool',
+        args: expect.objectContaining({
+          text: 'World',
+          // Layer-local, not canvas-space. The buggy code reduced by the document-space pos
+          // { x: -100, y: -50 } instead of the canvas-space pos { x: 0, y: 0 }, which would
+          // have produced { x1: 100, y1: 50, x2: 300, y2: 130.4 }.
+          rect: { x1: 0, y1: 0, x2: 200, y2: 80.4 },
+          placeholderUntouched: false,
+        }),
+      });
+      expect(layer?.pos).toEqual({ ...expectedLayerPos, width: 200, height: 80.4 });
+      expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
+      expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+      expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
+    }
+  );
+
+  it('preserves the original layer-local rect for an empty edit through the frame', () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.dispatch({
+        type: 'BATCH_UPDATES',
+        payload: { documentFrame: FRAME_CASES[0].frame },
+      });
+    });
+
+    const originalArgs = makeTextArgs({ rect: { x1: 100, y1: 50, x2: 200, y2: 100 } });
+    act(() => {
+      result.current.store.currentArgs.current = originalArgs;
+      result.current.layers.commitDirtyTool();
+    });
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    act(() => result.current.layers.beginTextLayerEdit(originalLayer.id));
+
+    const editingArgs = editArgsForExistingLayer(originalLayer, FRAME_CASES[0].frame);
+    const emptiedArgs = { ...editingArgs, text: '' };
+    act(() => {
+      result.current.store.currentArgs.current = emptiedArgs;
+      result.current.layers.commitDirtyTool();
+    });
+
+    const committedLayer = result.current.store.layers[originalLayer.id];
+    const originalSource = originalLayer.source;
+    if (originalSource?.kind !== 'tool' || originalSource.args.toolName !== 'text') {
+      throw new Error('created source was not a text layer');
+    }
+    const originalRect = originalSource.args.rect;
+
+    // The empty-edit path does NOT reduce through the frame — it preserves the original
+    // layer-local rect verbatim. This is the exception that proves the rule: a second
+    // reduction would corrupt an already-correct local rect.
+    expect(committedLayer?.source).toMatchObject({
+      kind: 'tool',
+      args: { text: '', rect: originalRect },
+    });
+    expect(committedLayer?.pos).toEqual(originalLayer.pos);
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
   });
 });

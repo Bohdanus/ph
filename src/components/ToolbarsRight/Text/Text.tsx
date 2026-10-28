@@ -1,9 +1,10 @@
 import React, { type ChangeEvent, type KeyboardEvent, useRef, useState } from 'react';
-import { calculateNewRect, reduceRect, sortRect, sortedRectToPos } from '../../../util/rect.ts';
+import { calculateNewRect, canvasRectToLocal as toLocal, sortRect, sortedRectToPos } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { canvasToDocumentPos, documentFrameFromSize } from '../../../contexts/document-frame.ts';
+import { isValidTextLayerGeometry, isValidTextRect } from '../../../contexts/text-layer-edit.ts';
 import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
 import {
@@ -11,6 +12,7 @@ import {
   FONT_SIZE_MIN,
   MAX_LINE_HEIGHT,
   MIN_LINE_HEIGHT,
+  clearTextDraftArgs,
   TRACKING_MAX,
   TRACKING_MIN,
   resolveTextKind,
@@ -49,6 +51,19 @@ const Text: React.FC<{}> = () => {
   const { text = '', rect = null, color } = toolArgs;
   /** A placed box remains an edit session even after the user deletes every character. */
   const editing = Boolean(rect);
+  const emptyEditLayer = toolArgs.editingLayerId ? layers[toolArgs.editingLayerId] : undefined;
+  const emptyEditArgs =
+    emptyEditLayer?.source?.kind === 'tool' && isTextToolArgs(emptyEditLayer.source.args)
+      ? emptyEditLayer.source.args
+      : null;
+  const emptyEditRect = emptyEditArgs?.rect ?? null;
+  const canCommitEmptyEdit = Boolean(
+    editing &&
+    toolArgs.editingLayerId &&
+    !text &&
+    emptyEditLayer &&
+    isValidTextLayerGeometry(emptyEditRect, emptyEditLayer.pos)
+  );
 
   /**
    * Publishing a style change and the rectangle it implies as ONE call.
@@ -179,9 +194,8 @@ const Text: React.FC<{}> = () => {
    * this function was the odd one out rather than the rule being wrong somewhere.
    */
   const applyText = () => {
-    if (!editing || !text || !rect) return;
+    if (!editing || !rect || (!text && !canCommitEmptyEdit)) return;
     if (appliedArgsRef.current === toolArgs) return;
-    const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
     const editingLayerId = toolArgs.editingLayerId;
     const activeLayer = editingLayerId ? layers[editingLayerId] : activeLayerId ? layers[activeLayerId] : undefined;
     if (
@@ -191,22 +205,37 @@ const Text: React.FC<{}> = () => {
       clear();
       return;
     }
+    const activeTextArgs =
+      activeLayer?.source?.kind === 'tool' && isTextToolArgs(activeLayer.source.args) ? activeLayer.source.args : null;
+    const activeTextLayer = activeTextArgs && activeLayer ? activeLayer : null;
+    const originalRect = canCommitEmptyEdit ? (activeTextArgs?.rect ?? null) : null;
+    if (canCommitEmptyEdit && (!activeTextLayer || !isValidTextLayerGeometry(originalRect, activeTextLayer.pos))) {
+      return;
+    }
+
+    const measuredRect = canCommitEmptyEdit ? originalRect : (calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect);
+    if (!isValidTextRect(measuredRect)) return;
     const localPos = sortedRectToPos(sortRect(measuredRect));
-    const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+    const pos =
+      canCommitEmptyEdit && activeTextLayer
+        ? activeTextLayer.pos
+        : canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
     const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
     const committedArgs = { ...persistedArgs, placeholderUntouched: false, rect: measuredRect };
     const editsActiveLayer =
-      activeLayer?.source?.kind === 'tool' &&
-      activeLayer.source.args.toolName === 'text' &&
-      (Boolean(editingLayerId) || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y));
-    if (editsActiveLayer && activeLayer) {
+      activeTextLayer !== null &&
+      (Boolean(editingLayerId) || (pos.x === activeTextLayer.pos.x && pos.y === activeTextLayer.pos.y));
+    if (editsActiveLayer && activeLayer && activeTextLayer) {
       // Layer-LOCAL rect, as the create arm stores it and as the creator renders it: the raster is
       // built at `pos` size and the type is drawn at the rect's own coordinates. An unreduced
       // canvas-space rect therefore renders an EMPTY layer as soon as the document frame is not the
-      // origin. `commitDirtyTool`'s replace arm reduces for the same reason.
+      // origin. Existing empty edits are the exception: their source rect is already layer-local,
+      // so preserve it with the original position rather than reducing it a second time.
+      const replacementRect = canCommitEmptyEdit ? originalRect : toLocal(measuredRect, pos, currentDocumentFrame);
+      if (!isValidTextLayerGeometry(replacementRect, pos)) return;
       const replaced = replaceLayerSource(activeLayer.id, {
         kind: 'tool',
-        args: { ...persistedArgs, ...committedArgs, rect: reduceRect(sortRect(measuredRect), pos) },
+        args: { ...persistedArgs, ...committedArgs, rect: replacementRect },
         pos,
       });
       if (replaced === null) return;
@@ -220,13 +249,13 @@ const Text: React.FC<{}> = () => {
       createLayerFromTool({ args: committedArgs });
     }
     appliedArgsRef.current = toolArgs;
-    onChange({ ...persistedArgs, text: '', rect: null });
+    onChange(clearTextDraftArgs(persistedArgs));
   };
 
   const clear = () => {
     if (toolArgs.editingLayerId) cancelLayerPreview(toolArgs.editingLayerId);
     const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
-    onChange({ ...persistedArgs, text: '', rect: null });
+    onChange(clearTextDraftArgs(persistedArgs));
   };
 
   return (
@@ -275,7 +304,7 @@ const Text: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="font-size-input"
-          className="flex mb-2 justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex mb-1 justify-between text-[10px] leading-none font-medium text-gray-700 dark:text-gray-300"
         >
           Font Size
           <span className="text-gray-500 dark:text-gray-400">
@@ -302,7 +331,7 @@ const Text: React.FC<{}> = () => {
           onChange={handleFontSizeChange}
           onBlur={handleFontSizeCommit}
           onKeyDown={handleFontSizeKeyDown}
-          className="w-24 h-9 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          className="w-24 h-8 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>
 
@@ -489,7 +518,7 @@ const Text: React.FC<{}> = () => {
            * open — the `disabled={!text || !rect}` this replaces was the old half-gate, and it was
            * reachable only because the field could be emptied, which it no longer can.
            */}
-          <button className={PRIMARY_BUTTON} disabled={!editing || !text} onClick={applyText}>
+          <button className={PRIMARY_BUTTON} disabled={!editing || (!text && !canCommitEmptyEdit)} onClick={applyText}>
             Commit
           </button>
           <button className={SECONDARY_BUTTON} disabled={!editing} onClick={clear}>

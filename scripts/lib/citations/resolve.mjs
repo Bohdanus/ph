@@ -405,7 +405,8 @@ export const resolveHeadingAtLine = (text, line) => {
  * of which appears in this repository's own import lines.
  */
 const CITATION_EXTENSION_SOURCE =
-  'ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml|html|svg|wasm|avif|webp|jpg|png';
+  'ts|tsx|mts|cts|js|jsx|mjs|cjs|json|jsonc|md|mdx|scss|css|yml|yaml|toml|sh|bash|html|htm|svg|xml|gitignore|gitattributes|dockerignore|npmignore|npmrc|editorconfig|pre-commit|wasm|avif|webp|jpg|png';
+const CITATION_TARGET_SOURCE = `(?:\\.husky/pre-commit|(?:[\\w./@-]+\\.|\\.)(?:${CITATION_EXTENSION_SOURCE}))`;
 
 /**
  * The gate's own detection pattern, exported so the gate cannot hold a second copy.
@@ -416,7 +417,7 @@ const CITATION_EXTENSION_SOURCE =
  * existed. The sweep and the gate must agree on what a citation IS before either can be trusted
  * about how many are left.
  */
-const LINE_NUMBER_CITATION = new RegExp(`[\\w./@-]+\\.(?:${CITATION_EXTENSION_SOURCE}):\\d+`, 'g');
+const LINE_NUMBER_CITATION = new RegExp(`${CITATION_TARGET_SOURCE}:\\d+`, 'g');
 
 /**
  * A fenced code block's contents, removed.
@@ -427,8 +428,85 @@ const LINE_NUMBER_CITATION = new RegExp(`[\\w./@-]+\\.(?:${CITATION_EXTENSION_SO
  * pass for the unterminated fence, which strips to the end of the document — the safe direction,
  * since a document that forgets its closing fence loses the check on everything after it.
  */
-const withoutFencedCode = (markdown) =>
-  markdown.replace(/^[ \t]{0,3}```[\s\S]*?^[ \t]{0,3}```[^\n]*$/gm, '').replace(/^[ \t]{0,3}```[\s\S]*$/m, '');
+const withoutFencedCode = (markdown) => {
+  const lines = markdown.split('\n');
+  let fenceCharacter = null;
+  let fenceLength = 0;
+  let fenceListIndent = 0;
+  let listIndent = null;
+  let inHtmlComment = false;
+
+  return lines
+    .map((line) => {
+      if (fenceCharacter !== null) {
+        const containerLine = line.replace(/^(?: {0,3}> ?)+/, '').slice(fenceListIndent);
+        const closing = /^[ \t]{0,3}(`+|~+)[ \t]*$/.exec(containerLine);
+        if (closing && closing[1][0] === fenceCharacter && closing[1].length >= fenceLength) {
+          fenceCharacter = null;
+          fenceLength = 0;
+          fenceListIndent = 0;
+        }
+        return '';
+      }
+
+      let visible = '';
+      let cursor = 0;
+      while (cursor < line.length) {
+        if (inHtmlComment) {
+          const close = line.indexOf('-->', cursor);
+          if (close < 0) {
+            visible += 'x'.repeat(line.length - cursor);
+            cursor = line.length;
+          } else {
+            visible += 'x'.repeat(close + 3 - cursor);
+            cursor = close + 3;
+            inHtmlComment = false;
+          }
+        } else {
+          const open = line.indexOf('<!--', cursor);
+          if (open < 0) {
+            visible += line.slice(cursor);
+            cursor = line.length;
+          } else {
+            visible += line.slice(cursor, open) + 'xxxx';
+            cursor = open + 4;
+            inHtmlComment = true;
+          }
+        }
+      }
+
+      let containerLine = visible.replace(/^(?: {0,3}> ?)+/, '');
+      let removedListIndent = 0;
+      const listMarker = /^([ ]{0,3}(?:[-+*]|\d+[.)])[ \t]+)/.exec(containerLine);
+      if (listMarker) {
+        listIndent = listMarker[0].length;
+        removedListIndent = listIndent;
+        containerLine = containerLine.slice(listIndent);
+      } else if (listIndent !== null && !containerLine.trim()) {
+        // Blank lines can occur within a loose list item without ending its container.
+      } else if (listIndent !== null) {
+        const indent = /^[ ]*/.exec(containerLine)[0].length;
+        if (indent >= listIndent) {
+          removedListIndent = listIndent;
+          containerLine = containerLine.slice(listIndent);
+        } else listIndent = null;
+      }
+      if (fenceCharacter === null) {
+        const nestedFence = listIndent === null ? null : /^([ \t]+)(`{3,}|~{3,})/.exec(containerLine);
+        const opening = nestedFence
+          ? [`${nestedFence[1]}${nestedFence[2]}`, nestedFence[2]]
+          : /^[ \t]{0,3}(`{3,}|~{3,})/.exec(containerLine);
+        if (!opening) return line;
+        fenceCharacter = opening[1][0];
+        fenceLength = opening[1].length;
+        fenceListIndent = nestedFence ? removedListIndent + nestedFence[1].length : removedListIndent;
+        inHtmlComment = false;
+        return '';
+      }
+      return line;
+    })
+    .join('\n');
+};
 
 /**
  * The citation forms this repository actually writes, in one pattern.
@@ -466,7 +544,7 @@ const NUMBER_LIST = String.raw`\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*`;
  */
 const CONTINUATION_LIST = String.raw`\d+(?:-\d+)?(?:,:\d+(?:-\d+)?)*`;
 
-const FULL_CITATION = new RegExp('`?([\\w./@-]+\\.(?:' + CITATION_EXTENSION_SOURCE + ')):(' + NUMBER_LIST + ')`?', 'g');
+const FULL_CITATION = new RegExp('`?(' + CITATION_TARGET_SOURCE + '):(' + NUMBER_LIST + ')`?', 'g');
 const CONTINUATION = new RegExp('`:(' + CONTINUATION_LIST + ')`', 'g');
 
 /**

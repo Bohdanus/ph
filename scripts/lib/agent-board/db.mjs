@@ -43,8 +43,15 @@ import { execFileSync } from 'node:child_process';
  * for a different migration, and a board stamped 2 by either script would be
  * indistinguishable from a board stamped 2 by the other. v2 therefore means
  * `migrateFileLockAttribution` and only that, which is why `issue_files` is v3.
+ *
+ * v4 was the GPT token-budget poll subsystem. It was removed because the
+ * readings it produced were unreliable (always "incomplete" with no budget),
+ * so the routing policy it fed was fail-closed and never informed a real
+ * subagent decision. The version is retained at 4 so existing boards are not
+ * refused; the `token_window` table and its migration step are kept as no-ops
+ * for backward compatibility.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /**
  * Issue statuses whose issues still describe work somebody may pick up. A
@@ -716,7 +723,19 @@ export class Board {
    * answers.
    */
   migrationSteps() {
-    return { 1: () => this.migrateFileLockAttribution(), 2: () => this.indexIssueFiles() };
+    return {
+      1: () => this.migrateFileLockAttribution(),
+      2: () => this.indexIssueFiles(),
+      3: () => this.migrateTokenConsumptionKnown(),
+    };
+  }
+
+  migrateTokenConsumptionKnown() {
+    // The GPT token-budget poll subsystem has been removed. This v3→v4 step is
+    // retained as a no-op so that boards at v3 can still advance to v4 without
+    // error; existing `token_window` tables (if present in an old database) are
+    // left untouched as dead data.
+    return true;
   }
 
   /**
@@ -2524,16 +2543,12 @@ export class Board {
   }
 
   /**
-   * The maintenance a board should never need a human to run: keep my own
-   * claims and file locks alive because I exist, then release the ones whose
-   * holder does not.
+   * Renew this caller's own claims and locks, then apply the global expiry sweep.
    *
-   * Order matters and is the whole reason this is safe. Renewing first means a
-   * working agent's lease is never the thing that gets swept, so the sweep can
-   * only ever reclaim a holding whose worktree is gone — which is precisely
-   * when reclaiming it is correct. Sweeping first, as a bare `doctor` on every
-   * open would, hands a 45-minute timer the power to strip a lock off an agent
-   * in the middle of an edit.
+   * Renewal protects only this caller's rows, and only while its worktree
+   * exists. The following sweep releases any expired lease even if its owner's
+   * worktree still exists. This is not proof that a session ended: a long task
+   * that outlives its lease can lose the claim to a peer's next board command.
    */
   autoSweep({ at = this.now(), dryRun = false } = {}) {
     if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at, dryRun, record: false }) };

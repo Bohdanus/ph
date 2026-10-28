@@ -49,10 +49,9 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
  * WHAT IS REPORTED BUT NOT FAILED
  *   Console warnings and failed requests are printed and attached to the report
  *   without failing the test. Warnings are advisory by construction, and this
- *   app's `index.html:18,35` loads a Google Tag Manager container that beacons to
- *   `region1.google-analytics.com` on every page — including every e2e run, which
- *   makes the suite non-hermetic and would otherwise fail ~36 times over a
- *   network call no test controls.
+ *   app's `index.html` is hermetic — the Google Tag Manager container that
+ *   previously beaconed to `region1.google-analytics.com` on every page was
+ *   removed by `c5f1759b`, so the suite no longer inherits any external beacon.
  */
 export interface ConsoleEntry {
   text: string;

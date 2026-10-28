@@ -90,6 +90,59 @@ const pngFileBytes = (width: number, height: number, extraChunks: Uint8Array[] =
     pngChunk('IDAT', Uint8Array.of(0)),
     pngChunk('IEND', new Uint8Array())
   );
+const concatenateBytes = (...parts: Uint8Array[]) => {
+  const output = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+};
+const uint16be = (value: number) => bytes((value >> 8) & 0xff, value & 0xff);
+const uint16le = (value: number) => bytes(value & 0xff, (value >> 8) & 0xff);
+const uint24le = (value: number) => bytes(value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff);
+const uint32le = (value: number) =>
+  bytes(value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff);
+const jpegSegment = (marker: number, payload: Uint8Array) => {
+  const length = payload.length + 2;
+  return concatenateBytes(bytes(0xff, marker), uint16be(length), payload);
+};
+const jpegSofPayload = (width: number, height: number) =>
+  bytes(8, ...uint16be(height), ...uint16be(width), 1, 1, 0x11, 0);
+const jpegFileBytes = (width: number, height: number, sofMarker = 0xc0, segmentsBeforeSof: Uint8Array[] = []) =>
+  concatenateBytes(
+    bytes(0xff, 0xd8),
+    ...segmentsBeforeSof,
+    jpegSegment(sofMarker, jpegSofPayload(width, height)),
+    bytes(0xff, 0xda, 0x00, 0x08, 1, 1, 0, 0, 63, 0, 0, 0xff, 0xd9)
+  );
+const webpChunk = (fourCc: string, payload: Uint8Array) => {
+  const size = payload.length;
+  return concatenateBytes(ascii(fourCc), uint32le(size), payload, ...(size % 2 === 1 ? [bytes(0)] : []));
+};
+const webpFileBytes = (...chunks: Uint8Array[]) => {
+  const body = concatenateBytes(ascii('WEBP'), ...chunks);
+  return concatenateBytes(ascii('RIFF'), uint32le(body.length), body);
+};
+const webpVp8Payload = (width: number, height: number) =>
+  bytes(0x10, 0x00, 0x00, 0x9d, 0x01, 0x2a, ...uint16le(width), ...uint16le(height));
+const webpVp8lPayload = (width: number, height: number, alpha = false, version = 0) => {
+  const dimensions = (width - 1) | ((height - 1) << 14) | (alpha ? 1 << 28 : 0) | (version << 29);
+  return bytes(0x2f, ...uint32le(dimensions));
+};
+const webpVp8xPayload = (width: number, height: number, flags = 0) =>
+  bytes(flags, 0, 0, 0, ...uint24le(width - 1), ...uint24le(height - 1));
+const webpAnmfPayload = (x: number, y: number, width: number, height: number, ...chunks: Uint8Array[]) =>
+  concatenateBytes(
+    uint24le(x),
+    uint24le(y),
+    uint24le(width - 1),
+    uint24le(height - 1),
+    uint24le(0),
+    bytes(0),
+    ...chunks
+  );
 const pngDataUrl = (width: number, height: number, extraChunks: Uint8Array[] = []) =>
   `data:image/png;base64,${btoa(String.fromCharCode(...pngFileBytes(width, height, extraChunks)))}`;
 const animatedPngDataUrl = (width: number, height: number) => {
@@ -117,9 +170,20 @@ function installBrowserDecoders(dimensions: { width?: number; height?: number } 
     reader: undefined as StubReader | undefined,
     readerInput: undefined as Blob | undefined,
     image: undefined as HTMLImageElement | undefined,
+    imageSrc: undefined as string | undefined,
+    objectUrls: [] as Array<{ source: Blob | MediaSource; url: string }>,
+    revokedObjectUrls: [] as string[],
     imageMode: 'load' as 'load' | 'error',
     readerMode: 'load' as 'load' | 'error',
   };
+  vi.spyOn(globalThis.URL, 'createObjectURL').mockImplementation((source) => {
+    const url = `blob:decoded-${state.objectUrls.length + 1}`;
+    state.objectUrls.push({ source, url });
+    return url;
+  });
+  vi.spyOn(globalThis.URL, 'revokeObjectURL').mockImplementation((url) => {
+    state.revokedObjectUrls.push(url);
+  });
   vi.spyOn(globalThis, 'FileReader').mockImplementation(
     class {
       onload: StubReader['onload'] = null;
@@ -144,8 +208,11 @@ function installBrowserDecoders(dimensions: { width?: number; height?: number } 
     const settle = () =>
       state.imageMode === 'load' ? this.onload?.(new Event('load')) : this.onerror?.(new Event('error'));
     Object.defineProperty(this, 'src', {
-      get: () => `data:${''}`,
-      set: () => settle(),
+      get: () => state.imageSrc ?? '',
+      set: (value: string) => {
+        state.imageSrc = value;
+        settle();
+      },
       configurable: true,
     });
     return this;
@@ -1143,6 +1210,20 @@ describe('loadImageFile rejection paths', () => {
     expect(decoders.reader).toBeUndefined();
   });
 
+  it('fails closed when the outer CSS walk and one variable-value walk exceed the shared node bound', async () => {
+    const decoders = installBrowserDecoders();
+    // Each parse visits about 10,000 nodes, below the 20,000 limit on its own. Counting both
+    // the outer stylesheet and the second value parse together must cross the shared limit.
+    const references = Array.from({ length: 5_000 }, () => 'var(--missing)').join(' ');
+    const file = new File([`<svg><rect style="color:${references}"/></svg>`], 'complex-value.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
   it('allows same-document SVG resource references', async () => {
     const decoders = installBrowserDecoders();
     const file = new File(
@@ -1297,22 +1378,578 @@ describe('loadImageFile rejection paths', () => {
     await expect(loadDocumentFile(file)).rejects.toThrow('Failed to load image');
   });
 
+  describe('pre-decode JPEG and WebP limits', () => {
+    it.each([0xc0, 0xc1, 0xc2, 0xc3, 0xc9, 0xca, 0xcb])(
+      'uses dimensions from the JPEG SOF marker 0x%s without restricting decoder process support',
+      async (sofMarker) => {
+        const decoders = installBrowserDecoders();
+        const file = new File([jpegFileBytes(1, 1, sofMarker)], 'photo.jpg', { type: 'image/jpeg' });
+
+        await loadDocumentFile(file);
+
+        expect(decoders.reader).toBeUndefined();
+        expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+        expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+      }
+    );
+
+    it.each([0xc5, 0xc6, 0xc7, 0xcd, 0xce, 0xcf])(
+      'rejects differential JPEG SOF marker 0x%s before native decode',
+      async (sofMarker) => {
+        const decoders = installBrowserDecoders();
+        const file = new File([jpegFileBytes(1, 1, sofMarker)], 'hierarchical.jpg', { type: 'image/jpeg' });
+
+        await expect(loadDocumentFile(file)).rejects.toThrow(/differential.*safely preflighted/i);
+
+        expect(decoders.reader).toBeUndefined();
+        expect(decoders.image).toBeUndefined();
+        expect(decoders.objectUrls).toHaveLength(0);
+      }
+    );
+
+    it('rejects hierarchical JPEG before native decode', async () => {
+      const decoders = installBrowserDecoders();
+      const dhp = jpegSegment(0xde, jpegSofPayload(10_000, 10_000));
+      const file = new File([jpegFileBytes(1, 1, 0xc0, [dhp])], 'hierarchy.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/hierarchical.*safely preflighted/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects an oversized JPEG SOF before constructing a decoder', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File([jpegFileBytes(10_001, 10_000)], 'oversized.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/too large/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('accepts a JPEG at the pixel ceiling through a Blob URL', async () => {
+      const decoders = installBrowserDecoders({ width: 10_000, height: 10_000 });
+      const file = new File([jpegFileBytes(10_000, 10_000, 0xc2)], 'maximum.jpg', { type: 'image/jpeg' });
+
+      const result = await loadDocumentFile(file);
+
+      expect(result).toMatchObject({ fileName: 'maximum.jpg', image: decoders.image });
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+      expect(decoders.imageSrc).toBe('blob:decoded-1');
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('ignores marker-like SOF bytes inside a JPEG metadata segment', async () => {
+      const decoders = installBrowserDecoders({ width: 1, height: 1 });
+      const fakeOversizedSof = jpegSegment(0xc0, jpegSofPayload(10_001, 10_000));
+      const appSegment = jpegSegment(0xe1, fakeOversizedSof);
+      const file = new File([jpegFileBytes(1, 1, 0xc0, [appSegment])], 'metadata.jpg', { type: 'image/jpeg' });
+
+      const result = await loadDocumentFile(file);
+
+      expect(result).toMatchObject({ fileName: 'metadata.jpg', image: decoders.image });
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(1);
+    });
+
+    it('rejects a zero-height JPEG frame before native decode because DNL is not preflighted', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File([jpegFileBytes(1, 0)], 'deferred-height.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/height|dimension/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('accepts repeated JPEG marker-fill bytes before a length-delimited marker', async () => {
+      const decoders = installBrowserDecoders();
+      const jpeg = concatenateBytes(bytes(0xff, 0xd8, 0xff, 0xff, 0xe0, 0x00, 0x02), jpegFileBytes(1, 1).subarray(2));
+      const file = new File([jpeg], 'filled-marker.jpg', { type: 'image/jpeg' });
+
+      const result = await loadDocumentFile(file);
+
+      expect(result).toMatchObject({ fileName: 'filled-marker.jpg', image: decoders.image });
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(1);
+    });
+
+    it.each([
+      ['marker length below two bytes', bytes(0xff, 0xd8, 0xff, 0xe1, 0x00, 0x01, 0xff, 0xda, 0x00, 0x02)],
+      ['SOS before any frame header', bytes(0xff, 0xd8, 0xff, 0xda, 0x00, 0x02, 0xff, 0xd9)],
+      ['stuffed zero at a marker boundary', bytes(0xff, 0xd8, 0xff, 0x00, 0xff, 0xda, 0x00, 0x02)],
+    ])('rejects JPEG with %s before decoder creation', async (_reason, contents) => {
+      const decoders = installBrowserDecoders();
+      const file = new File([contents], 'malformed.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/JPEG|image/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects a stuffed zero at a marker boundary even when a valid SOF follows', async () => {
+      const decoders = installBrowserDecoders();
+      const jpeg = concatenateBytes(
+        bytes(0xff, 0xd8, 0xff, 0x00),
+        jpegSegment(0xc0, jpegSofPayload(1, 1)),
+        bytes(0xff, 0xda, 0x00, 0x08, 1, 1, 0, 0, 63, 0, 0, 0xff, 0xd9)
+      );
+      const file = new File([jpeg], 'stuffed-boundary.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/stuffed zero at a marker boundary/i);
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects a DNL marker after the first JPEG scan before native decode', async () => {
+      const decoders = installBrowserDecoders();
+      const base = jpegFileBytes(1, 1);
+      const dnl = jpegSegment(0xdc, uint16be(10_000));
+      const jpeg = concatenateBytes(base.subarray(0, base.length - 2), dnl, bytes(0xff, 0xd9));
+      const file = new File([jpeg], 'dnl-redefinition.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/DNL dimensions.*safely preflighted/i);
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('bounds JPEG marker-only runs before a frame header', async () => {
+      const decoders = installBrowserDecoders();
+      const markers = new Uint8Array(65_537 * 2);
+      for (let offset = 0; offset < markers.length; offset += 2) {
+        markers[offset] = 0xff;
+        markers[offset + 1] = 0xd0;
+      }
+      const file = new File([concatenateBytes(bytes(0xff, 0xd8), markers)], 'marker-run.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/excessive number of markers/i);
+
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('accepts a simple VP8 WebP at the pixel ceiling through a Blob URL', async () => {
+      const decoders = installBrowserDecoders({ width: 10_000, height: 10_000 });
+      const file = new File([webpFileBytes(webpChunk('VP8 ', webpVp8Payload(10_000, 10_000)))], 'photo.webp', {
+        type: 'image/webp',
+      });
+
+      const result = await loadDocumentFile(file);
+
+      expect(result).toMatchObject({ fileName: 'photo.webp', image: decoders.image });
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+      expect(decoders.imageSrc).toBe('blob:decoded-1');
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('accepts a simple VP8L WebP at the pixel ceiling through a Blob URL', async () => {
+      const decoders = installBrowserDecoders({ width: 10_000, height: 10_000 });
+      const file = new File([webpFileBytes(webpChunk('VP8L', webpVp8lPayload(10_000, 10_000)))], 'photo.webp', {
+        type: 'image/webp',
+      });
+
+      const result = await loadDocumentFile(file);
+
+      expect(result).toMatchObject({ fileName: 'photo.webp', image: decoders.image });
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('accepts the VP8L alpha-used bit while checking the version field', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File([webpFileBytes(webpChunk('VP8L', webpVp8lPayload(1, 1, true)))], 'alpha.webp', {
+        type: 'image/webp',
+      });
+
+      const result = await loadDocumentFile(file);
+
+      expect('image' in result ? result.image : undefined).toBe(decoders.image);
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(1);
+    });
+
+    it('keeps animated WebP first-frame import while bounding canvas and frame dimensions', async () => {
+      const decoders = installBrowserDecoders({ width: 2, height: 2 });
+      const animated = webpFileBytes(
+        webpChunk('VP8X', webpVp8xPayload(2, 2, 0x02)),
+        webpChunk('ANIM', bytes(0, 0, 0, 0, 0, 0)),
+        webpChunk('ANMF', webpAnmfPayload(0, 0, 2, 2, webpChunk('VP8 ', webpVp8Payload(2, 2))))
+      );
+      const file = new File([animated], 'animated.webp', { type: 'image/webp' });
+
+      const result = await loadDocumentFile(file);
+
+      expect('image' in result ? result.image : undefined).toBe(decoders.image);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('accepts EXIF and XMP metadata after animated WebP frames', async () => {
+      const decoders = installBrowserDecoders({ width: 1, height: 1 });
+      const animated = webpFileBytes(
+        webpChunk('VP8X', webpVp8xPayload(1, 1, 0x0e)),
+        webpChunk('ANIM', bytes(0, 0, 0, 0, 0, 0)),
+        webpChunk('ANMF', webpAnmfPayload(0, 0, 1, 1, webpChunk('VP8 ', webpVp8Payload(1, 1)))),
+        webpChunk('XMP ', bytes(1)),
+        webpChunk('EXIF', bytes(2))
+      );
+      const file = new File([animated], 'animated-metadata.webp', { type: 'image/webp' });
+
+      const result = await loadDocumentFile(file);
+
+      expect('image' in result ? result.image : undefined).toBe(decoders.image);
+      expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+    });
+
+    it('ignores ANIM when the VP8X animation feature flag is clear', async () => {
+      const decoders = installBrowserDecoders({ width: 2, height: 2 });
+      const stillWithStrayAnim = webpFileBytes(
+        webpChunk('VP8X', webpVp8xPayload(2, 2)),
+        webpChunk('ANIM', bytes(0, 0, 0, 0, 0, 0)),
+        webpChunk('VP8 ', webpVp8Payload(2, 2))
+      );
+      const file = new File([stillWithStrayAnim], 'stray-animation-control.webp', { type: 'image/webp' });
+
+      const result = await loadDocumentFile(file);
+
+      expect('image' in result ? result.image : undefined).toBe(decoders.image);
+      expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+    });
+
+    it('bounds cumulative nested WebP animation subchunks', async () => {
+      const decoders = installBrowserDecoders();
+      const jpegLikeChunk = webpChunk('JUNK', new Uint8Array());
+      const nestedChunks = new Uint8Array(jpegLikeChunk.length * 65_535);
+      for (let offset = 0; offset < nestedChunks.length; offset += jpegLikeChunk.length) {
+        nestedChunks.set(jpegLikeChunk, offset);
+      }
+      const frame = webpAnmfPayload(0, 0, 1, 1, webpChunk('VP8 ', webpVp8Payload(1, 1)), nestedChunks);
+      const animated = webpFileBytes(
+        webpChunk('VP8X', webpVp8xPayload(1, 1, 0x02)),
+        webpChunk('ANIM', bytes(0, 0, 0, 0, 0, 0)),
+        webpChunk('ANMF', frame)
+      );
+      const file = new File([animated], 'many-subchunks.webp', { type: 'image/webp' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/excessive chunk sequence/i);
+
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects ICCP metadata after a WebP image bitstream', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [
+          webpFileBytes(
+            webpChunk('VP8X', webpVp8xPayload(1, 1, 0x20)),
+            webpChunk('VP8 ', webpVp8Payload(1, 1)),
+            webpChunk('ICCP', bytes(1))
+          ),
+        ],
+        'late-profile.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/ICC profile.*invalid position/i);
+      expect(decoders.image).toBeUndefined();
+    });
+
+    it('rejects ALPH metadata after a WebP image bitstream', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [
+          webpFileBytes(
+            webpChunk('VP8X', webpVp8xPayload(1, 1, 0x10)),
+            webpChunk('VP8 ', webpVp8Payload(1, 1)),
+            webpChunk('ALPH', bytes(0))
+          ),
+        ],
+        'late-alpha.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/alpha chunk.*invalid position/i);
+      expect(decoders.image).toBeUndefined();
+    });
+
+    it('rejects ICCP metadata after an ALPH subchunk', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [
+          webpFileBytes(
+            webpChunk('VP8X', webpVp8xPayload(1, 1, 0x30)),
+            webpChunk('ALPH', bytes(0)),
+            webpChunk('ICCP', bytes(1)),
+            webpChunk('VP8 ', webpVp8Payload(1, 1))
+          ),
+        ],
+        'late-profile-after-alpha.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/ICC profile.*invalid position/i);
+      expect(decoders.image).toBeUndefined();
+    });
+
+    it('rejects a VP8X alpha flag that disagrees with an extended VP8L bitstream', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [webpFileBytes(webpChunk('VP8X', webpVp8xPayload(1, 1, 0x10)), webpChunk('VP8L', webpVp8lPayload(1, 1)))],
+        'alpha-flag-mismatch.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/feature flags do not match/i);
+      expect(decoders.image).toBeUndefined();
+    });
+
+    it('rejects an animated VP8X alpha flag when no frame carries alpha', async () => {
+      const decoders = installBrowserDecoders();
+      const animated = webpFileBytes(
+        webpChunk('VP8X', webpVp8xPayload(1, 1, 0x12)),
+        webpChunk('ANIM', bytes(0, 0, 0, 0, 0, 0)),
+        webpChunk('ANMF', webpAnmfPayload(0, 0, 1, 1, webpChunk('VP8 ', webpVp8Payload(1, 1))))
+      );
+      const file = new File([animated], 'animated-alpha-flag-mismatch.webp', { type: 'image/webp' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/feature flags do not match/i);
+      expect(decoders.image).toBeUndefined();
+    });
+
+    it('rejects an animated WebP frame outside its canvas before constructing a decoder', async () => {
+      const decoders = installBrowserDecoders();
+      const animated = webpFileBytes(
+        webpChunk('VP8X', webpVp8xPayload(2, 2, 0x02)),
+        webpChunk('ANIM', bytes(0, 0, 0, 0, 0, 0)),
+        webpChunk('ANMF', webpAnmfPayload(1, 0, 1, 1, webpChunk('VP8 ', webpVp8Payload(1, 1))))
+      );
+      const file = new File([animated], 'bad-animation.webp', { type: 'image/webp' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/frame exceeds/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('uses the detected WebP MIME type on the Blob URL source', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File([webpFileBytes(webpChunk('VP8L', webpVp8lPayload(1, 1)))], 'image.bin', { type: '' });
+
+      await loadImageFile(file, 'image/webp');
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(1);
+      expect(decoders.objectUrls[0]?.source).not.toBe(file);
+      expect(decoders.objectUrls[0]?.source).toBeInstanceOf(Blob);
+      expect((decoders.objectUrls[0]?.source as Blob).type).toBe('image/webp');
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('revokes a WebP Blob URL when native decoding fails', async () => {
+      const decoders = installBrowserDecoders();
+      decoders.imageMode = 'error';
+      const file = new File([webpFileBytes(webpChunk('VP8 ', webpVp8Payload(1, 1)))], 'corrupt.webp', {
+        type: 'image/webp',
+      });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow('Failed to load image');
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(1);
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('revokes a WebP Blob URL after post-decode dimension rejection', async () => {
+      const decoders = installBrowserDecoders({ width: 10_001, height: 10_000 });
+      const file = new File([webpFileBytes(webpChunk('VP8 ', webpVp8Payload(1, 1)))], 'large.webp', {
+        type: 'image/webp',
+      });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/too large/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(1);
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('rejects WebP with a RIFF extent beyond the available bytes', async () => {
+      const decoders = installBrowserDecoders();
+      const data = webpFileBytes(webpChunk('VP8 ', webpVp8Payload(1, 1)));
+      new DataView(data.buffer).setUint32(4, data.length, true);
+      const file = new File([data], 'truncated.webp', { type: 'image/webp' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/RIFF size/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects oversized VP8L dimensions before native decode', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File([webpFileBytes(webpChunk('VP8L', webpVp8lPayload(10_001, 10_000)))], 'large.webp', {
+        type: 'image/webp',
+      });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/too large/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects an oversized VP8X canvas before reading its image bitstream', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [webpFileBytes(webpChunk('VP8X', webpVp8xPayload(10_001, 10_000)), webpChunk('VP8 ', webpVp8Payload(1, 1)))],
+        'large-canvas.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/too large/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects an oversized embedded VP8 bitstream behind a small VP8X canvas', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [webpFileBytes(webpChunk('VP8X', webpVp8xPayload(10, 10)), webpChunk('VP8 ', webpVp8Payload(10_001, 10_000)))],
+        'mismatched.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/too large/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects a static VP8X canvas that disagrees with its image bitstream', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [webpFileBytes(webpChunk('VP8X', webpVp8xPayload(10, 10)), webpChunk('VP8 ', webpVp8Payload(11, 10)))],
+        'mismatched.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/do not match/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('skips bounded WebP metadata chunks and ignores physical trailing bytes', async () => {
+      const decoders = installBrowserDecoders();
+      const webp = webpFileBytes(
+        webpChunk('VP8X', webpVp8xPayload(10, 10, 0x2c)),
+        webpChunk('EXIF', bytes(1)),
+        webpChunk('ICCP', bytes(1, 2, 3)),
+        webpChunk('VP8 ', webpVp8Payload(10, 10)),
+        webpChunk('XTRA', bytes(4, 5, 6)),
+        webpChunk('XMP ', bytes(2))
+      );
+      const file = new File([webp, bytes(0xca, 0xfe)], 'trailing.webp', { type: 'image/webp' });
+
+      const result = await loadDocumentFile(file);
+
+      expect(result).toMatchObject({ fileName: 'trailing.webp', image: decoders.image });
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+
+    it('rejects an oversized animated WebP canvas before native decode', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [webpFileBytes(webpChunk('VP8X', webpVp8xPayload(10_001, 10_000, 0x02)))],
+        'animated.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/too large/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('rejects a WebP ANMF chunk without an animation flag', async () => {
+      const decoders = installBrowserDecoders();
+      const file = new File(
+        [webpFileBytes(webpChunk('VP8X', webpVp8xPayload(10, 10)), webpChunk('ANMF', new Uint8Array(16)))],
+        'animated.webp',
+        { type: 'image/webp' }
+      );
+
+      await expect(loadDocumentFile(file)).rejects.toThrow(/animation frame/i);
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.image).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(0);
+    });
+
+    it('revokes a JPEG Blob URL when native decoding fails', async () => {
+      const decoders = installBrowserDecoders();
+      decoders.imageMode = 'error';
+      const file = new File([jpegFileBytes(1, 1)], 'corrupt.jpg', { type: 'image/jpeg' });
+
+      await expect(loadDocumentFile(file)).rejects.toThrow('Failed to load image');
+
+      expect(decoders.reader).toBeUndefined();
+      expect(decoders.objectUrls).toHaveLength(1);
+      expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+    });
+  });
+
   it.each(['photo.jpg', 'photo.jpeg', 'photo.webp', 'photo.avif', 'photo.svg', 'PHOTO.PNG'])(
     'accepts %s on its extension alone, with no media type',
     async (name) => {
       const decoders = installBrowserDecoders();
-      const contents = name.endsWith('.svg')
+      const lowerName = name.toLowerCase();
+      const contents = lowerName.endsWith('.svg')
         ? '<svg/>'
-        : name.toLowerCase().endsWith('.png')
+        : lowerName.endsWith('.png')
           ? pngFileBytes(1, 1)
-          : 'data';
+          : lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')
+            ? jpegFileBytes(1, 1)
+            : lowerName.endsWith('.webp')
+              ? webpFileBytes(webpChunk('VP8 ', webpVp8Payload(1, 1)))
+              : 'data';
       const file = new File([contents], name, { type: '' });
 
       const image = await loadImageFile(file);
 
       expect(image).toBe(decoders.image);
-      // No detected MIME type means the file is handed to FileReader untouched.
-      expect(decoders.readerInput).toBe(file);
+      if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.webp')) {
+        expect(decoders.reader).toBeUndefined();
+        expect(decoders.objectUrls).toMatchObject([{ source: file, url: 'blob:decoded-1' }]);
+        expect(decoders.imageSrc).toBe('blob:decoded-1');
+        expect(decoders.revokedObjectUrls).toEqual(['blob:decoded-1']);
+      } else {
+        // Other fallback formats retain their existing FileReader path in this slice.
+        expect(decoders.readerInput).toBe(file);
+      }
     }
   );
 

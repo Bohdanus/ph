@@ -147,16 +147,20 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   `Anti-alias` row belongs to the **elliptical** tool alone, which the file already said, and it
   is why the Magic Wand's row carries no `Feather` and the rectangular marquee's carries no
   `Anti-alias`.
-- **The app has one active selection.** `committedSelectionUpdate()` in
+- **Only one committed selection is active.** `committedSelectionUpdate()` in
   `src/contexts/useSelectionHistory.ts` deactivates every existing selection on a
-  `create` commit, so there is no model in which a second selection can be unioned, subtracted
-  from or intersected with the first. Every combination mode in this family is therefore
-  `missing` for a structural reason, not an oversight in one bar.
-- **The selection is a single point path.** `Selection` in `src/contexts/general-types.ts`
-  carries a `points` polyline and no mask, and `SelectionSourceTool` in the same file
-  has no `elliptical-selection` or `quick-selection` member. The elliptical marquee and the
-  quick selection both commit under a borrowed `'magic-wand'` identifier so that their outlines
-  carry neither draggable anchors nor an anchor hit-test.
+  `create` commit. Quick Selection has an Add/Subtract mode that rasterizes the current
+  compound contour path into its base mask, but the other selection tools replace the active
+  selection and there is no general Intersect or cross-tool combination mode.
+- **The selection stores compound contours or a packed one-bit mask, not a persistent alpha
+  channel.** `Selection` in `src/contexts/general-types.ts` carries closed paths normalized to a
+  shared bounding box and can carry an authoritative packed mask when contour complexity exceeds
+  the safe vector boundary budget. Even-odd membership preserves disconnected areas and holes;
+  Magic Wand and Quick Selection preserve every traced contour, and clipboard and selected raster
+  operations derive coverage from that geometry or mask. `SelectionSourceTool` includes
+  `'quick-selection'`, so Quick Selection keeps its own source identity. Elliptical Marquee still
+  uses the `'magic-wand'` identity because the union has no dedicated `'elliptical-selection'`
+  member; that source remains excluded from draggable anchors and anchor hit-testing.
 
 ## Rectangular Marquee Tool — `rectangular-selection`
 
@@ -649,8 +653,8 @@ the app behaves as though the box were always ticked while the bar shows no box.
 passed through as `smoothing` and consumed by `simplifyClosedPath`, which removes boundary
 vertices. Anti-aliasing blends coverage at the staircase; simplification deletes the staircase.
 The tool also reports a live selected-pixel count in its hint box, which Photoshop's bar does
-not, and which is worth knowing is the mask's count rather than the committed polygon's — the
-commit refuses a region with an enclosed hole, so the two can disagree.
+not. That count comes from the raw color-match mask; nonzero `Smooth` simplifies the committed
+contours, so the simplified path can differ from the original pixel count.
 
 **`Refine Edge`.** Documented on Adobe's own product page, reached from the options bar's
 `Select and Mask` and carrying `Radius`, `Smart Radius`, `Smooth`, `Feather`, `Contrast`,
@@ -958,9 +962,9 @@ in the `options` array; it is recorded here and in `appNotes`.
 start a fresh selection and no `Intersect`. `Sample All Layers` is absent and the stroke reads
 the merged composite canvas. `Select and Mask`, `Auto-Enhance` and the tool-preset picker
 are absent, and there is no route from a selection to a layer mask at all. The brush is flat — no hardness, spacing, angle or roundness — and `[`/`]`, the
-Alt-drag size gesture and the live size/opacity readout are not bound. The committed region is one
-traced contour, so a grown region containing an enclosed hole is refused outright rather than
-committed, and a `Selection` cannot express the hole.
+Alt-drag size gesture and the live size/opacity readout are not bound. Every traced contour is
+committed, including disconnected components and enclosed holes; the active selection remains a
+contour model with derived masks rather than a persistent Photoshop-style alpha channel.
 
 **Both modifier rows are unannotated false claims about the app.** `QuickSelectionToolArea` reads no
 modifier key either, so neither the `Alt`-subtracts-for-the-stroke row nor the

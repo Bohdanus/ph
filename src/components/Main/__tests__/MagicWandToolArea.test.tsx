@@ -4,6 +4,7 @@ import type { Selection } from '../../../contexts/general-types.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
 import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
+import * as magicWandUtil from '../../../util/magicWand.ts';
 import { MagicWandToolArea } from '../MagicWandToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -12,7 +13,8 @@ const storeState = vi.hoisted(
   (): {
     selections: Selection[];
     documentFrame: { x: number; y: number; width: number; height: number } | null;
-  } => ({ selections: [], documentFrame: null })
+    renderSelector: { source: 'legacy' | 'pending' | 'durable' };
+  } => ({ selections: [], documentFrame: null, renderSelector: { source: 'legacy' } })
 );
 const toolState = vi.hoisted(
   (): { toolArgs: { contiguous: boolean; smoothing: number; tolerance: number; toolName: string } } => ({
@@ -42,6 +44,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       activeSelectionId: null,
       totalSize: { width: 6, height: 6 },
       documentFrame: storeState.documentFrame,
+      renderSelector: storeState.renderSelector,
       history: [],
       historyIndex: 0,
     },
@@ -160,11 +163,14 @@ function singleSelectionEdit(): SelectionEdit {
 
 describe('MagicWandToolArea', () => {
   let getContextSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let createSelectionSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 
   beforeEach(() => {
-    dispatchMock.mockClear();
+    dispatchMock.mockReset();
     storeState.selections = [];
     storeState.documentFrame = null;
+    storeState.renderSelector = { source: 'legacy' };
     toolState.toolArgs = { contiguous: true, smoothing: 1, tolerance: 0, toolName: 'magic-wand' };
     sourceCanvas.width = 6;
     sourceCanvas.height = 6;
@@ -176,6 +182,10 @@ describe('MagicWandToolArea', () => {
   afterEach(() => {
     getContextSpy?.mockRestore();
     getContextSpy = null;
+    createSelectionSpy?.mockRestore();
+    createSelectionSpy = null;
+    consoleErrorSpy?.mockRestore();
+    consoleErrorSpy = null;
   });
 
   it('commits a magic wand polygon selection with metadata on click', () => {
@@ -211,15 +221,17 @@ describe('MagicWandToolArea', () => {
                 isActive: true,
                 sourceTool: 'magic-wand',
                 points: [
-                  { x: 1, y: 1 },
-                  { x: 3, y: 1 },
-                  { x: 3, y: 3 },
-                  { x: 1, y: 3 },
+                  [
+                    { x: 1, y: 1 },
+                    { x: 3, y: 1 },
+                    { x: 3, y: 3 },
+                    { x: 1, y: 3 },
+                  ],
                 ],
                 pos: { x: 1, y: 1, width: 4, height: 4 },
                 metadata: expect.objectContaining({
                   magicWand: expect.objectContaining({
-                    boundaryPointCount: 4,
+                    boundaryEdgeCount: 8,
                     selectedPixelCount: 4,
                     tolerance: 0,
                   }),
@@ -250,7 +262,7 @@ describe('MagicWandToolArea', () => {
    * read off the committed metadata, which is the same number the user sees in the bar.
    */
   describe('contiguous', () => {
-    function clickSeedWith(contiguous: boolean) {
+    function clickSeedWith(contiguous: boolean): Selection {
       toolState.toolArgs = { contiguous, smoothing: 1, tolerance: 0, toolName: 'magic-wand' };
       const mockCtx = createMockContext();
       const { container } = render(
@@ -260,16 +272,20 @@ describe('MagicWandToolArea', () => {
 
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
 
-      const selection = singleSelectionEdit().payload.updates.selections[0] as Selection;
-      return selection.metadata?.magicWand?.selectedPixelCount;
+      return singleSelectionEdit().payload.updates.selections[0] as Selection;
     }
 
     it('selects only the connected region under the seed when contiguous is on', () => {
-      expect(clickSeedWith(true)).toBe(4);
+      const selection = clickSeedWith(true);
+      expect(selection.metadata?.magicWand?.selectedPixelCount).toBe(4);
+      expect(selection.points).toHaveLength(1);
     });
 
     it('selects every region of the seed colour when contiguous is off', () => {
-      expect(clickSeedWith(false)).toBe(8);
+      const selection = clickSeedWith(false);
+      expect(selection.metadata?.magicWand?.selectedPixelCount).toBe(8);
+      expect(selection.points).toHaveLength(2);
+      expect(selection.pos).toEqual({ x: -1, y: -1, width: 6, height: 6 });
     });
   });
 
@@ -293,6 +309,18 @@ describe('MagicWandToolArea', () => {
     const toolArea = container.firstElementChild as HTMLDivElement;
 
     fireEvent.pointerDown(toolArea, { button: 2, clientX: 2, clientY: 2 });
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not read stale canvas pixels while replay is pending', () => {
+    storeState.renderSelector = { source: 'pending' };
+    const { container } = render(
+      <MagicWandToolArea overlayCtxRef={{ current: createMockContext() }} className="test-magic-wand-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
 
     expect(dispatchMock).not.toHaveBeenCalled();
   });
@@ -331,6 +359,44 @@ describe('MagicWandToolArea', () => {
     // is the only path that appends one, so this is the guard that survived the move
     // off the raw `COMMIT_SELECTION` action.
     expect(selectionEdits()).toEqual([]);
+  });
+
+  it('cancels the draft when selection processing throws before commit', () => {
+    createSelectionSpy = vi.spyOn(magicWandUtil, 'createMagicWandSelectionFromCanvas').mockImplementation(() => {
+      throw new RangeError('simulated allocation failure');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(
+      <MagicWandToolArea overlayCtxRef={{ current: createMockContext() }} className="test-magic-wand-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
+
+    expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: 'magic-wand' },
+    });
+    expect(dispatchMock).toHaveBeenNthCalledWith(2, { type: 'CANCEL_SELECTION_DRAFT' });
+    expect(selectionEdits()).toEqual([]);
+  });
+
+  it('cancels the draft when the selection writer throws during commit', () => {
+    dispatchMock.mockImplementation((action: { type: string }) => {
+      if (action.type === 'COMMIT_DOCUMENT_EDIT') throw new Error('simulated selection writer failure');
+    });
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(
+      <MagicWandToolArea overlayCtxRef={{ current: createMockContext() }} className="test-magic-wand-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
+
+    const actions = dispatchMock.mock.calls.map(([action]) => action as { type: string });
+    expect(actions.filter((action) => action.type === 'START_SELECTION_DRAFT')).toHaveLength(1);
+    expect(actions.filter((action) => action.type === 'CANCEL_SELECTION_DRAFT')).toHaveLength(1);
+    expect(selectionEdits()).toHaveLength(2);
   });
 
   it('records the seed in document space', () => {
@@ -386,9 +452,11 @@ describe('MagicWandToolArea', () => {
         lifecycle: 'committed',
         pos: { x: 0, y: 0, width: 4, height: 4 },
         points: [
-          { x: 0, y: 0 },
-          { x: 4, y: 0 },
-          { x: 4, y: 4 },
+          [
+            { x: 0, y: 0 },
+            { x: 4, y: 0 },
+            { x: 4, y: 4 },
+          ],
         ],
       },
     ];
@@ -425,9 +493,11 @@ describe('MagicWandToolArea', () => {
         lifecycle: 'committed',
         pos: { x: 0, y: 0, width: 4, height: 4 },
         points: [
-          { x: 0, y: 0 },
-          { x: 4, y: 0 },
-          { x: 4, y: 4 },
+          [
+            { x: 0, y: 0 },
+            { x: 4, y: 0 },
+            { x: 4, y: 4 },
+          ],
         ],
       },
     ];

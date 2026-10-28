@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "skippedTests": [
+    {
+      "specId": "14fd9111b1bf80c320a1-8bc7df38d4712d5a30db",
+      "projectId": "Google Chrome",
+      "file": "export/photopea.spec.ts",
+      "titlePath": ["exports to PSD and verifies in Photopea"],
+      "projectName": "Google Chrome"
+    },
+    {
+      "specId": "4265b590cb79810e64e7-db1a2d53d9a4fef7c36c",
+      "projectId": "Google Chrome",
+      "file": "viewport-drawing.spec.ts",
+      "titlePath": ["Viewport Drawing", "line stays under cursor after window resize (normal, wide and narrow)"],
+      "projectName": "Google Chrome"
+    }
+  ]
+}

@@ -136,10 +136,12 @@ describe('RectangularSelection toolbar', () => {
         isActive: true,
         pos: { x: 10, y: 20, width: 30, height: 40 },
         points: [
-          { x: 0, y: 0 },
-          { x: 30, y: 0 },
-          { x: 30, y: 40 },
-          { x: 0, y: 40 },
+          [
+            { x: 0, y: 0 },
+            { x: 30, y: 0 },
+            { x: 30, y: 40 },
+            { x: 0, y: 40 },
+          ],
         ],
       },
     ];
@@ -276,9 +278,11 @@ describe('RectangularSelection toolbar', () => {
       isActive: true,
       pos: { x: 0, y: 0, width: 10, height: 10 },
       points: [
-        { x: 0, y: 0 },
-        { x: 10, y: 0 },
-        { x: 10, y: 10 },
+        [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+        ],
       ],
     };
 

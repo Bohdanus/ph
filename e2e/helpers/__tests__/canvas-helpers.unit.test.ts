@@ -295,12 +295,15 @@ describe('screenshotBoundsToCss', () => {
     expect(result).toEqual({ left: 37, top: 11, right: 37, bottom: 11 });
   });
 
-  it('yields NaN edges for a zero-sized image instead of throwing', () => {
-    const result = screenshotBoundsToCss({ left: 0, top: 0, right: 0, bottom: 0, imageWidth: 0, imageHeight: 0 }, box);
-    expect(result.left).toBeNaN();
-    expect(result.top).toBeNaN();
-    expect(result.right).toBeNaN();
-    expect(result.bottom).toBeNaN();
+  it.each([
+    { name: 'zero width', imageWidth: 0, imageHeight: 300 },
+    { name: 'zero height', imageWidth: 400, imageHeight: 0 },
+    { name: 'non-finite width', imageWidth: Number.NaN, imageHeight: 300 },
+    { name: 'non-finite height', imageWidth: 400, imageHeight: Number.POSITIVE_INFINITY },
+  ])('rejects screenshot bounds with $name', ({ imageWidth, imageHeight }) => {
+    expect(() => screenshotBoundsToCss({ left: 0, top: 0, right: 0, bottom: 0, imageWidth, imageHeight }, box)).toThrow(
+      /positive finite image dimensions/
+    );
   });
 });
 

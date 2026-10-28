@@ -7,30 +7,17 @@ import * as ts from 'typescript';
 /**
  * Every module under `e2e/` is reachable from a unit test.
  *
- * WHY A REACHABILITY GATE AND NOT A COVERAGE ASSERTION
- * ----------------------------------------------------
- * `vitest.e2e.config.ts` sets `coverage.provider`, `coverage.reporter` and
- * `coverage.reportsDirectory`, and no `coverage.include`. With `include` unset, the
- * provider reports the files that were LOADED, so a module no unit test touches is not
- * reported at 0% — it is ABSENT, and nothing fails.
+ * WHY REACHABILITY AND COVERAGE ARE SEPARATE GATES
+ * ------------------------------------------------
+ * This test checks the structural TypeScript import graph on disk; it does not read a
+ * coverage artifact. The e2e-unit job runs this gate first, then runs Istanbul coverage
+ * with an explicit all-module universe. Reachability catches a source module with no
+ * unit-test dependency; Istanbul measures runtime statements and reports an imported
+ * but unexecuted module at zero. Neither report is used as the other's input.
  *
- * Two things make "is module X in the report?" unusable as a gate here:
- *
- * 1. **It cannot be read from a test.** The `e2e-unit` job runs `npm run test:e2e:unit`
- *    and only THEN `npm run test:e2e:unit:coverage`, so a test that opens a coverage
- *    artifact reads nothing at all on a clean CI checkout and yesterday's bytes on a
- *    desk. Vacuous in CI, non-reproducible locally.
- * 2. **Absence is not a measurement.** An assertion of the shape "X appears in the
- *    report" fails identically whether X is untested or the glob was never configured.
- *    Measured on this tree with the config as it stands, the report lists 8 of the 16
- *    modules: `canvas-redraw`, `cdp-helpers`, `image-comparison`, `screenshot-scale`,
- *    `selection-ants`, `timeouts`, `toolbar-helpers` and `fixtures/extended-test` are
- *    all missing, and SIX of those eight have a unit test today. A coverage assertion
- *    would report eight offenders, six of them false.
- *
- * Reachability has neither problem. Its input is the module graph on disk, which exists
- * before, during and after any test run; and it distinguishes "untested" from
- * "configured" because nothing about the coverage configuration is consulted.
+ * Coverage runs after this test in CI, so inspecting its artifact here would read
+ * nothing on a clean checkout (or stale data on a developer machine). The test instead
+ * derives both sides of the module universe from source and tsconfig.
  *
  * WHY TRANSITIVE, NOT DIRECT
  * --------------------------
@@ -151,9 +138,8 @@ function relativeImportsOf(repoRelativePath: string): string[] {
     }
   };
 
-  // Type-only imports and re-exports are edges: `import type { CssBounds } from
-  // './screenshot-scale'` is how a module acquires a dependency, and a module reached
-  // only through one is still type-checked and still loaded.
+  // Type-only imports and re-exports are structural graph edges and are type-checked.
+  // They do not prove runtime execution; the separate Istanbul report measures that.
   for (const statement of source.statements) {
     if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
       collect(statement.moduleSpecifier);
@@ -377,9 +363,8 @@ describe('every e2e module is reachable from a unit test', () => {
         ...unreachableModules.map((module) => `  - ${module}`),
         '',
         'A module passes this gate by being IMPORTED, transitively, from a unit test.',
-        'Reading the coverage report is not an alternative: the e2e-unit job runs the',
-        'tests before the coverage step, and with no `coverage.include` an untested',
-        'module is absent from that report rather than reported at 0%.',
+        'Coverage is measured in a separate later CI step; this graph gate does not read',
+        'its report and remains independent of coverage-provider configuration.',
       ].join('\n')
     ).toEqual([]);
   });

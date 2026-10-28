@@ -399,13 +399,17 @@ describe('MobileLayersDrawer', () => {
   it('commits one durable opacity action when a slider gesture ends', () => {
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
     const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(slider, 'setPointerCapture', { configurable: true, value: setPointerCapture });
 
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    expect(setPointerCapture).toHaveBeenCalledWith(1);
     fireEvent.change(slider, { target: { value: '50' } });
     fireEvent.change(slider, { target: { value: '25' } });
     expect(updateLayerMock).not.toHaveBeenCalled();
     expect(slider).toHaveAttribute('aria-valuetext', '25%');
 
-    fireEvent.pointerUp(slider);
+    fireEvent.pointerUp(slider, { pointerId: 1 });
 
     expect(updateLayerMock).toHaveBeenCalledTimes(1);
     expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
@@ -425,11 +429,158 @@ describe('MobileLayersDrawer', () => {
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
     const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
 
+    fireEvent.pointerDown(slider, { pointerId: 1 });
     fireEvent.change(slider, { target: { value: '33' } });
-    fireEvent.pointerCancel(slider);
+    fireEvent.pointerCancel(slider, { pointerId: 1 });
 
     expect(updateLayerMock).not.toHaveBeenCalled();
     expect(slider).toHaveAttribute('aria-valuetext', '100%');
+  });
+
+  it('keeps an opacity edit owned by its pointer and slider layer', () => {
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const upperSlider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+    const lowerSlider = screen.getByRole('slider', { name: 'Opacity for Lower' });
+
+    fireEvent.pointerDown(upperSlider, { pointerId: 1 });
+    fireEvent.change(upperSlider, { target: { value: '42' } });
+    fireEvent.pointerUp(upperSlider, { pointerId: 2 });
+    fireEvent.pointerCancel(upperSlider, { pointerId: 2 });
+    fireEvent.pointerDown(lowerSlider, { pointerId: 2 });
+    fireEvent.change(lowerSlider, { target: { value: '75' } });
+    fireEvent.pointerUp(lowerSlider, { pointerId: 1 });
+    fireEvent.pointerCancel(lowerSlider, { pointerId: 2 });
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(upperSlider).toHaveAttribute('aria-valuetext', '42%');
+    expect(lowerSlider).toHaveAttribute('aria-valuetext', '100%');
+
+    // Selection can change while another touch owns the slider. Completion still
+    // applies to the layer whose control began the gesture.
+    storeStateMock.activeLayerId = 'lower';
+    rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    fireEvent.pointerUp(upperSlider, { pointerId: 1 });
+
+    expect(updateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('ignores an unlabelled range change from a competing pointer on the same slider', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.pointerDown(slider, { pointerId: 2 });
+    fireEvent.change(slider, { target: { value: '77' } });
+
+    expect(slider).toHaveAttribute('aria-valuetext', '42%');
+    fireEvent.pointerUp(slider, { pointerId: 2 });
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(updateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('accepts owner input again after that pointer resumes moving', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.pointerDown(slider, { pointerId: 2 });
+    fireEvent.change(slider, { target: { value: '77' } });
+    expect(slider).toHaveAttribute('aria-valuetext', '42%');
+
+    fireEvent.pointerMove(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '55' } });
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(updateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.55 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('keeps a pointer-owned opacity draft through blur until that pointer ends', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.blur(slider);
+    fireEvent.change(slider, { target: { value: '55' } });
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '55%');
+
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(updateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.55 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('discards an opacity draft when pointer capture is lost', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '55' } });
+    const lostCapture = new Event('lostpointercapture', { bubbles: true });
+    Object.defineProperty(lostCapture, 'pointerId', { value: 1 });
+    fireEvent(slider, lostCapture);
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '100%');
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+    expect(updateLayerMock).not.toHaveBeenCalled();
+  });
+
+  it('clears opacity draft ownership when the mounted drawer closes and reopens', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={onClose} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '33' } });
+    rerender(<MobileLayersDrawer isOpen={false} onClose={onClose} />);
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+
+    rerender(<MobileLayersDrawer isOpen={true} onClose={onClose} />);
+    const reopenedSlider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+    fireEvent.pointerDown(reopenedSlider, { pointerId: 2 });
+    fireEvent.change(reopenedSlider, { target: { value: '25' } });
+    fireEvent.pointerUp(reopenedSlider, { pointerId: 2 });
+
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('discards a pointer-owned draft when its layer record changes', () => {
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    storeStateMock.layers = {
+      ...storeStateMock.layers,
+      upper: { ...storeStateMock.layers.upper, opacity: 0.8 },
+    };
+    rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.getByRole('slider', { name: 'Opacity for Upper' })).toHaveAttribute('aria-valuetext', '80%');
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+  });
+
+  it('commits an opacity edit on blur when no pointer owns it', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '60' } });
+    fireEvent.blur(slider);
+
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.6 }, SET_LAYER_OPACITY_ACTION);
   });
 
   it('disables opacity changes for a locked layer', () => {
@@ -534,7 +685,7 @@ describe('MobileLayersDrawer', () => {
     expect(setActiveLayerMock).not.toHaveBeenCalled();
   });
 
-  it('creates an ordinary blank layer covering the document frame', async () => {
+  it('creates a transparent blank layer covering the document frame', async () => {
     const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
@@ -542,7 +693,7 @@ describe('MobileLayersDrawer', () => {
 
     expect(createBlankLayerMock).toHaveBeenCalledWith({
       color: '#ffffff',
-      opacity: 1,
+      opacity: 0,
       pos: { x: 120, y: 90, width: 800, height: 600 },
     });
   });

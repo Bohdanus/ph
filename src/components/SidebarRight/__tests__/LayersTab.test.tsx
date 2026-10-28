@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import LayersTab from '../LayersTab.tsx';
+import LayersTab, { LAYER_REORDER_LONG_PRESS_MS } from '../LayersTab.tsx';
 import type { Layer, LayerId, LayersRecord, ToolLayerSource } from '@/contexts/layer-types.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '@/util/constants.ts';
@@ -69,10 +69,12 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
 const currentToolState = vi.hoisted(() => ({
   toolArgs: { toolName: 'move' } as {
     toolName: string;
+    text?: string;
     rect?: { x1: number; y1: number; x2: number; y2: number } | null;
     editingLayerId?: string;
   },
   setToolArgs: vi.fn(),
+  requestTextEditFocus: vi.fn(),
 }));
 
 vi.mock('@/contexts/StoreContext.tsx', async () => {
@@ -153,6 +155,23 @@ function wireActionsToStore() {
 function getLayerDivs(): HTMLElement[] {
   const items = screen.getAllByRole('listitem');
   return items.map((item) => item.querySelector<HTMLElement>('div[title="Drag to reorder"]')!);
+}
+
+function mockPointerCapture(target: HTMLElement) {
+  const setPointerCapture = vi.fn();
+  const releasePointerCapture = vi.fn();
+  Object.defineProperty(target, 'setPointerCapture', { configurable: true, value: setPointerCapture });
+  Object.defineProperty(target, 'releasePointerCapture', { configurable: true, value: releasePointerCapture });
+  return { setPointerCapture, releasePointerCapture };
+}
+
+function mockElementFromPoint(target: Element) {
+  const original = Object.getOwnPropertyDescriptor(document, 'elementFromPoint');
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => target) });
+  return () => {
+    if (original) Object.defineProperty(document, 'elementFromPoint', original);
+    else Reflect.deleteProperty(document, 'elementFromPoint');
+  };
 }
 
 function getListItemFor(name: string): HTMLElement {
@@ -257,17 +276,75 @@ describe('LayersTab', () => {
     render(<LayersTab />);
     fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
     const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(slider, 'setPointerCapture', { configurable: true, value: setPointerCapture });
 
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    expect(setPointerCapture).toHaveBeenCalledWith(1);
     fireEvent.change(slider, { target: { value: '50' } });
     fireEvent.change(slider, { target: { value: '42' } });
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
 
-    fireEvent.pointerUp(slider);
+    fireEvent.pointerUp(slider, { pointerId: 1 });
 
     expect(layerMocks.updateLayer).toHaveBeenCalledTimes(1);
     expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
     expect(liveStore.snapshot.layers['layer-2'].opacity).toBe(0.42);
     expect(screen.getByText('42%', { selector: 'summary' })).toBeInTheDocument();
+  });
+
+  it('keeps an opacity draft owned by its pointer through foreign pointer endings', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.pointerUp(slider, { pointerId: 2 });
+    fireEvent.pointerCancel(slider, { pointerId: 2 });
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('42%', { selector: 'output' })).toBeInTheDocument();
+
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('keeps a pointer-owned opacity draft through blur until that pointer ends', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '42' } });
+    fireEvent.blur(slider);
+    fireEvent.change(slider, { target: { value: '55' } });
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('55%', { selector: 'output' })).toBeInTheDocument();
+
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(layerMocks.updateLayer).toHaveBeenCalledTimes(1);
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.55 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('discards a pointer-owned opacity draft if pointer capture is lost', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '55' } });
+    const lostCapture = new Event('lostpointercapture', { bubbles: true });
+    Object.defineProperty(lostCapture, 'pointerId', { value: 1 });
+    fireEvent(slider, lostCapture);
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('100%', { selector: 'output' })).toBeInTheDocument();
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
   it('disables opacity changes for a locked layer', () => {
@@ -397,6 +474,239 @@ describe('LayersTab', () => {
       editingLayerId: 'text',
       rect: { x1: 80, y1: 60, x2: 180, y2: 120 },
     });
+    expect(layerMocks.beginTextLayerEdit).toHaveBeenCalledWith('text');
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledWith({ kind: 'select-all', layerId: 'text' });
+  });
+
+  it('shows the Type badge on its thumbnail and opens that text layer on double-click', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Type badge',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    seed(
+      {
+        text: createMockLayer({
+          id: 'text',
+          name: 'Text layer',
+          pos: { x: 120, y: 80, width: 100, height: 60 },
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+      },
+      null
+    );
+    currentToolState.toolArgs = { toolName: 'move' };
+    render(<LayersTab />);
+
+    const badge = screen.getByRole('img', { name: 'Type layer' });
+    const thumbnail = screen.getByTestId('layer-thumbnail');
+    expect(badge).toHaveTextContent('T');
+    expect(badge.parentElement).toBe(thumbnail.parentElement);
+
+    fireEvent.doubleClick(thumbnail);
+
+    expect(layerMocks.beginTextLayerEdit).toHaveBeenCalledWith('text');
+  });
+
+  it('commits and focuses once during the real row double-click sequence, even when text is unchanged', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'same text',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    const currentLayer = createMockLayer({
+      id: 'current',
+      name: 'Current text',
+      order: 0,
+      source: { kind: 'tool', args } as ToolLayerSource,
+    });
+    const targetLayer = createMockLayer({
+      id: 'target',
+      name: 'Target text',
+      order: 1,
+      pos: { x: 120, y: 80, width: 100, height: 60 },
+      source: { kind: 'tool', args: { ...args, text: 'old target text' } } as ToolLayerSource,
+    });
+    const layers = { current: currentLayer, target: targetLayer };
+    const committedLayers = {
+      ...layers,
+      target: { ...targetLayer, source: { kind: 'tool', args } as ToolLayerSource },
+    };
+    const order: string[] = [];
+    currentToolState.toolArgs = { ...args, editingLayerId: 'current' };
+    seed(layers, 'target');
+    layerMocks.commitDirtyTool.mockImplementationOnce(() => {
+      order.push('commit');
+      return committedLayers;
+    });
+    layerMocks.setActiveLayer.mockImplementationOnce((id) => {
+      order.push('active');
+      updateStore((prev) => ({ ...prev, activeLayerId: id }));
+    });
+    layerMocks.beginTextLayerEdit.mockImplementationOnce(() => {
+      order.push('begin-edit');
+    });
+    currentToolState.setToolArgs.mockImplementationOnce((nextArgs) => {
+      order.push('hydrate');
+      Object.assign(currentToolState.toolArgs, nextArgs);
+    });
+    currentToolState.requestTextEditFocus.mockImplementationOnce(() => {
+      order.push('focus');
+    });
+
+    render(<LayersTab />);
+    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Target text');
+    act(() => {
+      fireEvent.click(row);
+      fireEvent.click(row);
+      fireEvent.doubleClick(row);
+    });
+
+    expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+      kind: 'select-all',
+      layerId: 'target',
+    });
+    expect(currentToolState.toolArgs).toMatchObject({ editingLayerId: 'target', text: 'same text' });
+  });
+
+  it('uses the committed record when the direct text-layer entry handler switches layers', () => {
+    const currentArgs: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'current draft',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    const committedArgs: TextToolArgs = { ...currentArgs, text: 'committed target text' };
+    const currentLayer = createMockLayer({
+      id: 'current',
+      name: 'Current text',
+      order: 0,
+      source: { kind: 'tool', args: currentArgs } as ToolLayerSource,
+    });
+    const targetLayer = createMockLayer({
+      id: 'target',
+      name: 'Target text',
+      order: 1,
+      pos: { x: 120, y: 80, width: 100, height: 60 },
+      source: { kind: 'tool', args: { ...committedArgs, text: 'stale target text' } } as ToolLayerSource,
+    });
+    const layers = { current: currentLayer, target: targetLayer };
+    const committedLayers = {
+      ...layers,
+      target: { ...targetLayer, source: { kind: 'tool', args: committedArgs } as ToolLayerSource },
+    };
+    const order: string[] = [];
+    currentToolState.toolArgs = { ...currentArgs, editingLayerId: 'current' };
+    seed(layers, 'current');
+    layerMocks.commitDirtyTool.mockImplementationOnce(() => {
+      order.push('commit');
+      return committedLayers;
+    });
+    layerMocks.setActiveLayer.mockImplementationOnce((id) => {
+      order.push('active');
+      updateStore((prev) => ({ ...prev, activeLayerId: id }));
+    });
+    layerMocks.beginTextLayerEdit.mockImplementationOnce(() => {
+      order.push('begin-edit');
+    });
+    currentToolState.setToolArgs.mockImplementationOnce((nextArgs) => {
+      order.push('hydrate');
+      Object.assign(currentToolState.toolArgs, nextArgs);
+    });
+    currentToolState.requestTextEditFocus.mockImplementationOnce(() => {
+      order.push('focus');
+    });
+
+    render(<LayersTab />);
+    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Target text');
+    act(() => {
+      fireEvent.doubleClick(row);
+    });
+
+    expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(currentToolState.setToolArgs).toHaveBeenCalledWith(
+      expect.objectContaining({ editingLayerId: 'target', text: 'committed target text' })
+    );
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+      kind: 'select-all',
+      layerId: 'target',
+    });
+  });
+
+  it('preserves the current edit when commit fails during a row double-click', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'current draft',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    seed(
+      {
+        current: createMockLayer({
+          id: 'current',
+          name: 'Current text',
+          order: 0,
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+        target: createMockLayer({
+          id: 'target',
+          name: 'Target text',
+          order: 1,
+          pos: { x: 120, y: 80, width: 100, height: 60 },
+          source: { kind: 'tool', args: { ...args, text: 'target text' } } as ToolLayerSource,
+        }),
+      },
+      'current'
+    );
+    currentToolState.toolArgs = { ...args, editingLayerId: 'current' };
+    layerMocks.commitDirtyTool.mockReturnValueOnce(null).mockReturnValueOnce(null).mockReturnValueOnce(null);
+    render(<LayersTab />);
+
+    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Target text');
+    act(() => {
+      fireEvent.click(row);
+      fireEvent.click(row);
+      fireEvent.doubleClick(row);
+    });
+
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalled();
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+    expect(layerMocks.beginTextLayerEdit).not.toHaveBeenCalled();
+    expect(currentToolState.setToolArgs).not.toHaveBeenCalled();
+    expect(currentToolState.requestTextEditFocus).not.toHaveBeenCalled();
+    expect(currentToolState.toolArgs).toMatchObject({ editingLayerId: 'current', text: 'current draft' });
   });
 
   it('removes layer on trash click', () => {
@@ -750,81 +1060,352 @@ describe('LayersTab drag and drop guards', () => {
     expect(document.body).toHaveClass('cursor-grabbing');
   });
 
-  it('reorders a movable layer from a touch pointer gesture', () => {
+  it('starts touch reorder only after a thumbnail hold and the movement threshold', () => {
     render(<LayersTab />);
     const source = getLayerDivs()[0]!;
     const target = screen.getAllByRole('listitem')[2]!;
-    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
-    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
+    const capture = mockPointerCapture(source);
     const elementFromPoint = vi.fn(() => target);
     const originalElementFromPoint = document.elementFromPoint;
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
 
     try {
       act(() => {
-        fireEvent.pointerDown(source, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 10 });
-        fireEvent.pointerMove(source, { pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 20 });
-        fireEvent.pointerUp(source, { pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 20 });
+        fireEvent.pointerDown(thumbnail, {
+          pointerId: 7,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 10,
+          clientY: 10,
+        });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS - 1);
+        fireEvent.pointerMove(source, {
+          pointerId: 7,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+        fireEvent.pointerUp(source, {
+          pointerId: 7,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+      expect(capture.releasePointerCapture).toHaveBeenCalledWith(7);
+
+      act(() => {
+        fireEvent.pointerDown(thumbnail, {
+          pointerId: 8,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 10,
+          clientY: 10,
+        });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS);
+        fireEvent.pointerMove(source, {
+          pointerId: 8,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+        fireEvent.pointerUp(source, {
+          pointerId: 8,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
         vi.advanceTimersByTime(200);
       });
 
       expect(elementFromPoint).toHaveBeenCalledWith(20, 20);
+      expect(layerMocks.moveLayerAfter).toHaveBeenCalledTimes(1);
       expect(layerMocks.moveLayerAfter).toHaveBeenCalledWith('layer-3', 'layer-1');
     } finally {
       Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
     }
   });
 
+  it('does not start touch reorder from the rest of a row or a secondary pointer', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const capture = mockPointerCapture(source);
+
+    act(() => {
+      fireEvent.pointerDown(source, {
+        pointerId: 10,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX: 10,
+        clientY: 10,
+      });
+      fireEvent.pointerMove(source, {
+        pointerId: 10,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX: 20,
+        clientY: 20,
+      });
+      fireEvent.pointerDown(screen.getAllByTestId('layer-thumbnail')[0], {
+        pointerId: 11,
+        pointerType: 'touch',
+        isPrimary: false,
+        clientX: 10,
+        clientY: 10,
+      });
+      vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS + 1);
+    });
+
+    expect(capture.setPointerCapture).not.toHaveBeenCalled();
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId('layer-thumbnail')[0]).toHaveClass('touch-none');
+    expect(screen.getByTestId('layers-list')).not.toHaveClass('touch-none');
+  });
+
+  it('keeps native list panning enabled over locked, bedrock, and edited thumbnails', () => {
+    seed({ ...mockLayers, 'layer-3': { ...mockLayers['layer-3'], locked: true } });
+    render(<LayersTab />);
+
+    const lockedRow = getListItemFor('Top Layer');
+    const lockedContent = lockedRow.querySelector<HTMLElement>('[data-testid="layer-row-content"]')!;
+    const lockedThumbnail = lockedRow.querySelector<HTMLCanvasElement>('[data-testid="layer-thumbnail"]')!;
+    const bedrockThumbnail = getListItemFor('Background').querySelector<HTMLCanvasElement>(
+      '[data-testid="layer-thumbnail"]'
+    )!;
+    const editingRow = getListItemFor('Layer 2');
+    const editingThumbnail = editingRow.querySelector<HTMLCanvasElement>('[data-testid="layer-thumbnail"]')!;
+
+    expect(lockedThumbnail).not.toHaveClass('touch-none');
+    expect(bedrockThumbnail).not.toHaveClass('touch-none');
+    expect(editingThumbnail).toHaveClass('touch-none');
+    fireEvent.mouseDown(getNameSpan('Layer 2'));
+    expect(editingThumbnail).not.toHaveClass('touch-none');
+
+    const layersList = screen.getByTestId('layers-list');
+    expect(layersList).toHaveClass('overflow-y-auto');
+    expect(layersList).not.toHaveClass('touch-none');
+
+    const capture = mockPointerCapture(lockedContent);
+    fireEvent.pointerDown(lockedThumbnail, {
+      pointerId: 19,
+      pointerType: 'touch',
+      isPrimary: true,
+      clientX: 10,
+      clientY: 10,
+    });
+    expect(capture.setPointerCapture).not.toHaveBeenCalled();
+  });
+
+  it('uses the exact 250ms thumbnail hold contract', () => {
+    expect(LAYER_REORDER_LONG_PRESS_MS).toBe(250);
+  });
+
   it('supports dropping a touch drag after the last layer', () => {
     render(<LayersTab />);
     const source = getLayerDivs()[0]!;
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
     const target = screen.getByTestId('layers-bottom-drop-target');
-    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
-    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    mockPointerCapture(source);
     const elementFromPoint = vi.fn(() => target);
     const originalElementFromPoint = document.elementFromPoint;
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
 
     try {
       act(() => {
-        fireEvent.pointerDown(source, { pointerId: 8, pointerType: 'touch', clientX: 10, clientY: 10 });
-        fireEvent.pointerMove(source, { pointerId: 8, pointerType: 'touch', clientX: 20, clientY: 20 });
-        fireEvent.pointerUp(source, { pointerId: 8, pointerType: 'touch', clientX: 20, clientY: 20 });
+        fireEvent.pointerDown(thumbnail, {
+          pointerId: 12,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 10,
+          clientY: 10,
+        });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS);
+        fireEvent.pointerMove(source, {
+          pointerId: 12,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+        fireEvent.pointerUp(source, {
+          pointerId: 12,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
         vi.advanceTimersByTime(200);
       });
 
       expect(layerMocks.moveLayerAfter).toHaveBeenCalledWith('layer-3', undefined);
+      layerMocks.setActiveLayer.mockClear();
+      fireEvent.click(source, { detail: 1 });
+      expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+
+      const nextTap = getLayerDivs()[0]!;
+      fireEvent.pointerDown(nextTap, {
+        pointerId: 17,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX: 10,
+        clientY: 10,
+      });
+      fireEvent.pointerUp(nextTap, { pointerId: 17, pointerType: 'touch', isPrimary: true });
+      fireEvent.click(nextTap, { detail: 1 });
+      expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-2');
     } finally {
       Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
     }
   });
 
-  it('releases a touch drag when the window loses focus', () => {
+  it('cancels the hold timer and releases capture on pointercancel', () => {
     render(<LayersTab />);
     const source = getLayerDivs()[0]!;
-    const target = screen.getAllByRole('listitem')[2]!;
-    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
-    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
-    const originalElementFromPoint = document.elementFromPoint;
-    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => target) });
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
+    const capture = mockPointerCapture(source);
+
+    act(() => {
+      fireEvent.pointerDown(thumbnail, {
+        pointerId: 13,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX: 10,
+        clientY: 10,
+      });
+      fireEvent.pointerCancel(source, { pointerId: 13, pointerType: 'touch', isPrimary: true });
+      vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS + 1);
+    });
+
+    expect(capture.releasePointerCapture).toHaveBeenCalledWith(13);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(document.body).not.toHaveClass('cursor-grabbing');
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+  });
+
+  it('releases an active drag when pointer capture is lost', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
+    const capture = mockPointerCapture(source);
+    const restoreElementFromPoint = mockElementFromPoint(source.closest('[data-testid="layer-row"]')!);
 
     try {
       act(() => {
-        fireEvent.pointerDown(source, { pointerId: 9, pointerType: 'touch', clientX: 10, clientY: 10 });
-        fireEvent.pointerMove(source, { pointerId: 9, pointerType: 'touch', clientX: 20, clientY: 20 });
+        fireEvent.pointerDown(thumbnail, {
+          pointerId: 14,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 10,
+          clientY: 10,
+        });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS);
+        fireEvent.pointerMove(source, {
+          pointerId: 14,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
+      });
+      expect(document.body).toHaveClass('cursor-grabbing');
+
+      act(() => {
+        fireEvent.lostPointerCapture(source, { pointerId: 14, pointerType: 'touch', isPrimary: true });
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(capture.releasePointerCapture).toHaveBeenCalledWith(14);
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    } finally {
+      restoreElementFromPoint();
+    }
+  });
+
+  it('releases an active drag and clears its hold timer when the window loses focus', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
+    const capture = mockPointerCapture(source);
+    const restoreElementFromPoint = mockElementFromPoint(source.closest('[data-testid="layer-row"]')!);
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(thumbnail, {
+          pointerId: 18,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 10,
+          clientY: 10,
+        });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS);
+        fireEvent.pointerMove(source, {
+          pointerId: 18,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: 20,
+          clientY: 20,
+        });
       });
       expect(document.body).toHaveClass('cursor-grabbing');
 
       act(() => {
         fireEvent.blur(window);
-        fireEvent.pointerUp(source, { pointerId: 9, pointerType: 'touch', clientX: 20, clientY: 20 });
+        vi.advanceTimersByTime(LAYER_REORDER_LONG_PRESS_MS);
       });
 
+      expect(capture.releasePointerCapture).toHaveBeenCalledWith(18);
+      expect(vi.getTimerCount()).toBe(0);
       expect(document.body).not.toHaveClass('cursor-grabbing');
       expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+      restoreElementFromPoint();
     }
+  });
+
+  it('cleans a pending hold and pointer capture if capture setup throws or the tab unmounts', () => {
+    const { unmount } = render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const thumbnail = screen.getAllByTestId('layer-thumbnail')[0]!;
+    const capture = mockPointerCapture(source);
+    capture.setPointerCapture.mockImplementationOnce(() => {
+      throw new Error('pointer capture is unavailable');
+    });
+
+    act(() => {
+      fireEvent.pointerDown(thumbnail, {
+        pointerId: 15,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX: 10,
+        clientY: 10,
+      });
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    act(() => {
+      fireEvent.pointerDown(thumbnail, {
+        pointerId: 16,
+        pointerType: 'touch',
+        isPrimary: true,
+        clientX: 10,
+        clientY: 10,
+      });
+    });
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    unmount();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(capture.releasePointerCapture).toHaveBeenCalledWith(16);
   });
 
   it('publishes the dragged layer id and drag image through the data transfer', () => {

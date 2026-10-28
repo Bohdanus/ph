@@ -4,13 +4,11 @@
  *
  * The cases that carry the weight are the ones where this module must differ from
  * `src/util/magicWand.ts`, which is a sibling module and not a template for this one. The wand
- * folds the alpha delta into its distance (`:58-65`) and clamps tolerance to 0-100 (`:67-69`);
+ * folds the alpha delta into its distance and clamps tolerance to 0-100;
  * the fill uses `getToleranceDistance` over `MAX_COLOR_DISTANCE = sqrt(255 * 255 * 3)` and a
  * squared comparison, so the alpha cases here are the ones that fail if the sibling is copied.
- * The wand also refuses any region with an enclosed hole (`:348`), so the ring cases are the
- * ones that fail if this module is a wrapper around it. Both sibling behaviours are asserted in
- * `src/util/__tests__/magicWand.test.ts` and are correct there, so the contrast is stated here
- * rather than repaired there.
+ * Both entry points preserve holes in their own representations: this module retains the binary
+ * mask, while the wand traces every boundary loop. Their pixel coverage is compared below.
  *
  * Every tolerance threshold below is a number rather than a description, because the whole point
  * of the rescaled metric is that a caller can predict which pixels a given tolerance reaches:
@@ -20,6 +18,8 @@
 import { describe, expect, it } from 'vitest';
 import { createFloodFillMask, type FloodFillOptions } from '../floodFill.ts';
 import { createMagicWandSelectionFromImageData } from '../magicWand.ts';
+import { createSelectionAlphaMask } from '../selection.ts';
+import { MAX_RASTER_SELECTION_PIXELS } from '../selection-mask.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
   const imageData = {
@@ -359,11 +359,15 @@ describe('interior holes', () => {
     expect(result.bounds).toEqual({ left: 0, top: 0, right: size - 1, bottom: size - 1 });
   });
 
-  it('fills a ring the magic wand refuses, since the wand nulls any hole at magicWand.ts:348', () => {
+  it('matches the Magic Wand contour mask for a ring with an enclosed hole', () => {
     const imageData = createSquareRing(5, 1);
+    const fill = createFloodFillMask(imageData, { x: 0, y: 0 }, { tolerance: 0 })!;
+    const wand = createMagicWandSelectionFromImageData(imageData, { x: 0, y: 0 }, { tolerance: 0 })!;
 
-    expect(createMagicWandSelectionFromImageData(imageData, { x: 0, y: 0 }, { tolerance: 0 })).toBeNull();
-    expect(createFloodFillMask(imageData, { x: 0, y: 0 }, { tolerance: 0 })?.selectedPixelCount).toBe(24);
+    expect(wand.selectedPixelCount).toBe(fill.selectedPixelCount);
+    expect(createSelectionAlphaMask(wand.points, { width: 5, height: 5 })).toEqual(
+      Uint8Array.from(fill.mask, (selected) => (selected ? 255 : 0))
+    );
   });
 });
 
@@ -382,6 +386,18 @@ describe('degenerate input', () => {
     ['zero height', 4, 0],
   ])('returns null for %s', (_label, width, height) => {
     expect(createFloodFillMask(createImageData(width, height, [0, 0, 0, 255]), { x: 0, y: 0 })).toBeNull();
+  });
+
+  it('rejects over-budget dimensions before reading pixel data or allocating a mask', () => {
+    const oversized = {
+      width: MAX_RASTER_SELECTION_PIXELS + 1,
+      height: 1,
+      get data() {
+        throw new Error('over-budget pixel data must not be read');
+      },
+    } as unknown as ImageData;
+
+    expect(createFloodFillMask(oversized, { x: 0, y: 0 })).toBeNull();
   });
 });
 

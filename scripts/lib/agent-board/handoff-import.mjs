@@ -129,12 +129,12 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * revision of this comment quoted was the merge-base figure, and it is the whole
  * defect the other counts here are dated to avoid. This branch's own new entry
  * takes the corpus to 98 on the merged tree without moving a single verdict.
- * The four live ones are
- * `### The self-anchored move: a converter defect, deliberately not fixed here`
- * (`HANDOFF.md:368`), `## 69. An eraser gesture abandoned by switching tools …`
- * (`HANDOFF.md:1508`), `## 76. A closure check reported "3 FIXED" …`
- * (`HANDOFF.md:1788`) and `## 77. … and a suffixed retirement retires its
- * PARENT` (`HANDOFF.md:1821`). §69 and §77 are the cases with no boundary at
+ * The four live matches in that tree are:
+ * - `### The self-anchored move: a converter defect, deliberately not fixed here` under `§15`
+ * - `§69`: `An eraser gesture abandoned by switching tools …`
+ * - `§76`: `A closure check reported "3 FIXED" …`
+ * - `§77`: `… and a suffixed retirement retires its PARENT`.
+ * §69 and §77 are the cases with no boundary at
  * all — `abandoned` contains `done` and `suffixed` contains `fixed`, both
  * inside an ordinary word rather than after a hyphen — and they are the two the
  * corpus actually has. The hyphenated severities that motivated the rule were

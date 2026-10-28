@@ -87,10 +87,12 @@ function createLassoSelection(): Selection {
     isActive: true,
     lifecycle: 'committed',
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
-      { x: 0, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+        { x: 0, y: 40 },
+      ],
     ],
     pos: { x: 10, y: 20, width: 30, height: 40 },
     sourceTool: 'freehand-lasso',
@@ -109,6 +111,62 @@ function createClipboard(overrides: Partial<SelectionClipboard> = {}): Selection
   };
 }
 
+function createOversizedBmpBlob(): Blob {
+  const bytes = new Uint8Array(54);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(0, 0x4d42, true);
+  view.setUint32(10, 54, true);
+  view.setUint32(14, 40, true);
+  view.setInt32(18, 10_001, true);
+  view.setInt32(22, 10_000, true);
+  view.setUint16(26, 1, true);
+  view.setUint16(28, 24, true);
+  return new Blob([bytes], { type: 'image/bmp' });
+}
+
+function createPhotoshopSignatureBlob(): Blob {
+  return new Blob([new Uint8Array([0x38, 0x42, 0x50, 0x53])], { type: 'image/png' });
+}
+
+function createRle8BmpBlob(): Blob {
+  const pixelOffset = 14 + 40 + 256 * 4;
+  const bytes = new Uint8Array(pixelOffset + 2);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(0, 0x4d42, true);
+  view.setUint32(2, bytes.length, true);
+  view.setUint32(10, pixelOffset, true);
+  view.setUint32(14, 40, true);
+  view.setInt32(18, 2, true);
+  view.setInt32(22, 2, true);
+  view.setUint16(26, 1, true);
+  view.setUint16(28, 8, true);
+  view.setUint32(30, 1, true);
+  view.setUint32(34, 2, true);
+  view.setUint32(46, 256, true);
+  bytes.set([0, 1], pixelOffset);
+  return new Blob([bytes], { type: 'image/bmp' });
+}
+
+function createBmpWithOversizedEmbeddedPng(): Blob {
+  const pixelOffset = 14 + 40;
+  const bytes = new Uint8Array(pixelOffset + 33);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(0, 0x4d42, true);
+  view.setUint32(2, bytes.length, true);
+  view.setUint32(10, pixelOffset, true);
+  view.setUint32(14, 40, true);
+  view.setInt32(18, 2, true);
+  view.setInt32(22, 2, true);
+  view.setUint16(26, 1, true);
+  view.setUint16(28, 0, true);
+  view.setUint32(30, 5, true);
+  view.setUint32(34, 33, true);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], pixelOffset);
+  view.setUint32(pixelOffset + 16, 100_000, false);
+  view.setUint32(pixelOffset + 20, 100_000, false);
+  return new Blob([bytes], { type: 'image/bmp' });
+}
+
 const paste = () => {
   fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
   return lastPaste;
@@ -117,6 +175,7 @@ const paste = () => {
 const resetStoreState = () => {
   dispatchMock.mockClear();
   createLayerFromBitmapMock.mockReset();
+  createLayerFromBitmapMock.mockResolvedValue(true);
   readImageFromClipboardMock.mockReset();
   readImageFromClipboardMock.mockResolvedValue(null);
   lastPaste = null;
@@ -131,6 +190,11 @@ const resetStoreState = () => {
 describe('useSelectionClipboard', () => {
   beforeEach(() => {
     resetStoreState();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('copies the active lasso selection from the merged visible canvas into the in-app clipboard', () => {
@@ -209,6 +273,52 @@ describe('useSelectionClipboard', () => {
     expect(bitmap.close).not.toHaveBeenCalled();
   });
 
+  it('keeps native BMP compression support after bounded clipboard preflight', async () => {
+    const source = createRle8BmpBlob();
+    const bitmap = createMockImageBitmap(2, 2);
+    const createBitmap = vi.fn<(source: Blob | ImageBitmapSource) => Promise<ImageBitmap>>().mockResolvedValue(bitmap);
+    vi.stubGlobal('createImageBitmap', createBitmap);
+    readImageFromClipboardMock.mockImplementationOnce(
+      async (options: { decodeImage: (blob: Blob, mimeType: string) => Promise<ImageBitmap> }) => ({
+        bitmap: await options.decodeImage(source, 'image/bmp'),
+        mimeType: 'image/bmp',
+      })
+    );
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(true);
+
+    expect(createBitmap).toHaveBeenCalledTimes(1);
+    expect(createBitmap.mock.calls[0][0]).toBeInstanceOf(Blob);
+    expect(createBitmap.mock.calls[0][0]).toHaveProperty('size', source.size);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ bitmap, pos: { x: 49, y: 49, width: 2, height: 2 } })
+    );
+  });
+
+  it('rejects BMPs with embedded images before native decoding', async () => {
+    const source = createBmpWithOversizedEmbeddedPng();
+    const createBitmap = vi.fn();
+    vi.stubGlobal('createImageBitmap', createBitmap);
+    readImageFromClipboardMock.mockImplementationOnce(
+      async (options: { decodeImage: (blob: Blob, mimeType: string) => Promise<ImageBitmap> }) => {
+        try {
+          const bitmap = await options.decodeImage(source, 'image/bmp');
+          return { bitmap, mimeType: 'image/bmp' };
+        } catch {
+          return null;
+        }
+      }
+    );
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(createBitmap).not.toHaveBeenCalled();
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
+  });
+
   it('closes a system clipboard bitmap when layer creation rejects', async () => {
     const bitmap = createMockImageBitmap(20, 10);
     const failure = new Error('layer creation failed');
@@ -224,6 +334,19 @@ describe('useSelectionClipboard', () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it('closes and reports failure when layer creation is refused', async () => {
+    const bitmap = createMockImageBitmap(20, 10);
+    readImageFromClipboardMock.mockResolvedValue({ bitmap, mimeType: 'image/png' });
+    createLayerFromBitmapMock.mockResolvedValueOnce(false);
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledTimes(1);
+    expect(bitmap.close).toHaveBeenCalledExactlyOnceWith();
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
   it('closes an oversized system clipboard bitmap before creating a layer', async () => {
     const bitmap = createMockImageBitmap(10_001, 10_000);
     readImageFromClipboardMock.mockResolvedValue({ bitmap, mimeType: 'image/png' });
@@ -232,6 +355,63 @@ describe('useSelectionClipboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
     await expect(lastPaste).resolves.toBe(false);
     expect(bitmap.close).toHaveBeenCalledExactlyOnceWith();
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
+  });
+
+  it('preflights an oversized system clipboard image before browser bitmap decoding', async () => {
+    const createImageBitmapSpy = vi.spyOn(globalThis, 'createImageBitmap');
+    readImageFromClipboardMock.mockImplementation(async ({ decodeImage }) => {
+      expect(decodeImage).toBeTypeOf('function');
+      try {
+        const bitmap = await decodeImage(createOversizedBmpBlob(), 'image/bmp');
+        return { bitmap, mimeType: 'image/bmp' };
+      } catch {
+        return null;
+      }
+    });
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(createImageBitmapSpy).not.toHaveBeenCalled();
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Photoshop document disguised as a clipboard raster before browser decoding', async () => {
+    const createImageBitmapSpy = vi.spyOn(globalThis, 'createImageBitmap');
+    readImageFromClipboardMock.mockImplementation(async ({ decodeImage }) => {
+      expect(decodeImage).toBeTypeOf('function');
+      try {
+        const bitmap = await decodeImage(createPhotoshopSignatureBlob(), 'image/png');
+        return { bitmap, mimeType: 'image/png' };
+      } catch {
+        return null;
+      }
+    });
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(createImageBitmapSpy).not.toHaveBeenCalled();
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects clipboard image types without a bounded preflight path', async () => {
+    const createImageBitmapSpy = vi.spyOn(globalThis, 'createImageBitmap');
+    readImageFromClipboardMock.mockImplementation(async ({ decodeImage }) => {
+      expect(decodeImage).toBeTypeOf('function');
+      try {
+        const bitmap = await decodeImage(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/avif' }), 'image/avif');
+        return { bitmap, mimeType: 'image/avif' };
+      } catch {
+        return null;
+      }
+    });
+    render(<ClipboardProbe />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste System Image' }));
+    await expect(lastPaste).resolves.toBe(false);
+    expect(createImageBitmapSpy).not.toHaveBeenCalled();
     expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
   });
 
@@ -280,6 +460,16 @@ describe('pasteSelectionClipboard', () => {
 
     expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
     expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports failure when layer creation refuses a selection clipboard paste', async () => {
+    vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas);
+    storeState.selectionClipboard = createClipboard();
+    createLayerFromBitmapMock.mockResolvedValueOnce(false);
+    render(<ClipboardProbe />);
+
+    await expect(paste()).resolves.toBe(false);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledOnce();
   });
 
   it('clones the clipboard bitmap and centers the new layer in document space', async () => {
@@ -350,6 +540,7 @@ describe('pasteSelectionClipboard', () => {
     const withFrameOrigin = createLayerFromBitmapMock.mock.calls[0][0].pos;
 
     createLayerFromBitmapMock.mockReset();
+    createLayerFromBitmapMock.mockResolvedValue(true);
     storeState.documentFrame = undefined;
     rerender(<ClipboardProbe />);
 

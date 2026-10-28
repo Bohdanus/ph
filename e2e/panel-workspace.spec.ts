@@ -117,9 +117,10 @@ test.describe('Panel workspace (fast)', () => {
     // The distance the pointer travels, which is a choice about this gesture rather than a
     // property of the app: 80px in, and the dock must be 80px wider.
     const drag = 80;
-    await page.mouse.move(box.x + box.width / 2, 400);
+    const pointerY = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width / 2, pointerY);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 - drag, 400, { steps: 8 });
+    await page.mouse.move(box.x + box.width / 2 - drag, pointerY, { steps: 8 });
     await page.mouse.up();
 
     const widened = before + drag;
@@ -138,16 +139,15 @@ test.describe('Panel workspace (fast)', () => {
     // first thing a user does in it is click a history entry or a layer row.
     const dock = page.locator(DOCK);
     const before = await width(dock);
-    // The press goes at the dock's own centre, which is `viewportWidth - before / 2` written
-    // out as a literal in every other shape — `1280 - 125` happens to be the centre of the
-    // 250px this dock opens at, and it is nowhere else once the default moves, at which point
-    // the press lands off the dock and the test quietly stops testing anything.
+    // The press is at the measured dock centre, so it remains inside the panel if the default
+    // width or viewport changes.
     const dockBox = (await dock.boundingBox())!;
-    const viewportWidth = (await page.viewportSize())!.width;
-    await page.mouse.move(dockBox.x + before / 2, 400);
+    const pointerX = dockBox.x + dockBox.width / 2;
+    const pointerY = dockBox.y + dockBox.height / 2;
+    await page.mouse.move(pointerX, pointerY);
     await page.mouse.down();
-    // And the release well outside the column, off the handle's side of it.
-    await page.mouse.move(viewportWidth - 300, 400, { steps: 6 });
+    // And the release outside the column on its canvas side, away from the resize handle.
+    await page.mouse.move(dockBox.x - 24, pointerY, { steps: 6 });
     await page.mouse.up();
 
     expect(await width(dock)).toBeCloseTo(before, 0);
@@ -162,12 +162,14 @@ test.describe('Panel workspace (fast)', () => {
     const handle = page.locator(RESIZE_HANDLE);
     const box = (await handle.boundingBox())!;
     const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const viewportWidth = (await page.viewportSize())!.width;
 
-    await page.mouse.move(x, 400);
+    await page.mouse.move(x, y);
     await page.mouse.down();
     // All the way in. "To show only the icons, adjust the dock width until the labels
     // disappear" — so the labels must actually go, not merely narrow.
-    await page.mouse.move(1280 - 4, 400, { steps: 12 });
+    await page.mouse.move(viewportWidth - 4, y, { steps: 12 });
     await page.mouse.up();
 
     const dock = page.locator(DOCK);
@@ -215,7 +217,7 @@ test.describe('Panel workspace (fast)', () => {
     // allows; the measured offset on a correct build is zero.
     expect(
       Math.abs(lineBox.y + lineBox.height - (dockBox.y + dockBox.height)),
-      'the drop line is not at the edge the drop will insert at'
+      'the drop line bottom is not at the edge the drop will insert at'
     ).toBeLessThanOrEqual(2);
     // And that it is PAINTED, which none of the geometry above can see: this line is
     // `pointer-events: none` inside an `overflow: hidden` column, so a transparent one keeps a
@@ -254,10 +256,12 @@ test.describe('Panel workspace (fast)', () => {
     // `self-stretch` child of it, so measuring the control compares a stretched box against the
     // box that stretched it. A rolled-up group is its tab bar and nothing else.
     const rowBox = (await page.locator('[data-testid="panel-header-row-history"]').boundingBox())!;
-    // The group's own 1px bottom border rides along — that border is the separator to the
-    // group below, drawn whether or not there is still a body under it — so the tolerance is
-    // the border.
-    expect(Math.abs(groupBox.height - rowBox.height)).toBeLessThanOrEqual(2);
+    // The first group keeps its separator border when rolled up. Derive the expected extra
+    // height from the rendered border so an additional pixel of panel body cannot hide in a
+    // two-pixel tolerance.
+    const borderBottom = await group.evaluate((node) => parseFloat(getComputedStyle(node).borderBottomWidth));
+    expect(borderBottom).toBeGreaterThan(0);
+    expect(groupBox.height - rowBox.height).toBeCloseTo(borderBottom, 0);
 
     await tab.dblclick();
     await expect(tab).toHaveAttribute('aria-expanded', 'true');
@@ -323,9 +327,11 @@ test.describe('Panel workspace (fast)', () => {
     // read: `DEFAULT_DOCK_WIDTH` is a layout decision (`src/contexts/PanelLayout.tsx:114`).
     const openedAt = await width(dock);
     const handle = (await page.locator(RESIZE_HANDLE).boundingBox())!;
-    await page.mouse.move(handle.x + handle.width / 2, 400);
+    const handleX = handle.x + handle.width / 2;
+    const handleY = handle.y + handle.height / 2;
+    await page.mouse.move(handleX, handleY);
     await page.mouse.down();
-    await page.mouse.move(handle.x + handle.width / 2 - 60, 400, { steps: 6 });
+    await page.mouse.move(handleX - 60, handleY, { steps: 6 });
     await page.mouse.up();
     const resized = await width(dock);
     // The precondition of everything below, asserted rather than assumed: the drag has to
@@ -369,19 +375,26 @@ test.describe('Panel workspace (fast)', () => {
   test('a stored width below the label floor is reachable back out of', async ({ page }) => {
     // The one-way door. The icon strip's only expand control calls `setDockWidth(dockWidth)`,
     // which collapses again on a width that is still under the floor, and the double-arrow is
-    // not rendered while collapsed — so a 45px stored width left only `Window > Reset`.
+    // not rendered while collapsed — so a stale undersized value left only `Window > Reset`.
+    const openedAt = await width(page.locator(DOCK));
     await page.addInitScript(() =>
-      window.localStorage.setItem('panelLayout', '{"dockWidth": 45, "isCollapsed": false}')
+      window.localStorage.setItem('panelLayout', '{"dockWidth": 1, "isCollapsed": false}')
     );
     await page.reload();
     await expect(page.locator(RAIL)).toBeVisible();
 
     const dock = page.locator(DOCK);
-    expect(await width(dock)).toBeLessThan(56);
+    const collapsedWidth = await width(dock);
+    expect(collapsedWidth).toBeLessThan(56);
+    expect(collapsedWidth).toBeLessThan(openedAt);
     await expect(page.locator('[data-testid="dock-icon-strip"]')).toBeVisible();
 
     // Out, without the reset menu.
     await page.locator('[data-testid="dock-icon-layers"]').click();
-    expect(await width(dock)).toBeGreaterThanOrEqual(56);
+    const expandedWidth = await width(dock);
+    expect(expandedWidth).toBeGreaterThanOrEqual(56);
+    expect(expandedWidth).toBeGreaterThan(collapsedWidth);
+    await expect(page.locator('[data-testid="panel-group-layers"]')).toBeVisible();
+    await expect(page.locator('[data-testid="dock-icon-strip"]')).toBeHidden();
   });
 });

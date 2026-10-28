@@ -92,6 +92,10 @@ function bottomFirst(layers: LayersRecord): LayerId[] {
   return getSortedLayersArray(layers).map((layer) => layer.id);
 }
 
+function orderValuesFor(preOrder: readonly LayerId[]): Record<LayerId, number> {
+  return Object.fromEntries(preOrder.map((id, index) => [id, index]));
+}
+
 function newLayerEntries(ids: readonly string[] = stackIds): HistoryItem[] {
   return ids
     .filter((id) => id !== 'layer-1')
@@ -127,11 +131,28 @@ type ReorderOperation = Readonly<{ kind: 'reorder-layers'; orderByLayerId: Reado
 type PlannedReorderEntry = DurableHistoryEntry<ReorderOperation>;
 
 function plannedReorder(item: HistoryItem, preOrder: readonly LayerId[]): PlannedReorderEntry {
-  const entry = deriveReorderLayersEntry(item, preOrder);
+  const entry = deriveReorderLayersEntry(item, preOrder, orderValuesFor(preOrder));
   if (!entry || entry.operation.kind !== 'reorder-layers') {
     throw new Error(`expected a durable reorder entry for ${item.id}`);
   }
   return entry as PlannedReorderEntry;
+}
+
+function validatePlannedReorder(
+  item: HistoryItem,
+  planned: DurableHistoryEntry,
+  preOrder: readonly LayerId[] | null | undefined
+): string | null {
+  return validatePlannedDurableEntry(
+    item,
+    planned,
+    preOrder,
+    null,
+    undefined,
+    undefined,
+    undefined,
+    preOrder ? orderValuesFor(preOrder) : null
+  );
 }
 
 function withOrderMap(entry: DurableHistoryEntry, orderByLayerId: Record<LayerId, number>): DurableHistoryEntry {
@@ -141,7 +162,8 @@ function withOrderMap(entry: DurableHistoryEntry, orderByLayerId: Record<LayerId
 describe('reorderOrderAfterIntent agrees with the converter', () => {
   // Every case below is checked two ways: against `reorderOrderAfterIntent`, which
   // is the independent second implementation, and against the two properties
-  // that define the operation at all — a dense 0..n-1 permutation of the stack,
+  // that define the operation at all — a complete map whose sorted values keep
+  // the requested stack sequence,
   // and the requested placement or sequence-preserving self-anchor.
   it.each([
     { label: 'no anchor: a middle layer goes to the bottom', layerToMoveId: 'layer-c', afterWhichLayerId: null },
@@ -179,20 +201,21 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
         'new-layer-d',
         'reorder',
       ]);
-      expect(recorded).toEqual(reorderOrderAfterIntent(preOrder, intent));
-      // The map is a dense permutation of the pre-move stack: every id present
-      // exactly once, ranked 0..n-1, so no layer is dropped or duplicated.
+      expect(recorded).toEqual(reorderOrderAfterIntent(preOrder, intent, orderValuesFor(preOrder)));
+      // Sparse legacy values are intentional, but every layer must remain in
+      // the map and the numeric sort must produce the requested sequence.
       expect(Object.keys(recorded).sort()).toEqual([...preOrder].sort());
-      expect(Object.values(recorded).sort((left, right) => left - right)).toEqual(preOrder.map((_, i) => i));
-      // Self-anchoring is a valid no-op; other named anchors place the mover
-      // above the anchor, and an absent anchor places it at the bottom.
-      if (afterWhichLayerId === layerToMoveId) {
-        expect(recorded).toEqual(Object.fromEntries(preOrder.map((id, index) => [id, index])));
-      } else if (afterWhichLayerId) {
-        expect(recorded[layerToMoveId]).toBe(recorded[afterWhichLayerId] + 1);
-      } else {
-        expect(recorded[layerToMoveId]).toBe(0);
+      const expectedSequence = [...preOrder];
+      if (afterWhichLayerId !== layerToMoveId) {
+        expectedSequence.splice(expectedSequence.indexOf(layerToMoveId), 1);
+        const index = afterWhichLayerId ? expectedSequence.indexOf(afterWhichLayerId) + 1 : 0;
+        expectedSequence.splice(index, 0, layerToMoveId);
       }
+      expect(
+        Object.entries(recorded)
+          .sort((a, b) => a[1] - b[1])
+          .map(([id]) => id)
+      ).toEqual(expectedSequence);
       registry.shutdown();
     }
   );
@@ -204,19 +227,19 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
       label: 'a no-anchor move puts the mover at the bottom',
       layerToMoveId: 'layer-c',
       afterWhichLayerId: null,
-      expectedOrder: { 'layer-c': 0, 'layer-1': 1, 'layer-b': 2, 'layer-d': 3 },
+      expectedOrder: { 'layer-c': -1, 'layer-1': 0, 'layer-b': 1, 'layer-d': 3 },
     },
     {
       label: 'a no-anchor move of the top layer puts it at the bottom',
       layerToMoveId: 'layer-d',
       afterWhichLayerId: null,
-      expectedOrder: { 'layer-d': 0, 'layer-1': 1, 'layer-b': 2, 'layer-c': 3 },
+      expectedOrder: { 'layer-d': -1, 'layer-1': 0, 'layer-b': 1, 'layer-c': 2 },
     },
     {
       label: 'a move of the bottom layer above the top renumbers the stack',
       layerToMoveId: 'layer-1',
       afterWhichLayerId: 'layer-d',
-      expectedOrder: { 'layer-b': 0, 'layer-c': 1, 'layer-d': 2, 'layer-1': 3 },
+      expectedOrder: { 'layer-b': 1, 'layer-c': 2, 'layer-d': 3, 'layer-1': 4 },
     },
     {
       // "after" is a higher index, i.e. further up the stack, so anchoring on
@@ -224,13 +247,13 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
       label: 'a move after the layer immediately above the mover swaps the pair',
       layerToMoveId: 'layer-b',
       afterWhichLayerId: 'layer-c',
-      expectedOrder: { 'layer-1': 0, 'layer-c': 1, 'layer-b': 2, 'layer-d': 3 },
+      expectedOrder: { 'layer-1': 0, 'layer-c': 2, 'layer-b': 3, 'layer-d': 5 },
     },
     {
       label: 'a move after the layer immediately below the mover preserves the order',
       layerToMoveId: 'layer-b',
       afterWhichLayerId: 'layer-1',
-      expectedOrder: { 'layer-1': 0, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 },
+      expectedOrder: { 'layer-1': 0, 'layer-b': 1, 'layer-c': 4, 'layer-d': 5 },
     },
     {
       label: 'a move of the top layer onto the one below it preserves the order',
@@ -242,13 +265,13 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
       label: 'a self-anchor preserves the current order',
       layerToMoveId: 'layer-c',
       afterWhichLayerId: 'layer-c',
-      expectedOrder: { 'layer-1': 0, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 },
+      expectedOrder: { 'layer-1': 0, 'layer-b': 1, 'layer-c': 3, 'layer-d': 5 },
     },
     {
       label: 'a no-anchor move of the bottom layer preserves the order',
       layerToMoveId: 'layer-1',
       afterWhichLayerId: null,
-      expectedOrder: { 'layer-1': 0, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 },
+      expectedOrder: { 'layer-1': -1, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 },
     },
   ] satisfies ReadonlyArray<{
     label: string;
@@ -263,7 +286,7 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
 
     expect(recordedOrderMap(converted)).toEqual(expectedOrder);
     expect(recordedOrderMap(converted)).toEqual(
-      reorderOrderAfterIntent(preOrder, { layerToMoveId, afterWhichLayerId })
+      reorderOrderAfterIntent(preOrder, { layerToMoveId, afterWhichLayerId }, orderValuesFor(preOrder))
     );
     registry.shutdown();
   });
@@ -277,7 +300,9 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
     ({ layerToMoveId, afterWhichLayerId }) => {
       const preOrder = bottomFirst(runtimeStack());
 
-      expect(reorderOrderAfterIntent(preOrder, { layerToMoveId, afterWhichLayerId })).toBeNull();
+      expect(
+        reorderOrderAfterIntent(preOrder, { layerToMoveId, afterWhichLayerId }, orderValuesFor(preOrder))
+      ).toBeNull();
     }
   );
 
@@ -290,7 +315,13 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
     // Legacy replay skips the move, so the shadow records no operation and the
     // boundary must refuse rather than fabricate a map — a `null` here and an
     // absent entry there are the same answer.
-    expect(reorderOrderAfterIntent(preOrder, { layerToMoveId: 'layer-1', afterWhichLayerId: 'ghost' })).toBeNull();
+    expect(
+      reorderOrderAfterIntent(
+        preOrder,
+        { layerToMoveId: 'layer-1', afterWhichLayerId: 'ghost' },
+        orderValuesFor(preOrder)
+      )
+    ).toBeNull();
     expect(converted.diagnostics).toEqual([]);
     expect(converted.document.history.map((entry) => entry.id)).toEqual(['new-layer-b', 'new-layer-c', 'new-layer-d']);
     expect(converted.document.history.map((entry) => entry.operation.kind)).toEqual([
@@ -304,7 +335,7 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
   it('converts a self-anchored move to the sequence-preserving order', () => {
     const registry = new AssetRegistry();
     const preOrder = bottomFirst(runtimeStack());
-    const expectedOrder = { 'layer-1': 0, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 };
+    const expectedOrder = { 'layer-1': 0, 'layer-b': 1, 'layer-c': 3, 'layer-d': 5 };
 
     const moved = { ...runtimeStack() } as Record<string, Layer>;
     reorderLayers({ layers: moved, layerToMoveId: 'layer-c', afterWhichLayerId: 'layer-c' });
@@ -313,9 +344,13 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
 
     expect(runtimeSequence).toEqual(preOrder);
     expect(recordedOrderMap(converted)).toEqual(expectedOrder);
-    expect(reorderOrderAfterIntent(preOrder, { layerToMoveId: 'layer-c', afterWhichLayerId: 'layer-c' })).toEqual(
-      expectedOrder
-    );
+    expect(
+      reorderOrderAfterIntent(
+        preOrder,
+        { layerToMoveId: 'layer-c', afterWhichLayerId: 'layer-c' },
+        orderValuesFor(preOrder)
+      )
+    ).toEqual(expectedOrder);
     registry.shutdown();
   });
 });
@@ -351,15 +386,15 @@ describe('reorderOrderAfterIntent over real runtime order values', () => {
   ] as const)('$label', ({ values }) => {
     const preOrder = bottomFirst(stackWithOrders(values));
 
-    // The order values moved; the sequence did not, so every map below is the
-    // one the dense matrix already pins.
     expect(preOrder).toEqual([...stackIds]);
-    expect(reorderOrderAfterIntent(preOrder, intent)).toEqual({
-      'layer-1': 0,
-      'layer-b': 2,
-      'layer-c': 1,
-      'layer-d': 3,
-    });
+    const actualOrders = Object.fromEntries(
+      Object.values(stackWithOrders(values)).map((layer) => [layer.id, layer.order])
+    );
+    const expected = { ...actualOrders };
+    const targetOrder = expected[intent.afterWhichLayerId]!;
+    for (const id of preOrder) if (expected[id]! > targetOrder) expected[id] += 2;
+    expected[intent.layerToMoveId] = targetOrder + 1;
+    expect(reorderOrderAfterIntent(preOrder, intent, actualOrders)).toEqual(expected);
   });
 
   it('reads the sequence out of order values that do not follow the layer ids', () => {
@@ -372,26 +407,32 @@ describe('reorderOrderAfterIntent over real runtime order values', () => {
     expect(preOrder).toEqual(['layer-1', 'layer-c', 'layer-b', 'layer-d']);
     // `layer-b` moves to just above `layer-c`, which is now the second from the
     // bottom — so it lands at index 2, not at index 1.
-    expect(reorderOrderAfterIntent(preOrder, intent)).toEqual({
-      'layer-1': 0,
-      'layer-c': 1,
-      'layer-b': 2,
-      'layer-d': 3,
-    });
+    const stack = stackWithOrders([-4, 0, -2, 3]);
+    const actualOrders = Object.fromEntries(Object.values(stack).map((layer) => [layer.id, layer.order]));
+    const expected = { ...actualOrders };
+    const targetOrder = expected[intent.afterWhichLayerId]!;
+    for (const id of preOrder) if (expected[id]! > targetOrder) expected[id] += 2;
+    expected[intent.layerToMoveId] = targetOrder + 1;
+    expect(reorderOrderAfterIntent(preOrder, intent, actualOrders)).toEqual(expected);
   });
 
   it.each([
     { label: 'moves to the bottom', intent: { layerToMoveId: 'layer-b' as LayerId, afterWhichLayerId: null } },
     { label: 'moves to the bottom with no anchor at all', intent: { layerToMoveId: 'layer-b' as LayerId } },
-  ])('holds the dense map for a negative-order stack that $label', ({ intent: thisIntent }) => {
-    const preOrder = bottomFirst(stackWithOrders([-6, -3, 0, 2]));
-
-    expect(reorderOrderAfterIntent(preOrder, thisIntent)).toEqual({
-      'layer-b': 0,
-      'layer-1': 1,
-      'layer-c': 2,
-      'layer-d': 3,
-    });
+  ])('preserves sparse values for a negative-order stack that $label', ({ intent: thisIntent }) => {
+    const stack = stackWithOrders([-6, -3, 0, 2]);
+    const preOrder = bottomFirst(stack);
+    const actualOrders = Object.fromEntries(Object.values(stack).map((layer) => [layer.id, layer.order]));
+    const expected = { ...actualOrders };
+    const anchor = thisIntent.afterWhichLayerId ?? null;
+    if (!anchor) {
+      expected[thisIntent.layerToMoveId] = Math.min(...Object.values(expected)) - 1;
+    } else {
+      const targetOrder = expected[anchor]!;
+      for (const id of preOrder) if (expected[id]! > targetOrder) expected[id] += 2;
+      expected[thisIntent.layerToMoveId] = targetOrder + 1;
+    }
+    expect(reorderOrderAfterIntent(preOrder, thisIntent, actualOrders)).toEqual(expected);
   });
 });
 
@@ -399,9 +440,14 @@ describe('deriveReorderLayersEntry', () => {
   const preOrder = bottomFirst(runtimeStack());
 
   // `layer-1` starts at the bottom, so this intent genuinely moves it: the
-  // anchor takes index 0 and the mover lands directly above it at index 1.
+  // anchor remains at order 1 and the mover lands at order 2 above it.
   const item = reorderItem('layer-1', 'layer-b');
-  const intentOrder = { 'layer-b': 0, 'layer-1': 1, 'layer-c': 2, 'layer-d': 3 };
+  const intentOrder = { 'layer-b': 1, 'layer-1': 2, 'layer-c': 4, 'layer-d': 5 };
+
+  it('refuses to invent sparse order values when the live witness is missing or incomplete', () => {
+    expect(deriveReorderLayersEntry(item, preOrder)).toBeNull();
+    expect(deriveReorderLayersEntry(item, preOrder, { 'layer-1': 0 })).toBeNull();
+  });
 
   it('returns a frozen entry describing the legacy item', () => {
     const entry = plannedReorder(item, preOrder);
@@ -505,29 +551,28 @@ describe('deriveReorderLayersEntry', () => {
     );
 
     expect(withUndefined).toEqual(withNull);
-    expect(withUndefined.operation.orderByLayerId).toEqual({ 'layer-c': 0, 'layer-1': 1, 'layer-b': 2, 'layer-d': 3 });
+    expect(withUndefined.operation.orderByLayerId).toEqual({ 'layer-c': -1, 'layer-1': 0, 'layer-b': 1, 'layer-d': 3 });
   });
 });
 
 describe('validatePlannedDurableEntry on a reorder', () => {
   const preOrder = bottomFirst(runtimeStack());
   // The intent genuinely moves a layer: `layer-1` starts at the bottom, so
-  // anchoring it after `layer-b` renumbers the first two entries of the stack.
+  // anchoring it after `layer-b` updates legacy sparse order values.
   const item = reorderItem('layer-1', 'layer-b');
   const planned = plannedReorder(item, preOrder);
-  // Hand-written, and the map a correct plan must produce for this intent: the
-  // anchor at 0, the mover directly above it, the rest unchanged.
-  const correctOrder = { 'layer-b': 0, 'layer-1': 1, 'layer-c': 2, 'layer-d': 3 };
+  // Hand-written, and the map a correct plan must produce for this intent.
+  const correctOrder = { 'layer-b': 1, 'layer-1': 2, 'layer-c': 4, 'layer-d': 5 };
 
   it('accepts a correct planned entry when the store order is supplied', () => {
     expect(planned.operation.orderByLayerId).toEqual(correctOrder);
-    expect(validatePlannedDurableEntry(item, planned, preOrder)).toBeNull();
+    expect(validatePlannedReorder(item, planned, preOrder)).toBeNull();
   });
 
   it('reports a renamed index in the planned map', () => {
-    const reason = validatePlannedDurableEntry(
+    const reason = validatePlannedReorder(
       item,
-      withOrderMap(planned, { 'layer-b': 0, 'layer-1': 2, 'layer-c': 1, 'layer-d': 3 }),
+      withOrderMap(planned, { 'layer-b': 1, 'layer-1': 3, 'layer-c': 2, 'layer-d': 5 }),
       preOrder
     );
 
@@ -536,25 +581,21 @@ describe('validatePlannedDurableEntry on a reorder', () => {
   });
 
   it('reports a layer missing from the planned map', () => {
-    const short = { 'layer-b': 0, 'layer-1': 1, 'layer-c': 2 };
+    const short = { 'layer-b': 1, 'layer-1': 2, 'layer-c': 4 };
 
-    const reason = validatePlannedDurableEntry(item, withOrderMap(planned, short), preOrder);
+    const reason = validatePlannedReorder(item, withOrderMap(planned, short), preOrder);
 
     expect(reason).toEqual(expect.any(String));
   });
 
   it('reports an extra layer in the planned map', () => {
-    const reason = validatePlannedDurableEntry(
-      item,
-      withOrderMap(planned, { ...correctOrder, 'layer-x': 4 }),
-      preOrder
-    );
+    const reason = validatePlannedReorder(item, withOrderMap(planned, { ...correctOrder, 'layer-x': 4 }), preOrder);
 
     expect(reason).toEqual(expect.any(String));
   });
 
   it('reports a layer-property operation planned for a reorder', () => {
-    const reason = validatePlannedDurableEntry(
+    const reason = validatePlannedReorder(
       item,
       { ...planned, operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Other' } } },
       preOrder
@@ -570,7 +611,7 @@ describe('validatePlannedDurableEntry on a reorder', () => {
       layerId: 'document',
       args: { afterWhichLayerId: 'layer-b' },
     } as HistoryItem;
-    const reason = validatePlannedDurableEntry(bare, withOrderMap(planned, correctOrder), preOrder);
+    const reason = validatePlannedReorder(bare, withOrderMap(planned, correctOrder), preOrder);
 
     expect(reason).toBe('a layer reorder has no moving layer id');
   });
@@ -581,7 +622,7 @@ describe('validatePlannedDurableEntry on a reorder', () => {
   ] satisfies ReadonlyArray<{ label: string; order: readonly LayerId[] | null | undefined }>)(
     'refuses to pass a reorder checked with $label',
     ({ order }) => {
-      const reason = validatePlannedDurableEntry(item, planned, order);
+      const reason = validatePlannedReorder(item, planned, order);
 
       expect(reason).toBe('a layer reorder was checked without the store layer order it was planned against');
     }
@@ -596,7 +637,7 @@ describe('validatePlannedDurableEntry on a reorder', () => {
       // `decideDurableAppend` sends these down the preconditions path before
       // validation, so the validator must not grade the refusal as a valid
       // placement either.
-      const reason = validatePlannedDurableEntry(derailed, withOrderMap(planned, correctOrder), preOrder);
+      const reason = validatePlannedReorder(derailed, withOrderMap(planned, correctOrder), preOrder);
 
       expect(reason).toBe('the layer reorder names a layer the document does not hold');
     }

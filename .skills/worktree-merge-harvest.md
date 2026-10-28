@@ -1,3 +1,8 @@
+---
+name: worktree-merge-harvest
+description: Land useful work from free worktrees onto main: establish ownership and net content, recover the requirement, review the candidate, sync it with current main, validate the final composition, and record whether work landed, was reimplemented, rejected, archived, or remains unresolved. Abandoned-worktree reclamation is the separate `stale-worktree-reclaim` skill.
+---
+
 # Worktree merge harvest
 
 Land the work sitting on **free** worktrees of this repository onto `main`.
@@ -21,9 +26,14 @@ harvest that stops to ask "is this right?" about `main`'s current shape has
 started a second conversation, and the answer will be stale by the time it is
 acted on. Bring the BRANCH to `main`, never the reverse: rebase or merge `main`
 **into the branch**, in the branch's own worktree, and let `main` receive a
-fast-forward or a plain merge commit. Resolving a conflict in the main worktree
-puts your resolution — an unreviewed, unattributed one — into a shared checkout
-that other sessions are writing to.
+mechanical pinned merge commit prepared with `--no-commit --no-ff`. Every clean
+merge in every worktree must use `--no-commit --no-ff` and then `git commit`,
+because the direct merge hook cannot identify the incoming commit. Resolving a
+conflict in the main worktree puts your resolution — an unreviewed, unattributed
+one — into a shared checkout that other sessions are writing to.
+Land one candidate at a time. Octopus merges record multiple incoming commits,
+while the review pins identify one candidate; the helper and merge guard refuse
+that shape before creating a commit.
 
 The corollary that decides the whole sweep: **an `action: land` you did not
 generate yourself is a claim about a moment.** `WORKTREES.json` is a snapshot
@@ -32,24 +42,37 @@ moves underneath it, and the `mergeConflict` answer in particular is the fastest
 field in the file to go stale. Regenerate before you trust it, and re-read `dirty`
 and `mergeConflict` before you act.
 
-There is a second governing rule, and it decides how hard you try before you ask.
-**Time and compute are effectively unlimited in this repository; the scarce
-resources are autonomy and correctness.** Nothing in a harvest is to be
-abandoned for being expensive, slow, or hard to establish. Escalating to the
-operator is the last move on the board, not the first: it hands a decision to
-somebody who cannot see the branch, the transcript, or the diff you can see, so
-every question you ask instead of answering is one whose answer will be stale by
-the time it is acted on.
+There is a second governing rule: preserve autonomy while respecting finite budgets and
+provider quotas. Follow `MODELS.md`, prefer verified free routes for eligible research and
+review, and never silently fall back to paid inference. Keep moving on independent work when a
+route is unavailable; if a budget or blocker prevents safe validation, leave an evidence-based
+handoff naming the remaining check or decision. Do not abandon a branch just because its history
+is unfamiliar or its content needs careful review.
 
 **What makes the first rule enforceable is one layer down.**
-`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit` and refuses
-a commit made from the main worktree. It does not stop the write — it runs after
-the edit — so it converts "rogue commits nobody can attribute" into "a dirty
-tree the next `git status` names". A landing never reaches it, because a
-fast-forward fires no **blocking** hook and a merge fires `pre-merge-commit`
-before it commits; the one override is `ALLOW_MAIN_COMMIT=1`, and only the exact
-value `1`. A fast-forward does fire `post-merge`, which releases the board claims
-this merge carried — that is the one hook a landing reaches, and it cannot block.
+`scripts/main-worktree-guard.mjs` runs from `.husky/pre-commit` and refuses
+ordinary commits made from either the primary Git checkout or the designated
+`main` branch worktree. The primary checkout remains protected when it has a task
+branch checked out. A pinned landing is allowed only in the designated `main`
+worktree: prepare it with `--no-commit --no-ff`, then use
+`scripts/commit-reviewed-landing.mjs` with reviewed parent, tree, branch, and
+chat pins. It commits a private index snapshot, and the guard compares `HEAD`, `MERGE_HEAD`,
+and that staged tree. Direct self-committing merges are refused in every worktree; check for
+`MERGE_HEAD` and abort only that refused attempt before retrying. Fast-forwards
+also do not provide this check, so neither shape is a landing path. The pins are
+an operator-supplied record of the reviewed candidate, not a cryptographic
+approval token. The main worktree permits only reviewed pinned landings; ordinary and hotfix
+changes must be made on a task branch and landed through the same reviewed procedure.
+The hook installer records the designated main worktree's private Git directory
+and path in shared local Git config (`ph.mainWorktreeGitDir` and
+`ph.mainWorktreePath`). The Git directory keeps the same checkout protected if
+`HEAD` is detached or switched during a hook. If that private directory changes,
+the saved path still protects a detached checkout there; it does not transfer
+protection to a feature branch that reuses the path. A first install fails when
+`main` is detached and no saved identity exists. A pinned landing still requires
+`refs/heads/main` to be checked out.
+A completed merge also fires `post-merge`, which
+releases eligible board claims but cannot block the merge.
 Everything else that changes a tracked file belongs in the branch's own worktree,
 including a comment — and before you edit, `git rev-parse --show-toplevel` is the
 only thing that distinguishes the worktree you are in from the one you believe you
@@ -69,10 +92,15 @@ npm run branches:orphan
 ```
 
 The first report covers worktree-backed branches; the second covers branch-only refs. Classify
-every orphan before ending the harvest. Add `--no-live-writers "<why>"` when you know every chat is gone — an editor
-restart takes them all with it, and the recency heuristics keep reporting an owner
-for thirty minutes afterwards. It is a declared hard state, recorded in
-`ownership.suppressed` beside the signals it overrode.
+every orphan before ending the harvest. Use `--no-live-writers "<why>"` only when evidence shows
+that every writer is gone and the inventory's recency heuristic alone is stale. An editor restart
+may be that evidence only after confirming the writers are gone. The override is a declared hard
+state, recorded in `ownership.suppressed`; it does not clear `derivedLive`, session or board
+ownership, or make an active worktree safe to use.
+
+Record each action's `generatedAt`, `mainHead`, exact `absolutePath`, branch and HEAD, ownership
+evidence, staged/unstaged/untracked state, and nested-worktree state. These are snapshot facts;
+regenerate after acting and use the post-action inventory to report what remains.
 
 Read the top-level answers before the table:
 
@@ -116,22 +144,30 @@ Per worktree, the fields that decide:
   on every record, and prose arithmetic goes stale the moment `main` moves.
 - **`mergeConflict` / `mergeConflictFiles`** — and remember `mergeChecked: false`
   means _no answer_, never "clean" (`classify()` in `classify.mjs`).
+- **`mergeResultMatchesBase`** — `true` means the conflict-free merge adds no tree
+  content, `false` means it adds content, and `null`/unchecked is not an answer.
+  This is a point-in-time result against `mainHead`; regenerate if `main` moves.
 - **`summary` / `note` / `issues`** — the curator's claim about the branch. The
   `claimedLanded` / `mergedIntoMain` pair is asserted to agree by a test, so a
   stale `landed: true` fails the suite rather than quietly contradicting git.
 
-Then prove the branch is actually unlanded, because the file can be wrong:
+Then prove the branch is actually unlanded, because the file can be wrong. Use the
+`mainHead` from that inventory snapshot, and regenerate if `main` moves:
 
 ```bash
-cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
-git cherry main <branch>          # patch-level absorption; a branch can be
-                                  # unlanded by git log and already on main
-git log --oneline main..<branch>  # what is genuinely not there
+WORKTREE="<absolutePath-from-the-fresh-inventory>"
+MAIN_SHA="<mainHead-from-the-fresh-inventory>"
+BRANCH="<branch-ref>"
+git -C "$WORKTREE" rev-parse --show-toplevel
+git cherry "$MAIN_SHA" "$BRANCH"        # patch-level absorption
+git log --oneline "$MAIN_SHA..$BRANCH"  # commits reachable only from the branch
+MERGE_TREE=$(git -C "$WORKTREE" merge-tree --write-tree "$MAIN_SHA" "$BRANCH")
+MAIN_TREE=$(git -C "$WORKTREE" rev-parse "$MAIN_SHA^{tree}")
 ```
 
-A branch that `git log` and `merge-tree` both call unmerged can still be on `main`
-byte-identically. Report a branch unmerged without `git cherry` and you will
-merge an empty change.
+Compare `MERGE_TREE` with `MAIN_TREE`. An equal tree means there is no content to land even if
+`git log` or `git cherry` reports unique commits. A conflict, invalid result, or unknown
+`mergeResultMatchesBase` is not a clean answer; stop and investigate.
 
 ---
 
@@ -144,7 +180,7 @@ is the only thing that tells you whether the branch is finished.
 `WORKTREES.json` hands you the ids in one step:
 
 ```bash
-cd /Users/bkalynovskyi/ph
+cd "<verified-task-worktree>"
 node -e '
   const d = require("./WORKTREES.json");
   const w = d.worktrees.find((x) => x.name === process.argv[1]);
@@ -154,7 +190,7 @@ node -e '
     writers: w.writeHistory.chats.map((c) => ({ id: c.id, title: c.title, calls: c.calls, last: c.lastAt })),
     shell: w.shellHistory.chatCount,
   }, null, 2));
-' <name>
+' "<worktree-name>"
 ```
 
 Then read the transcript with the history tools, in this order:
@@ -209,9 +245,11 @@ Read the diff. Not the stat — the diff. A harvest that lands on the strength o
 commit log has not read the code it is about to put on `main`.
 
 ```bash
-cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
-git diff main...<branch> --stat
-git diff main...<branch> -- <path>        # per file, actually read it
+WORKTREE="<absolutePath-from-the-fresh-inventory>"
+MAIN_SHA="<mainHead-from-the-fresh-inventory>"
+BRANCH="<branch-ref>"
+git -C "$WORKTREE" diff "$MAIN_SHA...$BRANCH" --stat
+git -C "$WORKTREE" diff "$MAIN_SHA...$BRANCH" -- "<path>" # per file, actually read it
 ```
 
 Then the sweep that a diff cannot give you, and the one that catches the defect
@@ -219,7 +257,7 @@ this repository keeps producing:
 
 ```bash
 # What main changed in the same files, since the branch forked.
-git diff <branch>...main --stat
+git -C "$WORKTREE" diff "$BRANCH...$MAIN_SHA" --stat
 ```
 
 A branch that edited a file which also moved on `main` is a branch whose
@@ -258,16 +296,15 @@ has landed.
 
 ## Step 4 — independent review
 
-### Claim the merge before you touch it
+### Claim the paths before you touch them
 
 `npm run swarm -- claim <id> --files <paths you will touch>` or `npm run swarm
--- hold <path>`, and `npm run swarm -- check <paths>` before you edit anything a
-brief or a sibling subagent names; `claim` and `hold` exit 4, `check` exits 1, and
-both name the holder. **Claim the merge, not just the files** — a branch about to
-land carries a hazard to every path in it, and no file claim expresses that — and
-`npm run swarm -- note` the branch and its paths _before_ you start resolving. A
-held file is a queue, not a deadlock: do not edit it and do not wait on the lease.
-An unclaimed path looks free.
+-- hold <path>`, and `npm run swarm -- check <paths>` before editing; `claim` and
+`hold` exit 4, `check` exits 1, and both name the holder. Before syncing or landing,
+`npm run swarm -- note` the candidate branch and paths. File claims coordinate
+writers; they are **not** a lock on `refs/heads/main` and do not serialize main
+landings. A held file is a queue, not a deadlock: do not edit it and do not wait on
+the lease. An unclaimed path looks free, not safe.
 
 Identity here is the git branch, so **the board cannot enforce one writer per
 worktree**: two writers in one worktree are the same agent to the board, both holds
@@ -288,23 +325,17 @@ on it.
 Review the diff **before** merging, and make the reviewers genuinely independent
 of the chat that wrote it.
 
-- **How many:** two. One is a sample, not a check. Two reviewers who disagree on
-  something is the most valuable outcome of this step, and one reviewer who
-  agrees with the author is worth very little.
+- **How many:** follow `AGENTS.md` and `docs/CODE-REVIEW.md`: one fresh read-only
+  review for non-trivial changes, two independent reviewers for cross-module or
+  high-risk changes. A stale review does not cover a changed candidate tree.
 - **Independence means:** a fresh context that has not read the implementing
   chat's reasoning. Give the reviewer the diff, the requirement from step 2, and
   the platform contract — **not** the author's justification. A reviewer told
   "this is needed because of X" stops looking for X.
-- **Model, per `AGENTS.md`:** pass `model` AND `provider` together. Omitting them
-  inherits this session's model, which on a free orchestrator can resolve onto a
-  paid GPT id and kill the subagent at zero tokens. **A free session must never launch a GPT
-  subagent.** Resolve the current free model/provider pair with `agent_manager_models` and use
-  the current table in `AGENTS.md`; do not copy an expired model name from an old transcript.
-  `agent_manager` inherits the current turn's model unless both fields are set, so a main turn on
-  a paid model silently spawns paid worktrees. The subagent also
-  **inherits the working directory** — so launch reviews with the branch's absolute
-  worktree path in the brief, and never from the main checkout, or the review's own
-  notes land in `main`.
+- **Model and permissions:** follow current `AGENTS.md` and `MODELS.md`; do not
+  copy a provider/model from an old transcript. Reviewers are read-only and receive
+  the branch's absolute worktree path. They review the pinned candidate SHA, not a
+  moving branch name, and do not use the main checkout as their working directory.
 - **Tell them what to return:** `file:line` for every finding, with the evidence
   they got it from. A claim without a line number is not a review, it is an
   opinion. Ask for candidate results _and_ how they obtained them.
@@ -370,12 +401,10 @@ npm run test:e2e          # headless; starts its own dev server on its own port
   another agent's half-written change, so a red test there is often a WIP rather
   than a broken `main`.
 
-  ```bash
-  git worktree add --detach /tmp/verify-main main
-  ln -s "$PWD/node_modules" /tmp/verify-main/node_modules
-  (cd /tmp/verify-main && npx vitest run <suite>)
-  git worktree remove --force /tmp/verify-main
-  ```
+  Use the **clean committed-main baseline** recipe in `docs/ORCHESTRATION.md`.
+  It creates a named scratch branch under `.kilo/worktrees`, records the exact
+  main SHA, uses project `npm run` gates, and routes disposal through
+  `npm run dispose`. Never use a detached worktree or `git worktree remove --force`.
 
   A path you did not touch is not yours to stage, and its type error is not yours
   to resolve.
@@ -396,29 +425,133 @@ pin asserts something still true, it stays.
 Only here, and only for branches that came through steps 1–5.
 
 ```bash
-cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
+TASK_WORKTREE="<absolute path of this coordinator's task worktree>"
+WORKTREE="<absolutePath from the fresh inventory>"
+MAIN="<path paired with branch refs/heads/main in git worktree list --porcelain>"
+BRANCH="<source branch name>"
+CHAT_PHRASE="<distinctive phrase copied verbatim from the current user request>"
+# Resolve CHAT_ID with the current host's instructions in docs/CHAT-ID.md.
+# Use session:id only when this conversation is running in Kilo.
+CHAT_ID="<verified native session ID>"
+test -n "$CHAT_ID"
 
-# 1. Save anything on no ref BEFORE the merge. This is the only copy.
-git status --short
-git add -- <each path git status named>
-git commit -m "wip(salvage): <what the uncommitted work is>"
+# If the candidate has local edits, inspect every staged, unstaged and untracked path first.
+# Save only paths proven to belong to this harvest, on this branch, before merging main.
+git -C "$WORKTREE" status --short
 
-# 2. Bring main to the branch. NEVER the reverse.
-git fetch origin main 2>/dev/null || true
-git merge main        # resolve HERE, in this worktree, reviewed
+# Pin the local main ref and bring that exact commit into the candidate worktree.
+BASE_MAIN_SHA=$(git -C "$MAIN" rev-parse refs/heads/main)
+SYNC_MESSAGE=$(printf 'Sync main into %s for harvest\n\nChat: %s' "$BRANCH" "$CHAT_ID")
+git -C "$WORKTREE" merge --no-commit --no-ff "$BASE_MAIN_SHA"
+# If this merge conflicted, resolve and inspect the resolution only in this candidate worktree.
+git -C "$WORKTREE" commit -m "$SYNC_MESSAGE"
 
-# 3. Did the merge silently revert anything? It is checked for you, not by you reading.
-#    scripts/merge-takeover-guard.mjs runs from pre-commit and pre-merge-commit and refuses
-#    the merge. The one home for the mechanism and its limits is docs/ORCHESTRATION.md;
-#    the `comm -13` recipe that used to be here is retired because it missed this shape.
-
-# 4. Re-verify after the merge. Composition is where silent reverts live.
-npm run tsc && npm run build && npm run test
-
-# 5. Land it.
-cd /Users/bkalynovskyi/ph
-git merge --ff-only <branch> 2>/dev/null || git merge <branch>
+# After the sync merge is resolved and committed, pin the exact candidate tree for review and gates.
+REVIEWED_MAIN_SHA="$BASE_MAIN_SHA"
+REVIEWED_CANDIDATE_SHA=$(git -C "$WORKTREE" rev-parse HEAD)
+REVIEWED_TREE=$(git -C "$WORKTREE" rev-parse 'HEAD^{tree}')
+git -C "$WORKTREE" status --short
 ```
+
+Follow `docs/CHAT-ID.md` for the current host. Verify the selected session is this current
+conversation. Copy a phrase from the current user's request, not a branch name or generic project
+phrase; if the ID does not identify this chat, stop rather than recording a sibling session's
+trailer.
+
+Run steps 3–5 on `REVIEWED_CANDIDATE_SHA` and `REVIEWED_TREE`, after the main sync. A sync that
+changes the tree is a new composition and gets a new review and full gate run. After reviewers and
+gates finish, prove nothing moved:
+
+```bash
+test "$(git -C "$WORKTREE" rev-parse HEAD)" = "$REVIEWED_CANDIDATE_SHA"
+test "$(git -C "$WORKTREE" rev-parse 'HEAD^{tree}')" = "$REVIEWED_TREE"
+test -z "$(git -C "$WORKTREE" status --porcelain)"
+test "$(git -C "$MAIN" rev-parse refs/heads/main)" = "$REVIEWED_MAIN_SHA"
+git -C "$WORKTREE" merge-base --is-ancestor "$REVIEWED_MAIN_SHA" "$REVIEWED_CANDIDATE_SHA"
+MERGE_TREE=$(git -C "$MAIN" merge-tree --write-tree "$REVIEWED_MAIN_SHA" "$REVIEWED_CANDIDATE_SHA")
+MAIN_TREE=$(git -C "$MAIN" rev-parse "$REVIEWED_MAIN_SHA^{tree}")
+test "$MERGE_TREE" = "$REVIEWED_TREE"
+test "$MAIN_TREE" != "$MERGE_TREE"
+```
+
+Immediately before the landing, run the fresh gates from the coordinator worktree and inspect every
+reported operation, claim, and owner. Leave unrelated operations untouched; an operation or dirty
+state in `MAIN` or `WORKTREE` is a stop. Re-read the main worktree status and ref:
+
+```bash
+(cd "$TASK_WORKTREE" && npm run repo:state)
+(cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
+(cd "$TASK_WORKTREE" && npm run branches:orphan)
+(cd "$TASK_WORKTREE" && npm run swarm -- status)
+(cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
+git -C "$MAIN" status --short
+test -z "$(git -C "$MAIN" status --porcelain)"
+test "$(git -C "$MAIN" rev-parse HEAD)" = "$REVIEWED_MAIN_SHA"
+MERGE_MESSAGE=$(printf 'Merge %s into main\n\nBranch: %s\nChat: %s' "$BRANCH" "$BRANCH" "$CHAT_ID")
+git -C "$MAIN" merge --no-commit --no-ff "$REVIEWED_CANDIDATE_SHA"
+```
+
+If the merge reports a conflict or `git status` shows unmerged paths, abort this exact merge and
+resync in the candidate worktree. Never resolve it in `main`. Continue only when the prepared
+merge has no unmerged paths and its actual `MERGE_HEAD` is `REVIEWED_CANDIDATE_SHA`.
+
+If the candidate adds or changes a Git hook, refresh the shared dispatchers from the candidate
+worktree now, after the clean merge has made the hook file available in `MAIN` and before the
+landing commit. Verify the new dispatcher exists. If a non-main linked worktree has not synced
+the tracked hook yet, the shared dispatcher runs the designated main checkout's current final
+guard with that linked worktree as its Git context. The shared pre-commit entry records pending
+merge identity so `prepare-commit-msg` cannot erase Git's merge markers and skip the final
+takeover check, and the final index tree must still match the one approved by pre-commit.
+
+```bash
+(cd "$WORKTREE" && node scripts/install-git-hooks.js)
+test -x "$(git -C "$MAIN" rev-parse --path-format=absolute --git-common-dir)/hooks-gate/commit-msg"
+```
+
+Then commit the prepared result:
+
+```bash
+(
+  cd "$MAIN"
+  KILO_EXPECTED_MAIN_SHA="$REVIEWED_MAIN_SHA" \
+  KILO_EXPECTED_INCOMING_SHA="$REVIEWED_CANDIDATE_SHA" \
+  KILO_EXPECTED_TREE_SHA="$REVIEWED_TREE" \
+  KILO_EXPECTED_BRANCH="$BRANCH" \
+  KILO_EXPECTED_CHAT_ID="$CHAT_ID" \
+    node scripts/commit-reviewed-landing.mjs -m "$MERGE_MESSAGE"
+)
+```
+
+The `--no-commit` merge leaves `MERGE_HEAD` available to `pre-commit`. The landing script snapshots
+the prepared index so another process staging files in the shared main worktree cannot change the
+commit tree after the final hook check. It also writes a private workflow marker for that
+snapshot. The marker helps catch accidental alternate-index use; it is not an authentication
+boundary against a same-user caller deliberately constructing the environment and marker.
+The main-worktree guard allows that commit only when `HEAD`, `MERGE_HEAD`, the snapshot tree,
+marker, source branch, and chat ID match the reviewed record. The helper requires exactly one
+matching `Branch:` and `Chat:` trailer and verifies that the source branch still points at the
+reviewed candidate SHA. The `commit-msg` hook repeats the snapshot checks and checks the final
+message after `prepare-commit-msg` has run. Then `scripts/merge-takeover-guard.mjs` checks the
+prepared tree for lost work. If the merge conflicts,
+do not resolve it in `main`; abort the operation this command started and resync in the candidate
+worktree. The pre-merge hook refuses every direct self-committing merge, without relying on
+`GIT_REFLOG_ACTION` or Git-version-specific `MERGE_HEAD` timing. Do not substitute a branch name,
+fast-forward, squash, `--no-verify`, or the old `--ff-only || git merge` fallback.
+
+After the merge, verify the recorded parents, tree and trailers:
+
+```bash
+git -C "$MAIN" rev-parse HEAD^1
+git -C "$MAIN" rev-parse HEAD^2
+git -C "$MAIN" rev-parse 'HEAD^{tree}'
+git -C "$MAIN" show -s --format=%B HEAD
+```
+
+The first parent must be `REVIEWED_MAIN_SHA`, the second `REVIEWED_CANDIDATE_SHA`, and the tree
+must equal `REVIEWED_TREE`; the message must contain both `Branch: $BRANCH` and `Chat: $CHAT_ID`.
+If the merge or guard refuses, inspect `repo:state`. Abort only an operation this command started,
+whose `MERGE_HEAD` is the pinned candidate and which has no manual resolution; if ownership or
+state is unclear, stop and leave it untouched. Never resolve a conflict in `main`.
 
 - **Re-read `git status` and `git log --oneline -10` immediately before staging,
   every time.** Other sessions commit into `main` concurrently, and `git add -A`
@@ -432,8 +565,9 @@ git merge --ff-only <branch> 2>/dev/null || git merge <branch>
   revert was invisible in the diff. Step 3 of the block above computes the set;
   run it **before** step 4, because a reviewer only catches the files its brief
   happened to mention.
-- **`git merge --ff-only` first** because it is the cheap case and it fails
-  loudly when it is not possible. Fall back to a real merge only then.
+- **The board is not a main-ref lock.** The SHA and tree assertions in the pre-commit hooks
+  protect this documented `--no-ff` landing path. Do not describe a file claim
+  or board note as serializing `refs/heads/main`.
 - **A conflict resolution is new code.** It has been reviewed by nobody. Re-read
   every hunk you resolved, and run step 5 again — the gates cannot see a wrong
   resolution that typechecks.
@@ -451,13 +585,26 @@ git merge --ff-only <branch> 2>/dev/null || git merge <branch>
   recorded in `HANDOFF.md`. This is a `hard-merge` decision, so it goes through
   `.skills/hard-merge.md` like any other.
 
-Then, and only once the merge is on `main`:
+Then, and only once the merge is on `main`, re-check ownership and cleanup from the
+coordinator's verified task worktree:
 
 ```bash
-node scripts/worktree-inventory.mjs          # a fresh verdict: disposal reads it
-npm run dispose -- <name> --dry-run          # says which signal refuses, if any
-npm run dispose -- <name>
+(cd "$TASK_WORKTREE" && npm run repo:state)
+(cd "$TASK_WORKTREE" && node scripts/worktree-inventory.mjs)
+(cd "$TASK_WORKTREE" && npm run branches:orphan)
+(cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
+(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>" --dry-run)
+(cd "$TASK_WORKTREE" && npm run dispose -- "<worktree-name>")
 ```
+
+Before actual disposal, verify the exact target path and branch from the fresh inventory; read its
+curated entry; prove the owning root and every transitive child session are finished; and confirm
+the live board/session overlay has no owner or lock for the target. A repo-state operation in the
+target, an unreadable signal, an unknown descendant, or a live overlay means leave it. Classify
+unrelated operations on their own worktrees and never touch them. `dispose --dry-run` must name the
+same target and allow removal before the non-dry-run command. The active harvester may itself make
+disposal fail as `derived-live-writer`; that refusal is expected, not a reason to suppress the
+signal. Leave the landed worktree in place and record cleanup as pending.
 
 **That is the only sanctioned removal path**, and the reason is in the header of
 `scripts/dispose-worktree.mjs` and in `docs/ORCHESTRATION.md` under "Removal
@@ -522,15 +669,19 @@ skipped its own safety steps.
   `git stash push` on a CLEAN tree exits 0, prints nothing, and creates NO entry —
   so the `git stash pop` that follows is unpaired, and it pops a _different_
   session's work. This has destroyed work in this repository.
-- **Resolve anything in the main worktree.** See step 0. Never _repair_ one there
-  either: `reset --hard` and `checkout --ours`/`--theirs` destroy another
-  session's uncommitted work, and `hash-object` and `update-index` write an index
-  entry no later `git status` reconciles. If a merge conflicts in `main`,
-  `git merge --abort` and redo it in the worktree. After any interrupted or
-  abandoned merge, run `git rev-parse -q --verify MERGE_HEAD` and
-  `git rev-list --parents -n 1 HEAD` before committing — an interrupted merge can
-  leave `AUTO_MERGE` and `MERGE_MSG` behind with no `MERGE_HEAD`, and `git commit`
-  then lands a single-parent commit that reads as a resolution.
+- **Resolve anything in the main worktree.** See step 0. Never reset, check out
+  conflict sides, or resolve a merge there: those operations can destroy another
+  session's uncommitted work or record an unreviewed resolution. The sole
+  metadata-recovery exception is `git worktree repair` when the Git manual
+  requires running it from main. Follow [Recovering Git metadata](../docs/ORCHESTRATION.md#recovering-git-metadata): stop writers, take and compare an independent
+  backup, and run only the documented repair after confirming the affected paths
+  and admin directories. It may repair worktree links; it is never a merge or a
+  working-tree-content fix. If a merge conflicts in `main`, `git merge --abort`
+  and redo it in the worktree. After any interrupted or abandoned merge, run
+  `git rev-parse -q --verify MERGE_HEAD` and `git rev-list --parents -n 1 HEAD`
+  before committing — an interrupted merge can leave `AUTO_MERGE` and
+  `MERGE_MSG` behind with no `MERGE_HEAD`, and `git commit` then lands a
+  single-parent commit that reads as a resolution.
 - **Hand-edit `WORKTREES.json`.** It is generated and untracked; the edit is lost
   on the next run, and a hand-edited `prunable: true` is a licence to delete.
 - **`git add -A` in a worktree whose root checkout is dirty.** This is the more
@@ -563,8 +714,11 @@ skipped its own safety steps.
   Nothing in the tool yet pins _which_ run a decision was taken from, so a stale
   `land` has to be caught by regenerating. A `landedAt` stamp on the decision
   would close it.
-- `mergeConflict` is computed by `git merge-tree`
-  (`mergeConflict()` in `scripts/lib/worktree-inventory/git.mjs`) and reported raw, but there is no
-  check anywhere that the checked merge equals the merge that will actually
-  happen after step 6's `git merge main`. Two different merges, two different
-  answers, and the second one is the one that ships.
+- Step 6 pins the reviewed main and candidate SHAs and compares the precomputed merge tree with
+  the candidate tree; `main-worktree-guard` and `merge-takeover-guard` require and recheck both
+  parents and the tree from `pre-commit` after a `--no-commit --no-ff` merge prepared in the main
+  worktree and committed from a private index snapshot. Direct
+  self-committing merges are refused unconditionally by `pre-merge-commit`. Fast-forwards bypass
+  the blocking hook, and squash strategies do not create a merge
+  commit for it to inspect; neither is the harvest landing path. This is not a global lock on
+  arbitrary Git ref plumbing, so do not claim protection outside the documented guarded workflow.

@@ -1,26 +1,39 @@
 # Models and Providers
 
-## Paid Models (not free)
+## Current defaults
 
-| Model  | Provider | Variant | Use                                            |
-| ------ | -------- | ------- | ---------------------------------------------- |
-| Luna 6 | openai   | xhigh   | MANDATORY: keep context size UNDER 272k tokens |
+| Model                         | Provider | Variant    | Use                                        |
+| ----------------------------- | -------- | ---------- | ------------------------------------------ |
+| Luna 6                        | `openai` | `xhigh`    | Paid; keep context under 272k tokens       |
+| Poolside: Laguna S 2.1 (free) | `kilo`   | `thinking` | Preferred when present in the live catalog |
 
-## Free Models
+Use live catalogs, not stale model lists. Prefer verified free models for bounded research,
+text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit
+operator authorization before using paid inference.
 
-| Rank | Model                           | Provider | Variant  | Use                                                          |
-| ---- | ------------------------------- | -------- | -------- | ------------------------------------------------------------ |
-| 0    | Laguna S (Poolside)             | kilo     | thinking | TOP free model; only use Laguna S free                       |
-| 1    | Reflection: Beam 1.0 (free)     | kilo     | max      | Fast free model; not fully tested — verify important results |
-| 2    | Stealth: Glyph Cluster (free)   | kilo     | xhigh    | Strong general-purpose free model                            |
-| 3    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Less reliable; verify results                                |
-| 4    | StepFun: Step 3.7 Flash         | kilo     | high     | Fast free model                                              |
+## Routing
 
-## Provider Rules
+- Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
+- Never silently fall back to paid inference. The runner tries up to three eligible models per source; a provider quota or rate-limit failure exhausts that source for the run.
+- In Kilo tasks, pass `model` and `provider` together; GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.
 
-- GPT models (Luna, Terra, and Sol) must always use `openai`: `task --model "<model>" --provider "openai"`.
-- I do not have an OpenRouter budget, so use only free or very low-cost models there when unavoidable. Never use it for GPT models.
-- Pass `model` and `provider` together.
-- Free sessions must not launch GPT subagents or perform Git operations.
-- `kilo` provides 200 requests/hour per IP and requires no credits.
-- Model names can be ambiguous between free and paid variants; use the full name with the `(free)` suffix (for example, `Reflection: Beam 1.0 (free)`).
+## Provider-specific free quotas
+
+A provider name alone does not establish that a route is free. Verify the exact model/provider pair in the live catalog. Kilo and OpenRouter use separate free-model quotas:
+
+| Provider ID  | Published free-model limit                                                                                                    | What the quota check covers                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `kilo`       | 200 requests per hour per IP, for authenticated and anonymous free-model requests.                                            | `--openrouter-quota` does not read this Kilo gateway limit.                                  |
+| `openrouter` | 20 requests per minute; 50 per day on the base tier or 1,000 per day after the account has purchased at least $10 in credits. | `node scripts/free-model-pool.mjs --openrouter-quota` reads OpenRouter's daily counter only. |
+
+A 429 or exhausted counter applies to the provider that returned it. Stop using that source for the run, and switch only to another model/provider pair verified as free. See [Kilo's gateway rate limits](https://kilo.ai/docs/gateway/usage-and-billing) and [OpenRouter's pricing and rate limits](https://openrouter.ai/pricing) for current published limits.
+
+## Free-agent boundaries
+
+- Free Kilo children are read-only: use `read-only-research` for visible sessions and `explore` for internal tasks. Deny shell, edit, write, patch, and all connected file-mutation tools. If the host cannot verify this boundary, use the completion runner or do not launch the child.
+- The completion runner has no agent tools. The coordinator owns file edits and Git; cap fan-out at 15.
+- Use concise evidence-backed results. For large outputs, use `--output-file`; use `free-research.mjs` only for bounded public HTTPS URL lists.
+
+## Research and credentials
+
+Bulk web, code, or chat-history research must use a verified free read-only route and return a short result for root verification. If none is available, stop before paid research. For secure credential discovery, provider setup, and runner commands, see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md).

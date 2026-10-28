@@ -1,10 +1,15 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
-import type { Selection } from '../contexts/general-types.ts';
+import type { RasterSelectionMask, Selection } from '../contexts/general-types.ts';
 import { type DocumentFrame, documentFrameSize, documentToCanvasPoint } from '../contexts/document-frame.ts';
-import { getSelectionAbsolutePoints } from '../util/selection.ts';
+
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
 import { readSelectionDragPreview } from './selection-drag-preview.ts';
+import {
+  decodeRasterSelectionMask,
+  isRasterSelectionBoundaryPixel,
+  MAX_RASTER_SELECTION_PIXELS,
+} from '../util/selection-mask.ts';
 
 /**
  * The two strokes that make the classic marching-ants border: a black dash and a
@@ -33,19 +38,253 @@ export type SelectionMarchingAntsProps = {
   scaleRef?: RefObject<number>;
 };
 
-type AntsShape = { id: string; path: Path2D };
+export type SelectionRasterOutline = {
+  /** The source image can be downsampled under memory pressure; draw it at these document bounds. */
+  width: number;
+  height: number;
+  canvas: HTMLCanvasElement;
+  scaleFactor: number;
+};
+
+type AntsShape = {
+  id: string;
+  selection: Selection;
+  path: Path2D | null;
+  rasterOutline: SelectionRasterOutline | null;
+};
+
+type OutlineCacheEntry = {
+  width: number;
+  height: number;
+  outline: SelectionRasterOutline;
+  bytes: number;
+};
+
+// Content-keyed so a preview mask and its committed re-encoding share one outline.
+// The base64 string is already owned by the mask and is reused as the map key without
+// building a second, multi-megabyte composite key.
+const selectionOutlineCache = new Map<string, OutlineCacheEntry[]>();
+// One max-size document outline fits, but a second one forces the oldest canvas out.
+const MAX_SELECTION_OUTLINE_CACHE_BYTES = 65 * 1024 * 1024;
+const MAX_SELECTION_OUTLINE_CACHE_ENTRIES = 16;
+const MAX_SELECTION_OUTLINE_DIMENSION = 16_384;
+let selectionOutlineCacheBytes = 0;
+let selectionOutlineCacheEntries = 0;
+
+function cacheSelectionOutline(mask: RasterSelectionMask, outline: SelectionRasterOutline): void {
+  const bytes = outline.canvas.width * outline.canvas.height * 4;
+  if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > MAX_SELECTION_OUTLINE_CACHE_BYTES) return;
+
+  const existing = selectionOutlineCache.get(mask.data) ?? [];
+  const previousIndex = existing.findIndex((entry) => entry.width === mask.width && entry.height === mask.height);
+  if (previousIndex >= 0) {
+    const [previous] = existing.splice(previousIndex, 1);
+    if (previous) {
+      selectionOutlineCacheBytes -= previous.bytes;
+      selectionOutlineCacheEntries -= 1;
+    }
+  }
+  if (existing.length === 0) selectionOutlineCache.delete(mask.data);
+  while (
+    selectionOutlineCacheEntries >= MAX_SELECTION_OUTLINE_CACHE_ENTRIES ||
+    selectionOutlineCacheBytes + bytes > MAX_SELECTION_OUTLINE_CACHE_BYTES
+  ) {
+    const oldest = selectionOutlineCache.entries().next().value as [string, OutlineCacheEntry[]] | undefined;
+    const oldestEntry = oldest?.[1].shift();
+    if (!oldest || !oldestEntry) break;
+    selectionOutlineCacheBytes -= oldestEntry.bytes;
+    selectionOutlineCacheEntries -= 1;
+    if (oldest[1].length === 0) selectionOutlineCache.delete(oldest[0]);
+  }
+  const entries = selectionOutlineCache.get(mask.data) ?? existing;
+  entries.push({ width: mask.width, height: mask.height, outline, bytes });
+  selectionOutlineCache.delete(mask.data);
+  selectionOutlineCache.set(mask.data, entries);
+  selectionOutlineCacheBytes += bytes;
+  selectionOutlineCacheEntries += 1;
+}
+
+function createOutlineAtScale(
+  mask: RasterSelectionMask,
+  packed: Uint8Array,
+  scaleFactor: number
+): SelectionRasterOutline | null {
+  const innerWidth = Math.ceil(mask.width / scaleFactor);
+  const innerHeight = Math.ceil(mask.height / scaleFactor);
+  const canvasWidth = innerWidth + 2;
+  const canvasHeight = innerHeight + 2;
+  let canvas: HTMLCanvasElement | null = null;
+
+  try {
+    canvas = document.createElement('canvas');
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      canvas.width = 0;
+      canvas.height = 0;
+      return null;
+    }
+
+    const chunkHeight = 64;
+    for (let top = 0; top < canvasHeight; top += chunkHeight) {
+      const height = Math.min(chunkHeight, canvasHeight - top);
+      const imageData = ctx.createImageData(canvasWidth, height);
+      for (let localY = 0; localY < height; localY += 1) {
+        const outputY = top + localY;
+        const sourceYStart =
+          outputY === 0 ? -1 : outputY === canvasHeight - 1 ? mask.height : (outputY - 1) * scaleFactor;
+        const sourceYEnd =
+          outputY === 0
+            ? 0
+            : outputY === canvasHeight - 1
+              ? mask.height + 1
+              : Math.min(mask.height, sourceYStart + scaleFactor);
+        for (let outputX = 0; outputX < canvasWidth; outputX += 1) {
+          const sourceXStart =
+            outputX === 0 ? -1 : outputX === canvasWidth - 1 ? mask.width : (outputX - 1) * scaleFactor;
+          const sourceXEnd =
+            outputX === 0
+              ? 0
+              : outputX === canvasWidth - 1
+                ? mask.width + 1
+                : Math.min(mask.width, sourceXStart + scaleFactor);
+          let hasBoundary = false;
+          for (let sourceY = sourceYStart; sourceY < sourceYEnd && !hasBoundary; sourceY += 1) {
+            for (let sourceX = sourceXStart; sourceX < sourceXEnd; sourceX += 1) {
+              if (isRasterSelectionBoundaryPixel(mask, packed, sourceX, sourceY)) {
+                hasBoundary = true;
+                break;
+              }
+            }
+          }
+          if (hasBoundary) imageData.data[(localY * canvasWidth + outputX) * 4 + 3] = 255;
+        }
+      }
+      ctx.putImageData(imageData, 0, top);
+    }
+
+    return {
+      width: mask.width + 2,
+      height: mask.height + 2,
+      canvas,
+      scaleFactor,
+    };
+  } catch {
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    return null;
+  }
+}
 
 /** A closed contour through a selection's absolute points, or `null` when there is nothing to stroke. */
 function shapePath(selection: Selection, frame: DocumentFrame): Path2D | null {
-  const points = getSelectionAbsolutePoints(selection).map((point) => documentToCanvasPoint(point, frame));
-  if (points.length < 3) return null;
+  const contours = selection.points.map((contour) =>
+    contour.map((point) => documentToCanvasPoint({ x: point.x + selection.pos.x, y: point.y + selection.pos.y }, frame))
+  );
+
+  if (contours.every((contour) => contour.length < 3)) return null;
 
   const path = new Path2D();
-  path.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) path.lineTo(points[i].x, points[i].y);
-  path.closePath();
+  for (const contour of contours) {
+    if (contour.length < 3) continue;
+    path.moveTo(contour[0].x, contour[0].y);
+    for (let i = 1; i < contour.length; i++) path.lineTo(contour[i].x, contour[i].y);
+    path.closePath();
+  }
 
   return path;
+}
+
+/** Create the bounded edge image used by the animated raster-mask overlay. */
+export function createSelectionRasterOutlineCanvas(mask: RasterSelectionMask): SelectionRasterOutline | null {
+  const packed = decodeRasterSelectionMask(mask);
+  const cachedEntries = selectionOutlineCache.get(mask.data);
+  const cached = cachedEntries?.find((entry) => entry.width === mask.width && entry.height === mask.height);
+  if (packed && cached && cachedEntries) {
+    selectionOutlineCache.delete(mask.data);
+    selectionOutlineCache.set(mask.data, cachedEntries);
+    return cached.outline;
+  }
+  if (!packed || typeof document === 'undefined') return null;
+
+  // The full-resolution edge image is exact. Retry at progressively smaller scales,
+  // skipping dimensions that exceed the canvas budget before allocating. Long, narrow
+  // masks need more than the old fixed 8x fallback to fit common canvas limits. Selection
+  // processors and hit tests always use the original packed mask.
+  for (let scaleFactor = 1; scaleFactor <= Math.max(mask.width, mask.height); scaleFactor *= 2) {
+    const canvasWidth = Math.ceil(mask.width / scaleFactor) + 2;
+    const canvasHeight = Math.ceil(mask.height / scaleFactor) + 2;
+    if (
+      canvasWidth > MAX_SELECTION_OUTLINE_DIMENSION ||
+      canvasHeight > MAX_SELECTION_OUTLINE_DIMENSION ||
+      canvasWidth * canvasHeight > MAX_RASTER_SELECTION_PIXELS ||
+      canvasWidth * canvasHeight * 4 > MAX_SELECTION_OUTLINE_CACHE_BYTES
+    ) {
+      continue;
+    }
+    const outline = createOutlineAtScale(mask, packed, scaleFactor);
+    if (!outline) continue;
+    cacheSelectionOutline(mask, outline);
+    return outline;
+  }
+
+  console.error('Unable to prepare the raster selection outline at any supported resolution');
+  return null;
+}
+
+function createMarchingAntsPatternCanvas(): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const cycle = DASH_LENGTH + GAP_LENGTH;
+  const canvas = document.createElement('canvas');
+  canvas.width = cycle;
+  canvas.height = cycle;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const imageData = ctx.createImageData(cycle, cycle);
+  for (let y = 0; y < cycle; y += 1) {
+    for (let x = 0; x < cycle; x += 1) {
+      const index = (y * cycle + x) * 4;
+      const color = (x + y) % cycle < DASH_LENGTH ? 0 : 255;
+      imageData.data[index] = color;
+      imageData.data[index + 1] = color;
+      imageData.data[index + 2] = color;
+      imageData.data[index + 3] = 255;
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+function drawRasterMaskOutline(
+  ctx: CanvasRenderingContext2D,
+  pattern: CanvasPattern | null,
+  outline: SelectionRasterOutline,
+  selection: Selection,
+  frame: DocumentFrame,
+  offset: number,
+  scale: number
+): void {
+  const x = selection.pos.x - frame.x - 1;
+  const y = selection.pos.y - frame.y - 1;
+  const { width, height } = outline;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
+  if (pattern?.setTransform) {
+    const fit = 1 / Math.max(scale, Number.EPSILON);
+    pattern.setTransform({ a: fit, b: 0, c: 0, d: fit, e: offset, f: offset });
+  }
+  ctx.fillStyle = pattern ?? ANT_STROKE_COLOR;
+  ctx.fillRect(x, y, width, height);
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.drawImage(outline.canvas, x, y, width, height);
+  ctx.restore();
 }
 
 /**
@@ -76,16 +315,22 @@ export function useSelectionMarchingAnts({
   const dashOffsetRef = useRef(0);
   const shapesRef = useRef<AntsShape[]>([]);
   const documentFrameRef = useRef(documentFrame);
+  const rasterPatternRef = useRef<{ canvas: HTMLCanvasElement; pattern: CanvasPattern | null } | null>(null);
 
   const shapes = useMemo<AntsShape[]>(() => {
     if (!enabled) return [];
 
-    return selections.flatMap((selection) => {
+    return selections.flatMap<AntsShape>((selection): AntsShape[] => {
       if (!selection.isActive) return [];
+
+      if (selection.rasterMask) {
+        const rasterOutline = createSelectionRasterOutlineCanvas(selection.rasterMask);
+        return rasterOutline ? [{ id: selection.id, selection, path: null, rasterOutline }] : [];
+      }
 
       const path = shapePath(selection, documentFrame);
 
-      return path ? [{ id: selection.id, path }] : [];
+      return path ? [{ id: selection.id, selection, path, rasterOutline: null }] : [];
     });
   }, [documentFrame, enabled, selections]);
 
@@ -163,21 +408,55 @@ export function useSelectionMarchingAnts({
       // committed one is the pre-drag geometry, and both together would be two borders of one
       // selection, the stale one anchored where the pointer left.
       const dragged = drag?.kind === 'follow' ? drag.selection : null;
-      const paths: Path2D[] = (dragged ? committed.filter(({ id }) => id !== dragged.id) : committed).map(
-        ({ path }) => path
-      );
-      if (dragged) {
-        const path = shapePath(dragged, documentFrameRef.current);
-        if (path) paths.push(path);
+      const visibleShapes = dragged ? committed.filter(({ id }) => id !== dragged.id) : committed;
+      let pattern = rasterPatternRef.current?.canvas === canvas ? rasterPatternRef.current.pattern : null;
+      if (!pattern) {
+        const patternCanvas = createMarchingAntsPatternCanvas();
+        pattern = patternCanvas ? ctx.createPattern(patternCanvas, 'repeat') : null;
+        rasterPatternRef.current = { canvas, pattern };
       }
 
-      for (const path of paths) {
+      // Raster selections carry a stable edge image; the marching dash is composited over it once
+      // per frame, so no per-contour object walk or millions of Path2D segments are required.
+      for (const shape of visibleShapes) {
+        if (!shape.rasterOutline) continue;
+        drawRasterMaskOutline(
+          ctx,
+          pattern,
+          shape.rasterOutline,
+          shape.selection,
+          documentFrameRef.current,
+          offset,
+          scale
+        );
+      }
+
+      for (const shape of visibleShapes) {
+        if (!shape.path) continue;
+        const path = shape.path;
         ctx.strokeStyle = ANT_STROKE_COLOR;
         ctx.lineDashOffset = offset;
         ctx.stroke(path);
         ctx.strokeStyle = ANT_GAP_COLOR;
         ctx.lineDashOffset = offset + dashLength;
         ctx.stroke(path);
+      }
+
+      if (dragged) {
+        const original = committed.find(({ id }) => id === dragged.id);
+        if (original?.rasterOutline) {
+          drawRasterMaskOutline(ctx, pattern, original.rasterOutline, dragged, documentFrameRef.current, offset, scale);
+        } else {
+          const path = shapePath(dragged, documentFrameRef.current);
+          if (path) {
+            ctx.strokeStyle = ANT_STROKE_COLOR;
+            ctx.lineDashOffset = offset;
+            ctx.stroke(path);
+            ctx.strokeStyle = ANT_GAP_COLOR;
+            ctx.lineDashOffset = offset + dashLength;
+            ctx.stroke(path);
+          }
+        }
       }
 
       ctx.restore();

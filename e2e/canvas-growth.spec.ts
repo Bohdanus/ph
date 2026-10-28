@@ -39,6 +39,43 @@ async function backingStore(page: Page): Promise<Size> {
   });
 }
 
+async function readDocumentPixel(page: Page, point: { x: number; y: number }, documentSize: Size): Promise<number[]> {
+  return await getWorkspaceCanvas(page).evaluate(
+    (node, input) => {
+      const canvas = node as HTMLCanvasElement;
+      const probeWindow = window as typeof window & { __canvasGrowthPixelProbe?: HTMLCanvasElement };
+      const samplingCanvas = (probeWindow.__canvasGrowthPixelProbe ??= document.createElement('canvas'));
+      if (samplingCanvas.width !== canvas.width || samplingCanvas.height !== canvas.height) {
+        samplingCanvas.width = canvas.width;
+        samplingCanvas.height = canvas.height;
+      }
+      const context = samplingCanvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('The workspace canvas has no 2D context');
+
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.clearRect(0, 0, samplingCanvas.width, samplingCanvas.height);
+      context.drawImage(canvas, 0, 0);
+      const scale = canvas.width / input.documentSize.width;
+      if (canvas.height !== input.documentSize.height * scale) {
+        throw new Error(`Unexpected workspace backing scale ${scale}`);
+      }
+      const x = Math.round(input.point.x * scale);
+      const y = Math.round(input.point.y * scale);
+      return Array.from(context.getImageData(x, y, 1, 1).data);
+    },
+    { point, documentSize }
+  );
+}
+
+async function expectDarkDocumentPixel(page: Page, point: { x: number; y: number }, documentSize: Size): Promise<void> {
+  await expect
+    .poll(async () => {
+      const [red = 255, green = 255, blue = 255, alpha = 0] = await readDocumentPixel(page, point, documentSize);
+      return alpha > 0 && Math.max(red, green, blue) < 80;
+    })
+    .toBe(true);
+}
+
 /** The Footer's `totalSize` readout, excluding the independent development status seam. */
 async function footerDimensions(page: Page): Promise<string> {
   const text = await page.getByTestId('footer-dimensions').textContent();
@@ -298,55 +335,64 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
   });
 });
 
-/**
- * The mobile shell appends a regular blank layer mid-document. The size assertions here cover
- * that layer commit's undo/redo path without treating it as a document-level bedrock entry.
- */
-test.describe('a mobile blank-layer commit, then undo/redo', () => {
-  test.use({ viewport: { width: 390, height: 844 } });
+test.describe('tablet transparent blank-layer pixels', () => {
+  test.use({ viewport: { width: 744, height: 1133 }, deviceScaleFactor: 2, hasTouch: true });
 
-  test('adding blank layers mid-document never moves the document size', async ({ page }) => {
+  test('adding transparent layers preserves existing pixels through undo and redo', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await page.goto('/');
     await expect(getWorkspaceCanvas(page)).toBeVisible();
 
+    const documentSize = { width: 800, height: 600 };
     const baseline = await backingStore(page);
-    const baselineRows = await page.getByTestId('layer-row').count();
-    console.log(`[PW-MOBILE] baseline backingStore=${JSON.stringify(baseline)} layerRows=${baselineRows}`);
+    const baseRows = await page.getByTestId('layer-row').count();
+    await page.getByTestId('mobile-bottom-bar').getByRole('button', { name: 'Draw Tool' }).tap();
+    await dragInDocument(page, { x: 280, y: 300 }, { x: 520, y: 300 }, documentSize);
+    await page.mouse.move(0, 0);
+    const rowsWithStroke = baseRows + 1;
+    await expect(page.getByTestId('layer-row'), 'the reference stroke is committed first').toHaveCount(rowsWithStroke);
 
-    await page.getByTestId('mobile-layers-toggle-button').click();
+    const samplePoint = { x: 400, y: 300 };
+    await expectDarkDocumentPixel(page, samplePoint, documentSize);
+    const referencePixel = await readDocumentPixel(page, samplePoint, documentSize);
+    expect(referencePixel[3]).toBe(255);
+    expect(Math.max(referencePixel[0], referencePixel[1], referencePixel[2])).toBeLessThan(80);
+
+    await page.getByTestId('mobile-layers-toggle-button').tap();
     await expect(page.getByTestId('mobile-layers-drawer')).toBeVisible();
 
     for (let i = 0; i < 3; i += 1) {
-      await page.getByTestId('mobile-add-layer-button').click();
-      await expect(page.getByTestId('layer-row'), `blank layer ${i + 1}`).toHaveCount(baselineRows + 1 + i);
+      await page.getByTestId('mobile-add-layer-button').tap();
+      await expect(page.getByTestId('layer-row'), `transparent layer ${i + 1}`).toHaveCount(rowsWithStroke + 1 + i);
+      await page.getByRole('button', { name: 'Close layers drawer' }).tap();
+      await expect(page.getByTestId('mobile-layers-drawer')).toBeHidden();
+      await expect.poll(() => readDocumentPixel(page, samplePoint, documentSize)).toEqual(referencePixel);
       const size = await backingStore(page);
-      console.log(`[PW-MOBILE] blank-layer-${i + 1} backingStore=${JSON.stringify(size)}`);
-      expect(size, `backing store moved after blank layer ${i + 1}`).toEqual(baseline);
-    }
+      expect(size, `backing store moved after transparent layer ${i + 1}`).toEqual(baseline);
 
-    // The drawer is a modal dialog whose backdrop covers the header, so it is dismissed with
-    // its own Close control (`MobileLayersDrawer.tsx:161`) rather than by clicking through it.
-    await page.getByRole('button', { name: 'Close layers drawer' }).click();
-    await expect(page.getByTestId('mobile-layers-drawer')).toBeHidden();
-
-    for (let k = 0; k < 3; k += 1) {
-      await page.getByTestId('mobile-undo-button').click();
-      const expectedRows = baselineRows + 2 - k;
-      await expect(page.getByTestId('layer-row'), `mobile undo ${k + 1}`).toHaveCount(expectedRows);
-      const size = await backingStore(page);
-      console.log(`[PW-MOBILE] undo-${k + 1} backingStore=${JSON.stringify(size)} rows=${expectedRows}`);
-      expect(size, `backing store moved after mobile undo ${k + 1}`).toEqual(baseline);
+      if (i < 2) {
+        await page.getByTestId('mobile-layers-toggle-button').tap();
+        await expect(page.getByTestId('mobile-layers-drawer')).toBeVisible();
+      }
     }
 
     for (let k = 0; k < 3; k += 1) {
-      await page.getByTestId('mobile-redo-button').click();
-      const expectedRows = baselineRows + 1 + k;
-      await expect(page.getByTestId('layer-row'), `mobile redo ${k + 1}`).toHaveCount(expectedRows);
+      await page.getByTestId('mobile-undo-button').tap();
+      const expectedRows = rowsWithStroke + 2 - k;
+      await expect(page.getByTestId('layer-row'), `tablet undo ${k + 1}`).toHaveCount(expectedRows);
+      await expect.poll(() => readDocumentPixel(page, samplePoint, documentSize)).toEqual(referencePixel);
       const size = await backingStore(page);
-      console.log(`[PW-MOBILE] redo-${k + 1} backingStore=${JSON.stringify(size)} rows=${expectedRows}`);
-      expect(size, `backing store moved after mobile redo ${k + 1}`).toEqual(baseline);
+      expect(size, `backing store moved after tablet undo ${k + 1}`).toEqual(baseline);
+    }
+
+    for (let k = 0; k < 3; k += 1) {
+      await page.getByTestId('mobile-redo-button').tap();
+      const expectedRows = rowsWithStroke + 1 + k;
+      await expect(page.getByTestId('layer-row'), `tablet redo ${k + 1}`).toHaveCount(expectedRows);
+      await expect.poll(() => readDocumentPixel(page, samplePoint, documentSize)).toEqual(referencePixel);
+      const size = await backingStore(page);
+      expect(size, `backing store moved after tablet redo ${k + 1}`).toEqual(baseline);
     }
   });
 });

@@ -9,6 +9,7 @@ import {
 import type { DocumentFrame } from './document-frame.ts';
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 import type { Layer, LayerOperation } from './layer-types.ts';
+import type { ToolProcessorDefinition } from '../tools/toolProcessors.ts';
 import { FilterArgumentUnrenderableError } from '../util/canvas-filter.ts';
 import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 
@@ -237,9 +238,9 @@ function assemblePresentation(
  * The validating evaluation, and the default for every caller whose answer is read.
  *
  * `getAffineBounds` throws on a degenerate, non-finite, over-coordinate or over-area
- * transform, which is the right answer for all three: `materialization.ts:213` and
- * `useLayer.ts:150` size an allocated surface from `localBounds`, and `rasterizeBounds`
- * (`affine-transform.ts:125`) refuses the same numbers a second time.
+ * transform, which is the right answer for all three: `materializeLayer()` and the live tool
+ * path size an allocated surface from `localBounds` with `rasterizeBounds()`, while
+ * `normalizeTransformHistoryArgs()` refuses the same numbers a second time.
  */
 export function evaluatePresentation(input: PresentationEvaluationInput): PresentationEvaluation {
   const affine = getPresentationAffine(input.operations);
@@ -251,7 +252,7 @@ export function evaluatePresentation(input: PresentationEvaluationInput): Presen
  * path where the raster caps are protection for an allocation that never happens.
  *
  * `drawEvaluatedPresentation` with a `document` target reads only `filter`, `affine`,
- * `position`, `sourceSize` and the frame — `presentation-evaluator.ts:274-292` — and never
+ * `position`, `sourceSize` and the frame in `evaluatePresentation()` — and never
  * `localBounds` or `bounds`, so no value of them is observable there. Meanwhile the two
  * callers that DO size a surface from `localBounds` are exactly the ones that keep
  * validation, and the 64 Mpx cap is the correct answer for them.
@@ -272,7 +273,7 @@ export function evaluatePresentation(input: PresentationEvaluationInput): Presen
  * The worst case it now permits is therefore an unbounded SOURCE, drawn with the same single
  * `drawImage` into the same document-sized canvas it always used: no per-layer buffer, and
  * no arithmetic this module performs grows a canvas. What it costs in exchange is the
- * accident this replaced — `useApp.ts:159` caps nothing on the open path, so a plain 9000x9000
+ * accident this replaced — the open path in `useApp` caps nothing, so a plain 9000x9000
  * (81 Mpx) JPEG made `getAffineBounds` throw for EVERY layer of the document and
  * `drawLayersToCanvas` published nothing at all. Photoshop's own limit is far above 64 Mpx,
  * so the cap was a bound on a buffer, not on a document.
@@ -415,6 +416,9 @@ function uncappedAffineExtentOrNull(affine: AffineTransform, sourceSize: Size): 
 }
 
 export function processorPresentationBounds(layer: Layer): Pos {
+  const bakedBounds = getBakedPresentationBounds(layer);
+  if (bakedBounds) return bakedBounds;
+
   const operations = retainedPresentationOperations(layer);
   if (operations.length === 0) return { ...layer.pos };
 
@@ -432,15 +436,64 @@ export function processorPresentationBounds(layer: Layer): Pos {
 export type ProcessorStaging = Readonly<{
   /** The raster the processor addresses: the layer's own, or its presentation with the retained operations baked in. */
   bitmap: BitmapSource;
+  /** The integer pixel dimensions of `bitmap`, which may differ from its document-space bounds. */
+  rasterSize: Size;
   /** Where that raster sits in DOCUMENT space. `layer.pos` when nothing was baked. */
   bounds: Pos;
-  /** The operations baked into `bitmap`; empty means the input raster was handed straight through. */
+  /** Whether the staged raster already presents the layer's enabled retained operations. */
+  presentationIsBaked: boolean;
+  /** The retained operations baked into `bitmap`; an empty list may still have resized it to the logical bounds. */
   operations: readonly PresentationOperation[];
 }>;
 
+export type ProcessorStagingOptions = Readonly<{
+  /** Refuse staged input above a caller-specific pixel budget before handing it to a processor. */
+  maxPixelCount?: number;
+}>;
+
+/** The integer pixel grid used to rasterize a layer's logical bounds. */
+export function getProcessorRasterSize(bounds: Size): Size {
+  return {
+    width: Number.isFinite(bounds.width) ? Math.max(0, Math.ceil(bounds.width)) : 0,
+    height: Number.isFinite(bounds.height) ? Math.max(0, Math.ceil(bounds.height)) : 0,
+  };
+}
+
+export function assertProcessorStagingBudget(width: number, height: number, maxPixelCount: number | undefined): void {
+  if (maxPixelCount === undefined) return;
+  const pixelCount = width * height;
+  if (
+    !Number.isSafeInteger(maxPixelCount) ||
+    maxPixelCount < 0 ||
+    !Number.isSafeInteger(width) ||
+    width < 0 ||
+    !Number.isSafeInteger(height) ||
+    height < 0 ||
+    !Number.isSafeInteger(pixelCount) ||
+    pixelCount > maxPixelCount
+  ) {
+    throw new RangeError(`Presented raster exceeds the ${maxPixelCount} pixel staging budget`);
+  }
+}
+
+function hasUsableRaster(bitmap: BitmapSource | null | undefined): bitmap is BitmapSource {
+  return Boolean(
+    bitmap && Number.isFinite(bitmap.width) && bitmap.width > 0 && Number.isFinite(bitmap.height) && bitmap.height > 0
+  );
+}
+
+/** The renderer uses this cache and skips layer operations when its raster is present. */
+function getBakedPresentationBounds(layer: Layer): Pos | null {
+  const bounds = layer.presentationBounds;
+  if (!bounds) return null;
+  const hasBakedRaster =
+    hasUsableRaster(layer.tmpCanvas) || (layer.tmpCanvas === null && hasUsableRaster(layer.bitmap));
+  return hasBakedRaster ? { ...bounds } : null;
+}
+
 /**
- * Stages the raster a processor must address for `layer`: its own bitmap, or a private surface
- * carrying the retained operations already evaluated into it.
+ * Stages the raster a processor must address for `layer`: its own bitmap when it already matches
+ * the logical pixel grid, or a private surface carrying the current bounds and retained operations.
  *
  * The validating `evaluatePresentation`, not the draw variant, because this DOES allocate a
  * surface from the extent — which is what the affine raster caps exist to bound. A throw here is
@@ -450,26 +503,47 @@ export type ProcessorStaging = Readonly<{
  * `bounds` is a fresh object rather than the frozen `evaluation.bounds`: it becomes a layer's
  * `pos`, and nothing that follows treats a published position as immutable.
  */
-export function stageProcessorInput(layer: Layer, bitmap: BitmapSource): ProcessorStaging {
-  const operations = retainedPresentationOperations(layer);
-  if (operations.length === 0) return { bitmap, bounds: { ...layer.pos }, operations };
+export function stageProcessorInput(
+  layer: Layer,
+  bitmap: BitmapSource,
+  options: ProcessorStagingOptions = {}
+): ProcessorStaging {
+  const retainedOperations = retainedPresentationOperations(layer);
+  const bakedBounds = getBakedPresentationBounds(layer);
+  const operations = bakedBounds ? [] : retainedOperations;
+  const position = bakedBounds ?? layer.pos;
+  const untransformedRasterSize = getProcessorRasterSize(position);
+  const needsPresentationSurface =
+    operations.length > 0 ||
+    bitmap.width !== untransformedRasterSize.width ||
+    bitmap.height !== untransformedRasterSize.height;
+  if (!needsPresentationSurface) {
+    assertProcessorStagingBudget(untransformedRasterSize.width, untransformedRasterSize.height, options.maxPixelCount);
+    return {
+      bitmap,
+      rasterSize: untransformedRasterSize,
+      bounds: { ...position },
+      presentationIsBaked: bakedBounds !== null || operations.length > 0,
+      operations: retainedOperations,
+    };
+  }
 
   const evaluation = evaluatePresentation({
-    position: layer.pos,
-    sourceSize: { width: layer.pos.width, height: layer.pos.height },
+    position,
+    sourceSize: { width: position.width, height: position.height },
     operations,
     mode: 'layer-bounds',
   });
-  const width = Math.max(1, Math.ceil(evaluation.localBounds.width));
-  const height = Math.max(1, Math.ceil(evaluation.localBounds.height));
+  const rasterSize = getProcessorRasterSize(evaluation.localBounds);
+  assertProcessorStagingBudget(rasterSize.width, rasterSize.height, options.maxPixelCount);
   const surface =
     typeof OffscreenCanvas !== 'undefined'
-      ? new OffscreenCanvas(width, height)
+      ? new OffscreenCanvas(rasterSize.width, rasterSize.height)
       : (() => {
           if (typeof document === 'undefined') throw new Error('No canvas implementation is available');
           const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
+          canvas.width = rasterSize.width;
+          canvas.height = rasterSize.height;
           return canvas;
         })();
   const context = surface.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
@@ -482,5 +556,21 @@ export function stageProcessorInput(layer: Layer, bitmap: BitmapSource): Process
     context.restore();
   }
 
-  return { bitmap: surface as BitmapSource, bounds: { ...evaluation.bounds }, operations };
+  return {
+    bitmap: surface as BitmapSource,
+    rasterSize,
+    bounds: { ...evaluation.bounds },
+    presentationIsBaked: bakedBounds !== null || operations.length > 0,
+    operations: retainedOperations,
+  };
+}
+
+/** Apply a processor's pre-allocation raster budget to every shared staging path. */
+export function stageProcessorInputForTool(
+  layer: Layer,
+  bitmap: BitmapSource,
+  processor: Pick<ToolProcessorDefinition, 'maxStagingPixelCount'>
+): ProcessorStaging {
+  const options = processor.maxStagingPixelCount === undefined ? {} : { maxPixelCount: processor.maxStagingPixelCount };
+  return stageProcessorInput(layer, bitmap, options);
 }

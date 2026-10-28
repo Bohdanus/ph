@@ -200,15 +200,15 @@ describe('FeatherMagneticLassoToolArea', () => {
     return { ctx, strokeStyles, lineWidths };
   };
 
-  /** A 100x100 image with a hard vertical edge at x = 50 so magnetic snapping has something to find. */
+  /** A logical-size image with a hard vertical edge at x = 50 so magnetic snapping has something to find. */
   const installEdgeMapCanvas = () => {
     const canvas = document.createElement('canvas');
-    canvas.width = 100;
-    canvas.height = 100;
-    const data = new Uint8ClampedArray(100 * 100 * 4);
-    for (let y = 0; y < 100; y++) {
-      for (let x = 0; x < 100; x++) {
-        const index = (y * 100 + x) * 4;
+    canvas.width = 200;
+    canvas.height = 120;
+    const data = new Uint8ClampedArray(200 * 120 * 4);
+    for (let y = 0; y < 120; y++) {
+      for (let x = 0; x < 200; x++) {
+        const index = (y * 200 + x) * 4;
         const value = x < 50 ? 0 : 255;
         data[index] = value;
         data[index + 1] = value;
@@ -218,7 +218,7 @@ describe('FeatherMagneticLassoToolArea', () => {
     }
 
     getContextSpy = vi.spyOn(canvas, 'getContext').mockReturnValue({
-      getImageData: vi.fn(() => ({ data, width: 100, height: 100, colorSpace: 'srgb' })),
+      getImageData: vi.fn(() => ({ data, width: 200, height: 120, colorSpace: 'srgb' })),
     } as unknown as CanvasRenderingContext2D);
     h.canvas = canvas;
 
@@ -266,9 +266,11 @@ describe('FeatherMagneticLassoToolArea', () => {
     isActive: true,
     pos: { x: 4, y: 8, width: 16, height: 24 },
     points: [
-      { x: 4, y: 8 },
-      { x: 20, y: 8 },
-      { x: 20, y: 32 },
+      [
+        { x: 4, y: 8 },
+        { x: 20, y: 8 },
+        { x: 20, y: 32 },
+      ],
     ],
   };
 
@@ -340,9 +342,11 @@ describe('FeatherMagneticLassoToolArea', () => {
               // 1. A conversion that dropped the frame reports (9, 9) instead.
               pos: { x: 39, y: 49, width: 52, height: 52 },
               points: expect.arrayContaining([
-                { x: 1, y: 1 },
-                { x: 51, y: 1 },
-                { x: 51, y: 51 },
+                expect.arrayContaining([
+                  { x: 1, y: 1 },
+                  { x: 51, y: 1 },
+                  { x: 51, y: 51 },
+                ]),
               ]),
               sourceTool: 'feather-magnetic-lasso',
             }),

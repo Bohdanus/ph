@@ -139,7 +139,7 @@ export function main(argv, { cwd = process.cwd() } = {}) {
   const payload = json
     ? { base, count: rows.length, branches: shown }
     : `${report(shown, { base })}\n\n  ${rows.length} total.`;
-  process.stdout.write(`${payload}\n`);
+  process.stdout.write(`${json ? JSON.stringify(payload) : payload}\n`);
   return 0;
 }
 

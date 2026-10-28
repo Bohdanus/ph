@@ -17,6 +17,7 @@ const h = vi.hoisted(() => {
 
   return {
     tempUpdateLayer: vi.fn(),
+    cancelLayerPreview: vi.fn(),
     updateLayerByTool: vi.fn(),
     setActiveLayer: vi.fn(),
     clearSelection: vi.fn(),
@@ -33,6 +34,7 @@ const h = vi.hoisted(() => {
     useRectPointerDown: vi.fn(() => false),
     useRectPointerMove: vi.fn(() => false),
     useRectPointerUp: vi.fn(),
+    useRectPointerCancel: vi.fn(),
     useRectProps: { current: null as UseRectProps | null },
   };
 });
@@ -79,6 +81,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: h.tempUpdateLayer,
+    cancelLayerPreview: h.cancelLayerPreview,
     updateLayerByTool: h.updateLayerByTool,
     setActiveLayer: h.setActiveLayer,
     beginTextLayerEdit: vi.fn(),
@@ -114,6 +117,7 @@ vi.mock('../../../hooks/useRect.ts', () => ({
         onPointerDown: h.useRectPointerDown,
         onPointerMove: h.useRectPointerMove,
         onPointerUp: h.useRectPointerUp,
+        onPointerCancel: h.useRectPointerCancel,
       },
       rectHandles: { redraw: vi.fn(), clearSelection: h.clearSelection },
       pointerState: {
@@ -141,6 +145,7 @@ function pressOn(layerId: LayerId | null, point = { x: 5, y: 5 }) {
 describe('MoveToolArea', () => {
   beforeEach(() => {
     h.tempUpdateLayer.mockReset();
+    h.cancelLayerPreview.mockReset();
     h.updateLayerByTool.mockReset();
     h.setActiveLayer.mockReset();
     h.clearSelection.mockReset();
@@ -152,6 +157,7 @@ describe('MoveToolArea', () => {
     h.useRectPointerMove.mockReset();
     h.useRectPointerMove.mockReturnValue(false);
     h.useRectPointerUp.mockReset();
+    h.useRectPointerCancel.mockReset();
     h.getLayerIdByPoint.mockReset();
     h.getLayerIdByPoint.mockReturnValue(null);
     h.getLocalCoords.mockReset();
@@ -594,9 +600,68 @@ describe('MoveToolArea', () => {
 
       fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 1 });
 
+      expect(h.useRectPointerCancel).toHaveBeenCalledTimes(1);
+      expect(h.cancelLayerPreview).toHaveBeenCalledWith('layer-1');
       expect(isDocumentGestureOpen()).toBe(false);
       // The drag is over, so the grab cursor this very press added cannot outlive it.
       expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(false);
+    });
+
+    it('ignores a foreign pointer cancel and preserves the layer transform', () => {
+      const toolArea = pressOn('layer-1');
+      expect(readDocumentGesture()).toEqual({ kind: 'layer-transform', pointerId: 1 });
+
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 99 });
+
+      expect(h.useRectPointerCancel).toHaveBeenCalledTimes(1);
+      expect(h.cancelLayerPreview).not.toHaveBeenCalled();
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1 });
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it.each([
+      ['another layer', 'layer-2' as LayerId | null],
+      ['empty canvas', null as LayerId | null],
+    ])('preserves the active transform when a second pointer presses on %s', (_target, secondTarget) => {
+      const toolArea = pressOn('layer-1');
+      expect(readDocumentGesture()).toEqual({ kind: 'layer-transform', pointerId: 1 });
+
+      h.getLayerIdByPoint.mockReturnValue(secondTarget);
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2 });
+      fireEvent.pointerCancel(toolArea, { pointerId: 2 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'layer-transform', pointerId: 1 });
+      expect(h.cancelLayerPreview).not.toHaveBeenCalled();
+
+      fireEvent.pointerCancel(toolArea, { pointerId: 1 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+      expect(h.cancelLayerPreview).toHaveBeenCalledWith('layer-1');
+    });
+
+    it('preserves an empty-canvas rectangle gesture when another pointer presses a layer', () => {
+      h.getLayerIdByPoint.mockReturnValue(null);
+      const { container: el } = renderArea();
+      const toolArea = toolAreaOf(el);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1 });
+      // This MoveToolArea mock delegates pointer tracking to useRect rather than
+      // implementing it; mirror the state after useRect accepts the empty-canvas
+      // press so the wrapper sees the owner that the real hook would track.
+      h.isMouseDownRef.current = true;
+      h.pointerIdRef.current = 1;
+      h.setActiveLayer.mockClear();
+      h.tempUpdateLayer.mockClear();
+
+      h.getLayerIdByPoint.mockReturnValue('layer-2');
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2 });
+      h.useRectProps.current!.onRepaint!({ x1: 100, y1: 120, x2: 150, y2: 180 });
+
+      expect(h.setActiveLayer).not.toHaveBeenCalled();
+      expect(h.tempUpdateLayer).not.toHaveBeenCalled();
+      expect(h.useRectPointerDown).toHaveBeenCalledTimes(2);
     });
 
     it('does not let a foreign pointer release the claim it never took', () => {

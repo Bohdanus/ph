@@ -6,7 +6,7 @@ import { useMarchingPath } from '../usePolylineAnts';
 
 function createRafMocks() {
   const frames: Map<number, FrameRequestCallback> = new Map();
-  let nextId = 0;
+  let nextId = 1;
 
   const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
     const id = nextId++;

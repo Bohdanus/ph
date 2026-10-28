@@ -11,7 +11,7 @@ This page is about how.
 **`store.durableDocument` is a complete, correctly-typed, fully-populated
 document whose authority is surface-specific during the staged cutover.**
 
-It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
+It has thirteen operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
 rebuilt on every commit and every navigation. Successful supported navigation,
 eligible committed append/reorder presentation, and export consume its materialized
@@ -46,11 +46,14 @@ Evidence, all three current:
   publication is awaited and the complete legacy replay is painted only for the
   fallback outcome.
 
-`src/contexts/materialization.ts` has one production importer,
-`src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
+`src/contexts/materialization.ts` has one runtime production importer,
+`src/contexts/durable-compositor.ts`; `durable-render-projection.ts` imports only
+its `MaterializedLayer` type. `StoreContext.boundary-gates.test.ts` pins both
+source-level import sites. **The compositor is no longer isolated:**
 `StoreContext.tsx`'s staged navigation and background append/reorder publication
-paths call `composeDurableDocument()`, so the durable document feeds supported
-presentation surfaces. It does not replace logical state:
+paths call
+`composeDurableDocument()`, so the durable document feeds supported presentation
+surfaces. It does not replace logical state:
 the composition is staged off-tree, every layer is checked by
 `durablePresentationIsRendererIdentical()` against the legacy structural replay,
 and the complete result is published into `durableRenderProjection` with a
@@ -421,23 +424,31 @@ per-session module state accurately.
 
 ## Selection
 
-A selection is a polygon point list with a bounding box, which is the `Selection`
-type in `src/contexts/general-types.ts`, and it is stored in the store as
-`selections` plus `activeSelectionId`. Readers are ants, hit-testing
-(`isPointInPolygon()`, in `src/util/selection.ts`) and geometry
-(`getSelectionRect()`, in the same module).
+A selection snapshot is either one or more polygon paths or an exact packed raster
+mask, as represented by `Selection` in `src/contexts/general-types.ts`; it is stored
+in the store as `selections` plus `activeSelectionId`. Magic Wand and Quick Selection
+retain a raster mask when their boundary exceeds
+`MAX_VECTOR_SELECTION_BOUNDARY_EDGES` in `src/util/selection-mask.ts`, rather than
+materializing an unsafe number of points. The mask is row-major, one bit per pixel,
+Base64 encoded for history, positioned by the selection's `pos`, and bounded to
+`MAX_RASTER_SELECTION_PIXELS`. `isCanonicalRasterSelectionMask()` validates it before
+history accepts it. Ants, hit-testing, processors, copy/move, and history replay read
+the same committed selection snapshot through `src/util/selection.ts` and the history
+selection helpers.
 
-An alpha mask exists but is **derived on demand**, and one production path reaches
-it: `copySelectionToCanvas()` → `copyFeatheredPolygonSelectionToCanvas()`, both in
-`src/util/selection.ts`, for clipboard and copy-to-layer. Feather is a parameter of
-that copy.
+Polygon alpha coverage is rasterized on demand, including for clipboard and copy-to-
+layer. Raster selections instead use their packed mask as the exact coverage source;
+feathering is applied by the same alpha-mask builder.
 
 `src/contexts/selection-baseline.ts` owns one rule: the baseline a selection
 history entry restores to. `deriveSelectionBaseline()` scans the **unbounded**
-timeline, and must. A selection is created by a gesture that writes no history
-entry, so bounding the search at the replay target makes undoing a tool-switch
-deselect a silent no-op. Its own JSDoc says so; the reasoning is
-in project memory under `selection_baseline_helper`.
+timeline, and must. A later selection action's previous snapshot can be the only
+record of the state that existed before that action, so bounding the search at
+the replay target can make undoing a tool-switch deselect a silent no-op. The
+baseline starts from the first enabled selection action's previous snapshot,
+then rewinds only across earlier disabled selection rows whose next snapshot
+exactly matches the current baseline. If all selection rows are disabled, only
+a complete first before/after pair can seed it.
 
 ## File I/O
 

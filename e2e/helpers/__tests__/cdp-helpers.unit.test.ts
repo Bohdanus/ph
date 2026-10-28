@@ -56,10 +56,9 @@ interface CdpHarness {
   detach: DetachSpy;
   newCDPSession: NewSessionSpy;
   /**
-   * Whether the output directory already existed at the moment the CDP session was
-   * opened. The ordering of `mkdir` against the helper's `fs.writeFile` is asserted
-   * from this side of the call rather than by spying on `fs`, because the helper
-   * imports `node:fs/promises` statically.
+   * Whether the output directory already existed when the test harness opened the CDP
+   * session. Tests use this observation to assert that directory creation happened first,
+   * without intercepting filesystem calls.
    */
   outputDirExistedAtSession: () => boolean;
 }
@@ -369,13 +368,10 @@ describe('CDP Helpers', () => {
       });
     });
 
-    // The regression this translation exists for. `Page.captureScreenshot` is called
-    // directly here, so Playwright never gets to apply the window offset that
-    // `page.screenshot({ clip })` applies on the caller's behalf: with the test fixture
-    // window scrolled to y=440 (an explicit unit-test fixture value, not app geometry),
-    // a viewport-relative clip captures nothing and the page-relative one captures the
-    // pinned marker. Sending `box`/`clip` raw therefore puts every CDP read 440px from the
-    // region the caller measured — a wrong answer, not an error.
+    // This fixture pins the coordinate conversion, not screenshot pixels: with the
+    // synthetic window offset at y=440 and a viewport-relative box at y=-340, the CDP
+    // command must receive page y=100. Sending the viewport y unchanged would target a
+    // region 440px away; unlike `page.screenshot({ clip })`, raw CDP does not add scroll.
     it('translates a viewport-relative clip into the page coordinates CDP wants', async () => {
       const outputDir = await makeOutputDir('scrolled-clip');
       const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
@@ -516,8 +512,8 @@ describe('CDP Helpers', () => {
       // the helper then wrote, attached and RETURNED a 0-byte PNG as a successful capture.
       // The subject asserted here is therefore the DECODED LENGTH, so this case fails
       // against a type-only guard and against one that checks the string's length rather
-      // than the payload's. The fault it used to produce surfaced far from its cause, in
-      // `loadImageData` (canvas-helpers.ts:606), naming the consumer instead.
+      // than the payload's. The fault it used to produce surfaced later in the pipeline,
+      // in `loadImageData`, naming the consumer instead.
       const outputDir = await makeOutputDir('empty-data');
       const { page, detach } = createCdpHarness(outputDir, { response: { data: '' } });
       const { testInfo, attach } = createTestInfoMock(outputDir);

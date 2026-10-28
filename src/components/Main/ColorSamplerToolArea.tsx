@@ -15,7 +15,6 @@ import {
   syncColorSamplerFrameSize,
   useColorSamplers,
 } from '../../tools/color-sampler-store.ts';
-import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 
 type ColorSamplerToolAreaProps = {
   className?: string;
@@ -96,7 +95,7 @@ export const drawColorSamplerMarker = (
  * does not subtract `documentFrame.x` — the same rule `RulerToolArea` states, for the same reason.
  */
 const isInsideFrame = (point: Point, frame: Size): boolean =>
-  point.x >= 0 && point.y >= 0 && point.x <= frame.width && point.y <= frame.height;
+  point.x >= 0 && point.y >= 0 && point.x < frame.width && point.y < frame.height;
 
 /**
  * The Color Sampler records NO history state.
@@ -123,10 +122,9 @@ const isInsideFrame = (point: Point, frame: Size): boolean =>
  * <https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html>
  */
 export const ColorSamplerToolArea = ({ className, overlayCtxRef }: ColorSamplerToolAreaProps) => {
-  const [{ canvasRef, containerRef, totalSize }] = useStore();
+  const [{ canvasRef, containerRef, totalSize, renderSelector }] = useStore();
   const { toolArgs } = useCurrentTool();
   const samplers = useColorSamplers();
-  const dpr = useDevicePixelRatio();
 
   const { getLocalCoords, dimensionsRef, isPointerDownValid, isPointerMoveValid, isPointerUpValid } =
     usePointerPosition({ ref: containerRef, imageSize: totalSize });
@@ -186,8 +184,12 @@ export const ColorSamplerToolArea = ({ className, overlayCtxRef }: ColorSamplerT
 
     // A press on empty canvas places. The cap refuses loudly and changes nothing; see
     // `samplerCapReached` for why it refuses rather than replacing.
+    // During replay, the visible canvas is the previous accepted presentation, not the requested
+    // history state. Do not create a measurement from that stale image.
+    if (renderSelector.source === 'pending') return;
+
     const args = toolArgs as ColorSamplerToolArgs;
-    const readback = readColorSampler(canvasRef.current, pointer, args.sampleSize, dpr);
+    const readback = readColorSampler(canvasRef.current, pointer, args.sampleSize, totalSize);
     if (!readback.ok) {
       console.error(readback.reason, 'the color sampler cannot read the composited canvas');
       return;

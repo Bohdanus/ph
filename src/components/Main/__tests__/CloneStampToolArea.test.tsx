@@ -9,6 +9,7 @@ import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
+const cancelLayerPreviewMock = vi.hoisted(() => vi.fn());
 /**
  * `createLayerFromTool` is in the mock on purpose even though the Clone Stamp must never reach
  * it: a mock that simply omitted it would turn a regression that cloned through the
@@ -115,6 +116,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: tempUpdateLayerMock,
     updateLayerByTool: updateLayerByToolMock,
+    cancelLayerPreview: cancelLayerPreviewMock,
     createLayerFromTool: createLayerFromToolMock,
   }),
 }));
@@ -214,9 +216,11 @@ const cloneArgs = (overrides: Partial<CloneStampToolArgs> = {}): CloneStampToolA
 const ACTIVE_SELECTION: Selection = {
   id: 'selection-1',
   points: [
-    { x: 0, y: 0 },
-    { x: 20, y: 0 },
-    { x: 20, y: 20 },
+    [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 20 },
+    ],
   ],
   isActive: true,
   pos: { x: 10, y: 15, width: 20, height: 20 },
@@ -370,6 +374,7 @@ describe('CloneStampToolArea', () => {
     resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
+    cancelLayerPreviewMock.mockClear();
     createLayerFromToolMock.mockClear();
     patchToolArgsMock.mockClear();
     rafMock.mockClear();
@@ -438,15 +443,54 @@ describe('CloneStampToolArea', () => {
 
       const expectedSelection = {
         points: [
-          { x: 10, y: 15 },
-          { x: 30, y: 15 },
-          { x: 30, y: 35 },
+          [
+            { x: 10, y: 15 },
+            { x: 30, y: 15 },
+            { x: 30, y: 35 },
+          ],
         ],
         featherRadius: 7,
         antiAlias: false,
       };
       expect(previewCalls()[0]?.toolArgs.selection).toEqual(expectedSelection);
       expect(commitCalls()[0]?.toolArgs.selection).toEqual(expectedSelection);
+    });
+
+    it('preserves every contour in the selection snapshot sent to preview and commit', () => {
+      const compoundSelection: Selection = {
+        ...ACTIVE_SELECTION,
+        points: [
+          ...ACTIVE_SELECTION.points,
+          [
+            { x: 40, y: 5 },
+            { x: 50, y: 5 },
+            { x: 50, y: 15 },
+            { x: 40, y: 15 },
+          ],
+        ],
+        pos: { x: 10, y: 15, width: 50, height: 20 },
+      };
+      storeState.selections = [compoundSelection];
+      storeState.activeSelectionId = compoundSelection.id;
+      const { toolArea } = renderArea();
+
+      stroke(toolArea, [20, 20], [100, 60]);
+
+      const expectedContours = [
+        [
+          { x: 10, y: 15 },
+          { x: 30, y: 15 },
+          { x: 30, y: 35 },
+        ],
+        [
+          { x: 50, y: 20 },
+          { x: 60, y: 20 },
+          { x: 60, y: 30 },
+          { x: 50, y: 30 },
+        ],
+      ];
+      expect(previewCalls()[0]?.toolArgs.selection?.points).toEqual(expectedContours);
+      expect(commitCalls()[0]?.toolArgs.selection?.points).toEqual(expectedContours);
     });
 
     it('rebases the source and the stroke by the layer origin, in one translation', () => {
@@ -1246,6 +1290,7 @@ describe('CloneStampToolArea', () => {
       expect(updateLayerByToolMock).not.toHaveBeenCalled();
       expect(pointerState.activePointer).toBeNull();
       expect(pointerState.isMouseDown.current).toBe(false);
+      expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 90, clientY: 80 });
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 100 });
@@ -1280,13 +1325,14 @@ describe('CloneStampToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
       expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
-      fireEvent.pointerCancel(host);
+      fireEvent.pointerCancel(host, { pointerId: 1 });
       fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
 
       // The abort committed nothing, threw away the partial preview rather than leaving it, and
       // cannot be resurrected by the release that would have ended the gesture.
       expect(updateLayerByToolMock).not.toHaveBeenCalled();
       expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
+      expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
       expect(pointerState.activePointer).toBeNull();
     });
 
@@ -1345,18 +1391,16 @@ describe('CloneStampToolArea', () => {
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
       expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
 
-      // The layer is deleted while the button is held. `enabled` is read at gesture boundaries only,
-      // so the release below is refused wholesale rather than committing a stroke into a layer that
-      // no longer exists — half-committing it would be the worse of the two.
+      // The layer is deleted while the button is held. The owner release must abort the gesture,
+      // clear its transient preview, and release the pointer claim instead of committing stale work.
       storeState.layers = {};
       view.rerender(areaElement(NO_OVERLAY));
       fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
 
       expect(updateLayerByToolMock).not.toHaveBeenCalled();
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
-      // The refusal happens ABOVE the validators, so the capture is still held — the same ordering
-      // the bedrock case pins from the other side.
-      expect(pointerState.activePointer).toBe(1);
+      expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
+      expect(pointerState.activePointer).toBeNull();
     });
   });
 });

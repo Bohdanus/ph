@@ -76,6 +76,7 @@ export const TRACKING_MAX = 1000;
  * the default reproduces the 120% and the semantics stay divergent.
  */
 export const AUTO_LEADING = 1.2;
+export const NEUTRAL_TEXT_ANGLE = 0;
 
 /**
  * The leading range the options bar offers, and the bounds a corrupt record is folded into.
@@ -197,7 +198,7 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
-  /** Rotation of the text box in degrees, around its centre. */
+  /** Per-layer rotation in degrees; the active tool resets it when the draft closes. */
   angle?: number;
   /** True only for a newly placed placeholder that has not received user input yet. */
   placeholderUntouched?: boolean;
@@ -338,13 +339,27 @@ export function resolveTextKind(args: TextToolArgs): TextKind {
  * `color` is a setting, not a derivation. It used to be omitted because the bar mirrored the store's
  * foreground into the args on every render, so the value was never the tool's to keep; it is the
  * tool's own swatch now, and `saveLastSettings` already persists it (`src/util/settings.ts` omits
- * `text` and `rect` and, since this revision, `kind`), so this type has to say the same thing.
+ * draft content/geometry and, since this revision, `kind` and `angle`), so this type has to say the
+ * same thing.
  *
  * `kind` is omitted rather than persisted for a different reason: it is decided by the gesture that
  * placed the draft, so a remembered `paragraph` would make the next draft wrap inside the last
  * layer's box before the user has dragged anything.
+ *
+ * `angle` is omitted because it is geometry of one text layer, not reusable character formatting.
+ * A committed source retains its own angle; each subsequent draft starts at zero.
  */
-export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect' | 'kind'>;
+export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect' | 'kind' | 'angle'>;
+
+export function clearTextDraftArgs<T extends object>(
+  args: T
+): Omit<T, 'text' | 'rect' | 'angle'> & { text: string; rect: null; angle: number } {
+  return { ...args, text: '', rect: null, angle: NEUTRAL_TEXT_ANGLE } as Omit<T, 'text' | 'rect' | 'angle'> & {
+    text: string;
+    rect: null;
+    angle: number;
+  };
+}
 
 /**
  * The CSS font shorthand, with style and weight BEFORE the size.
@@ -358,8 +373,11 @@ export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect' | 'kind'>;
  * The same grammar rejects a weight AFTER the size (`bold 700 64px Arial`), which is why there is
  * no numeric weight here.
  */
-export function fontShorthand(style: Pick<ResolvedTextStyle, 'fontFamily' | 'fontSize' | 'bold' | 'italic'>): string {
-  return `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${style.fontSize}px ${style.fontFamily}`;
+export function fontShorthand(
+  style: Pick<ResolvedTextStyle, 'fontFamily' | 'fontSize' | 'bold' | 'italic'>,
+  caps: 'normal' | 'small-caps' = 'normal'
+): string {
+  return `${style.italic ? 'italic ' : ''}${caps === 'small-caps' ? 'small-caps ' : ''}${style.bold ? 'bold ' : ''}${style.fontSize}px ${style.fontFamily}`;
 }
 
 /** Tracking as a CSS length: 1/1000 em of the current type size, per Adobe. */
@@ -381,6 +399,124 @@ function hasFontVariantCaps(ctx: Ctx2D): boolean {
   return 'fontVariantCaps' in ctx;
 }
 
+type CanvasCapsMode = 'native' | 'manual-small-caps' | 'manual-all-caps';
+
+const SMALL_CAPS_SCALE = 0.703125;
+const canvasCapsMode = new WeakMap<Ctx2D, CanvasCapsMode>();
+const nativeSmallCapsCache = new WeakMap<Ctx2D, Map<string, boolean>>();
+
+function nativeSmallCapsPixelsDiffer(ctx: Ctx2D, style: ResolvedTextStyle): boolean | undefined {
+  const source = (ctx as Ctx2D & { canvas?: HTMLCanvasElement | OffscreenCanvas }).canvas;
+  if (!source) return undefined;
+
+  let scratch: HTMLCanvasElement | OffscreenCanvas;
+  if (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas) {
+    scratch = new OffscreenCanvas(160, 160);
+  } else if ('ownerDocument' in source) {
+    scratch = source.ownerDocument.createElement('canvas');
+    scratch.width = 160;
+    scratch.height = 160;
+  } else {
+    return undefined;
+  }
+
+  const probe = scratch.getContext('2d', { willReadFrequently: true }) as Ctx2D | null;
+  if (!probe) return undefined;
+  const usesFontVariantCaps = hasFontVariantCaps(probe);
+
+  try {
+    const pixelsFor = (variant: 'normal' | 'small-caps') => {
+      probe.clearRect(0, 0, scratch.width, scratch.height);
+      probe.font = fontShorthand(style, !usesFontVariantCaps && variant === 'small-caps' ? 'small-caps' : 'normal');
+      probe.textBaseline = 'alphabetic';
+      if (usesFontVariantCaps) probe.fontVariantCaps = variant;
+      probe.fillText('x', 0, 120);
+      return probe.getImageData(0, 0, scratch.width, scratch.height).data;
+    };
+    const normal = pixelsFor('normal');
+    const smallCaps = pixelsFor('small-caps');
+    return normal.some((channel, index) => channel !== smallCaps[index]);
+  } catch {
+    return undefined;
+  }
+}
+
+function supportsNativeSmallCaps(ctx: Ctx2D, style: ResolvedTextStyle): boolean {
+  const key = fontShorthand(style);
+  let cache = nativeSmallCapsCache.get(ctx);
+  if (!cache) {
+    cache = new Map();
+    nativeSmallCapsCache.set(ctx, cache);
+  }
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+
+  // A metrics change alone cannot prove that fillText applies the caps variant. If raster readback
+  // is unavailable or inconclusive, use faux caps so the committed pixels cannot silently disagree
+  // with the DOM preview.
+  const supported = nativeSmallCapsPixelsDiffer(ctx, style) === true;
+  cache.set(key, supported);
+  return supported;
+}
+
+function restoreCanvasCapsMode(ctx: Ctx2D, previous: CanvasCapsMode | undefined): void {
+  if (previous) canvasCapsMode.set(ctx, previous);
+  else canvasCapsMode.delete(ctx);
+}
+
+type CapsRun = { text: string; scale: number; clusterCount: number };
+
+function manualCapsRuns(line: string, mode: CanvasCapsMode): CapsRun[] {
+  if (mode === 'native') return [{ text: line, scale: 1, clusterCount: graphemes(line).length }];
+
+  const runs: CapsRun[] = [];
+  for (const cluster of graphemes(line)) {
+    const upper = cluster.toUpperCase();
+    const lower = cluster.toLowerCase();
+    const isCased = upper !== lower;
+    const isLowercase = mode === 'manual-all-caps' || cluster === lower;
+    const shouldTransform = isCased && isLowercase;
+    const text = shouldTransform ? upper : cluster;
+    const scale = mode === 'manual-small-caps' && shouldTransform ? SMALL_CAPS_SCALE : 1;
+    const clusterCount = graphemes(text).length;
+    const previous = runs.at(-1);
+    if (previous && previous.scale === scale) {
+      previous.text += text;
+      previous.clusterCount += clusterCount;
+    } else {
+      runs.push({ text, scale, clusterCount });
+    }
+  }
+  return runs;
+}
+
+function measureWithoutLetterSpacing(ctx: Ctx2D, text: string): number {
+  if (!hasLetterSpacing(ctx)) return ctx.measureText(text).width;
+  const previous = ctx.letterSpacing;
+  ctx.letterSpacing = '0px';
+  try {
+    return ctx.measureText(text).width;
+  } finally {
+    ctx.letterSpacing = previous;
+  }
+}
+
+function manualCapsWidth(ctx: Ctx2D, line: string, spacing: number, mode: CanvasCapsMode): number {
+  const runs = manualCapsRuns(line, mode);
+  const clusterCount = runs.reduce((count, run) => count + run.clusterCount, 0);
+  // `fillLine` has to draw each grapheme separately to add tracking when Canvas has no native
+  // `letterSpacing`; measure the same unkerned advances here so wrapping and alignment match the
+  // actual cursor path. Keep whole-run shaping when native letter spacing can draw the run intact.
+  const needsPerClusterWidths = spacing !== 0 && !hasLetterSpacing(ctx);
+  const glyphWidth = runs.reduce((width, run) => {
+    const chunks = needsPerClusterWidths ? graphemes(run.text) : [run.text];
+    return (
+      width + chunks.reduce((runWidth, chunk) => runWidth + measureWithoutLetterSpacing(ctx, chunk) * run.scale, 0)
+    );
+  }, 0);
+  return Math.max(0, glyphWidth + Math.max(0, clusterCount - 1) * spacing);
+}
+
 /**
  * Everything about the context that has to be true before a glyph is drawn, in the order that
  * order matters.
@@ -399,28 +535,32 @@ function hasFontVariantCaps(ctx: Ctx2D): boolean {
  * so that the box and the glyphs cannot disagree, and `textAlign` is only ever read by the manual
  * fallback that positions each cluster itself.
  */
-function applyTextStyle(ctx: Ctx2D, style: ResolvedTextStyle): void {
+function applyTextStyle(ctx: Ctx2D, style: ResolvedTextStyle): CanvasCapsMode {
   ctx.font = fontShorthand(style);
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'start';
   if (hasLetterSpacing(ctx)) {
     ctx.letterSpacing = `${trackingPx(style)}px`;
   }
-  if (hasFontVariantCaps(ctx)) {
-    // 'all-small-caps' covers Adobe's All Caps, which renders every character as a capital.
-    // 'small-caps' leaves characters already typed as capitals alone and synthesises only the
-    // lowercase, which is Adobe's documented rule: "if the font does not include small caps,
-    // Photoshop generates faux small caps"
-    // (https://helpx.adobe.com/photoshop/using/formatting-characters.html). Chrome synthesises
-    // both — measured at 64px Arial, synthesised capitals are exactly 0.703125 of the real cap
-    // height and lowercase renders identically to uppercase under 'all-small-caps'.
-    //
-    // All Caps wins the pair, and that is not an arbitrary precedence: with BOTH Adobe toggles on
-    // Photoshop renders every character as a small capital, which is precisely what
-    // 'all-small-caps' does to an uppercase character. The two are independent booleans here and
-    // the bar can hold both; only the resolved variant is single-valued.
-    ctx.fontVariantCaps = style.allCaps ? 'all-small-caps' : style.smallCaps ? 'small-caps' : 'normal';
+
+  let capsMode: CanvasCapsMode = 'native';
+  if (style.allCaps) {
+    if (hasFontVariantCaps(ctx)) ctx.fontVariantCaps = 'normal';
+    capsMode = 'manual-all-caps';
+  } else if (style.smallCaps) {
+    const nativeSmallCaps = supportsNativeSmallCaps(ctx, style);
+    if (hasFontVariantCaps(ctx)) {
+      ctx.fontVariantCaps = nativeSmallCaps ? 'small-caps' : 'normal';
+    } else if (nativeSmallCaps) {
+      ctx.font = fontShorthand(style, 'small-caps');
+    }
+    if (!nativeSmallCaps) capsMode = 'manual-small-caps';
+  } else if (hasFontVariantCaps(ctx)) {
+    ctx.fontVariantCaps = 'normal';
   }
+
+  canvasCapsMode.set(ctx, capsMode);
+  return capsMode;
 }
 
 function finiteMetric(value: number | undefined, fallbackEm: number, fontSize: number): number {
@@ -495,6 +635,8 @@ function xHeightHalf(ctx: Ctx2D, fontSize: number): number {
  * one. It is the honest degradation and it is documented, not hidden.
  */
 function inkWidth(ctx: Ctx2D, line: string, spacing: number): number {
+  const capsMode = canvasCapsMode.get(ctx) ?? 'native';
+  if (capsMode !== 'native') return manualCapsWidth(ctx, line, spacing, capsMode);
   // Tracking at zero is the overwhelmingly common case and it must not cost anything: the
   // fallback below measures a string one cluster at a time, which throws away kerning, and there
   // is no reason to throw it away when there is no spacing to place by hand.
@@ -510,6 +652,10 @@ function inkWidth(ctx: Ctx2D, line: string, spacing: number): number {
 
 /** The CSS text run includes its final tracking gap; keep alignment and decorations on that advance. */
 function lineAdvanceWidth(ctx: Ctx2D, line: string, spacing: number): number {
+  const capsMode = canvasCapsMode.get(ctx) ?? 'native';
+  if (capsMode !== 'native') {
+    return graphemes(line).length === 0 ? 0 : manualCapsWidth(ctx, line, spacing, capsMode) + spacing;
+  }
   if (spacing === 0) return ctx.measureText(line).width;
   if (hasLetterSpacing(ctx)) return ctx.measureText(line).width;
   if (line.length === 0) return 0;
@@ -526,6 +672,45 @@ function lineAdvanceWidth(ctx: Ctx2D, line: string, spacing: number): number {
  * for one pair at a time.
  */
 function fillLine(ctx: Ctx2D, line: string, x: number, y: number, spacing: number): void {
+  const capsMode = canvasCapsMode.get(ctx) ?? 'native';
+  if (capsMode !== 'native') {
+    const runs = manualCapsRuns(line, capsMode);
+    const nativeLetterSpacing = hasLetterSpacing(ctx);
+    let cursor = x;
+
+    if (!nativeLetterSpacing && spacing !== 0) {
+      for (const run of runs) {
+        for (const cluster of graphemes(run.text)) {
+          if (run.scale === 1) {
+            ctx.fillText(cluster, cursor, y);
+          } else {
+            ctx.save();
+            ctx.translate(cursor, y);
+            ctx.scale(run.scale, run.scale);
+            ctx.fillText(cluster, 0, 0);
+            ctx.restore();
+          }
+          cursor += measureWithoutLetterSpacing(ctx, cluster) * run.scale + spacing;
+        }
+      }
+      return;
+    }
+
+    for (const run of runs) {
+      if (run.scale === 1) {
+        ctx.fillText(run.text, cursor, y);
+      } else {
+        ctx.save();
+        ctx.translate(cursor, y);
+        ctx.scale(run.scale, run.scale);
+        if (nativeLetterSpacing) ctx.letterSpacing = `${spacing / run.scale}px`;
+        ctx.fillText(run.text, 0, 0);
+        ctx.restore();
+      }
+      cursor += measureWithoutLetterSpacing(ctx, run.text) * run.scale + run.clusterCount * spacing;
+    }
+    return;
+  }
   if (spacing === 0 || hasLetterSpacing(ctx)) {
     ctx.fillText(line, x, y);
     return;
@@ -694,7 +879,7 @@ export function layoutText(
   // there — running it would measure each line twice, once to prove it fits and once to place it,
   // and the measurement is the expensive half. Point type therefore skips it entirely and the
   // caller's single measurement per line stands.
-  const hardBroken = text.split('\n');
+  const hardBroken = (style.allCaps ? text.toUpperCase() : text).split('\n');
   // Styled here rather than left to the caller, because this is the layout AUTHORITY and it
   // measures: `wrapLine` calls `measureText`, and a context still wearing the workspace canvas's
   // `10px sans-serif` wraps a 1042px line at 163px. `withTextStyle` brackets, so a caller that has
@@ -821,6 +1006,7 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOp
   // tracking and caps variant after the user left the Type tool, for every later overlay painter
   // to inherit. The three measurers in this file were closed for exactly this reason; this one was
   // the only context-touching function left open, and it is the one that runs most often.
+  const previousCapsMode = canvasCapsMode.get(ctx);
   ctx.save();
   try {
     if (args.angle) {
@@ -832,6 +1018,7 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOp
     renderTextInto(ctx, style, kind, text, rect, options);
   } finally {
     ctx.restore();
+    restoreCanvasCapsMode(ctx, previousCapsMode);
   }
 }
 
@@ -850,7 +1037,6 @@ function renderTextInto(
   options: RenderTextOptions
 ): void {
   applyTextStyle(ctx, style);
-
   ctx.fillStyle = style.color;
   const spacing = trackingPx(style);
   const lineStep = style.fontSize * style.lineHeight;
@@ -869,7 +1055,6 @@ function renderTextInto(
   // an infinite width, which reduces the layout to the hard breaks it has always had.
   const wrapWidth = kind === 'paragraph' ? textWrapWidth(rect) : Infinity;
   const layout = layoutText(ctx, style, text, wrapWidth, rect.y2 - rect.y1);
-
   layout.lines.forEach((line, index) => {
     const baseline = rect.y1 + TEXT_PADDING + ascent + index * lineStep;
     const width = lineAdvanceWidth(ctx, line, spacing);
@@ -973,12 +1158,14 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
  * draws, and the draw still happens in the draft's face.
  */
 export function withTextStyle<T>(ctx: Ctx2D, style: ResolvedTextStyle, measure: () => T): T {
+  const previousCapsMode = canvasCapsMode.get(ctx);
   ctx.save();
   try {
     applyTextStyle(ctx, style);
     return measure();
   } finally {
     ctx.restore();
+    restoreCanvasCapsMode(ctx, previousCapsMode);
   }
 }
 
@@ -997,7 +1184,7 @@ export type DomOverlayStyle = {
   fontFamily: string;
   fontSize: string;
   fontStyle: string;
-  fontVariantCaps: 'all-small-caps' | 'small-caps' | 'normal';
+  fontVariantCaps: 'small-caps' | 'normal';
   fontWeight: string;
   letterSpacing: string;
   lineHeight: string;
@@ -1020,6 +1207,7 @@ export type DomOverlayStyle = {
   overflowWrap: 'normal';
   wordBreak: 'normal';
   textAlign: 'left' | 'center' | 'right';
+  textTransform: 'uppercase' | 'none';
   textDecorationLine: string;
   textDecorationColor: string;
   textDecorationThickness: string;
@@ -1098,9 +1286,7 @@ export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTe
     fontFamily: style.fontFamily,
     fontSize: `${style.fontSize * scale}px`,
     fontStyle: style.italic ? 'italic' : 'normal',
-    // The same single-valued variant the canvas resolves, and for the same reason: Adobe's two
-    // toggles are independent booleans and the resolved rendering is not. See `applyTextStyle`.
-    fontVariantCaps: style.allCaps ? 'all-small-caps' : style.smallCaps ? 'small-caps' : 'normal',
+    fontVariantCaps: style.smallCaps && !style.allCaps ? 'small-caps' : 'normal',
     fontWeight: style.bold ? '700' : '400',
     letterSpacing: `${trackingPx(style) * scale}px`,
     lineHeight: `${lineStep * scale}px`,
@@ -1109,6 +1295,7 @@ export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTe
     paddingLeft: `${padding}px`,
     paddingRight: `${padding}px`,
     textAlign: style.align,
+    textTransform: style.allCaps ? 'uppercase' : 'none',
     textDecorationColor: style.color,
     textDecorationLine: decoration.length > 0 ? decoration.join(' ') : 'none',
     textDecorationThickness: `${decorationThickness(style.fontSize) * scale}px`,
@@ -1166,7 +1353,6 @@ export const text =
     if (!ctx) return [canvas];
 
     renderText(ctx, args);
-
     textRasterCache.set(key, canvas);
     return [canvas];
   };

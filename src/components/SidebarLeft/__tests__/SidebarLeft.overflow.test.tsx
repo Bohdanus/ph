@@ -439,7 +439,7 @@ describe('SidebarLeft the three-dots tile', () => {
       fireEvent.pointerUp(overflowTile()!, { button: 0 });
     });
     act(() => {
-      fireEvent.click(overflowTile()!);
+      fireEvent.click(overflowTile()!, { detail: 1 });
     });
     expect(goToTool, 'a press on the three-dots tile must not choose a tool').not.toHaveBeenCalled();
 
@@ -472,12 +472,10 @@ describe('SidebarLeft the three-dots tile', () => {
   });
 
   it('is still reachable by an activation after a press that left the tile before release', () => {
-    // A press that leaves the button before releasing — a drag, or a scroll that steals the
-    // pointer — produces NO click, so the flag the press set to swallow that click survives.
-    // For a mouse the next press clears it first, so nothing is observably wrong. For anything
-    // that activates without a press there is no next press: the stranded flag swallows the
-    // activation, and this tile — the only way into the tools that did not fit — becomes
-    // unreachable for it. So the flag is cleared on leave and cancel, and this pins that.
+    // Leaving cancels the hold but retains pointer ownership until its terminal event, so a
+    // pressless activation can be distinguished from the pointer's later synthesized click.
+    // The overflow tile is the only way into tools that do not fit; its pressless activation
+    // must still open it without consuming the pointer's owner-click suppression.
     vi.useFakeTimers();
     setSlotHeight(TILE_HEIGHT);
     render(<SidebarLeft />);
@@ -489,8 +487,8 @@ describe('SidebarLeft the three-dots tile', () => {
       fireEvent.pointerLeave(overflowTile()!);
     });
 
-    // The press opened the menu, so dismiss it the way an outside click would, leaving the
-    // pressless activation below to run against a closed menu and whatever the flag now holds.
+    // Dismiss the menu while keeping the original pointer down, then exercise the independent
+    // pressless activation against a closed menu.
     act(() => {
       fireEvent.keyDown(overflowTile()!, { key: 'Escape' });
     });
@@ -505,6 +503,15 @@ describe('SidebarLeft the three-dots tile', () => {
     expect(
       screen.queryByRole('menu'),
       'an activation after an abandoned press must still open the menu; swallowing it makes the hidden tools unreachable without a mouse'
+    ).not.toBeNull();
+
+    act(() => {
+      fireEvent.pointerUp(overflowTile()!, { pointerId: 0 });
+      fireEvent.click(overflowTile()!, { detail: 1 });
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'the original pointer release must not undo the independent pressless activation'
     ).not.toBeNull();
     expect(goToTool, 'and it must not have chosen a tool on the way').not.toHaveBeenCalled();
   });
@@ -528,7 +535,7 @@ describe('SidebarLeft the three-dots tile', () => {
       fireEvent.pointerUp(overflowTile()!, { button: 0 });
     });
     act(() => {
-      fireEvent.click(overflowTile()!);
+      fireEvent.click(overflowTile()!, { detail: 1 });
     });
     expect(
       screen.queryByRole('menu'),

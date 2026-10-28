@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { KeyboardEventsProvider } from '../../../../hooks/useKeyboardEvents.tsx';
 import Text from '../Text.tsx';
+import type { DocumentFrame } from '../../../../contexts/document-frame.ts';
 
 const storeState = vi.hoisted(() => ({
   canvasRef: { current: null },
@@ -10,12 +11,14 @@ const storeState = vi.hoisted(() => ({
   currentArgs: { current: null },
   layers: {} as Record<string, unknown>,
   activeLayerId: null as string | null,
+  documentFrame: undefined as DocumentFrame | undefined,
   totalSize: { width: 800, height: 600 },
 }));
 
 const toolArgs = vi.hoisted(() => ({
   toolName: 'text',
   text: 'Hello',
+  angle: 0,
   fontSize: 64,
   lineHeight: 1.1,
   kind: 'point' as 'point' | 'paragraph',
@@ -89,6 +92,7 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
     currentArgs: { current: null },
     layers: {},
     activeLayerId: null,
+    documentFrame: undefined,
     totalSize: { width: 800, height: 600 },
     ...overrides,
   });
@@ -98,6 +102,7 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
   Object.assign(toolArgs, {
     toolName: 'text',
     text: 'Hello',
+    angle: 0,
     fontSize: 64,
     lineHeight: 1.1,
     kind: 'point',
@@ -507,12 +512,163 @@ describe('Text toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bold: true }));
   });
 
-  it('keeps the edit controls mounted for an empty draft box', () => {
+  it('keeps Commit disabled for an empty new draft box', () => {
     resetToolArgs({ text: '', rect: { x1: 0, y1: 0, x2: 100, y2: 50 } });
     renderWithProvider(<Text />);
 
     expect(screen.getByRole('button', { name: 'Commit' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  });
+
+  it('enables Commit for an empty edit of an existing text layer through a nonzero document frame', () => {
+    const originalRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+    const editRect = { x1: 100, y1: 50, x2: 200, y2: 100 };
+    const originalPos = { x: 100, y: 50, width: 100, height: 50 };
+    resetToolArgs({ text: '', rect: editRect, editingLayerId: 'text-layer-1' });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      documentFrame: { x: -100, y: -50, width: 800, height: 600 },
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: originalPos,
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: originalRect } },
+        },
+      },
+    });
+    renderWithProvider(<Text />);
+
+    const commitButton = screen.getByRole('button', { name: 'Commit' });
+    expect(commitButton).toBeEnabled();
+    fireEvent.click(commitButton);
+
+    expect(mockReplaceLayerSource).toHaveBeenCalledWith(
+      'text-layer-1',
+      expect.objectContaining({
+        kind: 'tool',
+        args: expect.objectContaining({ text: '', rect: originalRect }),
+        pos: originalPos,
+      })
+    );
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    expect(mockSetToolArgs.mock.lastCall?.[0]).not.toHaveProperty('editingLayerId');
+  });
+
+  it('refuses an empty commit when the committed source geometry is invalid', () => {
+    const originalRect = { x1: 0, y1: 0, x2: 0, y2: 50 };
+    const editRect = { x1: 100, y1: 50, x2: 200, y2: 100 };
+    resetToolArgs({ text: '', rect: editRect, editingLayerId: 'text-layer-1' });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: { x: 100, y: 50, width: 100, height: 50 },
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: originalRect } },
+        },
+      },
+    });
+    renderWithProvider(<Text />);
+
+    expect(screen.getByRole('button', { name: 'Commit' })).toBeDisabled();
+
+    expect(mockReplaceLayerSource).not.toHaveBeenCalled();
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(toolArgs.editingLayerId).toBe('text-layer-1');
+    expect(toolArgs.rect).toEqual(editRect);
+  });
+
+  it('keeps an empty existing edit open when replacement fails', () => {
+    const originalRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+    const editRect = { x1: 100, y1: 50, x2: 200, y2: 100 };
+    resetToolArgs({ text: '', rect: editRect, editingLayerId: 'text-layer-1' });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: { x: 100, y: 50, width: 100, height: 50 },
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: originalRect } },
+        },
+      },
+    });
+    mockReplaceLayerSource.mockReturnValueOnce(null);
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+    expect(mockReplaceLayerSource).toHaveBeenCalledOnce();
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(toolArgs.text).toBe('');
+    expect(toolArgs.rect).toEqual(editRect);
+    expect(toolArgs.editingLayerId).toBe('text-layer-1');
+  });
+
+  it.each([
+    {
+      name: 'negative',
+      frame: { x: -100, y: -50, width: 800, height: 600 },
+      expectedPos: { x: -100, y: 9.8 },
+    },
+    {
+      name: 'positive',
+      frame: { x: 100, y: 50, width: 800, height: 600 },
+      expectedPos: { x: 100, y: 109.8 },
+    },
+  ])('replaces an existing layer through a $name nonzero document frame', ({ frame, expectedPos }) => {
+    // The defect: applyText reduced the measured (canvas-space) rect by the document-space
+    // layer pos directly, leaving the rect offset by the frame origin whenever the document was
+    // not at (0, 0). With frame { x: -100, y: -50 }, a measured rect starting at canvas (0, 59.8)
+    // was reduced by document pos { x: -100, y: 9.8 }, producing { x1: 100, y1: 50 } instead of
+    // { x1: 0, y1: 0 }. The fix projects the pos through the frame via canvasRectToLocal.
+    //
+    // calculateNewRect (no canvas context) measures one 64px/1.1 line at 80.4px tall, centred
+    // on the click y-centre of 100 → y1: 59.8, y2: 140.2. The canvas origin is (0, 59.8) and the
+    // document pos is (-100, 9.8); reducing the measured rect by the projected canvas pos yields
+    // the layer-local (0, 0) origin and the 100×80.4 extent.
+    const layerPos = { x: 140, y: 75, width: 100, height: 80.4 };
+    const layerLocalRect = { x1: 0, y1: 0, x2: 100, y2: 80.4 };
+    resetToolArgs({
+      text: 'Hello',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 200 },
+      editingLayerId: 'text-layer-1',
+    });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      documentFrame: frame,
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: layerPos,
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: layerLocalRect } },
+        },
+      },
+    });
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+    expect(mockReplaceLayerSource).toHaveBeenCalledTimes(1);
+    expect(mockReplaceLayerSource).toHaveBeenCalledWith(
+      'text-layer-1',
+      expect.objectContaining({
+        kind: 'tool',
+        args: expect.objectContaining({
+          text: 'Hello',
+          // Layer-local: the fix, not the buggy canvas-space offset.
+          rect: expect.objectContaining({ x1: 0, y1: 0, x2: 100 }),
+        }),
+        pos: expect.objectContaining({ x: expectedPos.x, width: 100 }),
+      })
+    );
+    const replacement = mockReplaceLayerSource.mock.calls[0]?.[1];
+    expect(replacement.args.rect.y2).toBeCloseTo(80.4, 10);
+    expect(replacement.pos.y).toBeCloseTo(expectedPos.y, 10);
+    expect(replacement.pos.height).toBeCloseTo(80.4, 10);
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
   });
 
   it('does not show Commit and Cancel when the draft has no rect', () => {
@@ -599,6 +755,20 @@ describe('Text toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
   });
 
+  it('resets only the active angle after Apply, keeping the committed angle and typography', () => {
+    resetToolArgs({ angle: 37, fontSize: 48, tracking: 120, color: '#123456' });
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+    expect(mockCreateLayerFromTool).toHaveBeenCalledWith(
+      expect.objectContaining({ args: expect.objectContaining({ angle: 37, fontSize: 48, tracking: 120 }) })
+    );
+    expect(mockSetToolArgs).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '', rect: null, angle: 0, fontSize: 48, tracking: 120, color: '#123456' })
+    );
+  });
+
   // The re-entrancy guard, and the order it is armed in. Armed BEFORE the create it poisoned itself:
   // a throw from `createLayerFromTool` left it set against a `toolArgs` identity nothing had changed,
   // so every later Apply returned immediately and the user's next try did nothing at all. The draft
@@ -611,6 +781,7 @@ describe('Text toolbar', () => {
     const swallow = (event: ErrorEvent) => event.preventDefault();
     window.addEventListener('error', swallow);
     try {
+      resetToolArgs({ angle: 37 });
       mockCreateLayerFromTool.mockImplementationOnce(() => {
         throw new Error('Layer width and height must be greater than 0');
       });
@@ -620,6 +791,7 @@ describe('Text toolbar', () => {
 
       // Nothing was cleared, and — this is the assertion — the failed attempt did NOT consume the guard.
       expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+      expect(toolArgs.angle).toBe(37);
 
       // The second click, with a create that works this time.
       mockCreateLayerFromTool.mockImplementation(() => undefined);
@@ -627,6 +799,7 @@ describe('Text toolbar', () => {
 
       expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(2);
       expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ angle: 0 }));
     } finally {
       window.removeEventListener('error', swallow);
     }
@@ -642,6 +815,7 @@ describe('Text toolbar', () => {
   });
 
   it('Cancel discards the draft without creating a layer', () => {
+    resetToolArgs({ angle: 37, fontSize: 48, tracking: 120 });
     renderWithProvider(<Text />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -651,8 +825,9 @@ describe('Text toolbar', () => {
     // would be a Commit under a different name, and the two buttons sit next to each other.
     expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ angle: 0, fontSize: 48, tracking: 120 }));
     // And nothing about the style travels with the discard, so the tool keeps its last settings.
-    expect(lastToolArgs()).toMatchObject({ fontFamily: 'Arial', fontSize: 64, color: '#000000' });
+    expect(lastToolArgs()).toMatchObject({ fontFamily: 'Arial', fontSize: 48, color: '#000000' });
   });
 
   describe('font family', () => {

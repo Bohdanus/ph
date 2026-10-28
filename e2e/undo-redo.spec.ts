@@ -1,4 +1,7 @@
+import path from 'node:path';
+
 import { expect, test, type Page } from './fixtures/extended-test';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import {
   bandCentreY,
   bandInkFlags,
@@ -17,6 +20,7 @@ import {
   getDarkPixelBounds,
   getWorkspaceCanvas,
   hasDarkPixels,
+  loadImageData,
   type BoundingBox,
   type ClipOptions,
 } from './helpers/canvas-helpers';
@@ -434,5 +438,288 @@ test.describe('Undo and redo', () => {
     // The durable layer-id metadata must agree across the two navigations: the
     // converted layer reuses the bedrock id, so the published set is stable.
     expect(layerIdsAfterRedo, 'durable layer ids must match across undo/redo').toBe(layerIdsAfterUndo);
+  });
+
+  test('live Brush pixels commit intact and failed undo restores the raster presentation', async ({
+    page,
+  }, testInfo) => {
+    const historyRows = page.getByTitle('Click to go back to this state');
+    await expect(historyRows, 'a fresh document starts with one history row').toHaveCount(1);
+    await page.getByTestId('layers-convert-background-button').click();
+    await expect(historyRows, 'background conversion appends one history row').toHaveCount(2);
+    await getUndoButton(page).click();
+    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+    await getRedoButton(page).click();
+    const strip = page.getByTestId('dev-status-strip');
+    await expect(strip).toHaveAttribute('data-presentation-status', 'durable');
+
+    await openToolFlyout(page, 'brush');
+    await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
+    await expect(strip, 'tool selection must leave the accepted durable presentation current').toHaveAttribute(
+      'data-presentation-status',
+      'durable'
+    );
+    const box = await canvasBox(page);
+    const clip = wholeCanvasClip(box);
+    const baseline = await loadImageData(await capture(page, clip));
+
+    const start = { x: box.x + box.width * 0.25, y: box.y + box.height * 0.5 };
+    const end = { x: box.x + box.width * 0.65, y: box.y + box.height * 0.5 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 12 });
+
+    const centerOffset = (Math.floor(baseline.height / 2) * baseline.width + Math.floor(baseline.width / 2)) * 4;
+    const darkestCenterChannel = (raster: Awaited<ReturnType<typeof loadImageData>>) =>
+      Math.min(raster.data[centerOffset]!, raster.data[centerOffset + 1]!, raster.data[centerOffset + 2]!);
+    expect(darkestCenterChannel(baseline), 'the sampled document center starts white').toBeGreaterThan(240);
+
+    await expect
+      .poll(
+        async () => {
+          const raster = await loadImageData(await capture(page, clip));
+          return darkestCenterChannel(raster);
+        },
+        { message: 'the Brush preview should paint the sampled center after its animation frame' }
+      )
+      .toBeLessThan(128);
+
+    const preview = await loadImageData(await capture(page, clip));
+    expect(preview.width, 'a live paint preview must keep the document width').toBe(baseline.width);
+    expect(preview.height, 'a live paint preview must keep the document height').toBe(baseline.height);
+    expect(
+      darkestCenterChannel(preview),
+      'the live stroke reaches the center away from its pointer endpoint'
+    ).toBeLessThan(128);
+    expect(
+      Buffer.from(preview.data).equals(Buffer.from(baseline.data)),
+      'the live brush preview must change pixels'
+    ).toBe(false);
+    await expect(strip, 'the live preview must coexist with the current durable document').toHaveAttribute(
+      'data-presentation-status',
+      'durable'
+    );
+
+    await page.mouse.up();
+    await expect(historyRows, 'committing the preview appends one history row').toHaveCount(3);
+    const previewPixels = Buffer.from(preview.data);
+    await expect
+      .poll(
+        async () => {
+          const committed = await loadImageData(await capture(page, clip));
+          return (
+            committed.width === preview.width &&
+            committed.height === preview.height &&
+            Buffer.from(committed.data).equals(previewPixels)
+          );
+        },
+        { message: 'committing the stroke must preserve the visible preview pixels' }
+      )
+      .toBe(true);
+
+    const chooser = page.waitForEvent('filechooser');
+    await page.getByTestId('header-file-menu-button').click();
+    await page.getByTestId('header-file-open-button').click();
+    await acceptDiscardPrompt(page);
+    await (await chooser).setFiles(path.join(testInfo.config.rootDir, 'fixtures/split-half-red-blue.png'));
+    await expect(historyRows, 'the opened raster starts with one history row').toHaveCount(1);
+    await expect(getWorkspaceCanvas(page)).toHaveJSProperty('width', 64);
+    await expect(getWorkspaceCanvas(page)).toHaveJSProperty('height', 64);
+
+    const rasterRow = page.getByTestId('layer-row').first();
+    await rasterRow.getByRole('button', { name: 'Hide layer' }).click();
+    await expect(rasterRow.getByRole('button', { name: 'Show layer' })).toBeVisible();
+    await expect(historyRows, 'hiding the raster appends a durable entry').toHaveCount(2);
+    await rasterRow.getByRole('button', { name: 'Show layer' }).click();
+    await expect(rasterRow.getByRole('button', { name: 'Hide layer' })).toBeVisible();
+    await expect(historyRows, 'restoring the raster appends another durable entry').toHaveCount(3);
+    await expect(strip, 'the current raster frame must publish durably before navigation').toHaveAttribute(
+      'data-presentation-status',
+      'durable'
+    );
+
+    await openToolFlyout(page, 'brush');
+    await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
+    await expect(strip, 'tool selection must leave the current raster presentation durable').toHaveAttribute(
+      'data-presentation-status',
+      'durable'
+    );
+    const rasterBox = await canvasBox(page);
+    const rasterClip = wholeCanvasClip(rasterBox);
+    const rasterBaseline = await loadImageData(await capture(page, rasterClip));
+    const rasterSampleOffset =
+      (Math.floor(rasterBaseline.height / 2) * rasterBaseline.width + Math.floor(rasterBaseline.width * 0.45)) * 4;
+    const rasterSamplePixel = (raster: Awaited<ReturnType<typeof loadImageData>>) =>
+      [
+        raster.data[rasterSampleOffset]!,
+        raster.data[rasterSampleOffset + 1]!,
+        raster.data[rasterSampleOffset + 2]!,
+      ] as const;
+    const brightestRasterSampleChannel = (raster: Awaited<ReturnType<typeof loadImageData>>) =>
+      Math.max(...rasterSamplePixel(raster));
+    expect(rasterSamplePixel(rasterBaseline)[0], 'the sample begins in the fixture’s red half').toBeGreaterThan(200);
+    expect(rasterSamplePixel(rasterBaseline)[1], 'the sample begins in the fixture’s red half').toBeLessThan(80);
+    expect(rasterSamplePixel(rasterBaseline)[2], 'the sample begins in the fixture’s red half').toBeLessThan(80);
+    const rasterStart = { x: rasterBox.x + rasterBox.width * 0.25, y: rasterBox.y + rasterBox.height * 0.5 };
+    const rasterEnd = { x: rasterBox.x + rasterBox.width * 0.65, y: rasterBox.y + rasterBox.height * 0.5 };
+    await page.mouse.move(rasterStart.x, rasterStart.y);
+    await page.mouse.down();
+    await page.mouse.move(rasterEnd.x, rasterEnd.y, { steps: 12 });
+    await expect
+      .poll(
+        async () => {
+          const raster = await loadImageData(await capture(page, rasterClip));
+          return brightestRasterSampleChannel(raster);
+        },
+        { message: 'the second Brush preview should darken its sampled raster pixel' }
+      )
+      .toBeLessThan(128);
+    await page.mouse.up();
+    await expect(historyRows, 'committing the raster stroke appends one history row').toHaveCount(4);
+
+    // Exercise the failure after the workspace canvas has received the new frame,
+    // not at context acquisition. The renderer must restore the committed pixels
+    // before the history hook rolls its cursor and layers back.
+    await getUndoButton(page).hover();
+    const beforeRefusedNavigation = await loadImageData(await capture(page, rasterClip));
+    expect(
+      brightestRasterSampleChannel(beforeRefusedNavigation),
+      'moving the pointer off the canvas must leave the committed raster stroke visible'
+    ).toBeLessThan(128);
+    await page.evaluate(() => {
+      type DrawFailureProbe = {
+        stagingAttempts: number;
+        restoreAttempts: number;
+        centerAfterStagingBlit: number[][];
+        diagnostics: string[];
+        failureInjected: boolean;
+        failure: Error;
+        originalDrawImage: CanvasRenderingContext2D['drawImage'];
+        originalConsoleError: typeof console.error;
+      };
+
+      const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const context = canvas?.getContext('2d');
+      if (!canvas || !context) throw new Error('Workspace canvas has no 2D context');
+
+      const probe: DrawFailureProbe = {
+        stagingAttempts: 0,
+        restoreAttempts: 0,
+        centerAfterStagingBlit: [],
+        diagnostics: [],
+        failureInjected: false,
+        failure: new Error('e2e post-blit refusal'),
+        originalDrawImage: context.drawImage,
+        originalConsoleError: window.console.error,
+      };
+      const probeWindow = window as typeof window & { __drawFailureProbe?: DrawFailureProbe };
+      probeWindow.__drawFailureProbe = probe;
+
+      context.drawImage = new Proxy(context.drawImage, {
+        apply(target, thisArg, args) {
+          const source = args[0];
+          const result = Reflect.apply(target, thisArg, args);
+          if (source instanceof HTMLCanvasElement) {
+            probe.stagingAttempts += 1;
+            if (!probe.failureInjected) {
+              probe.failureInjected = true;
+              const sample = context.getImageData(
+                Math.floor(canvas.width * 0.4),
+                Math.floor(canvas.height / 2),
+                1,
+                1
+              ).data;
+              probe.centerAfterStagingBlit.push([sample[0]!, sample[1]!, sample[2]!]);
+              throw probe.failure;
+            }
+          }
+          if (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas) {
+            probe.restoreAttempts += 1;
+          }
+          return result;
+        },
+      });
+
+      window.console.error = (...args) => {
+        const message = args[0];
+        const error = args[1];
+        const expectedRendererRefusal =
+          message === 'Unable to publish runtime layer presentation' && error === probe.failure;
+        const expectedHistoryRefusal =
+          message === 'History replay is unavailable' &&
+          error instanceof Error &&
+          error.message === 'Unable to publish replayed history presentation';
+        if (expectedRendererRefusal || expectedHistoryRefusal) {
+          probe.diagnostics.push(String(message));
+          return;
+        }
+        probe.originalConsoleError.call(window.console, ...args);
+      };
+    });
+
+    try {
+      await getUndoButton(page).click();
+      await expect(strip, 'a post-blit navigation refusal must invalidate durable authority').toHaveAttribute(
+        'data-status',
+        'unavailable'
+      );
+      await expect(strip).toHaveAttribute('data-presentation-status', 'unpublished');
+      await expect(page.getByTestId('dev-status-strip-diagnostics')).toContainText('conversion-failed');
+      await expect(historyRows, 'refused navigation keeps the same timeline').toHaveCount(4);
+      await expect(getUndoButton(page), 'refused navigation leaves the current row undoable').toBeEnabled();
+      await expect(getRedoButton(page), 'refused navigation does not move the cursor backward').toBeDisabled();
+
+      const afterRefusedNavigation = await loadImageData(await capture(page, rasterClip));
+      expect(
+        Buffer.from(afterRefusedNavigation.data).equals(Buffer.from(beforeRefusedNavigation.data)),
+        'a renderer failure after its target blit must restore the previously committed canvas pixels'
+      ).toBe(true);
+
+      const probe = await page.evaluate(() => {
+        const probeWindow = window as typeof window & {
+          __drawFailureProbe?: {
+            stagingAttempts: number;
+            restoreAttempts: number;
+            centerAfterStagingBlit: number[][];
+            diagnostics: string[];
+            failureInjected: boolean;
+          };
+        };
+        const current = probeWindow.__drawFailureProbe;
+        if (!current) throw new Error('Draw failure probe was lost');
+        return {
+          stagingAttempts: current.stagingAttempts,
+          restoreAttempts: current.restoreAttempts,
+          centerAfterStagingBlit: current.centerAfterStagingBlit,
+          diagnostics: current.diagnostics,
+          failureInjected: current.failureInjected,
+        };
+      });
+      expect(probe.stagingAttempts, 'the injected refusal must happen after a staging blit').toBeGreaterThan(0);
+      expect(probe.restoreAttempts, 'the renderer must blit its saved snapshot after the failed write').toBeGreaterThan(
+        0
+      );
+      expect(
+        probe.centerAfterStagingBlit[0]?.[0],
+        'the undo target must have reached the live canvas before refusal'
+      ).toBeGreaterThan(240);
+      expect(probe.diagnostics).toContain('Unable to publish runtime layer presentation');
+      expect(probe.diagnostics).toContain('History replay is unavailable');
+      expect(probe.failureInjected, 'the probe must refuse exactly one staging publication').toBe(true);
+    } finally {
+      await page.evaluate(() => {
+        type DrawFailureProbe = {
+          originalDrawImage: CanvasRenderingContext2D['drawImage'];
+          originalConsoleError: typeof console.error;
+        };
+        const probeWindow = window as typeof window & { __drawFailureProbe?: DrawFailureProbe };
+        const probe = probeWindow.__drawFailureProbe;
+        const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+        const context = canvas?.getContext('2d');
+        if (probe && context) context.drawImage = probe.originalDrawImage;
+        if (probe) window.console.error = probe.originalConsoleError;
+        delete probeWindow.__drawFailureProbe;
+      });
+    }
   });
 });

@@ -97,7 +97,12 @@ const appliedDuring = new WeakMap<CanvasRenderingContext2D, Record<string, unkno
 const makeTextCtx = ({
   measure = widthOnlyMeasure,
   modern = false,
-}: { measure?: (value: string) => TextMetrics; modern?: boolean } = {}): CanvasRenderingContext2D => {
+  nativeFontVariantCaps = true,
+}: {
+  measure?: (value: string) => TextMetrics;
+  modern?: boolean;
+  nativeFontVariantCaps?: boolean;
+} = {}): CanvasRenderingContext2D => {
   const ctx = makeMockCtx({
     measureText: vi.fn(measure),
     ...(modern ? { letterSpacing: '0px', fontVariantCaps: 'normal' } : {}),
@@ -136,7 +141,11 @@ const makeTextCtx = ({
   appliedDuring.set(ctx, log);
   vi.mocked(ctx.measureText).mockImplementation((value: string) => {
     log.push(Object.fromEntries(RESTORED_BY_SAVE.map((key) => [key, target[key]])) as Record<string, unknown>);
-    return measure(value);
+    const result = measure(value);
+    const variant = target.fontVariantCaps;
+    const smallCaps =
+      variant === 'small-caps' && value === value.toLowerCase() && value.toUpperCase() !== value.toLowerCase();
+    return modern && nativeFontVariantCaps && smallCaps ? { ...result, width: result.width * 0.703125 } : result;
   });
 
   // Seeded so the restore assertions compare against a known value rather than against `undefined`,
@@ -146,6 +155,35 @@ const makeTextCtx = ({
 
   return ctx;
 };
+
+function attachCapsRasterProbe(ctx: CanvasRenderingContext2D, pixelsDiffer: boolean): void {
+  let variant: 'normal' | 'small-caps' = 'normal';
+  const probe = {
+    font: '20px Arial',
+    textBaseline: 'alphabetic',
+    fontVariantCaps: 'normal' as 'normal' | 'small-caps',
+    clearRect: vi.fn(),
+    fillText: vi.fn(),
+    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([pixelsDiffer && variant === 'small-caps' ? 1 : 0]) })),
+  } as unknown as CanvasRenderingContext2D;
+  Object.defineProperty(probe, 'fontVariantCaps', {
+    configurable: true,
+    get: () => variant,
+    set: (next: 'normal' | 'small-caps') => {
+      variant = next;
+    },
+  });
+
+  const scratch = {
+    width: 160,
+    height: 160,
+    getContext: vi.fn(() => probe),
+  };
+  Object.defineProperty(ctx, 'canvas', {
+    configurable: true,
+    value: { width: 100, height: 100, ownerDocument: { createElement: vi.fn(() => scratch) } },
+  });
+}
 
 /**
  * The context state as it stood during the LAST measurement the renderer made.
@@ -264,6 +302,9 @@ describe('fontShorthand', () => {
     expect(fontShorthand({ fontFamily: 'Arial', fontSize: 64, bold: false, italic: true })).toBe('italic 64px Arial');
     expect(fontShorthand({ fontFamily: 'Arial', fontSize: 64, bold: true, italic: true })).toBe(
       'italic bold 64px Arial'
+    );
+    expect(fontShorthand({ fontFamily: 'Arial', fontSize: 64, bold: true, italic: true }, 'small-caps')).toBe(
+      'italic small-caps bold 64px Arial'
     );
   });
 
@@ -887,6 +928,10 @@ describe('renderText', () => {
       // — so `ctx.fontVariantCaps` was `undefined`, and `expect(undefined).not.toBe('normal')` passes
       // against a renderer that never applies caps at all. Two assertions that cannot fail.
       const ctx = makeTextCtx({ modern: true });
+      const letterSpacingAtDraw: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        letterSpacingAtDraw.push(ctx.letterSpacing);
+      });
       ctx.font = '10px sans-serif';
 
       renderText(ctx, { ...baseArgs, tracking: 250, allCaps: true });
@@ -897,9 +942,9 @@ describe('renderText', () => {
       expect(ctx.letterSpacing).toBe('0px');
       // And each value really was written while the type was drawn, so the restore above restores
       // something rather than confirming that nothing was ever applied.
-      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('all-small-caps');
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
       // tracking 250 of 1000 em at the base 20px is 5px.
-      expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('5px');
+      expect(letterSpacingAtDraw).toEqual(['5px']);
     });
 
     it("restores the caller's alpha after rendering a draft", () => {
@@ -1286,28 +1331,119 @@ describe('renderText', () => {
   });
 
   describe('caps', () => {
-    // Read DURING the draw, not after it: `renderText` restores the context before returning, so
-    // the property afterwards is the seed and every case here would have read `'normal'`. `applied`
-    // is the value in effect while the glyphs were drawn, which is what the caps question is about.
-    const capsFor = (overrides: Partial<TextToolArgs>): unknown => {
+    it('renders All Caps as full-size uppercase text', () => {
       const ctx = makeTextCtx({ modern: true });
-      renderText(ctx, { ...baseArgs, ...overrides });
-      return styledDuringDraw(ctx, 'fontVariantCaps');
-    };
+      const fonts: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => fonts.push(ctx.font));
 
-    it('caps the whole line for All Caps, only the lowercase for Small Caps, and nothing otherwise', () => {
-      // `'all-small-caps'` covers Adobe's All Caps, which renders every character as a capital;
-      // `'small-caps'` leaves characters already typed as capitals alone and synthesises only the
-      // lowercase, which is Adobe's documented rule ("if the font does not include small caps,
-      // Photoshop generates faux small caps",
-      // https://helpx.adobe.com/photoshop/using/formatting-characters.html). The last case is the
-      // one that matters for a migrated record: a settings object carrying neither toggle must
-      // render un-capsed, and not small-capsed — which is what using `'small-caps'` as the
-      // fallback for "neither" would do.
-      expect(capsFor({ allCaps: true })).toBe('all-small-caps');
-      expect(capsFor({ allCaps: true, smallCaps: true })).toBe('all-small-caps');
-      expect(capsFor({ smallCaps: true })).toBe('small-caps');
-      expect(capsFor({})).toBe('normal');
+      renderText(ctx, { ...baseArgs, text: 'Wave', allCaps: true });
+
+      expect(ctx.fillText).toHaveBeenCalledWith('WAVE', TEXT_PADDING, 21);
+      expect(fonts).toEqual(['20px Arial']);
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
+    });
+
+    it('uses native small caps when a raster probe shows the variant changes pixels', () => {
+      const ctx = makeTextCtx({ modern: true });
+      attachCapsRasterProbe(ctx, true);
+      let capsDuringDraw: string | undefined;
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        capsDuringDraw = ctx.fontVariantCaps;
+      });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect(capsDuringDraw).toBe('small-caps');
+      expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
+    });
+
+    it('uses faux small caps when the raster probe finds no pixel difference', () => {
+      const ctx = makeTextCtx({ modern: true });
+      attachCapsRasterProbe(ctx, false);
+      const capsDuringDraw: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => {
+        capsDuringDraw.push(ctx.fontVariantCaps);
+      });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect(capsDuringDraw).toEqual(['normal', 'normal']);
+      expect(ctx.fillText).toHaveBeenNthCalledWith(1, 'W', TEXT_PADDING, 21);
+      expect(ctx.fillText).toHaveBeenNthCalledWith(2, 'AVE', 0, 0);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+    });
+
+    it('synthesizes grapheme-safe small caps when Canvas lacks fontVariantCaps', () => {
+      const ctx = makeTextCtx();
+      const fonts: string[] = [];
+      const glyphs: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation((value: string) => {
+        fonts.push(ctx.font);
+        glyphs.push(value);
+      });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect('fontVariantCaps' in ctx).toBe(false);
+      expect(glyphs).toEqual(['W', 'AVE']);
+      expect(fonts).toEqual(['20px Arial', '20px Arial']);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+    });
+
+    it('uses grapheme-safe faux small caps when Canvas exposes but ignores the variant', () => {
+      const ctx = makeTextCtx({ modern: true, nativeFontVariantCaps: false });
+      const fonts: string[] = [];
+      vi.mocked(ctx.fillText).mockImplementation(() => fonts.push(ctx.font));
+
+      renderText(ctx, { ...baseArgs, text: 'Wave', smallCaps: true });
+
+      expect(vi.mocked(ctx.fillText).mock.calls.map(([value]) => value)).toEqual(['W', 'AVE']);
+      expect(fonts).toEqual(['20px Arial', '20px Arial']);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
+    });
+
+    it('applies tracking between graphemes in faux small caps', () => {
+      const ctx = makeTextCtx({
+        modern: true,
+        nativeFontVariantCaps: false,
+        measure: (value) => metrics(value.length * CH - (value.startsWith('AVE') ? 5 : 0)),
+      });
+      const args = { ...baseArgs, text: 'Wave', smallCaps: true, tracking: 100 };
+
+      expect(getTextWidth(ctx, args)).toBeCloseTo(33.578125, 5);
+      renderText(ctx, args);
+
+      expect(vi.mocked(ctx.fillText).mock.calls.map(([glyph, x]) => [glyph, x])).toEqual([
+        ['W', TEXT_PADDING],
+        ['AVE', 0],
+      ]);
+      expect(ctx.translate).toHaveBeenCalledWith(TEXT_PADDING + 12, 21);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+    });
+
+    it('measures the unshaped fallback advances when Canvas lacks letterSpacing', () => {
+      const ctx = makeTextCtx({
+        measure: (value) => metrics(value.length * CH - (value.startsWith('AVE') ? 5 : 0)),
+      });
+      const args = { ...baseArgs, text: 'Wave', smallCaps: true, tracking: 100 };
+
+      expect('letterSpacing' in ctx).toBe(false);
+      expect(getTextWidth(ctx, args)).toBeCloseTo(37.09375, 5);
+      renderText(ctx, args);
+
+      expect(ctx.translate).toHaveBeenNthCalledWith(1, TEXT_PADDING + 12, 21);
+      expect(ctx.translate).toHaveBeenNthCalledWith(2, TEXT_PADDING + 21.03125, 21);
+      expect(ctx.translate).toHaveBeenNthCalledWith(3, TEXT_PADDING + 30.0625, 21);
+    });
+
+    it('keeps All Caps and Small Caps independent of contexts with neither toggle', () => {
+      const ctx = makeTextCtx({ modern: true });
+
+      renderText(ctx, { ...baseArgs, text: 'Wave' });
+
+      expect(ctx.fillText).toHaveBeenCalledWith('Wave', TEXT_PADDING, 21);
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
     });
 
     it('assigns fontVariantCaps AFTER ctx.font, because assigning the font resets it', () => {
@@ -1335,9 +1471,9 @@ describe('renderText', () => {
       //
       // The order is the point the whole caps feature hangs on: EVERY write of the caps value must
       // see the styled font, or a caps assignment made before the font would be reset by it.
-      const applied = assignments.filter((entry) => entry.value === 'all-small-caps');
+      const applied = assignments.filter((entry) => entry.value === 'normal');
       expect(applied.length).toBeGreaterThan(0);
-      expect(applied.every((entry) => entry.fontAtAssignment === 'italic bold 20px Arial')).toBe(true);
+      expect(applied.some((entry) => entry.fontAtAssignment === 'italic bold 20px Arial')).toBe(true);
       // And the last write restores the context, with the seed font already back in place — which
       // is the other half of the bracket, and the reason the overlay is not left wearing the draft's
       // caps variant after the user leaves the tool.
@@ -1762,20 +1898,20 @@ describe('PLACEHOLDER_TEXT and domOverlayStyle', () => {
       expect(domOverlayStyle(inkCtx(), overlayStyle({ italic: false })).fontStyle).toBe('normal');
     });
 
-    it('resolves the caps variant to ONE value, with All Caps winning the pair', () => {
-      // The same single-valued variant the canvas resolves and for the same reason: Adobe's two
-      // toggles are independent booleans and the RESOLVED rendering is not. All Caps wins the pair
-      // because with BOTH on Photoshop renders every character as a small capital, which is exactly
-      // what `'all-small-caps'` does to an uppercase character. The fourth case is the one that
-      // decides a migrated record: a settings object carrying neither toggle has to render un-capsed,
-      // and not small-capsed — which is what using `'small-caps'` as the fallback for "neither" would
-      // silently do to every document in the session.
-      expect(domOverlayStyle(inkCtx(), overlayStyle({ allCaps: true })).fontVariantCaps).toBe('all-small-caps');
-      expect(domOverlayStyle(inkCtx(), overlayStyle({ allCaps: true, smallCaps: true })).fontVariantCaps).toBe(
-        'all-small-caps'
-      );
-      expect(domOverlayStyle(inkCtx(), overlayStyle({ smallCaps: true })).fontVariantCaps).toBe('small-caps');
-      expect(domOverlayStyle(inkCtx(), overlayStyle()).fontVariantCaps).toBe('normal');
+    it('uses uppercase text-transform for All Caps and font variants only for Small Caps', () => {
+      const allCaps = domOverlayStyle(inkCtx(), overlayStyle({ allCaps: true }));
+      const both = domOverlayStyle(inkCtx(), overlayStyle({ allCaps: true, smallCaps: true }));
+      const smallCaps = domOverlayStyle(inkCtx(), overlayStyle({ smallCaps: true }));
+      const plain = domOverlayStyle(inkCtx(), overlayStyle());
+
+      expect(allCaps.textTransform).toBe('uppercase');
+      expect(allCaps.fontVariantCaps).toBe('normal');
+      expect(both.textTransform).toBe('uppercase');
+      expect(both.fontVariantCaps).toBe('normal');
+      expect(smallCaps.textTransform).toBe('none');
+      expect(smallCaps.fontVariantCaps).toBe('small-caps');
+      expect(plain.textTransform).toBe('none');
+      expect(plain.fontVariantCaps).toBe('normal');
     });
 
     it('passes the paragraph alignment through as left, center or right — not the anchor the canvas sets', () => {
@@ -2028,7 +2164,7 @@ describe('PLACEHOLDER_TEXT and domOverlayStyle', () => {
       expect(styledDuringDraw(ctx, 'textBaseline')).toBe('alphabetic');
       expect(styledDuringDraw(ctx, 'textAlign')).toBe('start');
       expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('1.6px');
-      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('all-small-caps');
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('normal');
     });
   });
 });

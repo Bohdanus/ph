@@ -402,7 +402,7 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     const registry = new AssetRegistry();
     const selection = {
       id: 'sel-1',
-      points: [{ x: 1, y: 2 }],
+      points: [[{ x: 1, y: 2 }]],
       isActive: true,
       pos: { x: 1, y: 2, width: 10, height: 12 },
     };
@@ -732,7 +732,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
       await expect(
         materializeLayer(layer, {
           documentId: 'document-a',
-          baselineAssetGeneration: 0,
+          baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
           operationSetRevision: 0,
           assetRegistry: registry,
         })
@@ -797,7 +797,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
     await expect(
       materializeLayer(layer, {
         documentId: 'document-a',
-        baselineAssetGeneration: 0,
+        baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
         operationSetRevision: 0,
         assetRegistry: registry,
       })

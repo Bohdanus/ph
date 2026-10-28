@@ -11,7 +11,7 @@ type CopyRectToClipboardParams = {
 
 type ReadImageFromClipboardParams = {
   clipboard?: Pick<Clipboard, 'read'> | null;
-  createImageBitmap?: (image: ImageBitmapSource) => Promise<ImageBitmap>;
+  decodeImage: (blob: Blob, mimeType: string) => Promise<ImageBitmap>;
 };
 
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
@@ -54,18 +54,22 @@ export async function copyRectToClipboard({
 
 export async function readImageFromClipboard({
   clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null,
-  createImageBitmap: decode = globalThis.createImageBitmap,
-}: ReadImageFromClipboardParams = {}): Promise<{ bitmap: ImageBitmap; mimeType: string } | null> {
-  if (!clipboard?.read || !decode) return null;
+  decodeImage,
+}: ReadImageFromClipboardParams): Promise<{ bitmap: ImageBitmap; mimeType: string } | null> {
+  if (!clipboard?.read) return null;
 
   try {
     const items = await clipboard.read();
     for (const item of items) {
-      const mimeType = item.types.find((type) => type.startsWith('image/'));
-      if (!mimeType) continue;
-
-      const bitmap = await decode(await item.getType(mimeType));
-      return { bitmap, mimeType };
+      for (const mimeType of item.types.filter((type) => type.startsWith('image/'))) {
+        try {
+          const blob = await item.getType(mimeType);
+          const bitmap = await decodeImage(blob, mimeType);
+          return { bitmap, mimeType };
+        } catch {
+          // An item may expose multiple image encodings; keep trying after an unsupported one.
+        }
+      }
     }
   } catch {
     // Permission denial and browsers without clipboard-read support are normal fallback cases.

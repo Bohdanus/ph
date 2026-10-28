@@ -65,21 +65,32 @@ export const multiplyChannel = (value: number, factor: number): number => clampC
 /**
  * Read the pixel at `(x, y)`.
  *
- * A coordinate whose byte offset is fractional, negative, or past the end of `data`
- * reads TRANSPARENT rather than a neighbour's byte: `data[-4]` and `data[data.length]`
- * are both `undefined`, and letting that through turns the arithmetic in `blendPixel`
- * and `premultiplyRgba` into `NaN` that a caller cannot trace back to a bad
- * coordinate. One `Number.isInteger` check covers fractional and non-finite
- * coordinates together.
+ * A coordinate whose x or y is fractional, negative, or past the end of `data` reads
+ * TRANSPARENT rather than a neighbour's byte. Checking the byte offset alone is not
+ * enough: `(0.5, 0)` at width 2 has the integer offset 2, which points into the middle
+ * of the first pixel. Letting that through turns the arithmetic in `blendPixel` and
+ * `premultiplyRgba` into a value a caller cannot trace back to a bad coordinate.
  *
- * This guard is a byte-offset check, not a pixel-address check: a coordinate on the
- * far side of `width` wraps onto a later row and is indistinguishable from a valid
- * one, because the signature carries no height. Pair it with `isPointInSize` or
- * `clampPointToSize` when the coordinate came from a pointer.
+ * `width` is validated separately from the byte offset so a malformed or fractional
+ * width cannot turn integer coordinates into mid-pixel reads. Horizontal overflow is
+ * rejected before it can wrap into the next row. The signature carries no height, so
+ * the backing-buffer bounds provide the upper-y guard; pointer callers should still
+ * pair this with `isPointInSize` or `clampPointToSize` for the document's actual height.
  */
 export const readRgba = (data: Uint8ClampedArray, x: number, y: number, width: number): Rgba => {
   const offset = pixelIndex(x, y, width);
-  if (!Number.isInteger(offset) || offset < 0 || offset + 3 >= data.length) {
+  if (
+    !Number.isInteger(x) ||
+    !Number.isInteger(y) ||
+    !Number.isInteger(width) ||
+    width <= 0 ||
+    x < 0 ||
+    x >= width ||
+    y < 0 ||
+    !Number.isInteger(offset) ||
+    offset < 0 ||
+    offset + 3 >= data.length
+  ) {
     return { r: 0, g: 0, b: 0, a: 0 };
   }
 
@@ -87,18 +98,30 @@ export const readRgba = (data: Uint8ClampedArray, x: number, y: number, width: n
 };
 
 /**
- * Write the pixel at `(x, y)`, discarding a coordinate whose byte offset is
- * fractional, negative, or past the end of `data`.
+ * Write the pixel at `(x, y)`, discarding fractional or out-of-buffer coordinates.
  *
  * Discarding rather than throwing matches `clearPixel`'s role in
  * `src/util/homography-resample.ts:14-19`: a resample target is a fixed-size buffer
  * and a homography legitimately maps some of its texels outside it, so a write has
- * to have a defined no-op arm. The same no-height caveat as `readRgba` applies — this
- * cannot tell a wrapped coordinate from a valid one.
+ * to have a defined no-op arm. It validates the row width and rejects horizontal
+ * overflow; the backing-buffer bounds reject rows past the allocated pixels.
  */
 export const writeRgba = (data: Uint8ClampedArray, x: number, y: number, width: number, rgba: Rgba): void => {
   const offset = pixelIndex(x, y, width);
-  if (!Number.isInteger(offset) || offset < 0 || offset + 3 >= data.length) return;
+  if (
+    !Number.isInteger(x) ||
+    !Number.isInteger(y) ||
+    !Number.isInteger(width) ||
+    width <= 0 ||
+    x < 0 ||
+    x >= width ||
+    y < 0 ||
+    !Number.isInteger(offset) ||
+    offset < 0 ||
+    offset + 3 >= data.length
+  ) {
+    return;
+  }
 
   data[offset] = rgba.r;
   data[offset + 1] = rgba.g;
@@ -256,11 +279,19 @@ export const clampPointToSize = (point: Point, size: Size): Point => ({
  * leaving the destination alone is the correct result, not an approximation.
  */
 export const blendPixel = (data: Uint8ClampedArray, offset: number, src: Rgba, opacity: number): void => {
-  if (!(opacity > 0) || src.a <= 0) return;
-  if (!Number.isInteger(offset) || offset < 0 || offset + 3 >= data.length) return;
+  if (!(opacity > 0)) return;
+
+  // Source-over assumes normalized color and alpha values in [0, 1]. Inputs here
+  // are byte-scale RGBA, so use the same channel policy as the rest of this module
+  // before normalizing them. This prevents NaN and out-of-range alpha from
+  // producing invalid weights, and prevents one invalid color channel from
+  // poisoning the whole output pixel.
+  const sourceAlpha = clampChannel(src.a);
+  if (!(sourceAlpha > 0)) return;
+  if (!Number.isInteger(offset) || offset % 4 !== 0 || offset < 0 || offset + 3 >= data.length) return;
 
   const destinationAlpha = data[offset + 3] / 255;
-  const effectiveAlpha = (src.a / 255) * Math.min(1, opacity);
+  const effectiveAlpha = (sourceAlpha / 255) * Math.min(1, opacity);
   const outAlpha = effectiveAlpha + destinationAlpha * (1 - effectiveAlpha);
   if (outAlpha <= 0) {
     data[offset] = 0;
@@ -273,10 +304,13 @@ export const blendPixel = (data: Uint8ClampedArray, offset: number, src: Rgba, o
   // The two numerator terms of `Co` above, kept named so the code is the comment.
   const sourceWeight = effectiveAlpha;
   const destinationWeight = destinationAlpha * (1 - effectiveAlpha);
+  const sourceRed = clampChannel(src.r);
+  const sourceGreen = clampChannel(src.g);
+  const sourceBlue = clampChannel(src.b);
 
-  data[offset] = (src.r * sourceWeight + data[offset] * destinationWeight) / outAlpha;
-  data[offset + 1] = (src.g * sourceWeight + data[offset + 1] * destinationWeight) / outAlpha;
-  data[offset + 2] = (src.b * sourceWeight + data[offset + 2] * destinationWeight) / outAlpha;
+  data[offset] = (sourceRed * sourceWeight + data[offset] * destinationWeight) / outAlpha;
+  data[offset + 1] = (sourceGreen * sourceWeight + data[offset + 1] * destinationWeight) / outAlpha;
+  data[offset + 2] = (sourceBlue * sourceWeight + data[offset + 2] * destinationWeight) / outAlpha;
   data[offset + 3] = outAlpha * 255;
 };
 

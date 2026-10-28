@@ -374,15 +374,16 @@ npm run test:e2e:update-baselines
 - Tests export drawings in various formats, render each to a canvas, and compare
   pixel-by-pixel against the baseline using `compareScreenshots`
   (`sharp` + `pixelmatch`, entirely in Node — no browser round-trip).
-- Comparison must satisfy **both** a per-pixel threshold and a cap on differing
-  pixels. `visual-regression.spec.ts` passes `threshold: 0.01` and
-  `maxDiffPixels: 100` explicitly. The budgets live in one place —
-  `DEFAULT_THRESHOLD = 0.2`, `DEFAULT_MAX_DIFF_PIXELS = 100`,
-  `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01` in `e2e/helpers/image-comparison.ts` — and
-  `compareScreenshots` reads them through `options.x ?? DEFAULT_X`, so an
-  explicitly-passed `undefined` falls back to the default instead of overwriting it.
-  Read the call site rather than assuming a budget: the number that ran is whatever
-  the call site passed, or the default when it passed nothing.
+- Comparison must satisfy **both** a per-pixel threshold and limits on the number
+  and ratio of differing pixels. `visual-regression.spec.ts` passes
+  `threshold: 0.01` and `maxDiffPixels: 100` explicitly. The defaults live in one
+  place — `DEFAULT_THRESHOLD = 0.2`, `DEFAULT_MAX_DIFF_PIXELS = 100`, and
+  `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01` in `e2e/helpers/image-comparison.ts`. The
+  `CompareOptions` names are `threshold`, `maxDiffPixels`, and `maxDiffPixelRatio`;
+  `compareScreenshots` reads each with `??`, so an omitted or explicitly undefined
+  option uses its default. Read the call site rather than assuming a budget: the
+  number that ran is whatever the call site passed, or the default when it passed
+  nothing.
 - The ICO test is a different comparison: it allows at most
   `CHANGED_CHANNEL_THRESHOLD_ICO` (20,000) colour channels to drift by more than
   `CHANNEL_DELTA_TOLERANCE` (40) from the source canvas.
@@ -541,13 +542,15 @@ Two more consequences of the same geometry, both of which have bitten a spec her
   cheap way to get a full-document layer (`GradientToolArea` also refuses to run
   on the bedrock layer at all).
 
-3 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
-photopea.com), one right-click flyout case, and `viewport-drawing.spec.ts` — the last
-is skipped by the operator's decision of 2026-09-29 because it is intermittently red (1
-run in 4, failing case moving between cases). That is a **gate decision, not a fix and
-not a waiver**: the defect is open in `TEST-FLAKES.md` §12 with its exact remaining
-verification, and the skip is not permission to loosen the assertion, raise the bound
-or add retries.
+2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
+photopea.com) and `viewport-drawing.spec.ts`, which is skipped by the operator's
+decision of 2026-09-29 because it is intermittently red (1 run in 4, failing case
+moving between cases). That is a **gate decision, not a fix and not a waiver**: the
+defect is open in `TEST-FLAKES.md` §12 with its exact remaining verification, and the
+skip is not permission to loosen the assertion, raise the bound or add retries.
+CI compares these identities with `skip-baseline.json` after collecting all three
+platforms and both shards. Each reviewed skip must appear once per platform, so a
+change in shard assignment does not count as a new or missing skip.
 
 A local run uses `retries: 0`; only `CI` sets `retries: 2`, so a local failure is
 never retried away.
@@ -610,41 +613,41 @@ PLAYWRIGHT_CHANNEL=msedge npm run test:e2e
 
 ## CI
 
-`.github/workflows/ci.yml` declares four jobs — `ci`, `e2e-unit`, `audit`, and
-`e2e`. The `e2e` job expands into three platform runs (Linux, Windows and macOS),
-for six job executions in total.
+`.github/workflows/ci.yml` defines seven jobs: `validate-dispatch`, `ci-checks`,
+`e2e-unit`, `audit`, `e2e`, `e2e-skip-baseline`, and the aggregate `ci` gate. The
+`e2e` matrix expands into six runs: two shards on each of Linux, Windows, and macOS.
 
 `e2e-unit` is the **blocking** gate for this directory: it runs
 `npm run test:e2e:unit`, then `npm run test:e2e:unit:coverage`, and uploads
-`coverage-e2e/` as the `e2e-helper-coverage` artifact. It needs no browser and no
-application instance. The coverage step is ordered after the gate on purpose, so a
+`coverage-e2e/` as the `e2e-helper-coverage-<run-id>-attempt-<attempt>` artifact. It
+needs no browser and no application instance. The coverage step is ordered after the gate on purpose, so a
 failure there is reported against a job whose tests already passed and can never
 stand in for the gate; and because `vitest.e2e.config.ts` declares no coverage
 thresholds, that step cannot go red on a percentage — only a failing test turns it
 red.
 
-It is a **separate job** rather than a step inside `ci` on purpose. Sharing a job
-would mean this coverage is only ever reached after the app pipeline's own steps
-succeed, so a break anywhere in `ci` would silently remove the only gate on the e2e
-code while the workflow still looked like it was covered. A separate job cannot be
-skipped that way. It carries no type-check step of its own: the `ci` job's
+It is a **separate job** rather than a step inside `ci-checks` on purpose. Sharing a
+job would mean this coverage is only ever reached after the app pipeline's own steps
+succeed, so a break anywhere in `ci-checks` would silently remove the only gate on the
+e2e code while the workflow still looked like it was covered. A separate job cannot
+be skipped that way. It carries no type-check step of its own: the `ci-checks` job's
 `npm run tsc` is `tsc -b`, which builds `tsconfig.e2e.json` along with the app and
 node projects, so a second scoped run here could only repeat it.
 
-`ci` is the app pipeline: lint, type-check, an assertion that every tracked `.ts`/`.tsx`
-is inside some project's `include`, unit tests, and the production build. `tsc -b` is
-what also builds `tsconfig.e2e.json`. The separate `audit` job runs `npm audit
---audit-level=high`; it is non-blocking.
+`ci-checks` is the app pipeline: lint, type-check, an assertion that every tracked
+`.ts`/`.tsx` is inside some project's `include`, unit tests, and the production build.
+`tsc -b` is what also builds `tsconfig.e2e.json`. The final `ci` job is an aggregate
+gate over dispatch validation, `ci-checks`, `e2e-unit`, `e2e`, and
+`e2e-skip-baseline`. The separate `audit` job runs `npm audit --audit-level=high`;
+it is non-blocking.
 
 `e2e` is a **blocking** matrix gate that runs the headless Playwright suite on
 Linux, Windows, and macOS. It was `continue-on-error` on the stated grounds that a
 handful of specs failed for documented reasons; those are all fixed and the job went
 on reporting a state the suite no longer had. The matrix runs with `fail-fast: false`
-so one platform's failure does not cancel the others. Only `darwin/` visual-regression
-baselines are committed, so the Linux and Windows legs hit the fail-as-missing
-contract on `visual-regression.spec.ts` until their baselines are recorded; the
-macOS leg should pass from the start. See "Missing baselines" in
-`../.github/workflows/ci.yml` for the recording procedure.
+so one platform's failure does not cancel the others. `darwin/`, `win32/`, and
+`linux/` visual-regression baselines are committed. Refresh Linux images only with
+the `mirror` workflow command documented in `../docs/E2E-MIRROR.md`.
 
 `e2e` installs Chrome (`channel: 'chrome'`, the stable channel Playwright
 installs) and runs the browser tests against the dev server started by
@@ -658,8 +661,8 @@ both concern configurations the job does not run in:
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-Each matrix leg reports the true state including the 3 declared skips. It runs the full
-suite with no `--grep-invert`, so the report is unfiltered — but note that
-`playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
-green run _after_ retries. A flake that only shows on the first attempt is
-invisible on any leg by design.
+Each matrix leg reports the true state including the 2 declared skips. It runs the full
+suite with no `--grep-invert`, so the report is unfiltered. `playwright.config.ts` sets
+`retries: 2` when `CI` is set and `failOnFlakyTests: true`, so a test that fails on an
+attempt and passes on a later retry is reported as flaky and fails the job. Inspect the
+attempt-level report and artifacts to diagnose it; a retry pass is not a clean run.

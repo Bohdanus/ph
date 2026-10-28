@@ -10,7 +10,7 @@ import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } f
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../tools/cloneStamp.ts';
-import { getActiveSelection, getSelectionAbsolutePoints } from '../../util/selection.ts';
+import { getActiveSelection, getSelectionProcessorSnapshot } from '../../util/selection.ts';
 
 type cloneStampToolAreaProps = {
   className?: string;
@@ -61,8 +61,8 @@ type SourceMarker = {
  * Module-level rather than inline in the component for the same reason
  * `src/util/selection.ts`'s `drawSelectionAnchors` is: it is pure overlay painting, it needs
  * no state, and the react-compiler lint rule reads a property assignment on a prop-supplied
- * context as a mutation of the component's inputs. `MagicWandToolArea.tsx:35` and
- * `ShapeToolArea.tsx:62` sidestep it the same way — by calling a drawer.
+ * context as a mutation of the component's inputs. `MagicWandToolArea` and
+ * `ShapeToolArea` sidestep it the same way — by calling a drawer.
  *
  * The overlay is shared, so this owns a FULL clear rather than its own bounding box: a
  * stale ring left behind is exactly the failure the marker exists to prevent, and the tool
@@ -136,13 +136,13 @@ const drawCloneSourceMarker = (
  * `event.altKey` on the PointerEvent is the authority for the GESTURE: Pointer Events
  * carries the modifier state of the physical key at the moment the event was generated, for
  * `Alt` on Windows/Linux and `Option` on macOS alike, and it is the same field
- * `ShapeToolArea.tsx:79` reads for its from-centre modifier and `useRect.ts:95` reads for its
+ * `ShapeToolArea` reads for its from-centre modifier and `useRect` reads for its
  * aspect-ratio constraint. No `keydown` listener is needed to decide the gesture, which is
  * what keeps this from disagreeing with the browser about whether Alt was down.
  *
  * A `keydown`/`keyup` pair on `window` IS registered, and only for the MARKER, which has to
  * appear the instant Alt goes down, before any pointer has moved. That is the same
- * `window.addEventListener` + state shape `ShapeToolArea.tsx:38-51` uses for its Space-pan
+ * `window.addEventListener` + state shape `ShapeToolArea` uses for its Space-pan
  * state, with the addition of a `blur` listener: a `keyup` never arrives if the window loses
  * focus with Alt held, and a marker stuck on screen with no Alt down is worse than no marker.
  *
@@ -154,7 +154,7 @@ const drawCloneSourceMarker = (
  * readable at all.
  *
  * The processor is then called with the LAYER's own bitmap in that layer's space
- * (`src/contexts/useLayer.ts:730-734`), so the frame the processor addresses is
+ * through `stageProcessorInput()`, so the frame the processor addresses is
  * layer-local [0, pos.width) x [0, pos.height) and carries no document origin. Every point
  * is therefore translated by `-activeLayer.pos` on the way into the processor — the same
  * rebase `buildArgs` in `GradientToolArea.tsx` does and for the same reason, and both now
@@ -170,9 +170,9 @@ const drawCloneSourceMarker = (
  * ## The commit split is the whole file
  *
  * `tempUpdateLayer` is the only writer of `previewLayersRef`
- * (`src/contexts/useLayer.ts:473`), so every move goes through it or `commitDirtyTool` takes
+ * through `tempUpdateLayer()`, so every move goes through it or `commitDirtyTool` takes
  * its `PUBLISH_RUNTIME_PRESENTATION` branch, writes no history item, and the pixels are
- * silently and permanently un-undoable. `updateLayerByTool` (`:264`) is the undo boundary and
+ * silently and permanently un-undoable. `updateLayerByTool()` is the undo boundary and
  * is reached exactly ONCE per gesture: `usePaintStroke` fires `onCommit` only on pointer-up,
  * so committing from `onMove` as well would put one `TOOL_ACTION` per pointer event on the
  * timeline.
@@ -195,7 +195,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
     { containerRef, activeLayerId, layers, totalSize, documentFrame: currentFrame, selections, activeSelectionId },
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { tempUpdateLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, updateLayerByTool, cancelLayerPreview } = useLayers();
   const { toolArgs, patchToolArgs } = useCurrentTool();
 
   const args = toolArgs as CloneStampToolArgs;
@@ -204,7 +204,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
   /**
    * Bedrock is the document's own backing image and is not addressable by a raster tool:
    * there is no layer to commit onto, so a stroke over it would have nowhere to go.
-   * `SmudgeToolArea.tsx:67` reads the same flag for the same reason.
+   * `SmudgeToolArea` reads the same flag for the same reason.
    *
    * `source` is the third gate and it is the tool's own: with no source there is nothing to
    * copy FROM, so every stroke would be a no-op. Refusing the gesture is better than
@@ -221,14 +221,8 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
    */
   const altHoverCanvasRef = useRef<Point | null>(null);
   const markerFrameRef = useRef<number | null>(null);
-  const selectionSnapshotRef = useRef<
-    | {
-        points: Point[];
-        featherRadius: number;
-        antiAlias: boolean;
-      }
-    | undefined
-  >(undefined);
+  const selectionSnapshotRef = useRef<CloneStampToolArgs['selection']>(undefined);
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
   const [isAltDown, setIsAltDown] = useState(false);
 
   useEffect(() => {
@@ -260,7 +254,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
    * than a second `usePointerPosition` on the same ref. Both instances compute the same
    * contain dimensions from the same `getBoundingClientRect`, so they cannot disagree, and
    * only the hook's instance ever captures a pointer — this one is destructured for
-   * `getLocalCoords` alone, the same shape `MagicWandToolArea.tsx:25` uses.
+   * `getLocalCoords` alone, the same shape `MagicWandToolArea` uses.
    */
   const { getLocalCoords } = usePointerPosition({ ref: containerRef, imageSize: totalSize });
 
@@ -327,7 +321,20 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         ? {
             selection: {
               ...selectionSnapshotRef.current,
-              points: documentPointsToLayerLocal(selectionSnapshotRef.current.points, origin),
+              points: Array.isArray(selectionSnapshotRef.current.points[0])
+                ? (selectionSnapshotRef.current.points as Point[][]).map((contour) =>
+                    documentPointsToLayerLocal(contour, origin)
+                  )
+                : documentPointsToLayerLocal(selectionSnapshotRef.current.points as Point[], origin),
+              ...(selectionSnapshotRef.current.rasterMask
+                ? {
+                    rasterMask: {
+                      ...selectionSnapshotRef.current.rasterMask,
+                      x: selectionSnapshotRef.current.rasterMask.x - origin.x,
+                      y: selectionSnapshotRef.current.rasterMask.y - origin.y,
+                    },
+                  }
+                : {}),
             },
           }
         : {}),
@@ -335,13 +342,14 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
   };
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
-    { imageSize: totalSize, containerRef, enabled: isEnabled },
+    { imageSize: totalSize, containerRef, enabled: isEnabled, gestureKey: activeLayerId },
     {
       onStart: () => {
+        previewLayerIdRef.current = activeLayerId;
         const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
         selectionSnapshotRef.current = activeSelection
           ? {
-              points: getSelectionAbsolutePoints(activeSelection),
+              ...getSelectionProcessorSnapshot(activeSelection, { x: 0, y: 0 }),
               featherRadius: activeSelection.metadata?.featherRadius ?? 0,
               antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
             }
@@ -363,6 +371,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         if (!layerArgs) return;
 
         selectionSnapshotRef.current = undefined;
+        previewLayerIdRef.current = null;
 
         // A fresh copy from the hook, so the history item this reaches does not alias a ref
         // the hook is about to reset.
@@ -370,6 +379,9 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
       },
       onCancel: () => {
         selectionSnapshotRef.current = undefined;
+        const layerId = previewLayerIdRef.current;
+        previewLayerIdRef.current = null;
+        if (layerId) cancelLayerPreview(layerId);
       },
     }
   );

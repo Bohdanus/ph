@@ -35,6 +35,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       hasImage: false,
       hasUnsavedChanges: false,
       currentArgs: { current: null },
+      viewStateRef: {
+        current: { panX: 0, panY: 0, zoom: 1, fitScaleCompensation: 1, rotation: 0, fitToScreen: true },
+      },
       // A REF, because `previewLayers` is read as `previewLayers.current` by
       // `UnsavedChangesProvider`. A plain `{}` here would throw inside the guard's own
       // predicate rather than describe the document, so the shape is the contract.
@@ -56,6 +59,7 @@ vi.mock('../../../contexts/useFile.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useLayer.ts', () => ({
+  MAX_DOCUMENT_FRAME_SIDE: 4096,
   useLayers: () => ({ drawAllLayers: vi.fn() }),
 }));
 

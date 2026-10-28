@@ -11,7 +11,7 @@ import type { HistoryItem } from '../history-types.ts';
 import { documentFrameFromSize } from '../document-frame.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 import { getSortedLayersArray } from '../layer-utils.ts';
-import { OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, REORDER_ACTION } from '../../util/constants.ts';
+import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, REORDER_ACTION } from '../../util/constants.ts';
 
 /**
  * `buildDurableDocument` is the store's only conversion call, and a published
@@ -360,7 +360,7 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(published.history.at(-1)).toMatchObject({
       id: store.history.at(-1)!.id,
       enabled: true,
-      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 2 } },
+      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 3 } },
     });
 
     // THE ORACLE: the whole document, against a real conversion of the same
@@ -388,11 +388,11 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(published.history.map((entry) => entry.operation.kind)).toEqual(['reorder-layers', 'reorder-layers']);
     expect(published.history[0]!.operation).toEqual({
       kind: 'reorder-layers',
-      orderByLayerId: { bottom: 0, top: 1, middle: 2 },
+      orderByLayerId: { bottom: 0, top: 1, middle: 3 },
     });
     expect(published.history[1]!.operation).toEqual({
       kind: 'reorder-layers',
-      orderByLayerId: { top: 0, bottom: 1, middle: 2 },
+      orderByLayerId: { top: 1, bottom: 2, middle: 5 },
     });
     expect(published.cursor).toBe(1);
     expect(published.durableRevision).toBe(base.durableRevision + 1);
@@ -457,7 +457,61 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     // shadow itself holds. A published map would name the runtime-only layer and
     // renumber the three layers the two models do agree on.
     expect(orders(store.layers)).toEqual({ bottom: 0, top: 1, middle: 3, extra: 5 });
-    expect(orderMap(store)).toEqual({ bottom: 0, top: 1, middle: 2 });
+    expect(orderMap(store)).toEqual({ bottom: 0, top: 1, middle: 3 });
+  });
+
+  it('refuses a reorder when the layer sequence matches but sparse order values disagree', () => {
+    const durable = makeLayers();
+    const runtime = makeLayers();
+    runtime.top!.order = 4;
+    const result = setupWithDocument(runtime, durable);
+    conversions.mockClear();
+
+    reorder(result.current.dispatch, 'middle', 'bottom');
+
+    expect(conversions).toHaveBeenCalledTimes(1);
+    const store = result.current.store;
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument).toEqual(conversionOracle(store, store.durableDocument!.durableRevision));
+    expect(durableSequence(store)).toEqual(sequence(store.layers));
+    expect(orders(store.layers)).toEqual({ bottom: 0, middle: 1, top: 6 });
+    const replayed = replayDurableDocument(store.durableDocument!);
+    expect(
+      Object.fromEntries(Object.entries(replayed.layers).map(([id, layer]) => [id, layer.snapshot.order]))
+    ).toEqual({
+      bottom: 0,
+      middle: 1,
+      top: 4,
+    });
+
+    conversions.mockClear();
+    const source = store.layers.bottom!.source;
+    const addedLayer = {
+      ...createMockLayer({ id: 'new-layer', name: 'Blank 7', order: 7 }),
+      source,
+    };
+    act(() => {
+      result.current.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { ...store.layers, 'new-layer': addedLayer }, activeLayerId: 'new-layer' },
+          historyItem: {
+            id: 'create-after-divergent-reorder',
+            actionName: NEW_LAYER_ACTION,
+            layerId: 'new-layer',
+            layerSource: source,
+          },
+        },
+      });
+    });
+    expect(conversions).toHaveBeenCalledTimes(1);
+    const afterCreate = result.current.store;
+    expect(afterCreate.durableDocument).toEqual(
+      conversionOracle(afterCreate, afterCreate.durableDocument!.durableRevision)
+    );
+    const created = afterCreate.durableDocument!.history.at(-1)?.operation;
+    expect(created?.kind).toBe('create-layer');
+    if (created?.kind === 'create-layer') expect(created.layer).toMatchObject({ name: 'Blank 5', order: 5 });
   });
 
   // FAILS WITHOUT THE CHANGE: the durable projection would omit the runtime-only layer.
@@ -562,7 +616,7 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(published.history.map((entry) => entry.id)).toEqual([planted.id, store.history.at(-1)!.id]);
     expect(published.history.at(-1)).toMatchObject({
       enabled: true,
-      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 2 } },
+      operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, top: 1, middle: 3 } },
     });
     expect(published.cursor).toBe(1);
     expect(published.durableRevision).toBe(base.durableRevision + 1);

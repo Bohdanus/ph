@@ -18,6 +18,7 @@ const usePointerPositionMock = vi.hoisted(() => {
     isPointerMoveValid: vi.fn(() => true),
     isPointerUpValid: vi.fn((event: PointerEvent) => event.button === 0),
     getLocalCoords: vi.fn((event: PointerEvent) => ({ x: event.clientX, y: event.clientY })),
+    getLocalCoordsFromClientPoint: vi.fn((x: number, y: number) => ({ x, y })),
     isMouseDown: { current: false },
     dimensionsRef: { current: { scale: 1, offset: { x: 0, y: 0 } } },
     onResize: vi.fn(),
@@ -287,6 +288,7 @@ describe('useRect', () => {
       initialRect?: { x1: number; y1: number; x2: number; y2: number } | null;
       isMoveTool?: boolean;
       hideBlend?: boolean;
+      incrementalOverlay?: boolean;
       rotationEnabled?: boolean;
       rotation?: number;
       onRotationChange?: UseRectProps['onRotationChange'];
@@ -301,6 +303,7 @@ describe('useRect', () => {
       imageSize: { width: 800, height: 600 },
       initialRect: options.initialRect ?? null,
       hideBlend: options.hideBlend ?? false,
+      incrementalOverlay: options.incrementalOverlay ?? false,
       isMoveTool: options.isMoveTool ?? false,
       rotationEnabled: options.rotationEnabled ?? false,
       rotation: options.rotation ?? 0,
@@ -383,6 +386,27 @@ describe('useRect', () => {
       ).toBe(true);
     });
     expect(result.current.pointerState.currentEdgeRef.current).toBe('inside');
+  });
+
+  it('cuts the current rotated crop out of the dimmed frame on each incremental repaint', () => {
+    const initialRect = { x1: 100, y1: 120, x2: 200, y2: 200 };
+    const ctx = testContext.overlayCanvas.getContext('2d') as unknown as ReturnType<typeof createMockCanvasContext>;
+    const { result } = renderUseRect({
+      initialRect,
+      incrementalOverlay: true,
+      rotationEnabled: true,
+      rotation: 30,
+    });
+
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
+
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.fillRect).mockClear();
+    act(() => result.current.rectHandles.redraw());
+
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(0, 0, 800, 600);
+    expect(ctx.clearRect).toHaveBeenCalledWith(-50, -40, 100, 80);
   });
 
   it('returns false for pointer down on non-left button', () => {
@@ -537,6 +561,42 @@ describe('useRect', () => {
 
       expect(onRotationChange).toHaveBeenCalled();
       expect(onRotationChange.mock.lastCall?.[0]).toBeCloseTo(90, 0);
+    });
+
+    it('keeps a fractional top-edge drag out of the rotation hotzone', () => {
+      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+      const onChangeEnd = vi.fn();
+      const onRotationChange = vi.fn();
+      const { result } = renderUseRect({ initialRect, rotationEnabled: true, onChangeEnd, onRotationChange });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 99.5, target }))
+        ).toBe(true);
+      });
+      expect(target.style.cursor).toBe(CURSOR_MAP.top);
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 200, clientY: 99.5, target })
+          )
+        ).toBe(true);
+      });
+      expect(result.current.pointerState.currentEdgeRef.current).toBe('top');
+
+      act(() => {
+        usePointerPositionMock.mockData.isMouseDown.current = true;
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 80, target }));
+        vi.advanceTimersByTime(20);
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 80, target })
+        );
+      });
+
+      expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 80, x2: 300, y2: 250 });
+      expect(onRotationChange).not.toHaveBeenCalled();
     });
 
     it('keeps the painted handles hit-testable after the rect rotates', () => {

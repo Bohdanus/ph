@@ -1,18 +1,6 @@
 import generateCss from 'css-tree/generator';
 import parseCss from 'css-tree/parser';
 import walkCss from 'css-tree/walker';
-
-interface CssNode {
-  type: string;
-  name?: string;
-  value?: string;
-  property?: string;
-  children?: {
-    toArray: () => CssNode[];
-    slice: (start: number) => CssNode[];
-  };
-  [key: string]: unknown;
-}
 import type { ImageUploadResponse } from './useFile.tsx';
 import { resolveImageFormat, withFileExtension } from '../constants/imageFormats.ts';
 import { MAX_CREATABLE_DOCUMENT_PIXELS } from './raster-utils.ts';
@@ -26,9 +14,14 @@ const GIF_HEADER_BYTES = 13;
 const SVG_DEFAULT_WIDTH = 300;
 const SVG_DEFAULT_HEIGHT = 150;
 const MAX_PNG_CHUNKS = 65_536;
+const MAX_WEBP_CHUNKS = 65_536;
+const MAX_JPEG_SEGMENTS = 65_536;
+const MAX_JPEG_FIRST_SCAN_BYTES = 256 * 1024 * 1024;
+const BLOB_HEADER_PAGE_BYTES = 64 * 1024;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 const XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace';
+
 const XLINK_NAMESPACE = 'http://www.w3.org/1999/xlink';
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const MAX_CSS_ANALYSIS_NODES = 20_000;
@@ -73,6 +66,33 @@ const CSS_RESOURCE_PROPERTIES = new Set([
   '-webkit-mask-box-image-source',
   '-webkit-mask-image',
 ]);
+
+type CssWalkRecord = Record<string, unknown> & { type: string };
+
+const asCssWalkRecord = (value: unknown): CssWalkRecord | null => {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.type === 'string' ? (record as CssWalkRecord) : null;
+};
+
+const cssWalkStringField = (node: CssWalkRecord, field: string): string | null =>
+  typeof node[field] === 'string' ? (node[field] as string) : null;
+
+const cssWalkChildren = (node: CssWalkRecord): unknown[] | null => {
+  const children = node.children;
+  if (typeof children !== 'object' || children === null) return null;
+  const toArray = (children as Record<string, unknown>).toArray;
+  if (typeof toArray !== 'function') return null;
+  const result = toArray.call(children);
+  return Array.isArray(result) ? result : null;
+};
+
+// These nodes are returned by parseCss; the narrow runtime record guard above ensures that
+// malformed walker values fail closed before generation. Keep this cast at the generator boundary
+// because walkCss's callback is intentionally treated as unknown here.
+const generateCssFromParsedNode = (node: CssWalkRecord): string =>
+  generateCss(node as unknown as Parameters<typeof generateCss>[0]);
+
 const CSS_INERT_VARIABLE_PROPERTIES = new Set([
   'background-color',
   'block-size',
@@ -213,6 +233,450 @@ function asciiAt(signature: Uint8Array, offset: number, length: number): string 
 
 function mimeEssence(value: string): string {
   return value.split(';', 1)[0].trim().toLowerCase();
+}
+
+function createBlobHeaderReader(blob: Blob, boundary: number) {
+  let pageStart = -1;
+  let page = new Uint8Array();
+
+  return async (offset: number, length: number): Promise<Uint8Array> => {
+    const end = offset + length;
+    if (
+      !Number.isSafeInteger(offset) ||
+      !Number.isSafeInteger(length) ||
+      !Number.isSafeInteger(end) ||
+      offset < 0 ||
+      length < 0 ||
+      end > boundary ||
+      boundary > blob.size
+    ) {
+      throw new Error('Image header exceeds its container boundary');
+    }
+    if (offset < pageStart || end > pageStart + page.length) {
+      pageStart = offset;
+      page = new Uint8Array(
+        await blob.slice(offset, Math.min(boundary, offset + BLOB_HEADER_PAGE_BYTES)).arrayBuffer()
+      );
+    }
+    const pageOffset = offset - pageStart;
+    if (pageOffset + length > page.length) throw new Error('Image header is truncated');
+    return page.subarray(pageOffset, pageOffset + length);
+  };
+}
+
+function readUint32LittleEndian(bytes: Uint8Array, offset = 0): number {
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(offset, true);
+}
+
+function readUint24LittleEndian(bytes: Uint8Array, offset = 0): number {
+  return bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16);
+}
+
+function assertWithinDocumentPixelBudget(width: number, height: number, format: 'JPEG' | 'WebP'): void {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
+    throw new Error(`${format} image has invalid dimensions`);
+  }
+  const pixels = width * height;
+  if (!Number.isSafeInteger(pixels) || pixels > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(
+      `${format} image is too large to open (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+  }
+}
+
+type WebpDimensions = { width: number; height: number; alphaUsed?: boolean };
+
+function webpVp8Dimensions(header: Uint8Array, chunkSize: number): WebpDimensions {
+  if (chunkSize < 10 || header.length < 10) throw new Error('WebP image has a truncated VP8 frame header');
+  if (header[3] !== 0x9d || header[4] !== 0x01 || header[5] !== 0x2a) {
+    throw new Error('WebP image has an invalid VP8 key-frame signature');
+  }
+  const frameTag = header[0]! | (header[1]! << 8) | (header[2]! << 16);
+  const isKeyFrame = (frameTag & 1) === 0;
+  const version = (frameTag >>> 1) & 0x07;
+  const isShown = ((frameTag >>> 4) & 1) === 1;
+  const firstPartitionSize = frameTag >>> 5;
+  if (!isKeyFrame || version > 3 || !isShown || firstPartitionSize > chunkSize - 10) {
+    throw new Error('WebP image has an invalid VP8 frame header');
+  }
+  const width = (header[6]! | (header[7]! << 8)) & 0x3fff;
+  const height = (header[8]! | (header[9]! << 8)) & 0x3fff;
+  return { width, height };
+}
+
+function webpVp8lDimensions(header: Uint8Array, chunkSize: number): WebpDimensions {
+  if (chunkSize < 5 || header.length < 5 || header[0] !== 0x2f) {
+    throw new Error('WebP image has an invalid VP8L header');
+  }
+  const packedDimensions = readUint32LittleEndian(header, 1);
+  if (packedDimensions >>> 29 !== 0) throw new Error('WebP image has an unsupported VP8L version');
+  return {
+    width: (packedDimensions & 0x3fff) + 1,
+    height: ((packedDimensions >>> 14) & 0x3fff) + 1,
+    alphaUsed: ((packedDimensions >>> 28) & 1) !== 0,
+  };
+}
+
+async function preflightWebpAnimationFrame(
+  readHeader: (offset: number, length: number) => Promise<Uint8Array>,
+  consumeChunk: () => void,
+  payloadOffset: number,
+  payloadEnd: number,
+  canvasDimensions: { width: number; height: number }
+): Promise<boolean> {
+  if (payloadEnd - payloadOffset < 16) throw new Error('WebP image has a truncated animation frame');
+  const frameHeader = await readHeader(payloadOffset, 16);
+  const x = readUint24LittleEndian(frameHeader, 0) * 2;
+  const y = readUint24LittleEndian(frameHeader, 3) * 2;
+  const width = readUint24LittleEndian(frameHeader, 6) + 1;
+  const height = readUint24LittleEndian(frameHeader, 9) + 1;
+  if ((frameHeader[15]! & 0xfc) !== 0) {
+    throw new Error('WebP animation frame has nonzero reserved flags');
+  }
+  if (x + width > canvasDimensions.width || y + height > canvasDimensions.height) {
+    throw new Error('WebP animation frame exceeds its canvas');
+  }
+
+  let offset = payloadOffset + 16;
+  let alphaSeen = false;
+  let bitstreamDimensions: WebpDimensions | undefined;
+  while (offset < payloadEnd) {
+    consumeChunk();
+    if (offset + 8 > payloadEnd) throw new Error('WebP animation frame has a truncated subchunk');
+    const chunkHeader = await readHeader(offset, 8);
+    const chunkType = asciiAt(chunkHeader, 0, 4);
+    const chunkSize = readUint32LittleEndian(chunkHeader, 4);
+    const dataOffset = offset + 8;
+    const dataEnd = dataOffset + chunkSize;
+    const paddedEnd = dataEnd + (chunkSize % 2);
+    if (!Number.isSafeInteger(dataEnd) || paddedEnd > payloadEnd) {
+      throw new Error('WebP animation frame has an invalid subchunk boundary');
+    }
+    if (chunkSize % 2 === 1 && (await readHeader(dataEnd, 1))[0] !== 0) {
+      throw new Error('WebP animation frame has an invalid RIFF padding byte');
+    }
+
+    if (chunkType === 'ALPH') {
+      if (alphaSeen || bitstreamDimensions || chunkSize < 1) {
+        throw new Error('WebP animation frame has an invalid alpha subchunk');
+      }
+      alphaSeen = true;
+    } else if (chunkType === 'VP8 ' || chunkType === 'VP8L') {
+      if (bitstreamDimensions || (chunkType === 'VP8L' && alphaSeen)) {
+        throw new Error('WebP animation frame has an invalid bitstream sequence');
+      }
+      bitstreamDimensions =
+        chunkType === 'VP8 '
+          ? webpVp8Dimensions(await readHeader(dataOffset, 10), chunkSize)
+          : webpVp8lDimensions(await readHeader(dataOffset, 5), chunkSize);
+      if (bitstreamDimensions.width !== width || bitstreamDimensions.height !== height) {
+        throw new Error('WebP animation frame dimensions do not match its frame header');
+      }
+    } else if (!bitstreamDimensions) {
+      throw new Error('WebP animation frame has an unsupported subchunk before its bitstream');
+    }
+
+    offset = paddedEnd;
+  }
+  if (offset !== payloadEnd || !bitstreamDimensions) {
+    throw new Error('WebP animation frame has no complete image bitstream');
+  }
+  return alphaSeen || bitstreamDimensions.alphaUsed === true;
+}
+
+async function preflightWebp(file: File): Promise<void> {
+  const signature = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (signature.length < 12 || asciiAt(signature, 0, 4) !== 'RIFF' || asciiAt(signature, 8, 4) !== 'WEBP') {
+    throw new Error('WebP image has an invalid RIFF header');
+  }
+  const riffSize = readUint32LittleEndian(signature, 4);
+  const riffEnd = riffSize + 8;
+  if (riffSize < 12 || riffSize % 2 !== 0 || !Number.isSafeInteger(riffEnd) || riffEnd > file.size) {
+    throw new Error('WebP image has an invalid RIFF size');
+  }
+
+  const readHeader = createBlobHeaderReader(file, riffEnd);
+  let offset = 12;
+  let chunkCount = 0;
+  let isExtended = false;
+  let hasAnimation = false;
+  let hasAnimationControl = false;
+  let animationFrameCount = 0;
+  let sawAlpha = false;
+  let sawIccp = false;
+  let sawExif = false;
+  let sawXmp = false;
+  let imageDataSeen = false;
+  let imageHasAlpha = false;
+  let canvasDimensions: { width: number; height: number } | undefined;
+  let imageDimensions: WebpDimensions | undefined;
+
+  while (offset < riffEnd) {
+    if (++chunkCount > MAX_WEBP_CHUNKS || offset + 8 > riffEnd) {
+      throw new Error('WebP image has an invalid or excessive chunk sequence');
+    }
+    const firstChunk = chunkCount === 1;
+    const chunkHeader = await readHeader(offset, 8);
+    const chunkType = asciiAt(chunkHeader, 0, 4);
+    const chunkSize = readUint32LittleEndian(chunkHeader, 4);
+    const payloadOffset = offset + 8;
+    const payloadEnd = payloadOffset + chunkSize;
+    const paddedEnd = payloadEnd + (chunkSize % 2);
+    if (!Number.isSafeInteger(payloadEnd) || paddedEnd > riffEnd) {
+      throw new Error('WebP image has an invalid chunk boundary');
+    }
+    if (chunkSize % 2 === 1 && (await readHeader(payloadEnd, 1))[0] !== 0) {
+      throw new Error('WebP image has an invalid RIFF padding byte');
+    }
+
+    if (firstChunk) {
+      if (chunkType === 'VP8X') {
+        if (chunkSize !== 10) throw new Error('WebP image has an invalid VP8X header');
+        const vp8x = await readHeader(payloadOffset, 10);
+        const flags = vp8x[0]!;
+        if ((flags & 0xc1) !== 0 || vp8x[1] !== 0 || vp8x[2] !== 0 || vp8x[3] !== 0) {
+          throw new Error('WebP image has invalid reserved VP8X bits');
+        }
+        hasAnimation = (flags & 0x02) !== 0;
+        canvasDimensions = {
+          width: readUint24LittleEndian(vp8x, 4) + 1,
+          height: readUint24LittleEndian(vp8x, 7) + 1,
+        };
+        assertWithinDocumentPixelBudget(canvasDimensions.width, canvasDimensions.height, 'WebP');
+        isExtended = true;
+      } else if (chunkType === 'VP8 ') {
+        imageDimensions = webpVp8Dimensions(await readHeader(payloadOffset, 10), chunkSize);
+        assertWithinDocumentPixelBudget(imageDimensions.width, imageDimensions.height, 'WebP');
+      } else if (chunkType === 'VP8L') {
+        imageDimensions = webpVp8lDimensions(await readHeader(payloadOffset, 5), chunkSize);
+        assertWithinDocumentPixelBudget(imageDimensions.width, imageDimensions.height, 'WebP');
+      } else {
+        throw new Error('WebP image has an unsupported first chunk');
+      }
+    } else {
+      if (chunkType === 'VP8X') throw new Error('WebP image contains a duplicate VP8X chunk');
+      if (chunkType === 'ANIM') {
+        if (!hasAnimation) {
+          // The WebP container specification says to ignore ANIM when its VP8X feature flag is unset.
+        } else if (hasAnimationControl || chunkSize !== 6) {
+          throw new Error('WebP image has an invalid animation control chunk');
+        } else {
+          hasAnimationControl = true;
+        }
+      } else if (chunkType === 'ANMF') {
+        if (!hasAnimation || !hasAnimationControl || !canvasDimensions) {
+          throw new Error('WebP image has an animation frame without animation control');
+        }
+        imageHasAlpha ||= await preflightWebpAnimationFrame(
+          readHeader,
+          () => {
+            if (++chunkCount > MAX_WEBP_CHUNKS) {
+              throw new Error('WebP image has an excessive chunk sequence');
+            }
+          },
+          payloadOffset,
+          payloadEnd,
+          canvasDimensions
+        );
+        animationFrameCount += 1;
+        imageDataSeen = true;
+      }
+      if (hasAnimation && (chunkType === 'VP8 ' || chunkType === 'VP8L')) {
+        throw new Error('Animated WebP image has a top-level image bitstream');
+      }
+      if (!hasAnimation && (chunkType === 'VP8 ' || chunkType === 'VP8L')) {
+        if (imageDimensions) throw new Error('WebP image contains multiple image bitstreams');
+        if (sawAlpha && chunkType !== 'VP8 ') {
+          throw new Error('WebP alpha subchunk must precede a lossy VP8 bitstream');
+        }
+        imageDataSeen = true;
+        imageDimensions =
+          chunkType === 'VP8 '
+            ? webpVp8Dimensions(await readHeader(payloadOffset, 10), chunkSize)
+            : webpVp8lDimensions(await readHeader(payloadOffset, 5), chunkSize);
+        imageHasAlpha = imageDimensions.alphaUsed === true;
+        assertWithinDocumentPixelBudget(imageDimensions.width, imageDimensions.height, 'WebP');
+        if (
+          canvasDimensions &&
+          (imageDimensions.width !== canvasDimensions.width || imageDimensions.height !== canvasDimensions.height)
+        ) {
+          throw new Error('WebP image dimensions do not match its VP8X canvas');
+        }
+      }
+
+      if (chunkType === 'ICCP') {
+        if (!isExtended || sawIccp || sawAlpha || imageDataSeen || hasAnimationControl || animationFrameCount > 0) {
+          throw new Error('WebP image has an ICC profile in an invalid position');
+        }
+        sawIccp = true;
+      } else if (chunkType === 'ALPH') {
+        if (!isExtended || hasAnimation || sawAlpha || imageDataSeen || chunkSize < 1) {
+          throw new Error('WebP image has an alpha chunk in an invalid position');
+        }
+        sawAlpha = true;
+      } else if (chunkType === 'EXIF') {
+        if (!isExtended || sawExif) throw new Error('WebP image has EXIF in an invalid position');
+        sawExif = true;
+      } else if (chunkType === 'XMP ') {
+        if (!isExtended || sawXmp) throw new Error('WebP image has XMP in an invalid position');
+        sawXmp = true;
+      }
+    }
+
+    offset = paddedEnd;
+  }
+
+  const validAnimation = hasAnimation && hasAnimationControl && animationFrameCount > 0 && !imageDimensions;
+  const validStillImage = !hasAnimation && imageDimensions != null;
+  const featureFlags = isExtended ? (await readHeader(20, 1))[0]! : 0;
+  if (
+    isExtended &&
+    (((featureFlags & 0x20) !== 0) !== sawIccp ||
+      ((featureFlags & 0x10) !== 0) !== (sawAlpha || imageHasAlpha) ||
+      ((featureFlags & 0x08) !== 0) !== sawExif ||
+      ((featureFlags & 0x04) !== 0) !== sawXmp)
+  ) {
+    throw new Error('WebP VP8X feature flags do not match the image chunks');
+  }
+  if (offset !== riffEnd || (!validAnimation && !validStillImage) || (isExtended && !canvasDimensions)) {
+    throw new Error('WebP image has an incomplete chunk sequence');
+  }
+}
+
+const JPEG_SOF_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+const JPEG_DIFFERENTIAL_SOF_MARKERS = new Set([0xc5, 0xc6, 0xc7, 0xcd, 0xce, 0xcf]);
+const JPEG_STANDALONE_MARKERS = new Set([0xd8, 0xd9, 0x01, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7]);
+
+async function readJpegFrameDimensions(
+  readHeader: (offset: number, length: number) => Promise<Uint8Array>,
+  lengthOffset: number,
+  segmentLength: number
+): Promise<{ width: number; height: number }> {
+  const framePrefix = await readHeader(lengthOffset + 2, Math.min(segmentLength - 2, 6));
+  if (framePrefix.length < 6) throw new Error('JPEG image has a truncated frame header');
+  const componentCount = framePrefix[5]!;
+  if (componentCount === 0 || segmentLength !== 8 + 3 * componentCount) {
+    throw new Error('JPEG image has an invalid frame header length');
+  }
+  return {
+    height: (framePrefix[1]! << 8) | framePrefix[2]!,
+    width: (framePrefix[3]! << 8) | framePrefix[4]!,
+  };
+}
+
+async function rejectJpegDnlInFirstScan(
+  readHeader: (offset: number, length: number) => Promise<Uint8Array>,
+  scanOffset: number,
+  fileSize: number
+): Promise<void> {
+  let offset = scanOffset;
+  let scannedBytes = 0;
+  let previousByteWasMarkerPrefix = false;
+  while (offset < fileSize) {
+    const page = await readHeader(
+      offset,
+      Math.min(BLOB_HEADER_PAGE_BYTES, fileSize - offset, MAX_JPEG_FIRST_SCAN_BYTES - scannedBytes + 1)
+    );
+    scannedBytes += page.length;
+    if (scannedBytes > MAX_JPEG_FIRST_SCAN_BYTES) {
+      throw new Error('JPEG first scan exceeds the preflight scan limit');
+    }
+    for (const byte of page) {
+      if (!previousByteWasMarkerPrefix) {
+        previousByteWasMarkerPrefix = byte === 0xff;
+        continue;
+      }
+      if (byte === 0xff) continue;
+      previousByteWasMarkerPrefix = false;
+      if (byte === 0x00 || (byte >= 0xd0 && byte <= 0xd7)) continue;
+      if (byte === 0xdc) throw new Error('JPEG DNL dimensions cannot be safely preflighted');
+      return;
+    }
+    offset += page.length;
+  }
+  throw new Error('JPEG image has an unterminated first scan');
+}
+
+async function preflightJpeg(file: File): Promise<{ width: number; height: number }> {
+  const readHeader = createBlobHeaderReader(file, file.size);
+  let header = await readHeader(0, 2);
+  if (header[0] !== 0xff || header[1] !== 0xd8) throw new Error('JPEG image has an invalid SOI marker');
+
+  let offset = 2;
+  let dimensions: { width: number; height: number } | undefined;
+  let frameCount = 0;
+  let markerCount = 0;
+
+  while (offset < file.size) {
+    if (++markerCount > MAX_JPEG_SEGMENTS) {
+      throw new Error('JPEG image has an excessive number of markers');
+    }
+    header = await readHeader(offset, 2);
+    if (header[0] !== 0xff) throw new Error('JPEG image has an invalid marker segment');
+    let marker = header[1];
+
+    while (marker === 0xff) {
+      if (++markerCount > MAX_JPEG_SEGMENTS) {
+        throw new Error('JPEG image has an excessive number of markers');
+      }
+      offset += 1;
+      if (offset + 1 >= file.size) throw new Error('JPEG image is truncated at marker start');
+      header = await readHeader(offset, 2);
+      if (header[0] !== 0xff) throw new Error('JPEG image has an invalid marker segment');
+      marker = header[1];
+    }
+
+    if (marker === 0x00) throw new Error('JPEG image has a stuffed zero at a marker boundary');
+
+    if (JPEG_STANDALONE_MARKERS.has(marker)) {
+      offset += 2;
+      continue;
+    }
+
+    if (marker === 0xda) {
+      if (!dimensions) throw new Error('JPEG image has a scan marker before its frame header');
+      const lengthOffset = offset + 2;
+      if (lengthOffset + 2 > file.size) throw new Error('JPEG image is truncated at scan length');
+      const lengthBytes = await readHeader(lengthOffset, 2);
+      const scanLength = (lengthBytes[0] << 8) | lengthBytes[1];
+      if (scanLength < 8 || lengthOffset + scanLength > file.size) {
+        throw new Error('JPEG image has an invalid scan header');
+      }
+      await rejectJpegDnlInFirstScan(readHeader, lengthOffset + scanLength, file.size);
+      return dimensions;
+    }
+
+    offset += 2;
+    if (offset + 2 > file.size) throw new Error('JPEG image is truncated at segment length');
+    const lengthBytes = await readHeader(offset, 2);
+    const segmentLength = (lengthBytes[0] << 8) | lengthBytes[1];
+    if (segmentLength < 2 || offset + segmentLength > file.size) {
+      throw new Error('JPEG image has an invalid segment length');
+    }
+
+    if (marker === 0xde) {
+      throw new Error('JPEG hierarchical images cannot be safely preflighted');
+    }
+
+    if (JPEG_SOF_MARKERS.has(marker)) {
+      if (JPEG_DIFFERENTIAL_SOF_MARKERS.has(marker)) {
+        throw new Error('JPEG differential images cannot be safely preflighted');
+      }
+      if (frameCount > 0) throw new Error('JPEG image contains multiple frame headers');
+      const frameDimensions = await readJpegFrameDimensions(readHeader, offset, segmentLength);
+      if (frameDimensions.height === 0 || frameDimensions.width === 0) {
+        throw new Error('JPEG image has a deferred dimension that requires a DNL marker');
+      }
+      assertWithinDocumentPixelBudget(frameDimensions.width, frameDimensions.height, 'JPEG');
+      dimensions ??= frameDimensions;
+      frameCount += 1;
+    }
+
+    offset += segmentLength;
+  }
+
+  if (!dimensions) throw new Error('JPEG image has no frame header');
+  return dimensions;
 }
 
 async function rejectOversizedGif(file: File): Promise<void> {
@@ -442,7 +906,10 @@ function cssContainsDataUrlString(source: string): boolean {
   return quote !== '';
 }
 
-function cssVariableReferences(source: string): { references: string[]; valid: boolean; parsedCharacters: number } {
+function cssVariableReferences(
+  source: string,
+  analysis: CssResourceAnalysis
+): { references: string[]; valid: boolean; parsedCharacters: number } {
   const references: string[] = [];
   const pendingValues = [source];
   let parsedCharacters = 0;
@@ -472,20 +939,58 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
     const fallbackValues: string[] = [];
     let invalidVar = false;
     try {
-      walkCss(valueAst, (node: CssNode) => {
-        if (node.type !== 'Function' || !node.name || decodeCssEscapes(node.name).toLowerCase() !== 'var') return;
-        const children = node.children?.toArray() ?? [];
+      walkCss(valueAst, (rawNode: unknown) => {
+        analysis.nodeCount += 1;
+        if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        const node = asCssWalkRecord(rawNode);
+        if (!node) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        if (node.type !== 'Function') return;
+        const functionName = cssWalkStringField(node, 'name');
+        if (functionName === null) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        if (decodeCssEscapes(functionName).toLowerCase() !== 'var') return;
+        const children = cssWalkChildren(node);
+        if (!children) {
+          invalidVar = true;
+          return walkCss.break;
+        }
         let name: string | undefined;
         let commaIndex = -1;
         for (let index = 0; index < children.length; index += 1) {
-          const child = children[index];
-          if (child.type === 'Operator' && child.value === ',') {
+          const child = asCssWalkRecord(children[index]);
+          if (!child) {
+            invalidVar = true;
+            return walkCss.break;
+          }
+          if (child.type === 'Operator') {
+            const operatorValue = cssWalkStringField(child, 'value');
+            if (operatorValue === null) {
+              invalidVar = true;
+              return walkCss.break;
+            }
+            if (operatorValue !== ',') {
+              invalidVar = true;
+              return walkCss.break;
+            }
             commaIndex = index;
             break;
           }
           if (child.type === 'WhiteSpace' || child.type === 'Comment') continue;
-          if (!name && child.type === 'Identifier' && child.name) {
-            name = decodeCssEscapes(child.name);
+          if (!name && child.type === 'Identifier') {
+            const identifier = cssWalkStringField(child, 'name');
+            if (identifier === null) {
+              invalidVar = true;
+              return walkCss.break;
+            }
+            name = decodeCssEscapes(identifier);
             continue;
           }
           invalidVar = true;
@@ -502,8 +1007,20 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
           return walkCss.break;
         }
         if (commaIndex >= 0) {
-          for (const child of children.slice(commaIndex + 1)) {
-            if (child.type === 'Raw' && child.value) fallbackValues.push(child.value);
+          for (const rawFallback of children.slice(commaIndex + 1)) {
+            const child = asCssWalkRecord(rawFallback);
+            if (!child) {
+              invalidVar = true;
+              return walkCss.break;
+            }
+            if (child.type === 'Raw') {
+              const fallback = cssWalkStringField(child, 'value');
+              if (fallback === null) {
+                invalidVar = true;
+                return walkCss.break;
+              }
+              fallbackValues.push(fallback);
+            }
           }
         }
         return undefined;
@@ -550,7 +1067,7 @@ function collectCssDeclaration(
   const property = normalizeCssProperty(rawProperty);
   if (!property) return true;
 
-  const parsedReferences = cssVariableReferences(value);
+  const parsedReferences = cssVariableReferences(value, analysis);
   analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
   if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
   analysis.variableReferenceCount += parsedReferences.references.length;
@@ -576,7 +1093,7 @@ function collectCssVariableSinkOnly(
   value: string,
   dataBaseInScope: boolean
 ): boolean {
-  const parsedReferences = cssVariableReferences(value);
+  const parsedReferences = cssVariableReferences(value, analysis);
   analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
   if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
   analysis.variableReferenceCount += parsedReferences.references.length;
@@ -598,7 +1115,7 @@ function collectCssAtRule(
   if (cssUrlReferencesData(params, undefined, dataBaseInScope)) return true;
   if (normalizedName === 'import' && cssContainsDataUrlString(params)) return true;
 
-  const parsedReferences = cssVariableReferences(params);
+  const parsedReferences = cssVariableReferences(params, analysis);
   analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
   if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
   analysis.variableReferenceCount += parsedReferences.references.length;
@@ -633,15 +1150,23 @@ function collectCssSource(
 
   const stopWalk = Symbol('stop CSS resource walk');
   try {
-    walkCss(root, (node: CssNode) => {
+    walkCss(root, (rawNode: unknown) => {
       analysis.nodeCount += 1;
       if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) throw stopWalk;
-      if (node.type === 'Declaration' && node.property) {
-        if (collectCssDeclaration(analysis, node.property, generateCss(node.value), dataBaseInScope)) {
+      const node = asCssWalkRecord(rawNode);
+      if (!node) throw stopWalk;
+      if (node.type === 'Declaration') {
+        const property = cssWalkStringField(node, 'property');
+        const value = asCssWalkRecord(node.value);
+        if (!property || !value) throw stopWalk;
+        if (collectCssDeclaration(analysis, property, generateCssFromParsedNode(value), dataBaseInScope)) {
           throw stopWalk;
         }
-      } else if (node.type === 'Atrule' && node.name) {
-        if (collectCssAtRule(analysis, node.name, node.prelude ? generateCss(node.prelude) : '', dataBaseInScope)) {
+      } else if (node.type === 'Atrule') {
+        const name = cssWalkStringField(node, 'name');
+        const prelude = node.prelude === undefined || node.prelude === null ? null : asCssWalkRecord(node.prelude);
+        if (name === null || (node.prelude !== undefined && node.prelude !== null && !prelude)) throw stopWalk;
+        if (collectCssAtRule(analysis, name, prelude ? generateCssFromParsedNode(prelude) : '', dataBaseInScope)) {
           throw stopWalk;
         }
       }
@@ -1680,11 +2205,45 @@ export const loadImageFile = async (file: File, detectedMimeType?: string): Prom
   const svgMimeType = detectedMimeType ?? file.type;
   const isSvg = mimeEssence(svgMimeType) === 'image/svg+xml' || /\.svg$/i.test(file.name);
   const flattenedPng = isSvg ? await rejectOversizedSvg(file, svgMimeType) : undefined;
+  let isWebp = false;
+  let isJpeg = false;
   if (!isSvg) {
     const pngHeader = new Uint8Array(await file.slice(0, 33).arrayBuffer());
     const hasPngSignature = PNG_SIGNATURE.every((byte, index) => pngHeader[index] === byte);
     const isPng = mimeEssence(svgMimeType) === 'image/png' || /\.png$/i.test(file.name) || hasPngSignature;
     if (isPng) await rejectOversizedPng(file, pngHeader);
+    const hasJpegSignature = pngHeader[0] === 0xff && pngHeader[1] === 0xd8;
+    const hasWebpSignature =
+      pngHeader.length >= 12 && asciiAt(pngHeader, 0, 4) === 'RIFF' && asciiAt(pngHeader, 8, 4) === 'WEBP';
+    const claimsWebp = mimeEssence(svgMimeType) === 'image/webp' || (!detectedMimeType && /\.webp$/i.test(file.name));
+    const claimsJpeg =
+      mimeEssence(svgMimeType) === 'image/jpeg' ||
+      /\.jpe?g$/i.test(file.name) ||
+      (hasJpegSignature && mimeEssence(svgMimeType) === 'image/jpeg');
+    isWebp = !isPng && (hasWebpSignature || (claimsWebp && !hasJpegSignature));
+    if (isWebp) await preflightWebp(file);
+    isJpeg = !isPng && !isWebp && (hasJpegSignature || (claimsJpeg && !hasWebpSignature));
+    if (isJpeg) await preflightJpeg(file);
+  }
+
+  const source = flattenedPng ?? (detectedMimeType ? new Blob([file], { type: detectedMimeType }) : file);
+
+  if (isWebp || isJpeg) {
+    const loadImage = (url: string): Promise<HTMLImageElement> =>
+      new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = url;
+      });
+    const url = URL.createObjectURL(source);
+    try {
+      const image = await loadImage(url);
+      validateDecodedImageDimensions(image);
+      return image;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -1707,7 +2266,6 @@ export const loadImageFile = async (file: File, detectedMimeType?: string): Prom
     reader.onerror = () => {
       reject(new Error('Failed to read file'));
     };
-    const source = flattenedPng ?? (detectedMimeType ? new Blob([file], { type: detectedMimeType }) : file);
     reader.readAsDataURL(source);
   });
 };

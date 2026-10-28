@@ -24,10 +24,35 @@ function toDomRect({ left, top, width, height }: Rect): DOMRect {
   } as DOMRect;
 }
 
+function setClientViewport(
+  el: HTMLDivElement,
+  {
+    left = 0,
+    top = 0,
+    width,
+    height,
+    offsetWidth = Math.round(width),
+    offsetHeight = Math.round(height),
+  }: { left?: number; top?: number; width: number; height: number; offsetWidth?: number; offsetHeight?: number }
+) {
+  Object.defineProperties(el, {
+    clientLeft: { configurable: true, value: left },
+    clientTop: { configurable: true, value: top },
+    clientWidth: { configurable: true, value: width },
+    clientHeight: { configurable: true, value: height },
+    offsetWidth: { configurable: true, value: offsetWidth },
+    offsetHeight: { configurable: true, value: offsetHeight },
+  });
+}
+
 function createContainer(rect: Rect) {
   const el = document.createElement('div');
   const getBoundingClientRect = vi.fn(() => toDomRect(rect));
   el.getBoundingClientRect = getBoundingClientRect;
+  setClientViewport(el, {
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  });
   el.setPointerCapture = vi.fn();
   el.releasePointerCapture = vi.fn();
 
@@ -210,6 +235,31 @@ describe('usePointerPosition', () => {
       });
     });
 
+    it('maps from a measurement-only ref attached after mount', () => {
+      const ref = createRef(null);
+      const { result } = renderHook(() => usePointerPosition({ ref, imageSize: IMAGE }));
+      const measuredStub = {
+        getBoundingClientRect: () => toDomRect({ left: 10, top: 20, width: 400, height: 200 }),
+      } as unknown as HTMLDivElement;
+
+      act(() => {
+        ref.current = measuredStub;
+      });
+
+      // The measurement-only stub deliberately has no scroll or listener API; those must not
+      // be required for a live geometry read or the default zero-scroll coordinate mapping.
+      expect(result.current.getLocalCoordsFromClientPoint(120, 34)).toEqual({ x: 5, y: 7 });
+    });
+
+    it('maps geometry when a measurement-only ref is present at mount', () => {
+      const { el } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
+      Object.defineProperty(el, 'addEventListener', { configurable: true, value: undefined });
+      Object.defineProperty(el, 'removeEventListener', { configurable: true, value: undefined });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      expect(result.current.getLocalCoordsFromClientPoint(120, 34)).toEqual({ x: 5, y: 7 });
+    });
+
     it('keeps the last measured rect when the element is later detached from the ref', () => {
       const { el } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
       const ref = createRef(el);
@@ -235,9 +285,47 @@ describe('usePointerPosition', () => {
       expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
     });
 
+    it('accounts for the container scroll offset without adding window scroll twice', () => {
+      const { el } = createContainer({ left: 50, top: 25, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+      el.scrollLeft = 8;
+      el.scrollTop = 20;
+      el.dispatchEvent(new Event('scroll'));
+
+      // The element's own scroll shifts the document point (10, 20) from content-space
+      // coordinates (20, 40) to scrollport-relative coordinates (12, 20), or client (62, 45).
+      const event = pointerEvent(el, { clientX: 50 + 2 * 10 - 8, clientY: 25 + 2 * 20 - 20 });
+      expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
+    });
+
+    it('retains the latest container scroll offset if its ref is detached', () => {
+      const { el } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
+      const ref = createRef(el);
+      const { result } = renderHook(() => usePointerPosition({ ref, imageSize: IMAGE }));
+
+      act(() => {
+        el.scrollLeft = 8;
+        el.scrollTop = 20;
+        el.dispatchEvent(new Event('scroll'));
+        ref.current = null;
+      });
+
+      // Cached rect has offsetX 100, offsetY 0, scale 2. The pointer maps to (5, 7)
+      // only when the cached content-space scroll offset is restored after detachment.
+      const event = pointerEvent(el, { clientX: 10 + 100 + 2 * 5 - 8, clientY: 20 + 2 * 7 - 20 });
+      expect(result.current.getLocalCoords(event)).toEqual({ x: 5, y: 7 });
+    });
+
     it('inverts a transient pan and zoom before returning document coordinates', () => {
       const { el } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
-      viewStateRef.current = { panX: 20, panY: -10, zoom: 2, rotation: 0 };
+      viewStateRef.current = {
+        panX: 20,
+        panY: -10,
+        zoom: 2,
+        fitScaleCompensation: 1,
+        rotation: 0,
+        fitToScreen: false,
+      };
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
       // The document point (10, 20) is at (120, 40) in the untransformed contain-fit viewport.
@@ -254,11 +342,10 @@ describe('usePointerPosition', () => {
       expect(result.current.getLocalCoords(pointerEvent(el, { clientX: -20, clientY: -6 }))).toEqual({ x: -10, y: -3 });
     });
 
-    it('does not compensate for scrolling twice', () => {
-      // `getLocalCoords` reads viewport coordinates, and `getBoundingClientRect()`
-      // is already expressed in the scrolled viewport, so a scrolled page must not
-      // shift the mapping by another scrollX/scrollY. This pins that contract:
-      // adding scroll compensation here would break every scrolled document.
+    it('does not add window scroll to viewport coordinates a second time', () => {
+      // Window scrolling shifts both the event's client coordinates and the element's
+      // getBoundingClientRect() position. Unlike the element's own scrollTop/scrollLeft,
+      // window.scrollX/scrollY must not be added to that already viewport-relative pair.
       const { el } = createContainer({ left: 50, top: 40, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
@@ -294,27 +381,14 @@ describe('usePointerPosition', () => {
       expect(getBoundingClientRect).toHaveBeenCalled();
     });
 
-    it('re-notifies onResize on every call, and does so for identical coordinates too', () => {
-      // `getLocalCoords` is NOT a pure coordinate transform: its first statement is
-      // `calculateDimensions()`, which ends unconditionally in `onResizeRef.current?.(…)`.
-      // There is no change detection anywhere on that path, so the notify fires on every
-      // call — including a second call at the very same coordinates, which is the case a
-      // change-detecting implementation would skip. Pinning "it measured" is not the same
-      // as pinning "it notified", and this pins the second.
-      //
-      // No production caller currently depends on the redundancy — `useRect.ts:117` feeds
-      // `drawMask()`, a pure function of the rect, and `Draw.tsx:24`, `Paint.tsx:54` and
-      // `Shape.tsx:29` call `setBrushScale(scale)`, which React bails on when the value is
-      // unchanged — so this is a pin on observed behaviour, not a required contract. Making
-      // the notify conditional is a legitimate change; it would just have to update this
-      // test in the same commit.
+    it('notifies onResize only when the measured fit changes', () => {
       //
       // Payload, derived from `calculateDimensions` over these fixtures:
       //   container 400x200 at (50, 25), image 100x100
       //   scaleX = 400/100 = 4, scaleY = 200/100 = 2  =>  scale = min(4, 2) = 2
       //   innerWidth  = 100 * 2 = 200      innerHeight = 100 * 2 = 200
       //   offsetX = (400 - 200) / 2 = 100  offsetY   = (200 - 200) / 2 = 0
-      const { el } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
+      const { el, getBoundingClientRect } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
       const onResize = vi.fn();
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
 
@@ -327,21 +401,28 @@ describe('usePointerPosition', () => {
       act(() => {
         result.current.getLocalCoords(event);
       });
-      expect(onResize).toHaveBeenCalledTimes(1);
+      expect(onResize).not.toHaveBeenCalled();
 
       // The SAME event object, so the coordinates are provably identical.
       act(() => {
         result.current.getLocalCoords(event);
       });
 
-      // Not deduplicated: the unconditional notify means the count tracks the calls.
-      expect(onResize).toHaveBeenCalledTimes(2);
+      // Re-reading the same fit must not make `useRect` repaint the previous crop rect.
+      expect(onResize).not.toHaveBeenCalled();
+
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 50, top: 25, width: 500, height: 200 }));
+      act(() => {
+        result.current.getLocalCoords(event);
+      });
+
+      expect(onResize).toHaveBeenCalledTimes(1);
       expect(onResize).toHaveBeenLastCalledWith({
         innerWidth: 200,
         innerHeight: 200,
-        outerWidth: 400,
+        outerWidth: 500,
         outerHeight: 200,
-        offsetX: 100,
+        offsetX: 150,
         offsetY: 0,
         scale: 2,
       });
@@ -379,6 +460,33 @@ describe('usePointerPosition', () => {
       expect(el.setPointerCapture).toHaveBeenCalledWith(3);
       expect(result.current.pointerIdRef.current).toBe(3);
       expect(result.current.isMouseDown.current).toBe(true);
+    });
+
+    it('clears the pointer claim when capture fails so a later press can start', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const setPointerCapture = el.setPointerCapture as ReturnType<typeof vi.fn>;
+      setPointerCapture.mockImplementationOnce(() => {
+        throw new DOMException('Pointer capture target is detached', 'NotFoundError');
+      });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      let failedPressAccepted: boolean | undefined;
+      act(() => {
+        failedPressAccepted = result.current.isPointerDownValid(pointerEvent(el, { button: 0, pointerId: 7 }));
+      });
+
+      expect(failedPressAccepted).toBe(false);
+      expect(result.current.pointerIdRef.current).toBeNull();
+      expect(result.current.isMouseDown.current).toBe(false);
+      expect(el.releasePointerCapture).toHaveBeenCalledWith(7);
+
+      let laterPressAccepted: boolean | undefined;
+      act(() => {
+        laterPressAccepted = result.current.isPointerDownValid(pointerEvent(el, { button: 0, pointerId: 8 }));
+      });
+
+      expect(laterPressAccepted).toBe(true);
+      expect(result.current.pointerIdRef.current).toBe(8);
     });
 
     it('ignores a second concurrent pointer and keeps the first one active', () => {
@@ -638,6 +746,72 @@ describe('usePointerPosition', () => {
       expect(accepted).toBe(true);
     });
 
+    it('tracks pointercancel when the ref appears and changes during an active gesture', () => {
+      const first = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const second = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const ref = createRef(null);
+      const { result } = renderHook(() => usePointerPosition({ ref, imageSize: IMAGE }));
+
+      act(() => {
+        ref.current = first.el;
+        result.current.isPointerDownValid(pointerEvent(first.el, { pointerId: 1 }));
+      });
+      expect(first.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+
+      act(() => {
+        ref.current = second.el;
+      });
+      act(() => {
+        const event = new Event('pointercancel', { bubbles: true });
+        Object.defineProperty(event, 'pointerId', { value: 1 });
+        first.el.dispatchEvent(event);
+      });
+
+      expect(result.current.pointerIdRef.current).toBeNull();
+      expect(first.removed.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+      expect(second.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+
+      let accepted: boolean | undefined;
+      act(() => {
+        accepted = result.current.isPointerDownValid(pointerEvent(second.el, { pointerId: 2 }));
+      });
+      expect(accepted).toBe(true);
+
+      act(() => {
+        const event = new Event('pointercancel', { bubbles: true });
+        Object.defineProperty(event, 'pointerId', { value: 2 });
+        second.el.dispatchEvent(event);
+      });
+      expect(result.current.pointerIdRef.current).toBeNull();
+    });
+
+    it('keeps the active cancellation listener when the ref object is replaced', () => {
+      const first = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const second = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result, rerender } = renderHook(
+        ({ ref }: { ref: RefObject<HTMLDivElement | null> }) => usePointerPosition({ ref, imageSize: IMAGE }),
+        { initialProps: { ref: createRef(first.el) } }
+      );
+
+      act(() => {
+        result.current.isPointerDownValid(pointerEvent(first.el, { pointerId: 1 }));
+      });
+      rerender({ ref: createRef(second.el) });
+
+      expect(first.removed.filter((listener) => listener.type === 'pointercancel')).toHaveLength(0);
+      expect(second.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(0);
+
+      act(() => {
+        const event = new Event('pointercancel', { bubbles: true });
+        Object.defineProperty(event, 'pointerId', { value: 1 });
+        first.el.dispatchEvent(event);
+      });
+
+      expect(result.current.pointerIdRef.current).toBeNull();
+      expect(first.removed.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+      expect(second.added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(1);
+    });
+
     it('ignores pointercancel from a pointer that is not active', () => {
       const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
@@ -680,6 +854,34 @@ describe('usePointerPosition', () => {
     });
   });
 
+  describe('container scroll listener', () => {
+    it('registers once and removes the same handler on unmount', () => {
+      const { el, added, removed } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { unmount } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const registered = added.find((listener) => listener.type === 'scroll');
+      expect(registered).toBeDefined();
+      expect(added.filter((listener) => listener.type === 'scroll')).toHaveLength(1);
+
+      unmount();
+
+      const unregistered = removed.find((listener) => listener.type === 'scroll');
+      expect(unregistered?.handler).toBe(registered?.handler);
+      expect(removed.filter((listener) => listener.type === 'scroll')).toHaveLength(1);
+    });
+
+    it('does not subscribe when the ref only supports adding listeners', () => {
+      const { el, added } = createContainer({ left: 10, top: 20, width: 400, height: 200 });
+      Object.defineProperty(el, 'removeEventListener', { configurable: true, value: undefined });
+      const { result, unmount } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      expect(result.current.getLocalCoordsFromClientPoint(120, 34)).toEqual({ x: 5, y: 7 });
+      expect(added.filter((listener) => listener.type === 'scroll')).toHaveLength(0);
+      expect(added.filter((listener) => listener.type === 'pointercancel')).toHaveLength(0);
+      expect(() => unmount()).not.toThrow();
+    });
+  });
+
   describe('resize observer integration', () => {
     it('schedules a single throttled recompute when ResizeObserver reports a resize', () => {
       vi.useFakeTimers();
@@ -696,6 +898,9 @@ describe('usePointerPosition', () => {
       onResize.mockClear();
       getBoundingClientRect.mockClear();
 
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 0, top: 0, width: 500, height: 100 }));
+      setClientViewport(el, { width: 500, height: 100 });
+
       act(() => {
         observer.emit({ width: 500, height: 100 });
       });
@@ -710,44 +915,45 @@ describe('usePointerPosition', () => {
 
       expect(onResize).toHaveBeenCalledTimes(1);
       expect(getBoundingClientRect).toHaveBeenCalled();
-      // The observed rect drives the recompute: 500x100 around a 100x100 image
-      // scales by 1 and leaves a 200px gap on each horizontal side.
+      // The live 500x100 client viewport scales by 1 and leaves a 200px gap
+      // on each horizontal side.
       expect(onResize).toHaveBeenCalledWith(
         expect.objectContaining({ scale: 1, innerWidth: 100, innerHeight: 100, offsetX: 200, offsetY: 0 })
       );
     });
 
-    it('sizes the recompute from the observed border box, not the content box or a re-read', () => {
+    it('uses the client viewport when a scrollbar shrinks it without resizing the border box', () => {
       vi.useFakeTimers();
       vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
 
-      // The element's own rect keeps reporting 200x200, so a re-read of
-      // getBoundingClientRect() would silently replace the observed measurement.
-      const { el, getBoundingClientRect } = createContainer({ left: 5, top: 6, width: 200, height: 200 });
+      const { el, getBoundingClientRect } = createContainer({ left: 5, top: 6, width: 415, height: 220 });
+      setClientViewport(el, { left: 2, top: 2, width: 400, height: 200, offsetWidth: 415, offsetHeight: 220 });
       const onResize = vi.fn();
 
       renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
       onResize.mockClear();
       getBoundingClientRect.mockClear();
 
+      // A classic 15px vertical scrollbar changes the client width but leaves the
+      // border box at 415x220. ResizeObserver reports its content box by default.
+      setClientViewport(el, { left: 2, top: 2, width: 385, height: 200, offsetWidth: 415, offsetHeight: 220 });
       act(() => {
-        // 4px border: the border box is 400x300, the content box 392x292.
-        ControllableResizeObserver.instances[0].emit({ width: 400, height: 300 }, { width: 392, height: 292 });
+        ControllableResizeObserver.instances[0].emit({ width: 415, height: 220 }, { width: 385, height: 200 });
         vi.advanceTimersByTime(32);
       });
 
       expect(onResize).toHaveBeenCalledTimes(1);
-      // 400x300 around a 100x100 image scales by 3 and centres the 300x300 image
-      // with a 50px gap on each side. The re-read 200x200 would give scale 2, and
-      // the 392x292 content box would give 2.92.
+      expect(getBoundingClientRect).toHaveBeenCalled();
+      // The visible client area is 385x200. It is height-limited at scale 2 and
+      // leaves a 92.5px horizontal gap, regardless of the 415px border box.
       expect(onResize).toHaveBeenCalledWith(
         expect.objectContaining({
-          outerWidth: 400,
-          outerHeight: 300,
-          scale: 3,
-          innerWidth: 300,
-          innerHeight: 300,
-          offsetX: 50,
+          outerWidth: 385,
+          outerHeight: 200,
+          scale: 2,
+          innerWidth: 200,
+          innerHeight: 200,
+          offsetX: 92.5,
           offsetY: 0,
         })
       );
@@ -761,13 +967,12 @@ describe('usePointerPosition', () => {
       const { el, getBoundingClientRect } = createContainer(rect);
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 33, top: 44, width: 200, height: 200 }));
+      setClientViewport(el, { width: 200, height: 200 });
       act(() => {
         ControllableResizeObserver.instances[0].emit({ width: 200, height: 200 });
         vi.advanceTimersByTime(32);
       });
-
-      // Container actually resized to 200x200; scale 2, offsets 0.
-      getBoundingClientRect.mockReturnValue(toDomRect({ left: 33, top: 44, width: 200, height: 200 }));
 
       // scale 2, offsets 0 => x = (clientX - 33) / 2
       expect(result.current.getLocalCoords(pointerEvent(el, { clientX: 33 + 2 * 5, clientY: 44 + 2 * 6 }))).toEqual({
@@ -797,10 +1002,13 @@ describe('usePointerPosition', () => {
       vi.useFakeTimers();
       vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
 
-      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { el, getBoundingClientRect } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const onResize = vi.fn();
       renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
       onResize.mockClear();
+
+      getBoundingClientRect.mockReturnValue(toDomRect({ left: 0, top: 0, width: 500, height: 500 }));
+      setClientViewport(el, { width: 500, height: 500 });
 
       act(() => {
         ControllableResizeObserver.instances[0].emit({ width: 300, height: 300 });
@@ -917,6 +1125,16 @@ describe('usePointerPosition', () => {
       const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: 10, clientY: 20, target: null }));
 
       expect(coords).toEqual({ x: 5, y: 10 });
+    });
+
+    it('maps captured client coordinates through the same current fit as a pointer event', () => {
+      const { el } = createContainer({ left: 25, top: 40, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const eventCoords = result.current.getLocalCoords(pointerEvent(el, { clientX: 45, clientY: 70 }));
+      const capturedCoords = result.current.getLocalCoordsFromClientPoint(45, 70);
+
+      expect(capturedCoords).toEqual(eventCoords);
     });
 
     it('does not throw for a zero-size container and reports a zero scale to onResize', () => {

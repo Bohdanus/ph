@@ -81,6 +81,25 @@ const TOOL_BUTTON_BASE_CLASS =
 const TOOL_BUTTON_ACTIVE_CLASS =
   'border-blue-500 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.45)] text-blue-700 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100';
 
+function focusFlyoutItemAfterOpen(groupIndex: string, key: string, isCurrentRequest: () => boolean, attempt = 0) {
+  requestAnimationFrame(() => {
+    if (!isCurrentRequest()) return;
+
+    const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
+    const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
+    const menuVisible = menu && getComputedStyle(menu).visibility !== 'hidden';
+    if (!menuVisible || items.length === 0) {
+      if (attempt < 3) focusFlyoutItemAfterOpen(groupIndex, key, isCurrentRequest, attempt + 1);
+      return;
+    }
+
+    if (!isCurrentRequest()) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
+    items[nextIndex]?.focus();
+  });
+}
+
 const TOOL_BUTTON_INACTIVE_CLASS =
   'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
@@ -230,6 +249,7 @@ const SidebarLeft = () => {
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { isToolNew, markToolAsSeen } = useFirstUse();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const flyoutFocusRequestRef = useRef(0);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
   const { highlightedTools } = useFirstUseContext();
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
@@ -253,6 +273,7 @@ const SidebarLeft = () => {
   const isTablet = useIsTabletViewport();
   const isMobile = useIsMobileViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressPointerIdRef = useRef<number | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
   const ignoreNextClickRef = useRef(false);
@@ -447,10 +468,15 @@ const SidebarLeft = () => {
     }
   };
 
-  const openFlyout = (groupIndex: string) => {
-    clearLongPressFlyout();
-    suppressLongPressRef.current = false;
-    longPressOpenedRef.current = true;
+  const openFlyout = (groupIndex: string, preservePointerGesture = false) => {
+    // Any earlier deferred keyboard focus belongs to the open it came from. A pointer or
+    // another key can supersede that open before its visibility retries have drained.
+    flyoutFocusRequestRef.current += 1;
+    if (!preservePointerGesture) {
+      clearLongPressFlyout();
+      suppressLongPressRef.current = false;
+      longPressOpenedRef.current = true;
+    }
     setOpenGroup(groupIndex);
   };
 
@@ -478,6 +504,7 @@ const SidebarLeft = () => {
    */
   const closeFlyout = useCallback(
     (restoreFocus = false) => {
+      flyoutFocusRequestRef.current += 1;
       if (restoreFocus) {
         flyoutAnchor?.element.querySelector<HTMLButtonElement>('button')?.focus();
       }
@@ -502,6 +529,31 @@ const SidebarLeft = () => {
   useEffect(() => {
     return () => {
       if (longPressFlyoutTimeoutRef.current !== null) clearTimeout(longPressFlyoutTimeoutRef.current);
+      flyoutFocusRequestRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    // A grouped tile does not capture its pointer: an owner may release outside
+    // it after leaving. Observe that terminal event so the owner cannot remain
+    // stuck, while keeping ownership if the pointer leaves and returns first.
+    const finishOutsidePointer = (event: PointerEvent) => {
+      if (longPressPointerIdRef.current !== event.pointerId) return;
+      longPressPointerIdRef.current = null;
+      suppressLongPressRef.current = false;
+      longPressOpenedRef.current = false;
+      ignoreNextClickRef.current = false;
+      if (longPressFlyoutTimeoutRef.current !== null) {
+        clearTimeout(longPressFlyoutTimeoutRef.current);
+        longPressFlyoutTimeoutRef.current = null;
+      }
+    };
+
+    window.addEventListener('pointerup', finishOutsidePointer);
+    window.addEventListener('pointercancel', finishOutsidePointer);
+    return () => {
+      window.removeEventListener('pointerup', finishOutsidePointer);
+      window.removeEventListener('pointercancel', finishOutsidePointer);
     };
   }, []);
 
@@ -640,10 +692,26 @@ const SidebarLeft = () => {
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}${
               isTileUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''
             }${isTileHighlighted ? ' tool-highlight-pulse' : ''}`}
-            onClick={() => {
+            onClick={(event) => {
+              // A native click does not carry the pointer id that produced it. While a
+              // pointer owns the pending long-press, another pointer's click must not
+              // clear that owner's timer or toggle the flyout. A detail-zero click is
+              // pressless assistive activation; honor it without altering pointer state.
+              if (hasFlyout && longPressPointerIdRef.current !== null) {
+                if (event.detail === 0) {
+                  // The active pointer will still synthesize a click when it is released.
+                  // Treat the menu change as belonging to that gesture so the later click
+                  // cannot immediately reverse the independent assistive activation.
+                  longPressOpenedRef.current = true;
+                  if (isOpen) closeFlyout();
+                  else openFlyout(groupIndex, true);
+                }
+                return;
+              }
+
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
-                return;
+                if (event.detail !== 0) return;
               }
 
               suppressLongPressRef.current = true;
@@ -689,18 +757,15 @@ const SidebarLeft = () => {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 openFlyout(groupIndex);
-                requestAnimationFrame(() => {
-                  const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
-                  const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
-                  if (items.length === 0) return;
-                  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-                  const nextIndex = event.key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
-                  items[nextIndex]?.focus();
-                });
+                const request = ++flyoutFocusRequestRef.current;
+                focusFlyoutItemAfterOpen(groupIndex, event.key, () => flyoutFocusRequestRef.current === request);
               }
             }}
             onPointerDown={(event) => {
               if (!hasFlyout || event.button !== 0) return;
+              const pointerOwner = longPressPointerIdRef.current;
+              if (pointerOwner !== null && pointerOwner !== event.pointerId) return;
+              longPressPointerIdRef.current = event.pointerId;
               suppressLongPressRef.current = false;
               ignoreNextClickRef.current = false;
               longPressOpenedRef.current = false;
@@ -726,22 +791,17 @@ const SidebarLeft = () => {
               }
               scheduleFlyoutOpen(groupIndex);
             }}
-            onPointerLeave={() => {
+            onPointerLeave={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              // Leaving cancels a pending hold, not the pointer's ownership. If
+              // it returns after opening the menu, its release-generated click
+              // must still be suppressed. A release outside is cleared globally.
               suppressLongPressRef.current = false;
-              longPressOpenedRef.current = false;
-              // `ignoreNextClickRef` too, and this is load-bearing rather than tidiness. The
-              // three-dots press sets it, and its only clearer is that button's own `onClick` —
-              // so a press that leaves the button before releasing (a drag, or a pointer capture
-              // stolen by a scroll) never produces that click, and the flag survives. The
-              // casualty is the NEXT activation: for a mouse the next press on any grouped tile
-              // clears it first, but an assistive technology's click on this tile has no press,
-              // so a stranded flag swallows the one activation AT has for reaching a menu.
-              // Cheap, and it cannot lose anything — the press it cancels is one that never
-              // resolved into a click anyway.
-              ignoreNextClickRef.current = false;
               clearLongPressFlyout();
             }}
-            onPointerUp={() => {
+            onPointerUp={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              longPressPointerIdRef.current = null;
               suppressLongPressRef.current = false;
               if (hasFlyout && longPressOpenedRef.current) {
                 ignoreNextClickRef.current = true;
@@ -749,7 +809,9 @@ const SidebarLeft = () => {
               longPressOpenedRef.current = false;
               clearLongPressFlyout();
             }}
-            onPointerCancel={() => {
+            onPointerCancel={(event) => {
+              if (longPressPointerIdRef.current !== event.pointerId) return;
+              longPressPointerIdRef.current = null;
               suppressLongPressRef.current = false;
               longPressOpenedRef.current = false;
               // A cancelled pointer never produces a click, so the flag it would have set is
@@ -792,7 +854,6 @@ const SidebarLeft = () => {
           <AnchoredOverlay
             align="start"
             anchor={flyoutAnchor.element}
-            label="Tool options"
             measureKey={groupIndex}
             side={overlaySide}
             xAnchor={railElement}

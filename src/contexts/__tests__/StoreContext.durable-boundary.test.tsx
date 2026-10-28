@@ -851,10 +851,12 @@ describe('StoreContext DurableDocumentStatus contract', () => {
           isActive: true,
           pos: { x: 0, y: 0, width: 10, height: 10 },
           points: [
-            { x: 0, y: 0 },
-            { x: 10, y: 0 },
-            { x: 10, y: 10 },
-            { x: 0, y: 10 },
+            [
+              { x: 0, y: 0 },
+              { x: 10, y: 0 },
+              { x: 10, y: 10 },
+              { x: 0, y: 10 },
+            ],
           ],
         },
       });

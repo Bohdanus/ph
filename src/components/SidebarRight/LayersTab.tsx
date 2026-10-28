@@ -1,5 +1,5 @@
 // src/components/SidebarRight/LayersTab.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -29,6 +29,16 @@ import {
 import LayerThumbnail from './LayerThumbnail.tsx';
 
 type UpdateLayer = ReturnType<typeof useLayers>['updateLayer'];
+
+export const LAYER_REORDER_LONG_PRESS_MS = 250;
+
+function releaseCapturedPointer(pointerDrag: { captureTarget: HTMLDivElement; pointerId: number }) {
+  try {
+    pointerDrag.captureTarget.releasePointerCapture(pointerDrag.pointerId);
+  } catch {
+    // Capture may already be gone after cancellation, focus loss, or unmount.
+  }
+}
 
 function LayerLockIcon({ locked, className = 'h-4 w-4' }: { locked: boolean; className?: string }) {
   return (
@@ -138,6 +148,7 @@ type LayerOpacityControlProps = {
 
 function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacityControlProps) {
   const [draftPercent, setDraftPercent] = useState<number | null>(null);
+  const pointerOwnerRef = useRef<number | null>(null);
   const opacityPercent = draftPercent ?? Math.round(layer.opacity * 100);
 
   function finishGesture() {
@@ -148,6 +159,42 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
     if (layer.opacity !== nextOpacity) {
       updateLayer(layer.id, { opacity: nextOpacity }, SET_LAYER_OPACITY_ACTION);
     }
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== null && pointerOwnerRef.current !== event.pointerId) {
+      event.preventDefault();
+      return;
+    }
+    pointerOwnerRef.current = event.pointerId;
+    // Range controls do not have to receive implicit pointer capture in every
+    // browser. Explicit capture keeps the owner's terminal event on this input
+    // even if a drag blurs it or leaves its bounds.
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function finishPointerGesture(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== event.pointerId) return;
+    pointerOwnerRef.current = null;
+    finishGesture();
+  }
+
+  function cancelPointerGesture(event: ReactPointerEvent<HTMLInputElement>) {
+    if (pointerOwnerRef.current !== event.pointerId) return;
+    pointerOwnerRef.current = null;
+    setDraftPercent(null);
+  }
+
+  function finishKeyboardGesture() {
+    if (pointerOwnerRef.current !== null) return;
+    finishGesture();
+  }
+
+  function finishBlur() {
+    // Pointer-owned drags can blur when capture or focus moves mid-gesture. Only
+    // their own up/cancel event may end the draft; blur ends keyboard edits only.
+    if (pointerOwnerRef.current !== null) return;
+    finishGesture();
   }
 
   return (
@@ -172,10 +219,12 @@ function LayerOpacityControl({ layer, updateLayer, textEditActive }: LayerOpacit
                 onChange={(event) => {
                   if (!layer.locked && !layer.isBedrock) setDraftPercent(Number(event.currentTarget.value));
                 }}
-                onPointerUp={finishGesture}
-                onPointerCancel={() => setDraftPercent(null)}
-                onKeyUp={finishGesture}
-                onBlur={finishGesture}
+                onPointerDown={handlePointerDown}
+                onPointerUp={finishPointerGesture}
+                onPointerCancel={cancelPointerGesture}
+                onLostPointerCapture={cancelPointerGesture}
+                onKeyUp={finishKeyboardGesture}
+                onBlur={finishBlur}
                 className="min-w-0 flex-1"
               />
               <output aria-live="polite" className="text-gray-800 dark:text-white">
@@ -205,7 +254,7 @@ export default function LayersTab() {
     beginTextLayerEdit,
     commitDirtyTool,
   } = useLayers();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, requestTextEditFocus } = useCurrentTool();
   const textEditActive = toolArgs.toolName === 'text' && Boolean(toolArgs.rect);
   const textEditingLayerId = textEditActive && toolArgs.toolName === 'text' ? (toolArgs.editingLayerId ?? null) : null;
   const { goToTool } = useApp();
@@ -220,19 +269,25 @@ export default function LayersTab() {
   const [isOverBottom, setIsOverBottom] = useState(false);
 
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
+  const canReorderLayer = (layerId: LayerId | null): layerId is LayerId =>
+    isMovableLayer(layerId) && editingLayerId !== layerId;
 
   // Touch and pen input do not start HTML5 drag events, so keep a separate pointer-capture
   // gesture while leaving the desktop data-transfer path unchanged.
   const pointerDragRef = useRef<{
     pointerId: number;
     layerId: LayerId;
+    captureTarget: HTMLDivElement;
     startX: number;
     startY: number;
+    canStart: boolean;
+    longPressTimer: ReturnType<typeof setTimeout> | null;
     active: boolean;
     targetId: LayerId | null;
     overBottom: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
+  const suppressPointerClickRef = useRef(false);
   const LAYER_REORDER_DRAG_THRESHOLD = 3;
 
   const [animatingLayerId, setAnimatingLayerId] = useState<LayerId | null>(null);
@@ -240,18 +295,23 @@ export default function LayersTab() {
   const [isExpanding, setIsExpanding] = useState(false);
 
   const selectLayer = (id: LayerId) => {
+    let layersAfterCommit = layers;
     if (textEditActive && toolArgs.toolName === 'text') {
-      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
-      if (commitDirtyTool() === null) return;
+      if (toolArgs.editingLayerId === id) return;
+      const committedLayers = commitDirtyTool();
+      if (committedLayers === null) return;
+      layersAfterCommit = committedLayers;
     }
     setActiveLayer(id);
-    const source = layers[id]?.source;
+    const selectedLayer = layersAfterCommit[id];
+    const source = selectedLayer?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
       if (source.args.toolName === 'text') {
-        const target = textLayerEditTarget(layers[id], documentFrame ?? documentFrameFromSize(totalSize));
+        const target = textLayerEditTarget(selectedLayer, documentFrame ?? documentFrameFromSize(totalSize));
         if (target) {
           beginTextLayerEdit(target.layerId);
           setToolArgs(target.args);
+          requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
         }
       } else {
         setToolArgs(source.args);
@@ -262,17 +322,21 @@ export default function LayersTab() {
   const enterTextLayer = (id: LayerId) => {
     const layer = layers[id];
     if (!layer) return;
-    const target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
+    let target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
     if (!target) return;
     if (textEditActive && toolArgs.toolName === 'text') {
-      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
-      if (commitDirtyTool() === null) return;
+      if (toolArgs.editingLayerId === id) return;
+      const committedLayers = commitDirtyTool();
+      if (committedLayers === null) return;
+      target = textLayerEditTarget(committedLayers[id], documentFrame ?? documentFrameFromSize(totalSize));
+      if (!target) return;
     } else if (toolArgs.toolName !== 'text' && goToTool('text') === false) {
       return;
     }
     setActiveLayer(id);
     beginTextLayerEdit(target.layerId);
     setToolArgs(target.args);
+    requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
   };
 
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
@@ -297,6 +361,14 @@ export default function LayersTab() {
 
   useEffect(() => {
     return () => {
+      const pointerDrag = pointerDragRef.current;
+      pointerDragRef.current = null;
+      if (pointerDrag) {
+        if (pointerDrag.longPressTimer !== null) clearTimeout(pointerDrag.longPressTimer);
+        releaseCapturedPointer(pointerDrag);
+      }
+      suppressClickRef.current = false;
+      suppressPointerClickRef.current = false;
       // Unmounting mid-drag happens whenever the dock crosses the label threshold under a live
       // column resize, which unmounts this whole tab.
       if (lockedRef.current) {
@@ -308,9 +380,17 @@ export default function LayersTab() {
 
   useEffect(() => {
     const cancelPointerDrag = () => {
-      if (!pointerDragRef.current) return;
+      const pointerDrag = pointerDragRef.current;
+      if (!pointerDrag) {
+        suppressClickRef.current = false;
+        suppressPointerClickRef.current = false;
+        return;
+      }
+      if (pointerDrag.longPressTimer !== null) clearTimeout(pointerDrag.longPressTimer);
       pointerDragRef.current = null;
+      releaseCapturedPointer(pointerDrag);
       suppressClickRef.current = false;
+      suppressPointerClickRef.current = false;
       setDraggedLayerId(null);
       setDropTargetId(null);
       setIsOverBottom(false);
@@ -388,37 +468,77 @@ export default function LayersTab() {
     const pointerDrag = pointerDragRef.current;
     if (!pointerDrag) return;
     if (event && event.pointerId !== pointerDrag.pointerId) return;
-    try {
-      event?.currentTarget.releasePointerCapture(pointerDrag.pointerId);
-    } catch {
-      // Capture may already have been released before pointerup/pointercancel arrives.
-    }
+    if (pointerDrag.longPressTimer !== null) clearTimeout(pointerDrag.longPressTimer);
     pointerDragRef.current = null;
+    suppressClickRef.current = false;
+    suppressPointerClickRef.current = false;
+    releaseCapturedPointer(pointerDrag);
     setDraggedLayerId(null);
     setDropTargetId(null);
     setIsOverBottom(false);
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>, layerId: LayerId) {
-    if (event.pointerType === 'mouse' || editingLayerId === layerId || !isMovableLayer(layerId)) return;
-    pointerDragRef.current = {
+    // A prior drag may end over a non-clickable target, so retire its one-shot click suppression
+    // when a new physical gesture begins. The click generated by the completed drag has no new down.
+    suppressPointerClickRef.current = false;
+    if (event.pointerType === 'mouse' || pointerDragRef.current || !canReorderLayer(layerId)) {
+      return;
+    }
+
+    const isTouch = event.pointerType === 'touch';
+    if (isTouch && event.isPrimary === false) return;
+    const startedOnThumbnail =
+      event.target instanceof Element && event.target.closest('[data-testid="layer-thumbnail"]') !== null;
+    if (isTouch && !startedOnThumbnail) return;
+
+    const pointerDrag = {
       pointerId: event.pointerId,
       layerId,
+      captureTarget: event.currentTarget,
       startX: event.clientX,
       startY: event.clientY,
+      canStart: !isTouch,
+      longPressTimer: null as ReturnType<typeof setTimeout> | null,
       active: false,
       targetId: null,
       overBottom: false,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerDragRef.current = pointerDrag;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      pointerDragRef.current = null;
+      return;
+    }
+
+    if (isTouch) {
+      try {
+        pointerDrag.longPressTimer = setTimeout(() => {
+          if (pointerDragRef.current !== pointerDrag) return;
+          pointerDrag.canStart = true;
+          pointerDrag.longPressTimer = null;
+        }, LAYER_REORDER_LONG_PRESS_MS);
+      } catch {
+        clearPointerDrag(event);
+      }
+    }
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const pointerDrag = pointerDragRef.current;
     if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    if (!canReorderLayer(pointerDrag.layerId)) {
+      clearPointerDrag(event);
+      return;
+    }
     if (!pointerDrag.active) {
       const distance = Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY);
       if (distance < LAYER_REORDER_DRAG_THRESHOLD) return;
+      if (!pointerDrag.canStart) {
+        clearPointerDrag(event);
+        return;
+      }
       pointerDrag.active = true;
       suppressClickRef.current = true;
       setDraggedLayerId(pointerDrag.layerId);
@@ -445,7 +565,14 @@ export default function LayersTab() {
     if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
     const { active, layerId, targetId, overBottom } = pointerDrag;
     clearPointerDrag(event);
-    if (active && isMovableLayer(layerId) && (targetId || overBottom)) animateMove(layerId, targetId ?? undefined);
+    if (active) suppressPointerClickRef.current = true;
+    if (active && canReorderLayer(layerId) && (targetId || overBottom)) animateMove(layerId, targetId ?? undefined);
+  }
+
+  function handleLostPointerCapture(event: React.PointerEvent<HTMLDivElement>) {
+    const pointerDrag = pointerDragRef.current;
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    clearPointerDrag(event);
   }
 
   return (
@@ -461,7 +588,11 @@ export default function LayersTab() {
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
-        <ul data-testid="layers-list" className="flex flex-col list-none p-0 pt-1 gap-1 overflow-y-auto min-h-0">
+        <ul
+          data-testid="layers-list"
+          data-touch-reorder-hold-ms={LAYER_REORDER_LONG_PRESS_MS}
+          className="flex flex-col list-none p-0 pt-1 gap-1 overflow-y-auto min-h-0"
+        >
           {sortedLayers.map((layer, index) => {
             const isActive = activeLayerId === layer.id;
             const isPickedLayer = draggedLayerId === layer.id;
@@ -472,6 +603,7 @@ export default function LayersTab() {
               dropTargetId !== draggedLayerId &&
               prevLayerId !== draggedLayerId;
             const isEditable = editingLayerId === layer.id;
+            const canReorder = canReorderLayer(layer.id);
             const isAnimating = animatingLayerId === layer.id;
             const previewLayer = previewLayers?.current[layer.id]?.layer ?? layer;
 
@@ -498,9 +630,9 @@ export default function LayersTab() {
 
                 <div
                   data-testid="layer-row-content"
-                  draggable={!layer.isBedrock && !layer.locked && editingLayerId !== layer.id}
+                  draggable={canReorder}
                   onDragStart={(e) => {
-                    if (isEditable || !isMovableLayer(layer.id)) {
+                    if (!canReorder) {
                       e.preventDefault();
                       return;
                     }
@@ -518,6 +650,8 @@ export default function LayersTab() {
                     setDraggedLayerId(null);
                     setDropTargetId(null);
                     setIsOverBottom(false);
+                    suppressClickRef.current = false;
+                    suppressPointerClickRef.current = false;
                   }}
                   onDragOver={(e) => {
                     e.stopPropagation();
@@ -534,6 +668,8 @@ export default function LayersTab() {
                     setDraggedLayerId(null);
                     setDropTargetId(null);
                     setIsOverBottom(false);
+                    suppressClickRef.current = false;
+                    suppressPointerClickRef.current = false;
 
                     if (!isMovableLayer(draggedLayerId) || !isDropTarget) return;
 
@@ -544,14 +680,19 @@ export default function LayersTab() {
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
                   onPointerCancel={(event) => {
+                    const pointerDrag = pointerDragRef.current;
+                    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
                     clearPointerDrag(event);
-                    suppressClickRef.current = false;
                   }}
-                  onClick={() => {
-                    if (suppressClickRef.current) {
+                  onLostPointerCapture={handleLostPointerCapture}
+                  onClick={(event) => {
+                    if (suppressClickRef.current || (suppressPointerClickRef.current && event.detail > 0)) {
                       suppressClickRef.current = false;
+                      suppressPointerClickRef.current = false;
                       return;
                     }
+                    suppressClickRef.current = false;
+                    suppressPointerClickRef.current = false;
                     selectLayer(layer.id);
                   }}
                   onDoubleClick={() => enterTextLayer(layer.id)}
@@ -579,7 +720,7 @@ export default function LayersTab() {
                     <EyeIcon open={layer.visible} />
                   </button>
 
-                  <LayerThumbnail layer={previewLayer} />
+                  <LayerThumbnail layer={previewLayer} touchReorderEnabled={canReorder} />
 
                   {layer.isBedrock ? <BedrockIcon /> : <LayerTypeIcon source={layer.source} />}
 

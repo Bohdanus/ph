@@ -7,7 +7,7 @@ import { spotHealing } from './spotHealing.ts';
 import { healingBrush } from './healingBrush.ts';
 import { patch } from './patch.ts';
 import { colors } from './colors.ts';
-import { colorReplacement } from './colorReplacement.ts';
+import { colorReplacement, COLOR_REPLACEMENT_MAX_STAGING_PIXELS } from './colorReplacement.ts';
 import { crop } from './crop.ts';
 import { burn, dodge } from './dodgeBurn.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
@@ -28,6 +28,7 @@ import { smudge } from './smudge.ts';
 import { sponge } from './sponge.ts';
 import { text } from './text.ts';
 import { transform } from './transform.ts';
+import { MAX_RASTER_SELECTION_PIXELS } from '../util/selection-mask.ts';
 
 export type ProcessorToolParams = {
   size: Size;
@@ -63,6 +64,8 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
+  /** Maximum staged raster size for processors whose pixel algorithms have an explicit cap. */
+  maxStagingPixelCount?: number;
   /**
    * Whether the processor reads the existing layer bitmap before producing its
    * raster result. Omitted means true; draw-backed paint processors are the
@@ -145,7 +148,7 @@ const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: num
 const replay = (kind: ToolReplayKind, requiresRaster: boolean, deterministic = true) =>
   Object.freeze({ kind, deterministic, version: 1, requiresRaster });
 
-/** The width `defaultSettings.pencil` seeds the pencil with (src/tools/settings.ts:126). */
+/** The width `defaultSettings.pencil.lineWidth` seeds the pencil with. */
 const DEFAULT_PENCIL_LINE_WIDTH = 3;
 
 const unimplemented = () => () => [null as never] as ToolResult;
@@ -240,7 +243,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   // The Photoshop focus family below, plus the tonal tools, are all `commit: 'raster'`
   // and therefore all get durable shadow support with no durable code of their own:
-  // `history-adapter.ts:416-424` converts ANY `commit: 'raster'` tool into an
+  // `history-adapter` converts ANY `commit: 'raster'` tool into an
   // `apply-raster-processor` operation keyed on `args.toolName`, with no allowlist to
   // extend. A new raster tool is replayable in the shadow document the day it is
   // registered here.
@@ -252,9 +255,9 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   // The 1-pixel marquees are the Rectangular Marquee's processor verbatim: it is a
   // pass-through that returns the document bitmap untouched, because a selection is
-  // geometry in the store and no pixels at all (`rectangularSelection.ts:9`-`:13`).
+  // geometry in the store and no pixels at all (`rectangularSelection()`).
   // Two separate `replay(...)` calls rather than one shared result, because
-  // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
+  // `tool-processors.test.ts` requires a distinct frozen descriptor per tool.
   'single-row-marquee': {
     commit: 'selection',
     replay: replay('selection', true),
@@ -323,6 +326,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: cloneStamp,
   },
   'red-eye': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
@@ -370,6 +374,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     },
   },
   'color-replacement': {
+    maxStagingPixelCount: COLOR_REPLACEMENT_MAX_STAGING_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     // No `@ts-expect-error` here, unlike the entries above it: `colorReplacement` narrows its
@@ -383,11 +388,13 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: (params) => (args) => eraser(params)(args),
   },
   'magic-eraser': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => magicEraser(params)(args),
   },
   'paint-bucket': {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
     commit: 'raster',
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => paintBucket(params)(args),

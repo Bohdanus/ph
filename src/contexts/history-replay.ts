@@ -22,7 +22,13 @@ import type { ActionType } from '../util/constants.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
-import { deriveSelectionBaseline, type SelectionHistoryArgs } from './selection-baseline.ts';
+import {
+  activeSelectionIdFromSnapshot,
+  cloneSelection,
+  deriveSelectionBaseline,
+  isValidLegacySelectionSnapshot,
+  type SelectionHistoryArgs,
+} from './selection-baseline.ts';
 import { documentAffineToLayerLocal, isIdentityAffineTransform, validateAffineTransform } from './affine-transform.ts';
 import {
   HIDE_LAYER_ACTION,
@@ -63,7 +69,8 @@ export type ReplayDiagnostic = Readonly<{
     | 'invalid-layer-blend-mode'
     | 'invalid-document-transform'
     | 'invalid-layer-opacity'
-    | 'invalid-layer-source';
+    | 'invalid-layer-source'
+    | 'invalid-selection-snapshot';
   error: unknown;
 }>;
 
@@ -124,12 +131,12 @@ export function replayHistory(
       // A document replacement means to be a WHOLE new document, so it is honoured
       // only as the first entry, which is how one is ever written: the single
       // production producer is `REPLACE_DOCUMENT` with `history: [entry]`
-      // (`useApp.ts:120`, `useLayer.ts:195`). Carried mid-history it would replace
+      // from the document-replacement path in `useApp`. Carried mid-history it would replace
       // the layer record and resize the canvas from anywhere in the timeline, which
       // is the same class of defect as the mid-history bedrock source below, so it is
       // refused — the durable converter already refuses it, reporting
       // `document-replacement` and holding the previous state
-      // (`history-adapter.ts:640`). Unreachable in production today, so this is a
+      // through `history-adapter`. Unreachable in production today, so this is a
       // parity repair rather than a fix for something a user can see.
       if (index === 0) {
         layers = cloneLayers(documentSource.layers);
@@ -193,8 +200,17 @@ export function replayHistory(
 
     if (actionName === SELECTION_ACTION) {
       const next = (args as SelectionHistoryArgs | undefined)?.nextSelectionState;
-      selections = next?.selections.map((selection) => ({ ...selection })) ?? [];
-      activeSelectionId = next?.activeSelectionId ?? null;
+      if (next != null && !isValidLegacySelectionSnapshot(next)) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-selection-snapshot',
+          error: new TypeError('Selection history value is not a valid selection snapshot'),
+        });
+        continue;
+      }
+      selections = next?.selections.map(cloneSelection) ?? [];
+      activeSelectionId = activeSelectionIdFromSnapshot(selections, next?.activeSelectionId);
       continue;
     }
 
@@ -332,7 +348,7 @@ export function replayHistory(
         try {
           requireCanvasFilter(toolArgs.toolName);
         } catch (error) {
-          // The commit gate at `useLayer.ts:356` refuses the same tool and logs it
+          // The `tempUpdateLayer()` canvas-filter gate refuses the same tool and logs it
           // there, before any `TOOL_ACTION` exists, so this catch is a backstop for
           // a timeline that arrived some other way. It records rather than logs,
           // because replay repeats: see `ReplayDiagnostic`.
@@ -381,7 +397,7 @@ export function replayHistory(
         // one loses a real edit: `getTransformFromHistoryArgs` validates the affine
         // against `layer.pos` AS IT IS NOW, while it was validated at commit time
         // against the pos the layer had then (`normalizeCommittedToolArgs` at
-        // `useLayer.ts:74-79` writes the retained transform into the committed
+        // `normalizeCommittedToolArgs()` writes the retained transform into the committed
         // args), so a transform valid when committed can fail a bounds check here
         // after the layer moved. Recorded, not logged — see `ReplayDiagnostic`.
         diagnostics.push({

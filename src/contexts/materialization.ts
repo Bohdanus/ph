@@ -8,8 +8,10 @@ import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
 import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
 import {
+  assertProcessorStagingBudget,
   drawEvaluatedPresentation,
   evaluatePresentation,
+  getProcessorRasterSize,
   scaleTextArgs,
   scaleVectorArgs,
   type PresentationOperation,
@@ -25,6 +27,8 @@ export type MaterializationRequest = Readonly<{
   assetRegistry: AssetRegistry;
   signal?: AbortSignal;
 }>;
+
+type MaterializationCanvas = OffscreenCanvas | HTMLCanvasElement;
 
 export type MaterializedLayer = Readonly<{
   layerId: string;
@@ -97,6 +101,23 @@ function layerSize(layer: DurableReplayLayer): Size {
   };
 }
 
+function assertDocumentGeneration(request: MaterializationRequest): void {
+  if (request.assetRegistry.getDocumentGeneration(request.documentId) !== request.baselineAssetGeneration) {
+    throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const nameGetter = Object.getOwnPropertyDescriptor(DOMException.prototype, 'name')?.get;
+  if (!nameGetter) return false;
+  try {
+    return Reflect.apply(nameGetter, error, []) === 'AbortError';
+  } catch {
+    return false;
+  }
+}
+
 function presentationOperations(operations: readonly DurableOperation[]): PresentationOperation[] {
   const normalized: PresentationOperation[] = [];
   for (const operation of operations) {
@@ -120,6 +141,38 @@ function presentationOperations(operations: readonly DurableOperation[]): Presen
     });
   }
   return normalized;
+}
+
+function isNoOpColorReplacement(operation: DurableOperation): boolean {
+  if (operation.kind !== 'apply-raster-processor' || operation.processorId !== 'color-replacement') return false;
+  const opacity = operation.args.alpha;
+  return typeof opacity === 'number' && Number.isFinite(opacity) && opacity <= 0;
+}
+
+/** Refuse an over-budget first processor before resolving or creating its source raster. */
+function preflightFirstRasterProcessor(layer: DurableReplayLayer): void {
+  for (let processorIndex = 0; processorIndex < layer.operations.length; processorIndex++) {
+    const operation = layer.operations[processorIndex];
+    if (!operation || operation.kind !== 'apply-raster-processor') continue;
+
+    const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
+    if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
+    if (processor.replay.version !== operation.version) {
+      throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
+    }
+    if (isNoOpColorReplacement(operation)) continue;
+    if (processor.maxStagingPixelCount === undefined) return;
+
+    const evaluation = evaluatePresentation({
+      position: layer.snapshot.pos,
+      sourceSize: layerSize(layer),
+      operations: presentationOperations(layer.operations.slice(0, processorIndex)),
+      mode: 'layer-bounds',
+    });
+    const rasterSize = getProcessorRasterSize(evaluation.localBounds);
+    assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+    return;
+  }
 }
 
 /**
@@ -146,7 +199,12 @@ async function sourceBitmap(
     ctx.fillStyle = source.color;
     ctx.globalAlpha = source.opacity;
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
-    return { bitmap: canvas, release: () => undefined, size: renderSize, borrowed: false };
+    return {
+      bitmap: canvas,
+      release: () => undefined,
+      size: renderSize,
+      borrowed: false,
+    };
   } else {
     const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
@@ -220,13 +278,19 @@ export function createMaterializationKey(layer: DurableReplayLayer, request: Mat
 
 export async function materializeLayer(
   layer: DurableReplayLayer,
-  request: MaterializationRequest
+  request: MaterializationRequest,
+  sharedFrameSurface?: MaterializationCanvas
 ): Promise<MaterializedLayer> {
+  if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
   const key = createMaterializationKey(layer, request);
   const lease = await request.assetRegistry.materialize({
     key,
     documentId: request.documentId,
+    expectedDocumentGeneration: request.baselineAssetGeneration,
     producer: async () => {
+      // The first processor's presented extent can be computed from the immutable record alone.
+      // Check it before sourceBitmap creates a blank/creator raster or resolves a borrowed asset.
+      preflightFirstRasterProcessor(layer);
       const source = await sourceBitmap(layer, request);
       let bitmap = source.bitmap;
       // Layer.pos is the current logical presentation size. The source size
@@ -234,7 +298,9 @@ export async function materializeLayer(
       // current geometry, matching the runtime layer renderer.
       let size = layerSize(layer);
       let origin = { x: layer.snapshot.pos.x, y: layer.snapshot.pos.y };
-      let ownsBitmap = false;
+      let ownsBitmap = !source.borrowed;
+      let frameSurface = sharedFrameSurface;
+      let ownedFrameSurface: MaterializationCanvas | undefined;
 
       const replaceOwnedBitmap = (next: BitmapSource) => {
         const previous = bitmap;
@@ -246,10 +312,28 @@ export async function materializeLayer(
         ownsBitmap = previous === next ? previousWasOwned : true;
       };
 
+      const getFrameSurface = (frame: DocumentFrame): MaterializationCanvas => {
+        if (!frameSurface) {
+          // Preserve the exported materializeLayer() contract for direct callers.
+          // materializeDocument() supplies a shared surface so document passes
+          // reuse one allocation; a standalone layer owns its local scratch.
+          frameSurface = createCanvas(frame.width, frame.height);
+          ownedFrameSurface = frameSurface;
+        }
+        if (
+          frameSurface.width !== Math.max(1, Math.ceil(frame.width)) ||
+          frameSurface.height !== Math.max(1, Math.ceil(frame.height))
+        ) {
+          throw new Error('The shared materialization frame surface must match the requested document frame');
+        }
+        return frameSurface;
+      };
+
       const renderRetainedSegment = async (
         operations: readonly DurableOperation[],
         force = false,
-        pixelGridFrame?: MaterializationRequest['pixelGridFrame']
+        pixelGridFrame?: MaterializationRequest['pixelGridFrame'],
+        maxPixelCount?: number
       ) => {
         if (!force && operations.length === 0) return;
         const evaluation = evaluatePresentation({
@@ -259,6 +343,9 @@ export async function materializeLayer(
           mode: 'layer-bounds',
         });
         const pixelGridBounds = pixelGridFrame ? alignBoundsToFrame(evaluation.bounds, pixelGridFrame) : undefined;
+        const outputWidth = Math.max(1, Math.ceil(pixelGridBounds?.width ?? evaluation.localBounds.width));
+        const outputHeight = Math.max(1, Math.ceil(pixelGridBounds?.height ?? evaluation.localBounds.height));
+        assertProcessorStagingBudget(outputWidth, outputHeight, maxPixelCount);
         const output = pixelGridBounds
           ? createCanvas(pixelGridBounds.width, pixelGridBounds.height)
           : createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
@@ -273,6 +360,60 @@ export async function materializeLayer(
           drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'bounds' });
         } finally {
           ctx.restore();
+        }
+        if (pixelGridFrame && pixelGridBounds) {
+          // Rasterize visible pixels in document coordinates so this tight
+          // per-layer bitmap uses the same pixel phase as the legacy renderer.
+          // Preserve any off-frame portion from the bounded pass above.
+          const rasterizationSurface = getFrameSurface(pixelGridFrame);
+          const frameContext = context2d(rasterizationSurface);
+          frameContext.save();
+          try {
+            frameContext.globalAlpha = 1;
+            frameContext.globalCompositeOperation = 'source-over';
+            frameContext.filter = 'none';
+            frameContext.clearRect(0, 0, rasterizationSurface.width, rasterizationSurface.height);
+            drawEvaluatedPresentation(frameContext, bitmap, evaluation, {
+              kind: 'document',
+              frame: pixelGridFrame,
+            });
+          } finally {
+            frameContext.restore();
+          }
+
+          const left = Math.max(pixelGridBounds.x, pixelGridFrame.x);
+          const top = Math.max(pixelGridBounds.y, pixelGridFrame.y);
+          const right = Math.min(pixelGridBounds.x + pixelGridBounds.width, pixelGridFrame.x + pixelGridFrame.width);
+          const bottom = Math.min(pixelGridBounds.y + pixelGridBounds.height, pixelGridFrame.y + pixelGridFrame.height);
+          if (right > left && bottom > top) {
+            const sourceX = left - pixelGridFrame.x;
+            const sourceY = top - pixelGridFrame.y;
+            const destinationX = left - pixelGridBounds.x;
+            const destinationY = top - pixelGridBounds.y;
+            const width = right - left;
+            const height = bottom - top;
+            ctx.save();
+            try {
+              ctx.globalAlpha = 1;
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.filter = 'none';
+              ctx.imageSmoothingEnabled = false;
+              ctx.clearRect(destinationX, destinationY, width, height);
+              ctx.drawImage(
+                rasterizationSurface as CanvasImageSource,
+                sourceX,
+                sourceY,
+                width,
+                height,
+                destinationX,
+                destinationY,
+                width,
+                height
+              );
+            } finally {
+              ctx.restore();
+            }
+          }
         }
         replaceOwnedBitmap(await toOwnedBitmap(output));
         origin = pixelGridBounds
@@ -296,33 +437,60 @@ export async function materializeLayer(
 
           // A raster processor consumes the exact presentation produced by all
           // preceding retained operations. It cannot be moved before them.
-          // Always draw into a private surface before a pixel processor. Some
-          // processors mutate their input canvas, while registry assets and
-          // source-local rasters are borrowed for this operation.
-          await renderRetainedSegment(retainedOperations, true);
-          retainedOperations = [];
           const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
           if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
           if (processor.replay.version !== operation.version) {
             throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
           }
-          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
+          // A zero-opacity Color Replacement is an identity operation. Validate
+          // its durable processor/version first, then skip full-frame staging.
+          if (isNoOpColorReplacement(operation)) continue;
+          const logicalRasterSize = getProcessorRasterSize(size);
+          const bitmapMatchesLogicalRaster =
+            bitmap.width === logicalRasterSize.width && bitmap.height === logicalRasterSize.height;
+          // A borrowed source can be reused without resampling only when its pixel
+          // grid already matches the logical layer bounds. Copy it first so a
+          // processor that mutates its input cannot change the registry asset.
+          if (retainedOperations.length === 0 && !ownsBitmap && source.borrowed && bitmapMatchesLogicalRaster) {
+            const rasterSize = { width: bitmap.width, height: bitmap.height };
+            assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+            replaceOwnedBitmap(await copyOwnedBitmap(bitmap, rasterSize));
+          } else if (retainedOperations.length > 0 || !bitmapMatchesLogicalRaster || !ownsBitmap) {
+            // Bake retained operations and align resized sources or prior processor
+            // outputs to the current logical pixel grid before this processor.
+            await renderRetainedSegment(retainedOperations, true, undefined, processor.maxStagingPixelCount);
+          } else {
+            // A matching owned raster can be reused without allocation, but every
+            // processor still gets its own staging-budget check below.
+          }
+          retainedOperations = [];
+          const rasterSize = { width: bitmap.width, height: bitmap.height };
+          // Check every processor against the raster it actually receives. An
+          // empty retained segment can reuse an owned bitmap without allocating,
+          // so the pre-allocation check above alone cannot cover that path.
+          assertProcessorStagingBudget(rasterSize.width, rasterSize.height, processor.maxStagingPixelCount);
+          const [processed, patch] = processor.imageProcessor({ bitmap, size: rasterSize })(operation.args as ToolArgs);
           if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
           replaceOwnedBitmap(processed);
           origin = {
             x: patch?.x ?? origin.x,
             y: patch?.y ?? origin.y,
           };
-          size = { width: processed.width, height: processed.height };
+          // Keep logical document bounds fractional while the processor works on
+          // the integer-sized bitmap. A processor can explicitly return new
+          // document bounds through its patch.
+          size = {
+            width: patch?.width ?? size.width,
+            height: patch?.height ?? size.height,
+          };
         }
         const area = size.width * size.height;
         const requiresSurface =
           retainedOperations.length > 0 ||
-          request.frame !== undefined ||
           !Number.isFinite(area) ||
           size.width <= 0 ||
           size.height <= 0 ||
-          area <= MAX_AFFINE_PIXELS;
+          (!ownsBitmap && area <= MAX_AFFINE_PIXELS);
         const hasRetainedAffine = retainedOperations.some((operation) => operation.kind === 'apply-affine-transform');
         await renderRetainedSegment(
           retainedOperations,
@@ -341,42 +509,55 @@ export async function materializeLayer(
         // blank or creator source) and anything an operation already replaced
         // are published as they are.
         const publishesBorrowedSource = !ownsBitmap && source.borrowed;
-        const presentation = publishesBorrowedSource ? await copyOwnedBitmap(bitmap, size) : bitmap;
+        const presentation = publishesBorrowedSource
+          ? await copyOwnedBitmap(bitmap, { width: bitmap.width, height: bitmap.height })
+          : bitmap;
         const presentationIsOwned = ownsBitmap || publishesBorrowedSource;
         ownsBitmap = false;
         if (!request.frame) {
           return { bitmap: presentation, metadata: bounds };
         }
 
-        const frameSurface = createCanvas(request.frame.width, request.frame.height);
-        const frameContext = context2d(frameSurface);
-        const frameEvaluation = evaluatePresentation({
-          position: bounds,
-          sourceSize: { width: bounds.width, height: bounds.height },
-          operations: [],
-          frame: request.frame,
-          mode: 'frame-bounds',
-        });
-        drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
-          kind: 'document',
-          frame: request.frame,
-        });
-        if (presentationIsOwned) closeOwnedBitmap(presentation);
-        return {
-          bitmap: await toOwnedBitmap(frameSurface),
-          metadata: {
-            x: request.frame.x,
-            y: request.frame.y,
-            width: request.frame.width,
-            height: request.frame.height,
-          },
-        };
+        try {
+          const frameRenderSurface = createCanvas(request.frame.width, request.frame.height);
+          const frameContext = context2d(frameRenderSurface);
+          const frameEvaluation = evaluatePresentation({
+            position: bounds,
+            sourceSize: { width: bounds.width, height: bounds.height },
+            operations: [],
+            frame: request.frame,
+            mode: 'frame-bounds',
+          });
+          drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
+            kind: 'document',
+            frame: request.frame,
+          });
+          return {
+            bitmap: await toOwnedBitmap(frameRenderSurface),
+            metadata: {
+              x: request.frame.x,
+              y: request.frame.y,
+              width: request.frame.width,
+              height: request.frame.height,
+            },
+          };
+        } finally {
+          if (presentationIsOwned) closeOwnedBitmap(presentation);
+        }
       } finally {
         source.release();
         if (ownsBitmap) closeOwnedBitmap(bitmap);
+        if (ownedFrameSurface) {
+          ownedFrameSurface.width = 1;
+          ownedFrameSurface.height = 1;
+        }
       }
     },
   });
+  if (request.signal?.aborted) {
+    lease.release();
+    throw new DOMException('Materialization aborted', 'AbortError');
+  }
   return {
     layerId: layer.snapshot.id,
     bitmap: lease.bitmap,
@@ -390,31 +571,54 @@ export async function materializeLayer(
 
 export async function materializeDocument(
   replay: DurableReplayResult,
-  request: MaterializationRequest
+  request: MaterializationRequest,
+  sharedFrameSurface?: MaterializationCanvas
 ): Promise<MaterializedDocument> {
   const materialized: Record<string, MaterializedLayer> = {};
+  const needsFrameSurface = Boolean(
+    request.pixelGridFrame &&
+    Object.values(replay.layers).some(
+      (layer) =>
+        layer.snapshot.visible && layer.operations.some((operation) => operation.kind === 'apply-affine-transform')
+    )
+  );
+  const ownsFrameSurface = !sharedFrameSurface && needsFrameSurface;
+  let frameSurface = sharedFrameSurface;
   try {
+    if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+    assertDocumentGeneration(request);
+    if (ownsFrameSurface && request.pixelGridFrame) {
+      // The layer loop below is serial, so one scratch serves every affine pass.
+      frameSurface = createCanvas(request.pixelGridFrame.width, request.pixelGridFrame.height);
+    }
     for (const layer of Object.values(replay.layers)) {
       if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
       if (!layer.snapshot.visible) continue;
       try {
-        materialized[layer.snapshot.id] = await materializeLayer(layer, request);
+        materialized[layer.snapshot.id] = await materializeLayer(layer, request, frameSurface);
       } catch (error) {
         // A refused layer must not be published unfiltered: doing so would make
         // the visible document look successful while durable replay cannot
         // reproduce its pixels. Keep the failure local, report it, and let the
         // compositor continue with the layers that did materialize.
-        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        if (isAbortError(error)) throw error;
         console.error(`Unable to materialize durable layer ${layer.snapshot.id}; skipping layer`, error);
       }
       // Keep replay cooperative even when every operation is synchronous.
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 0);
       });
+      if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+      assertDocumentGeneration(request);
     }
   } catch (error) {
     for (const layer of Object.values(materialized)) layer.lease.release();
     throw error;
+  } finally {
+    if (ownsFrameSurface && frameSurface) {
+      frameSurface.width = 1;
+      frameSurface.height = 1;
+    }
   }
   let released = false;
   return {

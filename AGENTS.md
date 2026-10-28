@@ -1,27 +1,43 @@
 Photoshop clone. The toolbar is a Photoshop clone — HARD REQUIREMENT.
 
+## Mandatory Model Policy
+
+Every orchestrator MUST read and follow [`MODELS.md`](MODELS.md) before selecting
+models/providers or launching subagents. It is the canonical everyday policy for free
+and paid models and the token-saving research protocol. The broad
+dated provider-research library is **not** daily policy and must not be linked from
+routine agent entry points.
+
 ## Worktrees
 
-- Make tracked edits and run Git/npm commands only in `.kilo/worktrees/`; `main` is read-only except for landing.
-- Before any other Git command, run `git worktree list --porcelain`, choose the `refs/heads/main` worktree, and create a task branch. Verify the new checkout with `git rev-parse --show-toplevel`.
+- Make tracked edits and run Git/npm commands only in `.kilo/worktrees/`; `main` is read-only except for a pinned landing. During metadata recovery, the only allowed mutation in `main` is the documented `git worktree repair` procedure; it does not permit file edits or merge resolution there.
+- **Base-branch selection is host-specific.** Kilo's Agent Manager setting does not configure Codex or Copilot. In Codex worktree chats and VS Code/Copilot's **New Worktree** sessions, select `main` in that host's base-branch picker; local/folder sessions use the selected checkout as-is and may start from a stale `main-sync` branch.
+- Before any other Git command, run `git worktree list --porcelain`, choose the `refs/heads/main` worktree, and create a task branch. If damaged metadata makes that sequence impossible or untrustworthy, use the recovery exception in [Recovering Git metadata](docs/ORCHESTRATION.md#recovering-git-metadata). Verify the new checkout with `git rev-parse --show-toplevel`.
 - Create the worktree before editing or starting subagents.
-- Commits require a `Chat: <native-session-id>` trailer; merges into `main` require `Branch: <source-branch>`. Resolve chat IDs with `npm run session:id -- "distinctive phrase"`.
+- If Git metadata or the worktree registry appears damaged, follow [Recovering Git metadata](docs/ORCHESTRATION.md#recovering-git-metadata). Do not hand-edit `.git`, `gitdir`, or `commondir`, and do not prune, remove, or move worktrees during recovery.
+- Before every Git mutation, verify `pwd`, `git -C <absolute-worktree> rev-parse --show-toplevel`, and `git -C <absolute-worktree> rev-parse --git-dir --git-common-dir`; stop if the checkout mapping is unexpected.
+- Commits require a `Chat: <native-session-id>` trailer; merges into `main` require `Branch: <source-branch>`. Resolve the chat ID using the instructions for the current host in [`docs/CHAT-ID.md`](docs/CHAT-ID.md); use `session:id` only for Kilo sessions, and never guess when the match is ambiguous.
 - Follow [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) for landing, recovery, and disposal.
 
 ## Product Boundary
 
 Support desktop and tablet/touch devices, including Retina/high-DPI. Do not add phone layouts or phone-specific interactions.
 
+Keep pixel-substitution tools such as Color Replacement on their own args, processor, and options bar; do not add them to the paint tools' `PaintToolName` union (`src/tools/brush.ts`).
+
 ## Agents And Reviews
 
-- Use `task` for research and `agent_manager` only for visible sessions/worktrees. Give each subagent an absolute worktree path and exclusive write set.
-- Pass `model` and `provider` together. Free sessions must not launch GPT subagents or perform Git operations; the coordinator owns branch, merge, commit, reset, and disposal work.
+- Find and open repository procedures from the [Skills index](docs/README.md#skills); Codex playbooks are in `.skills/*.md`, and Kilo runtime copies are under `.kilo/skills/*/SKILL.md`.
+- In Kilo Code, use `task` for research and `agent_manager` only for visible sessions/worktrees. For Codex orchestration, follow [`docs/CODEX-ORCHESTRATION.md`](docs/CODEX-ORCHESTRATION.md); do not assume Kilo tools or model/provider routing exist in Codex. Give each subagent an absolute worktree path and exclusive write set; free Kilo research children have an empty write set.
+- For Kilo `task`, pass `model` and `provider` together. A provider is not a price label, and Kilo and OpenRouter use separate free-model quotas; check the exact pair in the live catalog and follow [MODELS.md](MODELS.md) for limits. Kilo free sessions must not launch GPT subagents or perform Git operations. In every runtime, the coordinator owns branch, merge, commit, reset, and disposal work.
+- For visible free Kilo research sessions, use the project `read-only-research` agent in `.kilo/agent/read-only-research.md`; for internal free `task` children, use the read-only `explore` role. Deny `edit`, `bash`, and any separate filesystem write/patch or file-mutating MCP tools. The profile denies common mutation-named MCP tools; explicitly deny any connected write/delete tools not covered by those patterns. Kilo permissions are tool-level and have no delete-only permission: deny all writing for free children, not just deletion. If the host cannot verify read-only tools, use the free completion runner or do not launch that child. Free children return findings in their task response; the coordinator writes files.
+- Before launching a subagent, prefer a free model by default. Do not launch Terra or Sol unless the operator has given an explicit instruction in the current conversation naming the specific subtask and acknowledging the compute cost.
 - See [MODELS.md](MODELS.md) for model/provider guidance.
 - Photoshop behavior, UX, and non-trivial algorithms require Adobe or other primary-source research. Non-trivial changes require a fresh read-only review; cross-module or high-risk changes require two. See [`docs/ORCHESTRATION.md#the-task-lifecycle`](docs/ORCHESTRATION.md#the-task-lifecycle) and [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md).
 
 ## Browser And Validation
 
-- Never open a browser. Use `npm run test:e2e` for headless E2E and `npm run probe:console` for one page load. Do not add browser MCPs or weaken console/theme gates.
+- Never open a browser. Use `npm run test:e2e` for headless E2E and `npm run probe:console` for one page load. Broad E2E runs use the `mirror` workflow; see [`docs/E2E-MIRROR.md`](docs/E2E-MIRROR.md). Do not add browser MCPs or weaken console/theme gates.
 - Run npm commands only in a worktree. Use `npm run tsc` for typechecking and `npm run build` for production builds; do not use `npx tsc --noEmit` as project validation.
 - E2E specs use `./fixtures/extended-test`, not `@playwright/test`. Do not spread `useRect` return groups onto DOM elements.
 
@@ -36,5 +52,5 @@ Support desktop and tablet/touch devices, including Retina/high-DPI. Do not add 
 ## Gates And Documentation
 
 - Commit runs lint-staged, then typecheck/build; push runs the full suite. Never weaken gates or casually re-record baselines. See [`docs/TESTING.md#gates`](docs/TESTING.md).
-- Do not cite line numbers in prose; use identifiers, test titles, files, headings, or `§N`. Do not edit generated `docs/TOOLS.md`.
+- Do not cite line numbers in prose or human-written source/config/markup comments; use identifiers, test titles, files, headings, or `§N`. Do not edit generated `docs/TOOLS.md`.
 - Keep `HANDOFF.md`, `.kilo/plans/`, and `e2e/OPEN_PROBLEMS.md` problem-focused, not changelogs. Remove fixed, verified entries. Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`HANDOFF.md`](HANDOFF.md) §1 before crossing replay/durable boundaries.

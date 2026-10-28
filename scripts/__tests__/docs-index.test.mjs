@@ -54,8 +54,16 @@ const ALLOWED_UNLISTED = new Map([
   ],
   [
     '.kilo/plans/test-hardening-plan.md',
-    'internal hardening plan tracked in .kilo/plans/; not a public document and not ' +
-      'linked from docs/README.md. The .kilo/plans/ directory row covers the directory as a whole.',
+    'archived history-migration test plan; it records task-specific work already merged ' +
+      'to main. The maintained repository-wide workflow is .skills/parallel-test-hardening.md, ' +
+      'and this plan is not linked from docs/README.md.',
+  ],
+  [
+    'docs/FREE-COMPUTE.md',
+    'broad dated research library, intentionally not linked from routine agent entry points ' +
+      '(AGENTS.md, README.md, MODELS.md does not link it either) so it does not pollute ' +
+      'orchestrator context. MODELS.md is the canonical daily policy; this file is a lookup ' +
+      'reference for provider terms, quotas, and failure observations.',
   ],
 ]);
 
@@ -120,6 +128,23 @@ describe('the documentation index accounts for every tracked markdown file', () 
   it('has a reason on every allow-list entry', () => {
     const unreasoned = [...ALLOWED_UNLISTED].filter(([, reason]) => !reason.trim()).map(([p]) => p);
     expect(unreasoned).toEqual([]);
+  });
+});
+
+describe('the broad free-compute research stays out of routine entry points', () => {
+  it('is not linked from agent policy, model policy, or orchestration docs', () => {
+    const routineDocs = [
+      'AGENTS.md',
+      'MODELS.md',
+      'docs/README.md',
+      'docs/ORCHESTRATION.md',
+      'docs/CODEX-ORCHESTRATION.md',
+    ];
+    const linkedDocs = routineDocs.filter((path) => {
+      const content = readFileSync(resolve(REPO_ROOT, path), 'utf8');
+      return /\]\([^)]*FREE-COMPUTE\.md(?:#[^)]*)?\)/i.test(content);
+    });
+    expect(linkedDocs).toEqual([]);
   });
 });
 

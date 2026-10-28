@@ -1,7 +1,12 @@
 import type { BitmapSource } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import type { DurableReplayResult } from './durable-replay.ts';
-import { materializeDocument, type MaterializationRequest, type MaterializedLayer } from './materialization.ts';
+import {
+  materializeDocument,
+  type MaterializationRequest,
+  type MaterializedDocument,
+  type MaterializedLayer,
+} from './materialization.ts';
 import { toOwnedBitmap } from './materialization-bitmap.ts';
 
 export type DurableCompositorRequest = Omit<MaterializationRequest, 'frame'> &
@@ -112,16 +117,29 @@ export async function composeDurableDocument(
   request: DurableCompositorRequest
 ): Promise<DurableComposite> {
   const { frame = replay.frame, ...materializationRequest } = request;
-  const materialized = await materializeDocument(replay, {
-    ...materializationRequest,
-    pixelGridFrame: frame,
-  });
+  const canvas = createCanvas(frame.width, frame.height);
+  const context = context2d(canvas);
+  let materialized: MaterializedDocument | undefined;
   let bitmap: BitmapSource;
 
   try {
+    materialized = await materializeDocument(
+      replay,
+      {
+        ...materializationRequest,
+        pixelGridFrame: frame,
+      },
+      canvas
+    );
     requireVisibleLayerCoverage(replay, materialized.layers);
-    const canvas = createCanvas(frame.width, frame.height);
-    const context = context2d(canvas);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = 'source-over';
+    context.filter = 'none';
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    // Match the runtime and retained-presentation draws: fractional layer bounds
+    // must not introduce a second filtered resampling pass during composition.
+    context.imageSmoothingEnabled = false;
     for (const layerId of orderedLayers(replay)) {
       const replayLayer = replay.layers[layerId];
       const layer = materialized.layers[layerId];
@@ -147,10 +165,17 @@ export async function composeDurableDocument(
       }
     }
     bitmap = await toOwnedBitmap(canvas);
+    if (bitmap !== canvas) {
+      canvas.width = 1;
+      canvas.height = 1;
+    }
   } catch (error) {
-    materialized.release();
+    materialized?.release();
+    canvas.width = 1;
+    canvas.height = 1;
     throw error;
   }
+  if (!materialized) throw new Error('Durable composition did not materialize visible layers');
 
   let released = false;
   let layersDetached = false;

@@ -63,7 +63,8 @@ text and vector source arguments from the durable navigation document while
 protecting pending text and active gestures; saved settings remain the fallback
 for unsupported sources. The affine-resampling divergence found by the pixel differential
 is fixed; the remaining differential obligations are listed under Sequencing.
-The pinned `args.enabled` divergence also remains open.
+Nested `args.enabled` remains action payload rather than a history gate; this
+legacy-compatible behavior is pinned by `history-adapter.branches.test.ts`.
 
 ### RQ-3: bounded replay with explicit permission
 
@@ -102,11 +103,13 @@ The retired coordination gate forbids production imports of `replay-budget.ts`,
 `replay-coordinator.ts` and `replay-checkpoints.ts` were deleted as dead code —
 nothing imported them outside `__tests__` — and the gate keeps both names rather
 than dropping them with the files, so reintroducing either is reported rather
-than silently absorbed. A separate plain assertion allows exactly one
-production importer for `materialization.ts`, `durable-compositor.ts`. The
-compositor is mounted for navigation presentation and its `tmpCanvas` is already
-consumed by render and export. The remaining cutover surfaces stay
-legacy-authoritative until their differential and ownership gates pass.
+than silently absorbed. Production materialization has one runtime consumer,
+`durable-compositor.ts`; `durable-render-projection.ts` imports only the
+`MaterializedLayer` type. `StoreContext.boundary-gates.test.ts` pins both
+source-level import sites. The compositor is mounted for navigation presentation
+and its `tmpCanvas` is already consumed by render and export. The remaining
+cutover surfaces stay legacy-authoritative until their differential and ownership
+gates pass.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 
@@ -158,7 +161,12 @@ variant or an equivalent atomic history action.
 2. Keep every currently appendable durable operation replayable without changing
    production authority. The runtime retained-operation boundary, the supported
    raster append path and the navigation presentation mount are closed, and the
-   §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
+   §87-§89 append-boundary defects are fixed. The reproduced source-backed create
+   after moving the same layer to the bottom twice is covered by
+   `StoreContext.durable-append.test.tsx`. The regression checks the sparse
+   orders, created name and order, and durable-document equality against full
+   legacy conversion. This closes that reproduction only; it is not proof of
+   durable authority for unrelated operation shapes.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity, history-panel parity, the
    browser authority seam, options-bar rehydration, and the pixel/export
@@ -197,11 +205,32 @@ variant or an equivalent atomic history action.
    variants, additional text styling/rotation combinations, other frame sequences and the full
    retained-affine operation surface still need parity proof. Previews and unsupported documents
    still use the complete legacy compatibility path.
-   Unsupported-source
-   fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
-   then retire legacy logical replay only after
-   durable replay can provide the same complete state for append, branch, preview,
-   and compatibility fallback.
+   Unsupported-source fallback is pinned by the StoreContext publication seam. Preview safety is
+   also pinned at the renderer boundary: while a preview is live, `drawAllLayers` receives the
+   complete legacy layer base; accepted append publication reveals the durable base only after the
+   preview clears, and a stale/refused append keeps the complete legacy base. The refused-final-draw
+   rollback is covered through the real StoreProvider by `resetHistoryTo.durable.test.tsx`, while
+   `e2e/undo-redo.spec.ts` checks live Brush preview pixels on a current durable document and pixel
+   preservation at commit. These close the preview-interleaving and timeline-compensation proofs;
+   previews remain a legacy presentation surface and these tests do not authorize a logical
+   authority cutover.
+
+   The retained-affine/frame proof is now pinned for one raster fixture. It compares both history
+   cursors, verifies each renderer changes from the untransformed baseline, and checks the final
+   output against a frame-only control. Do not add frame-changing commits to durable publication
+   from this case alone. Next expand the frame matrix across the remaining angles, retained-affine
+   combinations, source/tool variants, text styling/rotation, frame sequences and exact fractional
+   materialized bounds. The same fixture's frame-only control showed a one-pixel/two-channel delta;
+   it is recorded in `e2e/OPEN_PROBLEMS.md` and is not a parity pass. Establish ownership and parity
+   for source-backed imports/replacements as a separate, unordered gate; it may proceed before,
+   after, or in parallel with the broader frame matrix. Keep the unsupported-source fallback
+   explicit.
+
+   Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
+   which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),
+   [rotate or flip entire images](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/rotate-or-flip-entire-images.html)).
+   The browser differential checks this app's two history operations against each other; it is not
+   an independent pixel oracle for Photoshop.
 
 ## Operator rulings
 

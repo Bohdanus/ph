@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
-import { FILL_TOOL_NO_LAYER_PIXELS, FILL_TOOL_READBACK_UNAVAILABLE, FillToolArea } from '../FillToolArea.tsx';
+import {
+  FILL_TOOL_NO_LAYER_PIXELS,
+  FILL_TOOL_PRESENTATION_UNAVAILABLE,
+  FILL_TOOL_READBACK_UNAVAILABLE,
+  FillToolArea,
+} from '../FillToolArea.tsx';
 import { findToolProcessor } from '../../../tools/toolProcessors.ts';
 import type { FillToolArgs } from '../../../tools/fill.ts';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
-import type { BitmapSource } from '../../../contexts/general-types.ts';
+import type { BitmapSource, Selection } from '../../../contexts/general-types.ts';
 
 const storeState = vi.hoisted(
   (): {
@@ -12,7 +17,16 @@ const storeState = vi.hoisted(
     documentFrame: { x: number; y: number; width: number; height: number } | null;
     layers: LayersRecord;
     activeLayerId: string | null;
-  } => ({ color: '#ff0000', documentFrame: null, layers: {}, activeLayerId: null })
+    selections: Selection[];
+    activeSelectionId: string | null;
+  } => ({
+    color: '#ff0000',
+    documentFrame: null,
+    layers: {},
+    activeLayerId: null,
+    selections: [],
+    activeSelectionId: null,
+  })
 );
 const toolState = vi.hoisted((): { toolArgs: Record<string, unknown> } => ({ toolArgs: {} }));
 
@@ -35,6 +49,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       },
       get documentFrame() {
         return storeState.documentFrame;
+      },
+      get selections() {
+        return storeState.selections;
+      },
+      get activeSelectionId() {
+        return storeState.activeSelectionId;
       },
     },
     vi.fn(),
@@ -150,7 +170,9 @@ const makeLayer = (id: string, pos: Layer['pos'], hasBitmap = true): Layer => ({
   name: id,
   isBedrock: false,
   tmpCanvas: null,
-  bitmap: hasBitmap ? ({ id: `${id}-bitmap` } as unknown as BitmapSource) : null,
+  bitmap: hasBitmap
+    ? ({ id: `${id}-bitmap`, width: Math.ceil(pos.width), height: Math.ceil(pos.height) } as unknown as BitmapSource)
+    : null,
   visible: true,
   opacity: 1,
   locked: false,
@@ -194,6 +216,8 @@ describe('FillToolArea', () => {
     storeState.color = '#ff0000';
     storeState.documentFrame = null;
     storeState.activeLayerId = 'base';
+    storeState.selections = [];
+    storeState.activeSelectionId = null;
     storeState.layers = { base: makeLayer('base', { x: 0, y: 0, width: 4, height: 4 }) };
     toolState.toolArgs = {
       toolName: 'paint-bucket',
@@ -210,6 +234,7 @@ describe('FillToolArea', () => {
     getContextSpy?.mockRestore();
     getContextSpy = null;
     consoleErrorSpy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it('commits one fill on a single click and never on a drag', () => {
@@ -230,6 +255,53 @@ describe('FillToolArea', () => {
       color: '#ff0000',
       pos: { x: 1, y: 1 },
     });
+  });
+
+  it('refuses an over-budget presentation before allocating fill readback pixels', () => {
+    const allocations: Array<{ width: number; height: number }> = [];
+    class AllocationCountingCanvas {
+      constructor(width: number, height: number) {
+        allocations.push({ width, height });
+      }
+
+      getContext() {
+        return {
+          drawImage: vi.fn(),
+          getImageData: vi.fn(() => null),
+        };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', AllocationCountingCanvas);
+    storeState.layers = { base: makeLayer('base', { x: 0, y: 0, width: 5000, height: 4000 }) };
+
+    click(renderArea(), 1, 1);
+
+    expect(allocations).toEqual([]);
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      FILL_TOOL_PRESENTATION_UNAVAILABLE,
+      expect.any(String),
+      expect.objectContaining({ message: expect.stringMatching(/pixel staging budget/) })
+    );
+  });
+
+  it('turns a thrown canvas readback into a loud no-commit refusal', () => {
+    class ThrowingReadbackCanvas {
+      getContext() {
+        return {
+          drawImage: vi.fn(),
+          getImageData: () => {
+            throw new DOMException('Pixel access was denied', 'SecurityError');
+          },
+        };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', ThrowingReadbackCanvas);
+
+    click(renderArea(), 1, 1);
+
+    expect(committed).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(FILL_TOOL_READBACK_UNAVAILABLE, expect.any(String));
   });
 
   it('commits the store foreground colour, not the tool args own seeded default', () => {
@@ -276,6 +348,58 @@ describe('FillToolArea', () => {
     expect(committed[0].toolArgs.pos).toEqual({ x: 1, y: 1 });
     expect(pixelAt(committedPixels(), 4, 1, 1)).toEqual([255, 0, 0, 255]);
     expect(pixelAt(committedPixels(), 4, 3, 3)).toEqual([255, 255, 255, 255]);
+  });
+
+  it('snapshots every active selection contour into the fill raster coordinate space', () => {
+    installPixelCanvases();
+    storeState.documentFrame = { x: 10, y: 20, width: 6, height: 6 };
+    storeState.layers = { base: makeLayer('base', { x: 10, y: 20, width: 4, height: 4 }) };
+    storeState.selections = [
+      {
+        id: 'compound',
+        points: [
+          [
+            { x: 1, y: 1 },
+            { x: 5, y: 1 },
+            { x: 5, y: 5 },
+            { x: 1, y: 5 },
+          ],
+          [
+            { x: 2, y: 2 },
+            { x: 4, y: 2 },
+            { x: 4, y: 4 },
+            { x: 2, y: 4 },
+          ],
+        ],
+        isActive: true,
+        pos: { x: 9, y: 19, width: 6, height: 6 },
+        geometry: 'polygon',
+        sourceTool: 'magic-wand',
+      },
+    ];
+    storeState.activeSelectionId = 'compound';
+    const toolArea = renderArea();
+
+    click(toolArea, 1, 1);
+
+    expect(committed[0].toolArgs.selection).toEqual({
+      points: [
+        [
+          { x: 0, y: 0 },
+          { x: 4, y: 0 },
+          { x: 4, y: 4 },
+          { x: 0, y: 4 },
+        ],
+        [
+          { x: 1, y: 1 },
+          { x: 3, y: 1 },
+          { x: 3, y: 3 },
+          { x: 1, y: 3 },
+        ],
+      ],
+      featherRadius: 0,
+      antiAlias: true,
+    });
   });
 
   it('writes no history entry at all when the flood fill matches nothing', () => {

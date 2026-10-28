@@ -2,6 +2,7 @@ import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import {
   PLACEHOLDER_TEXT,
+  NEUTRAL_TEXT_ANGLE,
   POINT_TYPE_MAX_DRAG_PX,
   drawOverflowIndicator,
   layoutText,
@@ -29,7 +30,7 @@ type TextToolAreaProps = {
 
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
   const [{ containerRef, toolOverlayRef, totalSize, layers, activeLayerId, documentFrame: currentFrame }] = useStore();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, requestTextEditFocus } = useCurrentTool();
   const { commitDirtyTool, setActiveLayer, beginTextLayerEdit } = useLayers();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
@@ -159,6 +160,10 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
         ...persistedArgs,
         text: placing ? PLACEHOLDER_TEXT : args.text,
         placeholderUntouched: placing ? true : args.placeholderUntouched,
+        // A placement can follow an implicit commit in the same pointer event. That commit clears
+        // the tool state, but this callback still holds the pre-commit args; never let the old
+        // layer's per-layer rotation leak into the new draft's placeholder.
+        angle: placing ? NEUTRAL_TEXT_ANGLE : persistedArgs.angle,
       };
 
       /**
@@ -201,16 +206,28 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
             const hitLayerId = getLayerIdByPoint(layers, documentPoint);
             const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
             const activeTextLayer =
-              activeLayer && isTextLayerSource(activeLayer.source) && isPointInLayer(activeLayer, documentPoint)
+              activeLayer?.visible &&
+              isTextLayerSource(activeLayer.source) &&
+              isPointInLayer(activeLayer, documentPoint)
                 ? activeLayer
                 : undefined;
             const layer = activeTextLayer ?? (hitLayerId ? layers[hitLayerId] : undefined);
             if (layer) {
               const target = textLayerEditTarget(layer, documentFrame);
               if (target) {
+                // The pointer began on the canvas before the contenteditable existed. Suppress the
+                // browser's default focus/selection from that same mouse or touch press; the one-shot
+                // focus request below places the caret after the overlay mounts.
+                event.preventDefault();
                 setActiveLayer(target.layerId);
                 beginTextLayerEdit(target.layerId);
                 setToolArgs(target.args);
+                requestTextEditFocus({
+                  kind: 'point',
+                  layerId: target.layerId,
+                  clientX: event.clientX,
+                  clientY: event.clientY,
+                });
                 return;
               }
             }
@@ -232,6 +249,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
       getLocalCoords,
       layers,
       pointerHandlers,
+      requestTextEditFocus,
       setActiveLayer,
       setToolArgs,
     ]

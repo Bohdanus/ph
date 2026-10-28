@@ -17,7 +17,7 @@ import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
 import type { DurableDocument } from './history-model.ts';
 import { durableEntryTitle } from './history-provenance.ts';
-import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
+import { operationsRetainedAfterBake, stageProcessorInputForTool } from './presentation-evaluator.ts';
 import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
@@ -151,6 +151,11 @@ export const useHistory = () => {
       documentRevision,
       clearPreviewLayers,
       publishDurableNavigationPresentation,
+      beginHistoryReplayPresentation,
+      isHistoryReplayPresentationCurrent,
+      hasPendingHistoryReplayPresentation,
+      cancelHistoryReplayPresentation,
+      finalizeHistoryReplayPresentation,
     },
     dispatch,
   ] = useStore();
@@ -209,6 +214,8 @@ export const useHistory = () => {
       preserveHasUnsavedChanges: true,
     };
     let replayDispatched = false;
+    let attemptId: number | null = null;
+    const isCurrentAttempt = (id: number) => isHistoryReplayPresentationCurrent?.(id) ?? true;
     // Legacy replay remains the structural substrate and complete fallback. The
     // durable publication paints the normal path when every identity, coverage,
     // and materialization gate succeeds.
@@ -235,8 +242,8 @@ export const useHistory = () => {
             // the screen showed. An evaluator throw here fails the navigation closed through the
             // `catch` below, exactly as one from the publication does — `drawReplay` runs the same
             // evaluation over the same layer — so it adds no failure class, only an earlier failure.
-            const staged = stageProcessorInput(layer, bitmap);
-            const [canvas, patch] = processor.imageProcessor({ bitmap: staged.bitmap, size: staged.bounds })(args);
+            const staged = stageProcessorInputForTool(layer, bitmap, processor);
+            const [canvas, patch] = processor.imageProcessor({ bitmap: staged.bitmap, size: staged.rasterSize })(args);
             // Published at the bounds that raster occupies, with the operations baked into it
             // dropped from the list the renderer evaluates again. Keeping both was the double
             // application: `getLayerBitmap()` prefers this canvas and `drawLayerSource()` then
@@ -276,10 +283,15 @@ export const useHistory = () => {
         },
       });
       replayDispatched = true;
+      // The dispatch is synchronous. Starting the token immediately after it
+      // keeps a dispatch failure from superseding an accepted async replay,
+      // while still fencing that older publication before it can resume.
+      attemptId = beginHistoryReplayPresentation(documentId, documentRevision);
       const outcome = publishDurableNavigationPresentation
-        ? await publishDurableNavigationPresentation()
+        ? await publishDurableNavigationPresentation(attemptId)
         : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
-      if (outcome.status === 'stale') {
+      if (outcome.status === 'stale' || !isCurrentAttempt(attemptId)) {
+        cancelHistoryReplayPresentation?.(attemptId);
         return;
       }
       const painted =
@@ -302,6 +314,10 @@ export const useHistory = () => {
         replayDispatched = false;
         throw new Error('Unable to publish replayed history presentation');
       }
+      if (!isCurrentAttempt(attemptId)) {
+        cancelHistoryReplayPresentation?.(attemptId);
+        return;
+      }
       // Dropped HERE, after the replay has been published and applied, and not
       // ahead of it. A navigation that throws — a converter refusal, a tool
       // processor, a refused publication — leaves the visible canvas and the
@@ -313,6 +329,14 @@ export const useHistory = () => {
       // pixels were gone from the canvas, so the next `commitDirtyTool()` would
       // apply a stroke the user could no longer see.
       clearPreviewLayers?.();
+      const finalized = finalizeHistoryReplayPresentation?.({
+        attemptId,
+        documentId,
+        documentRevision,
+        branchRevision: _branchRevision,
+        historyIndex: targetIndex,
+      });
+      if (finalized === false) cancelHistoryReplayPresentation?.(attemptId);
       // Reported HERE rather than inside `replayHistory`, which collects instead
       // of logging (see `ReplayDiagnostic`): replay runs on every undo, redo and
       // history-panel click, so a per-item log inside that loop would re-emit the
@@ -325,6 +349,17 @@ export const useHistory = () => {
         console.error(`History replay skipped an entry (${diagnostic.code})`, diagnostic.error);
       }
     } catch (error) {
+      if (attemptId !== null && !isCurrentAttempt(attemptId)) {
+        cancelHistoryReplayPresentation?.(attemptId);
+        return Promise.resolve();
+      }
+      if (attemptId === null && hasPendingHistoryReplayPresentation?.(documentId, documentRevision)) {
+        // A newer request failed while a previously accepted replay is still
+        // composing. Its failure must not invalidate the replay already in
+        // flight or publish a status against that replay's logical state.
+        console.error('History replay is unavailable', error);
+        return Promise.resolve();
+      }
       if (replayDispatched) {
         // The replay has already moved logical state, but the final presentation
         // can throw before it paints. Restore the prior cursor/layers before
@@ -342,6 +377,16 @@ export const useHistory = () => {
       };
       console.error('History replay is unavailable', error);
       dispatch({ type: 'SET_DURABLE_STATUS', payload: { status: 'unavailable', diagnostics: [diagnostic] } });
+      if (attemptId !== null) {
+        const finalized = finalizeHistoryReplayPresentation?.({
+          attemptId,
+          documentId,
+          documentRevision,
+          branchRevision: previousReplay.timeline.branchRevision,
+          historyIndex: previousReplay.timeline.cursor,
+        });
+        if (finalized === false) cancelHistoryReplayPresentation?.(attemptId);
+      }
     }
 
     return Promise.resolve();

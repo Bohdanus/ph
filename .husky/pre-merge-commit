@@ -1,35 +1,9 @@
 #!/usr/bin/env sh
-# A merge may not silently delete the other side's committed work.
-# ---------------------------------------------------------------------------
-# This hook closes a gap that several documents and no code had closed. The rule —
-# "a merge must not hand `main` back its own older content" — was written down in
-# `docs/ORCHESTRATION.md`, copied verbatim into two `.skills/` files, pointed at from
-# three more, and asserted nowhere. The one automated check it had was a `comm -13`
-# recipe an agent was expected to remember, in a document AGENTS.md does not mention,
-# which reports hundreds of innocent paths when run at the only moment it could act
-# and misses the shape that actually cost this repository 17 files and 1,835 lines.
-#
-# It lives here because this is the last moment the damage is still free to undo, and
-# because it is the one moment git guarantees to run code in for a merge. `pre-commit`
-# cannot see it: `tsc` and `build` both pass a reverted file, since a reverted file is
-# a perfectly good file. That is the whole reason `gate:verify` did not catch it.
-#
-# WHY IT IS A GATE AND NOT A REPORT. `.husky/post-merge` deliberately cannot fail —
-# by the time it runs the merge is recorded. This one runs BEFORE the merge commit is
-# written, so a non-zero exit leaves nothing landed and nothing to undo. A merge that
-# reports success while deleting another branch's work is worse than one that stops.
-#
-# WHAT IT CANNOT COVER, stated here so nobody relies on it:
-# - A FAST-FORWARD landing fires no gating hook. That path is safe by construction —
-#   the branch tip contains main as an ancestor, so the result IS the branch tree and
-#   every difference from main is a change the branch made on purpose. Verified with
-#   raw git, not assumed. The one hook it does reach is `post-merge`, which cannot
-#   block a landing.
-# - `--no-verify` bypasses this, as it bypasses every other gate in this repository.
-#   CI is the backstop for that, and this is the floor under it rather than the ceiling.
-# - The incoming ref is read from GIT_REFLOG_ACTION because MERGE_HEAD is not yet
-#   written in this hook. If it cannot be identified the guard REFUSES rather than
-#   passing: a check that cannot tell must not report success.
-#
-# `HUSKY=0` is handled by the dispatcher in scripts/install-git-hooks.js.
-node scripts/merge-takeover-guard.mjs
+# Direct self-committing merges are not a supported workflow. Refuse every one here,
+# regardless of whether this Git version exposes MERGE_HEAD to this hook. Prepare a
+# clean merge with --no-commit --no-ff so pre-commit can inspect the actual merge state.
+# What this hook cannot cover:
+# - Fast-forward merges do not invoke it. The non-blocking post-merge hook still runs.
+# - `--no-verify` bypasses every blocking hook in this repository.
+printf '%s\n' 'merge-takeover-guard: direct self-committing merges are refused; prepare with `git merge --no-commit --no-ff <full-sha>` and commit the prepared result.' >&2
+exit 1

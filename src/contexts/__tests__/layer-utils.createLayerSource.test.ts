@@ -192,6 +192,8 @@ describe('createLayerSource blank sources', () => {
     expect(staged).not.toBeNull();
     expect((staged as OffscreenCanvas).width).toBe(16);
     expect((staged as OffscreenCanvas).height).toBe(9);
+    const context = (staged as OffscreenCanvas).getContext('2d') as unknown as Record<string, unknown>;
+    expect(context.fillRect).toHaveBeenCalledWith(0, 0, 16, 9);
     expect(createImageBitmapSpy).not.toHaveBeenCalled();
     expect(layer.bitmap).toBeNull();
   });
@@ -203,6 +205,7 @@ describe('createLayerSource blank sources', () => {
 
     expect(context.globalAlpha).toBe(0.5);
     expect(context.fillStyle).toBe('#ff0000');
+    expect(context.fillRect).toHaveBeenCalledWith(0, 0, 16, 9);
   });
 
   it('skips the alpha write for a fully opaque fill', () => {
@@ -213,11 +216,36 @@ describe('createLayerSource blank sources', () => {
     expect(context.fillStyle).toBe('#ff0000');
   });
 
-  it('still allocates a canvas for a fully transparent fill but never reads a context', () => {
+  it('initializes a fully transparent source without painting it', () => {
+    const getContext = vi.spyOn(OffscreenCanvas.prototype, 'getContext');
     const layer = createLayerSource({ layers: {}, source: blankSource({ opacity: 0 }) });
 
+    expect(layer.opacity).toBe(1);
+    expect(layer.source).toEqual(expect.objectContaining({ kind: 'blank', opacity: 0 }));
+    expect(getContext).toHaveBeenCalledTimes(1);
+    expect(getContext).toHaveBeenCalledWith('2d');
+    const context = getContext.mock.results[0]?.value as OffscreenCanvasRenderingContext2D | undefined;
+    expect(context?.fillRect).not.toHaveBeenCalled();
     expect(layer.tmpCanvas).not.toBeNull();
     expect((layer.tmpCanvas as OffscreenCanvas).width).toBe(16);
+  });
+
+  it('keeps a transparent source when a 2D context is unavailable', () => {
+    const getContext = vi.spyOn(OffscreenCanvas.prototype, 'getContext').mockReturnValue(null);
+    const layer = createLayerSource({ layers: {}, source: blankSource({ opacity: 0 }) });
+
+    expect(getContext).toHaveBeenCalledWith('2d');
+    expect(layer.opacity).toBe(1);
+    expect(layer.source).toEqual(expect.objectContaining({ kind: 'blank', opacity: 0 }));
+    expect(layer.tmpCanvas).not.toBeNull();
+  });
+
+  it('fails closed when a filled blank source cannot obtain a 2D context', () => {
+    vi.spyOn(OffscreenCanvas.prototype, 'getContext').mockReturnValue(null);
+
+    expect(() => createLayerSource({ layers: {}, source: blankSource({ opacity: 1 }) })).toThrow(
+      'Unable to initialize blank layer canvas'
+    );
   });
 
   it('stages the canvas without materialising it', () => {

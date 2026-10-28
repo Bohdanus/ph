@@ -162,3 +162,30 @@ body {
     -10px 0px;
   background-color: #000;
 }
+
+.toolbar-touch-slider--4px {
+  --toolbar-touch-slider-track-height: 4px;
+  box-sizing: border-box;
+}
+
+.toolbar-touch-slider--6px {
+  --toolbar-touch-slider-track-height: 6px;
+  box-sizing: border-box;
+}
+
+@media (any-pointer: coarse) and (min-width: 768px) {
+  // The range input itself stays interactive. Its padded content box keeps the
+  // existing gray background track 4px or 6px tall while the hit box grows.
+  .toolbar-touch-slider--4px,
+  .toolbar-touch-slider--6px {
+    height: 44px;
+    padding-block: calc((44px - var(--toolbar-touch-slider-track-height)) / 2);
+    background-clip: content-box;
+  }
+
+  // The toolbar grid row is auto-sized, so it grows around stacked tablet controls.
+  .toolbar-horizontal {
+    height: auto;
+    min-height: 50px;
+  }
+}

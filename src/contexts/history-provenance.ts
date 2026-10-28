@@ -2,20 +2,29 @@ import { SET_DOCUMENT_FRAME_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from
 import type { DurableEntryProvenance } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
 
+function readDataProperty(value: unknown, key: string): unknown {
+  if (!value || typeof value !== 'object') return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor?.enumerable && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+}
+
 /**
  * Carries only the legacy identity needed to reproduce a history-panel label.
  * It is metadata for the durable entry, not another replay operation.
  */
 export function durableEntryProvenance(item: HistoryItem): DurableEntryProvenance {
+  const actionName = readDataProperty(item, 'actionName');
+  const layerSource = readDataProperty(item, 'layerSource');
+  const sourceKind = readDataProperty(layerSource, 'kind');
   const sourceToolName =
-    item.layerSource?.kind === 'tool'
-      ? (item.layerSource.args as { toolName?: unknown } | undefined)?.toolName
-      : item.actionName === TOOL_ACTION
-        ? (item.args as { toolName?: unknown } | undefined)?.toolName
+    sourceKind === 'tool'
+      ? readDataProperty(readDataProperty(layerSource, 'args'), 'toolName')
+      : actionName === TOOL_ACTION
+        ? readDataProperty(readDataProperty(item, 'args'), 'toolName')
         : undefined;
   const toolName = typeof sourceToolName === 'string' ? sourceToolName : undefined;
   return Object.freeze({
-    actionName: item.actionName,
+    actionName: actionName as HistoryItem['actionName'],
     ...(toolName !== undefined ? { toolName } : {}),
   });
 }

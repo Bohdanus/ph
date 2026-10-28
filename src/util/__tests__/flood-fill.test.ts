@@ -197,9 +197,7 @@ describe('floodFill', () => {
   });
 
   it('keeps a region that has an enclosed hole, with the hole left at zero', () => {
-    // This is the case the Magic Wand's public entry point has to refuse: a `Selection`
-    // carries one point path, so it cannot express a ring. The mask has no such limitation,
-    // and a Paint Bucket filling a ring must not repaint the hole.
+    // The mask keeps the hole at zero, and a Paint Bucket filling a ring must not repaint it.
     const result = floodFill(createSquareRing(5, 1), { x: 0, y: 0 }, { tolerance: 0, contiguous: true });
 
     expect(result).not.toBeNull();

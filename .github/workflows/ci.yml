@@ -1,20 +1,19 @@
 name: CI
+run-name: CI ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.request_id || github.run_number }} @ ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.source_sha || github.sha }}
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  # Re-run a gate on demand without pushing an empty commit. The `e2e` matrix is
-  # the one whose result a reviewer may want to confirm, especially on a platform
-  # whose baselines were just recorded.
-  workflow_dispatch:
+  repository_dispatch:
+    types: [mirror-e2e-full]
 
-# Superseded runs are pointless work, and this workflow is triggered on every push
-# to a PR branch as well as `main`.
+# Superseded automatic runs are pointless work. Branch updates enter through pull_request;
+# direct push runs are limited to main. Mirror repository dispatches are never cancelled.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.request_id || 'automatic' }}
+  cancel-in-progress: ${{ github.event_name != 'repository_dispatch' }}
 
 # Read-only by default. No job in this workflow needs to write to the repository,
 # and an un-scoped GITHUB_TOKEN inherits whatever the org default happens to be.
@@ -22,13 +21,46 @@ permissions:
   contents: read
 
 jobs:
-  ci:
+  validate-dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      source_sha: ${{ steps.validate.outputs.source_sha }}
+    steps:
+      - name: Validate repository dispatch source
+        id: validate
+        env:
+          INPUT_REQUEST_ID: ${{ github.event.client_payload.request_id }}
+          INPUT_SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ github.event.client_payload.expected_workflow_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
+            [[ "$GITHUB_REPOSITORY" == "Bohdanus/ph" ]] || { echo "Refusing mirror validation outside Bohdanus/ph" >&2; exit 1; }
+            [[ "$REF" == "refs/heads/main" ]] || { echo "Refusing mirror validation outside trusted main" >&2; exit 1; }
+            [[ "$INPUT_REQUEST_ID" =~ ^[a-fA-F0-9]{32}$ ]] || { echo "request_id must be 32 hexadecimal characters" >&2; exit 1; }
+            [[ "$INPUT_SOURCE_SHA" =~ ^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$ ]] || { echo "source_sha must be a full Git object ID" >&2; exit 1; }
+            [[ "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || { echo "Mirror main advanced after workflow preflight" >&2; exit 1; }
+            source_sha="$INPUT_SOURCE_SHA"
+          else
+            source_sha="$GITHUB_SHA"
+          fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  ci-checks:
+    name: CI checks
+    needs: validate-dispatch
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validate-dispatch.outputs.source_sha }}
+          # The citation guard compares additions against the PR/push base commit below.
+          fetch-depth: 0
           # Nothing in this workflow pushes, tags or reads a private ref, so the
           # token the checkout leaves in .git/config is a credential with no job
           # that needs it. Combined with the read-only `permissions` above, a
@@ -45,6 +77,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Reject new line-number citations
+        env:
+          CITATION_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+        shell: bash
+        run: |
+          if [[ "$CITATION_DIFF_BASE" =~ ^0+$ ]]; then CITATION_DIFF_BASE=origin/main; fi
+          node scripts/check-new-line-citations.mjs --base "$CITATION_DIFF_BASE"
 
       - name: Lint
         run: npm run lint:check
@@ -106,7 +146,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: app-coverage
+          name: app-coverage-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: |
             coverage/
           retention-days: 7
@@ -114,9 +154,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-  # Dependency licence terms are not checked by CI. The `npm audit` step above
-  # checks vulnerability advisories only; see the README's dependency licensing note.
 
   # The blocking gate for everything under e2e/.
   #
@@ -127,12 +164,14 @@ jobs:
   #
   # Needs no browser and no application instance.
   e2e-unit:
+    needs: validate-dispatch
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validate-dispatch.outputs.source_sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -149,7 +188,7 @@ jobs:
 
       - name: Cover the e2e helpers
         # LAST, and deliberately still a gate. `test:e2e:unit:coverage` re-runs the
-        # same suite with v8 instrumentation and reports into ./coverage-e2e. Ordered
+        # same suite with Istanbul's explicit include list and reports into ./coverage-e2e. Ordered
         # after the real gate so it cannot be skipped or obscured by it: a failure here
         # is reported against a job whose tests already passed, and a failure in the gate
         # above aborts this step rather than letting coverage output stand in for it. It
@@ -160,8 +199,9 @@ jobs:
         # tsconfig.e2e.json along with the app and node projects, so a second scoped run
         # here could only repeat it.
         #
-        # There are no coverage thresholds in vitest.e2e.config.ts, so this step
-        # cannot go red on a percentage; it fails only if a test fails.
+        # Per-file floors use the reviewed Istanbul baseline: statements 50%, branches
+        # 50%, functions 35%, lines 50%. The pure re-export barrel has no executable code
+        # and remains enforced by the separate module-reachability gate.
         run: npm run test:e2e:unit:coverage
 
       - name: Upload e2e helper coverage
@@ -169,7 +209,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-helper-coverage
+          name: e2e-helper-coverage-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: |
             coverage-e2e/
           retention-days: 7
@@ -180,6 +220,7 @@ jobs:
   # It runs as a separate non-blocking job so external advisories cannot block the
   # main pipeline.
   audit:
+    needs: validate-dispatch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
@@ -187,6 +228,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validate-dispatch.outputs.source_sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -205,16 +247,16 @@ jobs:
   # Cross-platform e2e
   #
   # A GATE, and the only one for the e2e specs themselves. A matrix runs the
-  # same headless suite on Linux (macOS baselines), Windows and macOS.
+  # same headless suite on Linux (Linux export baselines), Windows and macOS.
   #
   # It was `continue-on-error: true` on the stated grounds that "5 of the 97 tests
   # fail": 2 CDP capture-size specs, 2 `levels.spec.ts` canvas-lookup specs, and a
   # sidebar keyboard flyout race. All three of those groups are fixed in this
   # repository, and are recorded as fixed in `e2e/OPEN_PROBLEMS.md` ("Observed
   # failures") and in `e2e/README.md`. The specs declare no `test.fail`, no
-  # `test.fixme` and no `describe.skip`; the only three skips are unconditional
-  # `test.skip` declarations in `e2e/export/photopea.spec.ts`,
-  # `e2e/sidebar-flyout.spec.ts` and `e2e/viewport-drawing.spec.ts`. Nothing in
+  # `test.fixme` and no `describe.skip`; the only two skips are unconditional
+  # `test.skip` declarations in `e2e/export/photopea.spec.ts` and
+  # `e2e/viewport-drawing.spec.ts`. Nothing in
   # the tree marks a test as failing, so the stated justification had stopped
   # describing the suite, and the job went on reporting a state the suite no
   # longer had. The comment kept its number alive long after the failures behind
@@ -237,42 +279,60 @@ jobs:
   # the page mid-run. A CI runner has no such input, but keeping the same default
   # locally is what stops that class of failure from being misread as flakiness.
   #
-  # MISSING BASELINES. `visual-regression.spec.ts` reads its oracle from
-  # `export-baselines/<platform>/`. Only `darwin/` baselines are committed; the
-  # Linux and Windows directories will be empty on the first CI run, so those legs
-  # hit the fail-as-missing contract (`Baseline missing for <format> on linux`)
-  # until an operator records them. That is a RED first run by design: the test
-  # would rather fail than silently fall back to another OS's rasteriser. Record
-  # each platform's set from a green CI run with:
-  #   npm run test:e2e:update-baselines
-  # and commit the result after reviewing the diff. The macOS leg should be
-  # green from the start — those baselines are already recorded.
+  # Linux baselines are captured on ubuntu-latest and committed only by the
+  # isolated promotion job in capture-linux-baselines.yml. Missing images remain
+  # a hard failure; do not skip the visual-regression spec.
   e2e:
     strategy:
-      # One platform failing must not cancel the others; a Windows-specific
-      # rasteriser regression is a finding even alongside an expected Linux
-      # baseline-missing red.
+      # One platform failing must not cancel the others; each runner can expose
+      # platform-specific rasterisation regressions independently.
       fail-fast: false
       matrix:
         include:
           - platform: linux
             os: ubuntu-latest
-            timeout: 30
+            shard: 1
+            shards: 2
+            timeout: 35
             install-command: npx playwright install --with-deps chrome
           - platform: windows
             os: windows-latest
-            timeout: 35
+            shard: 1
+            shards: 2
+            timeout: 40
             install-command: npx playwright install chrome
           - platform: macos
             os: macos-latest
-            timeout: 35
+            shard: 1
+            shards: 2
+            timeout: 40
             install-command: npx playwright install chrome
+          - platform: linux
+            os: ubuntu-latest
+            shard: 2
+            shards: 2
+            timeout: 35
+            install-command: npx playwright install --with-deps chrome
+          - platform: windows
+            os: windows-latest
+            shard: 2
+            shards: 2
+            timeout: 40
+            install-command: npx playwright install chrome
+          - platform: macos
+            os: macos-latest
+            shard: 2
+            shards: 2
+            timeout: 40
+            install-command: npx playwright install chrome
+    needs: validate-dispatch
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validate-dispatch.outputs.source_sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -319,7 +379,7 @@ jobs:
         # here is a new defect unless e2e/OPEN_PROBLEMS.md says otherwise, and
         # filtering failures out would hide the one signal this job now exists to
         # give.
-        run: npx playwright test
+        run: npx playwright test --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
       - name: Upload Playwright report
         # `always()`, and NOT `!cancelled()`. `cancel-in-progress: true` at the top
@@ -352,7 +412,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.platform }}
+          name: playwright-report-${{ matrix.platform }}-shard-${{ matrix.shard }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: |
             playwright-report/
             test-results/
@@ -363,3 +423,60 @@ jobs:
           # only record of what the suite actually did, and the other uploads in
           # this workflow already treat a missing report as an error.
           if-no-files-found: error
+
+  # The Playwright job is split across three platforms and two shards. Compare
+  # the complete skip set only after all six machine-readable reports are back.
+  # Checking the global baseline in each individual shard would incorrectly
+  # require that shard to contain skips assigned to its sibling shard.
+  e2e-skip-baseline:
+    name: E2E skip baseline
+    needs: [validate-dispatch, e2e]
+    if: ${{ always() && needs.validate-dispatch.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-dispatch.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Download Playwright reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: playwright-report-*-shard-*-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: playwright-artifacts
+          merge-multiple: false
+
+      - name: Enforce the reviewed E2E skip baseline
+        run: node scripts/e2e-skip-baseline.mjs --artifacts-dir playwright-artifacts
+
+  # Keep the existing `ci` status check as a final gate. The expensive jobs run
+  # in parallel; this small job propagates any failure into the same check that
+  # branch protection already uses, including the cross-shard skip baseline.
+  ci:
+    needs: [validate-dispatch, ci-checks, e2e-unit, e2e, e2e-skip-baseline]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Enforce required checks
+        env:
+          VALIDATE_DISPATCH_RESULT: ${{ needs.validate-dispatch.result }}
+          CI_CHECKS_RESULT: ${{ needs.ci-checks.result }}
+          E2E_UNIT_RESULT: ${{ needs.e2e-unit.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          E2E_SKIP_BASELINE_RESULT: ${{ needs.e2e-skip-baseline.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATE_DISPATCH_RESULT" == "success" ]] || { echo "::error::Source validation ended with $VALIDATE_DISPATCH_RESULT"; exit 1; }
+          [[ "$CI_CHECKS_RESULT" == "success" ]] || { echo "::error::CI checks ended with $CI_CHECKS_RESULT"; exit 1; }
+          [[ "$E2E_UNIT_RESULT" == "success" ]] || { echo "::error::E2E unit checks ended with $E2E_UNIT_RESULT"; exit 1; }
+          [[ "$E2E_RESULT" == "success" ]] || { echo "::error::Cross-platform E2E ended with $E2E_RESULT"; exit 1; }
+          [[ "$E2E_SKIP_BASELINE_RESULT" == "success" ]] || { echo "::error::E2E skip baseline ended with $E2E_SKIP_BASELINE_RESULT"; exit 1; }

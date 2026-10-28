@@ -34,35 +34,38 @@ class BlendingCanvas {
   readonly height: number;
   readonly draws: DrawState[] = [];
   readonly compositeWrites: GlobalCompositeOperation[] = [];
+  readonly smoothingAtDraw: boolean[] = [];
 
-  private readonly state = { composite: 'source-over' as GlobalCompositeOperation, alpha: 1 };
-  private readonly stack: Array<{ composite: GlobalCompositeOperation; alpha: number }> = [];
+  private readonly state = { composite: 'source-over' as GlobalCompositeOperation, alpha: 1, smoothing: true };
+  private readonly stack: Array<{ composite: GlobalCompositeOperation; alpha: number; smoothing: boolean }> = [];
   private readonly context: CanvasRenderingContext2D;
 
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
-    const { state, stack, draws, compositeWrites } = this;
+    const { state, stack, draws, compositeWrites, smoothingAtDraw } = this;
     const context = {
       filter: 'none',
-      imageSmoothingEnabled: true,
       save: () => {
-        stack.push({ composite: state.composite, alpha: state.alpha });
+        stack.push({ composite: state.composite, alpha: state.alpha, smoothing: state.smoothing });
       },
       restore: () => {
         const previous = stack.pop();
         if (!previous) return;
         state.composite = previous.composite;
         state.alpha = previous.alpha;
+        state.smoothing = previous.smoothing;
       },
       clearRect: () => undefined,
       fillRect: () => undefined,
+      setTransform: () => undefined,
       translate: () => undefined,
       transform: () => undefined,
       // Sampled through the accessors below, so what lands in `draws` is the state in force for
       // THIS draw rather than the sequence of writes that preceded it.
       drawImage: () => {
         draws.push({ composite: state.composite, alpha: state.alpha });
+        smoothingAtDraw.push(state.smoothing);
       },
     } as unknown as Record<string, unknown>;
     Object.defineProperties(context, {
@@ -77,6 +80,12 @@ class BlendingCanvas {
         set: (value: GlobalCompositeOperation) => {
           state.composite = value;
           compositeWrites.push(value);
+        },
+      },
+      imageSmoothingEnabled: {
+        get: () => state.smoothing,
+        set: (value: boolean) => {
+          state.smoothing = value;
         },
       },
     });
@@ -146,7 +155,7 @@ function replay(layers: Record<string, DurableReplayLayer>): DurableReplayResult
 function request(registry: AssetRegistry): MaterializationRequest {
   return {
     documentId: 'blend-document',
-    baselineAssetGeneration: 0,
+    baselineAssetGeneration: registry.getDocumentGeneration('blend-document'),
     operationSetRevision: 0,
     assetRegistry: registry,
   };
@@ -157,6 +166,10 @@ function installBlendingCanvas() {
   vi.stubGlobal('OffscreenCanvas', BlendingCanvas);
   vi.stubGlobal('createImageBitmap', undefined);
   return createdCanvases;
+}
+
+function documentSurface(canvases: readonly BlendingCanvas[] = createdCanvases): BlendingCanvas | undefined {
+  return canvases.find((canvas) => canvas.width === frame.width && canvas.height === frame.height);
 }
 
 afterEach(() => {
@@ -206,6 +219,22 @@ describe('a materialized layer carries its own compositing parameters', () => {
 });
 
 describe('the compositing boundary', () => {
+  it('composites fractional layer bounds without introducing smoothing', async () => {
+    const canvases = installBlendingCanvas();
+    const registry = new AssetRegistry();
+    try {
+      const result = await composeDurableDocument(
+        replay({ layer: layer('layer', 0, { pos: { x: 0, y: 0, width: 40.5, height: 20 } }) }),
+        request(registry)
+      );
+
+      expect(documentSurface(canvases)?.smoothingAtDraw).toEqual([false]);
+      result.release();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
   it('holds the snapshot blend mode in force for the draw, beside the snapshot opacity', async () => {
     // This is legacy `drawLayer()`'s contract, and the durable boundary has to match it: alpha and
     // the composite operation are set TOGETHER, inside one save/restore pair, on the shared
@@ -222,7 +251,7 @@ describe('the compositing boundary', () => {
         request(registry)
       );
 
-      const composite = canvases.at(-1);
+      const composite = documentSurface(canvases);
       expect(composite?.draws).toHaveLength(2);
       // The multiply layer's image reached the surface under `multiply`; the Normal layer above and
       // below it under its own mode. One list, so the second entry also proves the first layer's
@@ -254,7 +283,7 @@ describe('the compositing boundary', () => {
           request(registry)
         );
         result.release();
-        return canvases.at(-1)?.draws ?? [];
+        return documentSurface(canvases)?.draws ?? [];
       } finally {
         registry.shutdown();
       }
@@ -273,13 +302,9 @@ describe('the compositing boundary', () => {
   });
 
   it('writes a non-normal mode onto the document surface and onto no other surface it allocates', async () => {
-    // The isolation invariant, and the reason the blend must NOT be baked into a layer's own
-    // raster. Every surface `materializeLayer()` creates is freshly allocated and transparent, and
-    // compositing any blend mode against a transparent backdrop yields the source unchanged — so a
-    // baked-in mode is arithmetically inert rather than visibly wrong, which is exactly why it
-    // would survive review. Worse, the retained segments are drawn one after another into
-    // separate surfaces, so a mode written onto one would blend it against the layer's own
-    // previous segment. Only the document surface may ever carry one.
+    // The per-layer outputs stay tight, but affine materialization temporarily reuses the document
+    // surface as a frame-sized scratch. That pass must remain source-over; the snapshot blend mode
+    // is applied only during the final layer composite, after the scratch has been cleared.
     const canvases = installBlendingCanvas();
     const registry = new AssetRegistry();
     try {
@@ -300,12 +325,12 @@ describe('the compositing boundary', () => {
         request(registry)
       );
 
-      const documentSurface = canvases.at(-1);
-      const nonNormalSurfaces = canvases.filter((canvas) =>
-        canvas.compositeWrites.some((write) => write !== 'source-over')
-      );
-
-      expect(nonNormalSurfaces).toEqual([documentSurface]);
+      const compositingSurface = documentSurface(canvases);
+      expect(canvases.filter((canvas) => canvas.compositeWrites.some((write) => write !== 'source-over'))).toEqual([
+        compositingSurface,
+      ]);
+      expect(compositingSurface?.draws.at(-1)).toEqual({ composite: 'multiply', alpha: 1 });
+      expect(compositingSurface?.draws.slice(0, -1).every(({ composite }) => composite === 'source-over')).toBe(true);
       expect(canvases.length).toBeGreaterThan(1);
       result.release();
     } finally {
@@ -328,7 +353,7 @@ describe('the compositing boundary', () => {
         request(registry)
       );
 
-      const composite = canvases.at(-1);
+      const composite = documentSurface(canvases);
       expect(composite?.draws).toEqual([{ composite: 'source-over', alpha: 1 }]);
       expect(composite?.compositeWrites).not.toContain('multiply');
       result.release();

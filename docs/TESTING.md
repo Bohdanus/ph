@@ -45,6 +45,7 @@ forgotten it. Two rows have weaker coverage than the table implies:
 npm run test            # vitest, jsdom - app unit tests
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
 npm run test:e2e        # playwright, HEADLESS - starts its OWN server on a port it picks
+npm run test:e2e:verbose # like test:e2e, but streams suite output live
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
@@ -54,7 +55,14 @@ npm run build           # production bundle, and a real CI step
 baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
 
+For local work, run focused specs and fast gates on the developer machine. Broad
+headless Playwright runs use the `mirror` workflow; see [`E2E-MIRROR.md`](E2E-MIRROR.md).
+Use the SSH `e2e` host only for targeted Linux/ARM64 reproduction and checks, as
+described in [`FREE-REMOTE-COMPUTE.md`](FREE-REMOTE-COMPUTE.md).
+
 **`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
+It captures suite output by default and replays it only on failure; use
+`npm run test:e2e:verbose` or `--verbose` when live output is needed.
 It does two independent things, and telling them apart is the whole design.
 
 **The guarantee: the run starts its own server.** It picks a port, verifies it is
@@ -251,20 +259,33 @@ unquoted `$(...)` word-splits and globs into a silent pass.
 
 ### CI
 
-CI in `.github/workflows/ci.yml` is read-only by design: the workflow sets
-`permissions: contents: read`, and every checkout step passes
-`persist-credentials: false`, so no job can write to the repository or exfiltrate
-a usable token.
+The checked-in default-branch CI workflow in `.github/workflows/ci.yml` is
+read-only: it sets `contents: read` and `persist-credentials: false`. CLI-launched
+mirror runs use a pinned `repository_dispatch` workflow from the default branch.
+Automatic `pull_request` runs use GitHub's PR merge ref; fork PRs receive read-only
+tokens, but same-repository PR authors can edit workflow permissions. Treat
+contributors with repository write access as trusted workflow authors.
 
-- `ci`: lint, typecheck, TS-project coverage assertion, unit tests, build.
+- `validate-dispatch`: verifies manual mirror dispatches use `Bohdanus/ph` and a
+  full commit SHA, then passes that exact SHA to every checkout. Automatic runs
+  use the event SHA.
+- `ci-checks`: lint, typecheck, TS-project coverage assertion, unit tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
 - `audit`: `npm audit --audit-level=high`, a non-blocking vulnerability-advisory check.
-- `e2e`: headless Playwright on Linux, Windows, and macOS — a matrix with
-  `fail-fast: false` and `retries: 2` (three total attempts). `failOnFlakyTests`
+- `e2e`: headless Playwright on Linux, Windows, and macOS, split into two shards
+  per platform (`--shard=1/2` and `--shard=2/2`) with `fail-fast: false` and
+  `retries: 2` (three total attempts). `failOnFlakyTests`
   makes a test that passes only after a retry fail the job, so investigate it as a
-  defect rather than treating it as a pass. Only `darwin/` visual-regression
-  baselines are committed; the Linux and Windows legs fail-as-missing until their
-  baselines are recorded (see `.github/workflows/ci.yml` "MISSING BASELINES").
+  defect rather than treating it as a pass. `darwin/`, `win32/`, and Linux
+  visual-regression baselines are committed; Linux capture is verified on
+  `ubuntu-latest` and can be promoted only through the isolated writer in
+  `.github/workflows/capture-linux-baselines.yml`.
+- `e2e-skip-baseline`: downloads all six Playwright report artifacts and compares
+  their per-platform skipped-test identities with `e2e/skip-baseline.json`.
+- `ci`: lightweight summary check that fails unless `ci-checks`, `e2e-unit`,
+  `e2e`, and `e2e-skip-baseline` all succeed. The expensive jobs still run in
+  parallel; their results are collected here so skip-baseline failures reach the
+  existing `ci` status context.
 - **Dependency licences are not checked by CI.** The `audit` job checks
   vulnerability advisories, not licence terms. The README records this limitation
   and the expectation to review dependency licences.
@@ -290,13 +311,15 @@ decision to the operator.
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
 - **The latest recorded full headless run passed; its machine-specific result is
-  in `e2e/OPEN_PROBLEMS.md`.** Three tests are `test.skip` by declaration. The Photopea
-  round-trip needs an external service; the single-tool
-  right-click case is recorded under "Known-skip tests" in
-  `e2e/OPEN_PROBLEMS.md`; and `e2e/viewport-drawing.spec.ts` is skipped by the
-  operator's decision of 2026-09-29 because of intermittent capture drift. Its
+  in `e2e/OPEN_PROBLEMS.md`.** Two tests are `test.skip` by declaration: the Photopea
+  round-trip needs an external service, and `e2e/viewport-drawing.spec.ts` is skipped
+  by the operator's decision of 2026-09-29 because of intermittent capture drift. Its
   frequency is unknown: `TEST-FLAKES.md` §12 explicitly says the observations have
   not been reconciled into a rate. The skip is a gate decision, not a fix or waiver;
   do not loosen the assertion or add retries.
+- The CI skip baseline check recombines the JSON reports from all three platforms
+  and both shards before comparing them with `e2e/skip-baseline.json`. Each reviewed
+  skip must appear exactly once per platform; adding or removing one requires a
+  matching baseline review.
 - Read failures from `test-results/`. Do not open `trace.zip` in a trace viewer,
   because that opens a browser window; ask the operator to inspect it if needed.

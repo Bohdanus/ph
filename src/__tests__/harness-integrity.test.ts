@@ -1145,18 +1145,15 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
     ).toBe(true);
   });
 
-  it('pins colorScheme to light, which the pixel helpers require', () => {
-    // P2 — the letterbox is still read as ink by two predicates. The canvas helpers
-    // classify pixels with thresholds calibrated to the LIGHT theme (`#f3f3f3` cells,
-    // `#fff` gaps), and `hasDarkPixels` / `getDarkPixelBounds` are not letterbox-aware
-    // at all. Under the DARK theme both `#121212` cells and `#000` gaps satisfy
-    // `DARK_PIXEL_THRESHOLD`, so a dark-theme spec could wrong-pass a dark-pixel wait
-    // by capturing only backdrop. `colorScheme: 'light'` is the only thing preventing
-    // that today, and this pin makes it a structural default rather than an inherited
-    // one — removing or changing the line fails this test.
+  it('keeps the browser color scheme stable without treating it as the app theme pin', () => {
+    // `colorScheme` sets `prefers-color-scheme`, which ThemeContext no longer reads.
+    // The shared `extended-test` fixture seeds the app's `localStorage.theme` to light
+    // for fresh contexts; its own unit tests guard that pixel-helper precondition. Keep
+    // this assertion scoped to the browser media preference so a future reader does
+    // not mistake it for the mechanism that selects the workspace checkerboard.
     expect(
       playwrightConfig.use?.colorScheme,
-      'playwright.config.ts must declare colorScheme: "light", because the pixel helpers require it and nothing else enforces that precondition'
+      'playwright.config.ts keeps the browser media preference stable; the shared test fixture pins the app theme'
     ).toBe('light');
   });
 

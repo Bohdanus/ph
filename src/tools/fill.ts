@@ -2,7 +2,13 @@ import { createFloodFillMask } from '../util/floodFill.ts';
 import { blendPixel } from '../util/pixels.ts';
 import { createSelectionAlphaMask } from '../util/selection.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
-import type { BitmapSource, Point, Size } from '../contexts/general-types.ts';
+import type {
+  BitmapSource,
+  Point,
+  PositionedRasterSelectionMask,
+  SelectionPointPaths,
+  Size,
+} from '../contexts/general-types.ts';
 import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type FillToolName = 'magic-eraser' | 'paint-bucket';
@@ -46,7 +52,8 @@ export type FillToolArgs = {
    * correctly. Absent, the fill behaves as if no selection existed — byte-for-byte identical.
    */
   selection?: {
-    points: Point[];
+    points: SelectionPointPaths;
+    rasterMask?: PositionedRasterSelectionMask;
     featherRadius: number;
     antiAlias: boolean;
   };
@@ -131,7 +138,7 @@ const fillLayer =
     }
 
     const selectionMask = fillArgs.selection
-      ? createSelectionAlphaMask(fillArgs.selection.points, size, fillArgs.selection)
+      ? createSelectionAlphaMask(fillArgs.selection, size, fillArgs.selection)
       : null;
 
     paint(region, fillArgs, selectionMask);

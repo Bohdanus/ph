@@ -106,3 +106,17 @@ with a minimum height for each panel.
   other display preferences must never enter document history or mark the document dirty.
 - A layer thumbnail uses `drawLayerSource` and the layer's existing presentation caches. It does not
   create a second document renderer or add a History thumbnail.
+
+## Layer stack order and replay
+
+Adobe's [Reorder and move layers](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/reorder-and-move-layers.html)
+(updated 2026-09-28) describes changing a layer's stacking position by dragging it up or down, with
+the upper panel rows appearing in front. Adobe's [Create layers and layer groups](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/create-layer-compositions/create-layers-and-layer-groups.html)
+(updated 2026-09-28) says a new layer is added above the selected layer. These sources establish the
+visible sequence behavior; they do not specify a numeric order representation.
+
+Repository inference: numeric order values are also inputs to legacy source-backed layer naming.
+Therefore reorder replay, durable conversion, and append planning must preserve the historical sparse
+values as well as the visible stack sequence. Renumbering the same sequence densely can change the
+name and order assigned to a later layer when older history is replayed. This is a compatibility
+constraint of the clone's history model, not a claim about Photoshop's internal representation.

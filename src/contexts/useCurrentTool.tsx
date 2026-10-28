@@ -1,6 +1,7 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { cloneDeep } from 'lodash-es';
 import { lastSavedSettings } from '../tools/settings.ts';
+import { clearTextDraftArgs } from '../tools/text.ts';
 import { isFigureType, normalizeFigure } from '../tools/shape.ts';
 import type { ToolName, ToolArgs, ToolArgsFor, ToolPatch } from './tool-types.ts';
 import { saveLastSettings } from '../util/settings.ts';
@@ -16,9 +17,20 @@ import { isDocumentGestureOpen } from '../hooks/document-gesture.ts';
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
   setToolArgs: (args: ToolArgs) => void;
+  textEditFocusRequest: TextEditFocusRequest | null;
+  requestTextEditFocus: (target: TextEditFocusTarget) => void;
+  consumeTextEditFocusRequest: (id: number) => void;
   isDocumentBacked: boolean;
   getToolArgs: <TName extends ToolName>(toolName: TName) => ToolArgsFor<TName> | null;
   patchToolArgs: <TName extends ToolName>(toolName: TName, patch: ToolPatch<TName>) => void;
+}
+
+export type TextEditFocusTarget =
+  { kind: 'select-all'; layerId: string } | { kind: 'point'; layerId: string; clientX: number; clientY: number };
+
+export interface TextEditFocusRequest {
+  id: number;
+  target: TextEditFocusTarget;
 }
 
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
@@ -55,13 +67,16 @@ export function durableToolArgsForNavigation(
       text: _text,
       rect: _rect,
       kind: _kind,
+      angle: _angle,
       placeholderUntouched: _placeholderUntouched,
       editingLayerId: _editingLayerId,
       ...persisted
     } = args;
     // Keep an empty draft shape so Text.tsx cannot reopen a committed edit. The
     // committed text and layer-local rect are deliberately never rehydrated.
-    return normalizeToolArgs({ ...persisted, text: '', rect: null } as ToolArgs);
+    // The source keeps its own rotation; selecting it is not an edit session and must not rotate
+    // the next new draft. Explicit edit-entry handlers publish args from textLayerEditTarget.
+    return normalizeToolArgs(clearTextDraftArgs(persisted) as ToolArgs);
   }
 
   const { start: _start, end: _end, ...persisted } = args;
@@ -83,6 +98,8 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     args: cloneSavedToolArgs(toolName),
     isDocumentBacked: false,
   }));
+  const [textEditFocusRequest, setTextEditFocusRequest] = useState<TextEditFocusRequest | null>(null);
+  const textEditFocusRequestId = useRef(0);
 
   const savedArgsForTool = useMemo(() => cloneSavedToolArgs(toolName), [toolName]);
   const toolArgs = toolState.toolName === toolName ? toolState.args : savedArgsForTool;
@@ -112,6 +129,15 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     [currentArgsRef]
   );
 
+  const requestTextEditFocus = useCallback((target: TextEditFocusTarget) => {
+    const id = ++textEditFocusRequestId.current;
+    setTextEditFocusRequest({ id, target });
+  }, []);
+
+  const consumeTextEditFocusRequest = useCallback((id: number) => {
+    setTextEditFocusRequest((request) => (request?.id === id ? null : request));
+  }, []);
+
   useEffect(() => {
     if (Object.keys(previewLayers.current).length > 0) return;
     if (hasPendingText(currentArgsRef.current) || isDocumentGestureOpen()) return;
@@ -140,11 +166,22 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     () => ({
       toolArgs,
       setToolArgs: _setToolArgs,
+      textEditFocusRequest,
+      requestTextEditFocus,
+      consumeTextEditFocusRequest,
       isDocumentBacked: toolState.isDocumentBacked,
       getToolArgs,
       patchToolArgs,
     }),
-    [_setToolArgs, getToolArgs, patchToolArgs, toolArgs]
+    [
+      _setToolArgs,
+      consumeTextEditFocusRequest,
+      getToolArgs,
+      patchToolArgs,
+      requestTextEditFocus,
+      textEditFocusRequest,
+      toolArgs,
+    ]
   );
 
   return (

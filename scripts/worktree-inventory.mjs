@@ -32,11 +32,19 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { collectWorktrees, findMissingWorktrees, resolveBaseRef } from './lib/worktree-inventory/git.mjs';
+import {
+  baseRefName,
+  collectWorktrees,
+  findMissingWorktrees,
+  listBranchOnlyRefs,
+  listWorktrees,
+  resolveBaseRef,
+  sameWorktreeRoster,
+} from './lib/worktree-inventory/git.mjs';
 import { auditChats, resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { auditWrites } from './lib/worktree-inventory/writes.mjs';
@@ -48,13 +56,14 @@ import { createSessionDbSnapshot } from './lib/worktree-inventory/session-db-sna
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { loadChatAudit } from './lib/worktree-inventory/chat-audit.mjs';
 import { buildInventory, serialise, formatCanonical } from './lib/worktree-inventory/assemble.mjs';
+import { resolveInventoryPath, resolveRepositoryRoot } from './lib/worktree-inventory/location.mjs';
 
 const USAGE = `worktree inventory — regenerate WORKTREES.json
 
   (no flags)          write WORKTREES.json
   --check             exit 1 if WORKTREES.json is missing or stale, write nothing
   --stdout            print the inventory instead of writing it
-  --base <branch>     compare against <branch> (default: main)
+  --base <ref>        compare against <ref> (default: local main, then origin/main)
   --window-hours <n>  chat window in hours (default: 24, maximum: 72; the session database is never read older than 3 days)
   --now <ms>          pin recency evaluation; must not be in the future; generatedAt stays on the wall clock
   --out <path>        write somewhere other than WORKTREES.json
@@ -93,15 +102,21 @@ export function validatePinnedNow(nowMs, wallNowMs = Date.now()) {
 }
 
 export function parseArgs(argv) {
-  const opts = { base: 'main', windowHours: 24, now: null, out: null, noLiveWriters: null };
+  const opts = { base: undefined, windowHours: 24, now: null, out: null, noLiveWriters: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--check') opts.check = true;
     else if (arg === '--stdout') opts.stdout = true;
     else if (arg === '--quiet') opts.quiet = true;
     else if (arg === '--help' || arg === '-h') opts.help = true;
-    else if (arg === '--base') opts.base = argv[++i];
-    else if (arg === '--window-hours') opts.windowHours = Number(argv[++i]);
+    else if (arg === '--base') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--') || value.trim() === '') {
+        throw new Error('--base requires a non-empty ref');
+      }
+      opts.base = value;
+      i += 1;
+    } else if (arg === '--window-hours') opts.windowHours = Number(argv[++i]);
     else if (arg === '--now') opts.now = Number(argv[++i]);
     else if (arg === '--out') opts.out = argv[++i];
     else if (arg === '--no-live-writers' || arg.startsWith('--no-live-writers=')) {
@@ -131,38 +146,45 @@ export function parseArgs(argv) {
   return opts;
 }
 
-/**
- * The repository's MAIN checkout, so the script works from any worktree and
- * always inventories the whole repository rather than the one it was run from.
- *
- * `git rev-parse --show-toplevel` is the wrong answer here: inside a worktree
- * it returns that worktree, which would inventory one directory and report the
- * other 76 as missing. The main worktree is the first entry of
- * `git worktree list --porcelain`, and its checkout is where relative paths
- * like `.kilo/worktrees/…` resolve.
- */
-function repoRoot(cwd) {
-  const out = execFileSync('git', ['worktree', 'list', '--porcelain'], {
-    cwd,
-    encoding: 'utf8',
-  });
-  const first = out.split('\n').find((l) => l.startsWith('worktree '));
-  if (!first) throw new Error('git worktree list returned no worktrees');
-  return resolve(first.slice('worktree '.length).trim());
+/** Resolve the primary checkout root that owns repository-local storage. */
+export function repoRoot(cwd) {
+  const root = resolveRepositoryRoot(cwd);
+  if (!root) {
+    throw new Error(
+      `worktree-inventory: could not resolve the repository root from ${cwd}. ` +
+        'Git could not provide a usable primary worktree entry.'
+    );
+  }
+  return root;
+}
+
+/** Resolve where WORKTREES.json is written, shared with the disposer. */
+export function inventoryTarget(root, out, options = {}) {
+  if (out !== null && out !== undefined) return resolve(root, out);
+  const target = resolveInventoryPath(root, options);
+  if (!target) throw new Error(`worktree-inventory: could not resolve the canonical inventory path from ${root}`);
+  return target;
+}
+
+export function formatSummary(inventory) {
+  const t = inventory.totals;
+  return (
+    `${inventory.worktrees.length} worktrees · ` +
+    `${t.readyToLand} ready to land · ${t.disposalCandidates} to dispose · ` +
+    `${t.legacy} legacy · ${t.atRisk} at risk · ${t.inUse} in use · ${t.undecided} undecided · ` +
+    `${t.holdingUncommittedWork} holding uncommitted work · ${t.withoutSummary} without a summary\n` +
+    `+ ${t.branchOnlyRefs} branch-only ref(s): ` +
+    `${t.branchOnlyUnmatchedPatches} unmatched patches · ` +
+    `${t.branchOnlyZeroCherryPatches} zero cherry patches · ` +
+    `${t.branchOnlyAncestor} ancestor · ${t.branchOnlyUnknown} unknown\n`
+  );
 }
 
 function printSummary(inventory, quiet) {
   const t = inventory.totals;
   const byName = new Map(inventory.worktrees.map((w) => [w.name, w]));
   const line = (n) => `  ${n.padEnd(40)} ${byName.get(n)?.branch ?? ''}`;
-
-  process.stdout.write(
-    `${inventory.worktrees.length} worktrees · ` +
-      `${t.readyToLand} ready to land · ${t.disposalCandidates} to dispose · ` +
-      `${t.legacy} legacy · ${t.atRisk} at risk · ${t.inUse} in use · ${t.undecided} undecided · ` +
-      `${t.holdingUncommittedWork} holding uncommitted work · ` +
-      `${t.withoutSummary} without a summary\n`
-  );
+  process.stdout.write(formatSummary(inventory));
 
   // Ownership, before anything that acts on it. A reader who has just been told
   // "N ready for disposal" needs to know whether N is counting a worktree
@@ -299,6 +321,20 @@ function printSummary(inventory, quiet) {
         `${dirty}${chats}${collided}\n`
     );
   }
+
+  // Branch-only refs live outside the worktree roster, so they get their own
+  // section. These are Git observations for review, not ownership or disposition.
+  if (inventory.branchOnlyRefs.length > 0) {
+    process.stdout.write('\nBRANCH-ONLY REFS (no worktree; Git observations only):\n');
+    for (const r of inventory.branchOnlyRefs) {
+      const ahead = String(r.ahead ?? '?').padStart(3);
+      const behind = String(r.behind ?? '?').padStart(3);
+      const cherry = String(r.cherryPlusCount ?? '?').padStart(3);
+      process.stdout.write(
+        `  ${r.category.padEnd(16)} ${r.name.padEnd(46)} ` + `ahead=${ahead} behind=${behind} cherry+=${cherry}\n`
+      );
+    }
+  }
 }
 
 /**
@@ -364,12 +400,16 @@ async function runAsyncMain(opts) {
   const windowMs = opts.windowHours * 60 * 60 * 1000;
 
   // Resolve base ref before collecting worktrees
-  const base = opts.base ?? resolveBaseRef(root);
+  const base = opts.base === undefined ? resolveBaseRef(root) : resolveBaseRef(root, [opts.base]);
   if (base === null) {
+    const attemptedBase =
+      opts.base === undefined
+        ? 'Tried refs/heads/main and refs/remotes/origin/main.'
+        : `Could not resolve --base ${JSON.stringify(opts.base)} as a commit ref.`;
     throw new Error(
       `no base ref could be resolved in ${root}, so every ahead/behind and merged-into-base answer ` +
         'would be null and the inventory would read as "nothing is at risk" for a reason that has nothing ' +
-        `to do with risk. Tried main, origin/main, refs/remotes/origin/main. Pass --base <ref> to name one.`
+        `to do with risk. ${attemptedBase} Pass --base <ref> to name one.`
     );
   }
   opts.base = base;
@@ -377,14 +417,24 @@ async function runAsyncMain(opts) {
   // Pin every ancestry and merge-tree calculation to the exact commit recorded
   // below. If the branch ref moved during collection, the disposer will compare
   // this snapshot with current main and refuse the no-op proof.
-  const mainHead = execFileSync('git', ['rev-parse', '--verify', `${opts.base}^{commit}`], {
+  const mainHead = execFileSync('git', ['rev-parse', '--verify', '--quiet', `${opts.base}^{commit}`], {
     cwd: root,
     encoding: 'utf8',
   }).trim();
 
-  // Use async collectWorktrees for parallel execution against the pinned base.
-  const worktrees = await collectWorktrees(root, { base: mainHead, baseName: opts.base });
-  const missing = findMissingWorktrees(root);
+  // Take one roster snapshot for every worktree-derived view. Re-reading it in
+  // separate collectors can hide a branch checked out between those reads.
+  const worktreeRoster = listWorktrees(root);
+  const worktrees = await collectWorktrees(root, {
+    base: mainHead,
+    baseName: baseRefName(root, opts.base),
+    worktreeRoster,
+  });
+  const missing = findMissingWorktrees(root, worktreeRoster);
+  // Branch-only refs are local branches that no worktree holds — structurally
+  // invisible to `collectWorktrees`. Enumeration fails closed because an empty
+  // list after a Git error would hide potentially valuable work.
+  const branchOnlyRefs = await listBranchOnlyRefs(root, { base: mainHead, worktreeRoster });
   // Compare PATHS, not records. `collectWorktrees` and `findMissingWorktrees`
   // each build their own objects, so `missing.includes(w)` is reference
   // equality across disjoint sets and matches nothing — deleted worktrees
@@ -457,6 +507,7 @@ async function runAsyncMain(opts) {
   const generatedAtMs = Date.now();
   const inventory = buildInventory({
     worktrees,
+    branchOnlyRefs,
     root,
     base: opts.base,
     mainHead,
@@ -474,6 +525,11 @@ async function runAsyncMain(opts) {
 
   if (missing.length > 0) {
     inventory.dataSources.git.missingWorktrees = missing.map((w) => w.name);
+  }
+  inventory.dataSources.git.branchOnlyRefCount = branchOnlyRefs.length;
+
+  if (!sameWorktreeRoster(worktreeRoster, listWorktrees(root))) {
+    throw new Error('the worktree roster changed during inventory generation; rerun to capture a consistent snapshot');
   }
 
   const next = formatCanonical(serialise(inventory));
@@ -514,13 +570,15 @@ async function runAsyncMain(opts) {
     process.exitCode = 1;
     return;
   }
+  const cwd = process.cwd();
   process.stdout.write(`worktree-inventory: wrote ${target}\n`);
+  if (!opts.out && resolve(cwd) !== resolve(dirname(target))) {
+    process.stdout.write(
+      `worktree-inventory: NOTE — inventory was written to the main checkout (${dirname(target)}), ` +
+        `not the invoking directory (${cwd}). Read it from ${target}.\n`
+    );
+  }
   printSummary(inventory, opts.quiet);
-}
-
-/** Resolve the repository-wide inventory, even when invoked from a task worktree. */
-export function inventoryTarget(root, out) {
-  return resolve(root, out ?? 'WORKTREES.json');
 }
 
 /**

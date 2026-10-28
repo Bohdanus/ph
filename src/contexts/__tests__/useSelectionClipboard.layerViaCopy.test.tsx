@@ -4,13 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockCanvas, createMockImageBitmap } from '@/__tests__/fixtures/canvas.ts';
 import type { Selection, SelectionClipboard } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
+import * as selectionUtils from '../../util/selection.ts';
 import { useSelectionClipboard } from '../useSelectionClipboard.ts';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 
 type CreateLayerInput = { bitmap: unknown; name: string; pos: { x: number; y: number; width: number; height: number } };
 
-const createLayerFromBitmapMock = vi.hoisted(() => vi.fn(async () => undefined));
+const createLayerFromBitmapMock = vi.hoisted(() => vi.fn(async () => true));
 
 const storeState = vi.hoisted(
   (): {
@@ -71,10 +72,12 @@ function polygonSelection(overrides: Partial<Selection> = {}): Selection {
     geometry: 'polygon',
     sourceTool: 'freehand-lasso',
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
-      { x: 0, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+        { x: 0, y: 40 },
+      ],
     ],
     pos: { x: 10, y: 20, width: 30, height: 40 },
     ...overrides,
@@ -84,7 +87,7 @@ function polygonSelection(overrides: Partial<Selection> = {}): Selection {
 beforeEach(() => {
   dispatchMock.mockClear();
   createLayerFromBitmapMock.mockClear();
-  createLayerFromBitmapMock.mockImplementation(async () => undefined);
+  createLayerFromBitmapMock.mockImplementation(async () => true);
   storeState.activeSelectionId = null;
   storeState.canvasRef = { current: createMockCanvas({ width: 100, height: 100 }) };
   storeState.documentFrame = undefined;
@@ -129,8 +132,10 @@ describe('useSelectionClipboard copy guards', () => {
     storeState.selections = [
       polygonSelection({
         points: [
-          { x: 0, y: 0 },
-          { x: 5, y: 5 },
+          [
+            { x: 0, y: 0 },
+            { x: 5, y: 5 },
+          ],
         ],
       }),
     ];
@@ -166,16 +171,60 @@ describe('useSelectionClipboard copy guards', () => {
     expect(dispatchMock).not.toHaveBeenCalledWith({ type: 'MARK_SELECTION_COPIED', payload: { id: 'selection-1' } });
   });
 
+  it('uses logical bounds and backing scale for Copy and Layer Via Copy', async () => {
+    const sourceCanvas = createMockCanvas({ width: 200, height: 200 });
+    storeState.canvasRef = { current: sourceCanvas };
+    storeState.documentFrame = { x: 0, y: 0, width: 100, height: 100 };
+    storeState.totalSize = { width: 100, height: 100 };
+    storeState.selections = [
+      polygonSelection({
+        geometry: 'rectangle',
+        sourceTool: 'rectangular-selection',
+        pos: { x: 10, y: 20, width: 10, height: 10 },
+      }),
+    ];
+    const copy = vi.spyOn(selectionUtils, 'copySelectionToCanvas');
+
+    try {
+      const api = renderProbe();
+      expect(api.copyActiveSelection()).toBe(true);
+      await expect(api.layerViaCopy()).resolves.toBe(true);
+
+      const expectedSelection = expect.objectContaining({
+        geometry: 'rectangle',
+        pos: { x: 10, y: 20, width: 10, height: 10 },
+      });
+      expect(copy).toHaveBeenNthCalledWith(
+        1,
+        sourceCanvas,
+        expectedSelection,
+        { width: 100, height: 100 },
+        { x: 2, y: 2 }
+      );
+      expect(copy).toHaveBeenNthCalledWith(
+        2,
+        sourceCanvas,
+        expectedSelection,
+        { width: 100, height: 100 },
+        { x: 2, y: 2 }
+      );
+    } finally {
+      copy.mockRestore();
+    }
+  });
+
   it('preserves the cropped document lower-right edge in both copy paths', async () => {
     storeState.documentFrame = { x: 10, y: 20, width: 90, height: 80 };
     storeState.totalSize = { width: 90, height: 80 };
     storeState.selections = [
       polygonSelection({
         points: [
-          { x: 0, y: 0 },
-          { x: 5, y: 0 },
-          { x: 5, y: 5 },
-          { x: 0, y: 5 },
+          [
+            { x: 0, y: 0 },
+            { x: 5, y: 0 },
+            { x: 5, y: 5 },
+            { x: 0, y: 5 },
+          ],
         ],
         pos: { x: 95, y: 95, width: 5, height: 5 },
       }),
@@ -208,10 +257,12 @@ describe('useSelectionClipboard copy guards', () => {
     storeState.selections = [
       polygonSelection({
         points: [
-          { x: 0, y: 0 },
-          { x: 10, y: 0 },
-          { x: 10, y: 10 },
-          { x: 0, y: 10 },
+          [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+            { x: 10, y: 10 },
+            { x: 0, y: 10 },
+          ],
         ],
         pos: { x: 90, y: 90, width: 10, height: 10 },
       }),
@@ -300,6 +351,14 @@ describe('useSelectionClipboard layerViaCopy', () => {
 
     expect(api.activeSelection?.id).toBe('second');
     await expect(api.layerViaCopy()).resolves.toBe(true);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledOnce();
+  });
+
+  it('reports failure when layer creation refuses a copied selection', async () => {
+    createLayerFromBitmapMock.mockResolvedValueOnce(false);
+    const api = renderProbe();
+
+    await expect(api.layerViaCopy()).resolves.toBe(false);
     expect(createLayerFromBitmapMock).toHaveBeenCalledOnce();
   });
 

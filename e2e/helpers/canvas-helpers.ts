@@ -77,6 +77,17 @@ export interface ScreenshotBounds {
  * measured a mark and a caller that measured the same mark twice as wide.
  */
 export function screenshotBoundsToCss(bounds: ScreenshotBounds, box: BoundingBox): CssBounds {
+  if (
+    !Number.isFinite(bounds.imageWidth) ||
+    bounds.imageWidth <= 0 ||
+    !Number.isFinite(bounds.imageHeight) ||
+    bounds.imageHeight <= 0
+  ) {
+    throw new RangeError(
+      `Screenshot bounds require positive finite image dimensions; received ${bounds.imageWidth}x${bounds.imageHeight}`
+    );
+  }
+
   return imageBoundsToCss(
     { width: bounds.imageWidth, height: bounds.imageHeight },
     { x: box.x, y: box.y, width: box.width, height: box.height },
@@ -660,17 +671,14 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
 }
 
 /**
- * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the
- * only export here that reads from the live page rather than deriving geometry from a
- * box. (Note: `onScreenClip` in this file also calls `page.evaluate` for scroll, so the
- * "only export" qualifier is scoped to the page-read of scroll state.)
+ * Reads the window's scroll offset when a caller needs it. `onScreenClip` also reads,
+ * changes, and restores scroll internally; this export lets other helpers query the
+ * current offset.
  *
- * Caching it would be wrong rather than merely stale — the scroll offset can change
- * between captures, so an offset read once is wrong before and after any scroll-changing
- * interaction. `clickToolButton` holds scroll steady via `preservingScroll`, but the
- * offset itself originates from explicit scrolls (`onScreenClip`, test helpers like
- * `scrollToTop`), not from the preserve/restore. See `e2e/OPEN_PROBLEMS.md` for why the
- * app no longer scrolls at document level.
+ * Do not cache the value across operations: helpers such as `onScreenClip` can change
+ * the window position, and `preservingScroll` reads it before a tool click so it can
+ * restore that position afterward. The app shell no longer scrolls at document level;
+ * see `e2e/OPEN_PROBLEMS.md`.
  */
 export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { collectOrphanBranches, report } from '../orphan-branches.mjs';
+import { collectOrphanBranches, main, report } from '../orphan-branches.mjs';
 
 vi.setConfig({ testTimeout: 20_000 });
 const rmOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
@@ -94,6 +94,22 @@ describe('a branch nobody holds', () => {
     expect(report([], { base: 'main' })).toMatch(/^orphan-branches: none\./);
   });
 
+  it('prints valid JSON for the machine-readable report', () => {
+    const root = fixture();
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      expect(main(['--json', '--limit', '1'], { cwd: root })).toBe(0);
+      expect(JSON.parse(String(write.mock.calls[0][0]))).toMatchObject({
+        base: 'main',
+        count: 1,
+        branches: [{ name: 'orphan' }],
+      });
+    } finally {
+      write.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('states that it retires nothing', () => {
     const text = report([{ name: 'x', base: 'main', lastCommit: '2026-10-05', behind: 3, ahead: 1, conflicts: 2 }], {
       base: 'main',
@@ -101,5 +117,34 @@ describe('a branch nobody holds', () => {
     // A report that also acted would be a second `dispose` with none of dispose's checks.
     expect(text).toMatch(/Nothing here is retired by this command/);
     expect(text).toMatch(/x\s+2\s+conflicts\s+3\s+behind/);
+  });
+
+  it('keeps total count separate from limited JSON branches', () => {
+    const root = fixture();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+      const extra = join(root, 'extra-wt');
+      g('worktree', 'add', '--quiet', '-b', 'orphan-extra', extra);
+      writeFileSync(join(extra, 'extra.txt'), 'extra\n');
+      execFileSync('git', ['add', '-A'], { cwd: extra, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--quiet', '-m', 'orphan-extra commit'], { cwd: extra, stdio: 'ignore' });
+      g('worktree', 'remove', extra);
+      const rows = collectOrphanBranches({ cwd: root, base: 'main' });
+      expect(rows).toHaveLength(2);
+
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        expect(main(['--json', '--limit', '1'], { cwd: root })).toBe(0);
+        expect(JSON.parse(String(write.mock.calls[0][0]))).toEqual({
+          base: 'main',
+          count: rows.length,
+          branches: rows.slice(0, 1),
+        });
+      } finally {
+        write.mockRestore();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

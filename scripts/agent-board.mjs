@@ -109,11 +109,10 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
                           n must be a whole number, and a '#' line says so if there are none
                          --follow: the WHOLE log from the start, then each new event as it
                           lands, as lines; --json is not available and lines are the output
-  health                 is this board being USED, or only carried?
-  doctor                 release claims from dead worktrees and expired leases  --dry-run
-  import                 the handoff documents into the board     --dry-run --file
-  export                 dump the board as JSON
-
+   health                 is this board being USED, or only carried?
+   doctor                 release claims from dead worktrees and expired leases  --dry-run
+   import                 the handoff documents into the board     --dry-run --file
+    export                 dump the board as JSON
   --json                 machine-readable output on every command except help and --version,
                          and \`watch --follow\`, which is an unbounded stream: it prints one
                          line per event instead, and says so above

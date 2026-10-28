@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
+import { clickToolButton } from './helpers/toolbar-helpers';
 
 async function openWorkspace(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
@@ -23,9 +23,9 @@ test.describe('Transient view tools', () => {
     await openWorkspace(page);
 
     await page.keyboard.press('h');
-    await expectToolSelected(page, 'hand');
+    await expect(page.getByRole('region', { name: 'hand tool options', exact: true })).toBeVisible();
     await page.keyboard.press('z');
-    await expectToolSelected(page, 'zoom');
+    await expect(page.getByRole('region', { name: 'zoom tool options', exact: true })).toBeVisible();
     await page.keyboard.press('r');
     await expect(page.getByRole('button', { name: 'Reset View', exact: true })).toBeVisible();
   });
@@ -72,12 +72,14 @@ test.describe('Transient view tools', () => {
   test('Space temporarily pans while the selected document tool remains active', async ({ page }) => {
     await openWorkspace(page);
     await clickToolButton(page, 'draw');
+    const drawOptions = page.getByRole('region', { name: 'draw tool options', exact: true });
+    await expect(drawOptions).toBeVisible();
     const workspace = page.getByTestId('workspace-container');
     await page.keyboard.down('Space');
     await dragAcrossWorkspace(page, 70);
     await page.keyboard.up('Space');
 
-    await expectToolSelected(page, 'draw');
+    await expect(drawOptions).toBeVisible();
     await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
     await expect(page.getByTestId('undo-button')).toBeDisabled();
   });

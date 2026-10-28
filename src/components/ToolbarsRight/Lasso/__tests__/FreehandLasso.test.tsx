@@ -72,9 +72,11 @@ const LASSO_SELECTION: Selection = {
   isActive: true,
   pos: { x: 4, y: 8, width: 16, height: 24 },
   points: [
-    { x: 4, y: 8 },
-    { x: 20, y: 8 },
-    { x: 20, y: 32 },
+    [
+      { x: 4, y: 8 },
+      { x: 20, y: 8 },
+      { x: 20, y: 32 },
+    ],
   ],
 };
 

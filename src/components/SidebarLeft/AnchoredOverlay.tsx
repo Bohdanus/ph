@@ -56,8 +56,6 @@ type AnchoredOverlayProps = {
   anchor: HTMLElement | null;
   /** What the overlay renders. */
   children: ReactNode;
-  /** Accessible landmark name for the portalled overlay surface. */
-  label?: string;
   /** Space between the anchor edge and the overlay, in px. */
   gap?: number;
   /** Which vertical alignment of the anchor the overlay follows. */
@@ -122,7 +120,6 @@ const clampToViewport = (value: number, size: number, extent: number, padding: n
 const AnchoredOverlay = ({
   anchor,
   children,
-  label = 'Overlay',
   gap = 8,
   align = 'start',
   side = 'right',
@@ -233,7 +230,7 @@ const AnchoredOverlay = ({
   };
 
   return createPortal(
-    <div aria-label={label} ref={overlayRef} role="region" style={style}>
+    <div ref={overlayRef} style={style}>
       {children}
     </div>,
     document.body

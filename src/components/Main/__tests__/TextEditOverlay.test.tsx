@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextEditOverlay } from '../TextEditOverlay.tsx';
-import { insertPlainTextAtCaret, selectAllIn } from '../../../util/contenteditable-text.ts';
+import { insertPlainTextAtCaret, selectAllIn, textOffsetAt } from '../../../util/contenteditable-text.ts';
 import { calculateNewRect } from '../../../util/rect.ts';
 
 type Rect = { x1: number; y1: number; x2: number; y2: number };
@@ -34,6 +34,12 @@ const DOCUMENT_SIZE = { width: 100, height: 100 };
 
 const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
+  consumeTextEditFocusRequest: vi.fn(),
+  textEditFocusRequest: null as null | {
+    id: number;
+    target:
+      { kind: 'select-all'; layerId: string } | { kind: 'point'; layerId: string; clientX: number; clientY: number };
+  },
   dispatch: vi.fn(),
   commitDirtyTool: vi.fn(),
   toolName: 'text' as string,
@@ -86,6 +92,12 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
     get setToolArgs() {
       return h.setToolArgs;
     },
+    get textEditFocusRequest() {
+      return h.textEditFocusRequest;
+    },
+    get consumeTextEditFocusRequest() {
+      return h.consumeTextEditFocusRequest;
+    },
   }),
 }));
 
@@ -118,7 +130,20 @@ vi.mock('../../../util/rect.ts', async () => {
  * for the same reason — a geometry suite that cannot tell a correct mapping from a broken one. The
  * stub is therefore per-test and explicit about its size.
  */
-const containerOf = (width: number, height: number) => {
+type ClientViewport = {
+  clientLeft?: number;
+  clientTop?: number;
+  clientWidth: number;
+  clientHeight: number;
+  offsetWidth?: number;
+  offsetHeight?: number;
+};
+
+const containerOf = (
+  width: number,
+  height: number,
+  client: ClientViewport = { clientWidth: width, clientHeight: height, offsetWidth: width, offsetHeight: height }
+) => {
   const el = document.createElement('div');
   vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
     width,
@@ -131,9 +156,36 @@ const containerOf = (width: number, height: number) => {
     y: 0,
     toJSON: () => ({}),
   } as DOMRect);
+  Object.defineProperties(el, {
+    clientLeft: { configurable: true, value: client.clientLeft ?? 0 },
+    clientTop: { configurable: true, value: client.clientTop ?? 0 },
+    clientWidth: { configurable: true, value: client.clientWidth },
+    clientHeight: { configurable: true, value: client.clientHeight },
+    offsetWidth: { configurable: true, value: client.offsetWidth ?? width },
+    offsetHeight: { configurable: true, value: client.offsetHeight ?? height },
+  });
   h.containerRef.current = el;
   return el;
 };
+
+class ControlledTextResizeObserver implements ResizeObserver {
+  static instances: ControlledTextResizeObserver[] = [];
+
+  private readonly callback: ResizeObserverCallback;
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    ControlledTextResizeObserver.instances.push(this);
+  }
+
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+
+  emit(entry: ResizeObserverEntry) {
+    this.callback([entry], this);
+  }
+}
 
 const makeTextArgs = (overrides: Partial<TextArgs> = {}): TextArgs => ({
   align: 'left',
@@ -250,6 +302,8 @@ const readSelection = (): SelectionReading => {
 describe('TextEditOverlay', () => {
   beforeEach(() => {
     h.setToolArgs.mockReset();
+    h.consumeTextEditFocusRequest.mockReset();
+    h.textEditFocusRequest = null;
     h.dispatch.mockReset();
     h.commitDirtyTool.mockReset();
     h.toolName = 'text';
@@ -264,6 +318,9 @@ describe('TextEditOverlay', () => {
   afterEach(() => {
     // The helper hosts are appended to `document.body` directly, which RTL's `cleanup` does not own.
     for (const el of document.querySelectorAll('[data-helper-host]')) el.remove();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    ControlledTextResizeObserver.instances = [];
   });
 
   describe('edit mode is derived, so nothing renders unless the args already say the user is typing', () => {
@@ -295,6 +352,60 @@ describe('TextEditOverlay', () => {
   });
 
   describe('the element itself', () => {
+    it("triple-click selects the visual line instead of Chromium's paragraph default", () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta\nGamma delta' });
+      const original = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect');
+      Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+        configurable: true,
+        value: function (this: Range) {
+          const offset = textOffsetAt(overlay(), this.startContainer, this.startOffset) ?? 0;
+          const top = offset >= 11 ? 20 : 0;
+          return {
+            x: 0,
+            y: top,
+            left: 0,
+            right: 5,
+            top,
+            bottom: top + 10,
+            width: 5,
+            height: 10,
+            toJSON: () => ({}),
+          } as DOMRect;
+        },
+      });
+
+      try {
+        renderOverlay();
+        const cancelled = fireEvent.click(overlay(), { detail: 3, clientY: 25 });
+
+        expect(cancelled).toBe(false);
+        expect(readSelection()).toMatchObject({ string: 'Gamma delta', collapsed: false });
+      } finally {
+        if (original) Object.defineProperty(Range.prototype, 'getBoundingClientRect', original);
+        else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
+      }
+    });
+
+    it('quadruple-click selects the hard-break paragraph containing the click', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta\nGamma delta\nLast line' });
+      const original = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+      Object.defineProperty(document, 'caretPositionFromPoint', {
+        configurable: true,
+        value: () => ({ offsetNode: overlay().firstChild!, offset: 13 }),
+      });
+
+      try {
+        renderOverlay();
+        const cancelled = fireEvent.click(overlay(), { detail: 4, clientX: 40, clientY: 25 });
+
+        expect(cancelled).toBe(false);
+        expect(readSelection()).toMatchObject({ string: 'Gamma delta', collapsed: false });
+      } finally {
+        if (original) Object.defineProperty(document, 'caretPositionFromPoint', original);
+        else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+      }
+    });
+
     it('renders a contenteditable textbox carrying the test id and aria-multiline for a draft that has both halves', () => {
       const { container } = renderOverlay();
       const el = overlay();
@@ -375,6 +486,62 @@ describe('TextEditOverlay', () => {
       // `left` that happens to come out right for the wrong reason: with `scale` 1 the two
       // `left - rect.x1` is exactly the term under test, and a deleted `offsetX` reads 0.
       expect(parseFloat(el.style.left) - RECT.x1, 'the horizontal letterbox did not reach `left`').toBe(50);
+    });
+
+    it('measures the text overlay against the visible client viewport when a scrollbar reduces it', () => {
+      containerOf(200, 200, {
+        clientLeft: 2,
+        clientTop: 2,
+        clientWidth: 160,
+        clientHeight: 180,
+        offsetWidth: 200,
+        offsetHeight: 200,
+      });
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT });
+
+      renderOverlay();
+      const el = overlay();
+
+      // The client fit is 160x180 around the 100x100 document: scale 1.6 and a 10px vertical gap.
+      expect(el.style.left).toBe('16px');
+      expect(el.style.top).toBe('42px');
+      expect(el.style.width).toBe('80px');
+      expect(el.style.height).toBe('80px');
+    });
+
+    it('re-measures client fit after the scrollbar changes without a border-box resize', () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('ResizeObserver', ControlledTextResizeObserver);
+      const container = containerOf(200, 200);
+      toolArgs = makeTextArgs({ text: PLACEHOLDER, rect: RECT });
+
+      renderOverlay();
+      const el = overlay();
+      expect(el.style.width).toBe('100px');
+
+      Object.defineProperties(container, {
+        clientWidth: { configurable: true, value: 160 },
+        clientHeight: { configurable: true, value: 180 },
+      });
+      const observer = ControlledTextResizeObserver.instances[0];
+      expect(observer).toBeDefined();
+      if (!observer) return;
+
+      act(() => {
+        observer.emit({
+          target: container,
+          contentRect: { width: 160, height: 180 } as DOMRectReadOnly,
+          contentBoxSize: [{ inlineSize: 160, blockSize: 180 }],
+          borderBoxSize: [{ inlineSize: 200, blockSize: 200 }],
+          devicePixelContentBoxSize: [],
+        } as unknown as ResizeObserverEntry);
+        vi.advanceTimersByTime(32);
+      });
+
+      expect(overlay().style.left).toBe('16px');
+      expect(overlay().style.top).toBe('42px');
+      expect(overlay().style.width).toBe('80px');
+      expect(overlay().style.height).toBe('80px');
     });
   });
 
@@ -544,6 +711,59 @@ describe('TextEditOverlay', () => {
   });
 
   describe('entry', () => {
+    it('places the caret at the browser hit-test position for a canvas re-entry request', () => {
+      toolArgs = makeTextArgs({ text: 'alpha beta', rect: RECT, editingLayerId: 'text-1' });
+      h.textEditFocusRequest = {
+        id: 1,
+        target: { kind: 'point', layerId: 'text-1', clientX: 43, clientY: 57 },
+      };
+      const original = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+      const caretPositionFromPoint = vi.fn(() => ({ offsetNode: overlay().firstChild!, offset: 6 }));
+      Object.defineProperty(document, 'caretPositionFromPoint', {
+        configurable: true,
+        value: caretPositionFromPoint,
+      });
+
+      try {
+        renderOverlay();
+
+        expect(caretPositionFromPoint).toHaveBeenCalledWith(43, 57);
+        expect(readSelection()).toMatchObject({ string: '', collapsed: true, startOffset: 6, endOffset: 6 });
+        expect(document.activeElement).toBe(overlay());
+        expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+      } finally {
+        if (original) Object.defineProperty(document, 'caretPositionFromPoint', original);
+        else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+      }
+    });
+
+    it('selects all on an explicit layer-panel request even when the text is unchanged', () => {
+      toolArgs = makeTextArgs({ text: 'same text', rect: RECT, editingLayerId: 'text-1' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+      placeCaret(el, 2);
+      h.textEditFocusRequest = { id: 1, target: { kind: 'select-all', layerId: 'text-1' } };
+
+      rerender(<TextEditOverlay />);
+
+      expect(readSelection()).toMatchObject({ string: 'same text', collapsed: false });
+      expect(document.activeElement).toBe(el);
+      expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+    });
+
+    it('consumes but ignores a focus request for a different editing layer', () => {
+      toolArgs = makeTextArgs({ text: 'same text', rect: RECT, editingLayerId: 'text-1' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+      placeCaret(el, 2);
+      h.textEditFocusRequest = { id: 1, target: { kind: 'select-all', layerId: 'text-2' } };
+
+      rerender(<TextEditOverlay />);
+
+      expect(readSelection()).toMatchObject({ string: '', collapsed: true, startOffset: 2, endOffset: 2 });
+      expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+    });
+
     it('seeds the element with the draft text and focuses it on entry', () => {
       renderOverlay();
       const el = overlay();
@@ -844,6 +1064,48 @@ describe('TextEditOverlay', () => {
   });
 
   describe("keydown — Enter breaks the line and the other three commit, which is Adobe's split", () => {
+    it('extends the selection by one word with Command+Shift+ArrowRight on macOS', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 0);
+
+      const notCancelled = fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+
+      expect(notCancelled).toBe(false);
+      expect(readSelection().string).toBe('Alpha');
+    });
+
+    it('extends the selection by one word with Control+Shift+ArrowLeft on Windows/Linux', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 'Alpha beta'.length);
+
+      fireEvent.keyDown(el, { key: 'ArrowLeft', ctrlKey: true, shiftKey: true });
+
+      expect(readSelection().string).toBe('beta');
+    });
+
+    it('extends a reverse selection through its anchor and continues forward', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      const node = el.firstChild as Text;
+      const selection = window.getSelection()!;
+      selection.setBaseAndExtent(node, 5, node, 0);
+
+      fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+      expect(selection.isCollapsed).toBe(true);
+      expect(selection.anchorOffset).toBe(5);
+      expect(selection.focusOffset).toBe(5);
+
+      fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+      expect(selection.toString()).toBe(' beta');
+      expect(selection.anchorOffset).toBe(5);
+      expect(selection.focusOffset).toBe(10);
+    });
+
     it('inserts a single newline at the caret for a bare Enter, and does not commit', () => {
       renderOverlay();
       const el = overlay();
@@ -930,6 +1192,18 @@ describe('TextEditOverlay', () => {
       expect(h.commitDirtyTool).not.toHaveBeenCalled();
       expect(h.setToolArgs).not.toHaveBeenCalled();
     });
+  });
+
+  it('selects all text on the fifth click in the editor', () => {
+    toolArgs = makeTextArgs({ text: 'Alpha beta' });
+    renderOverlay();
+    const el = overlay();
+    placeCaret(el, 2);
+
+    fireEvent.click(el, { detail: 5 });
+
+    expect(readSelection().string).toBe('Alpha beta');
+    expect(readSelection().collapsed).toBe(false);
   });
 
   describe('paste', () => {

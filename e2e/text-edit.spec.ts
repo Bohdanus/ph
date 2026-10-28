@@ -193,6 +193,9 @@ interface SelectionState {
   inside: boolean;
   /** The caret's index into the overlay's own text, or `null` when there is no selection at all. */
   caretIndex: number | null;
+  /** Selection endpoints as UTF-16 offsets, preserving their direction. */
+  anchorIndex: number | null;
+  focusIndex: number | null;
 }
 
 async function selectionState(page: Page): Promise<SelectionState> {
@@ -200,7 +203,7 @@ async function selectionState(page: Page): Promise<SelectionState> {
     const host = document.querySelector('#text-edit-overlay');
     const selection = window.getSelection();
     if (!host || !selection || selection.rangeCount === 0) {
-      return { string: '', collapsed: true, inside: false, caretIndex: null };
+      return { string: '', collapsed: true, inside: false, caretIndex: null, anchorIndex: null, focusIndex: null };
     }
     const range = selection.getRangeAt(0);
     // The caret index, measured as the length of the text from the host's start to the selection's
@@ -212,13 +215,149 @@ async function selectionState(page: Page): Promise<SelectionState> {
     const before = range.cloneRange();
     before.selectNodeContents(host);
     before.setEnd(range.startContainer, range.startOffset);
+    const offsetOf = (node: Node | null, offset: number): number | null => {
+      if (!node || (node !== host && !host.contains(node))) return null;
+      const endpoint = document.createRange();
+      endpoint.selectNodeContents(host);
+      endpoint.setEnd(node, offset);
+      return endpoint.toString().length;
+    };
     return {
       string: selection.toString(),
       collapsed: selection.isCollapsed,
       inside: host.contains(range.startContainer) && host.contains(range.endContainer),
       caretIndex: before.toString().length,
+      anchorIndex: offsetOf(selection.anchorNode, selection.anchorOffset),
+      focusIndex: offsetOf(selection.focusNode, selection.focusOffset),
     };
   });
+}
+
+/** Return a point inside a rendered glyph, not the text box origin or its padding. */
+async function overlayPositionForText(
+  page: Page,
+  target: string,
+  characterOffset = Math.floor(target.length / 2)
+): Promise<{ x: number; y: number }> {
+  return await overlay(page).evaluate(
+    (host, { needle, offsetInTarget }) => {
+      const text = host.textContent ?? '';
+      const start = text.indexOf(needle);
+      if (start < 0) throw new Error(`overlayPositionForText: ${needle} is not in the editor`);
+      let offset = start + offsetInTarget;
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const length = node.textContent?.length ?? 0;
+        if (offset < length) break;
+        offset -= length;
+        node = walker.nextNode();
+      }
+      if (!(node instanceof Text)) throw new Error(`overlayPositionForText: no text node contains ${needle}`);
+
+      const range = document.createRange();
+      range.setStart(node, offset);
+      range.setEnd(node, offset + 1);
+      const glyph = range.getBoundingClientRect();
+      const hostBounds = host.getBoundingClientRect();
+      const glyphX = offsetInTarget === 0 ? Math.min(1, glyph.width / 4) : glyph.width / 2;
+      return {
+        x: glyph.left - hostBounds.left + glyphX,
+        y: glyph.top - hostBounds.top + glyph.height / 2,
+      };
+    },
+    { needle: target, offsetInTarget: characterOffset }
+  );
+}
+
+/** Ask Chromium where the caret would land at an absolute page-CSS point. */
+async function browserCaretIndexAtPoint(page: Page, point: { x: number; y: number }): Promise<number | null> {
+  return await page.evaluate(({ x, y }) => {
+    const host = document.querySelector('#text-edit-overlay');
+    const position = document.caretPositionFromPoint(x, y);
+    if (!host || !position || !host.contains(position.offsetNode)) return null;
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    range.setEnd(position.offsetNode, position.offset);
+    return range.toString().length;
+  }, point);
+}
+
+/** Read the visual line containing a target glyph and how many lines the paragraph actually uses. */
+async function overlayVisualLineAtText(page: Page, target: string): Promise<{ line: string; lineCount: number }> {
+  return await overlay(page).evaluate((host, needle) => {
+    const text = host.textContent ?? '';
+    const start = text.indexOf(needle);
+    if (start < 0) throw new Error(`overlayVisualLineAtText: ${needle} is not in the editor`);
+    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+    const nodeForOffset = (wanted: number): { node: Text; offset: number } => {
+      let offset = wanted;
+      let node = walker.nextNode();
+      while (node) {
+        const length = node.textContent?.length ?? 0;
+        if (offset < length && node instanceof Text) return { node, offset };
+        offset -= length;
+        node = walker.nextNode();
+      }
+      throw new Error(`overlayVisualLineAtText: no text node contains offset ${wanted}`);
+    };
+    const targetPosition = nodeForOffset(start + Math.floor(needle.length / 2));
+    const targetRange = document.createRange();
+    targetRange.setStart(targetPosition.node, targetPosition.offset);
+    targetRange.setEnd(targetPosition.node, targetPosition.offset + 1);
+    const targetTop = Math.round(targetRange.getBoundingClientRect().top);
+    const placed: { index: number; top: number }[] = [];
+    const lineTops = new Set<number>();
+    const characters = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+    let absolute = 0;
+    let node = characters.nextNode();
+    while (node) {
+      const length = node.textContent?.length ?? 0;
+      if (node instanceof Text) {
+        for (let offset = 0; offset < length; offset += 1) {
+          const range = document.createRange();
+          range.setStart(node, offset);
+          range.setEnd(node, offset + 1);
+          const rect = range.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue;
+          const top = Math.round(rect.top);
+          placed.push({ index: absolute + offset, top });
+          lineTops.add(top);
+        }
+      }
+      absolute += length;
+      node = characters.nextNode();
+    }
+    const onTargetLine = placed.filter((entry) => entry.top === targetTop).map((entry) => entry.index);
+    if (onTargetLine.length === 0) throw new Error(`overlayVisualLineAtText: no characters on ${needle}'s line`);
+    const first = Math.min(...onTargetLine);
+    const last = Math.max(...onTargetLine);
+    return { line: text.slice(first, last + 1).trim(), lineCount: lineTops.size };
+  }, target);
+}
+
+/** Ensure the actual glyph rects remain inside both their paragraph frame and the document canvas. */
+async function overlayTextFitsFrame(page: Page, canvas: BoundingBox): Promise<boolean> {
+  return await overlay(page).evaluate((host, canvasBounds) => {
+    const frame = host.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    const glyphs = Array.from(range.getClientRects());
+    const tolerance = 1;
+    const frameContainsGlyphs = glyphs.every(
+      (glyph) =>
+        glyph.left >= frame.left - tolerance &&
+        glyph.right <= frame.right + tolerance &&
+        glyph.top >= frame.top - tolerance &&
+        glyph.bottom <= frame.bottom + tolerance
+    );
+    const canvasContainsFrame =
+      frame.left >= canvasBounds.x - tolerance &&
+      frame.top >= canvasBounds.y - tolerance &&
+      frame.right <= canvasBounds.x + canvasBounds.width + tolerance &&
+      frame.bottom <= canvasBounds.y + canvasBounds.height + tolerance;
+    return frameContainsGlyphs && canvasContainsFrame;
+  }, canvas);
 }
 
 /**
@@ -252,6 +391,30 @@ async function setTextToolColor(page: Page, hex: string): Promise<void> {
 const { RED_PIXEL_RED_MIN, RED_PIXEL_GREEN_MAX, RED_PIXEL_BLUE_MAX } = STROKE_ANALYSIS;
 const isRedInk: PixelPredicate = (red, green, blue, alpha) =>
   alpha !== 0 && red > RED_PIXEL_RED_MIN && green < RED_PIXEL_GREEN_MAX && blue < RED_PIXEL_BLUE_MAX;
+
+/** Find an actual committed glyph pixel and convert it back to page CSS coordinates. */
+async function committedInkPoint(page: Page, box: BoundingBox): Promise<{ x: number; y: number }> {
+  const image = await loadImageData(
+    await page.screenshot({
+      clip: { x: box.x, y: box.y, width: box.width, height: box.height },
+    })
+  );
+  let pixelOffset = -1;
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    if (isRedInk(image.data[offset], image.data[offset + 1], image.data[offset + 2], image.data[offset + 3])) {
+      pixelOffset = offset;
+      break;
+    }
+  }
+  if (pixelOffset < 0) throw new Error('committedInkPoint: no committed red glyph pixel was found');
+  const pixelIndex = pixelOffset / 4;
+  const pixelX = pixelIndex % image.width;
+  const pixelY = Math.floor(pixelIndex / image.width);
+  return {
+    x: box.x + ((pixelX + 0.5) * box.width) / image.width,
+    y: box.y + ((pixelY + 0.5) * box.height) / image.height,
+  };
+}
 
 /**
  * The draft box's own `#007bff`, as a predicate: the same three constants `getSelectionBounds`
@@ -550,6 +713,9 @@ const CARET_CLICK = { x: 450, y: 250 };
 /** Where the second box of the commit-on-click test goes: far enough from the first to be a placement. */
 const FIRST_BOX_CLICK = { x: 200, y: 200 };
 const SECOND_BOX_CLICK = { x: 150, y: 450 };
+const CANVAS_REENTRY_TEXT = 'Canvas route';
+const CLICK_LADDER_TEXT = 'Alpha beta gamma delta epsilon';
+const CLICK_LADDER_RECT: DraftRect = { x1: 120, y1: 60, x2: 440, y2: 520 };
 
 /**
  * The two strings the commit-on-click test commits, and WHY they were chosen to be this different.
@@ -772,6 +938,35 @@ test.describe('Text tool in-place editing', () => {
     expect(partial.caretIndex, 'the selection anchor did not stay at the end of the line').toBe(2);
   });
 
+  test('Command+Shift+Arrow selects the next word', async ({ page }) => {
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, CARET_CLICK);
+    await expect(overlay(page)).toBeVisible();
+    await page.keyboard.type('Alpha beta');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Meta+Shift+ArrowRight');
+
+    const selected = await selectionState(page);
+    expect(selected.string, 'the shortcut did not select exactly one word').toBe('Alpha');
+    expect(selected.collapsed, 'word selection remained collapsed').toBe(false);
+  });
+
+  test('five clicks select all text in the editor', async ({ page }) => {
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, CARET_CLICK);
+    await expect(overlay(page)).toBeVisible();
+    await page.keyboard.type('Alpha beta');
+    const bounds = await overlay(page).boundingBox();
+    if (!bounds) throw new Error('the text editor has no clickable bounds');
+    await page.mouse.click(bounds.x + 4, bounds.y + 4, { clickCount: 5 });
+
+    const selected = await selectionState(page);
+    expect(selected.string, 'five clicks did not select all text').toBe('Alpha beta');
+    expect(selected.collapsed, 'select-all left a collapsed caret').toBe(false);
+  });
+
   test('Escape commits the draft instead of discarding it', async ({ page }) => {
     const layerRows = page.getByTitle('Drag to reorder');
     const box = await canvasBox(page);
@@ -792,7 +987,9 @@ test.describe('Text tool in-place editing', () => {
     // an EMPTY text layer passes the first two and fails the third.
     await expect(overlay(page), 'the overlay is still up, so nothing was committed').toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
 
     const fit = await readFit(page);
     const fontSize = await toolFontSize(page);
@@ -827,7 +1024,9 @@ test.describe('Text tool in-place editing', () => {
 
     await expect(overlay(page), 'the overlay is still up, so nothing was committed').toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   test('a committed text layer can be re-entered from its Layers row', async ({ page }) => {
@@ -868,7 +1067,9 @@ test.describe('Text tool in-place editing', () => {
     // not satisfy it either.
     await clickToPlace(page, box, SECOND_BOX_CLICK);
     await expect(layerRows, 'the first draft was discarded rather than committed').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
     await expect(overlay(page), 'the second placement did not open a new editor').toHaveCount(1);
 
     /**
@@ -1140,7 +1341,9 @@ test.describe('Text tool in-place editing', () => {
     await page.getByRole('button', { name: 'Commit' }).click();
     await expect(overlay(page), 'the overlay is still up, so the Commit button committed nothing').toHaveCount(0);
     await expect(layerRows, 'the Commit button discarded an untouched placeholder').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a tool layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   test('the overlay is laid over the box the canvas drew', async ({ page }, testInfo: TestInfo) => {
@@ -1363,7 +1566,7 @@ test.describe('Text tool in-place editing', () => {
         const computedTracking = Number.parseFloat(computed.letterSpacing);
         const style = {
           align: computed.textAlign,
-          allCaps: computed.fontVariantCaps === 'all-small-caps',
+          allCaps: computed.textTransform === 'uppercase',
           bold: computed.fontWeight === '700',
           color: computed.color,
           fontFamily: computed.fontFamily,
@@ -1484,7 +1687,9 @@ test.describe('Text tool in-place editing', () => {
     await expect(overlay(page), 'the draft outlived the numeric keypad Enter').toHaveCount(0);
     await expect(commit, 'Commit is still mounted after the draft was committed').toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   /**
@@ -1516,7 +1721,9 @@ test.describe('Text tool in-place editing', () => {
 
     await expect(overlay(page), 'the draft outlived the tool switch').toHaveCount(0);
     await expect(layerRows, 'the tool switch did not commit the draft').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
   });
 
   /**
@@ -1541,7 +1748,9 @@ test.describe('Text tool in-place editing', () => {
     // The commit that undo will remove.
     await expect(overlay(page), 'the draft outlived its commit').toHaveCount(0);
     await expect(layerRows, 'the text was not committed').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the committed layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
 
     // Undo removes the layer created by the commit above.
     const undo = getUndoButton(page);
@@ -1553,6 +1762,232 @@ test.describe('Text tool in-place editing', () => {
     // Redo restores it.
     await getRedoButton(page).click();
     await expect(layerRows, 'redo did not restore the text layer').toHaveCount(2);
-    await expect(layerRows.nth(0), 'the restored layer is not a text layer').toHaveText(/^text \d+$/);
+    await expect(layerRows.nth(0).getByTestId('layer-name'), 'the restored layer is not a text layer').toHaveText(
+      /^text \d+$/
+    );
+  });
+});
+
+test.describe('Canvas Type-tool re-entry', () => {
+  test.describe.configure({ timeout: TEXT_EDIT_TIMEOUT_MS });
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await selectTextTool(page);
+    await setTextToolColor(page, TEXT_COLOR);
+  });
+
+  test('the Type tool re-enters the original layer at the clicked glyph insertion point', async ({ page }) => {
+    const layerRows = page.getByTitle('Drag to reorder');
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, FIRST_BOX_CLICK);
+    await page.keyboard.type(CANVAS_REENTRY_TEXT);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows).toHaveCount(2);
+    const committedLayerCount = await layerRows.count();
+
+    const glyphPoint = await committedInkPoint(page, box);
+    const inkBounds = await inkBoundsIn(page, {
+      left: box.x,
+      top: box.y,
+      right: box.x + box.width,
+      bottom: box.y + box.height,
+    });
+    expect(inkBounds, 'the committed layer has no measurable text bounds').not.toBeNull();
+    expect(glyphPoint.x).toBeGreaterThanOrEqual(inkBounds!.left);
+    expect(glyphPoint.x).toBeLessThanOrEqual(inkBounds!.right);
+    expect(glyphPoint.y).toBeGreaterThanOrEqual(inkBounds!.top);
+    expect(glyphPoint.y).toBeLessThanOrEqual(inkBounds!.bottom);
+
+    await page.mouse.click(glyphPoint.x, glyphPoint.y);
+    await expect(overlay(page), 'clicking committed glyph ink did not reopen the Type editor').toBeVisible();
+    expect(await overlayText(page)).toBe(CANVAS_REENTRY_TEXT);
+    const expectedCaret = await browserCaretIndexAtPoint(page, glyphPoint);
+    expect(expectedCaret, 'the browser could not resolve an insertion point at the measured glyph').not.toBeNull();
+    const selection = await selectionState(page);
+    expect(selection.inside).toBe(true);
+    expect(selection.collapsed, 'canvas re-entry selected text instead of placing an insertion point').toBe(true);
+    expect(selection.caretIndex).toBe(expectedCaret);
+
+    const editedText = `${CANVAS_REENTRY_TEXT.slice(0, expectedCaret!)}X${CANVAS_REENTRY_TEXT.slice(expectedCaret!)}`;
+    await page.keyboard.type('X');
+    expect(await overlayText(page)).toBe(editedText);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows, 're-entry created a duplicate committed text layer').toHaveCount(committedLayerCount);
+
+    const editedGlyphPoint = await committedInkPoint(page, box);
+    await page.mouse.click(editedGlyphPoint.x, editedGlyphPoint.y);
+    await expect(overlay(page)).toBeVisible();
+    expect(await overlayText(page), 'the edit did not survive commit on the original layer').toBe(editedText);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows).toHaveCount(committedLayerCount);
+  });
+});
+
+test.describe('Tablet Type-tool touch re-entry', () => {
+  test.use({
+    viewport: { width: 834, height: 1194 },
+    hasTouch: true,
+    isMobile: false,
+  });
+  test.describe.configure({ timeout: TEXT_EDIT_TIMEOUT_MS });
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await page.getByTestId('right-panel-toggle').click();
+    await selectTextTool(page);
+    await setTextToolColor(page, TEXT_COLOR);
+  });
+
+  test('a tablet touch tap at measured committed glyph ink re-enters the original layer', async ({ page }) => {
+    const layerRows = page.getByTitle('Drag to reorder');
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, FIRST_BOX_CLICK);
+    await page.keyboard.type('Tablet touch route');
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows).toHaveCount(2);
+    const committedLayerCount = await layerRows.count();
+
+    const touchPoint = await committedInkPoint(page, box);
+    expect(touchPoint.x).toBeGreaterThanOrEqual(box.x);
+    expect(touchPoint.x).toBeLessThanOrEqual(box.x + box.width);
+    expect(touchPoint.y).toBeGreaterThanOrEqual(box.y);
+    expect(touchPoint.y).toBeLessThanOrEqual(box.y + box.height);
+
+    await page.touchscreen.tap(touchPoint.x, touchPoint.y);
+    await expect(overlay(page), 'a measured tablet glyph tap did not enter Type edit mode').toBeVisible();
+    await expect(overlay(page)).toBeFocused();
+    expect(await overlayText(page)).toBe('Tablet touch route');
+    const expectedCaret = await browserCaretIndexAtPoint(page, touchPoint);
+    expect(expectedCaret, 'the browser could not resolve a caret at the measured touch point').not.toBeNull();
+    const selection = await selectionState(page);
+    expect(selection.inside).toBe(true);
+    expect(selection.collapsed, 'tablet re-entry selected text instead of placing an insertion point').toBe(true);
+    expect(selection.caretIndex).toBe(expectedCaret);
+    await expect(layerRows, 'touch re-entry created a duplicate committed text layer').toHaveCount(committedLayerCount);
+
+    const editedText = 'Tablet touch edited';
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type(editedText);
+    expect(await overlayText(page)).toBe(editedText);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows, 'committing the touch edit duplicated the text layer').toHaveCount(committedLayerCount);
+
+    const editedTouchPoint = await committedInkPoint(page, box);
+    await page.touchscreen.tap(editedTouchPoint.x, editedTouchPoint.y);
+    await expect(overlay(page)).toBeVisible();
+    expect(await overlayText(page), 'the touch edit did not survive commit on the original layer').toBe(editedText);
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows).toHaveCount(committedLayerCount);
+  });
+});
+
+test.describe('Desktop Type click-count selection', () => {
+  test.describe.configure({ timeout: TEXT_EDIT_TIMEOUT_MS });
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await selectTextTool(page);
+
+    const fit = await readFit(page);
+    expect(CLICK_LADDER_RECT.x1).toBeGreaterThanOrEqual(0);
+    expect(CLICK_LADDER_RECT.y1).toBeGreaterThanOrEqual(0);
+    expect(CLICK_LADDER_RECT.x2).toBeLessThanOrEqual(fit.documentWidth);
+    expect(CLICK_LADDER_RECT.y2).toBeLessThanOrEqual(fit.documentHeight);
+
+    const box = await canvasBox(page);
+    await dragToPlace(page, box, CLICK_LADDER_RECT);
+    await expect(overlay(page)).toHaveAttribute('data-text-kind', 'paragraph');
+    await page.keyboard.insertText(CLICK_LADDER_TEXT);
+    expect(await overlayText(page)).toBe(CLICK_LADDER_TEXT);
+    const visualLine = await overlayVisualLineAtText(page, 'gamma');
+    expect(visualLine.lineCount, 'the paragraph fixture did not wrap into multiple visual lines').toBeGreaterThan(1);
+    expect(
+      await overlayTextFitsFrame(page, box),
+      'the click-count fixture has glyphs outside its paragraph frame or document canvas'
+    ).toBe(true);
+
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    const layerRows = page.getByTitle('Drag to reorder');
+    await expect(layerRows).toHaveCount(2);
+    await layerRows.nth(0).dblclick();
+    await expect(overlay(page)).toBeVisible();
+    expect(await overlayText(page)).toBe(CLICK_LADDER_TEXT);
+    expect(
+      await overlayTextFitsFrame(page, box),
+      'the committed click-count fixture no longer fits its paragraph frame'
+    ).toBe(true);
+  });
+
+  test('double-click selects the word at the measured glyph point', async ({ page }) => {
+    const point = await overlayPositionForText(page, 'gamma');
+    await overlay(page).click({ clickCount: 2, position: point });
+    const selection = await selectionState(page);
+    expect(selection.inside).toBe(true);
+    // Native word selection may include the one collapsed separator under `pre-line`, but no
+    // additional text or whitespace is allowed.
+    expect(selection.string).toMatch(/^gamma ?$/);
+  });
+
+  test('triple-click selects only the visual line in a wrapped paragraph', async ({ page }) => {
+    const visualLine = await overlayVisualLineAtText(page, 'gamma');
+    expect(visualLine.lineCount).toBeGreaterThan(1);
+    const point = await overlayPositionForText(page, 'gamma');
+    await overlay(page).click({ clickCount: 3, position: point });
+    const selection = await selectionState(page);
+    expect(selection.inside).toBe(true);
+    expect(selection.string.trim()).toBe(visualLine.line);
+    expect(selection.string.trim()).not.toBe(CLICK_LADDER_TEXT);
+  });
+
+  test('quadruple-click selects the whole wrapped paragraph, not just its visual line', async ({ page }) => {
+    const visualLine = await overlayVisualLineAtText(page, 'gamma');
+    expect(visualLine.lineCount).toBeGreaterThan(1);
+    const point = await overlayPositionForText(page, 'gamma');
+    await overlay(page).click({ clickCount: 4, position: point });
+    const selection = await selectionState(page);
+    expect(selection.inside).toBe(true);
+    expect(selection.string.trim()).toBe(CLICK_LADDER_TEXT);
+    expect(selection.string.trim()).not.toBe(visualLine.line);
+  });
+
+  test('quintuple-click selects every character in the wrapped type layer', async ({ page }) => {
+    const point = await overlayPositionForText(page, 'gamma');
+    await overlay(page).click({ clickCount: 5, position: point });
+    const selection = await selectionState(page);
+    expect(selection.inside).toBe(true);
+    expect(selection.string).toBe(CLICK_LADDER_TEXT);
+  });
+
+  test('Control/Command+Shift+Arrow selects one word from a measured insertion point', async ({ page }) => {
+    const point = await overlayPositionForText(page, 'gamma', 0);
+    const bounds = await overlay(page).boundingBox();
+    expect(bounds).not.toBeNull();
+    const expectedCaret = await browserCaretIndexAtPoint(page, {
+      x: bounds!.x + point.x,
+      y: bounds!.y + point.y,
+    });
+    expect(expectedCaret).not.toBeNull();
+
+    await overlay(page).click({ position: point });
+    expect((await selectionState(page)).caretIndex).toBe(expectedCaret);
+    await page.keyboard.press('ControlOrMeta+Shift+ArrowRight');
+
+    const selection = await selectionState(page);
+    expect(selection.string).toBe('gamma');
+    expect(selection.anchorIndex).toBe(expectedCaret);
+    expect(selection.focusIndex).toBe(expectedCaret! + 'gamma'.length);
   });
 });

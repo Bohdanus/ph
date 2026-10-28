@@ -13,8 +13,9 @@ const checkerboardStyle = {
 } as const;
 
 /** A small live layer preview. History rows intentionally do not use this component. */
-export default function LayerThumbnail({ layer }: { layer: Layer }) {
+export default function LayerThumbnail({ layer, touchReorderEnabled }: { layer: Layer; touchReorderEnabled: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const isTypeLayer = layer.source?.kind === 'tool' && layer.source.args.toolName === 'text';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -45,14 +46,31 @@ export default function LayerThumbnail({ layer }: { layer: Layer }) {
   }, [layer]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={THUMBNAIL_WIDTH}
-      height={THUMBNAIL_HEIGHT}
-      aria-hidden="true"
-      data-testid="layer-thumbnail"
-      className="h-8 w-12 shrink-0 rounded-sm border border-gray-300 dark:border-gray-600"
-      style={checkerboardStyle}
-    />
+    <div className="relative h-8 w-12 shrink-0">
+      <canvas
+        ref={canvasRef}
+        width={THUMBNAIL_WIDTH}
+        height={THUMBNAIL_HEIGHT}
+        aria-hidden="true"
+        data-testid="layer-thumbnail"
+        className={[
+          'h-full w-full rounded-sm border border-gray-300 dark:border-gray-600',
+          touchReorderEnabled && 'touch-none',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        style={checkerboardStyle}
+      />
+      {isTypeLayer && (
+        <span
+          role="img"
+          aria-label="Type layer"
+          data-testid="type-layer-badge"
+          className="pointer-events-none absolute bottom-0 right-0 grid h-4 min-w-3 place-items-center rounded-tl-sm bg-white/90 px-0.5 text-[10px] font-bold leading-none text-gray-800 dark:bg-gray-900/90 dark:text-gray-100"
+        >
+          T
+        </span>
+      )}
+    </div>
   );
 }

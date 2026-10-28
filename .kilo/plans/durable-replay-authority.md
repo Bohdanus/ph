@@ -152,7 +152,7 @@ layer presentation consumed by runtime and export.
 Production files:
 
 - `src/contexts/materialization.ts`
-- `src/contexts/durable-presentation.ts`
+- `src/contexts/durable-render-projection.ts`
 - `src/contexts/durable-compositor.ts`
 - `src/contexts/layer-types.ts`
 - `src/contexts/presentation-evaluator.ts`
@@ -252,19 +252,27 @@ Acceptance:
 
 Remove the legacy path only after Slices A-F are independently landed and all
 gates pass. Retain a narrowly named compatibility fallback while unsupported
-durable sources remain reachable; do not delete `history-replay.ts` merely
-because the normal path no longer calls it.
+durable sources remain reachable; `history-replay.ts` is still the live logical
+authority and must not be deleted as a cleanup.
 
-The first bounded retirement is complete when the dormant `replay-budget.ts`
-scaffolding and its isolated test are deleted. It has no production importer and
-must not be confused with the live legacy replay compatibility path.
+The previously listed `replay-budget.ts` scaffolding and separate
+`durable-presentation.ts` module are already absent from the current source tree;
+they are not open retirement tasks. The active projection is
+`durable-render-projection.ts`, and the current renderer keeps baked bitmap data
+in `Layer.tmpCanvas` with differing materialized bounds in
+`Layer.presentationBounds`.
 
-The second bounded retirement removes the duplicate durable presentation cache:
-`Layer.tmpCanvas` is the single baked bitmap slot, while `Layer.presentationBounds`
-retains materialized bounds when they differ from `Layer.pos`. The retired
-`durable-presentation.ts` projection module and its isolated test are deleted;
-the navigation publication and renderer keep the same atomic coverage, freshness,
-and lease-release gates.
+Before revisiting authority retirement, keep frame-changing commits and
+source-backed imports/replacements on the complete legacy path. The browser
+differential covers a retained affine layer transform at its own cursor and after
+one later frame transform, proves the outputs change from an untransformed
+baseline and frame-only control, and compares legacy with durable pixels. It does
+not close broader frame parity or exact materialized bounds. The frame-only
+control for this raster fixture showed a one-pixel/two-channel delta; it remains
+an open parity case recorded in `e2e/OPEN_PROBLEMS.md`. Preview interleaving and
+refused-draw timeline rollback are tested, but active previews still render over
+the complete legacy base. Expand the frame matrix and establish source ownership
+as unordered, independent gates, each with parity and failure-containment evidence.
 
 ## Gates
 

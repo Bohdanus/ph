@@ -1,10 +1,34 @@
 import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
 import { containFit, type ContainDimensions } from '../util/contain-fit.ts';
+import { readClientViewportRect } from '../util/client-viewport.ts';
 import type { Point, Pos, Size } from '../contexts/general-types.ts';
 import { inverseViewPoint, viewStateRef, viewportCenter } from '../contexts/view-state.ts';
 
 export type { ContainDimensions } from '../util/contain-fit.ts';
+
+function sameContainDimensions(left: ContainDimensions, right: ContainDimensions): boolean {
+  return (
+    left.innerWidth === right.innerWidth &&
+    left.innerHeight === right.innerHeight &&
+    left.outerWidth === right.outerWidth &&
+    left.outerHeight === right.outerHeight &&
+    left.offsetX === right.offsetX &&
+    left.offsetY === right.offsetY &&
+    left.scale === right.scale
+  );
+}
+
+type FitInputs = Readonly<{ outerWidth: number; outerHeight: number; imageWidth: number; imageHeight: number }>;
+
+function sameFitInputs(left: FitInputs, right: FitInputs): boolean {
+  return (
+    left.outerWidth === right.outerWidth &&
+    left.outerHeight === right.outerHeight &&
+    left.imageWidth === right.imageWidth &&
+    left.imageHeight === right.imageHeight
+  );
+}
 
 /**
  * The `data-*` attributes this hook publishes on its container, and what each one is.
@@ -50,10 +74,14 @@ export function usePointerPosition<T extends HTMLElement>(
   // } = {}
 ) {
   const containerRectRef = useRef<Pos | null>(null);
+  const containerScrollRef = useRef({ left: 0, top: 0 });
+  const containerScrollTargetRef = useRef<T | null>(null);
+  const pointerCancelTargetRef = useRef<T | null>(null);
   const activePointerId = useRef<number | null>(null);
   /** The element the capture was taken on, so a release without an event can name it. */
   const captureTargetRef = useRef<{ releasePointerCapture?: (id: number) => void } | null>(null);
   const isMouseDown = useRef(false);
+  const pointerTypeRef = useRef<PointerEvent['pointerType']>('mouse');
 
   // coordinates of the contained image within container
   const dimensionsRef = useRef<ContainDimensions>({
@@ -74,20 +102,124 @@ export function usePointerPosition<T extends HTMLElement>(
   /**
    * The last set of values written to the `data-fit-*` attributes, as one string.
    *
-   * `getLocalCoords` calls `calculateDimensions()` on every pointer event, so publishing
-   * unconditionally would be nine `setAttribute` calls per `pointermove` in production. The
-   * dimensions only change on a resize, so this signature makes the write path cold: nine
-   * number-to-string conversions and one comparison per event, zero DOM writes.
+   * `getLocalCoords` measures the container on every pointer event, so publishing
+   * unconditionally would be nine `setAttribute` calls per `pointermove` in production. This
+   * signature makes the write path cold: nine number-to-string conversions and one comparison per
+   * event, zero DOM writes when neither the fit nor the container position changed.
    */
-  const publishedFitRef = useRef<string | null>(null);
+  const publishedFitRef = useRef<Readonly<{
+    scale: number;
+    offsetX: number;
+    offsetY: number;
+    outerWidth: number;
+    outerHeight: number;
+    imageWidth: number;
+    imageHeight: number;
+    rectX: number;
+    rectY: number;
+  }> | null>(null);
+  const fitInputsRef = useRef<FitInputs | null>(null);
+
+  const onPointerCancel = useCallback((e: PointerEvent) => {
+    if (activePointerId.current === e.pointerId) {
+      clearEvent();
+    }
+  }, []);
+
+  const syncPointerCancelListener = useCallback(() => {
+    const node = ref.current;
+    // Keep the capture's cancellation listener on its current container for the full gesture.
+    // It can be moved after clearEvent resets activePointerId.
+    if (!node || activePointerId.current !== null) return;
+
+    const previous = pointerCancelTargetRef.current;
+    if (previous === node) return;
+    if (typeof previous?.removeEventListener === 'function') {
+      previous.removeEventListener('pointercancel', onPointerCancel);
+    }
+    pointerCancelTargetRef.current = null;
+
+    if (typeof node.addEventListener === 'function' && typeof node.removeEventListener === 'function') {
+      node.addEventListener('pointercancel', onPointerCancel);
+      pointerCancelTargetRef.current = node;
+    }
+  }, [onPointerCancel, ref]);
+
+  const syncPointerCancelListenerRef = useRef(syncPointerCancelListener);
+  syncPointerCancelListenerRef.current = syncPointerCancelListener;
+
+  // The active listener follows the latest ref during input, but its teardown belongs to
+  // the hook lifetime. Ref-object replacement during a captured gesture must not remove it.
+  useEffect(() => {
+    syncPointerCancelListenerRef.current();
+    return () => {
+      const node = pointerCancelTargetRef.current;
+      if (typeof node?.removeEventListener === 'function') {
+        node.removeEventListener('pointercancel', onPointerCancel);
+      }
+      pointerCancelTargetRef.current = null;
+    };
+  }, [onPointerCancel]);
+
+  const onContainerScroll = useCallback((event: Event) => {
+    const node = event.currentTarget as T;
+    containerScrollRef.current = {
+      left: Number.isFinite(node.scrollLeft) ? node.scrollLeft : 0,
+      top: Number.isFinite(node.scrollTop) ? node.scrollTop : 0,
+    };
+  }, []);
+
+  const syncContainerScroll = useCallback(() => {
+    const node = ref.current;
+    if (!node) return containerScrollRef.current;
+
+    if (containerScrollTargetRef.current !== node) {
+      const previous = containerScrollTargetRef.current;
+      if (typeof previous?.removeEventListener === 'function') {
+        previous.removeEventListener('scroll', onContainerScroll);
+      }
+      if (typeof node.addEventListener === 'function' && typeof node.removeEventListener === 'function') {
+        node.addEventListener('scroll', onContainerScroll, { passive: true });
+        containerScrollTargetRef.current = node;
+      } else {
+        containerScrollTargetRef.current = null;
+      }
+    }
+
+    containerScrollRef.current = {
+      left: Number.isFinite(node.scrollLeft) ? node.scrollLeft : 0,
+      top: Number.isFinite(node.scrollTop) ? node.scrollTop : 0,
+    };
+    return containerScrollRef.current;
+  }, [onContainerScroll, ref]);
+
+  useEffect(() => {
+    syncContainerScroll();
+    return () => {
+      const node = containerScrollTargetRef.current;
+      if (typeof node?.removeEventListener === 'function') {
+        node.removeEventListener('scroll', onContainerScroll);
+      }
+      containerScrollTargetRef.current = null;
+    };
+  }, [onContainerScroll, syncContainerScroll]);
 
   const publishFit = useCallback(
     (dimensions: ContainDimensions, rect: Pos, image: Size) => {
-      const signature =
-        `${dimensions.scale}|${dimensions.offsetX}|${dimensions.offsetY}|` +
-        `${dimensions.outerWidth}|${dimensions.outerHeight}|` +
-        `${image.width}|${image.height}|${rect.x}|${rect.y}`;
-      if (signature === publishedFitRef.current) return;
+      const previous = publishedFitRef.current;
+      if (
+        previous &&
+        previous.scale === dimensions.scale &&
+        previous.offsetX === dimensions.offsetX &&
+        previous.offsetY === dimensions.offsetY &&
+        previous.outerWidth === dimensions.outerWidth &&
+        previous.outerHeight === dimensions.outerHeight &&
+        previous.imageWidth === image.width &&
+        previous.imageHeight === image.height &&
+        previous.rectX === rect.x &&
+        previous.rectY === rect.y
+      )
+        return;
 
       const node = ref.current;
       // Not `if (!node)`: the ref is generic over `T extends HTMLElement` and callers and
@@ -100,7 +232,17 @@ export function usePointerPosition<T extends HTMLElement>(
       // matched for every later call with the same dimensions - so a first `calculateDimensions`
       // that ran before the element was attached suppressed the publish for good, and the
       // attributes never appeared at all.
-      publishedFitRef.current = signature;
+      publishedFitRef.current = {
+        scale: dimensions.scale,
+        offsetX: dimensions.offsetX,
+        offsetY: dimensions.offsetY,
+        outerWidth: dimensions.outerWidth,
+        outerHeight: dimensions.outerHeight,
+        imageWidth: image.width,
+        imageHeight: image.height,
+        rectX: rect.x,
+        rectY: rect.y,
+      };
 
       node.setAttribute(FIT_ATTRIBUTES.scale, String(dimensions.scale));
       node.setAttribute(FIT_ATTRIBUTES.offsetX, String(dimensions.offsetX));
@@ -116,40 +258,60 @@ export function usePointerPosition<T extends HTMLElement>(
   );
 
   const readContainerRect = useCallback((): Pos | null => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (!rect) return containerRectRef.current;
+    syncContainerScroll();
+    syncPointerCancelListener();
+    const node = ref.current;
+    if (!node) return containerRectRef.current;
+    const rect = readClientViewportRect(node);
 
-    const nextRect: Pos = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
-    containerRectRef.current = nextRect;
-    return nextRect;
-  }, [ref]);
+    const previous = containerRectRef.current;
+    if (
+      previous &&
+      previous.x === rect.x &&
+      previous.y === rect.y &&
+      previous.width === rect.width &&
+      previous.height === rect.height
+    )
+      return previous;
 
-  const calculateDimensions = useCallback(
-    (observed?: Pos) => {
-      // A rect handed in by the ResizeObserver is the measurement for this event,
-      // so it is used as is. Re-reading `getBoundingClientRect()` here discarded
-      // the observed size and substituted a second, possibly different one.
-      if (observed) containerRectRef.current = observed;
-      const rect = observed ?? readContainerRect() ?? containerRectRef.current;
-      if (!rect) return;
+    containerRectRef.current = rect;
+    return rect;
+  }, [ref, syncContainerScroll, syncPointerCancelListener]);
 
-      const { width: outerWidth, height: outerHeight } = rect;
+  const calculateDimensions = useCallback((): Pos | null => {
+    const rect = readContainerRect() ?? containerRectRef.current;
+    if (!rect) return null;
 
-      dimensionsRef.current = containFit({ width: outerWidth, height: outerHeight }, imageSize);
+    const { width: outerWidth, height: outerHeight } = rect;
 
-      publishFit(dimensionsRef.current, rect, imageSize);
-      onResizeRef.current?.(dimensionsRef.current);
-    },
-    [imageSize, publishFit, readContainerRect]
-  );
+    const nextInputs = {
+      outerWidth,
+      outerHeight,
+      imageWidth: imageSize.width,
+      imageHeight: imageSize.height,
+    };
+    const inputsChanged = !fitInputsRef.current || !sameFitInputs(fitInputsRef.current, nextInputs);
+    let dimensionsChanged = false;
+    if (inputsChanged) {
+      const nextDimensions = containFit({ width: outerWidth, height: outerHeight }, imageSize);
+      dimensionsChanged = !sameContainDimensions(dimensionsRef.current, nextDimensions);
+      // Keep the fit object stable between real layout changes. Consumers use this identity to
+      // avoid repainting overlays for a pointer event that only needs a fresh coordinate read.
+      if (dimensionsChanged) dimensionsRef.current = nextDimensions;
+      fitInputsRef.current = nextInputs;
+    }
+
+    publishFit(dimensionsRef.current, rect, imageSize);
+    if (dimensionsChanged) onResizeRef.current?.(dimensionsRef.current);
+    return rect;
+  }, [imageSize, publishFit, readContainerRect]);
 
   useEffect(() => {
     calculateDimensions();
   }, [calculateDimensions]);
 
-  useResizeObserverRAF(ref, (rect: Pos) => {
-    calculateDimensions(rect);
-  });
+  // The observer is a resize trigger; its border-box payload is not the client viewport used by fit.
+  useResizeObserverRAF(ref, () => calculateDimensions());
 
   /**
    * Drop the tracked pointer, releasing the capture if it is still held.
@@ -180,6 +342,7 @@ export function usePointerPosition<T extends HTMLElement>(
     isMouseDown.current = false;
     activePointerId.current = null;
     captureTargetRef.current = null;
+    syncPointerCancelListenerRef.current();
   }
 
   const isPointerDownValid = (e: React.PointerEvent<T>) => {
@@ -188,10 +351,20 @@ export function usePointerPosition<T extends HTMLElement>(
     // First pointer wins (this should prevent against multiclick??)
     if (activePointerId.current !== null) return false;
 
+    syncPointerCancelListener();
     isMouseDown.current = true;
+    pointerTypeRef.current = e.pointerType;
     activePointerId.current = e.pointerId;
     captureTargetRef.current = e.currentTarget as unknown as { releasePointerCapture?: (id: number) => void };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture can fail when the target detaches or the UA rejects the id. The
+      // pointer claim is installed above so the catch must unwind it before refusing the
+      // press; otherwise every later press loses at the first-pointer-wins guard.
+      clearEvent(e.currentTarget as unknown as { releasePointerCapture?: (id: number) => void });
+      return false;
+    }
 
     return true;
   };
@@ -235,53 +408,50 @@ export function usePointerPosition<T extends HTMLElement>(
     return true;
   };
 
-  // in theory its managed internally by this hook, so not exposed outside
-  const onPointerCancel = useCallback((e: PointerEvent) => {
-    if (activePointerId.current === e.pointerId) {
-      clearEvent();
-    }
-  }, []);
+  const getLocalCoordsFromClientPoint = useCallback(
+    (clientX: number, clientY: number): Point => {
+      const rect = calculateDimensions() ?? containerRectRef.current;
+      if (!rect) return { x: 0, y: 0 };
 
-  useEffect(() => {
-    const node = ref.current;
-    node?.addEventListener('pointercancel', onPointerCancel);
+      const { offsetX, offsetY, scale } = dimensionsRef.current;
 
-    return () => {
-      node?.removeEventListener('pointercancel', onPointerCancel);
-    };
-  }, [ref, onPointerCancel]);
+      // Client coordinates and getBoundingClientRect() are both viewport-relative, so page
+      // scrolling is already accounted for. This element's own scroll is different: it moves
+      // the transformed canvas inside the stationary scrollport, so restore that content-space
+      // offset before inverting the view transform.
+      const containerScroll = containerScrollRef.current;
+      const contentPoint = {
+        x: clientX - rect.x + containerScroll.left,
+        y: clientY - rect.y + containerScroll.top,
+      };
+      const untransformed = inverseViewPoint(
+        contentPoint,
+        viewStateRef.current,
+        viewportCenter(rect.width, rect.height)
+      );
+      const xCss = (untransformed.x - offsetX) / scale;
+      const yCss = (untransformed.y - offsetY) / scale;
 
-  const getLocalCoords = (e: React.PointerEvent<T>): Point => {
-    calculateDimensions();
+      return {
+        x: xCss,
+        y: yCss,
+      };
+    },
+    [calculateDimensions]
+  );
 
-    const rect = readContainerRect() ?? containerRectRef.current;
-    if (!rect) return { x: 0, y: 0 };
-
-    const { offsetX, offsetY, scale } = dimensionsRef.current;
-
-    const viewportPoint = { x: e.clientX - rect.x, y: e.clientY - rect.y };
-    const untransformed = inverseViewPoint(
-      viewportPoint,
-      viewStateRef.current,
-      viewportCenter(rect.width, rect.height)
-    );
-    const xCss = (untransformed.x - offsetX) / scale;
-    const yCss = (untransformed.y - offsetY) / scale;
-
-    return {
-      x: xCss,
-      y: yCss,
-    };
-  };
+  const getLocalCoords = (e: React.PointerEvent<T>): Point => getLocalCoordsFromClientPoint(e.clientX, e.clientY);
 
   return {
     pointerIdRef: activePointerId,
     dimensionsRef,
     getLocalCoords,
+    getLocalCoordsFromClientPoint,
     isMouseDown,
     releasePointer,
-    isPointerDownValid, // tells if the event was captured (therefore should be handled)
-    isPointerMoveValid, // tells if the event was captured (therefore should be handled)
-    isPointerUpValid, // tells if the event was captured (therefore should be handled)
+    isPointerDownValid,
+    isPointerMoveValid,
+    isPointerUpValid,
+    pointerTypeRef,
   };
 }

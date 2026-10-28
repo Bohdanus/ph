@@ -67,13 +67,11 @@ import {
 const A4_AT_300_DPI = { width: '2480', height: '3508' };
 
 /**
- * The size the app publishes for the current document. A different observable from
- * `documentSize` below, which reads the canvas element's backing store: this is the
- * `totalSize` the store holds and the `Footer` renders
- * (`src/components/Footer/Footer.tsx:8-16`), so it catches a document that was resized
- * on screen while the store still reports the old size.
+ * The size the app publishes for the current document. The canvas backing store is read
+ * separately by `canvasBackingStore`, so tests can compare independent logical and
+ * physical dimensions.
  */
-const dimensionsReadout = (page: Page) => page.locator('footer');
+const dimensionsReadout = (page: Page) => page.getByTestId('footer-dimensions');
 
 /**
  * The shared `openSaveDialog` only clicks; the two things the dialog's own callers in
@@ -351,11 +349,41 @@ const CHANNELS: ReadonlyArray<keyof Rgb> = ['red', 'green', 'blue'];
  * state alongside the rendered-pixel checks.
  */
 async function documentSize(page: Page): Promise<DocumentSize> {
+  const readout = await dimensionsReadout(page).textContent();
+  const match = readout?.match(/Dimensions:\s*(\d+)\s*×\s*(\d+)\s*px/);
+  if (!match) throw new Error(`Could not parse the document dimensions from the footer: ${String(readout)}`);
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
+interface CanvasBackingStore {
+  width: number;
+  height: number;
+  scale: number;
+}
+
+/** The physical backing dimensions, paired with the scale the renderer applied. */
+async function canvasBackingStore(page: Page): Promise<CanvasBackingStore> {
   return await getWorkspaceCanvas(page).evaluate((node) => {
     const canvas = node as HTMLCanvasElement;
-    const dpr = window.devicePixelRatio;
-    return { width: canvas.width / dpr, height: canvas.height / dpr };
+    const ratio = canvas.getAttribute('data-hidpi-ratio');
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      scale: ratio === null ? 1 : Number(ratio),
+    };
   });
+}
+
+/** Waits until the renderer has published backing pixels at the browser's current DPR. */
+async function expectCanvasBackingStore(page: Page, document: DocumentSize): Promise<void> {
+  const dpr = await page.evaluate(() => window.devicePixelRatio);
+  await expect
+    .poll(() => canvasBackingStore(page))
+    .toEqual({
+      width: Math.round(document.width * dpr),
+      height: Math.round(document.height * dpr),
+      scale: dpr,
+    });
 }
 
 /**
@@ -543,6 +571,8 @@ function expectIdenticalPixels(actual: ImageDataResult, expected: ImageDataResul
 }
 
 test.describe('New Image dialog', () => {
+  test.use({ deviceScaleFactor: 2 });
+
   test('the background colour reaches the created document', async ({ page }, testInfo) => {
     await page.goto('/');
     await createDocumentWithBackground(page, testInfo, { color: BACKGROUND_HEX, opacity: 1 });
@@ -681,6 +711,7 @@ test.describe('New Image dialog', () => {
       width: 2550,
       height: 3300,
     });
+    await expectCanvasBackingStore(page, at300);
 
     await createFromPreset('150');
     const at150 = await documentSize(page);
@@ -688,6 +719,7 @@ test.describe('New Image dialog', () => {
       width: 1275,
       height: 1650,
     });
+    await expectCanvasBackingStore(page, at150);
 
     // The numbers above are DOM state. The pixels have to agree: the document is
     // letterboxed into the canvas element with `object-fit: contain`, so the rendered
@@ -715,6 +747,7 @@ test.describe('New Image dialog', () => {
     await expect(canvas).toBeVisible();
     const before = await loadImageData(await captureWorkspace(page, testInfo, 'before-close'));
     const sizeBefore = await documentSize(page);
+    const backingBefore = await canvasBackingStore(page);
 
     // Propose a document that is a different colour, a different size and a different
     // aspect ratio, so "nothing happened" is a claim about the document and not only
@@ -727,6 +760,7 @@ test.describe('New Image dialog', () => {
     await page.getByTestId('new-image-dialog-cancel-button').click();
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
     expect(await documentSize(page), 'Cancel changed the document size').toEqual(sizeBefore);
+    expect(await canvasBackingStore(page), 'Cancel changed the canvas backing store').toEqual(backingBefore);
     expectIdenticalPixels(
       await loadImageData(await captureWorkspace(page, testInfo, 'after-cancel')),
       before,
@@ -741,6 +775,7 @@ test.describe('New Image dialog', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
     expect(await documentSize(page), 'Escape changed the document size').toEqual(sizeBefore);
+    expect(await canvasBackingStore(page), 'Escape changed the canvas backing store').toEqual(backingBefore);
     expectIdenticalPixels(
       await loadImageData(await captureWorkspace(page, testInfo, 'after-escape')),
       before,
@@ -1307,9 +1342,8 @@ test('the theme toggle switches the whole document between light and dark', asyn
  * WHAT IT ASSERTS, and what it does not: the `dark` class on `<html>` and `dark` in
  * `localStorage`. Not rendering. A `dark:` Tailwind variant that stopped applying
  * leaves both of those true, so this test is a declaration about `DEFAULT_THEME` and must
- * not be read as dark-mode coverage — `e2e/accessibility.spec.ts` records two extra
- * `color-contrast` violations on the panel tab labels
- * (`src/components/SidebarRight/PanelGroup.tsx:42`) that only the dark palette has.
+ * not be read as dark-mode coverage — `e2e/accessibility.spec.ts` runs under the light
+ * pin and provides no dark-theme axe result. Dark contrast remains unmeasured by that gate.
  *
  * WHAT IT DOES NOT DO. It does not weaken or parametrise the pin. `useAppDefaultTheme`
  * turns the pin off for this tab and removes the stored value in the same step, then the

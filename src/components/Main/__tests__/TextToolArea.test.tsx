@@ -5,6 +5,7 @@ import type { UseRectProps } from '../../../hooks/useRect.ts';
 import { TextToolArea } from '../TextToolArea.tsx';
 import { PLACEHOLDER_TEXT, drawOverflowIndicator, layoutText } from '../../../tools/text.ts';
 import { calculateNewRect } from '../../../util/rect.ts';
+import { documentFrameFromSize } from '../../../contexts/document-frame.ts';
 
 type TextArgs = {
   align: 'left' | 'center' | 'right';
@@ -13,6 +14,7 @@ type TextArgs = {
   fontFamily: string;
   fontSize: number;
   italic: boolean;
+  angle?: number;
   kind?: 'point' | 'paragraph';
   lineHeight: number;
   text?: string;
@@ -22,6 +24,9 @@ type TextArgs = {
 
 const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
+  setActiveLayer: vi.fn(),
+  beginTextLayerEdit: vi.fn(),
+  requestTextEditFocus: vi.fn(),
   commitDirtyTool: vi.fn(),
   dispatch: vi.fn(),
   color: '#000000',
@@ -36,6 +41,8 @@ const h = vi.hoisted(() => ({
   useRectProps: { current: null as UseRectProps | null },
   containerRef: { current: document.createElement('div') },
   toolOverlayRef: { current: document.createElement('canvas') },
+  layers: {} as Record<string, unknown>,
+  activeLayerId: null as string | null,
 }));
 
 const makeTextArgs = (overrides: Partial<TextArgs> = {}): TextArgs => ({
@@ -65,6 +72,13 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       get color() {
         return h.color;
       },
+      get layers() {
+        return h.layers;
+      },
+      get activeLayerId() {
+        return h.activeLayerId;
+      },
+      documentFrame: documentFrameFromSize({ width: 100, height: 100 }),
       totalSize: { width: 100, height: 100 },
     },
     h.dispatch,
@@ -79,6 +93,9 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
     get setToolArgs() {
       return h.setToolArgs;
     },
+    get requestTextEditFocus() {
+      return h.requestTextEditFocus;
+    },
   }),
 }));
 
@@ -87,8 +104,12 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
     get commitDirtyTool() {
       return h.commitDirtyTool;
     },
-    setActiveLayer: vi.fn(),
-    beginTextLayerEdit: vi.fn(),
+    get setActiveLayer() {
+      return h.setActiveLayer;
+    },
+    get beginTextLayerEdit() {
+      return h.beginTextLayerEdit;
+    },
   }),
 }));
 
@@ -102,7 +123,10 @@ vi.mock('../../../hooks/useRect.ts', () => ({
         onPointerUp: h.pointerUp,
       },
       rectHandles: { redraw: h.redraw, clearSelection: vi.fn() },
-      pointerState: { currentEdgeRef: h.currentEdgeRef },
+      pointerState: {
+        currentEdgeRef: h.currentEdgeRef,
+        getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
+      },
     };
   },
 }));
@@ -167,6 +191,9 @@ const gesture = (
 describe('TextToolArea', () => {
   beforeEach(() => {
     h.setToolArgs.mockReset();
+    h.setActiveLayer.mockReset();
+    h.beginTextLayerEdit.mockReset();
+    h.requestTextEditFocus.mockReset();
     h.commitDirtyTool.mockReset();
     h.dispatch.mockReset();
     h.redraw.mockReset();
@@ -176,6 +203,8 @@ describe('TextToolArea', () => {
     h.currentEdgeRef.current = null;
     h.useRectProps.current = null;
     h.color = '#000000';
+    h.layers = {};
+    h.activeLayerId = null;
     toolArgs = makeTextArgs();
     vi.mocked(calculateNewRect).mockReset();
     vi.mocked(calculateNewRect).mockReturnValue(null);
@@ -268,6 +297,61 @@ describe('TextToolArea', () => {
     });
   });
 
+  describe('re-entering an existing text layer from the canvas', () => {
+    const existingTextLayer = (visible: boolean) => ({
+      id: 'text-1',
+      name: 'Text 1',
+      isBedrock: false,
+      tmpCanvas: null,
+      bitmap: null,
+      visible,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 1,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+      presentationBounds: null,
+      source: {
+        kind: 'tool',
+        args: makeTextArgs({ text: 'existing text', rect: { x1: 0, y1: 0, x2: 40, y2: 20 } }),
+      },
+      operations: [],
+    });
+
+    it('passes the canvas press point to the newly opened DOM editor', () => {
+      h.layers = { 'text-1': existingTextLayer(true) };
+      h.activeLayerId = 'text-1';
+      const rendered = renderArea();
+      const area = rendered.container.firstElementChild as HTMLElement;
+
+      expect(fireEvent.pointerDown(area, { button: 0, clientX: 12, clientY: 8 })).toBe(false);
+
+      expect(h.setActiveLayer).toHaveBeenCalledWith('text-1');
+      expect(h.beginTextLayerEdit).toHaveBeenCalledWith('text-1');
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ editingLayerId: 'text-1' }));
+      expect(h.requestTextEditFocus).toHaveBeenCalledWith({
+        kind: 'point',
+        layerId: 'text-1',
+        clientX: 12,
+        clientY: 8,
+      });
+      expect(h.pointerDown).not.toHaveBeenCalled();
+    });
+
+    it('does not let a hidden active text layer intercept a canvas press', () => {
+      h.layers = { 'text-1': existingTextLayer(false) };
+      h.activeLayerId = 'text-1';
+      const rendered = renderArea();
+      const area = rendered.container.firstElementChild as HTMLElement;
+
+      expect(fireEvent.pointerDown(area, { button: 0, clientX: 12, clientY: 8 })).toBe(true);
+
+      expect(h.setToolArgs).not.toHaveBeenCalled();
+      expect(h.requestTextEditFocus).not.toHaveBeenCalled();
+      expect(h.pointerDown).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('onChangeEnd', () => {
     it('commits the recalculated rect and leaves the tool its own colour', () => {
       h.color = '#ff0000';
@@ -300,7 +384,22 @@ describe('TextToolArea', () => {
         rect: newRect,
         kind: 'paragraph',
         placeholderUntouched: true,
+        angle: 0,
       });
+    });
+
+    it('resets the previous layer angle when a canvas placement implicitly commits its draft', () => {
+      toolArgs = makeTextArgs({ text: 'Rotation source', angle: 73, rect: { x1: 0, y1: 0, x2: 40, y2: 20 } });
+      h.commitDirtyTool.mockReturnValue({} as never);
+      vi.mocked(calculateNewRect).mockReturnValue({ x1: 60, y1: 60, x2: 100, y2: 80 });
+
+      const rendered = renderArea();
+      gesture(rendered, { x: 60, y: 60 }, { x: 60, y: 60 }, { x1: 60, y1: 60, x2: 60, y2: 60 });
+
+      expect(h.commitDirtyTool).toHaveBeenCalledOnce();
+      expect(h.setToolArgs).toHaveBeenCalledWith(
+        expect.objectContaining({ text: PLACEHOLDER_TEXT, angle: 0, rect: { x1: 60, y1: 60, x2: 100, y2: 80 } })
+      );
     });
 
     it('does not republish the args when only the store foreground changed', () => {

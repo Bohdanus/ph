@@ -12,6 +12,7 @@ import { setRefValue } from '../util/ref.ts';
 import { createHistoryItem } from '../contexts/history-utils.ts';
 import { documentFrameFromSize } from '../contexts/document-frame.ts';
 import { appendSelectionClear } from '../contexts/useSelectionHistory.ts';
+import { isDocumentGestureOpen } from './document-gesture.ts';
 
 export interface UseAppType {
   setBlankImage: (data: NewDocumentBlankParams) => void;
@@ -165,10 +166,17 @@ export const useApp = (): UseAppType => {
   }
 
   function goToTool(nextToolName: ToolName) {
-    // commit any dirty tool changes before switching
-    if (commitDirtyTool() === null) return false;
+    const hasOpenDocumentGesture = isDocumentGestureOpen();
+    // A live document gesture can have only a transient preview: its owner owns
+    // whether that preview commits or rolls back. Committing here runs before
+    // the outgoing tool unmounts and would turn a partial stroke into history.
+    // Let the owner unmount and cancel it; ordinary dirty edits still commit
+    // before the switch.
+    if (!hasOpenDocumentGesture && commitDirtyTool() === null) return false;
 
-    if (nextToolName !== toolName && nextToolName !== 'patch' && activeSelectionId) {
+    // Clearing a selection is itself a document edit, so do not interleave it
+    // with a gesture that has not yet been cancelled by its owning tool.
+    if (!hasOpenDocumentGesture && nextToolName !== toolName && nextToolName !== 'patch' && activeSelectionId) {
       // The same single writer the Clear/Deselect controls use, so this deselect
       // gains the durable `set-selection` plan and the shadow-failure fallback
       // instead of appending a hand-built entry with no `durableEntry` — which

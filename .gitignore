@@ -51,6 +51,15 @@ playwright/.auth
 .kilo/*
 !.kilo/plans/
 .kilo/plans/*
+!.kilo/agent/
+.kilo/agent/*
+!.kilo/agent/read-only-research.md
+# The local and repository skill catalogs must stay synchronized.
+!.kilo/skills/
+.kilo/skills/*
+!.kilo/skills/kilo-chat-history/
+.kilo/skills/kilo-chat-history/*
+!.kilo/skills/kilo-chat-history/SKILL.md
 # This implementation plan is an explicit, tracked handoff for the durable replay cutover.
 !.kilo/plans/durable-replay-authority.md
 .serena

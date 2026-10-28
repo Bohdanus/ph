@@ -33,6 +33,9 @@ import {
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import { calculateNewRect, reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
+import { isTextToolArgs } from '../util/typeGuards.ts';
+import { isValidTextLayerGeometry } from './text-layer-edit.ts';
+import { selectionPointPathsToContours } from '../util/selection.ts';
 import {
   type ActionType,
   HIDE_LAYER_ACTION,
@@ -48,7 +51,10 @@ import {
   TOOL_ACTION,
   UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
-import type { TextToolArgs } from '../tools/text.ts';
+import { clearTextDraftArgs, type TextToolArgs } from '../tools/text.ts';
+import { normalizeColorsToolArgs } from '../tools/colors.ts';
+import { normalizeLevelsToolArgs } from '../tools/levels.ts';
+import { canvasRectToLocal } from '../util/rect.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
@@ -64,7 +70,7 @@ import {
   drawEvaluatedPresentation,
   evaluatePresentation,
   operationsRetainedAfterBake,
-  stageProcessorInput,
+  stageProcessorInputForTool,
 } from './presentation-evaluator.ts';
 import {
   canvasRectToDocumentFrame,
@@ -216,13 +222,30 @@ export const getIncrementalEraserArgs = (toolArgs: ToolArgs, previousToolArgs?: 
   const previousSelection = previous.selection;
   if ((currentSelection === undefined) !== (previousSelection === undefined)) return null;
   if (currentSelection && previousSelection) {
+    const currentContours = selectionPointPathsToContours(currentSelection.points);
+    const previousContours = selectionPointPathsToContours(previousSelection.points);
+    const currentMask = currentSelection.rasterMask;
+    const previousMask = previousSelection.rasterMask;
     if (
       currentSelection.featherRadius !== previousSelection.featherRadius ||
       currentSelection.antiAlias !== previousSelection.antiAlias ||
-      currentSelection.points.length !== previousSelection.points.length ||
-      !currentSelection.points.every(
-        (point, index) =>
-          point.x === previousSelection.points[index]?.x && point.y === previousSelection.points[index]?.y
+      (currentMask === undefined) !== (previousMask === undefined) ||
+      (currentMask !== undefined &&
+        previousMask !== undefined &&
+        (currentMask.x !== previousMask.x ||
+          currentMask.y !== previousMask.y ||
+          currentMask.width !== previousMask.width ||
+          currentMask.height !== previousMask.height ||
+          currentMask.data !== previousMask.data)) ||
+      currentContours.length !== previousContours.length ||
+      !currentContours.every(
+        (contour, contourIndex) =>
+          contour.length === previousContours[contourIndex]?.length &&
+          contour.every(
+            (point, pointIndex) =>
+              point.x === previousContours[contourIndex]?.[pointIndex]?.x &&
+              point.y === previousContours[contourIndex]?.[pointIndex]?.y
+          )
       )
     ) {
       return null;
@@ -253,7 +276,14 @@ function isTransformArgs(args: ToolArgs): args is TransformToolArgs {
   return args.toolName === 'transform';
 }
 
+function normalizeToolArgs(args: ToolArgs): ToolArgs {
+  if (args.toolName === 'color') return normalizeColorsToolArgs(args);
+  if (args.toolName === 'levels') return normalizeLevelsToolArgs(args);
+  return args;
+}
+
 function normalizeCommittedToolArgs(layer: Layer, args: ToolArgs): ToolArgs | object | null {
+  args = normalizeToolArgs(args);
   if (!isTransformArgs(args)) return args;
   const retained = normalizeTransformHistoryArgs(args, layer.pos);
   if (retained && isIdentityAffineTransform(retained.transform)) return null;
@@ -394,8 +424,8 @@ function getIncrementalSpongeArgs(prevArgs: ToolArgs | undefined, currArgs: Tool
 //
 // Crop-local, and NOT a document-size limit: nothing else in the stack caps a frame, so a PSD
 // open or a canvas resize bypasses both ceilings here entirely.
-const MAX_DOCUMENT_FRAME_SIDE = 4096;
-const MAX_DOCUMENT_FRAME_AREA = 16777216;
+export const MAX_DOCUMENT_FRAME_SIDE = 4096;
+export const MAX_DOCUMENT_FRAME_AREA = 16777216;
 
 export type ArrangeLayerCommand = 'bring-to-front' | 'bring-forward' | 'send-backward' | 'send-to-back';
 
@@ -543,7 +573,7 @@ export const useLayers = () => {
 
   const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
-    if (currentLayers === null) return;
+    if (currentLayers === null) return false;
 
     const source: ImageLayerSource = {
       kind: 'image',
@@ -573,6 +603,7 @@ export const useLayers = () => {
     // the live history entry's `layerSource.bitmap`. They are the same object, and
     // `trackPublished` keys on a `Set`.
     adoptLayerBitmaps([source.bitmap]);
+    return true;
   };
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
     // commented out because causes infinite recursion
@@ -688,8 +719,9 @@ export const useLayers = () => {
     return nextLayer;
   };
 
-  const updateLayerByTool = async ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
-    const toolArgsToolName = (toolArgs as ToolArgs).toolName;
+  const updateLayerByTool = async ({ id = activeLayerId, toolArgs: inputToolArgs }: LayerEditParams) => {
+    const toolArgs = normalizeToolArgs(inputToolArgs);
+    const toolArgsToolName = toolArgs.toolName;
     const processor = findToolProcessor(toolArgsToolName);
     // Statically enforced, not by convention: a tool with no processor (`PIXEL_FREE_TOOLS`) has no
     // pixel operation, so it is not reachable through this path at all.
@@ -793,13 +825,44 @@ export const useLayers = () => {
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
-      // An emptied draft is an edit session with nothing in it. It cannot be committed — the Commit
-      // button is disabled and there is no ink to record — so the implicit path CLOSES it rather than
-      // returning early, which used to leave a box on the canvas that a tool switch reopened and that
-      // no key could end: Escape, Ctrl+Enter and Commit were all no-ops and only Cancel escaped.
+      // Successful sources capture angle before their clear path. Angle is per-layer geometry;
+      // character formatting remains reusable for the next text draft.
+      // An empty existing edit is a source replacement, not a new empty layer. Keep its original
+      // geometry and position so deleting all characters does not shrink the raster origin.
+      if (!args.text && args.rect && args.editingLayerId) {
+        const activeLayer = layers[args.editingLayerId];
+        const activeTextArgs =
+          activeLayer?.source?.kind === 'tool' && isTextToolArgs(activeLayer.source.args)
+            ? activeLayer.source.args
+            : null;
+        const originalRect = activeTextArgs?.rect;
+        const originalPos = activeLayer?.pos;
+        if (!activeLayer || !activeTextArgs || !originalPos || !isValidTextLayerGeometry(originalRect, originalPos)) {
+          return null;
+        }
+
+        const replacementArgs = { ...args, text: '', rect: originalRect, placeholderUntouched: false };
+        delete replacementArgs.editingLayerId;
+        const replaced = replaceLayerSource(activeLayer.id, {
+          kind: 'tool',
+          args: replacementArgs,
+          pos: { ...originalPos },
+        });
+        if (!replaced) return null;
+
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const cleared = clearTextDraftArgs(persistedArgs);
+        if (setToolArgs) setToolArgs(cleared);
+        else currentArgsRef.current = cleared;
+        clearOverlay();
+        return { ...layers, [activeLayer.id]: replaced };
+      }
+
+      // An emptied new draft has no source to replace. Close it on implicit commit rather than
+      // leaving an editor open that cannot create a valid raster.
       if (!args.text && args.rect) {
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-        const closed = { ...persistedArgs, text: '', rect: null };
+        const closed = clearTextDraftArgs(persistedArgs);
         if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(closed);
         else currentArgsRef.current = closed;
@@ -816,7 +879,7 @@ export const useLayers = () => {
       // happens to be those words, which is the defect the flag replaced.
       if (args.placeholderUntouched === true) {
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-        const discarded = { ...persistedArgs, text: '', rect: null };
+        const discarded = clearTextDraftArgs(persistedArgs);
         if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(discarded);
         else currentArgsRef.current = discarded;
@@ -834,7 +897,7 @@ export const useLayers = () => {
         requestedLayerId &&
         (!activeLayer || activeLayer.source?.kind !== 'tool' || activeLayer.source.args.toolName !== 'text')
       ) {
-        const cleared = { ...args, text: '', rect: null };
+        const cleared = clearTextDraftArgs(args);
         delete cleared.editingLayerId;
         cancelLayerPreview(requestedLayerId);
         if (setToolArgs) setToolArgs(cleared);
@@ -860,7 +923,7 @@ export const useLayers = () => {
             // comparison above still uses the un-reduced rect, so the guard is unaffected.
             args: {
               ...replacementArgs,
-              rect: reduceRect(sortRect(measuredRect), pos),
+              rect: canvasRectToLocal(measuredRect, pos, documentFrame),
               placeholderUntouched: false,
             },
             pos,
@@ -869,7 +932,7 @@ export const useLayers = () => {
           if (!replaced) return null;
 
           const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-          const cleared = { ...persistedArgs, text: '', rect: null };
+          const cleared = clearTextDraftArgs(persistedArgs);
           if (setToolArgs) setToolArgs(cleared);
           else currentArgsRef.current = cleared;
           clearOverlay();
@@ -880,7 +943,7 @@ export const useLayers = () => {
 
       const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
       const layer = createLayerFromTool({ args: { ...persistedArgs, placeholderUntouched: false } });
-      const cleared = { ...persistedArgs, text: '', rect: null };
+      const cleared = clearTextDraftArgs(persistedArgs);
       if (setToolArgs) {
         setToolArgs(cleared);
       } else {
@@ -1134,10 +1197,10 @@ export const useLayers = () => {
   // THE MAIN POINT IS THAT THIS method does not leave any trace in history and REACT lifecycle
   //
   // The `boolean` is load-bearing: `updateLayerByTool` appends the `TOOL_ACTION` history entry
-  // right after calling this, and `normalizeCommittedToolArgs` returns a non-transform tool's args
-  // unchanged, so a `false` here that the caller ignored would still record a history state with
-  // no layer change behind it.
-  function tempUpdateLayer({ id = activeLayerId, toolArgs }: LayerEditParams): boolean {
+  // only after this succeeds. Colors and Levels args are normalized before the operation is
+  // rendered, and the same normalized args are what their history entries record.
+  function tempUpdateLayer({ id = activeLayerId, toolArgs: inputToolArgs }: LayerEditParams): boolean {
+    const toolArgs = normalizeToolArgs(inputToolArgs);
     if (!id) return false;
 
     const layer = layers[id];
@@ -1277,11 +1340,11 @@ export const useLayers = () => {
     // trapezoid, a non-invertible homography, degenerate affine bounds). Without the
     // guard the throw escapes `tempUpdateLayer` into a React event handler.
     let result: ToolResult;
-    let input: ReturnType<typeof stageProcessorInput> | null = null;
+    let input: ReturnType<typeof stageProcessorInputForTool> | null = null;
     try {
-      input = bitmap ? stageProcessorInput(processorLayer, bitmap) : null;
+      input = bitmap ? stageProcessorInputForTool(processorLayer, bitmap, processor) : null;
       const processorParams: ProcessorToolParams | CreatorToolParams = input
-        ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
+        ? ({ bitmap: input.bitmap, size: input.rasterSize } as ProcessorToolParams)
         : ({ size: layer.pos } as CreatorToolParams);
       // Pass previousCanvas for incremental eraser brush-mode
       if (canIncrementalEraser && preview?.layer.tmpCanvas) {
@@ -1310,7 +1373,7 @@ export const useLayers = () => {
     // already routes this branch through `applyRasterTool`; the live preview must publish the
     // same baked bounds and drop the retained operations or undo/redo will diverge.
     const rasterBoundary = processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
-    const bakedPresentation = rasterBoundary && input !== null && input.operations.length > 0;
+    const bakedPresentation = rasterBoundary && input !== null && input.presentationIsBaked;
     const publishedPosition = bakedPresentation && input ? input.bounds : layer.pos;
     const previewLayer = {
       ...layer,

@@ -26,10 +26,11 @@ chat that stopped answering while a subagent is still writing is a **live** work
 Subagents are found with `session.parent_id`, and the walk is **transitive** — a subagent can
 spawn its own subagent.
 
-Worktree `chats.count` in `WORKTREES.json` is **not** a usable staleness signal, and it is
-worse than "mostly zero": sessions record the directory a chat _opened_ in, not the worktree it
-worked in, so the inventory resolves the main checkout and leaves `chats.count` at 0 for
-**every** worktree it reports. Use `session.directory` in the Kilo database directly.
+Worktree `chats.count` in `WORKTREES.json` is **not a complete ownership signal**: it counts
+sessions by the directory they opened in, not every worktree they later used. A worktree may
+therefore have `chats.count: 0` despite work done there; sessions opened in that worktree may
+also be counted. Use `session.directory` to find sessions opened there, and use write/shell
+history, the board and transcript search to cover the other cases.
 
 **The liveness signals here are structurally blind, so `action` is not a verdict about
 people.** The board is keyed on the git _branch_ and the sessions on the directory a chat
@@ -37,9 +38,12 @@ _opened_ in, which means an agent can be actively writing a worktree and leave n
 either — and `in-use` is itself derived from those signals. So `dispose` never means "nobody
 is working here", and two byte-identical branches both read `at-risk` because `action` is
 computed from ahead/behind and conflicts, so deleting one does not change the other's landing
-situation. Read `mustNotPrune`, `prunable`, `ownership.liveWriterCount`,
-`ownership.derivedLiveWorktrees`, `writeHistory.activeNow` and `board.agents[].live`; treat
-the rest as a merge hint. (`derivedLiveWorktrees` is nested under `ownership`, not top level.)
+situation. Read each record's `derivedLive`, `writeHistory.derivedChatIds`, `mustNotPrune`,
+`prunable` and `board.agents[].live`. `ownership.liveWriterCount` and
+`ownership.derivedLiveWorktrees` are fleet-level summaries, not per-record fields; use them to
+cross-check the records, not to rank an individual worktree. `writeHistory.activeNow` reflects
+suppression, so inspect `derivedChatIds` when an override is present. Treat the rest as a merge
+hint.
 
 **The board is keyed on the branch, and that is the trap this whole sweep exists to avoid.** A
 chat that ran in the main checkout and then _drove into_ `.kilo/worktrees/<name>` to commit
@@ -115,10 +119,10 @@ the operator is a **last resort**, and it is reached only once the wider chat se
 family walk in step 4, the live overlay in step 4b and the external documentation have all
 genuinely come up empty — and only for what remains a **policy or an authorisation** rather
 than a fact you could have looked up. A question with no search log behind it is a judgement
-call wearing a question's clothes, and the operator cannot tell the two apart. **No wall-clock
-number appears in this document**, because every one of them goes stale: the staleness
-threshold is the operator's to set, and everything below is written so that changing it is a
-one-line edit rather than a re-derivation.
+call wearing a question's clothes, and the operator cannot tell the two apart. The two-hour
+board-observation value in §2 is the default **stale-candidate threshold**, not proof that a chat
+or worktree is dead. At two hours without a valid board observation, begin the full family and live
+overlay checks; do not delete or land from age alone. Unknown signals never count as dead.
 
 ## 1 — Git facts
 
@@ -130,56 +134,78 @@ node scripts/worktree-inventory.mjs          # regenerate, then read it
 there is no commit step: regenerate it whenever you add or remove a worktree, and never
 `git add -f` it. **Read `action` first**, and treat it as a point-in-time answer:
 
-| `action`    | meaning                                                                                                |
-| ----------- | ------------------------------------------------------------------------------------------------------ |
-| `land`      | clean tree, commits ahead of `main`, merges clean — land it                                            |
-| `at-risk`   | work on no ref, the merge needs a human, or a curated finding disagrees                                |
-| `dispose`   | on `main`, clean, nothing protects it — delete it                                                      |
-| `legacy`    | a curated `legacy: true`: clean, and nobody will work on it again — drop the worktree, keep the branch |
-| `in-use`    | an agent or session is active there — leave it alone                                                   |
-| `keep`      | the main checkout — never a candidate                                                                  |
-| `undecided` | cannot be told from what is known — do not remove it                                                   |
+| `action`    | meaning                                                                                                                     |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `land`      | clean tree, commits ahead of `main`, merges clean — land it                                                                 |
+| `at-risk`   | work on no ref, the merge needs a human, or a curated finding disagrees                                                     |
+| `dispose`   | clean, and the classifier proves the branch's work is already represented by the base — dispose it with its recovery anchor |
+| `legacy`    | a curated `legacy: true`: clean, and nobody will work on it again — drop the worktree, keep the branch                      |
+| `in-use`    | an agent or session is active there — leave it alone                                                                        |
+| `keep`      | the main checkout — never a candidate                                                                                       |
+| `undecided` | cannot be told from what is known — do not remove it                                                                        |
 
 ## 2 — Rank by staleness
 
-Rank on the **derived** signals, not on the board alone: `writeHistory.activeNow` and
-`ownership.derivedLiveWorktrees` catch what `board.agents[].lastSeenMs` cannot, which is an
-agent that never registered on that branch at all. Board identity is the git branch and every
-worktree is branch-keyed, so the board is a good signal _where it exists_ and silent where it
-does not:
+Rank on each worktree record's `derivedLive`, not the board alone. It combines session,
+write, recent shell-I/O and board signals; unlike `writeHistory.activeNow`, it preserves the
+pre-suppression evidence when an inventory liveness override is set. `ownership.liveWriterCount`
+is a fleet-wide total, not a per-worktree field. `ownership.derivedLiveWorktrees` is a
+fleet-level list; use `w.derivedLive` when iterating `j.worktrees`. Board identity is the git
+branch and every worktree is branch-keyed, so the board is useful where it has a row and silent
+where it does not:
 
 ```bash
 node -e "
 const j=require('./WORKTREES.json');
-const now=Date.now(), H=4*3600*1000;
+const now=Date.now();
 const rows=j.worktrees
   .filter(w=>!w.isPrimary)
   .map(w=>{
     const board=(w.board&&w.board.agents)||[];
-    const seen=board.map(a=>a.lastSeenMs||0);
+    const seen=board.map(a=>a.lastSeenMs).filter(Number.isFinite);
     return {name:w.name,branch:w.branch,action:w.action,prunable:w.prunable,
             dirty:w.dirty,untracked:w.untracked,ahead:w.ahead,
             mustNotPrune:!!w.mustNotPrune,
-            live:board.some(a=>a.live),
-            writers:(w.ownership&&w.ownership.liveWriterCount)||0,
+            derivedLive:!!w.derivedLive,
+            writers:((w.writeHistory&&w.writeHistory.derivedChatIds)||[]).length,
             ageH:seen.length?+((now-Math.max(...seen))/3600000).toFixed(1):null};
   })
-  .filter(w=>!w.live && (w.ageH===null || w.ageH>=4))
-  .sort((a,b)=>(b.ageH??1e9)-(a.ageH??1e9));
+   .filter(w=>!w.derivedLive && (w.ageH===null || w.ageH>=2))
+  .sort((a,b)=>a.ageH===null?(b.ageH===null?a.name.localeCompare(b.name):1):
+              b.ageH===null?-1:b.ageH-a.ageH);
 for(const w of rows)
   console.log([w.name,w.action,'prunable='+w.prunable,'dirty='+w.dirty,
     'untracked='+w.untracked,'ahead='+w.ahead,'mustNotPrune='+w.mustNotPrune,
-    'liveWriters='+w.writers,
+    'derivedLive='+w.derivedLive,'derivedWriters='+w.writers,
     'boardAgeH='+(w.ageH??'none')].join(' | '));
 "
 ```
 
-**Four hours with no board agent and no session activity is the operator's staleness
-threshold**, and it is a parameter rather than a law: below it the worktree is merely quiet —
-stop and re-check later. `boardAgeH=none` means no board agent has ever touched that branch.
-That is **unknown, not stale** — the age has to come from the session query in step 3, and the
-worktree is only a candidate once that says so too. Expect it to be common, and expect a live
-main-checkout agent to be one of the reasons.
+**Two hours without a board observation makes a worktree eligible for stale-candidate triage**;
+it does not prove death. Below two hours, leave it quiet and re-check later. `boardAgeH=none` means
+there is no valid board timestamp; it is **unknown, not stale**, and the script sorts it after known
+ages. The session/family checks in steps 3–4 and the live overlay in step 4b are still required
+before classification or action. The inventory's 30-minute live-session and two-hour recent-I/O
+signals are separate safety vetoes. `derivedLive` excludes worktrees with
+recent signals, but absence of a signal never proves an owner is dead.
+
+**`derivedLive` is not a complete session-family walk.** In the current inventory,
+`chats.mjs` summarizes top-level sessions only; `session-db-snapshot.mjs` and
+`writes.mjs` include recent child rows/calls and follow their parent chain upward,
+but do not enumerate every descendant from a quiet root. The classifier also does
+not use `readHistory` as a live signal. A recent read-only child can therefore be
+present in `readHistory` while `derivedLive` remains false: `chats.mjs` excludes it
+from `chatSummary`, and `classify.mjs` does not consume `readHistory` for liveness.
+An active child can be present in the snapshot through recent parts but absent
+from `chatSummary`, which includes top-level sessions only. If the family is
+missing from the available session and part rows, that absence is unknown, not
+evidence of death. Treat
+`derivedLive: false`, `chats.count: 0`, and `action: dispose` as triage hints only.
+The full recursive family query in §4 and the overlay in §4b are mandatory before
+any action. If a child task has no delivered terminal result, or a family member
+cannot be found/verified, classify the case as **unproven** and do not dispose or
+land it. Kilo's internal `task` API has no list/status operation, so do not infer a
+missing child result from session timestamps or launch a replacement task to poll.
 
 `prunable: true` is the strict disposal test and is already `false` whenever `mustNotPrune` is
 set, so a protected worktree never reaches a deletion.
@@ -210,10 +236,10 @@ WHERE directory = '$WT'
 ORDER BY time_updated DESC;"
 ```
 
-`session.path` holds the **empty string**, not NULL — `WHERE path IS NULL` matches nothing and
-`WHERE path = ''` matches everything, so a query written from the wrong assumption looks like a
-column that does not exist. Do not use it either way; `session.directory` is the link that
-works.
+Do not use `session.path` as the worktree link. In the inspected local database it was usually
+the empty string (and never NULL in the sampled table); that observation is database-specific,
+not a schema invariant. `session.directory` is the field to query, and an exact match finds
+sessions opened in that worktree only.
 
 ### When that returns nothing, search by what the branch DID
 
@@ -262,8 +288,8 @@ SID=ses_...
 sqlite3 -readonly "$DB" "
 WITH RECURSIVE up(id) AS (
   SELECT '$SID'
-  UNION ALL SELECT s.parent_id FROM session s JOIN up ON s.id=up.id
-            WHERE s.parent_id IS NOT NULL AND s.parent_id!=''
+  UNION SELECT s.parent_id FROM session s JOIN up ON s.id=up.id
+         WHERE s.parent_id IS NOT NULL AND s.parent_id!=''
 ),
 down(id) AS (
   SELECT id FROM up
@@ -292,10 +318,9 @@ is invisible; it must then recurse against **itself** (`JOIN down`) or a grandch
 invisible; and it must be `UNION`, not `UNION ALL`, or a session that is both an ancestor and
 someone's child appears twice in the death-evidence table.
 
-**The live database cannot catch the second mistake.** It currently holds subagents at depth 1
-and **no grandchildren at all**, so the one-generation form returns the same rows as the
-correct one and will keep passing until an agent spawns a subagent of a subagent — which is
-exactly what the rule above says happens. Test any change to this query against a synthetic
+**A live database sample without grandchildren cannot catch the second mistake.** A
+one-generation query can appear correct until an agent spawns a subagent of a subagent — which
+is exactly what the rule above says happens. Test any change to this query against a synthetic
 nested tree, never against the live database alone.
 
 Note also that `session.time_updated` is in milliseconds, so it must be divided by 1000 before
@@ -304,11 +329,10 @@ it becomes an age.
 **`time_updated` is a bookkeeping field, not a conversation, and the two come apart.** It is
 bumped by compaction, archiving, a title change, a token recount and other writes that are not
 a message. A chat whose last _words_ were yesterday can therefore read as minutes old, which
-inverts the rule below: the walk says LIVE, the sweep leaves the worktree alone, and a dozen
-cases get classified `unproven` for no reason. It happened on a sweep where one root read
-3.4 hours old — inside the threshold, so **not** dead by the operator's own rule — while its
-newest non-synthetic text part was 21 hours old, and it was the writer of 22 of the stale
-candidates.
+can invert the stale check. In one historical sweep, a root read 3.4 hours old — inside the
+then-four-hour threshold — while its newest non-synthetic text part was 21 hours old, and it was
+the writer of 22 stale candidates. Under the current two-hour rule, that row is an initial stale
+candidate; the complete family walk and live overlay still decide whether it is actually dead.
 
 So whenever a row lands **just inside** the threshold and is therefore deciding a case, confirm
 it against what the session actually said before believing it:
@@ -316,33 +340,41 @@ it against what the session actually said before believing it:
 ```bash
 DB="${XDG_DATA_HOME:-$HOME/.local/share}/kilo/kilo.db"
 sqlite3 -readonly "$DB" "
-SELECT datetime(s.time_updated/1000,'unixepoch')  AS row_says,
-       datetime(MAX(p.time_created)/1000,'unixepoch') AS last_spoke,
-       CAST((s.time_updated - MAX(p.time_created))/60000 AS INT) AS gap_min
+SELECT datetime(s.time_updated/1000,'unixepoch') AS row_says,
+       datetime(MAX(CASE
+         WHEN coalesce(json_extract(p.data,'$.synthetic'),0)=0 THEN p.time_created
+       END)/1000,'unixepoch') AS last_real_part,
+       ROUND((strftime('%s','now')-MAX(CASE
+         WHEN coalesce(json_extract(p.data,'$.synthetic'),0)=0 THEN p.time_created
+       END)/1000)/3600.0,2) AS last_real_part_age_h,
+       CAST((s.time_updated-MAX(CASE
+         WHEN coalesce(json_extract(p.data,'$.synthetic'),0)=0 THEN p.time_created
+       END))/60000 AS INT) AS row_part_gap_min
 FROM session s LEFT JOIN part p
   ON p.session_id = s.id
- AND json_extract(p.data,'\$.type') = 'text'
- AND coalesce(json_extract(p.data,'\$.synthetic'),0) = 0
 WHERE s.id = '<sid>'
 GROUP BY s.id;"
 ```
 
-A gap measured in **hours** is a bookkeeping bump and the session is dead; a gap measured in
-**seconds or minutes** is real activity and the session is live. `synthetic` matters — the
-empty prompts a harness injects are not the session speaking, and counting one is how a dead
-chat manufactures a fresh timestamp.
+A large `row_part_gap_min` suggests a bookkeeping update, but **the gap does not prove the
+session dead**. Compare `last_real_part_age_h` with the same operator threshold used for the
+family walk, and inspect recent tool activity, worktree write/shell history and the overlay.
+Count all non-synthetic parts, not only text: a tool call/result can be recent activity even when
+the session has not emitted new words. Synthetic harness prompts must not refresh the activity
+timestamp. A missing real-part timestamp is unknown, not dead.
 
-A worktree is **DEAD** only when every row above is older than the threshold. One live row
-anywhere in the family — root or subagent, up or down, a sibling's grandchild included — means
-the worktree is **LIVE**. Leave it and move on.
+A worktree is **DEAD** only when every row in the complete family has verified real activity
+older than the operator threshold. `time_updated` supplies the first-pass age; when it may have
+been advanced by bookkeeping, use the non-synthetic part check and inspect other recent activity.
+One recent or unresolved member anywhere in the family — root or subagent, up or down, a
+sibling's grandchild included — means the worktree is potentially **LIVE**. Leave it alone until
+the evidence resolves; unknown is not dead.
 
-A `parent_id` cycle or a self-parent makes this walk loop forever; the `up` leg has no guard.
-There are none today, and a hang here is loud rather than silent, but if a query ever spins,
-that is the first thing to look for.
-
-A session with no `parent_id` and no discoverable parent cannot have its subagents enumerated
-from the database, so its death is **unproven** unless `kilo_local_recall` and the board both
-agree. Unproven is a skip, not a merge.
+The `UNION` in both recursive legs deduplicates session IDs, so a self-parent or parent cycle
+does not recurse forever. If a candidate session row is missing or its ID cannot be established,
+the family cannot be proven from this query; use transcript/board evidence or classify death as
+unproven. A root session with `parent_id` empty is normal: the downward leg still discovers its
+children through their `parent_id` values.
 
 ## 4b — The live overlay: a main-checkout agent can be driving a worktree right now
 
@@ -354,20 +386,25 @@ at all. Its `lastSeenMs` is stale while the worktree is minutes old.
 ```bash
 DB="${XDG_DATA_HOME:-$HOME/.local/share}/kilo/kilo.db"
 sqlite3 -readonly "$DB" "
-SELECT s.id, s.title,
+SELECT s.id, s.parent_id, s.title,
        ROUND((strftime('%s','now')-s.time_updated/1000)/60.0) AS min_ago,
        (SELECT count(*) FROM session c WHERE c.parent_id=s.id) AS kids
 FROM session s
-WHERE (s.parent_id IS NULL OR s.parent_id='')
-  AND (strftime('%s','now')-s.time_updated/1000) < 14400
+WHERE (strftime('%s','now')-s.time_updated/1000) < 14400
 ORDER BY s.time_updated DESC;"
 ```
 
-That is the live set, and **their subagents are live too** — a root that has gone quiet above
-the threshold while a wide fan-out is still mid-flight is a live worktree owner. For each live
-root, `kilo_local_recall(mode="search", query="<worktree-name>")`, the branch name, and the
-feature; if a live session names the worktree, it is LIVE unless you can read the hit and show
-it is only a read-only inventory row.
+Keep this four-hour session lookback broader than the two-hour board-age threshold. It is an
+evidence-gathering window for recent root and child activity, not the time after which a worktree
+becomes a stale candidate. Do not shorten it when changing the board-age threshold.
+
+This is a **recent-session candidate list, not a live verdict**: `time_updated` can be advanced
+by bookkeeping, and a recent child can be active while its root row is old. Query all sessions,
+not just roots, so recent subagents are visible. For each recent row, walk to its root and search
+that session/family for the worktree name, branch and feature. If a session names the worktree,
+treat it as potentially live unless you can verify the reference is only read-only. Confirm
+session recency against real, non-synthetic part activity before deciding that a bookkeeping-only
+update is the explanation.
 
 **Re-run this list immediately before you act.** A live owner can appear _during_ the sweep,
 and it will not look like one: a branch the sweep had just classified as unproven-dead gained
@@ -399,21 +436,35 @@ when you started may be `dispose` now, and one you were about to land may have l
 ago. When two agents are sweeping at once this is not a rare race — it is the normal state, and
 the second-arriving sweep is the one that has to notice.
 
-## 5 — Confirm with the board before writing anything
+## 5 — Inspect board state without triggering the sweeper
 
 ```bash
-npm run swarm -- status
+node scripts/worktree-inventory.mjs
 npm run swarm -- doctor --dry-run
 ```
 
-The board is a SQLite file in the common git dir and is normally readable through the CLI; if
-the raw path is not, say so in the report and lean on the session database plus recall. **Do
-not silently report a clean board** — a board you could not read and a board that is empty mean
-opposite things, and only one of them is good news.
+The inventory reads the common-dir board and session database and writes only the generated
+`WORKTREES.json`; it does not renew or release board rows. `doctor --dry-run` reports expired
+claims and locks without running the sweeper, but the CLI still updates the caller's own
+`agents.last_seen` row. Use the inventory as the primary snapshot and report if either database
+is unavailable — an unreadable board and an empty board mean opposite things.
 
-A quiet agent is not a dead agent. **Preserve before reclaiming**: `git -C "$WT" status` and
-`git -C "$WT" diff` first, then `doctor --dry-run`, then `doctor`. Force-release only a
-session confirmed dead — never a network-lost one.
+**Do not use `npm run swarm -- status` as a read-only check during a sweep.** In the current
+`scripts/agent-board.mjs`, every board-backed command except `doctor` runs `autoSweep()` first
+(`help` and `--version` return before board setup). That renews the
+caller's own rows and then releases expired claims and locks globally; it can erase the very
+expired-row evidence a subsequent `doctor --dry-run` was meant to show. `note`, `check`, and
+`release` also enter this path. Consult the implementation and `docs/ORCHESTRATION.md` before
+running any board command with that side effect.
+
+A quiet agent is not a dead agent, and an expired lease is not proof that the session family is
+dead. **Preserve before reclaiming**: inspect `git -C "$WT" status` and `git -C "$WT" diff`,
+inspect the full parent/child session family and live overlay, then map every finding from
+`doctor --dry-run` to its owner. Do not run plain `npm run swarm -- doctor` unless every expired
+claim/lock it will release has been verified dead or belongs to a worktree proven gone; it is a
+global release pass, not a targeted check. Prefer the targeted release procedure in
+`docs/ORCHESTRATION.md` after preserving the worktree. Never release a live or network-lost
+session merely because its lease expired.
 
 ## 6 — Find the duplicate before you land anything
 
@@ -434,10 +485,9 @@ commit is frequently the _only_ ref in the repository holding the content, so "n
 contains it" is the expected answer, not a warning.
 
 The subtler case is **containment**: a shard branch can be fully subsumed by a larger
-integration branch, so the two are alternative routes to one body of work. The e2e shard
-branches `e2e/document-dialogs`, `e2e/harness-handoff`, `e2e/paint-tools` and
-`e2e/selection-gestures` are each patch-id-contained in `integration/e2e-campaign-validate`,
-so landing both routes is double work and landing neither drops recorded defects.
+integration branch, so the two are alternative routes to one body of work. Verify the exact refs
+in the current repository; historical branch names and hand-written notes are leads, not
+current evidence.
 
 `git cherry <candidate> <shard>` answers this in one line: **empty output means the shard is
 fully contained**, a `+` line means that patch is not in the candidate. Compare only the
@@ -445,21 +495,19 @@ shard's patches that `main` does not have — the candidate's own history is lar
 it wholesale will tell you nothing:
 
 ```bash
-git cherry integration/e2e-campaign-validate e2e/harness-handoff   # empty = contained
-git cherry main e2e/harness-hand-off                              # '+ …'   = not on main
+git cherry <integration-branch> <shard-branch>   # empty = patch-id-contained
+git cherry main <shard-branch>                  # '+' = patch not found on main
 ```
 
 To see the patches themselves, restrict both sides to what is unique against `main` before
 comparing patch-ids. Note what `git cherry` proves: **patch-id** absorption, not tree identity.
 A branch can be patch-absorbed and still differ from `main` in its tree.
 
-**Salvage commits carry test mutants.** `wip(salvage)` preserves whatever was in the working
-tree, including deliberate damage. The branch `e2e/ws-3-layers-levels` reads
-`return 'brightness(1.05)'` under the comment `// MUTATION: args ignored` in its
-`src/contexts/layer-renderer.ts`, where main calls `buildLevelsFilter(args)` — committed, and
-invisible to `merge-tree`. **Cite the function, not the line**: once the mutant is stripped the
-line number dangles and sends the next reader looking for damage that is gone. Before any
-salvage branch is landable, read the hunks that touch `src/`, not only the test files.
+**Salvage commits can carry test mutants.** `wip(salvage)` preserves whatever was in the working
+tree, including deliberate damage. `merge-tree` cannot tell whether the branch's code is
+correct. Before any salvage branch is landable, read the hunks that touch `src/`, not only the
+test files; inspect the relevant function and compare its behavior with current `main`. Historical
+branch names and line numbers may no longer resolve after cleanup.
 
 ## 7 — Classify and act
 
@@ -467,10 +515,10 @@ Run these cases **in order**, and classify the worktree before touching it.
 `(b-quarter)` sits between `(b)` and `(c)`: it is a judgement about the future, so
 it is a decision rather than something git reports.
 
-### (a) Clean tree — safe to delete
+### (a) Clean ancestor — safe to dispose
 
-All three must hold: `git status --porcelain` is empty, `ahead === 0`, and `mergedIntoMain ===
-true` (or the branch was never edited at all).
+This is the strict ancestry case. All three must hold: `git status --porcelain` is empty,
+`ahead === 0`, and `mergedIntoMain === true` (or the branch was never edited at all).
 
 ```bash
 git -C "$WT" status --porcelain      # must print nothing
@@ -478,45 +526,26 @@ git rev-list --count main.."$BRANCH" # must be 0
 git merge-base --is-ancestor "$BRANCH" main && echo on-main
 ```
 
-**The third test is git-ancestor-only, and that leaves a shape nothing can ever delete.**
-`classify.mjs` derives `LANDED` from `mergedIntoBase` alone — it consults no patch-absorption
-signal — and `prunable` requires that too. So a branch whose every commit is **already on main
-by patch-id**, but which is **not** a git ancestor because main re-landed the same content with
-different surrounding context, is `unmerged-work` forever; if its merge conflicts, which it
-usually will, it is `at-risk` forever; and `npm run dispose` refuses it on every sweep, naming
-the action as the reason. Three were sitting in exactly that state while their owner families
-were proven dead and their working trees clean. There is no sweep-time workaround, and there
-should not be: the fix is a status in `classify.mjs`, not a bypass.
+This is not the only inventory-supported disposal case. `classify.mjs` also reports a clean
+branch `LANDED` when every comparable non-merge commit is patch-id absorbed, or when a verified
+conflict-free merge produces exactly the base tree. Those cases can have `ahead > 0` and
+`mergedIntoMain: false`.
 
-Until that status exists, **recognise the shape and report it rather than working around it**:
+### (a-bis) Patch-absorbed or net-no-op — follow the inventory
 
-```bash
-git cherry main "$BRANCH" | grep -c '^+'   # 0 => every patch is already on main
-```
+Do not equate patch-id absorption with tree equality or a no-op merge. They are different proofs.
+The current classifier accepts complete patch absorption for **disposal**, not for landing: it
+requires a clean tree, no `mustNotPrune` finding, and the current inventory's `action: dispose`.
+For a non-ancestor patch-absorbed branch, `npm run dispose -- <name> --dry-run` must show that it
+will anchor the exact tip under `refs/keep/disposed/` before using guarded `git branch -D`. That
+anchor preserves the branch tip for recovery even though patch IDs do not prove byte-identical
+trees. The disposal program also rechecks live ownership, claims/locks and other preflight gates.
 
-**Empty `git cherry` does NOT mean the merge is a no-op, and must not be used to justify a
-deletion.** It proves patch-id absorption, not tree identity, and when main re-landed the same
-change the three-way merge still conflicts — verified on all three stuck branches, where
-`merge-tree` reports a conflict on every one. The test that does answer the question is content
-equality on the branch's **own** touched paths:
-
-```bash
-mb=$(git merge-base main "$BRANCH")
-for p in $(git diff --name-only "$mb".."$BRANCH"); do
-  printf '%s %s\n' "$p" "$([ "$(git rev-parse "$BRANCH:$p" 2>/dev/null)" \
-                       = "$(git rev-parse "main:$p" 2>/dev/null)" ] && echo same || echo DIFFERS)"
-done
-```
-
-All `same` means landing changes nothing and the branch is genuinely absorbed. Any `DIFFERS`
-means main holds the same _intent_ reworded, which is a **different** case: the branch has
-nothing to contribute and nothing at risk, so it is clutter rather than work — but proving that
-is a review, not an arithmetic fact, and it is what case (b) is for.
-
-A zero-own-path branch (`git diff --name-only "$mb".."$BRANCH"` prints nothing) is the same
-answer by construction, and `ahead > 0` does not contradict it: two commits that add and then
-revert leave a tip tree byte-identical to the merge-base while `git cherry` still counts an
-unabsorbed patch. Compare the **trees**, never the commit count.
+For a net-no-op merge, the disposal proof is tied to the inventory's recorded `mainHead`; if
+`main` moved, regenerate and reclassify. Never use `git cherry` alone to authorize deletion or a
+merge, never bypass an `action`, `prunable`, `mustNotPrune` or dispose refusal, and never infer
+that a patch-absorbed branch is tree-identical. If the current inventory does not say `dispose`
+or the dry run refuses, stop and report the evidence.
 
 Delete the worktree **and** its branch, then regenerate the inventory — through
 the one program that will do it:
@@ -639,7 +668,10 @@ paying for if someone can recognise it when it comes up.
 
 ### (c) Hard merge — mark it, move on, come back last
 
-The agent doing the sweep **must** mark the branch before moving on:
+The agent doing the sweep **must** mark the branch before moving on, but only after checking the
+global board-sweep side effect described in §5. `swarm note` is a non-`doctor` command and runs
+`autoSweep()`; if any expired claim/lock still has an unverified owner, do not invoke it. Record
+the deferred note in the report and resume after the holder is verified.
 
 ```bash
 npm run swarm -- note "problematic merge: <branch> has N conflicting files; deferred to the hard-merge pass"
@@ -693,13 +725,21 @@ than silently dropping it.
   nonexistent spelling as the real one, in the very sentence about not trusting an unconfirmed
   path, so the lesson is stronger than the rule: **confirm the path, and expect your memory of
   it to be the thing that is wrong.**
-- Report a branch as unmerged without checking `git cherry main <branch>`. `git cherry` proves
-  patch-level absorption, which `git log` and `merge-tree` both miss: branches that read as
-  unlanded work by every other signal can be fully absorbed. Re-derive the pairs yourself,
-  because a branch that gets deleted takes its half of the citation with it.
+- Do not call a branch unmerged without checking patch equivalence (`git cherry main <branch>`
+  or the fresh inventory's `patchEquivalence`). `git cherry` proves patch-level absorption, not
+  tree equality or a merge no-op; merge commits may be unclassifiable by patch ID. Re-derive
+  current refs yourself because branches and their evidence can disappear during cleanup.
 - Count a branch's value by its commit count. A branch can be several commits of real fixes and
   a branch one commit of scratch.
-- Release another agent's claim or file lock before `doctor` says it is expired.
+- Release another agent's claim or file lock before `doctor` says it is expired, or treat expiry
+  alone as proof that the session family is dead; see §5.
+- Run `npm run swarm -- status` or another board-backed non-`doctor` command as an early “read”: the CLI
+  invokes `autoSweep()` first and can release expired claims/locks across the board. Use the
+  generated inventory and `swarm doctor --dry-run` first, and resolve every expired holder before
+  using a command that sweeps.
+- Run plain `npm run swarm -- doctor` as a routine triage command. It releases every expired
+  board claim/lock, not only the worktree currently under review; lease expiry alone is not the
+  full session-family death proof required by this procedure.
 - Route around a `dispose` refusal. Every refusal names the signal that produced
   it, and the one you are most likely to hit is **you** — see case (a). The gate
   is the only thing standing between a sweep and the 2026-10-01 incident, and a
@@ -726,9 +766,12 @@ Three sections, and each needs a name in it:
 3. **Unproven** — every branch whose death could not be established, whatever its value. Never
    fold these into "skipped".
 
-**Post the material findings to the board** (`npm run swarm -- note`) when a truncated sweep
-would otherwise mislead: a live owner, a planted mutant, a duplicate pair, or a branch already
-absorbed. Those change other agents' decisions and outlive this session.
+**Post material findings to the board** (`npm run swarm -- note`) when a truncated sweep would
+otherwise mislead: a live owner, a planted mutant, a duplicate pair, or a branch already
+absorbed. Those change other agents' decisions and outlive this session. Because `note` invokes
+`autoSweep()`, first resolve every expired claim/lock from `doctor --dry-run`; if any remains
+uncertain, do not risk releasing it just to post a note — put the exact note in the report and
+mark it unposted.
 
 **Leave `main` clean — and note that a regenerated `WORKTREES.json` is not a footprint.** The
 file is untracked, so there is nothing to commit and nothing to restore; `git status` cannot

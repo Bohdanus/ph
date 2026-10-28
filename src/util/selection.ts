@@ -2,9 +2,12 @@ import type {
   BitmapSource,
   Ctx2D,
   Point,
+  PositionedRasterSelectionMask,
   Pos,
+  RasterSelectionMask,
   RectXYSorted,
   Selection,
+  SelectionPointPaths,
   SelectionSourceTool,
   Size,
 } from '../contexts/general-types.ts';
@@ -13,6 +16,12 @@ import { posToSortedRect, sortRect, trimRect } from './rect.ts';
 import { resetOverlayAlpha } from './canvas.ts';
 import type { DocumentFrame } from '../contexts/document-frame.ts';
 import { documentToCanvasPoint } from '../contexts/document-frame.ts';
+import {
+  decodeRasterSelectionMask,
+  isCanonicalRasterSelectionMask,
+  isRasterSelectionPixelSelected,
+  isRasterSelectionPixelSelectedAt,
+} from './selection-mask.ts';
 
 export const SELECTION_ANCHOR_RADIUS = 5;
 export const SELECTION_ANCHOR_HIT_RADIUS = 8;
@@ -25,12 +34,26 @@ export const SELECTION_ANCHOR_HIT_RADIUS = 8;
 const OUTLINE_LINE_WIDTH = 2;
 
 export function normalizeSelectionPoints(points: Point[]): Pick<Selection, 'points' | 'pos'> | null {
-  if (points.length < 3) return null;
+  return normalizeSelectionContours([points]);
+}
 
-  const pos = pointsBoundingPos({ points });
-  const normalizedPoints = points.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
+/** Normalize every closed contour against the selection's shared bounds. */
+export function normalizeSelectionContours(contours: Point[][]): Pick<Selection, 'points' | 'pos'> | null {
+  const validContours = contours.filter((contour) => contour.length >= 3);
+  if (validContours.length === 0) return null;
+
+  const pos = pointsBoundingPos({ points: validContours.flat() });
+  const normalizedPoints = validContours.map((contour) =>
+    contour.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }))
+  );
 
   return { points: normalizedPoints, pos };
+}
+
+/** Accept legacy one-path processor snapshots and preserve compound snapshots as contours. */
+export function selectionPointPathsToContours(points: SelectionPointPaths): Point[][] {
+  if (points.length === 0) return [];
+  return Array.isArray(points[0]) ? (points as Point[][]) : [points as Point[]];
 }
 
 export function createCommittedPolygonSelection({
@@ -44,16 +67,74 @@ export function createCommittedPolygonSelection({
   points: Point[];
   sourceTool: Extract<
     SelectionSourceTool,
-    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand'
+    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand' | 'quick-selection'
   >;
 }): Selection | null {
-  const normalized = normalizeSelectionPoints(points);
+  return createCommittedPolygonSelectionFromContours({ id, metadata, points: [points], sourceTool });
+}
+
+export function createCommittedPolygonSelectionFromContours({
+  id,
+  metadata,
+  points,
+  sourceTool,
+}: {
+  id: string;
+  metadata?: Selection['metadata'];
+  points: Point[][];
+  sourceTool: Extract<
+    SelectionSourceTool,
+    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand' | 'quick-selection'
+  >;
+}): Selection | null {
+  const normalized = normalizeSelectionContours(points);
   if (!normalized) return null;
 
   return {
     id,
     ...normalized,
     isActive: true,
+    lifecycle: 'committed',
+    geometry: 'polygon',
+    sourceTool,
+    metadata,
+  };
+}
+
+/** Create a committed pixel selection without expanding its boundary into a Point object per vertex. */
+export function createCommittedRasterSelection({
+  id,
+  metadata,
+  pos,
+  rasterMask,
+  sourceTool,
+}: {
+  id: string;
+  metadata?: Selection['metadata'];
+  pos: Pos;
+  rasterMask: RasterSelectionMask;
+  sourceTool: Extract<SelectionSourceTool, 'magic-wand' | 'quick-selection'>;
+}): Selection | null {
+  if (
+    !isCanonicalRasterSelectionMask(rasterMask) ||
+    !Number.isFinite(pos.x) ||
+    !Number.isFinite(pos.y) ||
+    pos.width !== rasterMask.width ||
+    pos.height !== rasterMask.height
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    points: [],
+    rasterMask: Object.freeze({
+      width: rasterMask.width,
+      height: rasterMask.height,
+      data: rasterMask.data,
+    }),
+    isActive: true,
+    pos: { ...pos },
     lifecycle: 'committed',
     geometry: 'polygon',
     sourceTool,
@@ -71,10 +152,12 @@ export function normalizeRectangleSelectionRect(
   return {
     pos: { x, y, width, height },
     points: [
-      { x: 0, y: 0 },
-      { x: width, y: 0 },
-      { x: width, y: height },
-      { x: 0, y: height },
+      [
+        { x: 0, y: 0 },
+        { x: width, y: 0 },
+        { x: width, y: height },
+        { x: 0, y: height },
+      ],
     ],
   };
 }
@@ -126,10 +209,41 @@ export function getActiveRectangularSelection(
 }
 
 export function getSelectionAbsolutePoints(selection: Selection): Point[] {
-  return selection.points.map((point) => ({
-    x: point.x + selection.pos.x,
-    y: point.y + selection.pos.y,
-  }));
+  return getSelectionAbsoluteContours(selection).flat();
+}
+
+/** The selection's closed paths in document space, preserving each contour boundary. */
+export function getSelectionAbsoluteContours(selection: Selection): Point[][] {
+  return selection.points.map((contour) =>
+    contour.map((point) => ({
+      x: point.x + selection.pos.x,
+      y: point.y + selection.pos.y,
+    }))
+  );
+}
+
+/** Snapshot selection geometry into a processor raster's local coordinate space. */
+export function getSelectionProcessorSnapshot(
+  selection: Selection,
+  rasterOrigin: Point
+): {
+  points: Point[][];
+  rasterMask?: PositionedRasterSelectionMask;
+} {
+  return {
+    points: getSelectionAbsoluteContours(selection).map((contour) =>
+      contour.map((point) => ({ x: point.x - rasterOrigin.x, y: point.y - rasterOrigin.y }))
+    ),
+    ...(selection.rasterMask
+      ? {
+          rasterMask: {
+            ...selection.rasterMask,
+            x: selection.pos.x - rasterOrigin.x,
+            y: selection.pos.y - rasterOrigin.y,
+          },
+        }
+      : {}),
+  };
 }
 
 /**
@@ -152,7 +266,12 @@ export function drawSelectionAnchors(
   if (!selection.isActive) return;
   // A traced boundary can carry hundreds of sampled points, so freehand and the
   // magic wand get a border and no handles.
-  if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return;
+  if (
+    selection.sourceTool === 'freehand-lasso' ||
+    selection.sourceTool === 'magic-wand' ||
+    selection.sourceTool === 'quick-selection'
+  )
+    return;
 
   const points = getSelectionAbsolutePoints(selection).map((point) =>
     frame ? documentToCanvasPoint(point, frame) : point
@@ -200,7 +319,12 @@ export function distanceBetweenPoints(a: Point, b: Point): number {
  * leaving the radius in document px shrinks the target below the visible dot at every zoom below 1.
  */
 export function findSelectionAnchorAtPoint(selection: Selection, point: Point, scale = 1): number | null {
-  if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return null;
+  if (
+    selection.sourceTool === 'freehand-lasso' ||
+    selection.sourceTool === 'magic-wand' ||
+    selection.sourceTool === 'quick-selection'
+  )
+    return null;
 
   const hitRadius = SELECTION_ANCHOR_HIT_RADIUS / scale;
   const points = getSelectionAbsolutePoints(selection);
@@ -228,13 +352,33 @@ export function isPointInPolygon(point: Point, polygon: Point[]): boolean {
   return isInside;
 }
 
+/** Membership in a compound selection path using the even-odd rule. */
+export function isPointInContours(point: Point, contours: Point[][]): boolean {
+  let isInside = false;
+  for (const contour of contours) {
+    if (isPointInPolygon(point, contour)) isInside = !isInside;
+  }
+  return isInside;
+}
+
+export function isPointInSelection(point: Point, selection: Selection): boolean {
+  if (selection.rasterMask) {
+    return isRasterSelectionPixelSelectedAt(
+      selection.rasterMask,
+      Math.floor(point.x - selection.pos.x),
+      Math.floor(point.y - selection.pos.y)
+    );
+  }
+
+  return isPointInContours(point, getSelectionAbsoluteContours(selection));
+}
+
 export function getSelectionAtPoint(selections: Selection[], point: Point): Selection | null {
   for (let i = selections.length - 1; i >= 0; i--) {
     const selection = selections[i];
     if (!selection.isActive) continue;
 
-    const points = getSelectionAbsolutePoints(selection);
-    if (isPointInPolygon(point, points)) {
+    if (isPointInSelection(point, selection)) {
       return selection;
     }
   }
@@ -243,7 +387,8 @@ export function getSelectionAtPoint(selections: Selection[], point: Point): Sele
 }
 
 export function moveSelectionAnchor(selection: Selection, anchorIndex: number, point: Point): Selection {
-  const points = getSelectionAbsolutePoints(selection);
+  const contours = getSelectionAbsoluteContours(selection);
+  const points = contours.flat();
   if (!points[anchorIndex]) return selection;
 
   points[anchorIndex] = point;
@@ -255,10 +400,12 @@ export function moveSelectionAnchor(selection: Selection, anchorIndex: number, p
       ...selection,
       pos,
       points: [
-        { x: 0, y: 0 },
-        { x: pos.width, y: 0 },
-        { x: pos.width, y: pos.height },
-        { x: 0, y: pos.height },
+        [
+          { x: 0, y: 0 },
+          { x: pos.width, y: 0 },
+          { x: pos.width, y: pos.height },
+          { x: 0, y: pos.height },
+        ],
       ],
       metadata: {
         ...selection.metadata,
@@ -267,7 +414,13 @@ export function moveSelectionAnchor(selection: Selection, anchorIndex: number, p
     };
   }
 
-  const normalized = normalizeSelectionPoints(points);
+  let offset = 0;
+  const updatedContours = contours.map((contour) => {
+    const localIndex = anchorIndex - offset;
+    offset += contour.length;
+    return contour.map((current, index) => (index === localIndex ? point : current));
+  });
+  const normalized = normalizeSelectionContours(updatedContours);
   if (!normalized) return selection;
 
   return {
@@ -313,9 +466,23 @@ export function hasSameSelectionGeometry(a: Selection, b: Selection): boolean {
   const { pos: aPos, points: aPoints } = a;
   const { pos: bPos, points: bPoints } = b;
   if (aPos.x !== bPos.x || aPos.y !== bPos.y || aPos.width !== bPos.width || aPos.height !== bPos.height) return false;
+  if (Boolean(a.rasterMask) !== Boolean(b.rasterMask)) return false;
+  if (
+    a.rasterMask &&
+    b.rasterMask &&
+    (a.rasterMask.width !== b.rasterMask.width ||
+      a.rasterMask.height !== b.rasterMask.height ||
+      a.rasterMask.data !== b.rasterMask.data)
+  ) {
+    return false;
+  }
   if (aPoints.length !== bPoints.length) return false;
 
-  return aPoints.every((point, index) => point.x === bPoints[index].x && point.y === bPoints[index].y);
+  return aPoints.every((contour, index) => {
+    const other = bPoints[index];
+    if (contour.length !== other.length) return false;
+    return contour.every((point, i) => point.x === other[i].x && point.y === other[i].y);
+  });
 }
 
 export type ClipboardCanvas = OffscreenCanvas | HTMLCanvasElement;
@@ -324,6 +491,28 @@ export type SelectionCanvasSnapshot = {
   bitmap: ClipboardCanvas;
   pos: Pos;
 };
+
+type SelectionSourceScale = Readonly<{ x: number; y: number }>;
+const IDENTITY_SELECTION_SOURCE_SCALE: SelectionSourceScale = Object.freeze({ x: 1, y: 1 });
+
+function drawSelectionSourceRegion(
+  ctx: Ctx2D,
+  sourceCanvas: BitmapSource,
+  bounds: Pos,
+  sourceScale: SelectionSourceScale
+): void {
+  ctx.drawImage(
+    sourceCanvas as CanvasImageSource,
+    bounds.x * sourceScale.x,
+    bounds.y * sourceScale.y,
+    bounds.width * sourceScale.x,
+    bounds.height * sourceScale.y,
+    0,
+    0,
+    bounds.width,
+    bounds.height
+  );
+}
 
 function createSelectionCanvas(width: number, height: number): ClipboardCanvas {
   const safeWidth = Math.max(1, Math.ceil(width));
@@ -370,7 +559,7 @@ export class SelectionCanvasContextError extends Error {
  *
  * `cloneBitmapToCanvas` returns a `ClipboardCanvas`, so there is no `null` to hand
  * back, and both production callers already wrap it in a `try`/`catch` that logs and
- * returns `false` (`src/contexts/useSelectionClipboard.ts:76-84` and `:96-105`). A
+ * returns `false` from the selection-copy helpers. A
  * named throw is therefore recoverable there, while returning a stand-in canvas would
  * paste a layer of silently wrong pixels.
  */
@@ -396,8 +585,8 @@ function requireSelectionCanvasContext(canvas: ClipboardCanvas, operation: strin
  * use it. Their return value is committed as a layer's `tmpCanvas` with no null check
  * anywhere on the way, so they throw. The throw is what carries the named error out of the
  * tool processor: the only caller of `copyPolygonToCanvas` is the polygon processor
- * (`src/tools/selection.ts:18`), reached solely from `tempUpdateLayer`, whose `catch`
- * (`src/contexts/useLayer.ts:606-608`) logs it and returns. Nothing else observes it, which
+ * (`polygonSelection`), reached solely from `tempUpdateLayer()`, whose `catch`
+ * inside `tempUpdateLayer()` logs it and returns. Nothing else observes it, which
  * is exactly why a stand-in canvas cannot be substituted here: a `null` would leave the
  * error with no in-band consumer at all. The outermost UI callers are a separate channel
  * and never reach these wrappers — they go through `copyActiveSelection`, whose `false`
@@ -428,6 +617,16 @@ function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
     ctx.lineTo(points[i].x, points[i].y);
   }
   ctx.closePath();
+}
+
+function drawPolygonContoursPath(ctx: Ctx2D, contours: Point[][]): void {
+  ctx.beginPath();
+  for (const points of contours) {
+    if (points.length < 3) continue;
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    ctx.closePath();
+  }
 }
 
 /**
@@ -472,7 +671,10 @@ export function cloneBitmapToCanvas(source: BitmapSource): ClipboardCanvas {
 export function copyPolygonSelectionToCanvas(
   sourceCanvas: BitmapSource,
   points: Point[],
-  { imageSize }: { imageSize?: Size } = {}
+  {
+    imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
+  }: { imageSize?: Size; sourceScale?: SelectionSourceScale } = {}
 ): SelectionCanvasSnapshot | null {
   if (points.length < 3) return null;
 
@@ -498,8 +700,10 @@ export function copyPolygonSelectionToCanvas(
   // The clipping will simply exclude regions based on the winding number, which prevents crashes.
   ctx.clip();
 
-  // Draw source canvas shifted so polygon aligns
-  ctx.drawImage(sourceCanvas as CanvasImageSource, -minX, -minY);
+  // Draw the logical source region so high-DPI backing pixels map to the
+  // selection's document-pixel coordinates before clipping.
+  if (sourceScale.x === 1 && sourceScale.y === 1) ctx.drawImage(sourceCanvas as CanvasImageSource, -minX, -minY);
+  else drawSelectionSourceRegion(ctx, sourceCanvas, bounds, sourceScale);
 
   ctx.restore();
 
@@ -528,12 +732,55 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
   throw new SelectionCanvasContextError('copyPolygonToCanvas', bounds.width, bounds.height);
 }
 
+export function copyPolygonContoursSelectionToCanvas(
+  sourceCanvas: BitmapSource,
+  contours: Point[][],
+  {
+    imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
+  }: { imageSize?: Size; sourceScale?: SelectionSourceScale } = {}
+): SelectionCanvasSnapshot | null {
+  const validContours = contours.filter((contour) => contour.length >= 3);
+  if (validContours.length === 0) return null;
+  if (validContours.length === 1) {
+    return copyPolygonSelectionToCanvas(sourceCanvas, validContours[0], { imageSize, sourceScale });
+  }
+
+  const bounds = getSelectionCanvasBounds(validContours.flat(), 0, imageSize);
+  if (!bounds) return null;
+
+  const destCanvas = createSelectionCanvas(bounds.width, bounds.height);
+  const ctx = getSelectionCanvasContext(destCanvas);
+  if (!ctx) return unavailableSelectionCanvasContext('copyPolygonContoursSelectionToCanvas', destCanvas);
+
+  ctx.save();
+  drawPolygonContoursPath(
+    ctx,
+    validContours.map((contour) => contour.map((point) => ({ x: point.x - bounds.x, y: point.y - bounds.y })))
+  );
+  // Even-odd fill preserves disconnected islands and makes each nested contour an exclusion.
+  ctx.clip('evenodd');
+  if (sourceScale.x === 1 && sourceScale.y === 1) {
+    ctx.drawImage(sourceCanvas as CanvasImageSource, -bounds.x, -bounds.y);
+  } else {
+    drawSelectionSourceRegion(ctx, sourceCanvas, bounds, sourceScale);
+  }
+  ctx.restore();
+
+  return { bitmap: destCanvas, pos: bounds };
+}
+
 type RasterizedPolygonMask = {
   values: Uint8Array;
   preservesCoverage: boolean;
 };
 
-function rasterizePolygonMask(points: Point[], width: number, height: number): RasterizedPolygonMask {
+function rasterizePolygonMask(contours: Point[][], width: number, height: number): RasterizedPolygonMask {
+  const validContours = contours.filter((contour) => contour.length >= 3);
+  if (validContours.length === 0 || width === 0 || height === 0) {
+    return { values: new Uint8Array(width * height), preservesCoverage: false };
+  }
+
   const canvas = createSelectionCanvas(width, height);
   const ctx = getSelectionCanvasContext(canvas);
 
@@ -542,8 +789,9 @@ function rasterizePolygonMask(points: Point[], width: number, height: number): R
       ctx.save();
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = 'black';
-      drawPolygonPath(ctx, points);
-      ctx.fill();
+      drawPolygonContoursPath(ctx, validContours);
+      if (validContours.length === 1) ctx.fill();
+      else ctx.fill('evenodd');
       ctx.restore();
 
       const imageData = ctx.getImageData(0, 0, width, height);
@@ -561,11 +809,55 @@ function rasterizePolygonMask(points: Point[], width: number, height: number): R
   const mask = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      mask[y * width + x] = isPointInPolygon({ x: x + 0.5, y: y + 0.5 }, points) ? 1 : 0;
+      mask[y * width + x] = isPointInContours({ x: x + 0.5, y: y + 0.5 }, validContours) ? 1 : 0;
     }
   }
 
   return { values: mask, preservesCoverage: false };
+}
+
+function rasterizePackedMaskCoverage(
+  mask: RasterSelectionMask,
+  packed: Uint8Array,
+  origin: Point,
+  width: number,
+  height: number
+): RasterizedPolygonMask {
+  const values = new Uint8Array(width * height);
+  const minX = Math.max(0, Math.floor(origin.x));
+  const minY = Math.max(0, Math.floor(origin.y));
+  const maxX = Math.min(width, Math.ceil(origin.x + mask.width));
+  const maxY = Math.min(height, Math.ceil(origin.y + mask.height));
+
+  for (let y = minY; y < maxY; y += 1) {
+    const sourceTop = y - origin.y;
+    const sourceBottom = sourceTop + 1;
+    const firstSourceY = Math.floor(sourceTop);
+    const lastSourceY = Math.ceil(sourceBottom) - 1;
+
+    for (let x = minX; x < maxX; x += 1) {
+      const sourceLeft = x - origin.x;
+      const sourceRight = sourceLeft + 1;
+      const firstSourceX = Math.floor(sourceLeft);
+      const lastSourceX = Math.ceil(sourceRight) - 1;
+      let coverage = 0;
+
+      for (let sourceY = firstSourceY; sourceY <= lastSourceY; sourceY += 1) {
+        const overlapY = Math.max(0, Math.min(sourceBottom, sourceY + 1) - Math.max(sourceTop, sourceY));
+        if (overlapY === 0) continue;
+
+        for (let sourceX = firstSourceX; sourceX <= lastSourceX; sourceX += 1) {
+          if (!isRasterSelectionPixelSelected(mask, packed, sourceX, sourceY)) continue;
+          const overlapX = Math.max(0, Math.min(sourceRight, sourceX + 1) - Math.max(sourceLeft, sourceX));
+          coverage += overlapX * overlapY;
+        }
+      }
+
+      values[y * width + x] = Math.round(coverage * 255);
+    }
+  }
+
+  return { values, preservesCoverage: true };
 }
 
 function chamferDistanceFromSeeds(seedMask: Uint8Array, width: number, height: number): Float32Array {
@@ -637,6 +929,22 @@ export function createFeatheredAlphaMask(
   // remains a 0/1 mask. The explicit flag keeps a canvas pixel with alpha 1 distinguishable
   // from that fallback's selected value.
   const useCoverage = preservesCoverage || binaryMask.some((value) => value > 1);
+
+  // The distance transforms below are only needed to grow a feather or recover a
+  // subpixel edge. A hard mask is already exact; allocating two Float32 distance
+  // planes for a large raster selection would multiply its memory cost needlessly.
+  if (Math.max(0, featherRadius) === 0) {
+    const hardMask = new Uint8Array(binaryMask.length);
+    if (useCoverage && antiAlias) {
+      hardMask.set(binaryMask);
+    } else {
+      for (let index = 0; index < binaryMask.length; index += 1) {
+        hardMask[index] = useCoverage ? (binaryMask[index] >= 128 ? 255 : 0) : binaryMask[index] ? 255 : 0;
+      }
+    }
+    return hardMask;
+  }
+
   const outsideSeeds = new Uint8Array(binaryMask.length);
   const insideSeeds = new Uint8Array(binaryMask.length);
 
@@ -674,13 +982,21 @@ export function createFeatheredAlphaMask(
  * consulting the live selection store.
  */
 export function createSelectionAlphaMask(
-  points: Point[],
+  selection: SelectionPointPaths | { points: SelectionPointPaths; rasterMask?: PositionedRasterSelectionMask },
   size: Size,
   { featherRadius = 0, antiAlias = true }: { featherRadius?: number; antiAlias?: boolean } = {}
 ): Uint8Array {
   const width = Math.max(0, Math.floor(size.width));
   const height = Math.max(0, Math.floor(size.height));
-  const rasterized = rasterizePolygonMask(points, width, height);
+  const rasterMask = Array.isArray(selection) ? undefined : selection.rasterMask;
+  const points = Array.isArray(selection) ? selection : selection.points;
+  const packed = rasterMask
+    ? decodeRasterSelectionMask({ width: rasterMask.width, height: rasterMask.height, data: rasterMask.data })
+    : null;
+  const rasterized =
+    rasterMask && packed
+      ? rasterizePackedMaskCoverage(rasterMask, packed, rasterMask, width, height)
+      : rasterizePolygonMask(selectionPointPathsToContours(points), width, height);
   return createFeatheredAlphaMask(
     rasterized.values,
     width,
@@ -698,10 +1014,12 @@ export function copyFeatheredPolygonToCanvas(
     antiAlias = true,
     featherRadius = 0,
     imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
   }: {
     antiAlias?: boolean;
     featherRadius?: number;
     imageSize?: Size;
+    sourceScale?: SelectionSourceScale;
   } = {}
 ): ClipboardCanvas {
   // Derived with the same rule `copyFeatheredPolygonSelectionToCanvas` uses, so the two
@@ -711,6 +1029,7 @@ export function copyFeatheredPolygonToCanvas(
     antiAlias,
     featherRadius,
     imageSize,
+    sourceScale,
   });
   if (snapshot) return snapshot.bitmap;
 
@@ -728,10 +1047,12 @@ export function copyFeatheredPolygonSelectionToCanvas(
     antiAlias = true,
     featherRadius = 0,
     imageSize,
+    sourceScale = IDENTITY_SELECTION_SOURCE_SCALE,
   }: {
     antiAlias?: boolean;
     featherRadius?: number;
     imageSize?: Size;
+    sourceScale?: SelectionSourceScale;
   } = {}
 ): SelectionCanvasSnapshot | null {
   if (points.length < 3) {
@@ -748,10 +1069,10 @@ export function copyFeatheredPolygonSelectionToCanvas(
   const ctx = getSelectionCanvasContext(destCanvas);
   if (!ctx) return unavailableSelectionCanvasContext('copyFeatheredPolygonSelectionToCanvas', destCanvas);
 
-  ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
+  drawSelectionSourceRegion(ctx, sourceCanvas, bounds, sourceScale);
 
   const imageData = ctx.getImageData(0, 0, width, height);
-  const mask = rasterizePolygonMask(relativePoints, width, height);
+  const mask = rasterizePolygonMask([relativePoints], width, height);
   const alphaMask = createFeatheredAlphaMask(
     mask.values,
     width,
@@ -774,7 +1095,8 @@ export function copyFeatheredPolygonSelectionToCanvas(
 export function copyRectSelectionToCanvas(
   sourceCanvas: BitmapSource,
   rect: RectXYSorted,
-  imageSize: Size
+  imageSize: Size,
+  sourceScale: SelectionSourceScale = IDENTITY_SELECTION_SOURCE_SCALE
 ): SelectionCanvasSnapshot | null {
   const { x, y, width, height } = trimRect(sortRect(rect), imageSize);
   if (width <= 0 || height <= 0) return null;
@@ -783,7 +1105,7 @@ export function copyRectSelectionToCanvas(
   const ctx = getSelectionCanvasContext(destCanvas);
   if (!ctx) return unavailableSelectionCanvasContext('copyRectSelectionToCanvas', destCanvas);
 
-  ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
+  drawSelectionSourceRegion(ctx, sourceCanvas, { x, y, width, height }, sourceScale);
 
   return { bitmap: destCanvas, pos: { x, y, width, height } };
 }
@@ -791,24 +1113,70 @@ export function copyRectSelectionToCanvas(
 export function copySelectionToCanvas(
   sourceCanvas: BitmapSource | null | undefined,
   selection: Selection,
-  imageSize: Size
+  imageSize: Size,
+  sourceScale: SelectionSourceScale = IDENTITY_SELECTION_SOURCE_SCALE
 ): SelectionCanvasSnapshot | null {
   if (!sourceCanvas) return null;
-
-  if (selection.geometry === 'rectangle') {
-    return copyRectSelectionToCanvas(sourceCanvas, getSelectionRect(selection), imageSize);
+  if (!Number.isFinite(sourceScale.x) || sourceScale.x <= 0 || !Number.isFinite(sourceScale.y) || sourceScale.y <= 0) {
+    return null;
   }
 
-  const points = getSelectionAbsolutePoints(selection);
+  if (selection.geometry === 'rectangle') {
+    return copyRectSelectionToCanvas(sourceCanvas, getSelectionRect(selection), imageSize, sourceScale);
+  }
+
+  if (selection.rasterMask) {
+    const packed = decodeRasterSelectionMask(selection.rasterMask);
+    if (!packed) return null;
+
+    const minX = Math.max(0, Math.floor(selection.pos.x));
+    const minY = Math.max(0, Math.floor(selection.pos.y));
+    const maxX = Math.min(imageSize.width, Math.ceil(selection.pos.x + selection.rasterMask.width));
+    const maxY = Math.min(imageSize.height, Math.ceil(selection.pos.y + selection.rasterMask.height));
+    const width = maxX - minX;
+    const height = maxY - minY;
+    if (width <= 0 || height <= 0) return null;
+
+    const destCanvas = createSelectionCanvas(width, height);
+    const ctx = getSelectionCanvasContext(destCanvas);
+    if (!ctx) return unavailableSelectionCanvasContext('copyRasterSelectionToCanvas', destCanvas);
+    drawSelectionSourceRegion(ctx, sourceCanvas, { x: minX, y: minY, width, height }, sourceScale);
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const rasterized = rasterizePackedMaskCoverage(
+      selection.rasterMask,
+      packed,
+      { x: selection.pos.x - minX, y: selection.pos.y - minY },
+      width,
+      height
+    );
+    const alphaMask = createFeatheredAlphaMask(
+      rasterized.values,
+      width,
+      height,
+      selection.metadata?.featherRadius ?? 0,
+      selection.metadata?.magneticLasso?.antiAlias ?? true,
+      rasterized.preservesCoverage
+    );
+    for (let index = 0; index < alphaMask.length; index += 1) {
+      const alphaIndex = index * 4 + 3;
+      imageData.data[alphaIndex] = Math.round((imageData.data[alphaIndex] * alphaMask[index]) / 255);
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return { bitmap: destCanvas, pos: { x: minX, y: minY, width, height } };
+  }
+
+  const contours = getSelectionAbsoluteContours(selection);
   if (selection.sourceTool === 'feather-magnetic-lasso') {
-    return copyFeatheredPolygonSelectionToCanvas(sourceCanvas, points, {
+    return copyFeatheredPolygonSelectionToCanvas(sourceCanvas, contours[0] ?? [], {
       antiAlias: selection.metadata?.magneticLasso?.antiAlias ?? true,
       featherRadius: selection.metadata?.featherRadius ?? 0,
       imageSize,
+      sourceScale,
     });
   }
 
-  return copyPolygonSelectionToCanvas(sourceCanvas, points, { imageSize });
+  return copyPolygonContoursSelectionToCanvas(sourceCanvas, contours, { imageSize, sourceScale });
 }
 
 function canvasToBlob(canvas: ClipboardCanvas): Promise<Blob> {

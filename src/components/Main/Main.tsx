@@ -43,7 +43,7 @@ import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
-import { DEFAULT_VIEW_STATE } from '../../contexts/view-state.ts';
+import { DEFAULT_VIEW_STATE, effectiveViewZoom } from '../../contexts/view-state.ts';
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 
 /**
@@ -292,7 +292,8 @@ const Main = () => {
 
   const renderContent = () => {
     const view = viewState ?? DEFAULT_VIEW_STATE;
-    const viewTransform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom}) rotate(${view.rotation}deg)`;
+    const viewZoom = effectiveViewZoom(view);
+    const viewTransform = `translate(${view.panX}px, ${view.panY}px) scale(${viewZoom}) rotate(${view.rotation}deg)`;
     type ToolAreaComponent =
       | typeof DummyToolArea
       | typeof MoveToolArea
@@ -489,6 +490,7 @@ const Main = () => {
       data-view-pan-x={String((viewState ?? DEFAULT_VIEW_STATE).panX)}
       data-view-pan-y={String((viewState ?? DEFAULT_VIEW_STATE).panY)}
       data-view-zoom={String((viewState ?? DEFAULT_VIEW_STATE).zoom)}
+      data-view-effective-zoom={String(effectiveViewZoom(viewState ?? DEFAULT_VIEW_STATE))}
       data-view-rotation={String((viewState ?? DEFAULT_VIEW_STATE).rotation)}
       className={`relative overflow-y-auto [grid-area:main] mobile-safe-bottom ${
         isDragging

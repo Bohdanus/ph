@@ -1088,4 +1088,128 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
       registry.disposeDocument(store().documentId);
     }
   });
+
+  it.each([
+    {
+      label: 'an anchored reorder',
+      moves: [{ layerToMoveId: 'layer-3', afterWhichLayerId: 'layer-1' }],
+      expectedOrders: [
+        ['layer-1', 0],
+        ['layer-3', 1],
+        ['layer-2', 3],
+      ],
+      createdName: 'Blank 4',
+      createdOrder: 4,
+    },
+    {
+      label: 'two moves to the bottom',
+      moves: [{ layerToMoveId: 'layer-3' }, { layerToMoveId: 'layer-3' }],
+      expectedOrders: [
+        ['layer-3', -2],
+        ['layer-1', 0],
+        ['layer-2', 1],
+      ],
+      createdName: 'Blank 2',
+      createdOrder: 2,
+    },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    moves: Array<{ layerToMoveId: string; afterWhichLayerId?: string }>;
+    expectedOrders: Array<[string, number]>;
+    createdName: string;
+    createdOrder: number;
+  }>)(
+    'uses legacy sparse layer orders for a source-backed create after $label',
+    ({ moves, expectedOrders, createdName, createdOrder }) => {
+      const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
+      const { store, dispatch, unmount } = renderWithProbe();
+      const registry = getAssetRegistry();
+      const source: Layer['source'] = {
+        kind: 'blank',
+        color: '#eeeeee',
+        opacity: 1,
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 80, height: 60 },
+      };
+      const initialLayers: LayersRecord = {
+        'layer-1': { ...createMockLayer({ id: 'layer-1', pos: source.pos }), name: 'Bottom layer', order: 0, source },
+        'layer-2': { ...createMockLayer({ id: 'layer-2', pos: source.pos }), name: 'Middle layer', order: 1, source },
+        'layer-3': { ...createMockLayer({ id: 'layer-3', pos: source.pos }), name: 'Top layer', order: 2, source },
+      };
+
+      try {
+        act(() => {
+          dispatch()({
+            type: 'REPLACE_DOCUMENT',
+            payload: {
+              documentId: 'sparse-order-document',
+              history: [baselineItem(initialLayers)],
+              updates: { layers: initialLayers, totalSize: initialSize, documentFrame: defaultFrame },
+            },
+          });
+        });
+        for (const payload of moves) {
+          act(() => {
+            dispatch()({
+              type: 'REORDER_LAYERS',
+              payload,
+            });
+          });
+        }
+
+        expect(store().durableStatus).toBe('current');
+        expect(
+          Object.values(store().layers)
+            .map((layer) => layer.order)
+            .sort((a, b) => a - b)
+        ).toEqual(expectedOrders.map(([, order]) => order).sort((a, b) => a - b));
+        expect(
+          Object.values(store().layers)
+            .sort((a, b) => a.order - b.order)
+            .map(({ id, order }) => [id, order])
+        ).toEqual(expectedOrders);
+        conversion.mockClear();
+
+        const addedLayer: Layer = {
+          ...createMockLayer({ id: 'new-layer', pos: source.pos }),
+          name: createdName,
+          order: createdOrder,
+          source,
+        };
+        act(() => {
+          dispatch()({
+            type: 'COMMIT_DOCUMENT_EDIT',
+            payload: {
+              updates: { layers: { ...store().layers, 'new-layer': addedLayer }, activeLayerId: 'new-layer' },
+              historyItem: {
+                id: 'create-after-sparse-reorder',
+                actionName: NEW_LAYER_ACTION,
+                layerId: 'new-layer',
+                layerSource: source,
+              },
+            },
+          });
+        });
+
+        expect(conversion).not.toHaveBeenCalled();
+        expect(store().durableStatus).toBe('current');
+        const created = store().durableDocument?.history.at(-1)?.operation;
+        if (created?.kind !== 'create-layer') throw new Error('expected the source-backed create operation');
+        expect(created.layer).toMatchObject({ name: addedLayer.name, order: addedLayer.order });
+        expect(store().durableDocument).toEqual(
+          legacyHistoryToDurable(store().history, {
+            documentId: store().documentId,
+            documentRevision: store().documentRevision,
+            branchRevision: store().branchRevision,
+            durableRevision: store().durableDocument!.durableRevision,
+            registry,
+          }).document
+        );
+      } finally {
+        conversion.mockRestore();
+        registry.disposeDocument(store().documentId);
+        unmount();
+      }
+    }
+  );
 });

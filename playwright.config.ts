@@ -70,50 +70,19 @@ export default defineConfig({
   // declare from being what decides the question.
   failOnFlakyTests: true,
   // The WHOLE-RUN clock, and deliberately BELOW the `e2e` matrix legs'
-  // `timeout-minutes` (30 on Linux, 35 on Windows/macOS) in .github/workflows/ci.yml.
+  // `timeout-minutes` (35 on Linux, 40 on Windows/macOS) in .github/workflows/ci.yml.
   // Playwright's default is `0`, which is unbounded, so today a hung suite is stopped
   // by GitHub killing the job — and a job killed for exceeding `timeout-minutes` runs
   // NONE of its remaining steps: no HTML report, no `test-results/results.json`, no
   // trace, no diff image. The timeout and the evidence it was meant to preserve cancel
   // out, and that is the whole reason this number is not 1800 or more.
   //
-  // The arithmetic, with the Linux leg's 1800 s split three ways:
-  //   SETUP  <= 480 s  checkout, setup-node, `npm ci` (431 packages, 347 MB of
-  //                   node_modules, and `cache: 'npm'` misses on every
-  //                   package-lock.json change) and `npx playwright install
-  //                   --with-deps chrome`, which the workflow deliberately does not
-  //                   cache at all
-  //   TESTS  <= 900 s  this key, under CI
-  //   UPLOAD <= 180 s  actions/upload-artifact@v4 zipping `playwright-report/` plus
-  //                   `test-results/`, whose per-retry traces are the bulk of it
-  // 480 + 900 + 180 = 1560 s = 26 min, which leaves 4 min INSIDE the 30-minute job
-  // kill. Raise it to 1800 s and GitHub wins that race, so a hang produces no diff
-  // image at all — the exact loss the timeout was added to prevent.
-  //
-  // 900 s against a measured ~8 min for all 447 tests at `workers: 1` on this
-  // machine, which is an UPPER bound for the job: CI resolves `workers` to "50%" of
-  // 4 vCPUs, so it runs 2 of them. Roughly 3x the real test phase, so the bound can
-  // only fire on a hang.
-  //
-  // LOCAL is a different machine and gets a different number, which is why this is
-  // not one literal. The two bounds are incompatible as one value: anything above a
-  // local run's ceiling is at or past the CI budget, and anything inside the CI
-  // budget is within reach of a loaded local run. `retries` and `workers` above
-  // resolve on `process.env.CI` for the same reason — the right value depends on the
-  // machine, not on the code. 2700 s is ~5x the measured local duration, and it is
-  // still strictly stricter than today's unbounded `0`: this repository serializes
-  // e2e runs with the `scripts/e2e-run.mjs` lock, so a suite never competes with
-  // another suite but does compete with an app vitest run on the same Mac.
-  //
-  // What the deadline BUYS is a report, and the reason it has one is
-  // `finishTaskRun`: a timed-out run's status is `"timedout"`, which is not
-  // `"passed"`, so `onEnd` still runs and the HTML and JSON reporters still write
-  // their files. That status is not `"interrupted"` either, so the exit code is 1
-  // and not 130: a hung suite is a FAILURE that arrives with its evidence.
-  //
-  // `--debug` RESETS this to 0, so an interactive debugging session is never killed
-  // by it.
-  globalTimeout: process.env.CI ? 15 * 60_000 : 45 * 60_000,
+  // The macOS two-way shard reached the 20-minute limit after 280 tests, leaving
+  // 11 assigned tests unrun. Give macOS 30 minutes while preserving 10 minutes
+  // before its 40-minute job timeout for report upload. Linux and Windows keep
+  // 20 minutes because this run had no timeout there (jobs 35/40 minutes).
+  // Local diagnostics retain the longer limit, and --debug disables it.
+  globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
   // machine is not running two browsers per core. The port argument that used to sit
@@ -184,35 +153,17 @@ export default defineConfig({
     // constructed. kilo.jsonc denies that flag on its own pattern instead.
     headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1',
 
-    /* The pixel helpers in e2e/helpers/canvas-helpers.ts classify a pixel with FIXED
-     * thresholds that are only correct against the app's LIGHT theme, and nothing
-     * declared that. DARK_THRESHOLD is 50 and NEAR_WHITE_THRESHOLD is 250
-     * (the `DARK_THRESHOLD` / `NEAR_WHITE_THRESHOLD` constants), and the workspace backdrop the
-     * canvas sits on is a
-     * 20px checkerboard chosen from the resolved theme: `#f3f3f3` over `#fff` for
-     * light, `#121212` over `#000` for dark (the `.chessboard-light` / `.chessboard-dark`
-     * rules in `src/index.scss`, switched by `Main.tsx`). So under dark the backdrop is
-     * itself below
-     * the dark threshold, and under light the letterbox is above the near-white one.
-     * The thresholds are not "roughly right"; they are calibrated to one palette.
-     *
-     * Playwright's own default is 'light', so every already-green test is correct today
-     * and is correct by an inherited value that this file never stated.
-     * `e2e/document-dialogs.spec.ts` no longer pins the theme itself; its own comment
-     * records that as a deletion rather than a demotion, which is what makes this line
-     * the only pin.
-     *
-     * What breaks without it, in the canvas helpers: every `hasDarkPixels` wait can be
-     * satisfied by the dark letterbox alone, and every `getStrokeAnalysis` reads a
-     * backdrop it believes is the page's background. A stroke that never landed passes
-     * its wait and fails later, or passes for the wrong reason.
-     *
-     * This DECLARES a precondition every green test already relies on; it constrains
-     * nothing new. It is deliberately not a variable: an escape hatch on a pixel
-     * threshold is a way to turn the suite's colour measurements off, which is the same
-     * move as raising a threshold, and it would not be greppable as one. A spec that
-     * genuinely needs the dark palette should pin `colorScheme: 'dark'` on itself and
-     * measure the direction it depends on, exactly as document-dialogs.spec.ts did. */
+    /* This sets the browser's `prefers-color-scheme` media query. It does not select
+     * the app's workspace theme: ThemeContext no longer reads that query. The shared
+     * `e2e/fixtures/extended-test.ts` fixture seeds `localStorage.theme` to `light` in
+     * a fresh context, and its unit tests pin that behavior. Pixel helpers depend on
+     * that app-level fixture because the workspace checkerboard is `#f3f3f3` over
+     * `#fff` in light and `#121212` over `#000` in dark. Keep the browser preference
+     * stable for browser-native rendering, but do not treat this option as the app-theme
+     * guard. A test that needs the dark app theme must use the app's theme controls or
+     * the fixture's release mechanism, then keep backdrop pixels out of color-only
+     * assertions until those helpers receive enough geometry to distinguish backdrop
+     * from ink. */
     colorScheme: 'light',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */

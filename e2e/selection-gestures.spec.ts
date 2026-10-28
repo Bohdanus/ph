@@ -5,12 +5,13 @@ import {
   getWorkspaceCanvas,
   hasDarkPixels,
   loadImageData,
+  documentToCanvasOffset,
   type BoundingBox,
   type ClipOptions,
   type SelectionBounds,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
-import { committedAntsOutline, waitForCommittedAnts } from './helpers/selection-ants';
+import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
   openToolFlyoutViaRightClick,
@@ -18,6 +19,7 @@ import {
   verifyPrimaryTool,
 } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * Seven pixel-level tests for the five selection tools.
@@ -146,6 +148,9 @@ const PROBE_HALF_PX = 20;
 /** Brush width for the magic wand's target region, and its half-width for the expected bounds. */
 const BRUSH_PX = 120;
 
+/** A narrow brush that draws a closed Magic Wand boundary without filling its centre. */
+const WAND_LOOP_BRUSH_PX = 28;
+
 /**
  * The viewport every test in this file runs at. Set explicitly in `beforeEach` — see the file
  * header for why it cannot be inherited, and for the measurements that justify this size.
@@ -254,6 +259,22 @@ const workspaceBox = async (page: Page): Promise<BoundingBox> => {
   if (!box) throw new Error('Workspace canvas has no bounding box');
   return box;
 };
+
+/** The visible document inside the letterboxed workspace canvas, in page CSS pixels. */
+const documentBox = async (page: Page): Promise<BoundingBox> =>
+  getWorkspaceCanvas(page).evaluate((element) => {
+    if (!(element instanceof window.HTMLCanvasElement)) {
+      throw new Error('workspace canvas is not a canvas element');
+    }
+    const rect = element.getBoundingClientRect();
+    const scale = Math.min(rect.width / element.width, rect.height / element.height);
+    return {
+      x: rect.left + (rect.width - element.width * scale) / 2,
+      y: rect.top + (rect.height - element.height * scale) / 2,
+      width: element.width * scale,
+      height: element.height * scale,
+    };
+  });
 
 /** Press, move and release between two box-relative points. */
 const dragOnCanvas = async (
@@ -642,10 +663,144 @@ test.describe('Selection tools', () => {
     // reporting the same gesture. It asserts nothing about the VALUE — that number counts
     // DOCUMENT pixels while the drag is in CSS pixels, and the two are joined by a fit scale
     // that depends on the viewport, so the geometry assertion is what carries this test.
-    const report = page.getByText(/\d[\d,]*\s*pixels selected/);
+    const report = page.getByText(/\d[\d,]*\s+matching pixels/);
     await expect(report).toBeVisible();
     const reported = Number.parseInt((await report.innerText()).replace(/\D/g, ''), 10);
     expect(reported, 'the wand reports a non-zero count alongside the outline it drew').toBeGreaterThan(0);
+  });
+
+  test('magic wand selects every disconnected color match when Contiguous is unchecked', async ({ page }) => {
+    const box = await workspaceBox(page);
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#000000', true);
+    await page.locator('#size-slider').fill(String(BRUSH_PX));
+    await page.locator('#alpha-slider').fill('1');
+    await expect(page.locator('#size-slider')).toHaveValue(String(BRUSH_PX));
+    await expect(page.locator('#alpha-slider')).toHaveValue('1');
+
+    const drawBar = async (documentY: number) => {
+      await dragOnCanvas(
+        page,
+        box,
+        documentToCanvasOffset(box, 180, documentY),
+        documentToCanvasOffset(box, 420, documentY)
+      );
+    };
+    await drawBar(180);
+    await drawBar(420);
+
+    await clickToolButton(page, 'magic-wand');
+    const contiguous = page.getByRole('checkbox', { name: 'Contiguous' });
+    await expect(contiguous).toBeChecked();
+    await contiguous.uncheck();
+    await page.locator('#magic-wand-tolerance').fill('0');
+    await page.locator('#magic-wand-smoothing').fill('0');
+    await expect(page.locator('#magic-wand-tolerance')).toHaveValue('0');
+    await expect(page.locator('#magic-wand-smoothing')).toHaveValue('0');
+
+    const click = documentToCanvasOffset(box, 300, 180);
+    await page.mouse.click(box.x + click.x, box.y + click.y);
+    await waitForCommittedAnts(page, 'both disconnected matching regions after the wand click');
+
+    // Read separate document-space windows around the two painted bars. A bounding-box-only
+    // assertion would pass when only one component survived, because the box says nothing about
+    // whether its interior gap was selected.
+    const firstRuns = await readAntRuns(page, { x: 100, y: 100, width: 500, height: 160 }, 'row');
+    const secondRuns = await readAntRuns(page, { x: 100, y: 340, width: 500, height: 160 }, 'row');
+    expect(
+      firstRuns.some((row) => row.length > 0),
+      'the clicked component has a committed border'
+    ).toBe(true);
+    expect(
+      secondRuns.some((row) => row.length > 0),
+      'the disconnected color match also has a committed border'
+    ).toBe(true);
+
+    // A single outline around both bars would put its vertical sides through this empty gap.
+    // The correct disconnected selection has no marching ants between the two components.
+    const gapRuns = await readAntRuns(page, { x: 100, y: 270, width: 500, height: 60 }, 'row');
+    expect(
+      gapRuns.every((row) => row.length === 0),
+      'the committed selection keeps the blank gap between matching regions unselected'
+    ).toBe(true);
+
+    await expect(page.getByRole('status')).toContainText(
+      'Selects matching colors across the image, including disconnected regions.'
+    );
+    const report = page.getByText(/\d[\d,]*\s+matching pixels/);
+    await expect(report).toBeVisible();
+    expect(Number.parseInt((await report.innerText()).replace(/\D/g, ''), 10)).toBeGreaterThan(0);
+  });
+
+  test('magic wand selects only the region inside a closed color boundary', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const document = await documentBox(page);
+    const loop = boxRect(document, 0.32, 0.28, 0.58, 0.64);
+    const loopPath = [
+      { x: loop.x, y: loop.y },
+      { x: loop.x + loop.width, y: loop.y },
+      { x: loop.x + loop.width, y: loop.y + loop.height },
+      { x: loop.x, y: loop.y + loop.height },
+      { x: loop.x, y: loop.y },
+    ];
+    const inside = {
+      x: document.x + loop.x + loop.width / 2,
+      y: document.y + loop.y + loop.height / 2,
+    };
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#000000', true);
+    await page.locator('#size-slider').fill(String(WAND_LOOP_BRUSH_PX));
+    await page.locator('#alpha-slider').fill('1');
+    await expect(page.locator('#size-slider')).toHaveValue(String(WAND_LOOP_BRUSH_PX));
+    await expect(page.locator('#alpha-slider')).toHaveValue('1');
+    await page.mouse.move(document.x + loopPath[0].x, document.y + loopPath[0].y);
+    await page.mouse.down();
+    for (let index = 1; index < loopPath.length; index += 1) {
+      await page.mouse.move(document.x + loopPath[index].x, document.y + loopPath[index].y, { steps: 12 });
+    }
+    await page.mouse.up();
+    await waitForCanvasPixels(
+      page,
+      { x: document.x + loop.x, y: document.y + loop.y, width: loop.width, height: loop.height },
+      hasDarkPixels,
+      { description: 'the black loop drawn around the Magic Wand target' }
+    );
+
+    await clickToolButton(page, 'magic-wand');
+    await expect(page.locator('#magic-wand-tolerance')).toBeVisible();
+    await expectMoveTransformBoxHidden(page);
+    await page.mouse.click(inside.x, inside.y);
+    await waitForCommittedAnts(page, 'the white region inside the closed loop');
+
+    const canvasSize = await getWorkspaceCanvas(page).evaluate((element) => {
+      if (!(element instanceof window.HTMLCanvasElement)) {
+        throw new Error('workspace canvas is not a canvas element');
+      }
+      return { width: element.width, height: element.height };
+    });
+    const insetX = (WAND_LOOP_BRUSH_PX / 2 / canvasSize.width) * document.width;
+    const insetY = (WAND_LOOP_BRUSH_PX / 2 / canvasSize.height) * document.height;
+    const expectedInside = {
+      x: document.x + loop.x + insetX,
+      y: document.y + loop.y + insetY,
+      width: loop.width - insetX * 2,
+      height: loop.height - insetY * 2,
+    };
+    const outline = await committedAntsOutline(page);
+    expectOutlineAround(outline, ORIGIN_CLIP, expectedInside, 12);
+    if (outline === null) throw new Error('the closed loop selection has no committed ants outline');
+    expect(outline.left, 'selection outline reaches the left side of the enclosed region').toBeLessThanOrEqual(
+      expectedInside.x + 12
+    );
+    expect(outline.top, 'selection outline reaches the top side of the enclosed region').toBeLessThanOrEqual(
+      expectedInside.y + 12
+    );
+    expect(outline.right, 'selection outline reaches the right side of the enclosed region').toBeGreaterThanOrEqual(
+      expectedInside.x + expectedInside.width - 12
+    );
+    expect(outline.bottom, 'selection outline reaches the bottom side of the enclosed region').toBeGreaterThanOrEqual(
+      expectedInside.y + expectedInside.height - 12
+    );
   });
 
   test('Enter closes a polygonal lasso and strokes its final edge', async ({ page }) => {

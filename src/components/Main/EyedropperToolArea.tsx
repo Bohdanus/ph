@@ -2,10 +2,9 @@ import { type PointerEvent, type RefObject } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import type { EyedropperSampleSize, EyedropperToolArgs } from '../../tools/eyedropper.ts';
+import type { EyedropperToolArgs } from '../../tools/eyedropper.ts';
 import { readColorSampler } from '../../tools/color-sampler-readback.ts';
 import { addColorSampler, colorSamplerAt, removeColorSampler } from '../../tools/color-sampler-store.ts';
-import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 import { documentFrameSize } from '../../contexts/document-frame.ts';
 
 type EyedropperToolAreaProps = {
@@ -48,9 +47,6 @@ export const EYEDROPPER_ALL_LAYERS_UNSUPPORTED = 'eyedropper-sample-all-layers-u
  */
 const shiftClickPlacesSampler = (event: PointerEvent<HTMLDivElement>): boolean => event.shiftKey;
 
-const toHexColor = (red: number, green: number, blue: number): string =>
-  `#${[red, green, blue].map((channel) => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, '0')).join('')}`;
-
 /**
  * The Eyedropper records NO history state.
  *
@@ -65,13 +61,12 @@ const toHexColor = (red: number, green: number, blue: number): string =>
  * `drawLayersToCanvas` composes every visible layer into), not from the active layer, because that
  * is the pixel the user actually clicked. `drawLayersToCanvas` sizes that canvas to the document
  * frame and draws each layer at `position.x - documentFrame.x`, so the canvas's own pixel (0,0) IS
- * the frame origin, and `getLocalCoords` (which returns frame-space coordinates) is already the index
- * `getImageData` wants.
+ * the frame origin. Sampling stays in frame pixels; `readColorSampler` maps those logical pixels to
+ * the rounded backing bitmap.
  */
 export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
-  const [{ canvasRef, containerRef, totalSize, documentFrame }, dispatch] = useStore();
+  const [{ canvasRef, containerRef, totalSize, documentFrame, renderSelector }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
-  const dpr = useDevicePixelRatio();
 
   const args = toolArgs as EyedropperToolArgs;
 
@@ -94,14 +89,8 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx || typeof ctx.getImageData !== 'function') {
-      console.error(EYEDROPPER_READBACK_UNAVAILABLE, 'the eyedropper cannot read the composited canvas');
-      return;
-    }
-
     // The composited canvas is drawn in FRAME space: it is sized by `documentFrameSize` and each
-    // layer is stamped at `position.x - documentFrame.x` (`src/contexts/layer-renderer.ts:78-79,119`).
+    // layer is stamped at `position.x - documentFrame.x` by `evaluatePresentation()`.
     // So the canvas's own pixel (0,0) is the frame origin, and `getLocalCoords` is already the
     // index `getImageData` wants. Running it through `canvasToDocumentPoint` first would ADD the
     // frame origin a second time: after a crop that trims 100px off the left, a click on canvas
@@ -110,18 +99,26 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     const canvasSeed = getLocalCoords(event);
     const centerX = Math.floor(canvasSeed.x);
     const centerY = Math.floor(canvasSeed.y);
+    const frameSize = documentFrameSize(documentFrame);
+    const shiftClick = shiftClickPlacesSampler(event);
+    const hit = shiftClick ? colorSamplerAt(canvasSeed) : null;
+    if (hit && event.altKey) {
+      // Marker deletion does not read pixels, so it remains available while the previous canvas
+      // is visible during replay.
+      removeColorSampler(hit.id);
+      return;
+    }
+
+    // A pending replay keeps the previous accepted pixels visible until the target is rendered.
+    // Refuse foreground samples and sampler placements during that interval.
+    if (renderSelector.source === 'pending') return;
 
     // Adobe's Shift-click path, resolved BEFORE the readback below because it does not use this
     // tool's sample at all: it places a sampler, which is the Color Sampler's store and overlay.
     // The readback module is shared so the two call sites cannot disagree about which document
     // pixel a point names.
-    if (shiftClickPlacesSampler(event)) {
-      const hit = colorSamplerAt({ x: centerX, y: centerY });
-      if (hit && event.altKey) {
-        removeColorSampler(hit.id);
-        return;
-      }
-      const samplerReadback = readColorSampler(canvas, { x: centerX, y: centerY }, args.sampleSize, dpr);
+    if (shiftClick) {
+      const samplerReadback = readColorSampler(canvas, { x: centerX, y: centerY }, args.sampleSize, frameSize);
       if (!samplerReadback.ok) {
         console.error(samplerReadback.reason, 'the color sampler cannot read the composited canvas');
         return;
@@ -132,54 +129,12 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
       return;
     }
 
-    // Sample Size is the side of the square averaged around the click, and all seven values Adobe
-    // offers are odd, so the block is centred. The block is then CLIPPED to the canvas rather than
-    // shifted inward: a click on the border averages the pixels that exist instead of reading out
-    // of bounds or quietly sliding the sample off the edge the user clicked.
-    //
-    // The centre pixel must be inside the canvas before the clipping math below is safe: `getLocalCoords`
-    // returns frame-space coordinates, and a click in the contain-fit padding (outside the canvas bitmap
-    // but inside the container) can be negative or past the frame width. With `sampleSize === 1` the
-    // `right <= left` guard at the next step catches every out-of-bounds case, but with a larger sample
-    // size the clipped block CAN be non-empty while the centre pixel is outside it, which would index
-    // a negative offset into the pixel array — `Uint8ClampedArray` returns `undefined` for negative
-    // indices, so the alpha check would read the wrong byte and the average would include padding.
-    // `sampleColorAt` makes the same check (`src/tools/colorSampler.ts:146`).
-    const frameSize = documentFrameSize(documentFrame);
-    if (centerX < 0 || centerY < 0 || centerX >= frameSize.width || centerY >= frameSize.height) return;
-
-    const sampleSize: EyedropperSampleSize = args.sampleSize;
-    const half = Math.floor(sampleSize / 2);
-    const left = Math.max(0, centerX - half);
-    const top = Math.max(0, centerY - half);
-    const right = Math.min(frameSize.width, centerX + half + 1);
-    const bottom = Math.min(frameSize.height, centerY + half + 1);
-    if (right <= left || bottom <= top) return;
-
-    // The canvas backing store is DPR-scaled and the context is scaled by DPR, so getImageData
-    // coordinates are in device pixels. Convert frame-space coordinates to device pixels.
-    const dl = left * dpr;
-    const dt = top * dpr;
-    const dr = right * dpr;
-    const db = bottom * dpr;
-    const { data } = ctx.getImageData(dl, dt, dr - dl, db - dt);
-    const sampleCount = Math.floor(data.length / 4);
-    if (sampleCount === 0) return;
-
-    // A fully transparent pixel has no colour to report. The app's foreground is a CSS colour on
-    // an `<input type="color">`, which cannot express transparency, so averaging one in would
-    // silently set the foreground to black. Photoshop shows a crossed-out swatch and changes
-    // nothing, so nothing is dispatched here either.
-    if (data[(centerY - top) * (right - left) * 4 + (centerX - left) * 4 + 3] === 0) return;
-
-    let red = 0;
-    let green = 0;
-    let blue = 0;
-    for (let index = 0; index < sampleCount; index++) {
-      red += data[index * 4];
-      green += data[index * 4 + 1];
-      blue += data[index * 4 + 2];
+    const readback = readColorSampler(canvas, { x: centerX, y: centerY }, args.sampleSize, frameSize);
+    if (!readback.ok) {
+      console.error(EYEDROPPER_READBACK_UNAVAILABLE, 'the eyedropper cannot read the composited canvas');
+      return;
     }
+    if (readback.color === null) return;
 
     // Alpha is dropped: the store's foreground is a CSS colour consumed by an `<input type="color">`,
     // which cannot express it, and the composited canvas has already resolved it.
@@ -188,12 +143,7 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     // (Windows) / Command-Option-click (Mac) to sample to the background color"
     // (https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html). The modifier
     // is `altKey` on both platforms, so there is no platform branch here.
-    const sampledColor = toHexColor(
-      Math.round(red / sampleCount),
-      Math.round(green / sampleCount),
-      Math.round(blue / sampleCount)
-    );
-    dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR', payload: sampledColor });
+    dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR', payload: readback.color });
   };
 
   return (

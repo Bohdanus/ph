@@ -1,6 +1,11 @@
+---
+name: broad-test-improvement
+description: Improve unit tests in the `ph` photo editor - fix broken tests, raise coverage, and strengthen assertions without touching source. E2E specs and helper unit tests are included only when requested and need their own runners/baselines. Use when asked to improve, harden or extend the test suite or fix flaky tests. The tracked procedure is `.skills/broad-test-improvement.md`.
+---
+
 # Broad Test Improvement Skill
 
-This skill performs comprehensive test suite improvements: fixing broken tests, shallow review for common defects, and increasing coverage where needed. **Only modifies test files** — never touches source code.
+This skill performs comprehensive test suite improvements: fixing broken tests, shallow review for common defects, and increasing coverage where needed. **Only modifies test files** — never touches source code. Follow `MODELS.md` before selecting agents. All agent tasks are read-only: they return findings and proposed patches; the coordinator applies accepted edits and runs verification.
 
 ## ⛔ DO NOT TOUCH (Protected Files)
 
@@ -26,8 +31,8 @@ These files are **never** modified by this skill, under any circumstances:
 
 - **Dry-run first**: Every phase starts with a read-only scan; no writes until verification passes
 - **Atomic fixes**: One file per subagent, verified independently before batch commit
-- **Escape hatches**: Stop on any regression (lint/typecheck/test failure on previously passing code) — **after you have established it is not a wrong expectation.** Compute and time are effectively unlimited in this repository, so the failure mode is not cost but premature surrender: a `toBeTruthy()` swapped for `toBeInTheDocument()` because a selector was hard to reach is a green suite that has stopped testing anything. **Escalating is a last resort.** Exhaust, in order: read the source under test and find the real behaviour; check `e2e/OPEN_PROBLEMS.md` for a filed instance; recover the intended contract from the project's chat history and the existing handoff entries; re-run the failing assertion with the actual value printed. Write the question into `HANDOFF.md` only once all four are done, and say in the entry which four you ran — a question with no search log behind it is a judgement call wearing a question's clothes.
-- **No source changes**: Except `data-testid` additions when absolutely required for test stability
+- **Escape hatches**: Stop on any regression (lint/typecheck/test failure on previously passing code) — **after you have established it is not a wrong expectation.** Follow `MODELS.md` for finite budgets and quota-aware routing; use a verified free route when eligible, and never silently fall back to paid inference. Do not weaken a valid assertion because a selector or setup is difficult. Before handing off an unresolved question, read the source under test, check `e2e/OPEN_PROBLEMS.md`, recover the intended contract from relevant chat history and handoffs, and rerun the failing assertion with the actual value printed. If evidence or available capacity is still insufficient, write an evidence-based handoff that names the remaining check or decision.
+- **No source changes**: Report any necessary accessibility hook as a separate proposal for coordinator review
 - **Deterministic verification**: Run affected file's tests + full suite after each batch
 - **Preserve good tests**: Never rewrite or "simplify" tests that already work and are well-structured
 
@@ -44,28 +49,35 @@ These files are **never** modified by this skill, under any circumstances:
 
 ## Scope
 
-All test files in `src`: `src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`, which sits in
-neither an `__tests__` directory nor a family folder. **The count is re-derived, never trusted** —
-an earlier revision of this line said "currently 55 files, ~400 tests" against a tree that held 259
-test files, so a number written here outlived the tree it described:
+The default scope is unit tests in `src`: `src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`,
+which sits in neither an `__tests__` directory nor a family folder. E2E specs and E2E-helper unit
+tests are in scope only when the request names them; they use different runners and must be
+baselined separately (`npm run test:e2e` and `npm run test:e2e:unit`). Do not treat their absence
+from the default Vitest report as a passing result. **Counts are re-derived, never trusted** — an
+earlier revision said "currently 55 files, ~400 tests" against a tree that held 259 test files:
 
 ```bash
-find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
+rg --files src -g '*.test.ts' -g '*.test.tsx' | wc -l
 ```
 
 ---
 
 ## Before Phase 1: create the worktree
 
-**Every subagent below inherits this session's working directory.** A fan-out launched from the main
-checkout is five concurrent writers in a shared checkout that other sessions are committing into,
-and no permission can stop it: tool permissions match a path glob and have no term for the working
-directory, so `src/foo.test.ts` is the same pattern in `main` and in a worktree. `task` creates no
-worktree and no session, so the order is fixed:
+**Every subagent below inherits this session's working directory.** Follow `AGENTS.md`: before any
+other Git command, list worktrees, select the stanza whose branch is `refs/heads/main`, and create
+the task worktree under `.kilo/worktrees`. Verify the new checkout before dispatching. A fan-out
+launched from main would share files with other sessions, and `task` does not create a worktree.
 
 ```bash
-# $MAIN is the main checkout's absolute path, as AGENTS.md under "Worktree FIRST" derives it.
-git worktree add -b test/improve-<slug> "$MAIN/.kilo/worktrees/<name>" main
+git worktree list --porcelain
+# Set this to the absolute path from the stanza with: branch refs/heads/main
+MAIN_WORKTREE="<absolute-main-worktree-path>"
+TASK_NAME="test-improve-<slug>"
+TASK_WORKTREE="$MAIN_WORKTREE/.kilo/worktrees/$TASK_NAME"
+git -C "$MAIN_WORKTREE" worktree add -b "task/$TASK_NAME" "$TASK_WORKTREE" main
+cd "$TASK_WORKTREE"
+git rev-parse --show-toplevel
 ```
 
 Create it, **then** dispatch, then put the **absolute** worktree path in every brief — a subagent's
@@ -75,9 +87,8 @@ serialize anything Phase 2's triage assigns to more than one finding in the same
 **and** `provider` together — a free session that names a paid model without a provider gets it
 resolved onto the gateway and dies at zero tokens.
 
-**The main worktree is for reading and merging only.** `scripts/main-worktree-guard.mjs` runs first
-in `.husky/pre-commit` and refuses a commit made from it; the one override is
-`ALLOW_MAIN_COMMIT=1`, and only the exact value `1`. Never `git stash`, and never
+**The main worktree is for reading and pinned landings only.** Never make ordinary or hotfix
+commits there; make the change on a task branch and land it through the reviewed procedure. Never `git stash`, and never
 `git add -A` in a worktree whose root checkout is dirty: the root is a different checkout at a
 different `HEAD`, so `-A` commits a silent reverting of whatever main has since done, with no
 conflict marker, and this repository has shipped 17 of those. Stage explicit paths, and run the
@@ -89,10 +100,13 @@ into `pre-commit` and `pre-merge-commit`; `docs/ORCHESTRATION.md` is its one hom
 ## Phase 0: Baseline Capture (Mandatory First Step)
 
 ```bash
-# Capture baseline for regression detection
-npm test -- --run --reporter=json > /tmp/test-baseline.json 2>&1
+# Capture baseline for regression detection (`npm test` already supplies --run)
+npm test -- --reporter=json > /tmp/test-baseline.json 2>&1
 npm run lint:check > /tmp/lint-baseline.txt 2>&1
 npm run tsc > /tmp/tsc-baseline.txt 2>&1
+# If E2E suites are in scope, capture their baselines separately.
+# npm run test:e2e:unit
+# npm run test:e2e
 git status --porcelain > /tmp/git-baseline.txt
 ```
 
@@ -102,7 +116,7 @@ git status --porcelain > /tmp/git-baseline.txt
 
 ## Good Test Detection (GTD) — Mandatory Pre-Flight
 
-**Before ANY subagent modifies a test file, it must classify the file using this rubric.**
+**Before ANY subagent proposes a change to a test file, it must classify the file using this rubric.**
 
 ### GTD Scorecard
 
@@ -121,6 +135,9 @@ For each candidate file, score these criteria (1 point each):
 
 ### GTD Classification
 
+These four classifications are the complete rubric. Do not invent extra tiers such as "hardened";
+if a scanner reports a raw score, retain the score and derive the classification from this table.
+
 | Score   | Classification   | Action                                                                                                 |
 | ------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
 | **5+**  | **Gold**         | **DO NOT TOUCH** — record in "Remaining (Manual Review)"                                               |
@@ -136,26 +153,27 @@ For each candidate file, score these criteria (1 point each):
 | `useAnts.test.tsx`       | 5     | Gold           | 5+ tests, canvas call assertions, verified accurate per source                                          |
 | `rect.test.ts`           | 5     | Gold           | 5+ tests, exact assertion matches `trimRect`                                                            |
 | `draw.test.ts`           | 5     | Gold           | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
-| `DesktopHeader.test.tsx` | 6     | Solid          | 67 tests, menu toggles, confirm dialogs, error paths                                                    |
+| `DesktopHeader.test.tsx` | 6     | Gold           | 67 tests, menu toggles, confirm dialogs, error paths                                                    |
 | `Draw.test.tsx`          | 5     | Gold           | 38 tests, controls and interaction paths                                                                |
 | `Transform.test.tsx`     | 5     | Gold           | 38 cases, 36 passing and 2 expected fail, controls and interaction paths                                |
 | `Levels.test.tsx`        | 5     | Gold           | 26 tests, controls and interaction paths                                                                |
 | `MagicWand.test.tsx`     | 5     | Gold           | 28 tests, controls and interaction paths                                                                |
 
-**Every score and count in this table and in **Gold-Standard Files** is a dated snapshot.**
+**Scores and counts in this table and in **Gold-Standard Files** are historical examples, not a
+current triage.**
 Re-derive with the rubric above — it is the only thing that classifies a file. `Draw`,
 `Transform`, `Levels` and `MagicWand` were reclassified from `Shallow` to `Gold` because the
-rubric scores them above 5, not because their coverage was judged better.
+rubric scores them at the 5+ threshold, not because their coverage was judged better.
 
 ### GTD Enforcement
 
-**Subagent contract**: Before modifying any file, the subagent must:
+**Subagent contract**: Before proposing a change for any file, the subagent must:
 
 1. Read the file
 2. Score it using the GTD rubric
 3. If Gold (5+) → return `{file, action: "skipped", reason: "gold_standard", score: N}`
-4. If Solid (3-4) → only fix Critical defects, return `{file, action: "critical_only", fixes: [...]}`
-5. If Shallow (0-2) → proceed with full improvement, return `{file, action: "improved", changes: [...]}`
+4. If Solid (3-4) → only propose Critical defects, return `{file, action: "critical_only", proposals: [...]}`
+5. If Shallow (0-2) → propose a focused improvement, return `{file, action: "proposed", changes: [...]}`
 6. If the file is in the **DO NOT TOUCH** list → return `{file, action: "skipped", reason: "protected"}`
 
 **If a subagent fails to classify or misclassifies, the skill aborts and reports the error.**
@@ -166,15 +184,30 @@ rubric scores them above 5, not because their coverage was judged better.
 
 Launch 3 subagents **simultaneously**. Each returns structured JSON.
 
+**Scanner results are leads, not defects.** Regexes can match valid patterns (for example, a
+`useStore` mock returning `[state, dispatch]` is a valid tuple, and a one-element tuple is only a
+problem if the exercised code reads the missing element). Cleanup can also be provided by shared
+test configuration or harnesses. Before assigning severity or editing, inspect the complete match,
+the test's setup/teardown, the relevant config, and the real source contract. Record confirmed
+findings separately from false positives. Never bulk-fix from match counts alone.
+
+Discovery output must use one shared schema and rubric across all partitions. In the merged
+`triage.json`, include each scanned file's runner/baseline status as `passed`, `failed`, or
+`not-in-baseline`; derive this from runner output, not from the pattern scanner. Missing from a
+report is not equivalent to passing. Keep the protected-file set and severity definitions
+identical across agents. If parallel reports disagree materially, reconcile the scripts and
+definitions before prioritizing fixes.
+
 ### 1A. Test Runner Subagent
 
 ```
-Run: npm test -- --run --reporter=json
+Run: npm test -- --reporter=json
 Return JSON with:
 {
   "totalTests": number,
   "passed": number,
   "failed": number,
+  "testFiles": [{"file": "path", "status": "passed|failed", "passes": number, "failures": number}],
   "errors": [{"file": "path", "test": "name", "error": "message", "line": number}],
   "unhandledErrors": [{"file": "path", "message": "string"}],
   "durationMs": number
@@ -195,7 +228,7 @@ Return JSON with:
 ### 1C. Pattern Scanner Subagent
 
 ```
-Search ALL test files (src/**/__tests__/*.test.{ts,tsx}) for these exact patterns.
+Search ALL in-scope src test files (`src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`) for these patterns.
 Return JSON array of findings: [{"file": "path", "line": number, "pattern": "id", "match": "exact matched text", "severity": "critical|high|medium|low"}]
 
 Patterns to scan (use ripgrep with -n --json):
@@ -205,12 +238,12 @@ CRITICAL — mock shape mismatches:
 2. "vi\\.mock\\([^)]+\\)" inside describe/it block (Vitest 5 hoisting violation)
 3. "beforeEach.*requestAnimationFrame|beforeEach.*cancelAnimationFrame|beforeEach.*Path2D" (global override without fake timers)
 4. "vi\\.stubGlobal\\([^)]+\\)" without corresponding "vi\\.unstubAllGlobals\\(\\)" in afterEach
-5. "useStore\\s*:\\s*\\(\\s*\\)\\s*=>\\s*\\["  (array mock — useStore returns [state, dispatch] tuple)
+5. "useStore\\s*:\\s*\\(\\s*\\)\\s*=>\\s*\\["  (candidate tuple-shape match — inspect whether the exercised code reads a missing element)
 
 CRITICAL — global cleanup hygiene:
-6. "vi\\.restoreAllMocks\\(\\)" in afterEach without "vi\\.useRealTimers\\(\\)" (leaves pending timers)
+6. "vi\\.restoreAllMocks\\(\\)" in a file that also uses fake timers without a verified timer reset in cleanup (candidate only)
 7. "vi\\.useFakeTimers\\(\\)" without "vi\\.useRealTimers\\(\\)" in afterEach
-8. "vi\\.clearAllMocks\\(\\)" or "vi\\.resetAllMocks\\(\\)" without "vi\\.unstubAllGlobals\\(\\)"
+8. "vi\\.stubGlobal\\(" without a verified corresponding global restore (candidate only; mock clearing is unrelated)
 
 HIGH — brittle assertions:
 9. "getAllByRole\\([^)]+\\)\\[\\d+\\]" (indexing into role queries)
@@ -254,19 +287,19 @@ Aggregate findings from all 3 subagents. Group by file and severity.
 | Medium   | Missing keyboard nav                    | Add coverage in Phase 5   |
 | Low      | Style/hygiene/nesting                   | Optional, batch at end    |
 
-**Output**: `triage.json` with `{critical: [], high: [], medium: [], low: []}` each containing `{file, line, pattern, description, fixStrategy}`.
+**Output**: `triage.json` with `{critical: [], high: [], medium: [], low: [], files: []}`. Findings contain `{file, line, pattern, description, fixStrategy}`; `files` contains one entry per scanned test file with `{file, runner, baselineStatus, gtdScore, classification}`. `baselineStatus` is `passed`, `failed`, or `not-in-baseline`; never infer `passed` from absence in runner output.
 
 ---
 
-## Phase 3: Fix Critical Defects (Parallel Subagents, One File Each)
+## Phase 3: Fix Critical Defects (Parallel Read-Only Reviews, One File Each)
 
-**Launch one subagent per critical finding**. Each subagent:
+**Launch one read-only subagent per critical finding**. Each subagent:
 
 1. Reads the test file
-2. Applies the specific fix strategy
-3. Runs `npm test -- --run <file>` to verify
-4. Runs `npm run lint:check` to verify the whole tracked tree
-5. Returns `{file, fixed: true/false, changes: "diff summary", verification: "pass/fail"}`
+2. Proposes the specific fix as a unified diff or exact edit instructions
+3. Returns `{file, fixed: false, proposedChanges: "diff or edit instructions", verification: "not-run"}`
+
+The coordinator applies accepted proposals and runs the file test and lint checks.
 
 ### Fix Strategies by Pattern
 
@@ -366,9 +399,9 @@ afterEach(() => {
 
 ---
 
-## Phase 4: Strengthen Assertions (Parallel Subagents, One File Each)
+## Phase 4: Strengthen Assertions (Parallel Read-Only Reviews, One File Each)
 
-**Launch one subagent per high-severity finding**.
+**Launch one read-only subagent per high-severity finding**. Each returns a focused patch proposal; the coordinator applies accepted proposals and verifies them.
 
 ### Fix Strategies
 
@@ -387,7 +420,7 @@ expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 expect(screen.getByTestId('save-dialog-save-button')).toBeInTheDocument();
 ```
 
-**If no stable accessible name exists**: Add `data-testid` to source component (minimal, semantic name like `save-dialog-backdrop`).
+**If no stable accessible name exists**: Propose a minimal semantic accessibility hook to the coordinator; source edits remain out of scope for this skill.
 
 #### 4.2 Replace Tailwind Class Assertions
 
@@ -422,7 +455,7 @@ expect(screen.getByTitle('Rotate 90° Left')).toBeTruthy();
 
 // GOOD
 expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocument();
-// If title is the only accessible name, add aria-label to source:
+// If title is the only accessible name, propose an aria-label source change separately:
 // <button aria-label="Rotate 90° Left" title="Rotate 90° Left">...</button>
 ```
 
@@ -472,15 +505,15 @@ expect(screen.getByTitle('Rotate 90° Left')).toBeTruthy();
 
 // GOOD — accessible query
 expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocument();
-// If source doesn't have aria-label, add it:
+// If source doesn't have aria-label, propose that source change separately:
 // <button aria-label="Rotate 90° Left" title="Rotate 90° Left">...</button>
 ```
 
-**Evidence**: `Transform.test.tsx` uses `getByTitle` for rotate buttons — `screen.getByTitle('Rotate 90° Left')`. The source likely renders `<button title="Rotate 90° Left">` without `aria-label`. Add `aria-label` to source and use `getByRole`.
+**Evidence**: `Transform.test.tsx` uses `getByTitle` for rotate buttons — `screen.getByTitle('Rotate 90° Left')`. The source likely renders `<button title="Rotate 90° Left">` without `aria-label`. Propose the minimal source accessibility change separately and keep source out of scope for this skill.
 
 ---
 
-## Phase 5: Add Coverage (Parallel Subagents, One Component Each)
+## Phase 5: Add Coverage (Parallel Read-Only Reviews, One Component Each)
 
 **Target components with gaps** (from the Phase 2 triage — an earlier revision of this line named
 `TEST_REVIEW_HANDOFF.md`, which **does not exist** anywhere in this repository, so it sent the reader
@@ -493,19 +526,19 @@ to a file that returns nothing and reads exactly like "no gaps are known"):
 | Format utils (bmp, tiff, ico, gif, svg, avif)                                        | Real round-trip encoding/decoding with pixel assertions                 |
 | SidebarLeft, SidebarRight, ToolbarHorizontal, BottomToolbar, Footer                  | Keyboard nav (ArrowUp/Down, Enter, Space, Escape), focus management     |
 
-### Subagent Template for Coverage
+### Read-Only Subagent Template for Coverage
 
 ```
-Add tests to: <test-file-path>
+Propose tests for: <test-file-path>
 Target: <specific gap from triage>
 Constraints:
-- ONLY modify the test file
+- Only propose test-file changes; do not edit files or run commands
 - Follow existing test patterns in the file
 - Use vi.useFakeTimers() for async
 - Use getByRole/getByLabelText/getByText first
-- Add data-testid to SOURCE only if no accessible query works
+- If no accessible query works, report the smallest needed source change separately; source remains out of scope
 - Test both success and failure paths
-- Run: npm test -- --run <file> && npm run lint:check
+- Return a focused unified diff or exact proposed test cases; do not edit files or run commands. The coordinator applies and verifies accepted changes.
 ```
 
 ### Coverage Patterns from Gold-Standard Tests
@@ -554,7 +587,7 @@ Constraints:
 
 ```bash
 # After ALL fixes applied
-npm test -- --run --reporter=json > /tmp/test-final.json
+npm test -- --reporter=json > /tmp/test-final.json
 npm run lint:check > /tmp/lint-final.txt
 npm run tsc > /tmp/tsc-final.txt
 
@@ -626,26 +659,24 @@ If ANY regression detected:
 4. **NEVER change mock return shapes on Solid-classified files** — If the mock works, don't "fix" it
 5. **NEVER replace exact assertions with loose ones** — `expect(x).toBe(42)` is better than `expect(x).toBeTruthy()` if the value is deterministic
 6. **NEVER delete `it.each` parameterized tests** — These are high-value coverage
-7. **NEVER add `data-testid` to source** unless you have verified no accessible query works AND the source doesn't already have one
+7. If an accessible query cannot work, report the smallest needed source change separately; do not edit source
 8. **NEVER modify source files** — Components, hooks, contexts, utils, styles are off-limits
 9. **NEVER update snapshots** — Without explicit approval
 10. **NEVER remove `vi.mock` calls** — Even if they seem unused; they may be needed for module isolation
 
 ### ✅ Required Actions
 
-**Before modifying ANY file:**
+**Before proposing a change for ANY file:**
 
 1. **Read the file** — Don't assume what's there
-2. **Run the existing tests** — `npm test -- --run <file>` to confirm they pass
+2. **Ask the coordinator to run the existing tests** — `npm test -- <file>` to confirm they pass
 3. **Classify with GTD** — Score using the rubric above
 4. **Check the DO NOT TOUCH list** — If matched, skip
 
-**After modifying:**
+**After the coordinator applies an accepted proposal:**
 
-5. **Run the file's tests** — Must pass with 0 failures
-6. **Run lint on the file** — Must have 0 new errors
-7. **Run the full suite** — Must have 0 new failures vs baseline
-8. **Return structured result** — `{file, action, changes, verification, gtdScore}`
+5. **Coordinator verification** — The coordinator runs the file's tests, lint, and relevant full suite after applying an accepted proposal
+6. **Return structured result** — `{file, action, proposedChanges, verification: "not-run", gtdScore}`
 
 ### 🚨 Red Flags — If You See These, STOP and Report
 
@@ -665,18 +696,18 @@ If ANY regression detected:
 
 ```bash
 # 1. Confirm existing tests pass (before changes)
-npm test -- --run <file>
+npm test -- <file>
 
 # 2. Apply changes
 
 # 3. Confirm modified tests pass
-npm test -- --run <file>
+npm test -- <file>
 
 # 4. Confirm no lint regressions
 npm run lint:check
 
 # 5. Confirm no full-suite regressions
-npm test -- --run
+npm test
 ```
 
 **If step 1 fails** → the file already has failing tests. Report as "pre-existing failure" and skip.
@@ -685,22 +716,20 @@ npm test -- --run
 
 ---
 
-## Known Issues Registry (Pre-loaded)
+## Findings Are Run-Specific
 
-These are tracked across sessions. Update after each run.
+Do not keep a pre-loaded inventory of presumed defects or coverage gaps here. Such lists become
+stale and can turn historical observations into unsafe instructions. Record findings in the
+current run's triage artifact only after re-deriving the file state, GTD score, source contract, and
+runner status. The protected files below remain explicit exceptions regardless of score.
 
-| Issue                  | Files Affected                                                                       | GTD Score     | Status                    |
-| ---------------------- | ------------------------------------------------------------------------------------ | ------------- | ------------------------- |
-| useTheme array mock    | DesktopHeader.test.tsx (was fixed), Main.test.tsx (verify)                           | Solid (6)     | Phase 3 — Critical only   |
-| Fake-timer hygiene     | usePolylineAnts.test.tsx (fixed), check others                                       | Gold (5)      | Phase 3 — Critical only   |
-| Vitest 5 hoisting      | the `SidebarLeft` suites under `src/components/SidebarLeft/__tests__/`, others       | Gold (7)      | Phase 3 — Critical only   |
-| Brittle toolbar tests  | Draw, Transform, Levels, Text, MagicWand, RectangularSelection, FeatherMagneticLasso | Shallow (0-1) | Phase 4 — Safe to improve |
-| Format-utils shallow   | bmp, tiff, ico, gif, svg, avif utils tests                                           | Shallow (0-1) | Phase 5 — Safe to improve |
-| Toolbar negative paths | 7 toolbar components                                                                 | Shallow (0-1) | Phase 5 — Safe to improve |
+Keep current findings only in the run-specific triage artifact; do not treat historical examples
+below as live defects or targets.
 
-## Concrete Evidence from Repo Scan
+## Historical Evidence (Not a Live Triage)
 
-Patterns verified in actual test files (not speculative). GTD scores from the rubric above.
+The following table is a historical snapshot, not a current issue list. Re-check every entry before
+using it; pattern matches and old GTD scores do not establish a defect or justify an edit.
 
 | Pattern                                                           | Where                                                                                                                    | GTD           | Severity | Evidence                                                |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------- | -------- | ------------------------------------------------------- |
@@ -731,11 +760,11 @@ Patterns verified in actual test files (not speculative). GTD scores from the ru
 ## Commands Reference
 
 ```bash
-# Full test run
-npm test -- --run
+# Full src/unit test run (`npm test` already supplies `--run`)
+npm test
 
 # Single file test
-npm test -- --run src/path/to/file.test.tsx
+npm test -- src/path/to/file.test.tsx
 
 # Lint the whole tracked tree (`lint:check` takes no paths)
 npm run lint:check
@@ -743,11 +772,14 @@ npm run lint:check
 # Typecheck
 npm run tsc
 
-# Pattern search (ripgrep)
-rg -n "pattern" src/**/__tests__/
+# Pattern search (ripgrep; includes src/App.test.tsx)
+rg -n --glob '*.test.ts' --glob '*.test.tsx' "pattern" src
 
 # Baseline capture
-npm test -- --run --reporter=json > /tmp/test-baseline.json
+npm test -- --reporter=json > /tmp/test-baseline.json
+# Run separately when these suites are in scope; they are not in the default Vitest baseline.
+npm run test:e2e:unit
+npm run test:e2e
 npm run lint:check > /tmp/lint-baseline.txt 2>&1
 npm run tsc > /tmp/tsc-baseline.txt 2>&1
 ```
@@ -757,8 +789,8 @@ npm run tsc > /tmp/tsc-baseline.txt 2>&1
 ## Constraints (Enforced)
 
 - **NEVER modify source files** (components, hooks, contexts, utils, styles)
-- **Only add data-testid to source** when absolutely necessary for test stability (no accessible alternative)
-- **Prefer subagents** for parallel file fixes
+- **Keep source files out of scope**; report any necessary source change for separate coordinator handling
+- **Prefer read-only subagents** for parallel review and patch proposals; the coordinator applies changes and runs verification
 - **Run verification** after each batch of fixes
 - **Stop immediately** if lint/typecheck/tests fail on previously passing code
 - **No new test files** unless covering entirely untested source module
@@ -773,15 +805,15 @@ To run this skill autonomously:
 ```
 Execute the broad-test-improvement skill:
 1. Run Phase 0 (baseline capture)
-2. Launch Phase 1 subagents in parallel
-3. Aggregate triage.json
-4. Launch Phase 3 subagents for all critical findings (max 5 parallel)
-5. Verify Phase 3 results, run full suite
-6. Launch Phase 4 subagents for all high findings (max 5 parallel)
-7. Verify Phase 4 results, run full suite
-8. Launch Phase 5 subagents for coverage gaps (max 5 parallel)
-9. Verify Phase 5 results, run full suite + lint + typecheck
-10. Generate final report
+2. Launch Phase 1 subagents in parallel with one shared prompt, schema, rubric, and protected-file set
+3. Reconcile disagreements and verify each candidate against source/config before triage
+4. Aggregate confirmed findings; preserve false positives and `not-in-baseline` status
+5. Launch Phase 3 subagents for confirmed critical findings (max 5 parallel)
+6. Verify Phase 3 results and run the relevant full suite
+7. Launch Phase 4 subagents for confirmed high findings (max 5 parallel)
+8. Verify Phase 4 results and run the relevant full suite
+9. Launch Phase 5 subagents for verified coverage gaps (max 5 parallel)
+10. Verify all in-scope runners + lint + typecheck, then generate the final report
 ```
 
 Each phase gates on the previous phase's verification passing.

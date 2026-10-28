@@ -6,6 +6,7 @@ import { DASH_LENGTH, GAP_LENGTH, SPEED } from '../useAnts.ts';
 import {
   ANT_GAP_COLOR,
   ANT_STROKE_COLOR,
+  createSelectionRasterOutlineCanvas,
   type SelectionMarchingAntsProps,
   useSelectionMarchingAnts,
 } from '../useSelectionAnts.ts';
@@ -14,7 +15,8 @@ import {
   publishSelectionDragPreview,
   readSelectionDragPreview,
 } from '../selection-drag-preview.ts';
-import { createMockCanvasContext } from '../../test/setup.ts';
+import { createMockCanvasContext, createPixelCanvasContext } from '../../test/setup.ts';
+import { encodeRasterSelectionMask } from '../../util/selection-mask.ts';
 
 const FRAME: DocumentFrame = { x: 0, y: 0, width: 200, height: 120 };
 const CANVAS_SIZE = { width: 200, height: 120 };
@@ -32,9 +34,11 @@ function polygon(overrides: Partial<Selection> = {}): Selection {
     sourceTool: 'polygonal-lasso',
     pos: { x: 10, y: 20, width: 30, height: 40 },
     points: [
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      { x: 30, y: 40 },
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 40 },
+      ],
     ],
     ...overrides,
   };
@@ -42,7 +46,7 @@ function polygon(overrides: Partial<Selection> = {}): Selection {
 
 function createRafMocks() {
   const frames: Map<number, FrameRequestCallback> = new Map();
-  let nextId = 0;
+  let nextId = 1;
 
   const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
     const id = nextId++;
@@ -379,6 +383,182 @@ describe('useSelectionMarchingAnts', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
+  it('builds and reuses a raster outline canvas for a packed selection', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const mask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, { x: 0, y: 0, width: 1, height: 1 })!;
+
+    const outline = createSelectionRasterOutlineCanvas(mask);
+
+    expect(outline).not.toBeNull();
+    expect(outline?.canvas.width).toBe(3);
+    expect(outline?.canvas.height).toBe(3);
+    expect(outline?.width).toBe(3);
+    expect(outline?.height).toBe(3);
+    expect(createSelectionRasterOutlineCanvas(mask)).toBe(outline);
+    expect(createdCanvases).toHaveLength(1);
+    const imageData = vi.mocked(createdCanvases[0]!.getContext('2d')!.putImageData).mock.calls[0]![0];
+    expect([imageData.data[7], imageData.data[15], imageData.data[19], imageData.data[23], imageData.data[31]]).toEqual(
+      [255, 255, 255, 255, 255]
+    );
+  });
+
+  it('reuses an outline for a new mask object with identical dimensions and packed contents', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const mask = encodeRasterSelectionMask(Uint8Array.of(1, 1, 0, 1), 2, 2, {
+      x: 0,
+      y: 0,
+      width: 2,
+      height: 2,
+    })!;
+    const previewOutline = createSelectionRasterOutlineCanvas(mask);
+    const committedMask = { ...mask };
+
+    const committedOutline = createSelectionRasterOutlineCanvas(committedMask);
+
+    expect(committedMask).not.toBe(mask);
+    expect(committedOutline).toBe(previewOutline);
+    expect(createdCanvases).toHaveLength(1);
+  });
+
+  it('retries a refused full-resolution outline with a smaller bounded display mask', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createdCanvases.length === 0 ? null : createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const mask = encodeRasterSelectionMask(new Uint8Array(8 * 8).fill(1), 8, 8, {
+      x: 0,
+      y: 0,
+      width: 8,
+      height: 8,
+    })!;
+
+    const outline = createSelectionRasterOutlineCanvas(mask);
+
+    expect(createdCanvases).toHaveLength(2);
+    expect(outline?.scaleFactor).toBe(2);
+    expect(outline?.canvas.width).toBe(6);
+    expect(outline?.canvas.height).toBe(6);
+    expect(outline?.width).toBe(10);
+    expect(outline?.height).toBe(10);
+  });
+
+  it('keeps a valid elongated selection outline when the browser rejects tall canvases', () => {
+    const createElement = document.createElement.bind(document);
+    const createdCanvases: HTMLCanvasElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      let height = element.height;
+      Object.defineProperty(element, 'height', {
+        configurable: true,
+        get: () => height,
+        set: (nextHeight: number) => {
+          if (nextHeight > 4_096) throw new Error('canvas dimension limit');
+          height = nextHeight;
+        },
+      });
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      createdCanvases.push(element);
+      return element;
+    }) as typeof document.createElement);
+    const source = new Uint8Array(262_144);
+    source[0] = 1;
+    const mask = encodeRasterSelectionMask(source, 1, source.length, {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: source.length,
+    })!;
+
+    const outline = createSelectionRasterOutlineCanvas(mask);
+
+    expect(outline).not.toBeNull();
+    expect(outline?.scaleFactor).toBe(128);
+    expect(outline?.width).toBe(3);
+    expect(outline?.height).toBe(source.length + 2);
+    expect(createdCanvases.some((canvas) => canvas.height <= 4_096)).toBe(true);
+  });
+
+  it('downsamples outlines whose bordered canvas would exceed the pixel-area budget', () => {
+    const createElement = document.createElement.bind(document);
+    const attemptedDimensions: Array<[number, number]> = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      element.getContext = vi.fn(() => {
+        attemptedDimensions.push([element.width, element.height]);
+        return null;
+      }) as unknown as HTMLCanvasElement['getContext'];
+      return element;
+    }) as typeof document.createElement);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const width = 4_096;
+    const height = 4_096;
+    const encodedLength = Math.ceil(Math.ceil((width * height) / 8) / 3) * 4;
+    const mask = { width, height, data: `QAAA${'A'.repeat(encodedLength - 5)}=` };
+
+    createSelectionRasterOutlineCanvas(mask);
+
+    expect(attemptedDimensions.length).toBeGreaterThan(0);
+    expect(attemptedDimensions[0]).toEqual([2_050, 2_050]);
+    expect(attemptedDimensions.every(([canvasWidth, canvasHeight]) => canvasWidth * canvasHeight <= 16_777_216)).toBe(
+      true
+    );
+  });
+
+  it('marches raster-backed selections without constructing a vector path', () => {
+    const createElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'canvas') return createElement('div');
+      const element = createElement('canvas');
+      const context = createPixelCanvasContext(element);
+      element.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+      return element;
+    }) as typeof document.createElement);
+    const rasterMask = encodeRasterSelectionMask(Uint8Array.of(1), 1, 1, {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    })!;
+    const rasterSelection: Selection = {
+      ...polygon({ id: 'raster-ants', pos: { x: 10, y: 20, width: 1, height: 1 }, points: [] }),
+      rasterMask,
+    };
+    const { ctx } = setup({ selections: [rasterSelection] });
+
+    frame();
+
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 9, 19, 3, 3);
+    expect(rafMocks.frames.size).toBe(1);
+  });
+
   it('converts document points to canvas coordinates through the frame', () => {
     const { ctx } = setup({ documentFrame: { x: 100, y: 50, width: 300, height: 300 } });
     frame();
@@ -401,9 +581,11 @@ describe('useSelectionMarchingAnts', () => {
           id: 'sel-2',
           pos: { x: 60, y: 0, width: 10, height: 10 },
           points: [
-            { x: 0, y: 0 },
-            { x: 10, y: 0 },
-            { x: 10, y: 10 },
+            [
+              { x: 0, y: 0 },
+              { x: 10, y: 0 },
+              { x: 10, y: 10 },
+            ],
           ],
         }),
       ],
@@ -445,7 +627,7 @@ describe('useSelectionMarchingAnts', () => {
 
   it.each([
     ['an inactive selection', { isActive: false }],
-    ['a degenerate selection', { points: [{ x: 0, y: 0 }] }],
+    ['a degenerate selection', { points: [[{ x: 0, y: 0 }]] }],
   ])('ignores %s', (_label, overrides) => {
     const { ctx } = setup({ selections: [polygon(overrides)] });
 
@@ -475,10 +657,12 @@ describe('useSelectionMarchingAnts', () => {
           // `createCommittedRectangleSelection` commits and the only thing that makes this a
           // rectangle rather than the triangle the fixture above describes.
           points: [
-            { x: 0, y: 0 },
-            { x: 30, y: 0 },
-            { x: 30, y: 40 },
-            { x: 0, y: 40 },
+            [
+              { x: 0, y: 0 },
+              { x: 30, y: 0 },
+              { x: 30, y: 40 },
+              { x: 0, y: 40 },
+            ],
           ],
         }),
       ],
@@ -493,6 +677,37 @@ describe('useSelectionMarchingAnts', () => {
     expect(path.lineTo).toHaveBeenCalledWith(40, 60);
     expect(path.lineTo).toHaveBeenCalledWith(10, 60);
     expect(path.closePath).toHaveBeenCalledOnce();
+  });
+
+  it('marches every contour of a multi-contour selection, even a nested hole', () => {
+    const { ctx } = setup({
+      selections: [
+        polygon({
+          id: 'sel-hole',
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 30, y: 0 },
+              { x: 30, y: 40 },
+              { x: 0, y: 40 },
+            ],
+            [
+              { x: 10, y: 10 },
+              { x: 20, y: 10 },
+              { x: 20, y: 20 },
+              { x: 10, y: 20 },
+            ],
+          ],
+        }),
+      ],
+    });
+    frame();
+
+    const path = vi.mocked(ctx.stroke).mock.calls.at(-1)![0] as Path2D;
+    expect(path.moveTo).toHaveBeenCalledTimes(2);
+    expect(path.closePath).toHaveBeenCalledTimes(2);
+    expect(path.moveTo).toHaveBeenNthCalledWith(1, 10, 20);
+    expect(path.moveTo).toHaveBeenNthCalledWith(2, 20, 30);
   });
 
   it('cancels the pending frame and clears the canvas on unmount', () => {

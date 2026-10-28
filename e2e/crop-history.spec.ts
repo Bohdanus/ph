@@ -1,6 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import path from 'node:path';
-import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
 import type { BoundingBox } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
@@ -8,6 +8,7 @@ import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './
 import { clickToolButton } from './helpers/toolbar-helpers';
 import type { DrawToolArgs } from '../src/tools/draw.ts';
 import type { ShapeToolArgs } from '../src/tools/shape.ts';
+import type { TransformToolArgs } from '../src/tools/transform.ts';
 import type { Layer } from '../src/contexts/layer-types.ts';
 
 /**
@@ -164,6 +165,23 @@ interface DocumentSize {
   readonly height: number;
 }
 
+type PixelDifference = {
+  readonly differingBytes: number;
+  readonly differingPixels: number;
+  readonly maxChannelDelta: number;
+  readonly differingSamples: readonly {
+    readonly x: number;
+    readonly y: number;
+    readonly channel: 'r' | 'g' | 'b' | 'a';
+    readonly legacy: number | null;
+    readonly durable: number | null;
+  }[];
+};
+
+function pixelDifferenceSummary(result: PixelDifference): string {
+  return `differingPixels=${result.differingPixels}, maxChannelDelta=${result.maxChannelDelta}, samples=${JSON.stringify(result.differingSamples)}`;
+}
+
 /** The contain fit the APP computed for the CURRENT document, plus the rect it was computed from. */
 interface Fit {
   readonly scale: number;
@@ -176,25 +194,54 @@ interface Fit {
   readonly rectY: number;
   readonly rectWidth: number;
   readonly rectHeight: number;
+  readonly scrollLeft: number;
+  readonly scrollTop: number;
+  readonly viewZoom: number;
+  readonly viewPanX: number;
+  readonly viewPanY: number;
+  readonly viewRotation: number;
 }
 
 /**
  * The app's own contain fit, read from the attributes `usePointerPosition` publishes.
  *
- * `export/visual-regression.spec.ts` already pins the two things this depends on: the container
- * rect equals the canvas rect, and the published `documentWidth`/`documentHeight` are the size
- * the app fitted. Reading the published values rather than calling `containFit` means this file
+ * `export/visual-regression.spec.ts` already pins the two things this depends on: the container's
+ * client viewport equals the canvas CSS box, and the published `documentWidth`/`documentHeight`
+ * are the size the app fitted. Reading the published values rather than calling `containFit` means this file
  * cannot drift from `getLocalCoords` if the fit rule ever changes, which is a change that would
  * otherwise turn every number below into a silently wrong gesture.
  *
  * The attributes are published by the mounted tool area's effect, which React schedules rather
- * than runs inside the tool click, so waiting for the first one removes that race without a sleep.
- * All nine are set in one synchronous block, so the first to exist implies the rest do, and `read`
- * still throws naming any that is missing or non-numeric.
+ * than runs inside the tool click. A populated scale can still be left over from the PREVIOUS
+ * document or container size, so wait until the published document and viewport geometry match
+ * the live canvas before using the fit. `read` then names any missing or non-numeric field.
  */
 async function readFit(page: Page): Promise<Fit> {
   const container = page.getByTestId('workspace-container');
-  await expect(container).toHaveAttribute('data-fit-scale', /.+/);
+  await expect
+    .poll(() =>
+      container.evaluate((node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const canvas = node.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+        if (!canvas) return false;
+        const rect = node.getBoundingClientRect();
+        const clientRect = {
+          left: rect.left + node.clientLeft,
+          top: rect.top + node.clientTop,
+          width: Math.max(0, node.clientWidth + rect.width - (node.offsetWidth || Math.round(rect.width))),
+          height: Math.max(0, node.clientHeight + rect.height - (node.offsetHeight || Math.round(rect.height))),
+        };
+        return (
+          node.getAttribute('data-fit-document-width') === String(canvas.width) &&
+          node.getAttribute('data-fit-document-height') === String(canvas.height) &&
+          node.getAttribute('data-fit-rect-x') === String(clientRect.left) &&
+          node.getAttribute('data-fit-rect-y') === String(clientRect.top) &&
+          node.getAttribute('data-fit-outer-width') === String(clientRect.width) &&
+          node.getAttribute('data-fit-outer-height') === String(clientRect.height)
+        );
+      })
+    )
+    .toBe(true);
   return await container.evaluate((node) => {
     const read = (name: string) => {
       const raw = node.getAttribute(name);
@@ -213,8 +260,31 @@ async function readFit(page: Page): Promise<Fit> {
       rectY: read('data-fit-rect-y'),
       rectWidth: read('data-fit-outer-width'),
       rectHeight: read('data-fit-outer-height'),
+      scrollLeft: Number.isFinite(node.scrollLeft) ? node.scrollLeft : 0,
+      scrollTop: Number.isFinite(node.scrollTop) ? node.scrollTop : 0,
+      viewZoom: read('data-view-effective-zoom'),
+      viewPanX: read('data-view-pan-x'),
+      viewPanY: read('data-view-pan-y'),
+      viewRotation: read('data-view-rotation'),
     };
   });
+}
+
+async function readEffectiveDocumentScale(page: Page): Promise<number> {
+  const fit = await readFit(page);
+  return fit.scale * fit.viewZoom;
+}
+
+async function readEffectiveScaleErrorForFrame(
+  page: Page,
+  expectedFrame: { width: number; height: number },
+  expectedScale: number
+): Promise<number> {
+  const fit = await readFit(page);
+  if (fit.documentWidth !== expectedFrame.width || fit.documentHeight !== expectedFrame.height) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.abs(fit.scale * fit.viewZoom - expectedScale);
 }
 
 /**
@@ -242,10 +312,43 @@ async function documentSize(page: Page): Promise<DocumentSize> {
 
 /** A document point, as an absolute page point. The forward direction of the app's own fit. */
 function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoint {
+  const centerX = fit.rectWidth / 2;
+  const centerY = fit.rectHeight / 2;
+  const relativeX = fit.offsetX + documentX * fit.scale - centerX;
+  const relativeY = fit.offsetY + documentY * fit.scale - centerY;
+  const angle = (fit.viewRotation * Math.PI) / 180;
+  const rotatedX = relativeX * Math.cos(angle) - relativeY * Math.sin(angle);
+  const rotatedY = relativeX * Math.sin(angle) + relativeY * Math.cos(angle);
   return {
-    x: fit.rectX + fit.offsetX + documentX * fit.scale,
-    y: fit.rectY + fit.offsetY + documentY * fit.scale,
+    x: fit.rectX + centerX + fit.viewPanX + fit.viewZoom * rotatedX - fit.scrollLeft,
+    y: fit.rectY + centerY + fit.viewPanY + fit.viewZoom * rotatedY - fit.scrollTop,
   };
+}
+
+/**
+ * Start just outside a real crop corner and rotate 90 degrees clockwise around the visible box
+ * center. CSS-pixel offsets keep the gesture inside the UI's fixed-size rotation hot zone at every
+ * document zoom; a fixed document-space offset silently leaves that hot zone on larger canvases.
+ */
+async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint; end: PagePoint }> {
+  const corner = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
+  const outline = page.getByTestId('crop-selection-outline');
+  await expect(corner, 'the top-left crop handle is rendered').toBeVisible();
+  const cornerBounds = await corner.boundingBox();
+  const outlineBounds = await outline.boundingBox();
+  if (!cornerBounds || !outlineBounds) throw new Error('the crop rotation gesture has no visible bounds');
+
+  const start = {
+    x: cornerBounds.x + cornerBounds.width / 2 - 8,
+    y: cornerBounds.y + cornerBounds.height / 2 - 8,
+  };
+  const center = {
+    x: outlineBounds.x + outlineBounds.width / 2,
+    y: outlineBounds.y + outlineBounds.height / 2,
+  };
+  const dx = start.x - center.x;
+  const dy = start.y - center.y;
+  return { start, end: { x: center.x - dy, y: center.y + dx } };
 }
 
 /**
@@ -352,6 +455,46 @@ async function readCanvasColor(page: Page, x: number, y: number) {
   );
 }
 
+async function readCanvasRegion(page: Page, testId: string, x: number, y: number, width: number, height: number) {
+  return page.getByTestId(testId).evaluate(
+    (canvas, region) => {
+      const context = (canvas as HTMLCanvasElement).getContext('2d');
+      if (!context) throw new Error('Canvas has no 2D context');
+      return Array.from(context.getImageData(region.x, region.y, region.width, region.height).data);
+    },
+    { x, y, width, height }
+  );
+}
+
+/** Wait for the document raster itself to contain no dark ink, independent of crop guides over it. */
+async function waitForNoInkOnWorkspaceCanvas(page: Page): Promise<void> {
+  await expect
+    .poll(() =>
+      getWorkspaceCanvas(page).evaluate((canvas) => {
+        const context = (canvas as HTMLCanvasElement).getContext('2d');
+        if (!context) throw new Error('document canvas has no 2D context');
+        const { width, height } = canvas as HTMLCanvasElement;
+        const { data } = context.getImageData(0, 0, width, height);
+        for (let index = 0; index < data.length; index += 4) {
+          if (data[index + 3] > 0 && data[index] < 80 && data[index + 1] < 80 && data[index + 2] < 80) return false;
+        }
+        return true;
+      })
+    )
+    .toBe(true);
+}
+
+async function readCropGuidePathCoordinates(page: Page): Promise<number[]> {
+  return page
+    .getByTestId('crop-composition-guide')
+    .locator('path')
+    .getAttribute('d')
+    .then((pathData) => {
+      if (!pathData) throw new Error('the crop composition guide has no path');
+      return (pathData.match(/-?(?:\d+\.?\d*|\.\d+)/g) ?? []).map(Number);
+    });
+}
+
 /**
  * That a release really did leave the document, on the edge it claims to have left by.
  *
@@ -363,13 +506,13 @@ async function readCanvasColor(page: Page, x: number, y: number) {
  * document's own edge ON THE PAGE, which is where the two numbers have to be compared.
  */
 function expectReleasePastDocumentEdge(fit: Fit, release: PagePoint, edge: string, what: string): void {
-  const left = fit.rectX + fit.offsetX;
-  const top = fit.rectY + fit.offsetY;
+  const left = documentPoint(fit, 0, 0).x;
+  const top = documentPoint(fit, 0, 0).y;
   const documentEdge = {
     left,
-    right: left + fit.documentWidth * fit.scale,
+    right: documentPoint(fit, fit.documentWidth, 0).x,
     top,
-    bottom: top + fit.documentHeight * fit.scale,
+    bottom: documentPoint(fit, 0, fit.documentHeight).y,
   }[edge];
   if (documentEdge === undefined) throw new Error(`no document edge is named ${edge}`);
 
@@ -397,19 +540,23 @@ function expectReleasePastDocumentEdge(fit: Fit, release: PagePoint, edge: strin
  * that decide it are compared before the gesture, with both of them in the message.
  */
 async function expectDeliverableRelease(page: Page, fit: Fit, release: PagePoint, what: string): Promise<void> {
+  await expectDeliverablePagePoint(page, fit, release, what);
+}
+
+async function expectDeliverablePagePoint(page: Page, fit: Fit, point: PagePoint, what: string): Promise<void> {
   const viewport = page.viewportSize();
   if (!viewport) throw new Error('the page has no viewport');
   const message =
-    `${what}: the release lands on page (${release.x.toFixed(2)}, ${release.y.toFixed(2)}) and the window ` +
+    `${what}: the pointer lands on page (${point.x.toFixed(2)}, ${point.y.toFixed(2)}) and the window ` +
     `is the rectangle [0, 0] ${viewport.width}x${viewport.height}, so a point outside it is not a page point ` +
     `the harness can hand to page.mouse. The workspace container is [${fit.rectX}, ${fit.rectY}] ` +
     `${fit.rectWidth}x${fit.rectHeight}, so the gesture surface — an \`absolute inset-0\` over that container — ` +
     `is reachable from the capture rather than from the pointer, and only the window is the real bound.`;
 
-  expect(release.x, message).toBeGreaterThanOrEqual(0);
-  expect(release.x, message).toBeLessThanOrEqual(viewport.width);
-  expect(release.y, message).toBeGreaterThanOrEqual(0);
-  expect(release.y, message).toBeLessThanOrEqual(viewport.height);
+  expect(point.x, message).toBeGreaterThanOrEqual(0);
+  expect(point.x, message).toBeLessThanOrEqual(viewport.width);
+  expect(point.y, message).toBeGreaterThanOrEqual(0);
+  expect(point.y, message).toBeLessThanOrEqual(viewport.height);
 }
 
 /**
@@ -460,6 +607,137 @@ async function commitCrop(page: Page): Promise<void> {
   const fit = await openCropTool(page);
   await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
   await applyCrop(page);
+}
+
+/** Drag the logarithmic zoom control to an absolute image-pixel magnification. */
+async function setZoomMagnification(page: Page, magnification: number): Promise<void> {
+  await clickToolButton(page, 'zoom');
+  const slider = page.locator('#view-zoom-slider');
+  const target = await slider.evaluate((element, targetMagnification) => {
+    const input = element as HTMLInputElement;
+    const workspace = document.querySelector<HTMLElement>('[data-testid="workspace-container"]');
+    const width = Number(workspace?.getAttribute('data-fit-document-width'));
+    const height = Number(workspace?.getAttribute('data-fit-document-height'));
+    const minimumMagnification = width > 0 && height > 0 ? 1 / Math.max(1, Math.min(width, height)) : 0.1;
+    const rect = input.getBoundingClientRect();
+    const thumbWidth = 16;
+    const minimumPosition = Number(input.min);
+    const maximumPosition = Number(input.max);
+    const currentPosition = Number(input.value);
+    const targetProgress = Math.log(targetMagnification / minimumMagnification) / Math.log(32 / minimumMagnification);
+    const positionToX = (position: number) =>
+      rect.left +
+      thumbWidth / 2 +
+      ((position - minimumPosition) / (maximumPosition - minimumPosition)) * (rect.width - thumbWidth);
+    return {
+      startX: positionToX(currentPosition),
+      targetX: positionToX(minimumPosition + targetProgress * (maximumPosition - minimumPosition)),
+      y: rect.top + rect.height / 2,
+    };
+  }, magnification);
+
+  await page.mouse.move(target.startX, target.y);
+  await page.mouse.down();
+  await page.mouse.move(target.targetX, target.y, { steps: 32 });
+  await page.mouse.up();
+  await expect.poll(() => readEffectiveDocumentScale(page)).toBeCloseTo(magnification, 1);
+}
+
+/** Set the Type bar's own color input, then verify the browser accepted it. */
+async function setTextToolColor(page: Page, hex: string): Promise<void> {
+  await page.evaluate((color) => {
+    const input = document.querySelector<HTMLInputElement>('#text-color');
+    if (!input) throw new Error('the Text toolbar color input is missing');
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+    if (!descriptor?.set) throw new Error('the native input value setter is missing');
+    descriptor.set.call(input, color);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, hex);
+  await expect(page.locator('#text-color')).toHaveValue(hex);
+}
+
+/** Decode the document canvas without repeated Canvas2D getImageData readbacks. */
+async function readWorkspaceRaster(page: Page): Promise<Awaited<ReturnType<typeof loadImageData>>> {
+  const pngBase64 = await getWorkspaceCanvas(page).evaluate((node) => {
+    const canvas = node as HTMLCanvasElement;
+    const png = canvas.toDataURL('image/png');
+    const comma = png.indexOf(',');
+    if (comma < 0) throw new Error('document canvas did not produce a PNG data URL');
+    return png.slice(comma + 1);
+  });
+  return await loadImageData(Buffer.from(pngBase64, 'base64'));
+}
+
+/** Count opaque red pixels in the committed document raster, not the DOM text preview. */
+async function countRedWorkspacePixels(page: Page): Promise<number> {
+  const { data } = await readWorkspaceRaster(page);
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    if (
+      (data[index + 3] ?? 0) > 0 &&
+      (data[index] ?? 0) > 100 &&
+      (data[index + 1] ?? 0) < 100 &&
+      (data[index + 2] ?? 0) < 100
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/** A stable whole-raster fingerprint for text edit undo/redo within the same cropped frame. */
+async function workspaceRasterSignature(page: Page): Promise<string> {
+  const { width, height, data } = await readWorkspaceRaster(page);
+  let hash = 2_166_136_261;
+  for (const byte of data) hash = Math.imul(hash ^ byte, 16_777_619) >>> 0;
+  return `${width}x${height}:${hash}`;
+}
+
+type WorkspaceRaster = Awaited<ReturnType<typeof loadImageData>>;
+type RasterRegion = Readonly<{ x: number; y: number; width: number; height: number }>;
+
+/** Compare exact document pixels after normalizing a crop's changed frame origin. */
+function expectRasterRegionToEqual(
+  expected: WorkspaceRaster,
+  expectedRegion: RasterRegion,
+  actual: WorkspaceRaster,
+  assertionMessage: string
+): void {
+  expect(expectedRegion.x, `${assertionMessage}: source x is an integer`).toBe(Math.trunc(expectedRegion.x));
+  expect(expectedRegion.y, `${assertionMessage}: source y is an integer`).toBe(Math.trunc(expectedRegion.y));
+  expect(expectedRegion.width, `${assertionMessage}: width is an integer`).toBe(Math.trunc(expectedRegion.width));
+  expect(expectedRegion.height, `${assertionMessage}: height is an integer`).toBe(Math.trunc(expectedRegion.height));
+  expect(expectedRegion.x, `${assertionMessage}: source x is inside the original frame`).toBeGreaterThanOrEqual(0);
+  expect(expectedRegion.y, `${assertionMessage}: source y is inside the original frame`).toBeGreaterThanOrEqual(0);
+  expect(
+    expectedRegion.x + expectedRegion.width,
+    `${assertionMessage}: source region fits horizontally`
+  ).toBeLessThanOrEqual(expected.width);
+  expect(
+    expectedRegion.y + expectedRegion.height,
+    `${assertionMessage}: source region fits vertically`
+  ).toBeLessThanOrEqual(expected.height);
+  expect(actual.width, `${assertionMessage}: normalized raster width`).toBe(expectedRegion.width);
+  expect(actual.height, `${assertionMessage}: normalized raster height`).toBe(expectedRegion.height);
+
+  let firstMismatch: string | null = null;
+  for (let y = 0; y < expectedRegion.height && firstMismatch === null; y++) {
+    for (let x = 0; x < expectedRegion.width; x++) {
+      const sourceOffset = ((expectedRegion.y + y) * expected.width + expectedRegion.x + x) * 4;
+      const actualOffset = (y * actual.width + x) * 4;
+      for (let channel = 0; channel < 4; channel++) {
+        const sourceValue = expected.data[sourceOffset + channel];
+        const actualValue = actual.data[actualOffset + channel];
+        if (sourceValue !== actualValue) {
+          firstMismatch = `pixel (${x}, ${y}) channel ${channel}: expected ${sourceValue}, received ${actualValue}`;
+          break;
+        }
+      }
+      if (firstMismatch !== null) break;
+    }
+  }
+  expect(firstMismatch, assertionMessage).toBeNull();
 }
 
 type CropParityFrame = Readonly<{ x: number; y: number; width: number; height: number }>;
@@ -519,11 +797,33 @@ type CropParityTransition = Readonly<{
   nextFrame: CropParityFrame;
 }>;
 
+type CropParityLayerTransform = Readonly<{
+  id: string;
+  layerId: string;
+  args: TransformToolArgs;
+}>;
+
 type CropParityFixture = Readonly<{
   caseName: string;
   documentId: string;
   transitions: readonly CropParityTransition[];
+  layerTransforms?: readonly CropParityLayerTransform[];
+  materializedLayerIds?: readonly string[];
   layers: readonly CropParityLayerFixture[];
+}>;
+
+type CropParityFramePixelSample = Readonly<
+  PixelDifference['differingSamples'][number] & { documentX: number; documentY: number }
+>;
+
+type CropParityLayerComparison = Readonly<{
+  layerId: string;
+  expectedBounds: CropParityFrame;
+  materializedBounds: CropParityFrame;
+  bitmapSize: Readonly<{ width: number; height: number }>;
+  frameDifferingBytes: number;
+  frameDifferingPixels: number;
+  frameDifferingSamples: readonly CropParityFramePixelSample[];
 }>;
 
 async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
@@ -534,10 +834,11 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       { composeDurableDocument },
       { isIdentityAffineTransform, rotationAffineAroundPoint },
       { legacyHistoryToDurable },
-      { drawLayersToCanvas },
+      { drawLayer, drawLayersToCanvas },
+      { evaluatePresentation, retainedPresentationOperations },
       { replayHistory },
       { replayDurableAtCursor },
-      { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION },
+      { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION },
       { findToolProcessor },
     ] = await Promise.all([
       load('/src/contexts/asset-registry.ts'),
@@ -545,6 +846,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       load('/src/contexts/affine-transform.ts'),
       load('/src/contexts/history-adapter.ts'),
       load('/src/contexts/layer-renderer.ts'),
+      load('/src/contexts/presentation-evaluator.ts'),
       load('/src/contexts/history-replay.ts'),
       load('/src/contexts/durable-replay.ts'),
       load('/src/util/constants.ts'),
@@ -642,6 +944,20 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       };
     });
     if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
+    const layerTransforms = fixture.layerTransforms ?? [];
+    let untransformedBaselinePixels: number[] | null = null;
+    if (layerTransforms.length > 0) {
+      const baselineSurface = document.createElement('canvas');
+      const baselineLayers = (layers as unknown as Layer[]).slice().sort((left, right) => left.order - right.order);
+      if (!drawLayersToCanvas(baselineSurface, baselineLayers, baseFrame)) {
+        throw new Error(`Untransformed baseline composition was refused for ${fixture.caseName}`);
+      }
+      const baselineContext = baselineSurface.getContext('2d');
+      if (!baselineContext) throw new Error(`Untransformed baseline produced no 2D context for ${fixture.caseName}`);
+      untransformedBaselinePixels = Array.from(
+        baselineContext.getImageData(0, 0, baseFrame.width, baseFrame.height).data
+      );
+    }
     const transitions = fixture.transitions.map((transition, index) => {
       const frameCenter = {
         x: transition.nextFrame.x + transition.nextFrame.width / 2,
@@ -671,6 +987,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             frame: baseFrame,
           },
         },
+        ...layerTransforms.map(({ id, layerId, args }) => ({
+          id,
+          actionName: TOOL_ACTION,
+          layerId,
+          args,
+        })),
         ...transitions.map(({ id, previousFrame, nextFrame, transform }) => ({
           id,
           actionName: SET_DOCUMENT_FRAME_ACTION,
@@ -687,49 +1009,40 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       if (converted.diagnostics.length > 0) {
         throw new Error(`Durable crop conversion failed: ${JSON.stringify(converted.diagnostics)}`);
       }
-      const transitionResults = [];
-      let finalLegacyPixels: number[] = [];
-      let finalDurablePixels: number[] = [];
-      let finalMaterializedBounds: Record<string, unknown> = {};
-      for (const [index, transition] of transitions.entries()) {
+      const compareAtCursor = async (legacyIndex: number, stage: string) => {
         const legacyReplay = replayHistory(
           history,
-          index + 1,
+          legacyIndex,
           { width: 64, height: 64 },
           {
             createLayer: () => {
-              throw new Error('Unexpected layer creation in a frame-only crop differential');
+              throw new Error('Unexpected layer creation in a crop differential');
             },
             applyRasterTool: (layer: unknown) => layer,
           },
           baseFrame
         );
         if (legacyReplay.diagnostics.length > 0) {
-          throw new Error(`Legacy crop replay failed: ${JSON.stringify(legacyReplay.diagnostics)}`);
+          throw new Error(`Legacy replay failed at ${stage}: ${JSON.stringify(legacyReplay.diagnostics)}`);
         }
         const frame = legacyReplay.documentFrame;
-        if (
-          frame.x !== transition.nextFrame.x ||
-          frame.y !== transition.nextFrame.y ||
-          frame.width !== transition.nextFrame.width ||
-          frame.height !== transition.nextFrame.height
-        ) {
-          throw new Error(`Legacy frame transition ${index + 1} did not reach its requested frame`);
-        }
         const legacySurface = document.createElement('canvas');
         const legacyLayers = (Object.values(legacyReplay.layers) as Layer[]).sort(
           (left, right) => left.order - right.order
         );
         if (!drawLayersToCanvas(legacySurface, legacyLayers, frame)) {
-          throw new Error(`Legacy composition was refused for ${fixture.caseName} at transition ${index + 1}`);
+          throw new Error(`Legacy composition was refused for ${fixture.caseName} at ${stage}`);
         }
         const legacyContext = legacySurface.getContext('2d');
-        if (!legacyContext) throw new Error('Legacy crop composition produced no 2D context');
+        if (!legacyContext) throw new Error(`Legacy composition produced no 2D context at ${stage}`);
         const legacyPixels = Array.from(legacyContext.getImageData(0, 0, frame.width, frame.height).data);
+        const differsFromUntransformed = (pixels: number[]) =>
+          untransformedBaselinePixels !== null &&
+          (pixels.length !== untransformedBaselinePixels.length ||
+            pixels.some((pixel, index) => pixel !== untransformedBaselinePixels[index]));
 
-        const cursor = converted.legacyCursorToDurableCursor[index + 1];
-        if (typeof cursor !== 'number')
-          throw new Error(`Frame transition ${index + 1} did not map to a durable cursor`);
+        const cursor = converted.legacyCursorToDurableCursor[legacyIndex];
+        if (typeof cursor !== 'number') throw new Error(`${stage} did not map to a durable cursor`);
         const replay = replayDurableAtCursor(converted.document, cursor);
         const composite = await composeDurableDocument(replay, {
           documentId: fixture.documentId,
@@ -742,37 +1055,223 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           durableSurface.width = frame.width;
           durableSurface.height = frame.height;
           const durableContext = durableSurface.getContext('2d');
-          if (!durableContext) throw new Error('Durable crop composition produced no 2D context');
+          if (!durableContext) throw new Error(`Durable composition produced no 2D context at ${stage}`);
           durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
           const durablePixels = Array.from(durableContext.getImageData(0, 0, frame.width, frame.height).data);
           let differingBytes = 0;
+          let differingPixels = 0;
+          let lastDifferingPixel = -1;
+          let maxChannelDelta = 0;
+          const differingSamples: PixelDifference['differingSamples'][number][] = [];
+          const channels = ['r', 'g', 'b', 'a'] as const;
           for (let byte = 0; byte < Math.max(legacyPixels.length, durablePixels.length); byte += 1) {
-            if (legacyPixels[byte] !== durablePixels[byte]) differingBytes += 1;
+            const legacy = legacyPixels[byte] ?? null;
+            const durable = durablePixels[byte] ?? null;
+            if (legacy === durable) continue;
+            differingBytes += 1;
+            const pixel = Math.floor(byte / 4);
+            if (pixel !== lastDifferingPixel) {
+              differingPixels += 1;
+              lastDifferingPixel = pixel;
+            }
+            maxChannelDelta = Math.max(
+              maxChannelDelta,
+              legacy === null || durable === null ? 255 : Math.abs(legacy - durable)
+            );
+            if (differingSamples.length < 8) {
+              differingSamples.push({
+                x: pixel % frame.width,
+                y: Math.floor(pixel / frame.width),
+                channel: channels[byte % 4],
+                legacy,
+                durable,
+              });
+            }
           }
           const materializedBounds = Object.fromEntries(
             fixture.layers.map(({ id }) => {
               const layer = composite.layers[id];
-              if (!layer) throw new Error(`Durable crop did not materialize ${id} at transition ${index + 1}`);
+              if (!layer) throw new Error(`Durable composition did not materialize ${id} at ${stage}`);
               return [id, layer.bounds];
             })
           );
-          transitionResults.push({
-            index: index + 1,
-            angleDegrees: transition.angleDegrees,
+          const frameComparisonSurfaces =
+            (fixture.materializedLayerIds?.length ?? 0) > 0
+              ? (() => {
+                  const legacyFrameSurface = document.createElement('canvas');
+                  legacyFrameSurface.width = frame.width;
+                  legacyFrameSurface.height = frame.height;
+                  const legacyFrameContext = legacyFrameSurface.getContext('2d');
+                  const durableFrameSurface = document.createElement('canvas');
+                  durableFrameSurface.width = frame.width;
+                  durableFrameSurface.height = frame.height;
+                  const durableFrameContext = durableFrameSurface.getContext('2d');
+                  if (!legacyFrameContext || !durableFrameContext) {
+                    throw new Error(`Unable to create reusable frame comparison surfaces at ${stage}`);
+                  }
+                  return { legacyContext: legacyFrameContext, durableContext: durableFrameContext };
+                })()
+              : null;
+          const materializedLayerComparisons = (fixture.materializedLayerIds ?? []).map((layerId) => {
+            const legacyLayer = legacyReplay.layers[layerId];
+            const materializedLayer = composite.layers[layerId];
+            if (!legacyLayer || !materializedLayer) {
+              throw new Error(`Missing ${layerId} layer for materialized parity at ${stage}`);
+            }
+
+            const evaluation = evaluatePresentation({
+              position: legacyLayer.pos,
+              sourceSize: { width: legacyLayer.pos.width, height: legacyLayer.pos.height },
+              operations: retainedPresentationOperations(legacyLayer),
+              mode: 'layer-bounds',
+            });
+            const expectedBounds = {
+              x: frame.x + Math.floor(evaluation.bounds.x - frame.x),
+              y: frame.y + Math.floor(evaluation.bounds.y - frame.y),
+              width:
+                Math.ceil(evaluation.bounds.x + evaluation.bounds.width - frame.x) -
+                Math.floor(evaluation.bounds.x - frame.x),
+              height:
+                Math.ceil(evaluation.bounds.y + evaluation.bounds.height - frame.y) -
+                Math.floor(evaluation.bounds.y - frame.y),
+            };
+            if (!frameComparisonSurfaces) throw new Error(`Missing frame comparison surfaces at ${stage}`);
+            const { legacyContext: legacyFrameContext, durableContext: durableFrameContext } = frameComparisonSurfaces;
+            for (const context of [legacyFrameContext, durableFrameContext]) {
+              context.setTransform(1, 0, 0, 1, 0, 0);
+              context.globalAlpha = 1;
+              context.globalCompositeOperation = 'source-over';
+              context.imageSmoothingEnabled = false;
+              context.clearRect(0, 0, frame.width, frame.height);
+            }
+            if (!drawLayer(legacyFrameContext, legacyLayer, frame)) {
+              throw new Error(`Legacy renderer refused ${layerId} frame comparison at ${stage}`);
+            }
+            durableFrameContext.globalAlpha = materializedLayer.opacity;
+            durableFrameContext.globalCompositeOperation = materializedLayer.blendMode;
+            durableFrameContext.drawImage(
+              materializedLayer.bitmap as CanvasImageSource,
+              materializedLayer.bounds.x - frame.x,
+              materializedLayer.bounds.y - frame.y,
+              materializedLayer.bounds.width,
+              materializedLayer.bounds.height
+            );
+            const legacyFramePixels = legacyFrameContext.getImageData(0, 0, frame.width, frame.height).data;
+            const durableFramePixels = durableFrameContext.getImageData(0, 0, frame.width, frame.height).data;
+            const frameChannels = ['r', 'g', 'b', 'a'] as const;
+            let frameDifferingBytes = 0;
+            let frameDifferingPixels = 0;
+            let lastFrameDifferingPixel = -1;
+            const frameDifferingSamples: CropParityFramePixelSample[] = [];
+            for (let byte = 0; byte < legacyFramePixels.length; byte += 1) {
+              const legacy = legacyFramePixels[byte] ?? null;
+              const durable = durableFramePixels[byte] ?? null;
+              if (legacy === durable) continue;
+              frameDifferingBytes += 1;
+              const pixel = Math.floor(byte / 4);
+              if (pixel !== lastFrameDifferingPixel) {
+                frameDifferingPixels += 1;
+                lastFrameDifferingPixel = pixel;
+              }
+              if (frameDifferingSamples.length < 8) {
+                const x = pixel % frame.width;
+                const y = Math.floor(pixel / frame.width);
+                frameDifferingSamples.push({
+                  x,
+                  y,
+                  documentX: frame.x + x,
+                  documentY: frame.y + y,
+                  channel: frameChannels[byte % 4],
+                  legacy,
+                  durable,
+                });
+              }
+            }
+            return {
+              layerId,
+              expectedBounds,
+              materializedBounds: materializedLayer.bounds,
+              bitmapSize: {
+                width: materializedLayer.bitmap.width,
+                height: materializedLayer.bitmap.height,
+              },
+              frameDifferingBytes,
+              frameDifferingPixels,
+              frameDifferingSamples,
+            };
+          });
+          return {
             frame,
             durableFrame: composite.frame,
+            legacyPixels,
+            durablePixels,
+            legacyDiffersFromUntransformed: differsFromUntransformed(legacyPixels),
+            durableDiffersFromUntransformed: differsFromUntransformed(durablePixels),
             legacyByteLength: legacyPixels.length,
             durableByteLength: durablePixels.length,
             differingBytes,
+            differingPixels,
+            maxChannelDelta,
+            differingSamples,
             materializedBounds,
-          });
-          if (index === transitions.length - 1) {
-            finalLegacyPixels = legacyPixels;
-            finalDurablePixels = durablePixels;
-            finalMaterializedBounds = materializedBounds;
-          }
+            materializedLayerComparisons,
+          };
         } finally {
           composite.release();
+        }
+      };
+
+      const layerTransformResults = [];
+      for (const [index, layerTransform] of layerTransforms.entries()) {
+        const result = await compareAtCursor(index + 1, `layer transform ${index + 1}`);
+        layerTransformResults.push({
+          index: index + 1,
+          id: layerTransform.id,
+          layerId: layerTransform.layerId,
+          frame: result.frame,
+          durableFrame: result.durableFrame,
+          differingBytes: result.differingBytes,
+          legacyDiffersFromUntransformed: result.legacyDiffersFromUntransformed,
+          durableDiffersFromUntransformed: result.durableDiffersFromUntransformed,
+          materializedLayerComparisons: result.materializedLayerComparisons,
+        });
+      }
+
+      const transitionResults = [];
+      let finalLegacyPixels: number[] = [];
+      let finalDurablePixels: number[] = [];
+      let finalMaterializedBounds: Record<string, unknown> = {};
+      let finalMaterializedLayerComparisons: CropParityLayerComparison[] = [];
+      for (const [index, transition] of transitions.entries()) {
+        const legacyIndex = layerTransforms.length + index + 1;
+        const result = await compareAtCursor(legacyIndex, `frame transition ${index + 1}`);
+        if (
+          result.frame.x !== transition.nextFrame.x ||
+          result.frame.y !== transition.nextFrame.y ||
+          result.frame.width !== transition.nextFrame.width ||
+          result.frame.height !== transition.nextFrame.height
+        ) {
+          throw new Error(`Legacy frame transition ${index + 1} did not reach its requested frame`);
+        }
+        transitionResults.push({
+          index: index + 1,
+          angleDegrees: transition.angleDegrees,
+          frame: result.frame,
+          durableFrame: result.durableFrame,
+          legacyByteLength: result.legacyByteLength,
+          durableByteLength: result.durableByteLength,
+          differingBytes: result.differingBytes,
+          differingPixels: result.differingPixels,
+          maxChannelDelta: result.maxChannelDelta,
+          differingSamples: result.differingSamples,
+          materializedBounds: result.materializedBounds,
+          materializedLayerComparisons: result.materializedLayerComparisons,
+        });
+        if (index === transitions.length - 1) {
+          finalLegacyPixels = result.legacyPixels;
+          finalDurablePixels = result.durablePixels;
+          finalMaterializedBounds = result.materializedBounds;
+          finalMaterializedLayerComparisons = result.materializedLayerComparisons;
         }
       }
 
@@ -830,8 +1329,13 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         legacyPixels: finalLegacyPixels,
         durablePixels: finalDurablePixels,
         differingBytes: finalTransition.differingBytes,
+        differingPixels: finalTransition.differingPixels,
+        maxChannelDelta: finalTransition.maxChannelDelta,
+        differingSamples: finalTransition.differingSamples,
         colorPresence,
         materializedBounds: finalMaterializedBounds,
+        materializedLayerComparisons: finalMaterializedLayerComparisons,
+        layerTransformResults,
         transitionResults,
       };
     } finally {
@@ -881,6 +1385,7 @@ test.describe('Crop history', () => {
     });
 
     const openingFit = await readFit(page);
+    const openingEffectiveScale = await readEffectiveDocumentScale(page);
     expect(
       { width: openingFit.documentWidth, height: openingFit.documentHeight },
       'the app fitted the opening document, so every coordinate below is an opening-document one'
@@ -908,6 +1413,9 @@ test.describe('Crop history', () => {
       width: COMMITTED_WIDTH,
       height: COMMITTED_HEIGHT,
     });
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, cropped, openingEffectiveScale))
+      .toBeLessThan(0.000001);
 
     // The bar's DOCUMENT position moved with the frame origin, so its strip is read under the
     // POST-CROP fit. Reading it under the opening fit is the bug `bandOfDocumentY` is here to
@@ -915,7 +1423,7 @@ test.describe('Crop history', () => {
     const croppedFit = await readFit(page);
     expect(
       { width: croppedFit.documentWidth, height: croppedFit.documentHeight },
-      'the app re-fitted the CROPPED document, which is why a document-space coordinate is the only stable one'
+      'contain fit follows the new frame dimensions while fit-scale compensation preserves screen-space pixel scale'
     ).toEqual(cropped);
     const keptOnCropped = bandOfDocumentY(croppedFit, BAR_KEPT_Y - CROP_TOP_Y);
     await waitForInk(page, croppedFit, inkIn(keptOnCropped));
@@ -925,6 +1433,9 @@ test.describe('Crop history', () => {
     // leaving the extent cropped, both fail on this line.
     await page.getByTestId('undo-button').click();
     await expect.poll(() => documentSize(page), 'one undo must put the whole frame back').toEqual(opening);
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, opening, openingEffectiveScale))
+      .toBeLessThan(0.000001);
     const restoredFit = await readFit(page);
     expect(
       { width: restoredFit.documentWidth, height: restoredFit.documentHeight },
@@ -935,6 +1446,19 @@ test.describe('Crop history', () => {
       page.getByTestId('undo-button'),
       'the kept bar sits below the crop, so it is still undoable'
     ).toBeEnabled();
+
+    // Redo and undo exercise the same frame transition through history. Neither transition should
+    // change apparent document-pixel size even though contain fit is recomputed for each frame.
+    await page.getByTestId('redo-button').click();
+    await expect.poll(() => documentSize(page), 'redo reapplies the cropped frame').toEqual(cropped);
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, cropped, openingEffectiveScale))
+      .toBeLessThan(0.000001);
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => documentSize(page), 'undo restores the opening frame again').toEqual(opening);
+    await expect
+      .poll(() => readEffectiveScaleErrorForFrame(page, opening, openingEffectiveScale))
+      .toBeLessThan(0.000001);
 
     // AND THE CROP WAS ONE ENTRY, which the disabled state two undos later is the only proof of.
     //
@@ -950,11 +1474,357 @@ test.describe('Crop history', () => {
     // undo, which is only reachable if the crop was exactly one entry above the stroke's one. A
     // crop that committed twice fails at the first of those, not the second.
     await page.getByTestId('undo-button').click();
-    await waitForInk(page, restoredFit, inkIn());
+    await waitForNoInkOnWorkspaceCanvas(page);
     await expect(
       page.getByTestId('undo-button'),
       'two undos from a fresh document reach the opening entry, so the crop was one and the stroke was one'
     ).toBeDisabled();
+  });
+
+  test('zoomed text commits before crop and crop/text history replays keep the transformed view', async ({ page }) => {
+    await openDocument(page);
+    const opening = await documentSize(page);
+    const openingRaster = await readWorkspaceRaster(page);
+    const openingRedPixels = await countRedWorkspacePixels(page);
+    expect(openingRedPixels, 'the new document starts without red text ink').toBe(0);
+
+    await setZoomMagnification(page, 2);
+    const workspace = page.getByTestId('workspace-container');
+    const workspaceBox = await workspace.boundingBox();
+    expect(workspaceBox, 'the workspace has a measurable view surface').not.toBeNull();
+    if (!workspaceBox) return;
+    const viewCenter = { x: workspaceBox.x + workspaceBox.width / 2, y: workspaceBox.y + workspaceBox.height / 2 };
+
+    // Keep zoom active while adding both a pan and a view rotation. The later Text and Crop
+    // gestures are named in document pixels, then projected through the view that the app
+    // publishes; a test that uses raw canvas percentages would silently name different pixels.
+    await clickToolButton(page, 'hand');
+    await page.mouse.move(viewCenter.x - 20, viewCenter.y - 10);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 12, viewCenter.y + 8, { steps: 5 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
+
+    await page.keyboard.press('r');
+    await expect(page.getByRole('button', { name: 'Reset View', exact: true })).toBeVisible();
+    await page.mouse.move(viewCenter.x - 16, viewCenter.y);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 8, viewCenter.y, { steps: 6 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-rotation', '0');
+
+    await clickToolButton(page, 'text');
+    await setTextToolColor(page, '#ff0000');
+    const textFit = await readFit(page);
+    const textAnchor = documentPoint(textFit, opening.width / 2, opening.height / 2);
+    const textOverlay = page.getByTestId('text-edit-overlay');
+    await page.mouse.click(textAnchor.x, textAnchor.y);
+    await expect(textOverlay, 'the zoomed Text click opens an editor').toBeVisible();
+    const placedTextBox = await textOverlay.boundingBox();
+    expect(placedTextBox, 'the zoomed Text editor has screen-space geometry').not.toBeNull();
+    expect(Math.abs(placedTextBox!.x + placedTextBox!.width / 2 - textAnchor.x)).toBeLessThanOrEqual(3);
+    expect(Math.abs(placedTextBox!.y + placedTextBox!.height / 2 - textAnchor.y)).toBeLessThanOrEqual(3);
+    await textOverlay.focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('ZOOM');
+    await expect(textOverlay).toHaveText('ZOOM');
+
+    const documentViewStyle = await page.locator('.zoom-container').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    const textViewStyle = await page.getByTestId('text-edit-view-transform').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    expect(textViewStyle, 'the Type editor and document share zoom, pan, and rotation').toEqual(documentViewStyle);
+
+    // Switching tools must commit the draft before Crop can create its own history entry.
+    await clickToolButton(page, 'crop');
+    await expect(textOverlay, 'leaving Text commits and closes the draft editor').toHaveCount(0);
+    const layers = page.getByTitle('Drag to reorder');
+    await expect(layers, 'the text draft became one editable layer').toHaveCount(2);
+    await expect(page.getByTestId('undo-button'), 'text commit is the first edit').toBeEnabled();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
+    const committedTextPixels = await countRedWorkspacePixels(page);
+    const committedTextRaster = await readWorkspaceRaster(page);
+    expect(committedTextRaster.width, 'the text commit keeps the original raster width').toBe(openingRaster.width);
+    expect(committedTextRaster.height, 'the text commit keeps the original raster height').toBe(openingRaster.height);
+    const magnificationBeforeCrop = await readEffectiveDocumentScale(page);
+
+    const cropFit = await readFit(page);
+    expect(cropFit.viewPanX).not.toBe(0);
+    expect(cropFit.viewRotation).not.toBe(0);
+    const cropRect = { left: 270, top: 220, right: 530, bottom: 380 };
+    await dragOnCanvas(page, cropFit, { x: cropRect.left, y: cropRect.top }, { x: cropRect.right, y: cropRect.bottom });
+
+    // The crop guide is a DOM/SVG preview transformed by the same view matrix as the canvas.
+    // Check all four projected corners so translation, zoom, rotation, and crop coordinates each
+    // have to agree; checking only the stored frame would miss a misaligned visible guide.
+    const pageCorners = [
+      documentPoint(cropFit, cropRect.left, cropRect.top),
+      documentPoint(cropFit, cropRect.right, cropRect.top),
+      documentPoint(cropFit, cropRect.left, cropRect.bottom),
+      documentPoint(cropFit, cropRect.right, cropRect.bottom),
+    ];
+    const expectedGuide = {
+      left: Math.min(...pageCorners.map(({ x }) => x)),
+      top: Math.min(...pageCorners.map(({ y }) => y)),
+      right: Math.max(...pageCorners.map(({ x }) => x)),
+      bottom: Math.max(...pageCorners.map(({ y }) => y)),
+    };
+    const guideBox = await page.getByTestId('crop-composition-guide').boundingBox();
+    expect(guideBox, 'the zoomed crop guide has screen-space geometry').not.toBeNull();
+    expect(Math.abs(guideBox!.x - expectedGuide.left)).toBeLessThanOrEqual(3);
+    expect(Math.abs(guideBox!.y - expectedGuide.top)).toBeLessThanOrEqual(3);
+    expect(Math.abs(guideBox!.x + guideBox!.width - expectedGuide.right)).toBeLessThanOrEqual(3);
+    expect(Math.abs(guideBox!.y + guideBox!.height - expectedGuide.bottom)).toBeLessThanOrEqual(3);
+
+    await applyCrop(page);
+    const cropped = { width: cropRect.right - cropRect.left, height: cropRect.bottom - cropRect.top };
+    await expect.poll(() => documentSize(page), 'Apply commits the exact document-space rectangle').toEqual(cropped);
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
+      .toBeLessThan(0.000001);
+    await expect
+      .poll(() => countRedWorkspacePixels(page), 'cropping around the text preserves its committed ink')
+      .toBe(committedTextPixels);
+    const croppedTextRaster = await readWorkspaceRaster(page);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      croppedTextRaster,
+      'crop preserves every committed point-text pixel at its shifted frame origin'
+    );
+
+    const replayView = {
+      panX: await workspace.getAttribute('data-view-pan-x'),
+      panY: await workspace.getAttribute('data-view-pan-y'),
+      rotation: await workspace.getAttribute('data-view-rotation'),
+    };
+    expect(replayView.panX, 'the transformed view has a horizontal pan').not.toBeNull();
+    expect(replayView.panY, 'the transformed view has a vertical pan').not.toBeNull();
+    expect(replayView.rotation, 'the transformed view has a rotation').not.toBeNull();
+    const expectReplayView = async (historyStep: string) => {
+      await expect(workspace, `${historyStep} preserves horizontal pan`).toHaveAttribute(
+        'data-view-pan-x',
+        replayView.panX!
+      );
+      await expect(workspace, `${historyStep} preserves vertical pan`).toHaveAttribute(
+        'data-view-pan-y',
+        replayView.panY!
+      );
+      await expect(workspace, `${historyStep} preserves canvas rotation`).toHaveAttribute(
+        'data-view-rotation',
+        replayView.rotation!
+      );
+    };
+
+    // Text then crop are two ordered history entries. Undoing crop retains the text and its
+    // magnification; undoing text removes only that layer. Redo must reproduce the same raster at
+    // each frame without recording zoom, pan, or view rotation in the document timeline.
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => documentSize(page), 'one undo restores the full document frame').toEqual(opening);
+    await expectReplayView('crop undo');
+    await expect(layers).toHaveCount(2);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'crop undo restores the exact full-frame point-text raster'
+    );
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
+      .toBeLessThan(0.000001);
+
+    await page.getByTestId('undo-button').click();
+    await expect(layers, 'the next undo removes the text entry, not the view state').toHaveCount(1);
+    await expectReplayView('text undo');
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(openingRedPixels);
+    expectRasterRegionToEqual(
+      openingRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'text undo restores the exact opening raster'
+    );
+    await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
+    await expect(workspace).not.toHaveAttribute('data-view-rotation', '0');
+
+    await page.getByTestId('redo-button').click();
+    await expect(layers).toHaveCount(2);
+    await expectReplayView('text redo');
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: 0, y: 0, width: opening.width, height: opening.height },
+      await readWorkspaceRaster(page),
+      'text redo reproduces the exact committed point-text raster'
+    );
+    await page.getByTestId('redo-button').click();
+    await expect.poll(() => documentSize(page), 'redo restores the cropped frame').toEqual(cropped);
+    await expectReplayView('crop redo');
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      committedTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'crop redo reproduces the exact cropped point-text raster'
+    );
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - magnificationBeforeCrop))
+      .toBeLessThan(0.000001);
+
+    // The crop shifted the document origin. Re-entering Type at the correspondingly shifted
+    // point must find the original vector-backed text layer, not place a second layer elsewhere.
+    await clickToolButton(page, 'text');
+    const croppedFit = await readFit(page);
+    const croppedTextAnchor = documentPoint(
+      croppedFit,
+      opening.width / 2 - cropRect.left,
+      opening.height / 2 - cropRect.top
+    );
+    await page.mouse.click(croppedTextAnchor.x, croppedTextAnchor.y);
+    await expect(textOverlay, 'the cropped text remains editable after redo').toHaveText('ZOOM');
+    const reenteredTextBox = await textOverlay.boundingBox();
+    expect(reenteredTextBox, 're-entered text has screen-space geometry').not.toBeNull();
+    expect(croppedTextAnchor.x).toBeGreaterThanOrEqual(reenteredTextBox!.x - 2);
+    expect(croppedTextAnchor.x).toBeLessThanOrEqual(reenteredTextBox!.x + reenteredTextBox!.width + 2);
+    expect(croppedTextAnchor.y).toBeGreaterThanOrEqual(reenteredTextBox!.y - 2);
+    expect(croppedTextAnchor.y).toBeLessThanOrEqual(reenteredTextBox!.y + reenteredTextBox!.height + 2);
+    await expect(layers, 'editing the cropped source must not duplicate its layer').toHaveCount(2);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(textOverlay).toHaveCount(0);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(committedTextPixels);
+    expectRasterRegionToEqual(
+      croppedTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'cancelling a re-entered text edit leaves the cropped raster unchanged'
+    );
+  });
+
+  test('paragraph Type keeps its edited source through a zoomed crop and text undo/redo', async ({ page }) => {
+    await openDocument(page);
+    const opening = await documentSize(page);
+    expect(opening).toEqual({ width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT });
+    await setZoomMagnification(page, 2);
+    await clickToolButton(page, 'text');
+    await setTextToolColor(page, '#ff0000');
+    await page.locator('#font-size-input').fill('48');
+    await expect(page.locator('#font-size-input')).toHaveValue('48');
+
+    const textFit = await readFit(page);
+    await dragOnCanvas(page, textFit, { x: 250, y: 220 }, { x: 550, y: 400 }, 14);
+    const textOverlay = page.getByTestId('text-edit-overlay');
+    await expect(textOverlay, 'the zoomed drag creates a paragraph editor').toBeVisible();
+    await expect(textOverlay).toHaveAttribute('data-text-kind', 'paragraph');
+    await textOverlay.focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('PARAGRAPH TYPE');
+    await expect(textOverlay).toHaveText('PARAGRAPH TYPE');
+
+    // As above, selecting Crop commits the active Type source first. The crop leaves room around
+    // the entire paragraph box, so pixel comparison below distinguishes coordinate drift from an
+    // intentional crop of glyphs at the frame edge.
+    await clickToolButton(page, 'crop');
+    await expect(textOverlay).toHaveCount(0);
+    const layers = page.getByTitle('Drag to reorder');
+    await expect(layers).toHaveCount(2);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
+    const originalTextPixels = await countRedWorkspacePixels(page);
+    const originalTextRaster = await readWorkspaceRaster(page);
+    const originalMagnification = await readEffectiveDocumentScale(page);
+
+    const cropRect = { left: 220, top: 180, right: 580, bottom: 420 };
+    const cropFit = await readFit(page);
+    await dragOnCanvas(page, cropFit, { x: cropRect.left, y: cropRect.top }, { x: cropRect.right, y: cropRect.bottom });
+    await applyCrop(page);
+    const cropped = { width: cropRect.right - cropRect.left, height: cropRect.bottom - cropRect.top };
+    await expect.poll(() => documentSize(page)).toEqual(cropped);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(originalTextPixels);
+    const croppedOriginalTextRaster = await readWorkspaceRaster(page);
+    expectRasterRegionToEqual(
+      originalTextRaster,
+      { x: cropRect.left, y: cropRect.top, width: cropped.width, height: cropped.height },
+      croppedOriginalTextRaster,
+      'crop preserves every committed paragraph-text pixel at its shifted frame origin'
+    );
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - originalMagnification))
+      .toBeLessThan(0.000001);
+    const originalTextSignature = await workspaceRasterSignature(page);
+
+    // The old text box is now [30,40]-[330,220] in the cropped document. Click inside its first
+    // line after the frame and fit have changed, then edit through the original source layer.
+    await clickToolButton(page, 'text');
+    const croppedFit = await readFit(page);
+    const textHit = documentPoint(croppedFit, 60, 65);
+    await page.mouse.click(textHit.x, textHit.y);
+    await expect(textOverlay, 'the cropped paragraph remains editable under zoom').toHaveText('PARAGRAPH TYPE');
+    await expect(textOverlay).toHaveAttribute('data-text-kind', 'paragraph');
+    const editBox = await textOverlay.boundingBox();
+    expect(editBox, 'the cropped paragraph editor has screen-space geometry').not.toBeNull();
+    expect(textHit.x).toBeGreaterThanOrEqual(editBox!.x - 2);
+    expect(textHit.x).toBeLessThanOrEqual(editBox!.x + editBox!.width + 2);
+    expect(textHit.y).toBeGreaterThanOrEqual(editBox!.y - 2);
+    expect(textHit.y).toBeLessThanOrEqual(editBox!.y + editBox!.height + 2);
+
+    await textOverlay.focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('AFTER CROP');
+    await expect(textOverlay).toHaveText('AFTER CROP');
+    await page.getByRole('button', { name: 'Commit', exact: true }).click();
+    await expect(textOverlay).toHaveCount(0);
+    await expect(layers, 'editing changes the source in place, not by adding another layer').toHaveCount(2);
+    await expect.poll(() => countRedWorkspacePixels(page)).toBeGreaterThan(20);
+    const editedTextPixels = await countRedWorkspacePixels(page);
+    const editedTextRaster = await readWorkspaceRaster(page);
+    const editedTextSignature = await workspaceRasterSignature(page);
+    expect(editedTextSignature, 'the committed replacement produces a different text raster').not.toBe(
+      originalTextSignature
+    );
+
+    await clickToolButton(page, 'zoom');
+    await page.getByTestId('undo-button').click();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(originalTextPixels);
+    await expect.poll(() => workspaceRasterSignature(page)).toBe(originalTextSignature);
+    expectRasterRegionToEqual(
+      croppedOriginalTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'text undo restores every pixel of the cropped original paragraph'
+    );
+    await expect.poll(() => documentSize(page)).toEqual(cropped);
+    await expect
+      .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - originalMagnification))
+      .toBeLessThan(0.000001);
+
+    await clickToolButton(page, 'text');
+    const undoFit = await readFit(page);
+    const undoHit = documentPoint(undoFit, 60, 65);
+    await page.mouse.click(undoHit.x, undoHit.y);
+    await expect(textOverlay).toHaveText('PARAGRAPH TYPE');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+    await page.getByTestId('redo-button').click();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(editedTextPixels);
+    await expect.poll(() => workspaceRasterSignature(page)).toBe(editedTextSignature);
+    expectRasterRegionToEqual(
+      editedTextRaster,
+      { x: 0, y: 0, width: cropped.width, height: cropped.height },
+      await readWorkspaceRaster(page),
+      'text redo reproduces every pixel of the edited cropped paragraph'
+    );
+    await clickToolButton(page, 'text');
+    const redoFit = await readFit(page);
+    const redoHit = documentPoint(redoFit, 60, 65);
+    await page.mouse.click(redoHit.x, redoHit.y);
+    await expect(textOverlay).toHaveText('AFTER CROP');
+    await expect(layers, 'redo keeps the same editable text layer').toHaveCount(2);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect.poll(() => countRedWorkspacePixels(page)).toBe(editedTextPixels);
+    expect(await documentSize(page), 'text edit replay does not change the crop frame').toEqual(cropped);
   });
 
   test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back', async ({ page }) => {
@@ -980,48 +1850,29 @@ test.describe('Crop history', () => {
     // frame" from "the crop erased pixels": a destructive crop would leave the canvas clean for a
     // reason that no undo could repair.
     const croppedFit = await readFit(page);
-    await waitForInk(page, croppedFit, inkIn());
+    await waitForNoInkOnWorkspaceCanvas(page);
 
     // A bar INSIDE the cropped frame, on the cropped document's own coordinates and committed on
     // top of the crop. Its frame-relative height is `BAR_KEPT_Y - CROP_TOP_Y` because the crop
     // moved the frame's ORIGIN and not only its size: what renders at frame height 102 is layer
     // content at document height 372.
     const keptAfterCrop = BAR_KEPT_Y - CROP_TOP_Y;
-    await drawBar(page, croppedFit, keptAfterCrop);
+    const afterBarBand = await drawBar(page, croppedFit, keptAfterCrop);
     const afterBar = await documentSize(page);
     expect(afterBar, 'a stroke on a cropped document must not move the frame again').toEqual({
       width: COMMITTED_WIDTH,
       height: COMMITTED_HEIGHT,
     });
+    await waitForInk(page, croppedFit, inkIn(afterBarBand));
 
-    // ------------------------------------------------------------------------------------
-    // NO INK ASSERTION ON THAT BAR, AND THE OMISSION IS A DECLARED DEFECT, NOT A LOOPHOLE.
-    //
-    // A stroke committed on a CROPPED document writes a history entry and renders NOTHING. The
-    // dark-pixel bounds of the whole canvas are byte-identical before and after it, measured at
-    // frame heights 60, 150 and 240 and again by sweeping four heights across the raw element, so
-    // this is not a coordinate mistake in this file: the ink lands outside the layer raster the
-    // post-crop frame leaves behind. `usePaintStroke` records the point in DOCUMENT space
-    // (`canvasToDocumentPoint`), which after a crop is not the space the layer is positioned in.
-    //
-    // Asserting the missing ink would be a PIN, and a pin is a deliberate declaration that a
-    // defect exists — which belongs beside the defect, in a document this step does not own, and
-    // which the fix must remove in the same change. Shipping it inside a gate test would put a
-    // permanently red assertion into CI, which is the same move as skipping it with the polarity
-    // reversed. So the ordering property below is asserted on the FRAME and on the timeline, which
-    // is what S10 is chartered to assert and what the defect does not touch, and the pixel half is
-    // left for the fix to enable.
-    // ------------------------------------------------------------------------------------
-
-    // ONE UNDO. This is the ordering assertion nothing else in the suite makes: the frame commit
-    // and the pixel commit are two entries, and the undo must take the LATER one. A replay that
-    // ordered them the other way round, or a cursor that moved by two, fails on the frame read.
+    // One undo removes the visible post-crop stroke without changing the frame.
     await page.getByTestId('undo-button').click();
     const afterUndo = await documentSize(page);
     expect(afterUndo, 'the crop must survive an undo of the bar drawn after it').toEqual({
       width: COMMITTED_WIDTH,
       height: COMMITTED_HEIGHT,
     });
+    await waitForInk(page, croppedFit, inkIn());
     await expect(
       page.getByTestId('undo-button'),
       'the crop entry is still below this undo, so the frame commit was not the one taken'
@@ -1112,6 +1963,648 @@ test.describe('Crop history', () => {
    */
   test.describe('with letterbox to release into', () => {
     test.use({ viewport: { width: 1600, height: 1400 } });
+
+    test('re-cropping after layer edits previews and recovers retained pixels without scaling', async ({ page }) => {
+      await openDocument(page);
+      const openingFit = await readFit(page);
+      const openingEffectiveScale = await readEffectiveDocumentScale(page);
+      const recoverableBarY = CROP_TOP_Y - 20;
+      await drawBar(page, openingFit, recoverableBarY);
+      await waitForInk(page, openingFit, inkIn(bandOfDocumentY(openingFit, recoverableBarY)));
+      const sourcePixels = await readCanvasRegion(page, 'workspace-canvas', 350, recoverableBarY - 6, 100, 12);
+      await commitCrop(page);
+      expect(await documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT });
+      await expect
+        .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - openingEffectiveScale))
+        .toBeLessThan(0.000001);
+
+      // A pixel edit after cropping, followed by visibility history, must not discard retained
+      // source pixels outside the frame or break the next crop's layer-stack preview.
+      const croppedFit = await readFit(page);
+      const editedBand = await drawBar(page, croppedFit, 100);
+      await waitForInk(page, croppedFit, inkIn(editedBand));
+      await page.getByTestId('panel-header-layers').click();
+      const layer = page.getByTestId('layer-row').first();
+      await layer.getByRole('button', { name: 'Hide layer' }).click();
+      await layer.getByRole('button', { name: 'Show layer' }).click();
+
+      // Crop stays active after Apply; leave it and re-enter to exercise Photoshop's crop-box
+      // recovery rather than merely reusing the first pending gesture.
+      await clickToolButton(page, 'move');
+      const recropFit = await openCropTool(page);
+      const topEdge = documentPoint(recropFit, recropFit.documentWidth / 2, 0);
+      const expandedTop = documentPoint(recropFit, recropFit.documentWidth / 2, -30);
+      await page.mouse.move(topEdge.x, topEdge.y);
+      await page.mouse.down();
+      await page.mouse.move(expandedTop.x, expandedTop.y, { steps: 10 });
+
+      const preview = page.getByTestId('crop-retained-pixels-preview');
+      await expect(preview, 'the crop preview renders previously hidden layer pixels before release').toBeVisible();
+      const previewPixels = await readCanvasRegion(page, 'crop-retained-pixels-preview', 350, 244, 100, 12);
+      expect(previewPixels, 'the recovered pixels remain identical before applying the expanded frame').toEqual(
+        sourcePixels
+      );
+      await page.mouse.up();
+
+      await expect(page.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled();
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT + 30 });
+      const recoveredPixels = await readCanvasRegion(page, 'workspace-canvas', 270, 4, 100, 12);
+      expect(recoveredPixels, 'the committed crop restores the original raster region without resampling').toEqual(
+        sourcePixels
+      );
+      await expect
+        .poll(async () => Math.abs((await readEffectiveDocumentScale(page)) - openingEffectiveScale))
+        .toBeLessThan(0.000001);
+    });
+
+    test('reselecting Crop shows retained pixels under the dim and widening restores the original raster', async ({
+      page,
+    }, testInfo) => {
+      await openDocument(page);
+      await openRasterFixture(page, testInfo.config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      const originalPixels = await readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64);
+      expect(await readCanvasColor(page, 1, 20)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      let retainedRedSourcePixelCount = 0;
+      for (let y = 0; y < 64; y += 1) {
+        for (let x = 0; x < 4; x += 1) {
+          const index = (y * 64 + x) * 4;
+          if (originalPixels[index] === 255 && originalPixels[index + 1] === 0 && originalPixels[index + 2] === 0)
+            retainedRedSourcePixelCount += 1;
+        }
+      }
+      expect(
+        retainedRedSourcePixelCount,
+        'the known retained left margin contains a broad red source region'
+      ).toBeGreaterThan(128);
+
+      const initialFit = await openCropTool(page);
+      await dragOnCanvas(page, initialFit, { x: 4, y: 4 }, { x: 60, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 56, height: 56 });
+
+      // Selecting Crop again must reveal the retained source immediately, before a handle moves.
+      await clickToolButton(page, 'move');
+      const recropFit = await openCropTool(page);
+      const preview = page.getByTestId('crop-retained-pixels-preview');
+      await expect(preview, 're-entering Crop exposes the original off-frame pixels').toBeVisible();
+      expect(await readCanvasRegion(page, 'crop-retained-pixels-preview', 1, 20, 1, 1)).toEqual([255, 0, 0, 255]);
+      const retainedOutsideFrame = await readCanvasRegion(page, 'crop-retained-pixels-preview', 0, 0, 64, 64);
+      const currentFramePixels = await readCanvasRegion(page, 'workspace-canvas', 0, 0, 56, 56);
+      const recoveredOpeningFrame: number[] = [];
+      for (let y = 0; y < 64; y += 1) {
+        for (let x = 0; x < 64; x += 1) {
+          // The preview canvas intentionally clears the currently visible 56×56 frame to avoid
+          // drawing semi-transparent layers twice. Reconstruct the whole opening image from that
+          // current frame and the retained pixels around it.
+          const inCurrentFrame = x >= 4 && x < 60 && y >= 4 && y < 60;
+          const source = inCurrentFrame ? currentFramePixels : retainedOutsideFrame;
+          const offset = inCurrentFrame ? ((y - 4) * 56 + (x - 4)) * 4 : (y * 64 + x) * 4;
+          recoveredOpeningFrame.push(...source.slice(offset, offset + 4));
+        }
+      }
+      expect(
+        recoveredOpeningFrame,
+        'the current frame and retained preview together reproduce every original raster pixel'
+      ).toEqual(originalPixels);
+      await testInfo.attach('crop-reentry-retained-pixels-under-dim', {
+        body: await page.screenshot({ scale: 'css' }),
+        contentType: 'image/png',
+      });
+
+      // Read a screenshot of the actual retained red margin, using the dim layer's measured DOM
+      // bounds instead of a hand-reconstructed page coordinate. This catches a good canvas buffer
+      // hidden beneath a missing or misplaced blend in the rendered UI.
+      const retainedDims = page.getByTestId('crop-retained-pixels-dim');
+      const workspaceBounds = await getWorkspaceCanvas(page).boundingBox();
+      if (!workspaceBounds) throw new Error('the workspace canvas has no visible bounds');
+      const dimCount = await retainedDims.count();
+      const dimBounds = await Promise.all(
+        Array.from({ length: dimCount }, (_, index) => retainedDims.nth(index).boundingBox())
+      );
+      const redRetainedMargin = dimBounds.find(
+        (bounds) =>
+          bounds &&
+          bounds.height > bounds.width * 4 &&
+          bounds.x + bounds.width / 2 < workspaceBounds.x + workspaceBounds.width / 2
+      );
+      if (!redRetainedMargin) throw new Error('the retained red margin has no rendered dim layer');
+      const clip = {
+        x: Math.floor(redRetainedMargin.x),
+        y: Math.floor(redRetainedMargin.y),
+        width: Math.ceil(redRetainedMargin.x + redRetainedMargin.width) - Math.floor(redRetainedMargin.x),
+        height: Math.ceil(redRetainedMargin.y + redRetainedMargin.height) - Math.floor(redRetainedMargin.y),
+      };
+      const rendered = await loadImageData(await page.screenshot({ clip, scale: 'css' }));
+      let blendedRedPixelCount = 0;
+      for (let index = 0; index < rendered.data.length; index += 4) {
+        const [red, green, blue] = rendered.data.slice(index, index + 3);
+        if (red > 60 && red < 95 && green < 10 && blue < 10) blendedRedPixelCount += 1;
+      }
+      expect(
+        blendedRedPixelCount,
+        'a meaningful part of the known retained red margin is visible through the crop selection’s 70% black blend'
+      ).toBeGreaterThan(rendered.width * rendered.height * 0.5);
+
+      // Grow all four crop edges back to the original image bounds, then prove the full raster is
+      // byte-identical to what was on the canvas before the first crop.
+      await dragOnCanvas(page, recropFit, { x: 0, y: 28 }, { x: -4, y: 28 });
+      await dragOnCanvas(page, recropFit, { x: 56, y: 28 }, { x: 60, y: 28 });
+      await dragOnCanvas(page, recropFit, { x: 28, y: 0 }, { x: 28, y: -4 });
+      await dragOnCanvas(page, recropFit, { x: 28, y: 56 }, { x: 28, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      await expect.poll(() => readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64)).toEqual(originalPixels);
+      await testInfo.attach('crop-reentry-restored-original-raster', {
+        body: await page.screenshot({ scale: 'css' }),
+        contentType: 'image/png',
+      });
+    });
+
+    test('resizing a re-entered crop updates its full-frame grid and keeps the preview allocation fixed', async ({
+      page,
+    }, testInfo) => {
+      await openDocument(page);
+      await openRasterFixture(page, testInfo.config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+
+      const openingFit = await openCropTool(page);
+      await dragOnCanvas(page, openingFit, { x: 4, y: 4 }, { x: 60, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 56, height: 56 });
+
+      await clickToolButton(page, 'move');
+      const fit = await openCropTool(page);
+      const workspaceCanvas = getWorkspaceCanvas(page);
+      const workspaceBoundsAtEntry = await workspaceCanvas.boundingBox();
+      if (!workspaceBoundsAtEntry) throw new Error('the workspace canvas has no visible bounds');
+      const documentPixelsAtEntry = await readCanvasRegion(page, 'workspace-canvas', 0, 0, 56, 56);
+      const expectDocumentStationary = async (phase: string) => {
+        expect(
+          await readCanvasRegion(page, 'workspace-canvas', 0, 0, 56, 56),
+          `${phase}: resizing or moving the crop box must leave document pixels unchanged`
+        ).toEqual(documentPixelsAtEntry);
+        const bounds = await workspaceCanvas.boundingBox();
+        if (!bounds) throw new Error(`${phase}: the workspace canvas lost its visible bounds`);
+        expect(bounds.x, `${phase}: the workspace canvas must not move horizontally`).toBeCloseTo(
+          workspaceBoundsAtEntry.x,
+          5
+        );
+        expect(bounds.y, `${phase}: the workspace canvas must not move vertically`).toBeCloseTo(
+          workspaceBoundsAtEntry.y,
+          5
+        );
+        expect(bounds.width, `${phase}: the workspace canvas must not resize horizontally`).toBeCloseTo(
+          workspaceBoundsAtEntry.width,
+          5
+        );
+        expect(bounds.height, `${phase}: the workspace canvas must not resize vertically`).toBeCloseTo(
+          workspaceBoundsAtEntry.height,
+          5
+        );
+      };
+      const preview = page.getByTestId('crop-retained-pixels-preview');
+      const previewBacking = await preview.evaluate((canvas) => ({
+        width: (canvas as HTMLCanvasElement).width,
+        height: (canvas as HTMLCanvasElement).height,
+      }));
+      const cropOutline = page.getByTestId('crop-selection-outline');
+      const guide = page.getByTestId('crop-composition-guide');
+      const rotationHandle = page.getByTestId('crop-rotation-handle');
+      await expect(cropOutline).toBeVisible();
+      await expect(guide).toBeVisible();
+      await expect(
+        rotationHandle,
+        'the full-frame rotation grip stays visible beyond the old frame edge'
+      ).toBeVisible();
+      const openingGuidePath = guide.locator('path');
+      expect(await openingGuidePath.getAttribute('stroke')).toMatch(/^rgba?\(/);
+      expect(Number(await openingGuidePath.getAttribute('stroke-width'))).toBeGreaterThan(0);
+
+      // Widen both dimensions of the full-frame crop. Use the center of each edge so the gesture
+      // cannot be classified as the nearby rotation hot zone at an exact corner coordinate.
+      const resizedFrameSize = 60;
+      const rightPress = documentPoint(fit, fit.documentWidth, fit.documentHeight / 2);
+      const resizedRight = documentPoint(fit, resizedFrameSize, 28);
+      await expectDeliverablePagePoint(page, fit, rightPress, 'the right-edge press point');
+      await expectDeliverableRelease(page, fit, resizedRight, 'the right-edge resize point');
+      await dragOnCanvas(
+        page,
+        fit,
+        { x: fit.documentWidth, y: fit.documentHeight / 2 },
+        { x: resizedFrameSize, y: 28 }
+      );
+      const bottomEdge = documentPoint(fit, 40, fit.documentHeight);
+      const intermediateBottom = documentPoint(fit, 40, 58);
+      const resizedBottom = documentPoint(fit, 40, resizedFrameSize);
+      await expectDeliverablePagePoint(page, fit, bottomEdge, 'the bottom-edge press point');
+      await expectDeliverableRelease(page, fit, resizedBottom, 'the bottom-edge resize point');
+      await page.mouse.move(bottomEdge.x, bottomEdge.y);
+      await page.mouse.down();
+      await page.mouse.move(intermediateBottom.x, intermediateBottom.y);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          })
+      );
+      await expectDocumentStationary('during re-entered crop resize');
+      const intermediateScreenshot = await page.screenshot({ scale: 'css' });
+      const intermediatePixels = await loadImageData(intermediateScreenshot);
+      const intermediateGuideBounds = await guide.boundingBox();
+      if (!intermediateGuideBounds) throw new Error('the resized grid did not repaint within two animation frames');
+      expect(intermediateGuideBounds.width).toBeCloseTo(resizedFrameSize * fit.scale * fit.viewZoom, 0);
+      expect(intermediateGuideBounds.height).toBeCloseTo(58 * fit.scale * fit.viewZoom, 0);
+      const intermediateGuideCoordinates = await readCropGuidePathCoordinates(page);
+      expect(intermediateGuideCoordinates[3]).toBeCloseTo(58, 5);
+      expect(intermediateGuideCoordinates[7]).toBeCloseTo(58, 5);
+      expect(intermediateGuideCoordinates[10]).toBeCloseTo(resizedFrameSize, 5);
+      expect(intermediateGuideCoordinates[14]).toBeCloseTo(resizedFrameSize, 5);
+      const pixelContrastNear = (pixels: Awaited<ReturnType<typeof loadImageData>>, x: number, y: number) => {
+        const pixelAt = (px: number, py: number) => {
+          const left = Math.floor(px);
+          const top = Math.floor(py);
+          const index = (top * pixels.width + left) * 4;
+          return [...pixels.data.slice(index, index + 3)];
+        };
+        let maxContrast = 0;
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            const sample = pixelAt(x + offsetX, y + offsetY);
+            const neighbor = pixelAt(x + offsetX + 3, y + offsetY);
+            maxContrast = Math.max(
+              maxContrast,
+              sample.reduce((total, value, index) => total + Math.abs(value - neighbor[index]), 0)
+            );
+          }
+        }
+        return maxContrast;
+      };
+      const countBluePixels = (
+        pixels: Awaited<ReturnType<typeof loadImageData>>,
+        bounds: { x: number; y: number; width: number; height: number }
+      ) => {
+        let count = 0;
+        const left = Math.max(0, Math.floor(bounds.x));
+        const top = Math.max(0, Math.floor(bounds.y));
+        const right = Math.min(pixels.width, Math.ceil(bounds.x + bounds.width));
+        const bottom = Math.min(pixels.height, Math.ceil(bounds.y + bounds.height));
+        for (let y = top; y < bottom; y += 1) {
+          for (let x = left; x < right; x += 1) {
+            const index = (y * pixels.width + x) * 4;
+            const [red, green, blue] = pixels.data.slice(index, index + 3);
+            if (red < 100 && green > 50 && blue > 150) count += 1;
+          }
+        }
+        return count;
+      };
+      expect(
+        pixelContrastNear(
+          intermediatePixels,
+          intermediateGuideBounds.x + intermediateGuideBounds.width / 3,
+          intermediateGuideBounds.y + intermediateGuideBounds.height / 2
+        ),
+        'the intermediate-size thirds guide is painted within two animation frames'
+      ).toBeGreaterThan(30);
+      expect(
+        countBluePixels(intermediatePixels, {
+          x: intermediateGuideBounds.x + intermediateGuideBounds.width * 0.2,
+          y: intermediateGuideBounds.y - 2,
+          width: intermediateGuideBounds.width * 0.6,
+          height: 6,
+        }),
+        'the intermediate-size crop border is painted within two animation frames'
+      ).toBeGreaterThan(3);
+      expect(
+        countBluePixels(intermediatePixels, {
+          x: intermediateGuideBounds.x + intermediateGuideBounds.width * 0.2,
+          y: intermediateGuideBounds.y + intermediateGuideBounds.height - 4,
+          width: intermediateGuideBounds.width * 0.6,
+          height: 6,
+        }),
+        'the moved bottom crop border is painted within two animation frames'
+      ).toBeGreaterThan(3);
+      expect(
+        countBluePixels(intermediatePixels, {
+          x: intermediateGuideBounds.x + intermediateGuideBounds.width - 4,
+          y: intermediateGuideBounds.y + intermediateGuideBounds.height * 0.2,
+          width: 6,
+          height: intermediateGuideBounds.height * 0.6,
+        }),
+        'the moved right crop border is painted within two animation frames'
+      ).toBeGreaterThan(3);
+      await testInfo.attach('crop-reentry-intermediate-resize-grid-and-outline', {
+        body: intermediateScreenshot,
+        contentType: 'image/png',
+      });
+
+      await page.mouse.move(resizedBottom.x, resizedBottom.y, { steps: 10 });
+      await page.mouse.up();
+      await expectDocumentStationary('after re-entered crop resize');
+
+      const expectedGuideWidth = resizedFrameSize * fit.scale * fit.viewZoom;
+      const expectedGuideHeight = resizedFrameSize * fit.scale * fit.viewZoom;
+      await expect.poll(async () => (await guide.boundingBox())?.width ?? 0).toBeCloseTo(expectedGuideWidth, 0);
+      await expect.poll(async () => (await guide.boundingBox())?.height ?? 0).toBeCloseTo(expectedGuideHeight, 0);
+      await expect
+        .poll(async () => {
+          const box = await cropOutline.boundingBox();
+          return box ? Math.abs(box.width - expectedGuideWidth) : Number.POSITIVE_INFINITY;
+        })
+        .toBeLessThan(3);
+      await expect
+        .poll(async () => {
+          const box = await cropOutline.boundingBox();
+          return box ? Math.abs(box.height - expectedGuideHeight) : Number.POSITIVE_INFINITY;
+        })
+        .toBeLessThan(3);
+      const frameOrigin = documentPoint(fit, 0, 0);
+      await expect
+        .poll(async () => {
+          const box = await guide.boundingBox();
+          return box
+            ? Math.max(Math.abs(box.x - frameOrigin.x), Math.abs(box.y - frameOrigin.y))
+            : Number.POSITIVE_INFINITY;
+        })
+        .toBeLessThan(3);
+      await expect
+        .poll(async () => {
+          const box = await cropOutline.boundingBox();
+          return box
+            ? Math.max(Math.abs(box.x - frameOrigin.x + fit.viewZoom), Math.abs(box.y - frameOrigin.y + fit.viewZoom))
+            : Number.POSITIVE_INFINITY;
+        })
+        .toBeLessThan(3);
+      const guideCoordinates = await readCropGuidePathCoordinates(page);
+      expect(guideCoordinates).toHaveLength(16);
+      expect(guideCoordinates[0]).toBeCloseTo(resizedFrameSize / 3, 5);
+      expect(guideCoordinates[2]).toBeCloseTo(resizedFrameSize / 3, 5);
+      expect(guideCoordinates[4]).toBeCloseTo((2 * resizedFrameSize) / 3, 5);
+      expect(guideCoordinates[6]).toBeCloseTo((2 * resizedFrameSize) / 3, 5);
+      expect(guideCoordinates[9]).toBeCloseTo(resizedFrameSize / 3, 5);
+      expect(guideCoordinates[11]).toBeCloseTo(resizedFrameSize / 3, 5);
+      expect(guideCoordinates[13]).toBeCloseTo((2 * resizedFrameSize) / 3, 5);
+      expect(guideCoordinates[15]).toBeCloseTo((2 * resizedFrameSize) / 3, 5);
+      expect(guideCoordinates[0]).not.toBeCloseTo(fit.documentWidth / 3, 2);
+      expect(guideCoordinates[9]).not.toBeCloseTo(fit.documentHeight / 3, 2);
+      expect(guideCoordinates[3]).toBeCloseTo(resizedFrameSize, 5);
+      expect(guideCoordinates[7]).toBeCloseTo(resizedFrameSize, 5);
+      expect(guideCoordinates[10]).toBeCloseTo(resizedFrameSize, 5);
+      expect(guideCoordinates[14]).toBeCloseTo(resizedFrameSize, 5);
+      expect(
+        await preview.evaluate((canvas) => ({
+          width: (canvas as HTMLCanvasElement).width,
+          height: (canvas as HTMLCanvasElement).height,
+        })),
+        'resizing the crop keeps the retained-pixel preview backing size stable'
+      ).toEqual(previewBacking);
+
+      const resizedOutlineRect = cropOutline.locator('rect');
+      expect(await resizedOutlineRect.getAttribute('stroke')).toBe('#007bff');
+      expect(Number(await resizedOutlineRect.getAttribute('stroke-width'))).toBeGreaterThan(0);
+      expect(await resizedOutlineRect.getAttribute('stroke-dasharray')).toMatch(/\d/);
+      await expect(rotationHandle, 'the rotation grip stays visible and aligned after resize').toBeVisible();
+      expect(Number(await rotationHandle.locator('path').getAttribute('stroke-width'))).toBe(1);
+
+      const screenshot = await page.screenshot({ scale: 'css' });
+      const screenshotPixels = await loadImageData(screenshot);
+      const guideBounds = await guide.boundingBox();
+      if (!guideBounds) throw new Error('the resized crop guide has no screen bounds');
+      const guideContrast = pixelContrastNear(
+        screenshotPixels,
+        guideBounds.x + guideBounds.width / 3,
+        guideBounds.y + guideBounds.height / 2
+      );
+      expect(guideContrast, 'the resized thirds line is visible in the screenshot').toBeGreaterThan(30);
+
+      expect(
+        countBluePixels(screenshotPixels, {
+          x: guideBounds.x + guideBounds.width * 0.2,
+          y: guideBounds.y - 2,
+          width: guideBounds.width * 0.6,
+          height: 6,
+        }),
+        'the resized screenshot contains the crop outline dash pixels'
+      ).toBeGreaterThan(3);
+      const rotationHandleBounds = await rotationHandle.boundingBox();
+      if (!rotationHandleBounds) throw new Error('the crop rotation grip has no screen bounds');
+      expect(
+        countBluePixels(screenshotPixels, {
+          x: rotationHandleBounds.x - 1,
+          y: rotationHandleBounds.y - 1,
+          width: rotationHandleBounds.width + 2,
+          height: rotationHandleBounds.height + 2,
+        }),
+        'the resized screenshot contains the visible rotation-grip pixels'
+      ).toBeGreaterThan(2);
+      const topLeftHandle = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
+      const topLeftHandleBounds = await topLeftHandle.boundingBox();
+      if (!topLeftHandleBounds) throw new Error('the resized crop corner handle has no screen bounds');
+      expect(
+        countBluePixels(screenshotPixels, topLeftHandleBounds),
+        'the resized screenshot contains the rendered crop corner-handle pixels'
+      ).toBeGreaterThan(2);
+
+      await expect(topLeftHandle).toHaveCSS('background-color', 'rgb(0, 123, 255)');
+
+      const bottomRightHandle = page.locator('[data-testid="crop-selection-handle"][data-corner="bottom-right"]');
+      const bottomRightHandleBounds = await bottomRightHandle.boundingBox();
+      if (!bottomRightHandleBounds) throw new Error('the moved bottom-right crop handle has no screen bounds');
+      const movedCorner = documentPoint(fit, resizedFrameSize, resizedFrameSize);
+      expect(bottomRightHandleBounds.x + bottomRightHandleBounds.width / 2).toBeCloseTo(movedCorner.x, 0);
+      expect(bottomRightHandleBounds.y + bottomRightHandleBounds.height / 2).toBeCloseTo(movedCorner.y, 0);
+      expect(
+        countBluePixels(screenshotPixels, bottomRightHandleBounds),
+        'the resized screenshot contains the moved bottom-right crop handle'
+      ).toBeGreaterThan(2);
+
+      await testInfo.attach('crop-reentry-live-resize-grid-and-outline', {
+        body: screenshot,
+        contentType: 'image/png',
+      });
+
+      // Dragging inside moves the pending crop box. The document itself and its workspace
+      // placement remain fixed until Apply; only the crop chrome and pending bounds move.
+      const guideBeforeMove = await guide.boundingBox();
+      if (!guideBeforeMove) throw new Error('the crop guide has no visible bounds before moving the crop box');
+      const moveOffset = { x: 2, y: 3 };
+      const moveStart = documentPoint(fit, resizedFrameSize / 2, resizedFrameSize / 2);
+      const moveEnd = documentPoint(fit, resizedFrameSize / 2 + moveOffset.x, resizedFrameSize / 2 + moveOffset.y);
+      await page.mouse.move(moveStart.x, moveStart.y);
+      await page.mouse.down();
+      await page.mouse.move(moveEnd.x, moveEnd.y, { steps: 10 });
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          })
+      );
+      await expectDocumentStationary('during interior move of the re-entered crop box');
+      const movedGuideOrigin = documentPoint(fit, moveOffset.x, moveOffset.y);
+      await expect
+        .poll(async () => {
+          const bounds = await guide.boundingBox();
+          return bounds
+            ? Math.max(Math.abs(bounds.x - movedGuideOrigin.x), Math.abs(bounds.y - movedGuideOrigin.y))
+            : Infinity;
+        })
+        .toBeLessThan(3);
+      await page.mouse.up();
+      await expectDocumentStationary('after moving the re-entered crop box');
+      await expect.poll(async () => (await guide.boundingBox())?.width ?? 0).toBeCloseTo(guideBeforeMove.width, 0);
+      await expect.poll(async () => (await guide.boundingBox())?.height ?? 0).toBeCloseTo(guideBeforeMove.height, 0);
+      await testInfo.attach('crop-reentry-moved-box-stationary-document', {
+        body: await page.screenshot({ scale: 'css' }),
+        contentType: 'image/png',
+      });
+    });
+
+    test('canceling a re-entered crop resize restores its frame and accepts the next drag', async ({ page }) => {
+      await openDocument(page);
+      await openRasterFixture(page, test.info().config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      const openingFit = await openCropTool(page);
+      await dragOnCanvas(page, openingFit, { x: 4, y: 4 }, { x: 60, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 56, height: 56 });
+
+      await clickToolButton(page, 'move');
+      const fit = await openCropTool(page);
+      const surface = page.locator('.cursor-crop');
+      const guide = page.getByTestId('crop-composition-guide');
+      await surface.evaluate((element) => {
+        element.addEventListener(
+          'pointerdown',
+          (event) => {
+            (window as Window & { __cropPointerId?: number }).__cropPointerId = (event as PointerEvent).pointerId;
+          },
+          { capture: true, once: true }
+        );
+      });
+
+      const rightEdge = documentPoint(fit, fit.documentWidth, fit.documentHeight / 2);
+      const widenedRight = documentPoint(fit, 60, fit.documentHeight / 2);
+      await page.mouse.move(rightEdge.x, rightEdge.y);
+      await page.mouse.down();
+      await page.mouse.move(widenedRight.x, widenedRight.y, { steps: 5 });
+      const pointerId = await page.evaluate(() => (window as Window & { __cropPointerId?: number }).__cropPointerId);
+      if (pointerId === undefined) throw new Error('the active crop pointer ID was not captured');
+      await page.evaluate((id) => {
+        const element = document.querySelector('.cursor-crop');
+        if (!element) throw new Error('the crop gesture surface disappeared');
+        element.dispatchEvent(
+          new PointerEvent('pointercancel', { pointerId: id, pointerType: 'mouse', bubbles: true, cancelable: true })
+        );
+      }, pointerId);
+      await page.mouse.up();
+
+      const expectedOpeningWidth = fit.documentWidth * fit.scale * fit.viewZoom;
+      await expect
+        .poll(async () => (await guide.boundingBox())?.width ?? 0, 'pointercancel restores the crop box')
+        .toBeCloseTo(expectedOpeningWidth, 0);
+
+      const nextRight = documentPoint(fit, 58, fit.documentHeight / 2);
+      await dragOnCanvas(page, fit, { x: fit.documentWidth, y: fit.documentHeight / 2 }, { x: 58, y: 28 });
+      await expect
+        .poll(async () => (await guide.boundingBox())?.width ?? 0, 'the next edge drag is accepted')
+        .toBeCloseTo(58 * fit.scale * fit.viewZoom, 0);
+      await expectDeliverablePagePoint(page, fit, nextRight, 'the following resize remains on the workspace');
+    });
+
+    test('a recrop resize and move keep the crop frame aligned with the zoomed canvas', async ({ page }) => {
+      await openDocument(page);
+      await commitCrop(page);
+      const croppedFit = await readFit(page);
+      await drawBar(page, croppedFit, 100);
+
+      // Re-entering crop after both a frame change and a pixel edit is the reported path. The
+      // previous crop deliberately leaves a non-unit view zoom compensation so the canvas has a
+      // transformed view when the crop box grows outside its current frame.
+      await clickToolButton(page, 'move');
+      const fit = await openCropTool(page);
+      const topEdge = documentPoint(fit, fit.documentWidth / 2, 0);
+      const extendedTop = documentPoint(fit, fit.documentWidth / 2, -40);
+      await page.mouse.move(topEdge.x, topEdge.y);
+      await page.mouse.down();
+      await page.mouse.move(extendedTop.x, extendedTop.y, { steps: 12 });
+      await page.mouse.up();
+
+      const readTopOutlineCenter = async () => {
+        const bounds = await page.getByTestId('crop-selection-outline').boundingBox();
+        if (!bounds) throw new Error('the crop outline was not rendered');
+        return { x: bounds.x + bounds.width / 2, y: bounds.y + fit.viewZoom };
+      };
+      const expectedTop = documentPoint(fit, fit.documentWidth / 2, -40);
+      await expect
+        .poll(async () => {
+          const actual = await readTopOutlineCenter();
+          return Math.max(Math.abs(actual.x - expectedTop.x), Math.abs(actual.y - expectedTop.y));
+        })
+        .toBeLessThan(2);
+
+      // Move the whole crop rectangle after resizing it. Its top edge should move by the same
+      // document-space delta while the underlying document remains in place.
+      const moveFrom = documentPoint(fit, fit.documentWidth / 2, 120);
+      const moveTo = documentPoint(fit, fit.documentWidth / 2 + 30, 145);
+      await page.mouse.move(moveFrom.x, moveFrom.y);
+      await page.mouse.down();
+      await page.mouse.move(moveTo.x, moveTo.y, { steps: 12 });
+      await page.mouse.up();
+
+      const movedTop = documentPoint(fit, fit.documentWidth / 2 + 30, -15);
+      await expect
+        .poll(async () => {
+          const actual = await readTopOutlineCenter();
+          return Math.max(Math.abs(actual.x - movedTop.x), Math.abs(actual.y - movedTop.y));
+        })
+        .toBeLessThan(2);
+
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT + 40 });
+    });
+
+    test('a rotated recrop commits retained pixels outside the prior frame', async ({ page }, testInfo) => {
+      await page.setViewportSize({ width: 1800, height: 1400 });
+      await openDocument(page);
+      await openRasterFixture(page, testInfo.config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      await expect.poll(() => readCanvasColor(page, 3, 20)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+
+      const openingFit = await openCropTool(page);
+      await dragOnCanvas(page, openingFit, { x: 4, y: 4 }, { x: 60, y: 60 });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 56, height: 56 });
+
+      await clickToolButton(page, 'move');
+      const croppedFit = await openCropTool(page);
+      await dragOnCanvas(page, croppedFit, { x: 0, y: 0 }, { x: -3, y: 0 });
+      const preview = page.getByTestId('crop-retained-pixels-preview');
+      await expect(preview).toBeVisible();
+      await expect
+        .poll(() => readCanvasRegion(page, 'crop-retained-pixels-preview', 2, 16, 1, 1))
+        .toEqual([255, 0, 0, 255]);
+
+      const surface = page.locator('.cursor-crop');
+      const rotation = await cropRotationGesturePoints(page);
+      await page.mouse.move(rotation.start.x, rotation.start.y);
+      await expect(surface, 'the expanded corner still exposes the rotation handle').toHaveCSS(
+        'cursor',
+        /url.*ew-resize/
+      );
+      await page.mouse.down();
+      await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
+      await page.mouse.up();
+      await expect(surface, 'the recrop can be rotated after expanding its bounds').toHaveAttribute(
+        'data-rotation',
+        /8[5-9]|9[0-5]/
+      );
+      await expect(page.getByTestId('crop-retained-pixels-preview')).toHaveCount(0);
+
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 59, height: 56 });
+      await expect.poll(() => readCanvasColor(page, 18, 55)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+    });
 
     test('a crop released past the right and bottom edges commits a LARGER frame, not a clamped one', async ({
       page,
@@ -1277,19 +2770,47 @@ test.describe('Crop history', () => {
       await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
 
       const surface = page.locator('.cursor-crop');
-      const corner = documentPoint(fit, CROP_LEFT_X - 10, CROP_TOP_Y - 10);
-      await page.mouse.move(corner.x, corner.y);
+      const rotation = await cropRotationGesturePoints(page);
+      await page.mouse.move(rotation.start.x, rotation.start.y);
       await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
 
       await page.mouse.down();
-      const rotatedCorner = documentPoint(fit, CROP_RIGHT_X - 160, CROP_TOP_Y - 180);
-      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
 
       await expect(surface, 'the pending crop keeps the rotated angle').toHaveAttribute(
         'data-rotation',
         /8[5-9]|9[0-5]/
       );
+    });
+
+    test('the visible top rotation grip rotates a re-entered crop instead of starting a new crop', async ({ page }) => {
+      await openDocument(page);
+      const openingFit = await openCropTool(page);
+      await dragOnCanvas(page, openingFit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
+      await applyCrop(page);
+      await expect.poll(() => documentSize(page)).toEqual({ width: COMMITTED_WIDTH, height: COMMITTED_HEIGHT });
+
+      await clickToolButton(page, 'move');
+      const fit = await openCropTool(page);
+
+      const surface = page.locator('.cursor-crop');
+      const gripPoint = documentPoint(fit, fit.documentWidth / 2, -12);
+      await page.mouse.move(gripPoint.x, gripPoint.y);
+      await expect(surface, 'the rendered midpoint grip advertises rotation').toHaveCSS('cursor', /url.*ew-resize/);
+      const rotatedPoint = documentPoint(
+        fit,
+        fit.documentWidth / 2 + fit.documentHeight / 2 + 12,
+        fit.documentHeight / 2
+      );
+      await expectDeliverablePagePoint(page, fit, gripPoint, 'the visible rotation-grip press point');
+      await expectDeliverablePagePoint(page, fit, rotatedPoint, 'the visible rotation-grip drag point');
+      await page.mouse.down();
+      await page.mouse.move(rotatedPoint.x, rotatedPoint.y, { steps: 12 });
+      await page.mouse.up();
+
+      await expect.poll(async () => Number(await surface.getAttribute('data-rotation'))).not.toBe(0);
+      await expect(surface).toHaveAttribute('data-rotation', /8[5-9]|9[0-5]/);
     });
 
     test('a rotated crop transforms pixels in one history step and redo reproduces them exactly', async ({
@@ -1300,16 +2821,15 @@ test.describe('Crop history', () => {
       await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
       await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
-      const originalPixels = await getWorkspaceCanvas(page).screenshot();
+      const originalPixels = await readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64);
 
       const cropFit = await openCropTool(page);
       await dragOnCanvas(page, cropFit, { x: 16, y: 16 }, { x: 48, y: 48 });
       const surface = page.locator('.cursor-crop');
-      const rotationHandle = documentPoint(cropFit, 15.5, 15.5);
-      await page.mouse.move(rotationHandle.x, rotationHandle.y);
+      const rotation = await cropRotationGesturePoints(page);
+      await page.mouse.move(rotation.start.x, rotation.start.y);
       await page.mouse.down();
-      const rotatedCorner = documentPoint(cropFit, 48.5, 15.5);
-      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
       await expect(surface, 'the pending crop has a nonzero rotation').toHaveAttribute(
         'data-rotation',
@@ -1326,7 +2846,7 @@ test.describe('Crop history', () => {
       await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'unpublished');
       await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
-      const committedPixels = await getWorkspaceCanvas(page).screenshot();
+      const committedPixels = await readCanvasRegion(page, 'workspace-canvas', 0, 0, 32, 32);
 
       await page.getByTestId('undo-button').click();
       await expect
@@ -1338,7 +2858,7 @@ test.describe('Crop history', () => {
       await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
       await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
-      expect((await getWorkspaceCanvas(page).screenshot()).equals(originalPixels)).toBe(true);
+      await expect.poll(() => readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64)).toEqual(originalPixels);
 
       await page.getByTestId('redo-button').click();
       await expect
@@ -1350,8 +2870,11 @@ test.describe('Crop history', () => {
       await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
       await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
-      const redonePixels = await getWorkspaceCanvas(page).screenshot();
-      expect(redonePixels.equals(committedPixels), 'redo must reproduce the rotated-crop pixels exactly').toBe(true);
+      await expect
+        .poll(() => readCanvasRegion(page, 'workspace-canvas', 0, 0, 32, 32), {
+          message: 'redo must reproduce the rotated-crop raster exactly',
+        })
+        .toEqual(committedPixels);
     });
 
     test('durable materialization matches legacy pixels for a quarter-turn crop without an extra edge pixel', async ({
@@ -1381,7 +2904,10 @@ test.describe('Crop history', () => {
       expect(result.colorPresence['#0000ff']?.legacy, 'legacy crop must contain fixture blue pixels').toBe(true);
       expect(result.colorPresence['#ff0000']?.durable, 'durable crop must contain fixture red pixels').toBe(true);
       expect(result.colorPresence['#0000ff']?.durable, 'durable crop must contain fixture blue pixels').toBe(true);
-      expect(result.differingBytes, 'durable and legacy crop rasters must be byte-identical').toBe(0);
+      expect(
+        result.differingBytes,
+        `durable and legacy crop rasters must be byte-identical; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.materializedBounds['quarter-turn-crop-layer']).toEqual({ x: 0, y: 0, width: 64, height: 64 });
       expect(result.transitionResults).toHaveLength(1);
@@ -1422,10 +2948,124 @@ test.describe('Crop history', () => {
         expect(presence.legacy, `legacy crop should contain ${color}`).toBe(true);
         expect(presence.durable, `durable crop should contain ${color}`).toBe(true);
       }
-      expect(result.differingBytes, '37-degree multi-layer rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `37-degree multi-layer rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'center-patch']);
       expect(result.transitionResults).toHaveLength(1);
+    });
+
+    test('a retained layer transform matches legacy before and after a later frame transform', async ({ page }) => {
+      await openDocument(page);
+
+      const fixture: CropParityFixture = {
+        caseName: 'retained affine followed by frame transform',
+        documentId: 'retained-affine-frame-parity',
+        materializedLayerIds: ['background', 'foreground'],
+        layerTransforms: [
+          {
+            id: 'retained-affine',
+            layerId: 'foreground',
+            args: {
+              toolName: 'transform',
+              rotate: 23,
+              mirrorH: false,
+              mirrorV: false,
+              skewX: 6,
+              skewY: -4,
+              trapezoid: 0,
+              resizeX: 112,
+              resizeY: 84,
+            },
+          },
+        ],
+        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 9, width: 48, height: 44 } }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 32, height: 64, color: '#ff0000' },
+              { x: 32, y: 0, width: 32, height: 64, color: '#0000ff' },
+            ],
+          },
+          {
+            kind: 'raster',
+            id: 'foreground',
+            order: 1,
+            pos: { x: 14, y: 18, width: 28, height: 24 },
+            fills: [
+              { x: 0, y: 0, width: 14, height: 24, color: '#ffff00' },
+              { x: 14, y: 0, width: 14, height: 24, color: '#00ff00' },
+            ],
+          },
+        ],
+      };
+      const result = await compareCropRenderers(page, fixture);
+      const untransformedControl = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'untransformed control for retained affine followed by frame transform',
+        documentId: 'retained-affine-frame-parity-control',
+        layerTransforms: [],
+      });
+
+      expect(result.layerTransformResults).toHaveLength(1);
+      expect(result.layerTransformResults[0]?.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+      expect(result.layerTransformResults[0]?.durableFrame).toEqual(result.layerTransformResults[0]?.frame);
+      expect(result.layerTransformResults[0]?.differingBytes).toBe(0);
+      expect(result.layerTransformResults[0]?.legacyDiffersFromUntransformed).toBe(true);
+      expect(result.layerTransformResults[0]?.durableDiffersFromUntransformed).toBe(true);
+      expect(result.transitionResults).toHaveLength(1);
+      expect(result.transitionResults[0]?.differingBytes).toBe(0);
+      expect(result.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
+      const layerComparisons = [
+        ...result.layerTransformResults.flatMap((transform) => transform.materializedLayerComparisons),
+        ...result.transitionResults.flatMap((transition) => transition.materializedLayerComparisons),
+      ];
+      expect(layerComparisons).toHaveLength(4);
+      for (const comparison of layerComparisons) {
+        expect(
+          comparison.materializedBounds,
+          `${comparison.layerId} must use exact frame-aligned legacy bounds`
+        ).toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize).toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(
+          comparison.frameDifferingBytes,
+          `${comparison.layerId} frame raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
+        ).toBe(0);
+      }
+      expect(untransformedControl.transitionResults[0]?.frame).toEqual(result.transitionResults[0]?.frame);
+      expect(untransformedControl.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
+      expect(
+        untransformedControl.transitionResults[0]?.differingBytes,
+        'frame-only final composite must match legacy exactly'
+      ).toBe(0);
+      const controlLayerComparisons = untransformedControl.transitionResults[0]?.materializedLayerComparisons ?? [];
+      expect(controlLayerComparisons).toHaveLength(2);
+      for (const comparison of controlLayerComparisons) {
+        expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize).toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(
+          comparison.frameDifferingBytes,
+          `frame-only ${comparison.layerId} raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
+        ).toBe(0);
+      }
+      // This control isolates the retained operation within each renderer; the broader frame-only
+      // parity matrix remains open and is not treated as an oracle by this fixture.
+      expect(result.legacyPixels).not.toEqual(untransformedControl.legacyPixels);
+      expect(result.durablePixels).not.toEqual(untransformedControl.durablePixels);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
     });
 
     test('a 37-degree crop preserves a committed text source across renderers', async ({ page }) => {
@@ -1460,7 +3100,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#ff00ff']?.legacy, 'legacy crop must contain text-source pixels').toBe(true);
       expect(result.colorPresence['#ff00ff']?.durable, 'durable crop must contain text-source pixels').toBe(true);
-      expect(result.differingBytes, 'text-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `text-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds)).toEqual(['text-layer']);
       expect(result.transitionResults).toHaveLength(1);
@@ -1498,7 +3141,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#00ccff']?.legacy, 'legacy crop must contain paragraph text pixels').toBe(true);
       expect(result.colorPresence['#00ccff']?.durable, 'durable crop must contain paragraph text pixels').toBe(true);
-      expect(result.differingBytes, 'paragraph text crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `paragraph text crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.materializedBounds['paragraph-serif']).toBeDefined();
     });
@@ -1535,7 +3181,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#ff8800']?.legacy, 'legacy crop must contain offset text pixels').toBe(true);
       expect(result.colorPresence['#ff8800']?.durable, 'durable crop must contain offset text pixels').toBe(true);
-      expect(result.differingBytes, 'offset text crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `offset text crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(result.materializedBounds['offset-monospace']).toBeDefined();
     });
@@ -1561,7 +3210,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#00ff00']?.legacy, 'legacy crop must contain blank-source pixels').toBe(true);
       expect(result.colorPresence['#00ff00']?.durable, 'durable crop must contain blank-source pixels').toBe(true);
-      expect(result.differingBytes, 'blank-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `blank-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
     });
 
@@ -1596,7 +3248,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#00ffff']?.legacy, 'legacy crop must contain vector-source pixels').toBe(true);
       expect(result.colorPresence['#00ffff']?.durable, 'durable crop must contain vector-source pixels').toBe(true);
-      expect(result.differingBytes, 'vector-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `vector-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
     });
 
@@ -1630,7 +3285,10 @@ test.describe('Crop history', () => {
 
       expect(result.colorPresence['#ff8800']?.legacy, 'legacy crop must contain paint-source pixels').toBe(true);
       expect(result.colorPresence['#ff8800']?.durable, 'durable crop must contain paint-source pixels').toBe(true);
-      expect(result.differingBytes, 'paint-source crop rasters must match byte-for-byte').toBe(0);
+      expect(
+        result.differingBytes,
+        `paint-source crop rasters must match byte-for-byte; ${pixelDifferenceSummary(result)}`
+      ).toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
     });
 
@@ -1718,7 +3376,10 @@ test.describe('Crop history', () => {
         expect(transition.durableFrame).toEqual(transition.frame);
         expect(transition.legacyByteLength).toBe(transition.frame.width * transition.frame.height * 4);
         expect(transition.durableByteLength).toBe(transition.legacyByteLength);
-        expect(transition.differingBytes, `frame transition ${transition.index} must match byte-for-byte`).toBe(0);
+        expect(
+          transition.differingBytes,
+          `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
+        ).toBe(0);
       }
       for (const [color, presence] of Object.entries(result.colorPresence)) {
         expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);

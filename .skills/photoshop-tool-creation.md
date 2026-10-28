@@ -25,7 +25,7 @@ concludes none exists is following this document's own index correctly and still
 **Read `docs/ORCHESTRATION.md` before your first edit**, and treat a rule you cannot find in either
 as a rule you do not know rather than one that does not apply.
 
-Every `file:line` here was last re-verified on 2026-09-28. **Re-verify before you rely on one**,
+Every `file:line` here was last re-verified on 2026-10-21, when 15 citations were checked and 15 were re-pointed or confirmed. **Re-verify before you rely on one**,
 and name a symbol as well as a line wherever you can: a stale citation sends the next session
 after a bug that does not exist, and writing this skill corrected more than sixty of them.
 
@@ -577,7 +577,7 @@ must read the conventions, and three of its items are non-negotiable:
     explicitly.
 ```
 
-- **`e2e/README.md` quoted verbatim** (415 lines; the headless rule is under
+- **`e2e/README.md` quoted verbatim** (665 lines; the headless rule is under
   "Run it headless": _"`npm run test:e2e` is **headless by default. Keep it that way.**"_).
   A summary of the rules is not the rules. The verbatim quote is what stops the new spec from
   reintroducing `--headed`, a wrong `testDir`, or an unquarantined flake.
@@ -880,7 +880,7 @@ Two more habits from that `README.md` that make a doc set worth maintaining:
   spec says so in that section. **Do not promote a reconstruction to a spec** — that is the
   single rule that keeps a research corpus from decaying into folklore.
 
-**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore:49`
+**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore`
 (`.kilo`, alongside `.serena`), and `git check-ignore -v .kilo/plans/ps-research/README.md`
 confirms it. Two consequences, both of which will bite:
 
@@ -1345,7 +1345,7 @@ unfulfilled, which in this repo is a `disabled` attribute whose condition is a r
 fact about state, never a hardcoded `true`:
 
 ```tsx
-// src/components/ToolbarsRight/Levels/Levels.tsx:137-144
+// src/components/ToolbarsRight/Levels/Levels.tsx:139-144
 <button
   className={`${SECONDARY_BUTTON} w-full focus:ring-2 focus:ring-blue-500 disabled:opacity-50`}
   onClick={discardAdjustment}
@@ -1636,7 +1636,7 @@ non-negotiable: give a paint tool full args and you must also have moved it off
 And the trap that keeps a new tool from falling off the end of the chain:
 
 ```ts
-// src/util/settings.ts:93-99
+// src/util/settings.ts:196-197
 } else {
   const _exhaustive: never = toolName;
   void _exhaustive;
@@ -2119,7 +2119,7 @@ export type DrawToolArgs = {
   /**
    * Photoshop `Smoothing`, 0-100, applied to the sampled path by
    * `smoothStrokePoints`. Optional because the legacy `draw` tool's per-pen presets
-   * (`src/tools/settings.ts:37-41,68-74`) predate it; an absent value is no smoothing,
+   * (`src/tools/settings.ts:53`) predate it; an absent value is no smoothing,
    * which is exactly what those presets render today.
    */
   smoothing?: number;
@@ -2259,9 +2259,9 @@ the working tree rather than from a list you cannot check.
 
 #### The entry shape
 
-Four parts, in this order. `**Why it is not a wiring bug.**` is the part to write first and two live
-entries still carry it — `HANDOFF.md` §151 and §152 — so read either for the shape rather than a
-sample:
+Four parts, in this order. `**Why it is not a wiring bug.**` is the part to write first. Do not copy
+stale section-number examples: inspect the live `HANDOFF.md` for current analogues and use stable
+identifiers rather than relying on an old entry number.
 
 ```markdown
 ## <N>. <the defect, stated as the claim>
@@ -2359,7 +2359,7 @@ export type ToolProcessorDefinition = {
   imageProcessor: (param: ProcessorToolParams | CreatorToolParams) => (args: ToolArgs) => ToolResult;
 };
 
-// src/tools/toolProcessors.ts:97-98
+// src/tools/toolProcessors.ts:145-146
 const replay = (kind: ToolReplayKind, requiresRaster: boolean, deterministic = true) =>
   Object.freeze({ kind, deterministic, version: 1, requiresRaster });
 ```
@@ -2392,7 +2392,7 @@ CreatorToolParams)(source.args)` and assigns the result to `layer.tmpCanvas`. Wi
 against a dishonest declaration:
 
 ```ts
-// src/tools/__tests__/tool-processors.test.ts:799-803
+// src/tools/__tests__/tool-processors.test.ts:1404
 it.each(toolNames)('derives the %s requiresRaster flag from its commit kind and creator status', (toolName) => {
   const { commit, creator, replay } = toolProcessors[toolName];
 
@@ -2519,7 +2519,7 @@ for a single dot. This is why the shipped bar caps Size at 500 while Photoshop a
 /**
  * Photoshop's brush Size range is 1-5000px, but this editor's strokes are rasterized into a
  * canvas padded by the full `lineWidth` on every side (`pointsBoundingPos`,
- * src/util/draw.ts:5-26) and committed as their own layer, so a 5000px tip allocates a 10000px
+ * src/util/draw.ts:25-34) and committed as their own layer, so a 5000px tip allocates a 10000px
  * square for a single dot. 1-500 is the ceiling the existing `Draw` bar already uses, and it
  * keeps a stroke's layer proportional to the canvas it was drawn on.
  */
@@ -2535,7 +2535,7 @@ resolved at layer creation, not while drawing.** The literal at `src/contexts/la
 `blendMode: 'source-over'`); only then does `createLayerSource()`'s `kind === 'tool'` creator branch run the creator:
 
 ```ts
-// src/contexts/layer-utils.ts:204-217
+// src/contexts/layer-utils.ts:251-262
 } else if (kind === 'tool') {
   // and this is a creator tool
   const [canvas, patch] = toolProcessors[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
@@ -2557,7 +2557,7 @@ re-recording is gated on `testInfo.config.updateSnapshots === 'all'` (`e2e/expor
 they encode:
 
 ```ts
-// src/util/draw.ts:141-144 — one beginPath, one moveTo, one stroke() for a whole stroke
+// src/util/draw.ts:172-175 — one beginPath, one moveTo, one stroke() for a whole stroke
 ctx.beginPath();
 ctx.moveTo(points[0].x, points[0].y);
 bezierSmoothedLine(ctx, points);
@@ -2739,12 +2739,12 @@ object plus `vi.mock('../StoreContext.tsx', …)` returning a tuple — the shap
 /**
  * Pins the seam that carries a tool's Photoshop `Mode` from the options bar into the layer the
  * tool creates. A stroke is committed as a NEW layer through `createLayerFromTool`
- * (`src/contexts/useLayer.ts:219-262`), and both undo/redo and the durable shadow re-enter
- * `createLayerSource` with the same history entry's args (`src/contexts/useHistory.ts:98`). So
+ * (`src/contexts/useLayer.ts:577`), and both undo/redo and the durable shadow re-enter
+ * `createLayerSource` with the same history entry's args (`src/contexts/useHistory.ts:226`). So
  * the mode has to be derivable from the args alone — that, and not from any ambient bar state,
  * is the property this file pins. The fixture processors are the real ones: rasterizing a
  * two-point stroke needs no pixel read-back, so nothing here depends on the reduced canvas
- * context (`src/test/setup.ts:182-190`).
+ * context (`src/test/setup.ts:327`).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -2950,7 +2950,7 @@ describe('Eraser options bar', () => {
       fireEvent.change(getHardnessSlider(), { target: { value: '60' } });
 
       // Counted across all captured contexts, not on the last one: the stub hands out a fresh
-      // context per `getContext` call (`src/test/setup.ts:211-215`), so a repaint lands on a new
+      // context per `getContext` call (`src/test/setup.ts:353`), so a repaint lands on a new
       // object rather than accumulating on the last.
       expect(blits()).toBeGreaterThan(1);
     } finally {
@@ -3137,7 +3137,7 @@ and it is `max-md:hidden`, so the default 1280x720 viewport is fine. The workspa
 ONLY by `getWorkspaceCanvas(page)` — never `page.locator('canvas')`, **because the options bar
 mounts its own preview canvas and a positional lookup would grab that one.** The repo's convention
 for options-bar controls is a role + accessible-name locator, exactly as
-`e2e/levels.spec.ts:71-75,103-104` does: **match the LABEL PART ONLY with a regex, because the
+`e2e/levels.spec.ts:263` does: **match the LABEL PART ONLY with a regex, because the
 accessible name carries a live value suffix that changes as you drag.** So use
 `page.getByRole('slider', { name: /^<Label>/ })` and `page.getByRole('combobox', { name: '<Label>' })`.
 
@@ -3364,7 +3364,7 @@ through `testInfo.snapshotDir` rather than `snapshotPath()` so a baseline commit
 does not read as missing on another (`e2e/README.md` — the `testInfo.snapshotDir` paragraph under "Baseline layout"). The directory holds 17 committed
 files; 7 are read, one per format in `browserVerifiedFormats` (`drawing.png.png`, `.jpeg`, `.webp`,
 `.svg`, `.bmp`, `.gif`, `.avif`); the other 10 are orphans nothing references
-(`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes:14` marks the snapshot tree `binary` so
+(`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes` marks the snapshot tree `binary` so
 line-ending normalisation can never rewrite the committed pixels.
 
 **A green run means the pixels matched** — only because the record-vs-compare branch is gated on
@@ -3502,7 +3502,7 @@ read/write rights on the source tree.
 2. `<ABSOLUTE PATH>/<plan>.md` — <what it is, which section>
 3. `<ABSOLUTE PATH>/AGENTS.md` — the binding repo rules
 
-<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore:49`), so it is not carried into a
+<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore`), so it is not carried into a
 fresh worktree: a plan that exists in one checkout must be named by absolute path, or the subagent
 will read a file that is not there.>
 
@@ -3968,12 +3968,7 @@ doc fixes it in the same commit.**
   `AGENTS.md` and `docs/TESTING.md` point readers to the record without duplicating its
   totals. A suite change can invalidate a count: rerun before updating the source record,
   and do not copy totals into another document.
-- **A claim about a gate is a real one.** `e2e/README.md` — the "It is a **blocking** gate" paragraph, which no longer says `continue-on-error: true` still says the `e2e` job "is
-  still marked `continue-on-error: true`" and leaves "flipping `continue-on-error` to `false`" as
-  the thing left to do. It is not: the job was promoted, and `.github/workflows/ci.yml` — the `e2e` job's "It was `continue-on-error: true`" comment
-  documents the promotion and why the old justification had stopped describing the suite.
-  `AGENTS.md` already carries the new claim. **The README is the stale one** — fix it in the same
-  commit that promotes the job, not three commits later.
+- **A claim about a gate is a real one.** `e2e/README.md` — the "It is a **blocking** gate" paragraph — was corrected to say the `e2e` job **was** `continue-on-error: true`, matching `.github/workflows/ci.yml` (line 210), which records the promotion to a blocking matrix gate and why the old justification had stopped describing the suite. Both documents are consistent; neither needs correcting. Promote a gate in the same commit as the justification that made it, and do not carry stale "fix the README" instructions into a new session.
 - **A claim about the number of orphans, of pins, of files** moves the same way.
 - **The trigger:** before committing any change, ask what it made untrue elsewhere — a promoted
   gate, a deleted entry, a removed helper, a changed test count. Then fix that too, in the same
@@ -4342,7 +4337,7 @@ merge --ff-only main`.
 2. **`.kilo` is gitignored, so a worktree has no plan docs and no skills.** Symptom: the
    research corpus, the skill, and every plan directory appear not to exist; you re-research
    something that was already answered. Defence: read the corpus from the **main** checkout
-   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore:49`
+   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore`
    matches `.kilo`, and `git ls-files .kilo` returns nothing. Note the corollary —
    `HANDOFF.md`, `docs/handoffs/`, and `e2e/OPEN_PROBLEMS.md` **are** tracked and do exist in a
    worktree.
@@ -4588,7 +4583,7 @@ merge --ff-only main`.
 ## Appendix B — the research corpus that already exists
 
 `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/` — 11 files, ~265 KB, in the **main** checkout
-only. `.gitignore:49` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
+only. `.gitignore` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
 has none of it** (trap 2). Read it from the main checkout.
 
 **The rule: read before re-researching. A new research wave that ignores this corpus does not
