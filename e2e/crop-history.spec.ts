@@ -3473,7 +3473,7 @@ test.describe('Crop history', () => {
       const result = await compareCropRenderers(page, {
         caseName: 'multi-step mixed-source crop',
         documentId: 'multi-step-mixed-source-crop-pixel-parity',
-        materializedLayerIds: ['blank', 'vector', 'paint', 'text'],
+        materializedLayerIds: ['blank', 'blank-semi', 'vector', 'paint', 'text'],
         layerTransforms: [
           {
             id: 'blank-affine',
@@ -3503,6 +3503,21 @@ test.describe('Crop history', () => {
               trapezoid: 0,
               resizeX: 96,
               resizeY: 103,
+            },
+          },
+          {
+            id: 'blank-opacity-affine',
+            layerId: 'blank-semi',
+            args: {
+              toolName: 'transform',
+              rotate: 9,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 1,
+              skewY: -2,
+              trapezoid: 0,
+              resizeX: 104,
+              resizeY: 94,
             },
           },
           {
@@ -3566,9 +3581,17 @@ test.describe('Crop history', () => {
             opacity: 1,
           },
           {
+            kind: 'blank',
+            id: 'blank-semi',
+            order: 1,
+            pos: { x: 7, y: 8, width: 9, height: 10 },
+            color: '#ffff00',
+            opacity: 0.45,
+          },
+          {
             kind: 'vector',
             id: 'vector',
-            order: 1,
+            order: 2,
             pos: { x: 14, y: 18, width: 14, height: 14 },
             args: {
               toolName: 'shape',
@@ -3586,7 +3609,7 @@ test.describe('Crop history', () => {
           {
             kind: 'paint',
             id: 'paint',
-            order: 2,
+            order: 3,
             pos: { x: 40, y: 24, width: 16, height: 18 },
             args: {
               toolName: 'draw',
@@ -3603,7 +3626,7 @@ test.describe('Crop history', () => {
           {
             kind: 'text',
             id: 'text',
-            order: 3,
+            order: 4,
             pos: { x: 18, y: 38, width: 28, height: 18 },
             textArgs: {
               toolName: 'text',
@@ -3623,8 +3646,14 @@ test.describe('Crop history', () => {
       });
 
       const assertMixedLayerParity = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
-        expect(comparisons, `${stage} materialized layer count`).toHaveLength(4);
-        expect(comparisons.map((comparison) => comparison.layerId)).toEqual(['blank', 'vector', 'paint', 'text']);
+        expect(comparisons, `${stage} materialized layer count`).toHaveLength(5);
+        expect(comparisons.map((comparison) => comparison.layerId)).toEqual([
+          'blank',
+          'blank-semi',
+          'vector',
+          'paint',
+          'text',
+        ]);
         for (const comparison of comparisons) {
           expect(comparison.materializedBounds, `${comparison.layerId} bounds at ${stage}`).toEqual(
             comparison.expectedBounds
@@ -3640,7 +3669,7 @@ test.describe('Crop history', () => {
         }
       };
 
-      expect(result.layerTransformResults).toHaveLength(5);
+      expect(result.layerTransformResults).toHaveLength(6);
       for (const transform of result.layerTransformResults) {
         expect(transform.differingBytes, `retained affine ${transform.id} composite parity`).toBe(0);
         expect(transform.legacyDiffersFromUntransformed).toBe(true);
@@ -3665,7 +3694,7 @@ test.describe('Crop history', () => {
         expect(presence.durable, `durable mixed-source crop should contain ${color}`).toBe(true);
       }
       expect(result.durablePixels).toEqual(result.legacyPixels);
-      expect(Object.keys(result.materializedBounds).sort()).toEqual(['blank', 'paint', 'text', 'vector']);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['blank', 'blank-semi', 'paint', 'text', 'vector']);
     });
   });
 });
