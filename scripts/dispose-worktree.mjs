@@ -535,7 +535,9 @@ export function preflight({
         inventory.record.patchEquivalence !== 'absorbed' &&
         inventory.record.mergeResultMatchesBase === true;
       const noOpMergeBaseMatches =
-        inventory.base === 'main' && typeof inventory.mainHead === 'string' && inventory.mainHead === gitState.mainHead;
+        (inventory.base === 'main' || inventory.base === 'refs/heads/main') &&
+        typeof inventory.mainHead === 'string' &&
+        inventory.mainHead === gitState.mainHead;
       if (noOpMerge && !noOpMergeBaseMatches) {
         refuse('inventory-base-moved', inventory.mainHead, gitState.mainHead);
       }
