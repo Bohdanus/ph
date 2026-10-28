@@ -209,9 +209,21 @@
     "external_directory": {
       "/tmp/kilo/**": "allow",
       ".kilo/worktrees/**": "allow",
+      "~/.local/share/kilo/**": "allow",
     },
     "edit": {
+      ".github/**": "allow",
+      ".husky/**": "allow",
       ".kilo/**": "allow",
+      ".skills/**": "allow",
+      "dist/**": "allow",
+      "docs/**": "allow",
+      "e2e/**": "allow",
+      "public/**": "allow",
+      "scripts/**": "allow",
+      "src/**": "allow",
+      "/tmp/kilo/**": "allow",
+      "~/.local/share/kilo/**": "allow",
     },
   },
 
