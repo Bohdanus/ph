@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -150,6 +150,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as FeatherMagneticLassoToolArgs;
+  const renderSelectorSourceRef = useRef(renderSelector.source);
 
   const anchorsRef = useRef<Point[]>([]);
   const segmentsRef = useRef<Point[][]>([]);
@@ -258,7 +259,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   }
 
   function processPointerMovePreview({ coords, magneticEnabled }: PendingPointerMove) {
-    if (renderSelector.source === 'pending') {
+    if (renderSelectorSourceRef.current === 'pending') {
       cancelSelectionDraft();
       return;
     }
@@ -381,7 +382,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
   function finishSelection() {
     if (anchorsRef.current.length === 0) return;
-    if (renderSelector.source === 'pending') {
+    if (renderSelectorSourceRef.current === 'pending') {
       cancelSelectionDraft();
       return;
     }
@@ -491,7 +492,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
-    if (renderSelector.source === 'pending') {
+    if (renderSelectorSourceRef.current === 'pending') {
       cancelSelectionDraft();
       return;
     }
@@ -529,7 +530,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (renderSelector.source === 'pending') {
+    if (renderSelectorSourceRef.current === 'pending') {
       cancelSelectionDraft();
       return;
     }
@@ -599,8 +600,9 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     redrawOverlay();
   }, [redrawOverlay]);
 
-  useEffect(() => {
-    if (renderSelector.source === 'pending') cancelSelectionDraft();
+  useLayoutEffect(() => {
+    renderSelectorSourceRef.current = renderSelector.source;
+    if (renderSelectorSourceRef.current === 'pending') cancelSelectionDraft();
   });
 
   useEffect(() => {

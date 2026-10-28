@@ -382,6 +382,7 @@ describe('FeatherMagneticLassoToolArea', () => {
 
     fireEvent.pointerDown(ctx, { button: 0, clientX: 10, clientY: 10 });
     fireEvent.pointerMove(ctx, { clientX: 30, clientY: 30 });
+    const queuedRaf = rafCallbacks[0];
     expect(h.dispatch).toHaveBeenCalledWith({
       type: 'START_SELECTION_DRAFT',
       payload: { sourceTool: 'feather-magnetic-lasso' },
@@ -390,7 +391,7 @@ describe('FeatherMagneticLassoToolArea', () => {
     h.renderSelector = { source: 'pending' };
     rerenderStore();
     expect(cancelAnimationFrameSpy).toHaveBeenCalled();
-    act(() => rafCallbacks[0]?.(0));
+    act(() => queuedRaf?.(0));
     h.shortcutHandlers.get('Enter')?.();
 
     expect(h.dispatch).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
