@@ -199,8 +199,10 @@ variant or an equivalent atomic history action.
    the matching legacy frame: 37-degree transform, frame-only transition, then -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. Only the 90-degree fixture pins exact materialized bounds; the remaining cases assert
-   byte-identical pixels and materialized-layer presence, not exact fractional per-layer bounds.
+   pixel grid. Within this source/tool matrix, only the 90-degree fixture pins exact materialized
+   bounds; the other cases assert byte-identical pixels and materialized-layer presence. The
+   retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
+   styled-text combinations.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
    variants, additional text styling/rotation combinations, other frame sequences and the full
    retained-affine operation surface still need parity proof. Previews and unsupported documents
@@ -215,13 +217,15 @@ variant or an equivalent atomic history action.
    previews remain a legacy presentation surface and these tests do not authorize a logical
    authority cutover.
 
-   The retained-affine/frame proof is now pinned for one raster fixture. It compares both history
-   cursors, verifies each renderer changes from the untransformed baseline, and checks the final
-   output against a frame-only control. Do not add frame-changing commits to durable publication
-   from this case alone. Next expand the frame matrix across the remaining angles, retained-affine
-   combinations, source/tool variants, text styling/rotation, frame sequences and exact fractional
-   materialized bounds. The same fixture's frame-only control showed a one-pixel/two-channel delta;
-   it is recorded in `e2e/OPEN_PROBLEMS.md` and is not a parity pass. Establish ownership and parity
+   The retained-affine/frame proof now covers two transformed raster layers across two successive
+   non-quarter frame transforms with fractional origins and extents, checking exact per-layer bounds
+   and pixels at both affine cursors, both frame cursors, and a frame-only control. A separate styled
+   paragraph-text fixture checks its affine cursor and two frame cursors against exact per-layer
+   bounds and pixels. Both fixtures also require byte-identical composites, and their frame-only
+   controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not
+   add frame-changing commits to durable publication from these cases alone. Continue across the
+   remaining angles, retained-affine combinations, source/tool variants, text styling/rotation,
+   frame sequences and exact fractional materialized bounds across the wider source matrix. Establish ownership and parity
    for source-backed imports/replacements as a separate, unordered gate; it may proceed before,
    after, or in parallel with the broader frame matrix. Keep the unsupported-source fallback
    explicit.
