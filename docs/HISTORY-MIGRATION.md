@@ -207,6 +207,10 @@ variant or an equivalent atomic history action.
    opacity blank, and one each to the other layers, checking per-layer bounds, dimensions, and pixels
    at all nine changed cursors. The other source-only cases assert
    byte-identical pixels and materialized-layer presence. The
+   mixed-source fixture uses integer frame origins and extents; a fractional-frame probe retained
+   exact per-layer bounds and pixels but its first composite transition differed at canvas pixel
+   (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not count that mixed-source
+   fractional case as parity proof until the composite mismatch is resolved. The
    retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
    styled-text combinations.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool

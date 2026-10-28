@@ -6,6 +6,7 @@ import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
+import { documentFrameSize as getDocumentFrameSize } from '../src/contexts/document-frame.ts';
 import type { DrawToolArgs } from '../src/tools/draw.ts';
 import type { ShapeToolArgs } from '../src/tools/shape.ts';
 import type { TransformToolArgs } from '../src/tools/transform.ts';
@@ -2896,7 +2897,6 @@ test.describe('Crop history', () => {
       page,
     }) => {
       await openDocument(page);
-
       const result = await compareCropRenderers(page, {
         caseName: 'quarter-turn crop',
         documentId: 'quarter-turn-crop-pixel-parity',
@@ -3671,23 +3671,24 @@ test.describe('Crop history', () => {
 
       expect(result.layerTransformResults).toHaveLength(6);
       for (const transform of result.layerTransformResults) {
+        assertMixedLayerParity(transform.materializedLayerComparisons, `retained affine ${transform.id}`);
         expect(transform.differingBytes, `retained affine ${transform.id} composite parity`).toBe(0);
         expect(transform.legacyDiffersFromUntransformed).toBe(true);
         expect(transform.durableDiffersFromUntransformed).toBe(true);
         expect(transform.legacyDiffersFromPrevious).toBe(true);
         expect(transform.durableDiffersFromPrevious).toBe(true);
-        assertMixedLayerParity(transform.materializedLayerComparisons, `retained affine ${transform.id}`);
       }
       expect(result.transitionResults).toHaveLength(3);
       for (const transition of result.transitionResults) {
         expect(transition.durableFrame).toEqual(transition.frame);
-        expect(transition.legacyByteLength).toBe(transition.frame.width * transition.frame.height * 4);
+        const frameSize = getDocumentFrameSize(transition.frame);
+        expect(transition.legacyByteLength).toBe(frameSize.width * frameSize.height * 4);
         expect(transition.durableByteLength).toBe(transition.legacyByteLength);
+        assertMixedLayerParity(transition.materializedLayerComparisons, `frame transition ${transition.index}`);
         expect(
           transition.differingBytes,
           `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
         ).toBe(0);
-        assertMixedLayerParity(transition.materializedLayerComparisons, `frame transition ${transition.index}`);
       }
       for (const [color, presence] of Object.entries(result.colorPresence)) {
         expect(presence.legacy, `legacy mixed-source crop should contain ${color}`).toBe(true);
