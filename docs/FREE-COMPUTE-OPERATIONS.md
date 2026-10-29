@@ -10,6 +10,45 @@ are absent: use [Kilo chat history](../.skills/kilo-chat-history.md) or [Codex c
 Never print key files, dump the environment, include credentials in prompts, or copy secret values
 into logs. Report only the provider, path, and whether authentication is available.
 
+## Kilo Code
+
+The runner uses `kilo run` for Kilo inference, which picks up the logged-in Kilo Gateway OAuth
+account used by the Kilo Code extension. It discovers `kilo` on `PATH` and then checks common VS
+Code, Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set
+`KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never read or
+print the Kilo auth database or JSON file.
+
+`kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
+tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
+Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
+broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
+rejects tool events and reported non-zero cost, and allows up to five minutes for inference. It
+uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
+inference requests anonymously to the public Gateway endpoint. The child environment is limited to
+runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
+and `KILO_CONFIG_CONTENT` are not passed through.
+
+The current Kilo CLI has no `--max-tokens` option. For Kilo completions, the runner's
+`--max-tokens` value is a response-length instruction; Kilo and the model control the actual
+generation budget. The OpenRouter and Groq routes send a provider-side token limit.
+
+## OpenRouter
+
+OpenRouter inference uses `OPENROUTER_API_KEY` from the runner process. The runner neither reads
+Kilo's saved OpenRouter credential nor prints the API key. Use a secret manager or an existing
+protected environment setup to provide it. Check the account's daily counter without inference:
+
+```sh
+node scripts/free-model-pool.mjs --openrouter-quota
+```
+
+The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Laguna S 2.1
+first when it is present, and stops that provider for the run on HTTP 401, 402, or 429. Inference
+gets five minutes; catalog and quota requests keep a separate 15-second timeout. A quota snapshot
+is only current at the time it was read and can change when other tools use the account.
+OpenRouter Laguna receives at least 1,024 completion tokens so reasoning has room to finish; other
+models use the requested token limit.
+
 ## OpenCode
 
 The runner calls `opencode run` through the OpenCode CLI; it does not call a generic model HTTP API.
@@ -56,9 +95,11 @@ node scripts/free-model-pool.mjs --openrouter-quota
 node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt --output-file ./summary.md --max-tokens 1500
 ```
 
-The pool tries at most three eligible models per provider; HTTP 402/429 exhausts that provider for
-the run. It never falls back to paid models. `--list` refreshes public catalogs and does not send
-an inference request. `--openrouter-quota` reads OpenRouter's daily counter only; it does not
-report Kilo's separate IP-based free-model limit. See [MODELS.md](../MODELS.md) for both providers'
-published limits. The URL runner accepts at most 20 public HTTPS URLs and writes only its
-condensed result. Quarantine operations are `npm run free:quarantine -- list|add|release|prune`.
+The pool tries at most three eligible models per provider; HTTP 401, 402, or 429 exhausts that
+provider for the run. It never falls back to paid models. `--list` refreshes public catalogs and
+does not send an inference request. For Kilo, `configured: null` means the CLI was found but its
+saved login was not probed; for OpenRouter, `configured` reflects `OPENROUTER_API_KEY`. The
+OpenRouter quota command does not report Kilo's separate IP-based free-model limit. See
+[MODELS.md](../MODELS.md) for both providers' published limits. The URL runner accepts at most 20
+public HTTPS URLs and writes only its condensed result. Quarantine operations are
+`npm run free:quarantine -- list|add|release|prune`.
