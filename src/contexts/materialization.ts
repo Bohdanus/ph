@@ -422,7 +422,10 @@ export async function materializeLayer(
             }
           }
         }
-        replaceOwnedBitmap(await toOwnedBitmap(output));
+        // This freshly-created surface is already owned by the materialization cache. Keep it
+        // directly; round-tripping through createImageBitmap can change low-alpha edge bytes on
+        // other Canvas backends.
+        replaceOwnedBitmap(output);
         origin = pixelGridBounds
           ? { x: pixelGridBounds.x, y: pixelGridBounds.y }
           : { x: evaluation.bounds.x, y: evaluation.bounds.y };

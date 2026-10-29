@@ -102,8 +102,13 @@ affine on a 45%-opacity blank, and one each on vector, paint, and point text, at
 and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
 with fractional origins and extents, including composite parity and exact per-layer bounds and
-pixels at each tested affine or frame-transition cursor plus a frame-only control. A second fixture applies a retained affine to a
-bold-italic serif paragraph text layer through a two-frame sequence, with exact per-layer
+pixels at each tested affine or frame-transition cursor plus a frame-only control. Mirror run
+40963949888 disproved that per-layer gate on Linux and Windows: the retained `background` raster
+differed by three bytes at a fractional affine edge while the composite remained exact. Keeping a
+newly rasterized, cache-owned canvas directly instead of round-tripping it through
+`createImageBitmap()` is the current candidate fix; rerun the exact zero-byte gate on both platforms
+before treating it as resolved. A second fixture applies a retained affine to a bold-italic serif
+paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
 combinations; other retained-affine operation combinations and angles, blank opacity variants, other
 text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
@@ -131,6 +136,10 @@ previews keep the complete legacy base through accepted and refused append publi
 `resetHistoryTo.durable.test.tsx` proves a refused final durable draw restores the real timeline.
 `e2e/undo-redo.spec.ts` also checks exact live Brush preview pixels while startup and imported
 baselines remain ownership-gated, and proves a refused navigation restores the committed raster.
+Its browser screenshot remains attached as a diagnostic: in mirror run 40963949888 Linux and
+Windows had exact 800x600 preview/commit backing pixels, while the 974x583 CSS screenshot differed
+at 834 pixels by at most one channel value. Keep the exact backing-pixel assertion as the document
+gate and do not treat screenshot-resampling deltas as document-raster differences.
 These are preview-interleaving and rollback proofs; they do not move previews to durable authority or permit removal of legacy logical replay. The
 retained-affine/frame differentials now establish exact layer bounds and pixel parity for two raster
 layers across successive fractional frame transforms, and for a styled paragraph-text layer across
