@@ -327,22 +327,47 @@ function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoin
 }
 
 /**
- * Start just outside a real crop corner and rotate 90 degrees clockwise around the visible box
- * center. CSS-pixel offsets keep the gesture inside the UI's fixed-size rotation hot zone at every
- * document zoom; a fixed document-space offset silently leaves that hot zone on larger canvases.
+ * Find a point just outside a real crop corner that the app identifies as its rotation hotspot,
+ * then rotate 90 degrees clockwise around the visible box center. The DOM corner is rendered from
+ * rounded document coordinates while the pointer hook hit-tests the fractional selection rect,
+ * so a fixed CSS offset can land just inside a corner on one scale and outside the hot zone on
+ * another.
  */
 async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint; end: PagePoint }> {
   const corner = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
   const outline = page.getByTestId('crop-selection-outline');
+  const surface = page.locator('.cursor-crop');
   await expect(corner, 'the top-left crop handle is rendered').toBeVisible();
   const cornerBounds = await corner.boundingBox();
   const outlineBounds = await outline.boundingBox();
   if (!cornerBounds || !outlineBounds) throw new Error('the crop rotation gesture has no visible bounds');
 
-  const start = {
-    x: cornerBounds.x + cornerBounds.width / 2 - 8,
-    y: cornerBounds.y + cornerBounds.height / 2 - 8,
-  };
+  const cornerX = cornerBounds.x + cornerBounds.width / 2;
+  const cornerY = cornerBounds.y + cornerBounds.height / 2;
+  const offsets = [4, 8, 12, 16, 20];
+  const candidates = offsets
+    .flatMap((offsetX) =>
+      offsets
+        .filter((offsetY) => Math.hypot(offsetX, offsetY) <= 23)
+        .map((offsetY) => ({ offsetX, offsetY, distance: Math.hypot(offsetX, offsetY) }))
+    )
+    .sort((left, right) => left.distance - right.distance);
+  let start: PagePoint | null = null;
+
+  for (const candidate of candidates) {
+    const point = { x: cornerX - candidate.offsetX, y: cornerY - candidate.offsetY };
+    await page.mouse.move(point.x, point.y);
+    const cursor = await surface.evaluate((element) => getComputedStyle(element).cursor);
+    if (/url.*ew-resize/.test(cursor)) {
+      start = point;
+      break;
+    }
+  }
+
+  if (!start) {
+    throw new Error('No point outside the visible crop corner exposed the rotation cursor');
+  }
+
   const center = {
     x: outlineBounds.x + outlineBounds.width / 2,
     y: outlineBounds.y + outlineBounds.height / 2,
@@ -2871,7 +2896,11 @@ test.describe('Crop history', () => {
           width: 64,
           height: 64,
         });
-      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute(
+        'data-durable-fallback-reason',
+        'ownership-unproven'
+      );
       await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64)).toEqual(originalPixels);
@@ -2884,6 +2913,10 @@ test.describe('Crop history', () => {
           height: 32,
         });
       await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute(
+        'data-durable-fallback-reason',
+        'ownership-unproven'
+      );
       await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect
