@@ -127,6 +127,92 @@ test.describe('Undo and redo', () => {
 
   const capture = (page: Page, clip: Required<ClipOptions>): Promise<Buffer> => page.screenshot({ clip });
 
+  const captureCanvasStack = async (page: Page, includeToolOverlay: boolean) => {
+    const snapshot = await page.evaluate((includeOverlay) => {
+      const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const overlay = document.querySelector<HTMLCanvasElement>('[data-testid="tool-overlay-canvas"]');
+      if (!canvas || !overlay) throw new Error('Workspace canvas stack is incomplete');
+
+      const composed = document.createElement('canvas');
+      composed.width = canvas.width;
+      composed.height = canvas.height;
+      const context = composed.getContext('2d');
+      if (!context) throw new Error('Could not create the canvas-stack diagnostic context');
+      context.drawImage(canvas, 0, 0);
+      const overlayAligned = overlay.width === canvas.width && overlay.height === canvas.height;
+      if (includeOverlay && overlayAligned) context.drawImage(overlay, 0, 0);
+
+      return {
+        png: composed.toDataURL(),
+        overlayComposited: includeOverlay && overlayAligned,
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        overlayWidth: overlay.width,
+        overlayHeight: overlay.height,
+        devicePixelRatio: window.devicePixelRatio,
+      };
+    }, includeToolOverlay);
+
+    const png = snapshot.png.slice(snapshot.png.indexOf(',') + 1);
+    return {
+      raster: await loadImageData(Buffer.from(png, 'base64')),
+      overlayComposited: snapshot.overlayComposited,
+      canvasWidth: snapshot.canvasWidth,
+      canvasHeight: snapshot.canvasHeight,
+      overlayWidth: snapshot.overlayWidth,
+      overlayHeight: snapshot.overlayHeight,
+      devicePixelRatio: snapshot.devicePixelRatio,
+    };
+  };
+
+  const pixelDifference = (
+    expected: Awaited<ReturnType<typeof loadImageData>>,
+    actual: Awaited<ReturnType<typeof loadImageData>>
+  ) => {
+    if (expected.width !== actual.width || expected.height !== actual.height) {
+      return {
+        equal: false,
+        dimensions: `${expected.width}x${expected.height} vs ${actual.width}x${actual.height}`,
+        differingPixels: null,
+        maxChannelDelta: null,
+        bounds: null,
+      };
+    }
+
+    let differingPixels = 0;
+    let maxChannelDelta = 0;
+    let left = expected.width;
+    let top = expected.height;
+    let right = -1;
+    let bottom = -1;
+
+    for (let offset = 0; offset < expected.data.length; offset += 4) {
+      let pixelDiffers = false;
+      for (let channel = 0; channel < 4; channel += 1) {
+        const delta = Math.abs(expected.data[offset + channel]! - actual.data[offset + channel]!);
+        if (delta > 0) pixelDiffers = true;
+        if (delta > maxChannelDelta) maxChannelDelta = delta;
+      }
+      if (!pixelDiffers) continue;
+      differingPixels += 1;
+      const pixel = offset / 4;
+      const x = pixel % expected.width;
+      const y = Math.floor(pixel / expected.width);
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    }
+
+    return {
+      equal: differingPixels === 0,
+      dimensions: `${expected.width}x${expected.height}`,
+      differingPixels,
+      maxChannelDelta,
+      bounds: differingPixels === 0 ? null : { left, top, right, bottom },
+    };
+  };
+
   const expectPresentationDecision = async (page: Page) => {
     const strip = page.getByTestId('dev-status-strip');
     await expect
@@ -483,6 +569,7 @@ test.describe('Undo and redo', () => {
       .toBeLessThan(128);
 
     const preview = await loadImageData(await capture(page, clip));
+    const previewCanvasStack = await captureCanvasStack(page, true);
     expect(preview.width, 'a live paint preview must keep the document width').toBe(baseline.width);
     expect(preview.height, 'a live paint preview must keep the document height').toBe(baseline.height);
     expect(
@@ -501,20 +588,49 @@ test.describe('Undo and redo', () => {
 
     await page.mouse.up();
     await expect(historyRows, 'committing the preview appends one history row').toHaveCount(3);
+    const workspaceCanvas = getWorkspaceCanvas(page);
+    await expect(workspaceCanvas, 'the committed Brush frame must finish its legacy paint').toHaveAttribute(
+      'data-presentation-paint-source',
+      'legacy'
+    );
+    await expect(workspaceCanvas).toHaveAttribute('data-presentation-paint-cursor', '2');
+    const committedCanvasStack = await captureCanvasStack(page, false);
+    const backingPixelParity = previewCanvasStack.overlayComposited
+      ? { comparable: true, ...pixelDifference(previewCanvasStack.raster, committedCanvasStack.raster) }
+      : {
+          comparable: false,
+          reason: 'tool-overlay and workspace backing dimensions differ; screenshot comparison is still exact',
+        };
     const previewPixels = Buffer.from(preview.data);
+    let screenshotPixelParity: ReturnType<typeof pixelDifference> | null = null;
     await expect
       .poll(
         async () => {
           const committed = await loadImageData(await capture(page, clip));
-          return (
-            committed.width === preview.width &&
-            committed.height === preview.height &&
-            Buffer.from(committed.data).equals(previewPixels)
-          );
+          screenshotPixelParity = pixelDifference(preview, committed);
+          return screenshotPixelParity.equal && Buffer.from(committed.data).equals(previewPixels);
         },
         { message: 'committing the stroke must preserve the visible preview pixels' }
       )
-      .toBe(true);
+      .toBe(true)
+      .finally(async () => {
+        await testInfo.attach('brush-preview-commit-pixel-diagnostics.json', {
+          contentType: 'application/json',
+          body: JSON.stringify({
+            devicePixelRatio: previewCanvasStack.devicePixelRatio,
+            previewBacking: {
+              canvas: [previewCanvasStack.canvasWidth, previewCanvasStack.canvasHeight],
+              overlay: [previewCanvasStack.overlayWidth, previewCanvasStack.overlayHeight],
+            },
+            committedBacking: {
+              canvas: [committedCanvasStack.canvasWidth, committedCanvasStack.canvasHeight],
+              overlay: [committedCanvasStack.overlayWidth, committedCanvasStack.overlayHeight],
+            },
+            backingPixelParity,
+            screenshotPixelParity,
+          }),
+        });
+      });
 
     const chooser = page.waitForEvent('filechooser');
     await page.getByTestId('header-file-menu-button').click();
