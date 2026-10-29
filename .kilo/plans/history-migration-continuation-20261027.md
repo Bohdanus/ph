@@ -1,9 +1,60 @@
 # Continue durable history from current main
 
-## Current-run checkpoint — 2026-10-29 (prepared landing)
+## Latest checkpoint — 2026-10-29 (History-panel reachability proof)
 
-This is the latest execution snapshot; the 2026-10-28 sync and inventory entries below are
-historical evidence and do not describe today's branch or repository operation state.
+- Slice 1 landed on the actual local `main` as `f723394b47872bc579913af763d1ea32a56f1d1b`.
+  Its first parent is the reviewed main pin `84c1c9200f7a8c14f88fca1b4b465d0fa9430785`, its
+  second parent is candidate `c9b52cd39e5b3aa59b4b2961f6e7dbf12021fb86`, and the landed tree is
+  `2402ee0d958ba23b1aa0cf7fa242cf087058d7c8`. The required `Branch` and native `Chat` trailers
+  were verified; `main` is clean and `npm run repo:state` is clear.
+- This checkpoint's E2E and documentation candidate is based on that exact pin in
+  `/Users/bkalynovskyi/ph/.kilo/worktrees/history-disabled-blank-root-e2e-20261029`, branch
+  `task/history-disabled-blank-root-e2e-20261029`. It owns the `ph-12` E2E/docs paths; refresh the
+  claim and verify its held paths, including `src/contexts/useLayer.ts`, before another edit or
+  landing.
+- The History-panel reachability E2E now passes from the real startup blank document. It disables
+  the first `new layer` row through the visible eye control, checks the current row and exact empty
+  transparent pixels, pastes the deterministic raster through the clipboard/UI path, and requires
+  `durable` presentation at that append cursor. It compares exact canvas pixels, PSD composite and
+  layer pixels/bounds, and PNG pixels. Undo returns to the exact empty canvas and keeps the root
+  disabled; redo restores the exact raster pixels while the root remains disabled. Redo uses the
+  complete legacy fallback with `ownership-unproven`; this proves one bounded append route, not
+  broad navigation eligibility. The first `OPEN_DOCUMENT_ACTION` disable refusal remains covered
+  by `useHistory.test.tsx`.
+- Validation on this exact candidate: both History E2E specs passed (7 tests);
+  `npm run test:e2e:unit` passed (21 files, 1,536 passed, 13 expected failures); the full unit suite
+  passed (400 files, 11,518 passed, 215 expected failures); `npm run tsc` and `npm run build`
+  passed; `npm run lint:check` passed with 64 existing warnings and no errors. Fresh read-only
+  reviews are complete: Sol found and verified closure of the pre-repaint false-pass risk, and the
+  final Kilo review used `poolside/laguna-s-2.1:free` at reported cost zero. Kilo's proposed locator,
+  cursor, and renderer concerns were checked against the final source/test behavior; none was
+  actionable. The final candidate is ready for the pinned landing after the normal live-main,
+  ownership, and clean-checkout gates.
+- The production gate was not changed. `HistoryItem[]` and `replayHistory()` remain logical
+  authority. Slices 2A and 2B are still independent and unproven. At resume, inspect live ownership:
+  the existing frame-parity task retains Slice 2A until explicit handoff, and the separate
+  import/replacement candidate is not reusable without its owner's handoff and current-main review.
+  Select one source family only after proving the producer, exact history shape, owned assets, and a
+  missing acceptance path; do not harvest another active worktree.
+- Sol found that status publication alone could let the test sample correct legacy pixels before
+  the durable repaint. The candidate now exposes DEV-only paint source/cursor markers after
+  `drawLayersToCanvas` succeeds; pending and failed draws clear the durable claim. The E2E requires
+  a successful durable paint at cursor 1 before comparing output and a successful legacy paint at
+  cursor 1 after redo. Sol's final read-only review confirmed that fix. A free Kilo final review
+  also ran at reported cost zero; its locator, synchronous draw, and failure-path concerns were
+  checked against the test and renderer and were not actionable.
+- The latest user instruction authorizes extensive free compute. `MODELS.md` identifies the verified
+  zero-cost runner and live catalog as the route; use them for bounded reviews. Codex `spawn_agent`
+  does not expose provider routing, so do not describe an unverified subagent route as free.
+- The latest user instruction authorizes extensive free compute. Use `MODELS.md` and the verified
+  zero-cost runner for bounded research/reviews; Codex `spawn_agent` does not expose provider
+  routing. Do not infer that an unverified subagent route is free.
+
+## Prelanding checkpoint — 2026-10-29
+
+This records readiness immediately before the merge above. The 2026-10-28 sync and inventory
+entries below are historical evidence and do not describe today's branch or repository operation
+state.
 
 - The actual `refs/heads/main` worktree is
   `/Users/bkalynovskyi/ph/.kilo/worktrees/main-clean-20261028` at
@@ -24,9 +75,8 @@ historical evidence and do not describe today's branch or repository operation s
   ownership and exact source identity, and checks blank color/opacity/size. Its 8 tests passed;
   Terra re-reviewed and closed that finding. Sol's read-only StoreContext review found no
   actionable issue. The mocked-compositor test still is not pixel-parity evidence.
-- After the pinned landing, continue with the History-panel reachability E2E below. Do not widen
-  the cursor-prefix gate based on source inspection alone. Run only Luna or stronger model routes;
-  free-model research is not authorized in the current run.
+- This prelanding checkpoint is historical; the later History-panel reachability proof and its
+  validation are recorded above.
 
 ## Current-main sync and active decision record — 2026-10-28
 

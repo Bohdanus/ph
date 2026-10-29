@@ -194,8 +194,15 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
 
 The source of truth for this migration's implementation slices and acceptance gates is
 [the durable history continuation plan](../.kilo/plans/history-migration-continuation-20261027.md).
-The `976a201e` main-into-branch sync and `3ccccba0` main pin above describe the 2026-10-28
-checkpoint. The plan's 2026-10-29 current-run checkpoint records the actual current-main pin,
-prepared landing, validation and review results. At that checkpoint, the History-panel path that
-could make the bounded image/blank create exception reachable remained unproven; the next required
-step is the specified headless E2E, with the production gate unchanged until it passes.
+The `976a201e` sync and `3ccccba0` main pin above describe the 2026-10-28 checkpoint. Slice 1
+landed on `main` on 2026-10-29 as `f723394b`, after the full unit suite, source-backed E2E,
+typecheck, build, lint and read-only reviews passed. The latest plan checkpoint records its exact
+parents/tree and the History-panel proof based on that landed pin. The headless E2E now proves one
+bounded route: disable the default blank `NEW_LAYER_ACTION` row, then paste one supported raster
+through the UI and publish its append cursor with durable presentation. It checks the empty
+transparent state, exact composite and layer pixels, PNG and PSD output, then exact undo/redo pixels
+while the root stays disabled. A DEV-only canvas marker is written after the renderer succeeds, so
+the E2E confirms the durable and legacy repaint sources before reading their pixels. Redo correctly
+takes the legacy fallback with `ownership-unproven`. This does not widen production eligibility or finish history migration;
+`HistoryItem[]` and `replayHistory()` remain authoritative. Recheck live worktree ownership before
+selecting Slice 2A or one Slice 2B family, as recorded in the plan.
