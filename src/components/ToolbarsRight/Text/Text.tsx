@@ -304,7 +304,7 @@ const Text: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="font-size-input"
-          className="flex mb-2 justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex mb-1 justify-between text-[10px] leading-none font-medium text-gray-700 dark:text-gray-300"
         >
           Font Size
           <span className="text-gray-500 dark:text-gray-400">
@@ -331,7 +331,7 @@ const Text: React.FC<{}> = () => {
           onChange={handleFontSizeChange}
           onBlur={handleFontSizeCommit}
           onKeyDown={handleFontSizeKeyDown}
-          className="w-24 h-9 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          className="w-24 h-8 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>
 
