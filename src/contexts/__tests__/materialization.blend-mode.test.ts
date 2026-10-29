@@ -339,15 +339,24 @@ describe('the compositing boundary', () => {
   });
 
   it('leaves a hidden layer out of the composite entirely', async () => {
-    // The boundary skips on the flag it received, not on a re-read of the replay: a multiply layer
-    // that was hidden must issue no draw and no composite write at all, or the save/restore pair
-    // is the only thing keeping its mode off the next layer.
+    // The hidden multiply layer carries an affine operation too, so it must be skipped before the
+    // scratch materialization path and issue no draw or composite write on the document surface.
     const canvases = installBlendingCanvas();
     const registry = new AssetRegistry();
     try {
       const result = await composeDurableDocument(
         replay({
-          'hidden-multiply': layer('hidden-multiply', 0, { visible: false, blendMode: 'multiply' }),
+          'hidden-multiply': layer('hidden-multiply', 0, {
+            visible: false,
+            blendMode: 'multiply',
+            operations: [
+              Object.freeze({
+                kind: 'apply-affine-transform' as const,
+                layerId: 'hidden-multiply',
+                transform: Object.freeze({ a: 1, b: 0, c: 0, d: 1, e: 5, f: 5 }),
+              }),
+            ],
+          }),
           normal: layer('normal', 1),
         }),
         request(registry)
