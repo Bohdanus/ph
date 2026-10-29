@@ -111,6 +111,7 @@ its tool permissions.
 
 | Profile                                                                        | Its one job                                                                        |
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`../.kilo/agent/free-completion.md`](../.kilo/agent/free-completion.md)       | Deny every tool for authenticated free-model text completions                      |
 | [`../.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) | Deny file writes, patches, shell, and task delegation to free Kilo research agents |
 
 `e2e/fixtures/README.md` is the Playwright fixture conventions note.
