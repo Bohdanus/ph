@@ -13,6 +13,9 @@ operator authorization before using paid inference.
 
 ## Routing
 
+- Inference attempts providers in this order: Kilo, OpenRouter, Groq, then OpenCode. Catalog checks
+  can run in parallel; inference is sequential. A provider is skipped unless its route is configured
+  and its model is currently verified free.
 - Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
 - The runner sends Kilo inference through the installed Kilo Code CLI, so its saved Kilo Gateway OAuth is used. It searches `PATH` and common editor extension directories; set `KILO_CLI` only when discovery misses the executable. The child receives runtime paths but not other provider credentials or `KILO_CONFIG_CONTENT`; the tool-free `free-completion` agent and `--pure` mode block agent tools and external plugins.
 - The Kilo CLI has no `--max-tokens` option. The runner's `--max-tokens` value is a response-length instruction for Kilo; the CLI/model controls the actual generation budget. OpenRouter and Groq receive a provider-side token limit.
