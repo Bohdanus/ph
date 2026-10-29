@@ -2067,20 +2067,24 @@ already-landed patch-equivalence logic.
 
 ## 193. Paragraph overflow at the document edge has no verified raster contract
 
-**Confirmed app behavior.** `calculateNewRect` replaces an empty paragraph draft's dragged height
-with one line of height, then grows `y2` to the measured text height as the user types and clamps the
-result to the document with `trimRect2`. At the document edge, `renderTextInto` still lays out the full
-text, but the committed layer's `OffscreenCanvas` is sized from the clamped `pos`, so ink beyond that
-canvas is clipped. `TextEditOverlay` sets its editor element to `overflow: visible`, so that element
-does not clip content at its own box; whether excess ink remains visible outside the document workspace
-is not established.
+**Confirmed app behavior.** `calculateNewRect` in `src/util/rect.ts` measures all wrapped
+paragraph lines with `layoutText`, grows `y2` to the required height, and then clamps the rectangle
+with `trimRect2`. In `src/tools/text.ts`, `layoutText` returns every wrapped or hard-broken line; its
+optional box height sets the `overflow` flag but does not discard lines. `renderTextInto` draws every
+returned line. `createLayerFromTool` sets the committed `pos` from the rect, and `createLayerSource`
+passes that `pos` as the creator size (`src/contexts/useLayer.ts`, `src/contexts/layer-utils.ts`). The
+text creator allocates an `OffscreenCanvas` at that size (`src/tools/text.ts`); pixels drawn beyond it
+are clipped
+by its raster bounds. `TextEditOverlay` sets its contenteditable element to `overflow: visible`
+(`src/components/Main/TextEditOverlay.tsx`); that establishes the element's CSS behavior but not
+whether excess ink remains visible outside the document workspace.
 
-The current tool-layer source retains the text and its paragraph rectangle in `source.args`;
-`textLayerEditTarget` hydrates those values for editing. The text data is therefore not deleted by
-this raster crop in the editor's source-backed path. This does not establish Photoshop export or
-serialization behavior. The unresolved question is whether Photoshop clips committed overflow to
-the paragraph boundary or renders any of it beyond that boundary, and whether canvas expansion reveals
-it.
+The current tool-layer source retains the text and paragraph rectangle in `source.args`
+(`src/contexts/useLayer.ts`); `textLayerEditTarget` hydrates those values for editing
+(`src/contexts/text-layer-edit.ts`). The text data is therefore not deleted by this raster crop in the
+editor's source-backed path. This does not establish Photoshop export or serialization behavior. The
+unresolved question is whether Photoshop clips committed overflow to the paragraph boundary or renders
+any of it beyond that boundary, and whether canvas expansion reveals it.
 
 **Adobe contract.** Adobe describes paragraph type as text inside a user-created bounding box that
 wraps to the box dimensions, shows an overflow icon when the content does not fit, permits resizing
@@ -2107,12 +2111,15 @@ bounded by `pos`) can disagree. Choosing a shared fixed extent or separate layou
 without checking Photoshop would encode an unverified behavior and may add unneeded serialization
 state.
 
-**Coverage.** The current overflow E2E does reach the document's bottom edge: its original box ends at
-row 560 of a 600-row document, and three lines grow it to the edge. It verifies the draft overflow icon
-and checks that the icon is not baked into the committed layer. Its pixel check only establishes that
-some in-frame text ink remains after commit; it does not establish whether the overflow line survives,
-re-editing restores it, or canvas expansion reveals it. The earlier claim that this fixture stays
-40px from the edge is stale.
+**Coverage.** The E2E `the overflow icon is on the draft overlay only while the type outgrows the box`
+in `e2e/text-tool.spec.ts` starts from `OVERFLOW_RECT`, whose bottom is row 560 of the default
+800x600 document (`src/App.tsx`). The initial drag is 40px from the edge; replacing its text with three hard-broken
+lines makes `calculateNewRect` grow and clamp the box to the document bottom. The test explicitly
+waits for the box there and measures the icon at that edge. The earlier note was right about the
+initial rectangle but wrong to infer that the fixture never exercises the clamp. After commit, the
+pixel check establishes only that some in-frame text ink remains and that the icon is absent; it does
+not establish whether the overflow line survives, re-editing restores it, or canvas expansion reveals
+it.
 
 **Next step.** Verify in Photoshop before implementing: create paragraph text with known overflow
 inside the document and at its bottom edge; record whether overflow ink is visible outside the box
