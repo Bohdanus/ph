@@ -2484,7 +2484,7 @@ test.describe('Crop history', () => {
       expect(Number(await resizedOutlineRect.getAttribute('stroke-width'))).toBeGreaterThan(0);
       expect(await resizedOutlineRect.getAttribute('stroke-dasharray')).toMatch(/\d/);
       await expect(rotationHandle, 'the rotation grip stays visible and aligned after resize').toBeVisible();
-      expect(Number(await rotationHandle.locator('path').getAttribute('stroke-width'))).toBe(1);
+      expect(Number(await rotationHandle.locator('path').getAttribute('stroke-width'))).toBe(1.5);
 
       const screenshot = await page.screenshot({ scale: 'css' });
       const screenshotPixels = await loadImageData(screenshot);
