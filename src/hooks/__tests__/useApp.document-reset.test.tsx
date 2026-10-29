@@ -429,12 +429,20 @@ afterEach(() => {
 });
 
 describe('the outgoing document fixture is one production could really have produced', () => {
-  it('publishes a durable presentation cache after navigation without changing logical layers', async () => {
+  it('keeps a source-backed active prefix on the legacy presentation after navigation', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
 
-    await waitFor(() => expect(result.current.store.layers['old-1'].tmpCanvas).not.toBeNull());
-    expect(result.current.store.layers['old-1'].presentationBounds).toEqual({ x: 0, y: 0, width: 40, height: 20 });
+    await waitFor(() =>
+      expect(result.current.store.durablePresentation).toMatchObject({
+        status: 'legacy-fallback',
+        reason: 'ownership-unproven',
+      })
+    );
+    expect(result.current.store.durableRenderProjection).toBeNull();
+    expect(result.current.store.renderSelector.source).toBe('legacy');
+    expect(result.current.store.layers['old-1'].tmpCanvas).toBeNull();
+    expect(result.current.store.layers['old-1'].presentationBounds).toBeNull();
     expect(result.current.store.layers['old-1'].pos).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(result.current.store.historyIndex).toBe(1);
   });

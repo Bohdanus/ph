@@ -36,15 +36,34 @@ is for this review closeout.
   projection with legacy fallback, not a completed undo/redo authority cutover. Supported committed
   eligible append/reorder transitions also compose a durable presentation in the background, but keep
   the already-visible legacy selector active while composition runs so transient previews are not
-  blocked. Source-backed imports/replacements and frame-changing commits remain legacy until their
-  ownership or frame-parity gates are explicit.
+  blocked. Image/blank layer creates can request that presentation after asset finalization only if
+  the preceding active cursor prefix passes the existing ownership and frame gates; their own
+  navigation cursor remains on the legacy fallback. Tool-source creates, later source-backed edits,
+  source replacements, merge and frame-changing commits retain their gates.
+
+The current default UI path does not reach that create exception. `App.tsx` boots a blank
+document through `setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a
+`NEW_LAYER_ACTION`; the current ownership gate treats that active entry as unproven. Imported
+raster baselines are gated as well. Paste and Background conversion therefore remain on the
+legacy presentation for those flows. The focused unit test uses a gate-free blank
+`OPEN_DOCUMENT_ACTION` baseline to prove the narrow condition, but no normal UI path producing
+that prefix has been proven. Source inspection identifies an unverified candidate: the History
+panel can disable the default blank `NEW_LAYER_ACTION`, and disabled rows are skipped by replay and
+the presentation gate. Use the next-run E2E in the continuation plan to determine whether this is a
+valid product path; do not broaden the exception to bypass the active-prefix gate.
 
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
    staged presentation projection, and eligible committed append/reorder presentation composes in
-   the background. Source-backed imports/replacements and frame-changing commits remain on the
-   complete legacy path. Live previews also keep the complete legacy layer base until they clear;
+   the background. A new image/blank layer create may request composition after asset finalization
+   only if the prior active prefix passes the ownership and frame gates; its own navigation cursor
+   and later appends still use the complete legacy fallback. Other source-backed commits and
+   frame-changing commits remain on the complete legacy path.
+   The image/blank exception is not yet product-reachable from the default new-document or
+   imported-raster paths because both active prefixes are gated; keep that migration unproven
+   until baseline ownership is resolved explicitly.
+   Live previews also keep the complete legacy layer base until they clear;
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
@@ -93,9 +112,12 @@ priority or dependency. They may be pursued in either order or in parallel.
    variants, and exact fractional materialized bounds across the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
    cursor checks without changing publication, cursor, or lease ownership.
-4. Establish source-backed import/replacement ownership and parity as the other independent gate.
-   Keep the unsupported-source refusal explicit, and do not treat either gate's passing differential
-   as authority to promote that surface.
+4. Keep the image/blank create exception scoped to the current append. It may request background
+   composition after asset finalization only when the preceding active cursor prefix passes the
+   ownership and frame gates. The create's own navigation cursor and later appends remain on the
+   current legacy fallback until the broader source-ownership proof is explicit. Continue source-backed
+   import/replacement ownership and parity as the other independent gate; keep unsupported-source
+   refusal explicit and do not use either gate's differential to promote broader surfaces.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
@@ -167,3 +189,13 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
   fixture pins exact bounds for its listed integer-origin frame cases; a fractional-frame probe keeps
   per-layer bounds and pixels exact but differs in its first composite transition by one pixel. The
   raster and styled paragraph-text fixtures cover fractional frame origins and extents.
+
+## Current continuation plan
+
+The source of truth for this migration's implementation slices and acceptance gates is
+[the durable history continuation plan](../.kilo/plans/history-migration-continuation-20261027.md).
+The `976a201e` main-into-branch sync and `3ccccba0` main pin above describe the 2026-10-28
+checkpoint. The plan's 2026-10-29 current-run checkpoint records the actual current-main pin,
+prepared landing, validation and review results. At that checkpoint, the History-panel path that
+could make the bounded image/blank create exception reachable remained unproven; the next required
+step is the specified headless E2E, with the production gate unchanged until it passes.
