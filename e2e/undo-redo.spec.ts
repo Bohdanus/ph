@@ -599,38 +599,48 @@ test.describe('Undo and redo', () => {
       ? { comparable: true, ...pixelDifference(previewCanvasStack.raster, committedCanvasStack.raster) }
       : {
           comparable: false,
-          reason: 'tool-overlay and workspace backing dimensions differ; screenshot comparison is still exact',
+          reason: 'tool-overlay and workspace backing dimensions differ',
         };
-    const previewPixels = Buffer.from(preview.data);
+    // The screenshot clip is CSS-scaled. Gate exact document pixels on the backing stores, and
+    // retain screenshot parity as diagnostic evidence for display-stage resampling differences.
     let screenshotPixelParity: ReturnType<typeof pixelDifference> | null = null;
-    await expect
-      .poll(
-        async () => {
-          const committed = await loadImageData(await capture(page, clip));
-          screenshotPixelParity = pixelDifference(preview, committed);
-          return screenshotPixelParity.equal && Buffer.from(committed.data).equals(previewPixels);
-        },
-        { message: 'committing the stroke must preserve the visible preview pixels' }
-      )
-      .toBe(true)
-      .finally(async () => {
-        await testInfo.attach('brush-preview-commit-pixel-diagnostics.json', {
-          contentType: 'application/json',
-          body: JSON.stringify({
-            devicePixelRatio: previewCanvasStack.devicePixelRatio,
-            previewBacking: {
-              canvas: [previewCanvasStack.canvasWidth, previewCanvasStack.canvasHeight],
-              overlay: [previewCanvasStack.overlayWidth, previewCanvasStack.overlayHeight],
-            },
-            committedBacking: {
-              canvas: [committedCanvasStack.canvasWidth, committedCanvasStack.canvasHeight],
-              overlay: [committedCanvasStack.overlayWidth, committedCanvasStack.overlayHeight],
-            },
-            backingPixelParity,
-            screenshotPixelParity,
-          }),
-        });
+    try {
+      expect(backingPixelParity, 'committing the stroke must preserve exact document backing pixels').toMatchObject({
+        comparable: true,
+        equal: true,
       });
+      await expect
+        .poll(
+          async () => {
+            const committed = await loadImageData(await capture(page, clip));
+            screenshotPixelParity = pixelDifference(preview, committed);
+            return (
+              committed.width === preview.width &&
+              committed.height === preview.height &&
+              darkestCenterChannel(committed) < 128
+            );
+          },
+          { message: 'the committed stroke must stay visible after the preview overlay clears' }
+        )
+        .toBe(true);
+    } finally {
+      await testInfo.attach('brush-preview-commit-pixel-diagnostics.json', {
+        contentType: 'application/json',
+        body: JSON.stringify({
+          devicePixelRatio: previewCanvasStack.devicePixelRatio,
+          previewBacking: {
+            canvas: [previewCanvasStack.canvasWidth, previewCanvasStack.canvasHeight],
+            overlay: [previewCanvasStack.overlayWidth, previewCanvasStack.overlayHeight],
+          },
+          committedBacking: {
+            canvas: [committedCanvasStack.canvasWidth, committedCanvasStack.canvasHeight],
+            overlay: [committedCanvasStack.overlayWidth, committedCanvasStack.overlayHeight],
+          },
+          backingPixelParity,
+          screenshotPixelParity,
+        }),
+      });
+    }
 
     const chooser = page.waitForEvent('filechooser');
     await page.getByTestId('header-file-menu-button').click();
