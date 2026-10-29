@@ -2586,14 +2586,19 @@ test.describe('Crop history', () => {
 
       // Move the whole crop rectangle after resizing it. Its top edge should move by the same
       // document-space delta while the underlying document remains in place.
-      const moveFrom = documentPoint(fit, fit.documentWidth / 2, 120);
-      const moveTo = documentPoint(fit, fit.documentWidth / 2 + 30, 145);
+      const movedFit = await readFit(page);
+      const moveFrom = documentPoint(movedFit, movedFit.documentWidth / 2, 120);
+      const moveTo = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, 145);
       await page.mouse.move(moveFrom.x, moveFrom.y);
+      await expect(page.locator('.cursor-crop'), 'the crop interior exposes its move cursor').toHaveCSS(
+        'cursor',
+        'move'
+      );
       await page.mouse.down();
       await page.mouse.move(moveTo.x, moveTo.y, { steps: 12 });
       await page.mouse.up();
 
-      const movedTop = documentPoint(fit, fit.documentWidth / 2 + 30, -15);
+      const movedTop = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, -15);
       await expect
         .poll(async () => {
           const actual = await readTopOutlineCenter();
