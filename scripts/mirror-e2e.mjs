@@ -26,6 +26,8 @@ const CODEX_THREAD_ID_PATTERN = new RegExp(`^${UUID_PATTERN}$`);
 const COPILOT_SESSION_URI_PATTERN = new RegExp(`^copilotcli:/${UUID_PATTERN}$`);
 const LINUX_BASELINE_COMMIT_SUBJECT = 'test: refresh Linux export baselines';
 const DISCOVERY_TIMEOUT_MS = 120_000;
+// `git push` runs the repository's full test suite through the pre-push hook.
+export const MIRROR_PUSH_TIMEOUT_MS = 15 * 60_000;
 export const RUN_WAIT_TIMEOUT_MS_BY_MODE = Object.freeze({
   full: 60 * 60_000,
   focused: 60 * 60_000,
@@ -608,7 +610,7 @@ export async function runMirrorE2E(argv = process.argv.slice(2)) {
 
   const remoteSha = readMirrorBranchSha(branch);
   assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch });
-  command('git', buildMirrorPushArgs(sourceSha, branch));
+  command('git', buildMirrorPushArgs(sourceSha, branch), process.cwd(), MIRROR_PUSH_TIMEOUT_MS);
   const dispatchArgs = buildDispatchArgs(options, { requestId, sourceSha, branch, workflowSha: expectedWorkflowSha });
   command('gh', dispatchArgs);
   console.log(`Waiting for ${title}`);

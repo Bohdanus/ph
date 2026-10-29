@@ -17,6 +17,7 @@ import {
   fastForwardBaselineCommit,
   githubRepositoryFromRemote,
   isRetryableCommandError,
+  MIRROR_PUSH_TIMEOUT_MS,
   parseArgs,
   parseMirrorBranchSha,
   readMirrorBranchSha,
@@ -223,6 +224,12 @@ describe('mirror E2E command parsing', () => {
     ].map((args) => [args])
   )('rejects invalid invocation %j', (args) => {
     expect(() => parseArgs(args)).toThrow();
+  });
+});
+
+describe('mirror E2E push timeout', () => {
+  it('allows the required pre-push suite to finish before timing out Git', () => {
+    expect(MIRROR_PUSH_TIMEOUT_MS).toBe(15 * 60_000);
   });
 });
 
