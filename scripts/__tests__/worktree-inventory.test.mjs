@@ -1718,6 +1718,45 @@ describe('classify: the 0-ahead trap', () => {
     }
   });
 
+  it.each(['main', 'refs/heads/main', 'refs/heads/release', 'refs/remotes/origin/main'])(
+    'protects linked main when the comparison base is %s',
+    (base) => {
+      const v = classify(wt({ branch: 'main', isPrimary: false, ahead: 0, mergedIntoBase: true }), {
+        chatSummary: noChats,
+        chatSessions: noSessions,
+        curated: { legacy: true },
+        nowMs: NOW,
+        base,
+      });
+      expect(v.action).toBe(ACTION.KEEP);
+      expect(v.prunable).toBe(false);
+    }
+  );
+
+  it('protects a linked comparison branch named by its fully qualified local ref', () => {
+    const v = classify(wt({ branch: 'release', ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+      base: 'refs/heads/release',
+    });
+    expect(v.action).toBe(ACTION.KEEP);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('does not confuse a remote comparison ref with a same-suffix local branch', () => {
+    const v = classify(wt({ branch: 'release', ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+      base: 'refs/remotes/origin/release',
+    });
+    expect(v.action).toBe(ACTION.DISPOSE);
+    expect(v.prunable).toBe(true);
+  });
+
   it('reports the MAIN worktree as in-use when a session is live in it', () => {
     // `wt.live` was read instead of the local `live`, and the input record
     // never carries that property — so the main worktree could never report
