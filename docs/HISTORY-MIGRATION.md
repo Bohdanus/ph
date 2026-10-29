@@ -187,8 +187,10 @@ variant or an equivalent atomic history action.
    adapter parity, and atomic failure fallback are closed; supported committed
    eligible append/reorder presentation now composes in the background with legacy
    as the immediate selector. Image/blank layer creates also request background presentation
-   after asset finalization. Tool-source creates, source replacements, merge and frame-changing
-   commits retain their independent ownership or frame-parity gates. A
+   after asset finalization. A Shape Tool create converts to a typed vector entry, but its
+   presentation remains behind the `NEW_LAYER_ACTION` ownership gate. Other tool-source creates,
+   source replacements, merge and frame-changing commits retain their independent ownership or
+   frame-parity gates. A
    rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
    operation, and legacy plus durable logical replay both transform every extant layer.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
@@ -246,12 +248,14 @@ variant or an equivalent atomic history action.
    `NEW_LAYER_ACTION`: it is permitted only after asset reconciliation and only when the preceding
    active cursor prefix passes the ownership and frame gates. The create cursor itself still uses the
    full legacy navigation fallback. `StoreContext.source-backed-presentation.test.tsx` pins stale,
-   incomplete, and failed finalization behavior; `e2e/source-backed-history.spec.ts` pins paste,
-   Background conversion, exact legacy undo/redo pixels, and PNG/PSD output. On the current app
-   boot path, the initial blank baseline is itself a `NEW_LAYER_ACTION`, so the source-backed
-   cursor gate prevents those UI flows from reaching this exception. The eligible prefix is
-   unit-tested with a gate-free blank `OPEN_DOCUMENT_ACTION`, but is not yet product-reachable.
-   This is presentation progress, not a logical authority change.
+   incomplete, and failed finalization behavior; `e2e/source-backed-history.spec.ts` proves a
+   product-reachable disabled-root path for raster paste and transparent blank creation with exact
+   canvas/PNG/PSD pixels and legacy undo/redo fallback. The default active root remains gated.
+   A Shape Tool `NEW_LAYER_ACTION` is converted to a typed vector entry, but its current presentation
+   is intentionally unpublished: planner and StoreContext tests prove conversion is current without
+   invoking the compositor, and the desktop E2E checks legacy paint, exact canvas/PNG/PSD pixels,
+   and undo/redo. This is a characterization boundary only; it does not authorize vector-source
+   publication or change logical history authority.
 
    Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
    which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),

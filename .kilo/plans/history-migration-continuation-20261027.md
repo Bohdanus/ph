@@ -1,6 +1,40 @@
 # Continue durable history from current main
 
-## Latest checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
+## Latest checkpoint — 2026-10-29 (typed vector create remains gated)
+
+- The actual local `main` is landed at `730339e5983d42f52fe102d83d8bfd286137a6c5`, with first
+  parent `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
+  `080144c22157c446b75eca7d15dabce661af10ec`, and tree
+  `df24312c10849921d6b6ce6704dba9ccf66aed76`. The task worktree
+  `/Users/bkalynovskyi/ph/.kilo/worktrees/history-disabled-blank-root-e2e-20261029` was
+  fast-forwarded to that exact main pin after landing the raster and tablet blank-source UI proof.
+- `ph-12` was resolved after that landing. `ph-14` is the active characterization-only task. Verify
+  live claim and path locks before continuing or landing; the exact current diff is the live source
+  for edited files. Do not take the independently owned frame-parity or import/replacement work.
+- Shape Tool creates are confirmed to emit `NEW_LAYER_ACTION` with a tool source and convert to a
+  current typed vector entry. The existing StoreContext ownership gate correctly leaves vector
+  presentation unpublished and on legacy paint. Tests now pin that boundary for vector, text and
+  pencil source families. The Shape Tool E2E checks the disabled-root route, legacy paint marker,
+  exact canvas/PNG/PSD output, undo/redo pixels, and `ownership-unproven` redo fallback. This is
+  characterization only; no production eligibility or logical-authority code changed.
+- Candidate validation now passes: 38 focused unit tests across the append planner and StoreContext
+  suites; all five `e2e/source-backed-history.spec.ts` browser cases; `npm run test:e2e:unit` (21
+  files, 1,536 passed, 13 established expected failures); full unit suite (400 files, 11,524
+  passed, 215 established expected failures); `npm run tsc`; `npm run build`; and
+  `npm run lint:check` (64 existing warnings, zero errors). The first full-suite attempt hit the
+  existing `e2e-run` test's ephemeral free-port race; its isolated rerun and the complete retry
+  both passed. Final independent reviews of the test diff (Sol) and documentation diff (Luna) found
+  no actionable issues after the reported findings were corrected. Earlier free-pool requests
+  returned provider rate limits, a length-ended empty completion, or a missing OpenCode CLI; those
+  attempts were not review evidence. Commit and pinned landing remain.
+- `HistoryItem[]` and `replayHistory()` remain logical authority. The default active root, imported
+  raster baselines, source replacement/import, merge, frame-changing commits, broader source
+  families, durable-first navigation, and replay-budget/cancellation behavior remain unproven. Do
+  not widen production gates. Next: finish exact-candidate validation/reviews, land this bounded
+  characterization if it remains clean, then reassess live ownership before choosing another
+  independent implementation slice.
+
+## Previous checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
 
 - Slice 1 landed on the actual local `main` as `f723394b47872bc579913af763d1ea32a56f1d1b`.
   Its first parent is the reviewed main pin `84c1c9200f7a8c14f88fca1b4b465d0fa9430785`, its
@@ -272,9 +306,10 @@ are proven together.
   on the exact candidate. Follow `docs/E2E-MIRROR.md` for a broad mirrored E2E run; never open a
   browser window.
 - Migration/persistence/cross-module behavior needs two independent read-only reviews after the
-  implementation is final. The operator's current instruction is Luna or stronger only; do not
-  use free-model routes. Read `MODELS.md` before any model/provider selection, and honor its
-  subtask and cost rules for Sol/Terra. Reviewers report; the coordinator verifies findings.
+  implementation is final. Follow current `MODELS.md` and the user's latest instruction to use
+  verified free compute heavily. Verify that each route is free and produces a complete, reviewable
+  response; timeout, empty, truncated, rate-limited, or unverified outputs are not review evidence.
+  Do not silently switch to paid compute. Reviewers report; the coordinator verifies findings.
 - Do not call the migration complete until Slice 2A and every needed Slice 2B source family have
   explicit parity/ownership gates; Slice 3 performs atomic durable-first navigation with exact
   labels and tool hydration; and Slice 4 measures replay cost, cancellation and safe baseline
@@ -285,39 +320,26 @@ are proven together.
   remains a separate pinned procedure and is blocked until the owner clears the current
   `repo:state` operation and the exact latest-main/parent/tree checks pass.
 
-Implemented files:
+Current implementation boundary:
 
-- `src/contexts/StoreContext.tsx`: only a current image/blank `NEW_LAYER_ACTION` may
-  compose in the background, and only if the preceding active cursor prefix passes main's
-  existing ownership and frame gates. The new entry keeps legacy navigation fallback.
-  The actual app boot path starts with a blank `NEW_LAYER_ACTION`, which main's gate marks
-  `ownership-unproven`; imported raster baselines are gated too. The History-tab disable route is
-  a source-derived candidate, not yet E2E-proven. Do not relax the cursor gate to make it reachable.
-  Transaction ordering, freshness, renderer compatibility and whole-document coverage
-  gates remain intact. Tool-source creates, later source-backed edits, merge, replacement
-  and frame commits stay gated.
-- `src/contexts/__tests__/StoreContext.source-backed-presentation.test.tsx`: eight
-  tests cover image/blank success, ownership-before-composition, borrowed input lifetime,
-  exactly-once lease disposal, stale document replacement, incomplete materialization,
-  tool-source refusal, prior-prefix refusal and finalization failure without a duplicate
-  logical append.
-- `src/hooks/__tests__/useApp.document-reset.test.tsx`: the outgoing-document fixture now
-  asserts the current main contract for its active source-backed prefix: navigation reports
-  `ownership-unproven` and retains the legacy layer presentation.
-- `e2e/source-backed-history.spec.ts`: actual paste and Background conversion on the app's
-  default blank document. Paste uses a deterministic page-local clipboard reader, preserving
-  the host clipboard. The oracle specifies an opaque white 800x600 document and a centered
-  32x24 red/blue source independently; it checks exact legacy pixels, ownership-gated undo/redo,
-  exact PSD composite and layer pixels, and exact native-resolution PNG pixels. These flows
-  do not claim durable presentation: the initial blank `NEW_LAYER_ACTION` already gates the
-  active prefix, so append status stays unpublished and navigation falls back to legacy.
-- `src/contexts/__tests__/useLayer.lifecycle.test.tsx`: immutable import now forbids
-  copying the original input, while permitting separate background render outputs;
-  it also requires runtime and editable-source bitmap identity to remain the input.
-- `docs/HISTORY-MIGRATION-NEXT.md`, `docs/HISTORY-MIGRATION.md`,
-  `docs/ARCHITECTURE.md`, and `HANDOFF.md`: describe the bounded new eligibility and
-  preserve the remaining gates. The restart guide's obsolete landing blocker is removed.
-- `docs/README.md` indexes this newly tracked plan, as required by the documentation gate.
+- `src/contexts/StoreContext.tsx` keeps background publication limited to current image/blank
+  `NEW_LAYER_ACTION` entries whose preceding active cursor prefix passes the ownership and frame
+  gates. The created cursor keeps legacy navigation fallback. The default active blank root and
+  imported-raster baselines remain gated. Do not relax this production predicate.
+- `src/contexts/__tests__/history-append.create.test.ts` pins Shape Tool source conversion to a
+  current typed vector entry, with exact arguments, source position and size, cloned/frozen args,
+  and no durable asset lease.
+- `src/contexts/__tests__/StoreContext.source-backed-presentation.test.tsx` pins that vector,
+  text, and pencil creates stay unpublished and do not call the compositor; the vector conversion
+  remains current. Existing image/blank success, ownership-before-composition, lease, stale,
+  coverage and finalization gates remain covered.
+- `e2e/source-backed-history.spec.ts` exercises the user-disabled-root route for raster paste,
+  tablet blank creation, and a Shape Tool rectangle. The vector test requires legacy paint, exact
+  canvas/PNG/PSD composite and layer pixels, undo/redo pixels, and legacy `ownership-unproven`
+  fallback. It makes no claim that PSD preserves editable vector semantics.
+- `docs/ARCHITECTURE.md`, `HANDOFF.md`, `docs/HISTORY-MIGRATION.md`,
+  `docs/HISTORY-MIGRATION-NEXT.md`, and this plan describe the current production boundary and
+  keep remaining migration gates explicit.
 
 Verified evidence so far:
 
@@ -345,41 +367,21 @@ Verified evidence so far:
   These were completion reviews of the old candidate, not tool-using agents; fresh review
   of the current-main composition is still required.
 
-Current reachability finding — 2026-10-28: `App.tsx` creates the default blank document via
-`setBlankImage()`, and `useLayer.ts` records that document's initial baseline as a
-`NEW_LAYER_ACTION` with a blank source. Main's `durablePresentationGateReason()` treats every
-active `NEW_LAYER_ACTION` as `ownership-unproven`. Consequently both actual paste and
-Background conversion start from an already-gated prefix. The narrow append exception is
-unit-tested against a gate-free `OPEN_DOCUMENT_ACTION` blank baseline, but that baseline has
-not yet been demonstrated through the product UI. Keep the implementation bounded; do not
-broaden the active-prefix gate.
+Resolved reachability boundary: the default active blank `NEW_LAYER_ACTION` still makes ordinary
+creates ownership-unproven, and `REPLACE_DOCUMENT` does not exercise the committed-append
+publisher. The disabled-root path is now proven through the visible History panel for deterministic
+raster paste and tablet blank creation, with exact renderer and export pixels. A Shape Tool rectangle
+can also be created on that path, but converts to a current typed vector entry that intentionally
+stays unpublished and legacy-painted. The E2E verifies this refusal and exact legacy pixels through
+undo/redo. The gate remains limited to image/blank; there is no test or production path that promotes
+tool-source creates. Default active roots, imported-raster starts, and other source families remain
+gated until independently proven.
 
-The boot path uses `REPLACE_DOCUMENT`, which builds the durable shadow and requests temporary
-layer presentation but does not call `publishDurableAppendPresentation()`. That background
-publisher is called for committed appends. Thus the initial blank source does not exercise the
-positive append exception; later paste and Background commits encounter that source in their
-prior active prefix and remain gated. The targeted browser spec confirms unpublished status and
-legacy fallback while checking exact visible and exported pixels.
-
-The focused Sol audit reached the same boundary for ordinary active startup and raster-import
-paths; it did not investigate a disabled startup entry. A fresh source read now shows a candidate
-alternate path: `HistoryTab.tsx` exposes a disable button for each row, `useHistory.toggleDisabled()`
-protects only an opening `OPEN_DOCUMENT_ACTION`, and both `replayHistory()` and the presentation
-gate skip disabled entries. This makes disabling the first blank `NEW_LAYER_ACTION` a plausible
-way to create a gate-free prefix, but no real UI/E2E proof exists yet and the resulting empty
-document must be checked for correctness. Do not call the exception unreachable across all UI
-states, and do not call this candidate reachable until the planned headless E2E passes.
-
-Sync-tree evidence after the main merge: the four focused StoreContext/presentation suites pass
-96 tests; the document-reset suite passes 15 tests after its stale durable-cache expectation was
-aligned with main's ownership fallback; the full unit suite passes 399 files, 11,489 tests, and
-215 established expected failures. `npm run tsc`, `npm run build`, and `npm run lint:check`
-pass. The targeted headless `e2e/source-backed-history.spec.ts` passes its two fallback and
-pixel/export cases. A focused paid Sol audit and two separately prompted read-only reviews via
-`kilo/poolside/laguna-s-2.1:free` report no blocking code defect; the second review explicitly
-confirms that `REPLACE_DOCUMENT` never calls the durable append publisher and the gate-free unit
-fixture does not prove normal UI reachability. Both Kilo calls completed with `finish_reason=stop`,
-`cost=0`, and no OpenRouter requests. No further model review is planned; broader authority and
+Historical sync-tree evidence from 2026-10-28 (superseded by the Latest checkpoint above): the
+four focused StoreContext/presentation suites passed 96 tests; the document-reset suite passed 15;
+the full unit suite passed 399 files, 11,489 tests, and 215 established expected failures. These
+counts and the then-current two-case browser run are not evidence for the vector characterization.
+The current task's exact validation is recorded in the latest checkpoint. Broader authority and
 product-flow proof remain open.
 After this plan update, the citation suite passed 24 checks and `npm run lint:check` passed with
 64 existing warnings, zero errors, and clean Prettier formatting.
@@ -398,29 +400,28 @@ source gate, append caller, startup producer, navigation behavior, and fallback 
 
 Current next steps:
 
-Use the **Next-run execution plan** above as the live handoff. It supersedes the earlier inventory
-command list: the last inventory is stale against the now-45-worktree registry, and the next run
-must first prove or reject the History-tab disabled-root path. Do not widen the gate or begin
-Slice 3/4 before those dependencies are resolved.
+The **Latest checkpoint** at the top is the live status; older dated inventories, claims and
+provider snapshots below are historical evidence. The disabled-root UI path is already proven for
+raster paste and tablet blank creation. Do not repeat that discovery task or describe it as
+unproven. The vector test is characterization only and does not open the production gate.
 
-For subsequent edits, stage only owned paths. This ignored plan needs `git add -f`.
-Commits require `Chat: 01a17f24-9224-7aa0-a412-3afafa09f797` and normal
-lint-staged/type/build gates. Run focused tests after fixes; a new composition needs
-its own applicable gates. Never run inventory concurrently with full unit worktree
-integration tests or with commits that change the roster's recorded HEADs.
+For the current `ph-14` candidate, verify the live claim and all eight held paths before landing.
+The final Sol test review and Luna documentation review found no actionable issues, and all listed
+validation passes. Stage only those owned paths, commit with
+`Chat: 01a17f24-9224-7aa0-a412-3afafa09f797`, and use the pinned local-main landing procedure. The
+plan is tracked; stage it normally. Recheck actual `refs/heads/main`, checkout mappings, cleanliness,
+`repo:state`, candidate parents/tree and current inventory immediately before landing. Never use
+the root `main-sync` checkout as the baseline. Any product-behavior or gate-related edit after
+review invalidates the relevant final review/gate evidence and must be checked again.
 
-Coordination: swarm issue **`ph-12`**, owned by this task branch, holds the production
-StoreContext path, new tests, lifecycle test and migration docs. Refresh/check live
-claims before continuing. Its earlier automatic "merged into main" release happened
-before the first task commit and was not landing evidence; the claim was reacquired.
-The frame task owns `materialization.ts` and its affine
-E2E file; this slice does not edit them or `e2e/OPEN_PROBLEMS.md`.
-
-Provider state refreshed 2026-10-28: two required current-candidate reviews resolved to
-`kilo/poolside/laguna-s-2.1:free`, each with zero reported cost; the last live OpenRouter
-snapshot was `817/1000` used with `183` remaining at 18:16:48Z, and no OpenRouter call was made.
-No Groq key or Free-plan opt-in is present. The operator has since instructed: do not use free
-models for further reviews; use Luna or stronger. The completed free calls predate that instruction.
+After this candidate lands, resolve `ph-14` and recheck current ownership before choosing another
+bounded slice. The frame-parity and import/replacement investigations are independent and remain in
+their existing worktrees; do not harvest them without an explicit owner handoff and fresh review.
+Prefer an independently owned source family with a concrete missing producer/test path, and leave
+vector publication, frame-changing commits, active-root/import ownership, authority cutover and
+replay-budget/cancellation for a separately proven gate. Continue to use verified free compute
+heavily per current `MODELS.md`; timeouts, rate limits, empty or truncated responses are not review
+evidence. Do not use paid inference without explicit authorization for the specific review.
 
 ## Goal and baseline
 
@@ -429,8 +430,8 @@ Preserve editable source arguments, exact history labels, atomic whole-document 
 selection baselines, explicit rasterization consent, and desktop/tablet behavior.
 
 Owner: Codex session `01a17f24-9224-7aa0-a412-3afafa09f797`, branch
-`docs/history-migration-plan-20261027`, worktree
-`/Users/bkalynovskyi/ph/.kilo/worktrees/history-migration-plan-20261027`.
+`task/history-disabled-blank-root-e2e-20261029`, worktree
+`/Users/bkalynovskyi/ph/.kilo/worktrees/history-disabled-blank-root-e2e-20261029`.
 
 Baseline at the start of this sync was actual `refs/heads/main` at
 `3ccccba083eab71df75971bcb4037d7df1fb9f13`, checked out in
@@ -602,9 +603,12 @@ legacy path and record an explicit blocked/unproven handoff with the next action
 
 ## Remaining status
 
-Broader migration: **unproven**. Slices 2A through 4 require the evidence above. Slice 1
-passed validation and two independent reviews on the pre-sync candidate, but its commits
-are not ancestors of current main. The current-main merge composition needs fresh tests and
-two fresh independent reviews before its sync commit. Swarm issue `ph-12` is open and claimed
-by this branch; no landing or release is recorded. Keep Slices 2A through 4 unproven until
-their listed evidence is complete.
+Broader migration: **unproven**. The bounded raster/tablet blank-source proof is landed on actual
+local `main` at `730339e5983d42f52fe102d83d8bfd286137a6c5`. `ph-12` was resolved after landing;
+`ph-14` tracks the current typed-vector characterization. All focused, full unit, E2E helper,
+browser, typecheck, build, and lint gates now pass; the full test suite's one initial ephemeral
+port-race failure passed both isolated and full-suite retries. The independent Sol test review and
+Luna docs review found no actionable issues. Commit and pinned landing remain. The current change
+does not widen production eligibility. After landing, reassess frame and import/replacement
+worktree ownership before selecting the next slice. Keep vector publication, Slices 2A through 4,
+and all other unproven source families gated until their listed evidence is complete.

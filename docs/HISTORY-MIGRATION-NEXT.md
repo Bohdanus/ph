@@ -38,8 +38,10 @@ is for this review closeout.
   the already-visible legacy selector active while composition runs so transient previews are not
   blocked. Image/blank layer creates can request that presentation after asset finalization only if
   the preceding active cursor prefix passes the existing ownership and frame gates; their own
-  navigation cursor remains on the legacy fallback. Tool-source creates, later source-backed edits,
-  source replacements, merge and frame-changing commits retain their gates.
+  navigation cursor remains on the legacy fallback. Shape Tool creates convert to typed vector
+  entries, but remain unpublished behind the `NEW_LAYER_ACTION` ownership gate. Other tool-source
+  creates, later source-backed edits, source replacements, merge and frame-changing commits retain
+  their gates.
 
 The default active UI prefix remains gated: `App.tsx` boots a blank document through
 `setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a `NEW_LAYER_ACTION` that the
@@ -52,18 +54,26 @@ legacy fallback while the root stays disabled. This proves only the user-disable
 default active prefix, imported-raster starts, later source-backed edits, and frame-changing commits
 remain gated. Do not broaden the exception to bypass the active-prefix gate.
 
+A Shape Tool create is now characterized on the same disabled-root route. Its durable conversion is
+`current`, but its append presentation stays `unpublished` and the canvas records a successful legacy
+paint because the vector source is outside the image/blank exception. The test checks the exact
+transparent baseline, visible shape pixels, PNG/PSD composite and layer pixels, and exact undo/redo;
+redo reports `ownership-unproven`. This is a gate test, not evidence that vector creation is eligible.
+
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
    staged presentation projection, and eligible committed append/reorder presentation composes in
-   the background. A new image/blank layer create may request composition after asset finalization
-   only if the prior active prefix passes the ownership and frame gates; its own navigation cursor
-   and later appends still use the complete legacy fallback. Other source-backed commits and
+   the background. An image/blank layer create may request composition after asset finalization only
+   if the prior active prefix passes the ownership and frame gates; its own navigation cursor and
+   later appends still use the complete legacy fallback. A typed vector Shape Tool create remains
+   unpublished and legacy-painted under its current ownership gate. Other source-backed commits and
    frame-changing commits remain on the complete legacy path.
    The image/blank exception is reachable only after disabling the default blank History row, as
    the raster-paste and tablet blank-layer tests now prove. The default active new-document prefix
    and imported-raster starts remain gated; keep those paths unproven until their baseline ownership
-   is resolved explicitly.
+   is resolved explicitly. The vector test does not establish an ownership exception or authorize
+   publication.
    Live previews also keep the complete legacy layer base until they clear;
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
@@ -116,9 +126,11 @@ priority or dependency. They may be pursued in either order or in parallel.
 4. Keep the image/blank create exception scoped to the current append. It may request background
    composition after asset finalization only when the preceding active cursor prefix passes the
    ownership and frame gates. The create's own navigation cursor and later appends remain on the
-   current legacy fallback until the broader source-ownership proof is explicit. Continue source-backed
-   import/replacement ownership and parity as the other independent gate; keep unsupported-source
-   refusal explicit and do not use either gate's differential to promote broader surfaces.
+   current legacy fallback until the broader source-ownership proof is explicit. The typed vector
+   Shape Tool create is characterized but remains unpublished; any eligibility change needs a
+   separate source-ownership and whole-document parity proof. Continue import/replacement ownership
+   and parity as the other independent gate; keep unsupported-source refusal explicit and do not use
+   either gate's differential to promote broader surfaces.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
@@ -216,8 +228,22 @@ DEV-only paint source/cursor after renderer completion; redo remains the complet
 `ownership-unproven` legacy fallback. These tests demonstrate only this reachable prefix and do not
 change any production publication gate.
 
-At the latest sync, actual local `main` was `ce1aedec0ddc619ea92414444377f1b243bc29b9`; this
-candidate contains it through merge `9f84f7eaa8942e2c340d340771fde6f0b509ff13`. After syncing, the
-focused browser suite (4 tests), E2E helper suite (21 files), typecheck, production build, and lint
-all passed. Before the pinned landing, recheck live main and `repo:state`; sync and rerun the focused
-gates if main has moved.
+The latest actual local `main` landing is `730339e5983d42f52fe102d83d8bfd286137a6c5`, with first
+parent `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
+`080144c22157c446b75eca7d15dabce661af10ec`, and tree
+`df24312c10849921d6b6ce6704dba9ccf66aed76`. The history task worktree fast-forwarded to that main
+pin. `repo:state` was clean, the landing preserved the pinned tree, and the source-backed history E2E
+passed all five tests.
+
+Current task `ph-14` is a characterization-only vector create slice. The planner and StoreContext
+tests pass (38 tests across two files); all five desktop/tablet headless E2Es pass, including current
+conversion, unpublished presentation, legacy paint, exact canvas/PNG/PSD output, and undo/redo.
+`npm run test:e2e:unit` passes (21 files, 1,536 tests, 13 expected failures); the full unit suite
+passes (400 files, 11,524 tests, 215 expected failures); `npm run tsc`, `npm run build`, and
+`npm run lint:check` pass (64 existing warnings, no errors). One initial full-suite run hit the
+existing E2E runner's ephemeral port race; its isolated test and a full retry both passed. No
+production eligibility changed. The final independent Sol test review and Luna documentation
+review found no actionable issues; commit and pinned landing remain. If this candidate is
+interrupted, preserve its dirty task worktree and finish those steps before landing. Leave vector
+publication, frame parity, source replacement/import ownership, authority cutover, and replay-budget
+work explicitly unproven for the next owner.

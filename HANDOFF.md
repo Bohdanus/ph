@@ -143,17 +143,17 @@ are unordered and may proceed independently. Keep both surfaces legacy-gated unt
 failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
 sequence.
 
-A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to
-request background composition only when the active cursor prefix before that create passes the
-ownership and frame gates. The create's own undo/redo cursor still takes the legacy fallback, and
-later edits cannot use this exception to skip that gate. The default app starts with a blank
-`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too;
-the tested paste and Background flows therefore remain on the legacy presentation. The browser
-spec verifies their exact undo/redo pixels and PNG/PSD exports, not durable presentation.
-The eligible gate-free prefix is covered by a focused unit test but has no proven normal UI entry
-point yet. A source-derived candidate is disabling the default blank history row through the
-History panel; validate it with the next-run E2E in `docs/HISTORY-MIGRATION-NEXT.md` before calling
-the exception product-reachable. Logical replay remains legacy-owned.
+A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to request
+background composition only when the active cursor prefix before that create passes the ownership
+and frame gates. The create's own undo/redo cursor still takes the legacy fallback, and later edits
+cannot use this exception to skip that gate. The UI route is proven only after the user disables
+the default blank History row; the default active root and imported raster baselines remain gated.
+The raster paste and transparent blank-layer E2Es verify durable paint at the append cursor, exact
+canvas/export pixels, and legacy fallback on redo. A Shape Tool create converts to a typed vector
+entry, but the image/blank create exception excludes vector sources, so its append presentation
+stays unpublished and legacy-painted. Unit and UI tests verify current conversion, exact PSD/PNG
+pixels, and undo/redo; redo's legacy fallback reports `ownership-unproven`. Do not read that
+conversion as permission to publish vector sources. Logical replay remains legacy-owned.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,

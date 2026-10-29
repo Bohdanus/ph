@@ -18,6 +18,7 @@ import {
 } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { LayerSource } from '../layer-types.ts';
+import type { ShapeToolArgs } from '../../tools/shape.ts';
 import { MERGE_ACTION, NEW_LAYER_ACTION } from '../../util/constants.ts';
 
 const documentId = 'create-append-doc';
@@ -159,6 +160,40 @@ describe('history append source-backed create planning', () => {
       expect(entry?.operation.kind).toBe('create-layer');
       if (!entry || entry.operation.kind !== 'create-layer') return;
       expect(entry.operation.layer.source).toMatchObject({ kind: 'paint', toolName: 'pencil', sourcePos: position });
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('publishes a typed vector source for a Shape Tool create without aliasing its args', () => {
+    const registry = new AssetRegistry();
+    try {
+      const args: ShapeToolArgs = {
+        toolName: 'shape',
+        figure: 'rectangle',
+        alpha: 1,
+        color: '#000000',
+        backgroundColor: null,
+        lineWidth: 4,
+        start: { x: 12, y: 18 },
+        end: { x: 52, y: 48 },
+      };
+      const source: LayerSource = { kind: 'tool', args, isBedrock: false, pos: position };
+      const entry = deriveCreateLayerEntry(createItem('vector-layer', source), context(registry));
+
+      expect(entry?.operation.kind).toBe('create-layer');
+      if (!entry || entry.operation.kind !== 'create-layer') return;
+      expect(entry.operation.layer.source).toMatchObject({
+        kind: 'vector',
+        toolName: 'shape',
+        args,
+        sourcePos: position,
+        size: { width: position.width, height: position.height },
+      });
+      if (entry.operation.layer.source.kind !== 'vector') throw new Error('Expected a vector create source');
+      expect(entry.operation.layer.source.args).not.toBe(args);
+      expect(Object.isFrozen(entry.operation.layer.source.args)).toBe(true);
+      expect([...collectDurableAssetIds(durableDocument(entry))]).toEqual([]);
     } finally {
       registry.shutdown();
     }

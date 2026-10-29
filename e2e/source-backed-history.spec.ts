@@ -2,8 +2,9 @@ import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { initializeCanvas, readPsd } from 'ag-psd';
 import { expect, test, type Page } from './fixtures/extended-test';
-import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { documentToCanvasOffset, drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { getRedoButton, getUndoButton } from './helpers/history-helpers';
+import { openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { fillSaveDialog, openSaveDialog, submitSaveDialogForDownload } from './export/helpers';
 
 function expectedPixels(background: 'white' | 'transparent' = 'white') {
@@ -71,6 +72,17 @@ async function openTabletSaveDialog(page: Page) {
   await page.getByTestId('mobile-menu-button').tap();
   await page.getByTestId('mobile-menu-save-button').tap();
   await expect(page.getByTestId('save-dialog')).toBeVisible();
+}
+
+async function drawRectangle(page: Page) {
+  await openToolFlyout(page, 'shape');
+  await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+  const canvas = getWorkspaceCanvas(page);
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('The workspace canvas has no box for a Shape Tool drag');
+  const start = documentToCanvasOffset(box, 140, 120);
+  const end = documentToCanvasOffset(box, 300, 250);
+  await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
 }
 
 test('a pasted raster preserves exact pixels behind the source-backed cursor gate', async ({ page }) => {
@@ -293,6 +305,125 @@ test('disabling the default blank history row allows one durable create at its a
   await expect(canvas).toHaveAttribute('data-presentation-paint-source', 'legacy');
   await expect(canvas).toHaveAttribute('data-presentation-paint-cursor', '1');
   await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(pastedDataUrl);
+});
+
+test('a typed vector create remains ownership-gated with exact pixels and exports', async ({ page }) => {
+  await page.goto('/');
+  const canvas = getWorkspaceCanvas(page);
+  await expect(canvas).toBeVisible();
+  const historyRows = page.getByTitle('Click to go back to this state');
+  await expect(historyRows).toHaveCount(1);
+  const openingRow = historyRows.last();
+  await expect(openingRow).toContainText('new layer');
+  await openingRow.getByTitle('Disable history item').click();
+  await expect(openingRow.getByTitle('Enable history item')).toBeVisible();
+
+  const transparentPixels = Buffer.alloc(800 * 600 * 4);
+  await expect.poll(async () => (await readWorkspacePixels(page)).data.equals(transparentPixels)).toBe(true);
+  const empty = await readWorkspacePixels(page);
+  expect({ width: empty.info.width, height: empty.info.height, channels: empty.info.channels }).toEqual({
+    width: 800,
+    height: 600,
+    channels: 4,
+  });
+  expect(empty.data.equals(transparentPixels), 'the disabled opening row leaves a transparent document').toBe(true);
+
+  const historyCountBeforeShape = await historyRows.count();
+  await drawRectangle(page);
+  const expectedCursor = historyCountBeforeShape;
+  await expect(historyRows.first().getByTitle('Current state')).toBeVisible();
+  await expect(historyRows).toHaveCount(historyCountBeforeShape + 1);
+  await expect(openingRow.getByTitle('Enable history item')).toBeVisible();
+
+  const strip = page.getByTestId('dev-status-strip');
+  await expect(strip).toHaveAttribute('data-status', 'current');
+  await expect(strip).toHaveAttribute('data-presentation-status', 'unpublished');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-source', 'legacy');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-cursor', String(expectedCursor));
+  const shape = await readWorkspacePixels(page);
+  expect({ width: shape.info.width, height: shape.info.height, channels: shape.info.channels }).toEqual({
+    width: 800,
+    height: 600,
+    channels: 4,
+  });
+  expect(shape.data.equals(transparentPixels), 'the committed rectangle changes the document pixels').toBe(false);
+  const pixelAt = (x: number, y: number) => Buffer.from(shape.data.subarray((y * 800 + x) * 4, (y * 800 + x) * 4 + 4));
+  const opaqueBlack = Buffer.from([0, 0, 0, 255]);
+  const transparentPixel = Buffer.from([0, 0, 0, 0]);
+  expect(pixelAt(220, 120), 'the top edge has its expected opaque black stroke').toEqual(opaqueBlack);
+  expect(pixelAt(300, 185), 'the right edge has its expected opaque black stroke').toEqual(opaqueBlack);
+  expect(pixelAt(220, 250), 'the bottom edge has its expected opaque black stroke').toEqual(opaqueBlack);
+  expect(pixelAt(140, 185), 'the left edge has its expected opaque black stroke').toEqual(opaqueBlack);
+  expect(pixelAt(220, 180), 'the rectangle remains unfilled').toEqual(transparentPixel);
+  expect(pixelAt(40, 40), 'pixels outside the rectangle remain transparent').toEqual(transparentPixel);
+
+  await openSaveDialog(page);
+  await fillSaveDialog(page, 'vector-create-legacy-gate', 'Photoshop PSD (layers)');
+  const psdDownload = await submitSaveDialogForDownload(page, {
+    label: 'PSD',
+    extension: '.psd',
+    verification: 'container',
+  });
+  const psdPath = await psdDownload.path();
+  if (!psdPath) throw new Error('Missing downloaded PSD');
+  initializeCanvas(
+    () => {
+      throw new Error('PSD decoding must use ImageData');
+    },
+    (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4), colorSpace: 'srgb' })
+  );
+  const psd = readPsd(new Uint8Array(await readFile(psdPath)), { useImageData: true });
+  expect({ width: psd.width, height: psd.height }).toEqual({ width: 800, height: 600 });
+  expect(psd.children).toHaveLength(1);
+  if (!psd.imageData) throw new Error('Missing PSD composite');
+  expect(
+    Buffer.from(psd.imageData.data).equals(shape.data),
+    'PSD composite pixels must match the visible legacy canvas'
+  ).toBe(true);
+  const vectorLayer = psd.children![0];
+  if (!vectorLayer.imageData) throw new Error('Missing rasterized PSD vector layer pixels');
+  const left = vectorLayer.left ?? 0;
+  const top = vectorLayer.top ?? 0;
+  const { width, height, data } = vectorLayer.imageData;
+  expect({ left, top, width, height }).toEqual({ left: 136, top: 116, width: 168, height: 138 });
+  const expectedShapeLayerPixels = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    const sourceOffset = ((top + y) * 800 + left) * 4;
+    expectedShapeLayerPixels.set(shape.data.subarray(sourceOffset, sourceOffset + width * 4), y * width * 4);
+  }
+  expect(
+    Buffer.from(data).equals(expectedShapeLayerPixels),
+    'PSD layer pixels must match their exact canvas crop'
+  ).toBe(true);
+
+  await openSaveDialog(page);
+  await fillSaveDialog(page, 'vector-create-legacy-gate', 'PNG');
+  const pngDownload = await submitSaveDialogForDownload(page, {
+    label: 'PNG',
+    extension: '.png',
+    verification: 'browser-pixels',
+  });
+  const pngPath = await pngDownload.path();
+  if (!pngPath) throw new Error('Missing downloaded PNG');
+  const png = await sharp(await readFile(pngPath))
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  expect({ width: png.info.width, height: png.info.height, channels: png.info.channels }).toEqual({
+    width: 800,
+    height: 600,
+    channels: 4,
+  });
+  expect(png.data.equals(shape.data), 'PNG pixels must match the visible legacy canvas').toBe(true);
+
+  await getUndoButton(page).click();
+  await expect.poll(async () => (await readWorkspacePixels(page)).data.equals(transparentPixels)).toBe(true);
+  await getRedoButton(page).click();
+  await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+  await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-source', 'legacy');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-cursor', String(expectedCursor));
+  await expect.poll(async () => (await readWorkspacePixels(page)).data.equals(shape.data)).toBe(true);
 });
 
 test('Background conversion retains exact pixels behind the source-backed cursor gate', async ({ page }) => {
