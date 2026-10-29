@@ -842,13 +842,24 @@ type CropParityFramePixelSample = Readonly<
   PixelDifference['differingSamples'][number] & { documentX: number; documentY: number }
 >;
 
+type CropParityAffineTransform = Readonly<{ a: number; b: number; c: number; d: number; e: number; f: number }>;
+
 type CropParityLayerComparison = Readonly<{
   layerId: string;
   stage: string;
+  positions: Readonly<{
+    legacy: Readonly<{ x: number; y: number; width: number; height: number }>;
+    durable: Readonly<{ x: number; y: number; width: number; height: number }>;
+  }>;
+  affineTransforms: Readonly<{
+    legacy: readonly CropParityAffineTransform[];
+    durable: readonly CropParityAffineTransform[];
+  }>;
   expectedBounds: CropParityFrame;
   materializedBounds: CropParityFrame;
   bitmapSize: Readonly<{ width: number; height: number }>;
   frameDifferingBytes: number;
+  offscreenFrameDifferingBytes: number;
   frameDifferingPixels: number;
   frameDifferingSamples: readonly CropParityFramePixelSample[];
 }>;
@@ -1139,13 +1150,32 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                   if (!legacyFrameContext || !durableFrameContext) {
                     throw new Error(`Unable to create reusable frame comparison surfaces at ${stage}`);
                   }
-                  return { legacyContext: legacyFrameContext, durableContext: durableFrameContext };
+                  const legacyOffscreenSurface =
+                    typeof OffscreenCanvas === 'undefined'
+                      ? legacyFrameSurface
+                      : new OffscreenCanvas(frameSize.width, frameSize.height);
+                  const durableOffscreenSurface =
+                    typeof OffscreenCanvas === 'undefined'
+                      ? durableFrameSurface
+                      : new OffscreenCanvas(frameSize.width, frameSize.height);
+                  const legacyOffscreenContext = legacyOffscreenSurface.getContext('2d');
+                  const durableOffscreenContext = durableOffscreenSurface.getContext('2d');
+                  if (!legacyOffscreenContext || !durableOffscreenContext) {
+                    throw new Error(`Unable to create OffscreenCanvas comparison surfaces at ${stage}`);
+                  }
+                  return {
+                    legacyContext: legacyFrameContext,
+                    durableContext: durableFrameContext,
+                    legacyOffscreenContext,
+                    durableOffscreenContext,
+                  };
                 })()
               : null;
           const materializedLayerComparisons = (fixture.materializedLayerIds ?? []).map((layerId) => {
             const legacyLayer = legacyReplay.layers[layerId];
             const materializedLayer = composite.layers[layerId];
-            if (!legacyLayer || !materializedLayer) {
+            const durableLayer = replay.layers[layerId];
+            if (!legacyLayer || !materializedLayer || !durableLayer) {
               throw new Error(`Missing ${layerId} layer for materialized parity at ${stage}`);
             }
 
@@ -1166,8 +1196,18 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 Math.floor(evaluation.bounds.y - frame.y),
             };
             if (!frameComparisonSurfaces) throw new Error(`Missing frame comparison surfaces at ${stage}`);
-            const { legacyContext: legacyFrameContext, durableContext: durableFrameContext } = frameComparisonSurfaces;
-            for (const context of [legacyFrameContext, durableFrameContext]) {
+            const {
+              legacyContext: legacyFrameContext,
+              durableContext: durableFrameContext,
+              legacyOffscreenContext,
+              durableOffscreenContext,
+            } = frameComparisonSurfaces;
+            for (const context of [
+              legacyFrameContext,
+              durableFrameContext,
+              legacyOffscreenContext,
+              durableOffscreenContext,
+            ]) {
               context.setTransform(1, 0, 0, 1, 0, 0);
               context.globalAlpha = 1;
               context.globalCompositeOperation = 'source-over';
@@ -1176,6 +1216,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             }
             if (!drawLayer(legacyFrameContext, legacyLayer, frame)) {
               throw new Error(`Legacy renderer refused ${layerId} frame comparison at ${stage}`);
+            }
+            if (
+              legacyOffscreenContext !== legacyFrameContext &&
+              !drawLayer(legacyOffscreenContext, legacyLayer, frame)
+            ) {
+              throw new Error(`Legacy renderer refused ${layerId} OffscreenCanvas comparison at ${stage}`);
             }
             durableFrameContext.globalAlpha = materializedLayer.opacity;
             durableFrameContext.globalCompositeOperation = materializedLayer.blendMode;
@@ -1186,16 +1232,41 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               materializedLayer.bounds.width,
               materializedLayer.bounds.height
             );
+            if (durableOffscreenContext !== durableFrameContext) {
+              durableOffscreenContext.globalAlpha = materializedLayer.opacity;
+              durableOffscreenContext.globalCompositeOperation = materializedLayer.blendMode;
+              durableOffscreenContext.drawImage(
+                materializedLayer.bitmap as CanvasImageSource,
+                materializedLayer.bounds.x - frame.x,
+                materializedLayer.bounds.y - frame.y,
+                materializedLayer.bounds.width,
+                materializedLayer.bounds.height
+              );
+            }
             const legacyFramePixels = legacyFrameContext.getImageData(0, 0, frameSize.width, frameSize.height).data;
             const durableFramePixels = durableFrameContext.getImageData(0, 0, frameSize.width, frameSize.height).data;
+            const legacyOffscreenPixels = legacyOffscreenContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
+            const durableOffscreenPixels = durableOffscreenContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
             const frameChannels = ['r', 'g', 'b', 'a'] as const;
             let frameDifferingBytes = 0;
             let frameDifferingPixels = 0;
             let lastFrameDifferingPixel = -1;
             const frameDifferingSamples: CropParityFramePixelSample[] = [];
+            let offscreenFrameDifferingBytes = 0;
             for (let byte = 0; byte < legacyFramePixels.length; byte += 1) {
               const legacy = legacyFramePixels[byte] ?? null;
               const durable = durableFramePixels[byte] ?? null;
+              if (legacyOffscreenPixels[byte] !== durableOffscreenPixels[byte]) offscreenFrameDifferingBytes += 1;
               if (legacy === durable) continue;
               frameDifferingBytes += 1;
               const pixel = Math.floor(byte / 4);
@@ -1220,6 +1291,24 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             return {
               layerId,
               stage,
+              positions: {
+                legacy: legacyLayer.pos,
+                durable: durableLayer.snapshot.pos,
+              },
+              affineTransforms: {
+                legacy: legacyLayer.operations
+                  .filter(
+                    (operation: { kind: string; enabled: boolean; transform: CropParityAffineTransform }) =>
+                      operation.kind === 'affine-transform' && operation.enabled
+                  )
+                  .map((operation: { transform: CropParityAffineTransform }) => operation.transform),
+                durable: durableLayer.operations
+                  .filter(
+                    (operation: { kind: string; transform: CropParityAffineTransform }) =>
+                      operation.kind === 'apply-affine-transform'
+                  )
+                  .map((operation: { transform: CropParityAffineTransform }) => operation.transform),
+              },
               expectedBounds,
               materializedBounds: materializedLayer.bounds,
               bitmapSize: {
@@ -1227,6 +1316,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 height: materializedLayer.bitmap.height,
               },
               frameDifferingBytes,
+              offscreenFrameDifferingBytes,
               frameDifferingPixels,
               frameDifferingSamples,
             };
@@ -3137,9 +3227,12 @@ test.describe('Crop history', () => {
           height: comparison.expectedBounds.height,
         });
         expect(
-          comparison.frameDifferingBytes,
-          `${comparison.layerId} frame raster at ${comparison.stage} must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
-        ).toBe(0);
+          {
+            htmlCanvas: comparison.frameDifferingBytes,
+            offscreenCanvas: comparison.offscreenFrameDifferingBytes,
+          },
+          `${comparison.layerId} frame raster at ${comparison.stage} must match; positions ${JSON.stringify(comparison.positions)}, affine transforms ${JSON.stringify(comparison.affineTransforms)}, samples ${JSON.stringify(comparison.frameDifferingSamples)}`
+        ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
       for (const [index, transition] of untransformedControl.transitionResults.entries()) {

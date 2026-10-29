@@ -103,11 +103,14 @@ and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
 with fractional origins and extents, including composite parity and exact per-layer bounds and
 pixels at each tested affine or frame-transition cursor plus a frame-only control. Mirror runs
-40963949888 and 40966738289 disproved that per-layer gate on Linux and Windows: the retained
-`background` raster differed by three bytes at a fractional affine edge while the composite remained
-exact. Retaining the intermediate canvas directly did not remove the mismatch. Preferring
-`HTMLCanvasElement` also broke the OffscreenCanvas materialization unit contracts and was reverted;
-keep the exact per-layer gate open until the raster path and the failing cursor stage are identified.
+40963949888, 40966738289, and 40969207836 disproved that per-layer gate on Linux and Windows: the
+retained `background` raster differed by three bytes at the first frame transition while the whole
+composite remained exact. The frame affine and layer bounds agree; the failure is isolated to the
+tight raster published by `materializeLayer()` after `renderRetainedSegment()`, while the whole
+composite uses `drawDirectAffineSourceLayer()` and bypasses that tight bitmap for affine-only
+layers. Keep the exact per-layer gate open until this publication path matches legacy's direct
+frame draw byte-for-byte. Retaining the intermediate canvas did not remove the mismatch, and
+preferring `HTMLCanvasElement` broke the OffscreenCanvas materialization unit contracts.
 A second fixture applies a retained affine to a bold-italic serif
 paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
