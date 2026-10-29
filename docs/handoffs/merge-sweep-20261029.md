@@ -150,10 +150,16 @@ the old sync checkout contains ignored `dist/` and `node_modules/`. The disposer
 reported both clear, but ignored build/install output does not waive the
 operator's four-hour age condition. Do not remove either checkout early.
 
-The new `sync-origin-main-20261030` worktree is recent and is a distinct
-unlanded sync candidate, so it is not a cleanup target. The fresh inventory
-continues to identify `activity-analyzer` and `task-wsl-files` as nominally
-landable, but the correctness/privacy and WSL safety reviews above still rule
-out landing them as-is. Re-run the live-session overlay, inventory, repository
-state, and disposal dry-run after the four-hour threshold before removing any
-checkout.
+At the time of this inventory, `sync-origin-main-20261030` was recent and a
+distinct unlanded sync candidate. A later read-only check at `2026-10-30
+00:54 +01:00` found that its merge had landed on main as
+`4a72d30d981965950bbad6a47ad70f98d6589f7d`. `npm run repo:state` reports no
+operation in progress. Its worktree was created at `00:40:06` and last written
+at `00:42:38`, so it is newly superseded but far below the four-hour age gate;
+preserve it.
+
+The inventory at the time continued to identify `activity-analyzer` and
+`task-wsl-files` as nominally landable, but the correctness/privacy and WSL
+safety reviews above still rule out landing them as-is. Re-run the live-session
+overlay, inventory, repository state, and disposal dry-run after the four-hour
+threshold before removing any checkout.
