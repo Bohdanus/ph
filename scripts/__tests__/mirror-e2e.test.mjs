@@ -25,6 +25,8 @@ import {
   LINUX_BASELINE_FILES,
   LINUX_BASELINE_PATH,
   verifyBaselinePromotion,
+  pushMirrorBranch,
+  runCommandWithTimeout,
 } from '../mirror-e2e.mjs';
 import { validateE2ESpec } from '../validate-e2e-spec.mjs';
 
@@ -54,6 +56,15 @@ function createMirrorPushFixture() {
   runGit(source, ['remote', 'add', 'mirror', mirror]);
 
   return { root, source, mirror, branch, sourceSha: runGit(source, ['rev-parse', 'HEAD']) };
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
 }
 
 function createBaselinePromotion(fixture, chatId, subject = 'test: refresh Linux export baselines') {
@@ -228,8 +239,44 @@ describe('mirror E2E command parsing', () => {
 });
 
 describe('mirror E2E push timeout', () => {
-  it('allows the required pre-push suite to finish before timing out Git', () => {
+  it('passes the full pre-push gate budget to Git when pushing a tested branch', () => {
+    const sourceSha = 'c'.repeat(40);
+    const runCommand = vi.fn();
+    pushMirrorBranch(sourceSha, 'feat/e2e-runner', { cwd: '/repo', runCommand });
+
+    expect(runCommand).toHaveBeenCalledWith(
+      'git',
+      ['push', 'mirror', `${sourceSha}:refs/heads/feat/e2e-runner`],
+      '/repo',
+      MIRROR_PUSH_TIMEOUT_MS
+    );
     expect(MIRROR_PUSH_TIMEOUT_MS).toBe(15 * 60_000);
+  });
+
+  it('kills the command process tree when the timeout expires', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mirror-e2e-timeout-'));
+    const childPidFile = join(root, 'child-pid');
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      'writeFileSync(process.argv[1], String(child.pid));',
+      'setInterval(() => {}, 1000);',
+    ].join('\n');
+
+    try {
+      await expect(
+        runCommandWithTimeout(process.execPath, ['-e', script, childPidFile], root, 750)
+      ).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+      const childPid = Number(readFileSync(childPidFile, 'utf8'));
+      const deadline = Date.now() + 5_000;
+      while (isProcessAlive(childPid) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(isProcessAlive(childPid)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

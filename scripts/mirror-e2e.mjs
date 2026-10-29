@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -405,6 +405,85 @@ function command(binary, args, cwd = process.cwd(), timeoutMs = 120_000, { trimO
   return trimOutput ? output.trim() : output;
 }
 
+function killCommandTree(child) {
+  if (!child.pid) {
+    child.kill('SIGKILL');
+    return;
+  }
+  if (process.platform === 'win32') {
+    const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0) child.kill('SIGKILL');
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    child.kill('SIGKILL');
+  }
+}
+
+export function runCommandWithTimeout(binary, args, cwd, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, args, {
+      cwd,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      killCommandTree(child);
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once('error', (cause) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      const error = new Error(`${binary} could not run: ${cause.message}`);
+      error.code = cause.code;
+      error.retryable = isRetryableCommandError(cause.code, cause.message);
+      reject(error);
+    });
+    child.once('close', (status) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (timedOut) {
+        const error = new Error(`${binary} could not run: timed out after ${timeoutMs}ms`);
+        error.code = 'ETIMEDOUT';
+        error.retryable = true;
+        reject(error);
+        return;
+      }
+      if (status !== 0) {
+        const detail = (stderr || stdout).trim();
+        const error = new Error(`${binary} ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`);
+        error.retryable = isRetryableCommandError(undefined, detail);
+        reject(error);
+        return;
+      }
+      resolve(stdout.trim());
+    });
+  });
+}
+
+export function pushMirrorBranch(sourceSha, branch, { cwd = process.cwd(), runCommand = runCommandWithTimeout } = {}) {
+  return runCommand('git', buildMirrorPushArgs(sourceSha, branch), cwd, MIRROR_PUSH_TIMEOUT_MS);
+}
+
 function assertCleanTaskBranch() {
   const root = realpathSync(process.cwd());
   if (root !== REPO_ROOT) throw new Error(`run this command from the repository root: ${REPO_ROOT}`);
@@ -610,7 +689,7 @@ export async function runMirrorE2E(argv = process.argv.slice(2)) {
 
   const remoteSha = readMirrorBranchSha(branch);
   assertMirrorBranchPushSafe({ sourceSha, remoteSha, branch });
-  command('git', buildMirrorPushArgs(sourceSha, branch), process.cwd(), MIRROR_PUSH_TIMEOUT_MS);
+  await pushMirrorBranch(sourceSha, branch);
   const dispatchArgs = buildDispatchArgs(options, { requestId, sourceSha, branch, workflowSha: expectedWorkflowSha });
   command('gh', dispatchArgs);
   console.log(`Waiting for ${title}`);
