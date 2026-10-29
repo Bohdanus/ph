@@ -102,12 +102,13 @@ affine on a 45%-opacity blank, and one each on vector, paint, and point text, at
 and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
 with fractional origins and extents, including composite parity and exact per-layer bounds and
-pixels at each tested affine or frame-transition cursor plus a frame-only control. Mirror run
-40963949888 disproved that per-layer gate on Linux and Windows: the retained `background` raster
-differed by three bytes at a fractional affine edge while the composite remained exact. Keeping a
-newly rasterized, cache-owned canvas directly instead of round-tripping it through
-`createImageBitmap()` is the current candidate fix; rerun the exact zero-byte gate on both platforms
-before treating it as resolved. A second fixture applies a retained affine to a bold-italic serif
+pixels at each tested affine or frame-transition cursor plus a frame-only control. Mirror runs
+40963949888 and 40966738289 disproved that per-layer gate on Linux and Windows: the retained
+`background` raster differed by three bytes at a fractional affine edge while the composite remained
+exact. Retaining the intermediate canvas directly did not remove the mismatch. Preferring
+`HTMLCanvasElement` also broke the OffscreenCanvas materialization unit contracts and was reverted;
+keep the exact per-layer gate open until the raster path and the failing cursor stage are identified.
+A second fixture applies a retained affine to a bold-italic serif
 paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
 combinations; other retained-affine operation combinations and angles, blank opacity variants, other

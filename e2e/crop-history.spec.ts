@@ -844,6 +844,7 @@ type CropParityFramePixelSample = Readonly<
 
 type CropParityLayerComparison = Readonly<{
   layerId: string;
+  stage: string;
   expectedBounds: CropParityFrame;
   materializedBounds: CropParityFrame;
   bitmapSize: Readonly<{ width: number; height: number }>;
@@ -1218,6 +1219,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             }
             return {
               layerId,
+              stage,
               expectedBounds,
               materializedBounds: materializedLayer.bounds,
               bitmapSize: {
@@ -3136,7 +3138,7 @@ test.describe('Crop history', () => {
         });
         expect(
           comparison.frameDifferingBytes,
-          `${comparison.layerId} frame raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
+          `${comparison.layerId} frame raster at ${comparison.stage} must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
         ).toBe(0);
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
