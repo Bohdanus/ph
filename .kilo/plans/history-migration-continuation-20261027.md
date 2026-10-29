@@ -1,6 +1,6 @@
 # Continue durable history from current main
 
-## Latest checkpoint — 2026-10-29 (typed vector create remains gated)
+## Latest checkpoint — 2026-10-29 (typed vector create committed; main landing paused)
 
 - The actual local `main` is landed at `730339e5983d42f52fe102d83d8bfd286137a6c5`, with first
   parent `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
@@ -17,7 +17,7 @@
   pencil source families. The Shape Tool E2E checks the disabled-root route, legacy paint marker,
   exact canvas/PNG/PSD output, undo/redo pixels, and `ownership-unproven` redo fallback. This is
   characterization only; no production eligibility or logical-authority code changed.
-- Candidate validation now passes: 38 focused unit tests across the append planner and StoreContext
+- Candidate validation passes: 38 focused unit tests across the append planner and StoreContext
   suites; all five `e2e/source-backed-history.spec.ts` browser cases; `npm run test:e2e:unit` (21
   files, 1,536 passed, 13 established expected failures); full unit suite (400 files, 11,524
   passed, 215 established expected failures); `npm run tsc`; `npm run build`; and
@@ -26,13 +26,26 @@
   both passed. Final independent reviews of the test diff (Sol) and documentation diff (Luna) found
   no actionable issues after the reported findings were corrected. Earlier free-pool requests
   returned provider rate limits, a length-ended empty completion, or a missing OpenCode CLI; those
-  attempts were not review evidence. Commit and pinned landing remain.
+  attempts were not review evidence. Candidate commit
+  `4678e34ae9c6c45d87f27d46b16a18d472a3390b` has tree
+  `8d21351a85b360f2862b75b135d3481ab1a2c722`; the task worktree is clean.
+- The pinned landing was not prepared. Its preflight stopped because the actual `main` worktree
+  `/Users/bkalynovskyi/ph/.kilo/worktrees/main-clean-20261028` has staged changes in
+  `.skills/free-model-chat-sweep.md` and `MODELS.md`. Preserve those paths and their index exactly;
+  do not unstage, discard, stage over, commit, or merge them as part of this task. `main` is still
+  at `730339e5983d42f52fe102d83d8bfd286137a6c5`; no merge operation was started and no
+  `MERGE_HEAD` was created. The source branch already contains this exact main pin.
 - `HistoryItem[]` and `replayHistory()` remain logical authority. The default active root, imported
   raster baselines, source replacement/import, merge, frame-changing commits, broader source
   families, durable-first navigation, and replay-budget/cancellation behavior remain unproven. Do
-  not widen production gates. Next: finish exact-candidate validation/reviews, land this bounded
-  characterization if it remains clean, then reassess live ownership before choosing another
-  independent implementation slice.
+  not widen production gates. Next: wait for the main owner to settle the two staged files, then
+  rerun `git worktree list --porcelain`, `npm run repo:state`, fresh inventory, board status/doctor,
+  and the exact clean-main/HEAD checks. If local `main` has advanced, merge it into this task branch
+  in this worktree and rerun the affected validation plus two independent reviews on the exact
+  composition. Only then prepare and commit the pinned non-fast-forward landing. After landing,
+  reassess live ownership and choose the next implementation from this plan; keep the default root,
+  vector publication, import/replacement ownership, frame parity, authority cutover, and replay
+  budget gates closed until their proofs are complete.
 
 ## Previous checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
 

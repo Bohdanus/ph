@@ -235,15 +235,19 @@ parent `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
 pin. `repo:state` was clean, the landing preserved the pinned tree, and the source-backed history E2E
 passed all five tests.
 
-Current task `ph-14` is a characterization-only vector create slice. The planner and StoreContext
-tests pass (38 tests across two files); all five desktop/tablet headless E2Es pass, including current
-conversion, unpublished presentation, legacy paint, exact canvas/PNG/PSD output, and undo/redo.
+Current task `ph-14` is a committed characterization-only vector create slice at
+`4678e34ae9c6c45d87f27d46b16a18d472a3390b` (tree
+`8d21351a85b360f2862b75b135d3481ab1a2c722`). The planner and StoreContext tests pass (38 tests
+across two files); all five desktop/tablet headless E2Es pass, including current conversion,
+unpublished presentation, legacy paint, exact canvas/PNG/PSD output, and undo/redo.
 `npm run test:e2e:unit` passes (21 files, 1,536 tests, 13 expected failures); the full unit suite
 passes (400 files, 11,524 tests, 215 expected failures); `npm run tsc`, `npm run build`, and
 `npm run lint:check` pass (64 existing warnings, no errors). One initial full-suite run hit the
 existing E2E runner's ephemeral port race; its isolated test and a full retry both passed. No
-production eligibility changed. The final independent Sol test review and Luna documentation
-review found no actionable issues; commit and pinned landing remain. If this candidate is
-interrupted, preserve its dirty task worktree and finish those steps before landing. Leave vector
-publication, frame parity, source replacement/import ownership, authority cutover, and replay-budget
-work explicitly unproven for the next owner.
+production eligibility changed. Final independent Sol test and Luna documentation reviews found no
+actionable issues. The pinned landing was not started because actual local `main` has staged changes
+in `.skills/free-model-chat-sweep.md` and `MODELS.md`; preserve them and wait for their owner to
+settle the main worktree. No merge is prepared. Once main is clean, re-read its HEAD and repository
+state; if it moved, merge the new main into the task branch and rerun validation and reviews before
+landing. Leave vector publication, frame parity, source replacement/import ownership, authority
+cutover, and replay-budget work explicitly unproven for the next owner.
