@@ -894,7 +894,25 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
     ]);
 
     const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
-    const layers = await Promise.all(
+    if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
+    const layerTransforms = fixture.layerTransforms ?? [];
+    const transitions = fixture.transitions.map((transition, index) => {
+      const frameCenter = {
+        x: transition.nextFrame.x + transition.nextFrame.width / 2,
+        y: transition.nextFrame.y + transition.nextFrame.height / 2,
+      };
+      const candidate = rotationAffineAroundPoint((-transition.angleDegrees * Math.PI) / 180, frameCenter);
+      const transform = isIdentityAffineTransform(candidate) ? undefined : candidate;
+      return {
+        id: `frame-transition-${index + 1}`,
+        previousFrame: index === 0 ? baseFrame : fixture.transitions[index - 1]!.nextFrame,
+        nextFrame: transition.nextFrame,
+        angleDegrees: transition.angleDegrees,
+        transform,
+      };
+    });
+    const registry = new AssetRegistry();
+    const layerResults = await Promise.allSettled(
       fixture.layers.map(async (layerFixture) => {
         const createSourceCanvas = () => {
           const canvas = document.createElement('canvas');
@@ -918,6 +936,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
             }
             const bitmap = await createImageBitmap(sourceCanvas);
+            registry.registerBaseline(fixture.documentId, bitmap);
             runtimeSource = {
               bitmap,
               source: {
@@ -989,38 +1008,33 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         };
       })
     );
-    if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
-    const layerTransforms = fixture.layerTransforms ?? [];
-    let untransformedBaselinePixels: number[] | null = null;
-    if (layerTransforms.length > 0) {
-      const baselineSurface = document.createElement('canvas');
-      const baselineLayers = (layers as unknown as Layer[]).slice().sort((left, right) => left.order - right.order);
-      if (!drawLayersToCanvas(baselineSurface, baselineLayers, baseFrame)) {
-        throw new Error(`Untransformed baseline composition was refused for ${fixture.caseName}`);
-      }
-      const baselineContext = baselineSurface.getContext('2d');
-      if (!baselineContext) throw new Error(`Untransformed baseline produced no 2D context for ${fixture.caseName}`);
-      untransformedBaselinePixels = Array.from(
-        baselineContext.getImageData(0, 0, baseFrame.width, baseFrame.height).data
-      );
+    const rejectedLayer = layerResults.find((result) => result.status === 'rejected');
+    if (rejectedLayer?.status === 'rejected') {
+      registry.shutdown();
+      throw rejectedLayer.reason;
     }
-    const transitions = fixture.transitions.map((transition, index) => {
-      const frameCenter = {
-        x: transition.nextFrame.x + transition.nextFrame.width / 2,
-        y: transition.nextFrame.y + transition.nextFrame.height / 2,
-      };
-      const candidate = rotationAffineAroundPoint((-transition.angleDegrees * Math.PI) / 180, frameCenter);
-      const transform = isIdentityAffineTransform(candidate) ? undefined : candidate;
-      return {
-        id: `frame-transition-${index + 1}`,
-        previousFrame: index === 0 ? baseFrame : fixture.transitions[index - 1]!.nextFrame,
-        nextFrame: transition.nextFrame,
-        angleDegrees: transition.angleDegrees,
-        transform,
-      };
+    const layers = layerResults.map((result) => {
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
     });
-
-    const registry = new AssetRegistry();
+    let untransformedBaselinePixels: number[] | null = null;
+    try {
+      if (layerTransforms.length > 0) {
+        const baselineSurface = document.createElement('canvas');
+        const baselineLayers = (layers as unknown as Layer[]).slice().sort((left, right) => left.order - right.order);
+        if (!drawLayersToCanvas(baselineSurface, baselineLayers, baseFrame)) {
+          throw new Error(`Untransformed baseline composition was refused for ${fixture.caseName}`);
+        }
+        const baselineContext = baselineSurface.getContext('2d');
+        if (!baselineContext) throw new Error(`Untransformed baseline produced no 2D context for ${fixture.caseName}`);
+        untransformedBaselinePixels = Array.from(
+          baselineContext.getImageData(0, 0, baseFrame.width, baseFrame.height).data
+        );
+      }
+    } catch (error) {
+      registry.shutdown();
+      throw error;
+    }
     try {
       const history = [
         {
