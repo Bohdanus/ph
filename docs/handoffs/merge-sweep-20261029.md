@@ -120,3 +120,40 @@ No candidate was merged or disposed during this follow-up. The main blocker is
 the active origin-sync merge, not a lack of review. Preserve every dirty or
 unresolved payload above and resume from a fresh inventory once the landing
 owner releases the main checkout.
+
+## Cleanup check (2026-10-30)
+
+The operator authorized disposal only for clearly superseded branches/worktrees
+with strong evidence of no useful unique data and an age greater than four
+hours. Main is clean at `6f5812e4d582fcaadb0ada5d240908e44d42a067`, and
+`npm run repo:state` reports no Git operation in progress. Main sessions are
+still reported in progress, so this check made no branch or worktree changes.
+
+The canonical inventory was refreshed with the Windows-batching generator from
+`systemic-hardening` because the current-main inventory command failed with
+`spawn ENAMETOOLONG`. The generated schema-7 snapshot uses the current main SHA
+and reports 18 worktrees, six at-risk, three in-use, one undecided, and two
+disposal candidates; there are no branch-only refs. `npm run branches:orphan`
+reported no orphan refs. `npm run swarm -- doctor --dry-run` found no stale
+claims or locks.
+
+Both disposal candidates are clean and demonstrably superseded, and both
+disposal dry-runs pass:
+
+| Worktree                                                                                                        | Supersession evidence                                                                                                                                              | Age evidence                                                                                                                                                                                                           | Decision                                                                   |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `land-wsl` (`land/wsl`, tip `decafba0de2d18452df3b2e58a02836aadf0be16`)                                         | Its tip is an ancestor of current main; the branch contains no unique commit or worktree changes. Dry-run would anchor it before removing the worktree and branch. | Checkout created `2026-10-29 22:37:24`, last written `23:25:38`; both are under four hours before this cleanup check. Its old commit date alone does not establish that the checkout has been inactive for four hours. | Preserve until both the age threshold and a fresh disposal preflight pass. |
+| `sync-origin-main-20261029` (`chore/sync-origin-main-20261029`, tip `ecb18176a213962ec631c76ac5ebbed89656f6e8`) | Its sync commit is an ancestor of current main; the worktree is clean. Dry-run would anchor it before removal.                                                     | Checkout created `2026-10-29 22:42:14`, last written `23:03:36`; both are under four hours before this cleanup check.                                                                                                  | Preserve until both the age threshold and a fresh disposal preflight pass. |
+
+No worktree or branch was deleted. `land-wsl` contains ignored `node_modules/`;
+the old sync checkout contains ignored `dist/` and `node_modules/`. The disposer
+reported both clear, but ignored build/install output does not waive the
+operator's four-hour age condition. Do not remove either checkout early.
+
+The new `sync-origin-main-20261030` worktree is recent and is a distinct
+unlanded sync candidate, so it is not a cleanup target. The fresh inventory
+continues to identify `activity-analyzer` and `task-wsl-files` as nominally
+landable, but the correctness/privacy and WSL safety reviews above still rule
+out landing them as-is. Re-run the live-session overlay, inventory, repository
+state, and disposal dry-run after the four-hour threshold before removing any
+checkout.
