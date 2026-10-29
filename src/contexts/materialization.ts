@@ -397,28 +397,11 @@ export async function materializeLayer(
             const sourceY = top - pixelGridFrame.y;
             const destinationX = left - pixelGridBounds.x;
             const destinationY = top - pixelGridBounds.y;
-            const width = right - left;
-            const height = bottom - top;
-            ctx.save();
-            try {
-              ctx.globalAlpha = 1;
-              ctx.globalCompositeOperation = 'source-over';
-              ctx.filter = 'none';
-              ctx.imageSmoothingEnabled = false;
-              ctx.clearRect(destinationX, destinationY, width, height);
-              ctx.drawImage(
-                rasterizationSurface as CanvasImageSource,
-                sourceX,
-                sourceY,
-                width,
-                height,
-                destinationX,
-                destinationY,
-                width,
-                height
-              );
-            } finally {
-              ctx.restore();
+            const width = Math.min(rasterizationSurface.width - sourceX, output.width - destinationX);
+            const height = Math.min(rasterizationSurface.height - sourceY, output.height - destinationY);
+            if (width > 0 && height > 0) {
+              const framePixels = frameContext.getImageData(sourceX, sourceY, width, height);
+              ctx.putImageData(framePixels, destinationX, destinationY);
             }
           }
         }
