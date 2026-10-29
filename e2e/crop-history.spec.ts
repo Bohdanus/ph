@@ -894,95 +894,101 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
     ]);
 
     const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
-    const layers = fixture.layers.map((layerFixture) => {
-      const createSourceCanvas = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = layerFixture.pos.width;
-        canvas.height = layerFixture.pos.height;
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error(`A 2D context is required for ${layerFixture.id}`);
-        return { canvas, context };
-      };
-      let runtimeSource:
-        | Readonly<{ bitmap: HTMLCanvasElement | OffscreenCanvas; source: Readonly<Record<string, unknown>> }>
-        | Readonly<{ bitmap: null; source: Readonly<Record<string, unknown>> }>;
-      switch (layerFixture.kind) {
-        case 'raster': {
-          const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
-          for (const fill of layerFixture.fills) {
-            sourceContext.fillStyle = fill.color;
-            sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
+    const layers = await Promise.all(
+      fixture.layers.map(async (layerFixture) => {
+        const createSourceCanvas = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = layerFixture.pos.width;
+          canvas.height = layerFixture.pos.height;
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error(`A 2D context is required for ${layerFixture.id}`);
+          return { canvas, context };
+        };
+        let runtimeSource:
+          | Readonly<{
+              bitmap: ImageBitmap | HTMLCanvasElement | OffscreenCanvas;
+              source: Readonly<Record<string, unknown>>;
+            }>
+          | Readonly<{ bitmap: null; source: Readonly<Record<string, unknown>> }>;
+        switch (layerFixture.kind) {
+          case 'raster': {
+            const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
+            for (const fill of layerFixture.fills) {
+              sourceContext.fillStyle = fill.color;
+              sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
+            }
+            const bitmap = await createImageBitmap(sourceCanvas);
+            runtimeSource = {
+              bitmap,
+              source: {
+                kind: 'image',
+                bitmap,
+                name: `${layerFixture.id}.png`,
+                isBedrock: false,
+                pos: layerFixture.pos,
+              },
+            };
+            break;
           }
-          runtimeSource = {
-            bitmap: sourceCanvas,
-            source: {
-              kind: 'image',
+          case 'blank': {
+            const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
+            sourceContext.globalAlpha = layerFixture.opacity;
+            sourceContext.fillStyle = layerFixture.color;
+            sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+            runtimeSource = {
               bitmap: sourceCanvas,
-              name: `${layerFixture.id}.png`,
-              isBedrock: false,
-              pos: layerFixture.pos,
-            },
-          };
-          break;
+              source: {
+                kind: 'blank',
+                color: layerFixture.color,
+                opacity: layerFixture.opacity,
+                isBedrock: false,
+                pos: layerFixture.pos,
+              },
+            };
+            break;
+          }
+          case 'text':
+            runtimeSource = {
+              bitmap: null,
+              source: { kind: 'tool', args: layerFixture.textArgs, isBedrock: false, pos: layerFixture.pos },
+            };
+            break;
+          case 'vector':
+            runtimeSource = {
+              bitmap: null,
+              source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
+            };
+            break;
+          case 'paint': {
+            const processor = findToolProcessor(layerFixture.args.toolName);
+            if (!processor?.creator) throw new Error(`Paint source ${layerFixture.id} is not a deterministic creator`);
+            const [bitmap] = processor.imageProcessor({ size: layerFixture.pos })(layerFixture.args);
+            if (!bitmap) throw new Error(`Paint source ${layerFixture.id} produced no raster`);
+            runtimeSource = {
+              bitmap,
+              source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
+            };
+            break;
+          }
         }
-        case 'blank': {
-          const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
-          sourceContext.globalAlpha = layerFixture.opacity;
-          sourceContext.fillStyle = layerFixture.color;
-          sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
-          runtimeSource = {
-            bitmap: sourceCanvas,
-            source: {
-              kind: 'blank',
-              color: layerFixture.color,
-              opacity: layerFixture.opacity,
-              isBedrock: false,
-              pos: layerFixture.pos,
-            },
-          };
-          break;
-        }
-        case 'text':
-          runtimeSource = {
-            bitmap: null,
-            source: { kind: 'tool', args: layerFixture.textArgs, isBedrock: false, pos: layerFixture.pos },
-          };
-          break;
-        case 'vector':
-          runtimeSource = {
-            bitmap: null,
-            source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
-          };
-          break;
-        case 'paint': {
-          const processor = findToolProcessor(layerFixture.args.toolName);
-          if (!processor?.creator) throw new Error(`Paint source ${layerFixture.id} is not a deterministic creator`);
-          const [bitmap] = processor.imageProcessor({ size: layerFixture.pos })(layerFixture.args);
-          if (!bitmap) throw new Error(`Paint source ${layerFixture.id} produced no raster`);
-          runtimeSource = {
-            bitmap,
-            source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
-          };
-          break;
-        }
-      }
-      return {
-        id: layerFixture.id,
-        name: layerFixture.id,
-        isBedrock: false,
-        tmpCanvas: null,
-        bitmap: runtimeSource.bitmap,
-        visible: true,
-        opacity: layerFixture.layerOpacity ?? 1,
-        locked: false,
-        blendMode: layerFixture.blendMode ?? 'source-over',
-        order: layerFixture.order,
-        pos: layerFixture.pos,
-        presentationBounds: null,
-        source: runtimeSource.source,
-        operations: [],
-      };
-    });
+        return {
+          id: layerFixture.id,
+          name: layerFixture.id,
+          isBedrock: false,
+          tmpCanvas: null,
+          bitmap: runtimeSource.bitmap,
+          visible: true,
+          opacity: layerFixture.layerOpacity ?? 1,
+          locked: false,
+          blendMode: layerFixture.blendMode ?? 'source-over',
+          order: layerFixture.order,
+          pos: layerFixture.pos,
+          presentationBounds: null,
+          source: runtimeSource.source,
+          operations: [],
+        };
+      })
+    );
     if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
     const layerTransforms = fixture.layerTransforms ?? [];
     let untransformedBaselinePixels: number[] | null = null;
