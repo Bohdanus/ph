@@ -1,6 +1,46 @@
 # Continue durable history from current main
 
-## Latest checkpoint — 2026-10-29 (Shape Tool E2E hardened; broad gate red; landing gates unresolved)
+## Latest checkpoint — 2026-10-29 (latest main synced; broad mirror red; ph-14 landing blocked)
+
+- The latest actual `refs/heads/main` is `e87c05ff72ff895112cefdc88c9d70ca836670a1` in
+  `/Users/bkalynovskyi/ph/.kilo/worktrees/main-clean-20261028`. At the latest check it was clean,
+  seven commits ahead of `origin/main`, and `npm run repo:state` reported no in-progress operations.
+  This is the actual main worktree; the root checkout and `main-sync` are not migration baselines.
+- This task branch synced that pin in merge `6d1f96eb55a00e76ccf0f575493c494433fecfe1`, with
+  first parent `6c4af4a2c636130c1601326dbcbd4419022bd301`, second parent
+  `e87c05ff72ff895112cefdc88c9d70ca836670a1`, tree
+  `c6507faee604647d8aa9f7c30127dcd0d97d4f6d`, and the native `Chat:` trailer. The merge is
+  committed and `repo:state` is clear. The live `ph-14` claim and its eight path locks remain held
+  by this branch; recheck before every edit and landing.
+- `ph-14` remains characterization-only. The Shape Tool creates a `NEW_LAYER_ACTION` with a typed
+  vector source; conversion is current while the ownership gate keeps presentation unpublished and
+  legacy-painted. The browser test exercises the real Shape Tool after disabling the default blank
+  row, checks the shape history row, independent rectangle pixels, canvas/PNG/PSD composite and
+  layer pixels, undo/redo, and `ownership-unproven` fallback. Planner and StoreContext tests cover
+  typed conversion and gated text/pencil sources. The browser action is not directly joined to its
+  typed unit assertion, and the E2E does not inspect its serialized `HistoryItem`; keep those
+  evidence claims separate. No production eligibility or logical-authority code changed.
+- After the sync, local `npm run test:e2e -- e2e/source-backed-history.spec.ts` passed. Full mirror
+  run `40885682904` tested exact candidate `6d1f96eb55a00e76ccf0f575493c494433fecfe1`. Dispatch
+  validation, audit, E2E helper tests, CI checks, and the skip baseline passed; all six browser
+  shards failed. The five source-backed-history cases passed on Linux, macOS, and Windows. The
+  failures are in other suites: `e2e/crop-history.spec.ts` crop resize/rotation and retained-frame
+  parity cases; the three Small Caps preview/commit cases in `e2e/text-tool.spec.ts` on Linux and
+  Windows; and vector, background-conversion, and live-Brush durable-presentation expectations in
+  `e2e/undo-redo.spec.ts` across the platforms. Exact results and diagnostics are in
+  `test-results/remote-e2e/40885682904-1-25185df88db5435b8ca9c04747ab7c34/`. These files are
+  outside the eight `ph-14` locks. Do not edit them from this task branch without a fresh ownership
+  check and explicit handoff.
+- A fresh Luna read-only review found the prior checkpoint's main/candidate pins stale and found no
+  actionable issue in the Shape Tool assertions. This checkpoint corrects those pins. Obtain a
+  read-only follow-up review of this update before any landing. Continue to follow the operator
+  instruction not to run Sol or Terra subagents.
+- The full mirror gate is red, so `ph-14` is not ready to land even though actual local main is
+  clean. No landing merge has started. Keep every production gate closed. Once the unrelated failed
+  suites are resolved or handed off, refresh main and `repo:state`, sync a newer actual-main pin if
+  needed, rerun the exact candidate gates, then use the pinned landing procedure.
+
+## Pre-sync checkpoint — 2026-10-29 (historical; before main pin e87c05f)
 
 - The raster/tablet blank-source proof remains landed on actual local `main` at
   `730339e5983d42f52fe102d83d8bfd286137a6c5`. The task branch synced the latest committed actual
@@ -443,7 +483,7 @@ additions across the four files changed on both sides (`HANDOFF.md`, both histor
 and `StoreContext.tsx`); citation tests pass 24 checks; and semantic re-anchoring confirms the
 source gate, append caller, startup producer, navigation behavior, and fallback E2E expectations.
 
-Current next steps:
+Historical next steps — superseded by the Latest checkpoint:
 
 The **Latest checkpoint** at the top is the live status; older dated inventories, claims and
 provider snapshots below are historical evidence. The disabled-root UI path is already proven for
@@ -478,6 +518,24 @@ vector publication, frame-changing commits, active-root/import ownership, author
 replay-budget/cancellation for a separately proven gate. Continue to use verified free compute
 heavily per current `MODELS.md`; timeouts, rate limits, empty or truncated responses are not review
 evidence. Do not use paid inference without explicit authorization for the specific review.
+
+## Current next steps
+
+1. Keep the current work limited to the claimed `ph-14` characterization and its eight locked
+   paths. The disabled-root raster, tablet blank, and Shape Tool routes are already covered; do not
+   repeat them or widen the `NEW_LAYER_ACTION` production gate.
+2. Keep the broad-run failures in `crop-history`, `text-tool`, and `undo-redo` with their owners.
+   Recheck the live board and file locks before taking any of that work; otherwise wait for explicit
+   handoff and a landed fix.
+3. After the owners resolve those failures, refresh actual local main and `repo:state`. Sync any
+   newer clean main pin into this branch, inspect and commit the merge with the `Chat:` trailer, and
+   rerun the full mirror against the resulting exact candidate.
+4. Land `ph-14` only when the six browser shards are green and the pinned landing preflight is
+   clear. If they remain red, keep production behavior on its complete legacy path and update this
+   plan with the exact blocker and next owner action.
+5. After landing, resolve `ph-14`, recheck ownership, and select the next bounded source family from
+   this plan. Keep default-root ownership, vector publication, import/replacement, frame parity,
+   durable authority cutover, and replay-budget/cancellation closed until their listed proofs pass.
 
 ## Goal and baseline
 
@@ -692,18 +750,16 @@ legacy path and record an explicit blocked/unproven handoff with the next action
 
 ## Remaining status
 
-Broader migration: **unproven**. The bounded raster/tablet blank-source proof is landed on actual
-local `main` at `730339e5983d42f52fe102d83d8bfd286137a6c5`. `ph-12` is resolved; `ph-14` remains
-claimed and unlanded. The full mirror tested code candidate
-`ba9dc09a341d7fa3be8e93b86f50afa49c7fe001`, which includes committed main through
-`1b0b55a80da7da17022deea87f8248abdcbc92d4` via sync merge
-`331103961e3f58eeae3cd43cccaf2be8d355cc90`. Its Shape Tool characterization passes focused local,
-Linux, Windows, and full-mirror per-platform checks without changing production eligibility. The
-full broad mirror fails on owned-by-others crop-history, Small Caps, and durable-presentation
-expectations. The last observed state of the actual local main worktree was an unrelated
-in-progress merge. Do not land or widen production gates until both blockers are cleared. When
-main is clear, sync its latest committed pin, rerun the required exact-candidate gates, then use
-the pinned landing procedure.
-After landing, reassess frame and import/replacement ownership before selecting the next slice.
-Keep vector publication, Slices 2A through 4, and all other unproven source families gated until
-their listed evidence is complete.
+Broader migration: **unproven**. The bounded raster/tablet blank-source proof remains landed on
+actual local main at `730339e5983d42f52fe102d83d8bfd286137a6c5`. The latest main pin observed is
+`e87c05ff72ff895112cefdc88c9d70ca836670a1`; task merge `6d1f96eb55a00e76ccf0f575493c494433fecfe1`
+contains it. `ph-12` is resolved and `ph-14` remains claimed and unlanded. The exact-candidate full
+mirror at `6d1f96e` passed its non-browser checks and failed all six browser shards on the
+crop-history, Small Caps, and undo/redo durable-presentation cases listed in the Latest checkpoint.
+All five source-backed-history cases passed on every platform. No production gate changed. Do not
+land while the broad browser gate is red, and do not change another task's test surface without a
+fresh ownership check and handoff. After the blockers are resolved, refresh and sync actual main,
+rerun the required exact-candidate gates, and use the pinned landing procedure. After landing,
+reassess frame and import/replacement ownership before selecting the next slice. Keep vector
+publication, Slices 2A through 4, and all other unproven source families gated until their listed
+evidence is complete.

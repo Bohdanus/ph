@@ -228,26 +228,33 @@ DEV-only paint source/cursor after renderer completion; redo remains the complet
 `ownership-unproven` legacy fallback. These tests demonstrate only this reachable prefix and do not
 change any production publication gate.
 
-The latest actual local `main` landing is `730339e5983d42f52fe102d83d8bfd286137a6c5`, with first
+The latest history-migration landing on actual local `main` remains `730339e5983d42f52fe102d83d8bfd286137a6c5`, with first
 parent `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
 `080144c22157c446b75eca7d15dabce661af10ec`, and tree
 `df24312c10849921d6b6ce6704dba9ccf66aed76`. The history task worktree fast-forwarded to that main
 pin. `repo:state` was clean, the landing preserved the pinned tree, and the source-backed history E2E
 passed all five tests.
 
-Current task `ph-14` is a committed characterization-only vector create slice at
-`4678e34ae9c6c45d87f27d46b16a18d472a3390b` (tree
-`8d21351a85b360f2862b75b135d3481ab1a2c722`). The planner and StoreContext tests pass (38 tests
-across two files); all five desktop/tablet headless E2Es pass, including current conversion,
-unpublished presentation, legacy paint, exact canvas/PNG/PSD output, and undo/redo.
-`npm run test:e2e:unit` passes (21 files, 1,536 tests, 13 expected failures); the full unit suite
-passes (400 files, 11,524 tests, 215 expected failures); `npm run tsc`, `npm run build`, and
-`npm run lint:check` pass (64 existing warnings, no errors). One initial full-suite run hit the
-existing E2E runner's ephemeral port race; its isolated test and a full retry both passed. No
-production eligibility changed. Final independent Sol test and Luna documentation reviews found no
-actionable issues. The pinned landing was not started because actual local `main` has staged changes
-in `.skills/free-model-chat-sweep.md` and `MODELS.md`; preserve them and wait for their owner to
-settle the main worktree. No merge is prepared. Once main is clean, re-read its HEAD and repository
-state; if it moved, merge the new main into the task branch and rerun validation and reviews before
-landing. Leave vector publication, frame parity, source replacement/import ownership, authority
-cutover, and replay-budget work explicitly unproven for the next owner.
+The latest actual local `refs/heads/main` pin observed is `e87c05ff72ff895112cefdc88c9d70ca836670a1`
+in `/Users/bkalynovskyi/ph/.kilo/worktrees/main-clean-20261028`; it was clean, seven commits ahead
+of `origin/main`, and `repo:state` found no operation in progress. Task merge
+`6d1f96eb55a00e76ccf0f575493c494433fecfe1` synced it into the history branch with a `Chat:` trailer.
+
+The committed `ph-14` code candidate `6d1f96eb55a00e76ccf0f575493c494433fecfe1` (tree
+`c6507faee604647d8aa9f7c30127dcd0d97d4f6d`) is characterization-only and does not change
+production eligibility. The planner and StoreContext tests previously passed 38 tests across two
+files, and the post-sync local focused E2E passed all five source-backed history cases. Full mirror
+run `40885682904` tested that exact code candidate: dispatch validation, audit, E2E helper tests,
+CI checks, and the skip baseline passed; all six browser shards failed on the existing crop/frame,
+Small Caps, and durable-presentation suites described in the live checkpoint of
+[`history-migration-continuation-20261027.md`](../.kilo/plans/history-migration-continuation-20261027.md).
+All five source-backed history E2Es passed on Linux, macOS, and Windows. Artifacts are under
+`test-results/remote-e2e/40885682904-1-25185df88db5435b8ca9c04747ab7c34/`.
+
+The `ph-14` claim and eight path locks remain on the task branch. The full browser gate blocks
+landing; the latest actual main is clean, but no landing merge is prepared. Do not change the
+unowned failing suites or widen production eligibility without a fresh ownership check and explicit
+handoff. After those failures are resolved, refresh actual main, sync any newer pin into the task
+branch, rerun the full exact-candidate gate, and then follow the pinned landing procedure. Leave
+vector publication, frame parity, source replacement/import ownership, authority cutover, and
+replay-budget work explicitly unproven for the next slice.
