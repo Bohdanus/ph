@@ -2553,7 +2553,7 @@ test.describe('Crop history', () => {
       await expectDeliverablePagePoint(page, fit, nextRight, 'the following resize remains on the workspace');
     });
 
-    test('a recrop resize and move keep the crop frame aligned with the zoomed canvas', async ({ page }) => {
+    test('a recrop resize and move keep the crop frame aligned with the zoomed canvas', async ({ page }, testInfo) => {
       await openDocument(page);
       await commitCrop(page);
       const croppedFit = await readFit(page);
@@ -2564,6 +2564,32 @@ test.describe('Crop history', () => {
       // transformed view when the crop box grows outside its current frame.
       await clickToolButton(page, 'move');
       const fit = await openCropTool(page);
+      await page.evaluate(() => {
+        const pointerEvents: Array<Record<string, unknown>> = [];
+        const windowWithProbe = window as Window & { __cropPointerEvents?: Array<Record<string, unknown>> };
+        windowWithProbe.__cropPointerEvents = pointerEvents;
+        const record = (event: Event) => {
+          const pointer = event as PointerEvent;
+          const surface = document.querySelector('.cursor-crop');
+          const snapshot = (phase: string) =>
+            pointerEvents.push({
+              phase,
+              type: event.type,
+              pointerId: pointer.pointerId,
+              button: pointer.button,
+              buttons: pointer.buttons,
+              clientX: pointer.clientX,
+              clientY: pointer.clientY,
+              target: (event.target as Element | null)?.className ?? null,
+              captured: surface?.hasPointerCapture(pointer.pointerId) ?? false,
+            });
+          snapshot('capture');
+          if (event.type === 'pointerdown' || event.type === 'pointerup') queueMicrotask(() => snapshot('settled'));
+        };
+        for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) {
+          document.addEventListener(type, record, true);
+        }
+      });
       const topEdge = documentPoint(fit, fit.documentWidth / 2, 0);
       const extendedTop = documentPoint(fit, fit.documentWidth / 2, -40);
       await page.mouse.move(topEdge.x, topEdge.y);
@@ -2597,6 +2623,13 @@ test.describe('Crop history', () => {
       await page.mouse.down();
       await page.mouse.move(moveTo.x, moveTo.y, { steps: 12 });
       await page.mouse.up();
+      const pointerEvents = await page.evaluate(
+        () => (window as Window & { __cropPointerEvents?: Array<Record<string, unknown>> }).__cropPointerEvents ?? []
+      );
+      await testInfo.attach('recrop-move-pointer-events', {
+        body: JSON.stringify(pointerEvents, null, 2),
+        contentType: 'application/json',
+      });
 
       const movedTop = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, -15);
       await expect
