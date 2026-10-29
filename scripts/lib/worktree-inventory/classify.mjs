@@ -236,6 +236,9 @@ export function classify(
   }
 ) {
   const reasons = [];
+  const baseBranch = base.startsWith('refs/heads/') ? base.slice('refs/heads/'.length) : base;
+  const protectedWorktree = wt.isPrimary || wt.branch === 'main' || wt.branch === baseBranch;
+  const protectedRole = wt.branch === 'main' ? 'main' : wt.isPrimary ? 'primary' : 'base';
   const uncommitted = isWorkingTreeHeld(wt);
   const unmerged = hasUnmergedCommits(wt);
   const treeUnreadable = Boolean(wt.workingTree.statusError);
@@ -351,10 +354,10 @@ export function classify(
     : null;
   const mergeState = mergeVerdict(wt);
   let recommendation;
-  if ((wt.isPrimary || wt.branch === base) && uncommitted && !live) {
+  if (protectedWorktree && uncommitted && !live) {
     recommendation = RECOMMENDATION.SALVAGE;
-    reasons.push('the base worktree holds uncommitted changes that are in no commit on this branch');
-  } else if (wt.isPrimary || wt.branch === base) {
+    reasons.push(`the ${protectedRole} worktree holds uncommitted changes that are in no commit on this branch`);
+  } else if (protectedWorktree) {
     // The main checkout is never a prune candidate, whatever git says about
     // it. It is the landing site, it is where the operator works, and every
     // other session in the repository resolves paths through it.
@@ -362,7 +365,7 @@ export function classify(
     // written back onto the input record, so `wt.live` was always undefined
     // and the main worktree could never report `in-use`.
     recommendation = live ? RECOMMENDATION.IN_USE : RECOMMENDATION.KEEP;
-    reasons.push('the base worktree is never a deletion candidate');
+    reasons.push(`the ${protectedRole} worktree is never a deletion candidate`);
   } else if (live) {
     recommendation = RECOMMENDATION.IN_USE;
     reasons.push(
