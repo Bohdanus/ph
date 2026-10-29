@@ -285,10 +285,6 @@ export async function loadCatalogs({
           }
         }
         if (!groqResponse) throw new Error(`groq catalog failed for all keys: ${lastGroqError}`);
-        if (!groqResponse.ok) {
-          await discardResponseBody(groqResponse);
-          throw new Error(`groq catalog returned HTTP ${groqResponse.status}`);
-        }
         return catalogCandidates(
           source,
           await readBoundedJson(groqResponse, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`),
@@ -763,7 +759,7 @@ export async function completeWithFreeModel(
             finishReason,
             usage: payload.usage ?? null,
             requestCounts: requestCounts(),
-            groqKeysAvailable: groqKeys.length,
+            groqKeysAvailable: groqKeys.length - exhaustedGroqKeys.size,
           };
         }
         if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
@@ -833,8 +829,7 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (response.status === 401 || response.status === 402 || response.status === 429)
-        exhausted.add(candidate.source);
+      if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -873,7 +868,7 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    if (response.status === 401 || response.status === 402 || response.status === 429) exhausted.add(candidate.source);
+    if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`

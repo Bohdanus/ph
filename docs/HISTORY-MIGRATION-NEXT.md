@@ -41,16 +41,16 @@ is for this review closeout.
   navigation cursor remains on the legacy fallback. Tool-source creates, later source-backed edits,
   source replacements, merge and frame-changing commits retain their gates.
 
-The current default UI path does not reach that create exception. `App.tsx` boots a blank
-document through `setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a
-`NEW_LAYER_ACTION`; the current ownership gate treats that active entry as unproven. Imported
-raster baselines are gated as well. Paste and Background conversion therefore remain on the
-legacy presentation for those flows. The focused unit test uses a gate-free blank
-`OPEN_DOCUMENT_ACTION` baseline to prove the narrow condition, but no normal UI path producing
-that prefix has been proven. Source inspection identifies an unverified candidate: the History
-panel can disable the default blank `NEW_LAYER_ACTION`, and disabled rows are skipped by replay and
-the presentation gate. Use the next-run E2E in the continuation plan to determine whether this is a
-valid product path; do not broaden the exception to bypass the active-prefix gate.
+The default active UI prefix remains gated: `App.tsx` boots a blank document through
+`setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a `NEW_LAYER_ACTION` that the
+ownership gate treats as unproven. Imported-raster baselines are gated as well. A narrow alternate
+route is now verified in headless UI tests: disable the default blank History row, then either paste
+a deterministic raster or add a transparent blank layer from the tablet Layers drawer. Both
+appends paint from the durable cursor and preserve exact empty/composite/layer pixels in the canvas,
+PNG, and PSD. Undo/redo keeps exact canvas pixels; redo uses the complete `ownership-unproven`
+legacy fallback while the root stays disabled. This proves only the user-disabled-root prefix. The
+default active prefix, imported-raster starts, later source-backed edits, and frame-changing commits
+remain gated. Do not broaden the exception to bypass the active-prefix gate.
 
 ## Loose Ends
 
@@ -60,9 +60,10 @@ valid product path; do not broaden the exception to bypass the active-prefix gat
    only if the prior active prefix passes the ownership and frame gates; its own navigation cursor
    and later appends still use the complete legacy fallback. Other source-backed commits and
    frame-changing commits remain on the complete legacy path.
-   The image/blank exception is not yet product-reachable from the default new-document or
-   imported-raster paths because both active prefixes are gated; keep that migration unproven
-   until baseline ownership is resolved explicitly.
+   The image/blank exception is reachable only after disabling the default blank History row, as
+   the raster-paste and tablet blank-layer tests now prove. The default active new-document prefix
+   and imported-raster starts remain gated; keep those paths unproven until their baseline ownership
+   is resolved explicitly.
    Live previews also keep the complete legacy layer base until they clear;
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
@@ -206,3 +207,17 @@ the E2E confirms the durable and legacy repaint sources before reading their pix
 takes the legacy fallback with `ownership-unproven`. This does not widen production eligibility or finish history migration;
 `HistoryItem[]` and `replayHistory()` remain authoritative. Recheck live worktree ownership before
 selecting Slice 2A or one Slice 2B family, as recorded in the plan.
+
+The tablet blank-layer case extends the same disabled-root route through the mobile Layers drawer.
+It requires a successful durable paint at cursor 1, exact transparent canvas/PNG pixels, exact PSD
+composite and blank-layer pixels/bounds, then exact undo/redo pixels with the root still disabled.
+The existing raster case covers deterministic clipboard paste on the same prefix. Both check the
+DEV-only paint source/cursor after renderer completion; redo remains the complete
+`ownership-unproven` legacy fallback. These tests demonstrate only this reachable prefix and do not
+change any production publication gate.
+
+At the latest sync, actual local `main` was `ce1aedec0ddc619ea92414444377f1b243bc29b9`; this
+candidate contains it through merge `9f84f7eaa8942e2c340d340771fde6f0b509ff13`. After syncing, the
+focused browser suite (4 tests), E2E helper suite (21 files), typecheck, production build, and lint
+all passed. Before the pinned landing, recheck live main and `repo:state`; sync and rerun the focused
+gates if main has moved.
