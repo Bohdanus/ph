@@ -186,8 +186,9 @@ variant or an equivalent atomic history action.
    presentation and both raster/PSD export paths. Ownership checks, production
    adapter parity, and atomic failure fallback are closed; supported committed
    eligible append/reorder presentation now composes in the background with legacy
-   as the immediate selector; source-backed imports/replacements and frame-changing
-   commits remain legacy until their ownership or frame-parity gates are explicit. A
+   as the immediate selector. Image/blank layer creates also request background presentation
+   after asset finalization. Tool-source creates, source replacements, merge and frame-changing
+   commits retain their independent ownership or frame-parity gates. A
    rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
    operation, and legacy plus durable logical replay both transform every extant layer.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
@@ -236,10 +237,21 @@ variant or an equivalent atomic history action.
    controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not
    add frame-changing commits to durable publication from these cases alone. Continue across the
    remaining angles, retained-affine combinations, source/tool variants, text styling/rotation,
-   frame sequences and exact fractional materialized bounds across the wider source matrix. Establish ownership and parity
-   for source-backed imports/replacements as a separate, unordered gate; it may proceed before,
-   after, or in parallel with the broader frame matrix. Keep the unsupported-source fallback
-   explicit.
+   frame sequences and exact fractional materialized bounds across the wider source matrix. Establish
+   ownership and parity for source-backed imports/replacements as a separate, unordered gate; it may
+   proceed before, after, or in parallel with the broader frame matrix. Keep the unsupported-source
+   fallback explicit.
+
+   The image/blank create slice is separately scoped to background publication for the current
+   `NEW_LAYER_ACTION`: it is permitted only after asset reconciliation and only when the preceding
+   active cursor prefix passes the ownership and frame gates. The create cursor itself still uses the
+   full legacy navigation fallback. `StoreContext.source-backed-presentation.test.tsx` pins stale,
+   incomplete, and failed finalization behavior; `e2e/source-backed-history.spec.ts` pins paste,
+   Background conversion, exact legacy undo/redo pixels, and PNG/PSD output. On the current app
+   boot path, the initial blank baseline is itself a `NEW_LAYER_ACTION`, so the source-backed
+   cursor gate prevents those UI flows from reaching this exception. The eligible prefix is
+   unit-tested with a gate-free blank `OPEN_DOCUMENT_ACTION`, but is not yet product-reachable.
+   This is presentation progress, not a logical authority change.
 
    Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
    which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),

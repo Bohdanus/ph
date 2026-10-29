@@ -15,9 +15,12 @@ It has thirteen operation kinds, a versioned schema, deep-frozen clones, an asse
 registry with generation counters and a memoizing materialization cache. It is
 rebuilt on every commit and every navigation. Successful supported navigation,
 eligible committed append/reorder presentation, and export consume its materialized
-projection; source-backed imports/replacements, frame-changing commits, logical timeline updates, previews,
-and unsupported documents retain the legacy compatibility path until their ownership or frame-parity
-gates are explicit. Canvas navigation selects a complete durable
+projection. Image/blank layer creates can request background presentation after their asset
+transaction commits and reconciles only when the prior active cursor prefix passes the existing
+ownership and frame gates. The create's own navigation cursor and later appends remain on the
+legacy fallback until source ownership is proven across that cursor. Other source-backed commits,
+frame-changing commits, logical timeline updates, previews and unsupported documents retain the
+legacy compatibility path until their independent gates are explicit. Canvas navigation selects a complete durable
 render projection only after its identity and frame match; pending navigation
 preserves the previously painted canvas. Append/reorder composition runs in the
 background while the already-visible legacy selector remains active, so a preview
@@ -61,6 +64,11 @@ and the complete result is published into `durableRenderProjection` with a
 legacy-compatible presentation path for other runtime updates. The awaitable
 publication returns a durable outcome or a complete legacy fallback; any replay
 carrying a `'legacy-tool'` source selects the latter.
+
+The source-backed create exception currently has no proven default UI entry point: the app's
+initial blank document is a `NEW_LAYER_ACTION`, which the active-prefix ownership gate refuses,
+as it does an imported raster baseline. Paste and Background conversion therefore stay on the
+legacy presentation until the baseline ownership gate is resolved explicitly.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current

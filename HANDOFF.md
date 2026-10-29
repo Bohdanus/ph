@@ -37,8 +37,11 @@ Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHis
 the mapped durable cursor after that transition and publishes a separate
 `durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; successful
 eligible committed append/reorder transitions run the same composition in the background while
-keeping the legacy selector immediately visible; source-backed imports/replacements and
-frame-changing commits remain legacy until their ownership or frame-parity gates are explicit. The
+keeping the legacy selector immediately visible, including image/blank layer creates after asset
+finalization only when the prior active cursor prefix passes the ownership and frame gates. The
+create's own navigation cursor and later appends remain on the legacy fallback until the broader
+source-ownership proof is explicit. Other source-backed commits and frame-changing commits retain
+their independent ownership or frame-parity gates. The
 legacy layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
@@ -74,8 +77,9 @@ affine arithmetic of its own. `renderRetainedSegment()` hands the retained opera
 through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 `presentation-evaluator.ts` — `scaleVectorArgs()`, which `materialization.ts` imports directly and
 `layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation
-and eligible committed append/reorder are now staged callers; source-backed imports/replacements,
-frame changes, previews, and the
+and eligible committed append/reorder, including image/blank creates from a gate-free prior
+prefix, are now staged callers; navigation through their source-backed cursors, other source-backed
+commits, frame changes, previews, and the
 remaining surfaces still need independent parity gates before they are mounted.
 
 **Rotated crop is now an explicit logical operation, but its presentation gate remains closed.**
@@ -138,6 +142,18 @@ source-backed import/replacement ownership as a separate gate. The frame matrix 
 are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
 failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
 sequence.
+
+A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to
+request background composition only when the active cursor prefix before that create passes the
+ownership and frame gates. The create's own undo/redo cursor still takes the legacy fallback, and
+later edits cannot use this exception to skip that gate. The default app starts with a blank
+`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too;
+the tested paste and Background flows therefore remain on the legacy presentation. The browser
+spec verifies their exact undo/redo pixels and PNG/PSD exports, not durable presentation.
+The eligible gate-free prefix is covered by a focused unit test but has no proven normal UI entry
+point yet. A source-derived candidate is disabling the default blank history row through the
+History panel; validate it with the next-run E2E in `docs/HISTORY-MIGRATION-NEXT.md` before calling
+the exception product-reachable. Logical replay remains legacy-owned.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,
