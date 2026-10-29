@@ -215,3 +215,9 @@ The existing raster case covers deterministic clipboard paste on the same prefix
 DEV-only paint source/cursor after renderer completion; redo remains the complete
 `ownership-unproven` legacy fallback. These tests demonstrate only this reachable prefix and do not
 change any production publication gate.
+
+At the latest sync, actual local `main` was `ce1aedec0ddc619ea92414444377f1b243bc29b9`; this
+candidate contains it through merge `9f84f7eaa8942e2c340d340771fde6f0b509ff13`. After syncing, the
+focused browser suite (4 tests), E2E helper suite (21 files), typecheck, production build, and lint
+all passed. Before the pinned landing, recheck live main and `repo:state`; sync and rerun the focused
+gates if main has moved.

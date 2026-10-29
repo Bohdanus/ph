@@ -37,10 +37,15 @@
   `npm run build`, and `npm run lint:check` (64 existing warnings, no errors). The independent
   Luna 6 read-only review found no actionable findings. Free review routes were attempted first but
   returned timeouts, empty responses, rate limits, or no CLI; those results are not review evidence.
-  The final pinned landing remains blocked by an unrelated in-progress merge in the designated main
-  worktree. Do not touch its index; rerun `npm run repo:state`, then sync the latest actual main into
-  this branch if it has moved and repeat the relevant gates before landing. The earlier raster
-  candidate's validation and reviews are recorded in merge `f43d7e52`.
+  Actual local `main` advanced to `ce1aedec0ddc619ea92414444377f1b243bc29b9`; this branch now
+  contains it through sync merge `9f84f7eaa8942e2c340d340771fde6f0b509ff13` (parents
+  `187d782072328c4c17ef3cfb5da6b6066ea5aac5` and
+  `ce1aedec0ddc619ea92414444377f1b243bc29b9`). The earlier in-progress merge is complete and
+  `repo:state` is clear. After the sync, the focused E2E passed (4 tests), the E2E helper suite
+  passed (21 files, 1,536 passed, 13 expected failures), `npm run tsc` and `npm run build` passed,
+  and `npm run lint:check` passed with 64 existing warnings and no errors. Before landing, rerun
+  `repo:state` and confirm the actual main pin is still `ce1aedec`; sync and rerun these gates if it
+  moved. The earlier raster candidate's validation and reviews are recorded in merge `f43d7e52`.
 - The production gate was not changed. `HistoryItem[]` and `replayHistory()` remain logical
   authority. Slices 2A and 2B are still independent and unproven. At resume, inspect live ownership:
   the existing frame-parity task retains Slice 2A until explicit handoff, and the separate
