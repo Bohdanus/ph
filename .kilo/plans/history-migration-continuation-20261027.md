@@ -24,7 +24,9 @@
   complete legacy fallback with `ownership-unproven`; this proves one bounded append route, not
   broad navigation eligibility. The first `OPEN_DOCUMENT_ACTION` disable refusal remains covered
   by `useHistory.test.tsx`.
-- A second source family is now covered by an unlanded tablet E2E candidate: from a 744×1133,
+- A second source family is now covered by tablet E2E candidate `fff5660c85eac12766a6930c8011a190c7324186`
+  (parent `f43d7e52b3dc4a4150e89eece6ee20e09e9ac7d9`, tree
+  `b5a02caa07150d7ba60039bf88ef7e5c4e989e67`). From a 744×1133,
   touch-enabled, 2× display, it disables the default blank row and creates a transparent layer
   through the mobile Layers drawer. The test requires a successful durable paint at cursor 1, checks
   exact empty canvas pixels, PSD composite and blank-layer pixels/bounds, and native 800×600 PNG
@@ -33,9 +35,12 @@
 - Current validation is `npm run test:e2e -- --verbose e2e/source-backed-history.spec.ts` (4 passed),
   `npm run test:e2e:unit` (21 files, 1,536 passed, 13 expected failures), `npm run tsc`,
   `npm run build`, and `npm run lint:check` (64 existing warnings, no errors). The independent
-  read-only review of the final diff and pinned landing of the blank-layer test remain. Free review
-  routes returned timeouts, empty responses, rate limits, or no CLI; they are not review evidence.
-  The earlier raster candidate's validation and reviews are recorded in merge `f43d7e52`.
+  Luna 6 read-only review found no actionable findings. Free review routes were attempted first but
+  returned timeouts, empty responses, rate limits, or no CLI; those results are not review evidence.
+  The final pinned landing remains blocked by an unrelated in-progress merge in the designated main
+  worktree. Do not touch its index; rerun `npm run repo:state`, then sync the latest actual main into
+  this branch if it has moved and repeat the relevant gates before landing. The earlier raster
+  candidate's validation and reviews are recorded in merge `f43d7e52`.
 - The production gate was not changed. `HistoryItem[]` and `replayHistory()` remain logical
   authority. Slices 2A and 2B are still independent and unproven. At resume, inspect live ownership:
   the existing frame-parity task retains Slice 2A until explicit handoff, and the separate
