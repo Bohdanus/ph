@@ -715,7 +715,12 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     : [];
 
   return (
-    <div className={`${className} cursor-crop`} data-rotation={angle} {...pointerHandlers}>
+    <div
+      className={`${className} cursor-crop`}
+      data-rotation={angle}
+      {...pointerHandlers}
+      onDragStart={(event) => event.preventDefault()}
+    >
       {painted && angle === 0 && (
         /**
          * `pointer-events: none` is inherited, so this one declaration takes the whole subtree out

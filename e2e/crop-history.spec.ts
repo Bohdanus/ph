@@ -429,6 +429,7 @@ async function installCropInputProbe(page: Page): Promise<void> {
     ]) {
       document.addEventListener(type, (event) => record(event, 'capture'), true);
     }
+    document.addEventListener('dragstart', (event) => record(event, 'bubble'));
     const dispatchEvent = EventTarget.prototype.dispatchEvent;
     EventTarget.prototype.dispatchEvent = function (event: Event): boolean {
       if (event.type === 'pointercancel') {
