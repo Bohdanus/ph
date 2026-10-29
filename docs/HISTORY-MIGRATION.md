@@ -253,9 +253,12 @@ variant or an equivalent atomic history action.
    canvas/PNG/PSD pixels and legacy undo/redo fallback. The default active root remains gated.
    A Shape Tool `NEW_LAYER_ACTION` is converted to a typed vector entry, but its current presentation
    is intentionally unpublished: planner and StoreContext tests prove conversion is current without
-   invoking the compositor, and the desktop E2E checks legacy paint, exact canvas/PNG/PSD pixels,
-   and undo/redo. This is a characterization boundary only; it does not authorize vector-source
-   publication or change logical history authority.
+   invoking the compositor. The desktop E2E uses the real Shape Tool from the disabled opening row,
+   observes a new `shape` history row and legacy-only presentation, and compares the full canvas,
+   PNG, PSD composite, and PSD layer crop to an independent rectangle pixel oracle through
+   undo/redo. That browser test does not inspect its `HistoryItem` payload; the source-emission and
+   typed-conversion checks are separate evidence. This is a characterization boundary only; it does
+   not authorize vector-source publication or change logical history authority.
 
    Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
    which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),

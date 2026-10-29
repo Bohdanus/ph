@@ -34,6 +34,33 @@ function expectedLayerPixels() {
   return expected;
 }
 
+async function expectedShapePixels(page: Page) {
+  const dataUrl = await page.evaluate(() => {
+    const expected = document.createElement('canvas');
+    expected.width = 800;
+    expected.height = 600;
+    const context = expected.getContext('2d');
+    if (!context) throw new Error('Missing expected shape context');
+    context.strokeStyle = '#000000';
+    context.lineWidth = 5;
+    context.strokeRect(140, 120, 160, 130);
+    return expected.toDataURL();
+  });
+  return sharp(Buffer.from(dataUrl.split(',')[1]!, 'base64'))
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+}
+
+function cropPixels(pixels: Buffer, canvasWidth: number, left: number, top: number, width: number, height: number) {
+  const cropped = Buffer.alloc(width * height * 4);
+  for (let row = 0; row < height; row += 1) {
+    const sourceOffset = ((top + row) * canvasWidth + left) * 4;
+    cropped.set(pixels.subarray(sourceOffset, sourceOffset + width * 4), row * width * 4);
+  }
+  return cropped;
+}
+
 async function pasteDeterministicRaster(page: Page) {
   // Supply a deterministic system clipboard without changing the host clipboard.
   await page.evaluate(async () => {
@@ -307,7 +334,7 @@ test('disabling the default blank history row allows one durable create at its a
   await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(pastedDataUrl);
 });
 
-test('a typed vector create remains ownership-gated with exact pixels and exports', async ({ page }) => {
+test('a Shape Tool create remains ownership-gated with exact pixels and exports', async ({ page }) => {
   await page.goto('/');
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
@@ -329,9 +356,11 @@ test('a typed vector create remains ownership-gated with exact pixels and export
   expect(empty.data.equals(transparentPixels), 'the disabled opening row leaves a transparent document').toBe(true);
 
   const historyCountBeforeShape = await historyRows.count();
+  const expectedShape = await expectedShapePixels(page);
   await drawRectangle(page);
   const expectedCursor = historyCountBeforeShape;
   await expect(historyRows.first().getByTitle('Current state')).toBeVisible();
+  await expect(historyRows.first()).toContainText('shape');
   await expect(historyRows).toHaveCount(historyCountBeforeShape + 1);
   await expect(openingRow.getByTitle('Enable history item')).toBeVisible();
 
@@ -347,6 +376,9 @@ test('a typed vector create remains ownership-gated with exact pixels and export
     channels: 4,
   });
   expect(shape.data.equals(transparentPixels), 'the committed rectangle changes the document pixels').toBe(false);
+  expect(shape.data.equals(expectedShape), 'the entire visible document matches an independent rectangle oracle').toBe(
+    true
+  );
   const pixelAt = (x: number, y: number) => Buffer.from(shape.data.subarray((y * 800 + x) * 4, (y * 800 + x) * 4 + 4));
   const opaqueBlack = Buffer.from([0, 0, 0, 255]);
   const transparentPixel = Buffer.from([0, 0, 0, 0]);
@@ -377,23 +409,27 @@ test('a typed vector create remains ownership-gated with exact pixels and export
   expect(psd.children).toHaveLength(1);
   if (!psd.imageData) throw new Error('Missing PSD composite');
   expect(
-    Buffer.from(psd.imageData.data).equals(shape.data),
-    'PSD composite pixels must match the visible legacy canvas'
+    Buffer.from(psd.imageData.data).equals(expectedShape),
+    'PSD composite pixels must match the independent rectangle oracle'
   ).toBe(true);
   const vectorLayer = psd.children![0];
   if (!vectorLayer.imageData) throw new Error('Missing rasterized PSD vector layer pixels');
   const left = vectorLayer.left ?? 0;
   const top = vectorLayer.top ?? 0;
   const { width, height, data } = vectorLayer.imageData;
-  expect({ left, top, width, height }).toEqual({ left: 136, top: 116, width: 168, height: 138 });
-  const expectedShapeLayerPixels = Buffer.alloc(width * height * 4);
-  for (let y = 0; y < height; y += 1) {
-    const sourceOffset = ((top + y) * 800 + left) * 4;
-    expectedShapeLayerPixels.set(shape.data.subarray(sourceOffset, sourceOffset + width * 4), y * width * 4);
-  }
+  const shapeBounds = { left: 136, top: 116, width: 168, height: 138 };
+  expect({ left, top, width, height }).toEqual(shapeBounds);
+  const expectedShapeLayerPixels = cropPixels(
+    expectedShape,
+    800,
+    shapeBounds.left,
+    shapeBounds.top,
+    shapeBounds.width,
+    shapeBounds.height
+  );
   expect(
     Buffer.from(data).equals(expectedShapeLayerPixels),
-    'PSD layer pixels must match their exact canvas crop'
+    'PSD layer pixels must match the independent rectangle oracle crop'
   ).toBe(true);
 
   await openSaveDialog(page);
@@ -414,7 +450,7 @@ test('a typed vector create remains ownership-gated with exact pixels and export
     height: 600,
     channels: 4,
   });
-  expect(png.data.equals(shape.data), 'PNG pixels must match the visible legacy canvas').toBe(true);
+  expect(png.data.equals(expectedShape), 'PNG pixels must match the independent rectangle oracle').toBe(true);
 
   await getUndoButton(page).click();
   await expect.poll(async () => (await readWorkspacePixels(page)).data.equals(transparentPixels)).toBe(true);
@@ -423,7 +459,7 @@ test('a typed vector create remains ownership-gated with exact pixels and export
   await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
   await expect(canvas).toHaveAttribute('data-presentation-paint-source', 'legacy');
   await expect(canvas).toHaveAttribute('data-presentation-paint-cursor', String(expectedCursor));
-  await expect.poll(async () => (await readWorkspacePixels(page)).data.equals(shape.data)).toBe(true);
+  await expect.poll(async () => (await readWorkspacePixels(page)).data.equals(expectedShape)).toBe(true);
 });
 
 test('Background conversion retains exact pixels behind the source-backed cursor gate', async ({ page }) => {

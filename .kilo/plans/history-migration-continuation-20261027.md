@@ -18,12 +18,28 @@
 - `ph-12` was resolved after that landing. `ph-14` is the active characterization-only task. Verify
   live claim and path locks before continuing or landing; the exact current diff is the live source
   for edited files. Do not take the independently owned frame-parity or import/replacement work.
-- Shape Tool creates are confirmed to emit `NEW_LAYER_ACTION` with a tool source and convert to a
-  current typed vector entry. The existing StoreContext ownership gate correctly leaves vector
-  presentation unpublished and on legacy paint. Tests now pin that boundary for vector, text and
-  pencil source families. The Shape Tool E2E checks the disabled-root route, legacy paint marker,
-  exact canvas/PNG/PSD output, undo/redo pixels, and `ownership-unproven` redo fallback. This is
-  characterization only; no production eligibility or logical-authority code changed.
+- `ShapeToolArea` and `useLayer.createLayerFromTool` source inspection shows a shape create is a
+  `NEW_LAYER_ACTION` with a tool source. Planner and StoreContext tests separately prove a valid
+  shape source converts to a current typed vector entry while the ownership gate leaves presentation
+  unpublished and on legacy paint; valid text and pencil sources remain gated too. The desktop E2E
+  uses the real Shape Tool from the disabled opening row, observes a new `shape` history row, and
+  checks unpublished/legacy presentation, a full independent rectangle pixel oracle for canvas and
+  PNG/PSD composite/layer pixels, undo/redo, and `ownership-unproven` redo fallback. It does not
+  inspect the UI-created `HistoryItem` payload or directly join that browser action to the typed
+  vector unit assertion. Keep those evidence claims separate. This is characterization only; no
+  production eligibility or logical-authority code changed.
+- Post-sync checks now pass: 38 focused append-planner/StoreContext tests; all five
+  `e2e/source-backed-history.spec.ts` browser cases; `npm run test:e2e:unit` (21 files, 1,536
+  passed, 13 expected); full unit suite (400 files, 11,524 passed, 215 expected); `npm run tsc`;
+  `npm run build`; and `npm run lint:check` (64 existing warnings, zero errors, formatting clean).
+  The first lint run exposed only a formatting error in the new valid pencil fixture; it was fixed
+  and the full lint/format gate passed. Sol's fresh review found three proof gaps: weak E2E linkage
+  to the UI-created entry, export comparison against the same canvas, and invalid text/pencil
+  fixture args. The pixel oracle and fixture args are now fixed, and the E2E/test claims explicitly
+  distinguish source inspection, unit conversion, and browser evidence. Sol's follow-up code review
+  found no actionable issues. Luna's docs review found a stale status contradiction lower in this
+  plan; that status is being corrected and needs a final docs-only recheck. The broad E2E mirror run
+  remains.
 - Before the main sync, candidate validation passed: 38 focused unit tests across the append planner and StoreContext
   suites; all five `e2e/source-backed-history.spec.ts` browser cases; `npm run test:e2e:unit` (21
   files, 1,536 passed, 13 established expected failures); full unit suite (400 files, 11,524
@@ -47,9 +63,9 @@
 - `HistoryItem[]` and `replayHistory()` remain logical authority. The default active root, imported
   raster baselines, source replacement/import, merge, frame-changing commits, broader source
   families, durable-first navigation, and replay-budget/cancellation behavior remain unproven. Do
-  not widen production gates. Next: rerun the focused/full checks and obtain two fresh reviews on
-  the exact synced tree. Then repeat the clean-main/HEAD and `repo:state` checks, and prepare the
-  pinned non-fast-forward landing if every gate passes. After landing, resolve `ph-14`, reassess
+  not widen production gates. Post-sync focused/full checks and Sol's code review have passed;
+  Luna's docs-only recheck and the broad E2E mirror remain. After those pass, repeat the clean-main/
+  HEAD and `repo:state` checks, then prepare the pinned landing. After landing, resolve `ph-14`, reassess
   live ownership, and choose the next implementation from this plan; keep the default root, vector
   publication, import/replacement ownership, frame parity, authority cutover, and replay-budget
   gates closed until their proofs are complete.
@@ -426,10 +442,14 @@ raster paste and tablet blank creation. Do not repeat that discovery task or des
 unproven. The vector test is characterization only and does not open the production gate.
 
 For the current `ph-14` candidate, verify the live claim and all eight held paths before landing.
-The final Sol test review and Luna documentation review found no actionable issues, and all listed
-validation passes. Stage only those owned paths, commit with
-`Chat: 01a17f24-9224-7aa0-a412-3afafa09f797`, and use the pinned local-main landing procedure. The
-plan is tracked; stage it normally. Recheck actual `refs/heads/main`, checkout mappings, cleanliness,
+The earlier Sol and Luna reviews were pre-sync and are historical only. The fresh Sol code review
+found no actionable findings; Luna's current docs review caught the stale status contradiction
+below, which must be corrected and re-reviewed. Local validation on the synced candidate passes,
+but the broad E2E mirror run is still required. Do not stage or commit until both review groups cover
+the exact final diff. Then stage only those owned paths, commit with
+`Chat: 01a17f24-9224-7aa0-a412-3afafa09f797`, and run the full mirror gate on the clean candidate.
+Land only after that gate completes. Use the pinned local-main landing procedure. The plan is
+tracked; stage it normally. Recheck actual `refs/heads/main`, checkout mappings, cleanliness,
 `repo:state`, candidate parents/tree and current inventory immediately before landing. Never use
 the root `main-sync` checkout as the baseline. Any product-behavior or gate-related edit after
 review invalidates the relevant final review/gate evidence and must be checked again.
@@ -660,10 +680,10 @@ Broader migration: **unproven**. The bounded raster/tablet blank-source proof is
 local `main` at `730339e5983d42f52fe102d83d8bfd286137a6c5`. `ph-12` was resolved after landing;
 `ph-14` tracks the committed typed-vector characterization, still unlanded at this checkpoint. The
 task branch includes current `main` through sync merge `1bd4a8a4d048103591dcad16b690586ebb658eaf`;
-fresh validation and two independent reviews on that exact tree remain. Earlier focused, full unit,
-E2E helper, browser, typecheck, build, and lint gates passed on the pre-sync tree; the full test
-suite's initial ephemeral port-race failure passed isolated and full-suite retries. The earlier Sol
-test review and Luna docs review found no actionable issues before the sync. The characterization
-does not widen production eligibility. After landing, reassess frame and import/replacement
+post-sync focused, E2E unit, full unit, browser, typecheck, build, and lint gates now pass. Sol's
+fresh code review found no actionable findings. Luna's docs review found and is helping correct a
+stale status contradiction in this plan; a docs-only recheck and the broad E2E mirror run remain.
+Pre-sync reviews and validation are historical evidence only. The characterization does not widen
+production eligibility. After landing, reassess frame and import/replacement
 worktree ownership before selecting the next slice. Keep vector publication, Slices 2A through 4,
 and all other unproven source families gated until their listed evidence is complete.

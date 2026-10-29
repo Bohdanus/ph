@@ -7,6 +7,7 @@ import { getAssetRegistry } from '../asset-registry.ts';
 import * as compositor from '../durable-compositor.ts';
 import type { DurableComposite } from '../durable-compositor.ts';
 import type { MaterializedLayer } from '../materialization.ts';
+import type { ToolArgsFor } from '../tool-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -34,6 +35,47 @@ function added(kind: 'image' | 'blank', id = 'added', order = 1): Layer {
   };
 }
 
+function toolArgsFor(toolName: 'shape' | 'text' | 'pencil') {
+  if (toolName === 'shape') {
+    return {
+      toolName,
+      figure: 'rectangle',
+      alpha: 1,
+      color: '#000000',
+      backgroundColor: null,
+      lineWidth: 4,
+      start: { x: 3, y: 3 },
+      end: { x: 21, y: 15 },
+    } satisfies ToolArgsFor<'shape'>;
+  }
+  if (toolName === 'text') {
+    return {
+      toolName,
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1,
+      text: 'Source-backed text',
+    } satisfies ToolArgsFor<'text'>;
+  }
+  return {
+    toolName,
+    alpha: 1,
+    color: '#000000',
+    penType: 'pen',
+    lineWidth: 3,
+    points: [
+      { x: 2, y: 2 },
+      { x: 22, y: 16 },
+    ],
+    smoothing: 0,
+    blendMode: 'source-over',
+  } satisfies ToolArgsFor<'pencil'>;
+}
+
 function toolAdded(toolName: 'shape' | 'text' | 'pencil', id = `${toolName}-added`, order = 1): Layer {
   const pos = { x: 22, y: 28, width: 24, height: 18 };
   return {
@@ -41,16 +83,7 @@ function toolAdded(toolName: 'shape' | 'text' | 'pencil', id = `${toolName}-adde
     bitmap: null,
     source: {
       kind: 'tool',
-      args: {
-        toolName,
-        figure: 'rectangle',
-        alpha: 1,
-        color: '#000000',
-        backgroundColor: null,
-        lineWidth: 4,
-        start: { x: 22, y: 28 },
-        end: { x: 46, y: 46 },
-      } as never,
+      args: toolArgsFor(toolName),
       isBedrock: false,
       pos,
     },
