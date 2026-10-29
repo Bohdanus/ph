@@ -19,6 +19,8 @@ type TextArgs = {
   toolName: 'text';
   angle?: number;
   editingLayerId?: string;
+  allCaps?: boolean;
+  smallCaps?: boolean;
 };
 
 /**
@@ -417,6 +419,19 @@ describe('TextEditOverlay', () => {
       // `aria-multiline` is what tells assistive technology that `Enter` inside this box is a line
       // break rather than an activation, which is exactly the Adobe split the key handler implements.
       expect(el.getAttribute('aria-multiline')).toBe('true');
+    });
+
+    it('keeps the Small Caps caret editable while the Canvas preview owns the visible glyphs', () => {
+      toolArgs = makeTextArgs({ text: 'Wave', smallCaps: true });
+
+      renderOverlay();
+      const el = overlay();
+
+      expect(el.style.color).toBe('transparent');
+      expect(el.style.webkitTextFillColor).toBe('transparent');
+      expect(el.style.caretColor).toBe('rgb(0, 0, 0)');
+      expect(el.style.fontVariantCaps).toBe('small-caps');
+      expect(el.style.textDecorationLine).toBe('none');
     });
 
     it('leaves the ink unclipped: overflow is visible, because a first line under the font ascent reaches above the box top', () => {

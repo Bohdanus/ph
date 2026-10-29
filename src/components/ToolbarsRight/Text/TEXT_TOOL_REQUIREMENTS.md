@@ -1433,10 +1433,11 @@ The Canvas renderer uses `fontVariantCaps` only when a raster probe shows the pr
 pixels. When the property is missing or ignored (raster readback is unavailable or unchanged), it
 draws uppercase runs for lowercase graphemes and scales those runs by the renderer's measured
 fallback factor; existing capitals retain their normal size. This path also avoids depending on
-whether an engine accepts `small-caps` in the Canvas `font` shorthand. The live editor uses
-CSS `font-variant-caps: small-caps`, so preview and committed text still request the same
-typographic variant. The fallback factor reproduces the measured browser behavior for the tested
-font; Adobe does not specify a universal faux-small-caps scale.
+whether an engine accepts `small-caps` in the Canvas `font` shorthand. The live editor keeps a
+contenteditable for its caret and input behavior, while Small Caps preview ink uses the same Canvas
+renderer as commit. This keeps native and faux-cap output, including advances, consistent across
+the DOM and Canvas font engines. The fallback factor reproduces the measured browser behavior for
+the tested font; Adobe does not specify a universal faux-small-caps scale.
 
 Assigning `ctx.font` **resets** `fontVariantCaps` to `'normal'`; `letterSpacing`, `wordSpacing` and
 `fontKerning` **survive** a font assignment. Where the separate caps property exists, that is the

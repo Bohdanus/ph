@@ -127,6 +127,92 @@ test.describe('Undo and redo', () => {
 
   const capture = (page: Page, clip: Required<ClipOptions>): Promise<Buffer> => page.screenshot({ clip });
 
+  const captureCanvasStack = async (page: Page, includeToolOverlay: boolean) => {
+    const snapshot = await page.evaluate((includeOverlay) => {
+      const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="workspace-canvas"]');
+      const overlay = document.querySelector<HTMLCanvasElement>('[data-testid="tool-overlay-canvas"]');
+      if (!canvas || !overlay) throw new Error('Workspace canvas stack is incomplete');
+
+      const composed = document.createElement('canvas');
+      composed.width = canvas.width;
+      composed.height = canvas.height;
+      const context = composed.getContext('2d');
+      if (!context) throw new Error('Could not create the canvas-stack diagnostic context');
+      context.drawImage(canvas, 0, 0);
+      const overlayAligned = overlay.width === canvas.width && overlay.height === canvas.height;
+      if (includeOverlay && overlayAligned) context.drawImage(overlay, 0, 0);
+
+      return {
+        png: composed.toDataURL(),
+        overlayComposited: includeOverlay && overlayAligned,
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        overlayWidth: overlay.width,
+        overlayHeight: overlay.height,
+        devicePixelRatio: window.devicePixelRatio,
+      };
+    }, includeToolOverlay);
+
+    const png = snapshot.png.slice(snapshot.png.indexOf(',') + 1);
+    return {
+      raster: await loadImageData(Buffer.from(png, 'base64')),
+      overlayComposited: snapshot.overlayComposited,
+      canvasWidth: snapshot.canvasWidth,
+      canvasHeight: snapshot.canvasHeight,
+      overlayWidth: snapshot.overlayWidth,
+      overlayHeight: snapshot.overlayHeight,
+      devicePixelRatio: snapshot.devicePixelRatio,
+    };
+  };
+
+  const pixelDifference = (
+    expected: Awaited<ReturnType<typeof loadImageData>>,
+    actual: Awaited<ReturnType<typeof loadImageData>>
+  ) => {
+    if (expected.width !== actual.width || expected.height !== actual.height) {
+      return {
+        equal: false,
+        dimensions: `${expected.width}x${expected.height} vs ${actual.width}x${actual.height}`,
+        differingPixels: null,
+        maxChannelDelta: null,
+        bounds: null,
+      };
+    }
+
+    let differingPixels = 0;
+    let maxChannelDelta = 0;
+    let left = expected.width;
+    let top = expected.height;
+    let right = -1;
+    let bottom = -1;
+
+    for (let offset = 0; offset < expected.data.length; offset += 4) {
+      let pixelDiffers = false;
+      for (let channel = 0; channel < 4; channel += 1) {
+        const delta = Math.abs(expected.data[offset + channel]! - actual.data[offset + channel]!);
+        if (delta > 0) pixelDiffers = true;
+        if (delta > maxChannelDelta) maxChannelDelta = delta;
+      }
+      if (!pixelDiffers) continue;
+      differingPixels += 1;
+      const pixel = offset / 4;
+      const x = pixel % expected.width;
+      const y = Math.floor(pixel / expected.width);
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    }
+
+    return {
+      equal: differingPixels === 0,
+      dimensions: `${expected.width}x${expected.height}`,
+      differingPixels,
+      maxChannelDelta,
+      bounds: differingPixels === 0 ? null : { left, top, right, bottom },
+    };
+  };
+
   const expectPresentationDecision = async (page: Page) => {
     const strip = page.getByTestId('dev-status-strip');
     await expect
@@ -340,7 +426,7 @@ test.describe('Undo and redo', () => {
     await expect(getRedoButton(page), 'undoing back to the branch point should make it redoable').toBeEnabled();
   });
 
-  test('vector shape undo and redo publish durable presentation with cursor and layer ids', async ({ page }) => {
+  test('vector shape undo and redo preserve pixels behind ownership fallback', async ({ page }) => {
     const box = await canvasBox(page);
     const clip = wholeCanvasClip(box);
 
@@ -364,7 +450,9 @@ test.describe('Undo and redo', () => {
     await getUndoButton(page).click();
     await waitForBands(page, [wholeCanvasBand(box)], [false], { description: 'the canvas to carry no ink after undo' });
     await expectPresentationDecision(page);
-    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+    const strip = page.getByTestId('dev-status-strip');
+    await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
 
     expect(await hasDarkPixels(await capture(page, clip)), 'undo left ink on the canvas').toBe(false);
     await expect(getRedoButton(page)).toBeEnabled();
@@ -373,23 +461,23 @@ test.describe('Undo and redo', () => {
     await getRedoButton(page).click();
     await waitForBands(page, [wholeCanvasBand(box)], [true], { description: 'the redone rectangle to be back' });
     await expectPresentationDecision(page);
-    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+    await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
 
     const redone = await getDarkPixelBounds(await capture(page, clip));
     expect(redone, 'redo left the canvas empty').toBeTruthy();
     expect(redone, 'redo did not restore the rectangle pixel for pixel').toEqual(drawn);
   });
 
-  test('background conversion (raster/blank commit) undo and redo publish durable presentation with cursor and layer ids', async ({
-    page,
-  }) => {
-    // A lone bedrock document exposes the Background -> editable layer route, which
-    // commits a raster (`image`) source layer on top of a blank bedrock. Both the
-    // converted layer and the bedrock it replaced are in the durable presentation's
-    // accepted (raster/blank) subset, so undo/redo navigation must publish a
-    // durable composition rather than the legacy fallback.
+  test('background conversion undo and redo preserve pixels behind ownership fallback', async ({ page }) => {
+    // The startup bedrock is a NEW_LAYER_ACTION, so its active prefix remains
+    // ownership-unproven even when the conversion adds a supported raster source.
+    // Navigation must stay on the complete legacy fallback until that prefix has
+    // its own ownership proof.
     const historyRows = page.getByTitle('Click to go back to this state');
     await expect(historyRows, 'a fresh document starts with one history row').toHaveCount(1);
+    const canvas = getWorkspaceCanvas(page);
+    const originalPixels = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
     const convert = page.getByTestId('layers-convert-background-button');
     await expect(convert, 'a fresh document exposes the Background conversion route').toBeVisible();
 
@@ -397,68 +485,64 @@ test.describe('Undo and redo', () => {
     await expect(convert, 'the conversion consumes the button').toHaveCount(0);
     await expect(historyRows, 'background conversion must append exactly one history row').toHaveCount(2);
     await expect(getUndoButton(page), 'the conversion should make undo available').toBeEnabled();
-
     const strip = page.getByTestId('dev-status-strip');
+    await expect(strip).toHaveAttribute('data-status', 'current');
+    await expect(strip, 'a gated append does not publish a durable presentation').toHaveAttribute(
+      'data-presentation-status',
+      'unpublished'
+    );
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
+    const convertedPixels = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
 
     // Undo the conversion: navigates from the raster layer back to the blank bedrock.
     await getUndoButton(page).click();
     await expect(getRedoButton(page), 'undo should make redo available').toBeEnabled();
     await expectPresentationDecision(page);
-    await expect(strip, 'undo of a raster/blank commit must publish durably').toHaveAttribute(
+    await expect(strip, 'undo across the unproven startup row must use legacy presentation').toHaveAttribute(
       'data-presentation-status',
-      'durable'
+      'legacy-fallback'
     );
-    await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
-    const publicationAfterUndo = await strip.getAttribute('data-durable-publication');
-    expect(publicationAfterUndo, 'undo must expose a durable publication token').toBeTruthy();
-    const cursorAfterUndoAttribute = await strip.getAttribute('data-durable-cursor');
-    expect(cursorAfterUndoAttribute, 'undo must expose a numeric durable cursor').toMatch(/^-?\d+$/);
-    const cursorAfterUndo = Number(cursorAfterUndoAttribute);
-    const layerIdsAfterUndo = await strip.getAttribute('data-durable-layer-ids');
-    expect(layerIdsAfterUndo, 'undo must publish non-empty durable layer ids').toBeTruthy();
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
+    await expect(convert, 'undo must restore the background conversion control').toBeVisible();
+    await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(originalPixels);
 
     // Redo the conversion: navigates back to the raster layer.
     await getRedoButton(page).click();
     await expect(getUndoButton(page), 'redo should make undo available').toBeEnabled();
     await expectPresentationDecision(page);
-    await expect(strip, 'redo of a raster/blank commit must publish durably').toHaveAttribute(
+    await expect(strip, 'redo across the unproven startup row must use legacy presentation').toHaveAttribute(
       'data-presentation-status',
-      'durable'
+      'legacy-fallback'
     );
-    await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
-    const publicationAfterRedo = await strip.getAttribute('data-durable-publication');
-    expect(publicationAfterRedo, 'redo must expose a durable publication token').toBeTruthy();
-    expect(publicationAfterRedo, 'undo and redo must publish distinct durable records').not.toBe(publicationAfterUndo);
-    const cursorAfterRedoAttribute = await strip.getAttribute('data-durable-cursor');
-    expect(cursorAfterRedoAttribute, 'redo must expose a numeric durable cursor').toMatch(/^-?\d+$/);
-    const cursorAfterRedo = Number(cursorAfterRedoAttribute);
-    expect(cursorAfterRedo, 'undo and redo must publish different durable cursors').not.toBe(cursorAfterUndo);
-    const layerIdsAfterRedo = await strip.getAttribute('data-durable-layer-ids');
-    expect(layerIdsAfterRedo, 'redo must publish non-empty durable layer ids').toBeTruthy();
-    // The durable layer-id metadata must agree across the two navigations: the
-    // converted layer reuses the bedrock id, so the published set is stable.
-    expect(layerIdsAfterRedo, 'durable layer ids must match across undo/redo').toBe(layerIdsAfterUndo);
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
+    await expect(convert, 'redo must consume the background conversion control').toHaveCount(0);
+    await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(convertedPixels);
   });
 
   test('live Brush pixels commit intact and failed undo restores the raster presentation', async ({
     page,
   }, testInfo) => {
     const historyRows = page.getByTitle('Click to go back to this state');
+    const strip = page.getByTestId('dev-status-strip');
     await expect(historyRows, 'a fresh document starts with one history row').toHaveCount(1);
     await page.getByTestId('layers-convert-background-button').click();
     await expect(historyRows, 'background conversion appends one history row').toHaveCount(2);
     await getUndoButton(page).click();
-    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+    await expectPresentationDecision(page);
+    await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
     await getRedoButton(page).click();
-    const strip = page.getByTestId('dev-status-strip');
-    await expect(strip).toHaveAttribute('data-presentation-status', 'durable');
+    await expectPresentationDecision(page);
+    await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
 
     await openToolFlyout(page, 'brush');
     await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
-    await expect(strip, 'tool selection must leave the accepted durable presentation current').toHaveAttribute(
+    await expect(strip, 'tool selection keeps the gated document on legacy presentation').toHaveAttribute(
       'data-presentation-status',
-      'durable'
+      'legacy-fallback'
     );
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
     const box = await canvasBox(page);
     const clip = wholeCanvasClip(box);
     const baseline = await loadImageData(await capture(page, clip));
@@ -485,6 +569,7 @@ test.describe('Undo and redo', () => {
       .toBeLessThan(128);
 
     const preview = await loadImageData(await capture(page, clip));
+    const previewCanvasStack = await captureCanvasStack(page, true);
     expect(preview.width, 'a live paint preview must keep the document width').toBe(baseline.width);
     expect(preview.height, 'a live paint preview must keep the document height').toBe(baseline.height);
     expect(
@@ -495,27 +580,70 @@ test.describe('Undo and redo', () => {
       Buffer.from(preview.data).equals(Buffer.from(baseline.data)),
       'the live brush preview must change pixels'
     ).toBe(false);
-    await expect(strip, 'the live preview must coexist with the current durable document').toHaveAttribute(
+    await expect(strip, 'the live preview must coexist with the ownership-gated fallback').toHaveAttribute(
       'data-presentation-status',
-      'durable'
+      'legacy-fallback'
     );
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
 
     await page.mouse.up();
     await expect(historyRows, 'committing the preview appends one history row').toHaveCount(3);
-    const previewPixels = Buffer.from(preview.data);
-    await expect
-      .poll(
-        async () => {
-          const committed = await loadImageData(await capture(page, clip));
-          return (
-            committed.width === preview.width &&
-            committed.height === preview.height &&
-            Buffer.from(committed.data).equals(previewPixels)
-          );
-        },
-        { message: 'committing the stroke must preserve the visible preview pixels' }
-      )
-      .toBe(true);
+    const workspaceCanvas = getWorkspaceCanvas(page);
+    await expect(workspaceCanvas, 'the committed Brush frame must finish its legacy paint').toHaveAttribute(
+      'data-presentation-paint-source',
+      'legacy'
+    );
+    await expect(workspaceCanvas).toHaveAttribute('data-presentation-paint-cursor', '2');
+    const committedCanvasStack = await captureCanvasStack(page, false);
+    const backingPixelParity = previewCanvasStack.overlayComposited
+      ? { comparable: true, ...pixelDifference(previewCanvasStack.raster, committedCanvasStack.raster) }
+      : {
+          comparable: false,
+          reason: 'tool-overlay and workspace backing dimensions differ',
+        };
+    // Backing-store equality pins the document raster; the screenshot check separately verifies
+    // that moving the stroke from the overlay to the committed canvas does not change its display.
+    let screenshotPixelParity: ReturnType<typeof pixelDifference> | null = null;
+    try {
+      expect(backingPixelParity, 'committing the stroke must preserve exact document backing pixels').toMatchObject({
+        comparable: true,
+        equal: true,
+      });
+      await expect
+        .poll(
+          async () => {
+            const committed = await loadImageData(await capture(page, clip));
+            screenshotPixelParity = pixelDifference(preview, committed);
+            return (
+              committed.width === preview.width &&
+              committed.height === preview.height &&
+              darkestCenterChannel(committed) < 128
+            );
+          },
+          { message: 'the committed stroke must stay visible after the preview overlay clears' }
+        )
+        .toBe(true);
+      expect(screenshotPixelParity, 'committing the stroke must preserve exact visible pixels').toMatchObject({
+        equal: true,
+      });
+    } finally {
+      await testInfo.attach('brush-preview-commit-pixel-diagnostics.json', {
+        contentType: 'application/json',
+        body: JSON.stringify({
+          devicePixelRatio: previewCanvasStack.devicePixelRatio,
+          previewBacking: {
+            canvas: [previewCanvasStack.canvasWidth, previewCanvasStack.canvasHeight],
+            overlay: [previewCanvasStack.overlayWidth, previewCanvasStack.overlayHeight],
+          },
+          committedBacking: {
+            canvas: [committedCanvasStack.canvasWidth, committedCanvasStack.canvasHeight],
+            overlay: [committedCanvasStack.overlayWidth, committedCanvasStack.overlayHeight],
+          },
+          backingPixelParity,
+          screenshotPixelParity,
+        }),
+      });
+    }
 
     const chooser = page.waitForEvent('filechooser');
     await page.getByTestId('header-file-menu-button').click();
@@ -529,21 +657,23 @@ test.describe('Undo and redo', () => {
     const rasterRow = page.getByTestId('layer-row').first();
     await rasterRow.getByRole('button', { name: 'Hide layer' }).click();
     await expect(rasterRow.getByRole('button', { name: 'Show layer' })).toBeVisible();
-    await expect(historyRows, 'hiding the raster appends a durable entry').toHaveCount(2);
+    await expect(historyRows, 'hiding the raster appends a history entry').toHaveCount(2);
     await rasterRow.getByRole('button', { name: 'Show layer' }).click();
     await expect(rasterRow.getByRole('button', { name: 'Hide layer' })).toBeVisible();
-    await expect(historyRows, 'restoring the raster appends another durable entry').toHaveCount(3);
-    await expect(strip, 'the current raster frame must publish durably before navigation').toHaveAttribute(
+    await expect(historyRows, 'restoring the raster appends another history entry').toHaveCount(3);
+    await expect(strip, 'the imported raster baseline remains unpublished behind the ownership gate').toHaveAttribute(
       'data-presentation-status',
-      'durable'
+      'unpublished'
     );
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
 
     await openToolFlyout(page, 'brush');
     await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
-    await expect(strip, 'tool selection must leave the current raster presentation durable').toHaveAttribute(
+    await expect(strip, 'tool selection does not publish the imported raster baseline').toHaveAttribute(
       'data-presentation-status',
-      'durable'
+      'unpublished'
     );
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
     const rasterBox = await canvasBox(page);
     const rasterClip = wholeCanvasClip(rasterBox);
     const rasterBaseline = await loadImageData(await capture(page, rasterClip));
@@ -593,6 +723,8 @@ test.describe('Undo and redo', () => {
         centerAfterStagingBlit: number[][];
         diagnostics: string[];
         failureInjected: boolean;
+        failurePaintSource: string | null;
+        failurePaintCursor: string | null;
         failure: Error;
         originalDrawImage: CanvasRenderingContext2D['drawImage'];
         originalConsoleError: typeof console.error;
@@ -608,6 +740,8 @@ test.describe('Undo and redo', () => {
         centerAfterStagingBlit: [],
         diagnostics: [],
         failureInjected: false,
+        failurePaintSource: null,
+        failurePaintCursor: null,
         failure: new Error('e2e post-blit refusal'),
         originalDrawImage: context.drawImage,
         originalConsoleError: window.console.error,
@@ -621,8 +755,15 @@ test.describe('Undo and redo', () => {
           const result = Reflect.apply(target, thisArg, args);
           if (source instanceof HTMLCanvasElement) {
             probe.stagingAttempts += 1;
-            if (!probe.failureInjected) {
+            const paintSource = canvas.dataset.presentationPaintSource ?? '';
+            const paintCursor = canvas.dataset.presentationPaintCursor ?? '';
+            // APPLY_HISTORY_REPLAY first paints through the runtime layer effect.
+            // Refuse only after it marks the undo target as the visible legacy frame;
+            // resetHistoryTo's final draw then exercises the navigation transaction.
+            if (!probe.failureInjected && paintSource === 'legacy' && paintCursor === '2') {
               probe.failureInjected = true;
+              probe.failurePaintSource = paintSource;
+              probe.failurePaintCursor = paintCursor;
               const sample = context.getImageData(
                 Math.floor(canvas.width * 0.4),
                 Math.floor(canvas.height / 2),
@@ -683,6 +824,8 @@ test.describe('Undo and redo', () => {
             centerAfterStagingBlit: number[][];
             diagnostics: string[];
             failureInjected: boolean;
+            failurePaintSource: string | null;
+            failurePaintCursor: string | null;
           };
         };
         const current = probeWindow.__drawFailureProbe;
@@ -693,6 +836,8 @@ test.describe('Undo and redo', () => {
           centerAfterStagingBlit: current.centerAfterStagingBlit,
           diagnostics: current.diagnostics,
           failureInjected: current.failureInjected,
+          failurePaintSource: current.failurePaintSource,
+          failurePaintCursor: current.failurePaintCursor,
         };
       });
       expect(probe.stagingAttempts, 'the injected refusal must happen after a staging blit').toBeGreaterThan(0);
@@ -706,6 +851,8 @@ test.describe('Undo and redo', () => {
       expect(probe.diagnostics).toContain('Unable to publish runtime layer presentation');
       expect(probe.diagnostics).toContain('History replay is unavailable');
       expect(probe.failureInjected, 'the probe must refuse exactly one staging publication').toBe(true);
+      expect(probe.failurePaintSource, 'the refusal must target the accepted legacy repaint').toBe('legacy');
+      expect(probe.failurePaintCursor, 'the refusal must target the undo destination').toBe('2');
     } finally {
       await page.evaluate(() => {
         type DrawFailureProbe = {

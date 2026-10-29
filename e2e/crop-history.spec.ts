@@ -327,22 +327,42 @@ function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoin
 }
 
 /**
- * Start just outside a real crop corner and rotate 90 degrees clockwise around the visible box
- * center. CSS-pixel offsets keep the gesture inside the UI's fixed-size rotation hot zone at every
- * document zoom; a fixed document-space offset silently leaves that hot zone on larger canvases.
+ * Find a point just outside a real crop corner that the app identifies as its rotation hotspot,
+ * then rotate 90 degrees clockwise around the visible box center. The DOM corner is rendered from
+ * rounded document coordinates while the pointer hook hit-tests the fractional selection rect, so
+ * a fixed CSS offset can land inside the corner on one scale and outside the hot zone on another.
  */
 async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint; end: PagePoint }> {
   const corner = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
   const outline = page.getByTestId('crop-selection-outline');
+  const surface = page.locator('.cursor-crop');
   await expect(corner, 'the top-left crop handle is rendered').toBeVisible();
   const cornerBounds = await corner.boundingBox();
   const outlineBounds = await outline.boundingBox();
   if (!cornerBounds || !outlineBounds) throw new Error('the crop rotation gesture has no visible bounds');
 
-  const start = {
-    x: cornerBounds.x + cornerBounds.width / 2 - 8,
-    y: cornerBounds.y + cornerBounds.height / 2 - 8,
-  };
+  const cornerX = cornerBounds.x + cornerBounds.width / 2;
+  const cornerY = cornerBounds.y + cornerBounds.height / 2;
+  const offsets = [4, 8, 12, 16, 20];
+  const candidates = offsets
+    .flatMap((offsetX) =>
+      offsets
+        .filter((offsetY) => Math.hypot(offsetX, offsetY) <= 23)
+        .map((offsetY) => ({ offsetX, offsetY, distance: Math.hypot(offsetX, offsetY) }))
+    )
+    .sort((left, right) => left.distance - right.distance);
+  let start: PagePoint | null = null;
+  for (const candidate of candidates) {
+    const point = { x: cornerX - candidate.offsetX, y: cornerY - candidate.offsetY };
+    await page.mouse.move(point.x, point.y);
+    const cursor = await surface.evaluate((element) => getComputedStyle(element).cursor);
+    if (cursor.includes('data:image/svg+xml')) {
+      start = point;
+      break;
+    }
+  }
+  if (!start) throw new Error('No point outside the visible crop corner exposed the rotation cursor');
+
   const center = {
     x: outlineBounds.x + outlineBounds.width / 2,
     y: outlineBounds.y + outlineBounds.height / 2,
@@ -743,55 +763,60 @@ function expectRasterRegionToEqual(
 
 type CropParityFrame = Readonly<{ x: number; y: number; width: number; height: number }>;
 
-type CropParityLayerFixture =
-  | Readonly<{
-      kind: 'raster';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
-    }>
-  | Readonly<{
-      kind: 'blank';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      color: string;
-      opacity: number;
-    }>
-  | Readonly<{
-      kind: 'text';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      textArgs: Readonly<{
-        toolName: 'text';
-        align: 'left' | 'center' | 'right';
-        bold: boolean;
+type CropParityLayerFixture = Readonly<{
+  layerOpacity?: number;
+  blendMode?: GlobalCompositeOperation;
+}> &
+  (
+    | Readonly<{
+        kind: 'raster';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
+      }>
+    | Readonly<{
+        kind: 'blank';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
         color: string;
-        fontFamily: string;
-        fontSize: number;
-        italic: boolean;
-        lineHeight: number;
-        text: string;
-        rect: Readonly<{ x1: number; y1: number; x2: number; y2: number }>;
-        kind: 'point' | 'paragraph';
-      }>;
-    }>
-  | Readonly<{
-      kind: 'vector';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      args: ShapeToolArgs;
-    }>
-  | Readonly<{
-      kind: 'paint';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      args: DrawToolArgs;
-    }>;
+        opacity: number;
+      }>
+    | Readonly<{
+        kind: 'text';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        textArgs: Readonly<{
+          toolName: 'text';
+          align: 'left' | 'center' | 'right';
+          bold: boolean;
+          color: string;
+          fontFamily: string;
+          fontSize: number;
+          italic: boolean;
+          lineHeight: number;
+          text: string;
+          rect: Readonly<{ x1: number; y1: number; x2: number; y2: number }>;
+          kind: 'point' | 'paragraph';
+        }>;
+      }>
+    | Readonly<{
+        kind: 'vector';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        args: ShapeToolArgs;
+      }>
+    | Readonly<{
+        kind: 'paint';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        args: DrawToolArgs;
+      }>
+  );
 
 type CropParityTransition = Readonly<{
   angleDegrees: number;
@@ -936,9 +961,9 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         tmpCanvas: null,
         bitmap: runtimeSource.bitmap,
         visible: true,
-        opacity: 1,
+        opacity: layerFixture.layerOpacity ?? 1,
         locked: false,
-        blendMode: 'source-over',
+        blendMode: layerFixture.blendMode ?? 'source-over',
         order: layerFixture.order,
         pos: layerFixture.pos,
         presentationBounds: null,
@@ -2381,7 +2406,7 @@ test.describe('Crop history', () => {
       expect(Number(await resizedOutlineRect.getAttribute('stroke-width'))).toBeGreaterThan(0);
       expect(await resizedOutlineRect.getAttribute('stroke-dasharray')).toMatch(/\d/);
       await expect(rotationHandle, 'the rotation grip stays visible and aligned after resize').toBeVisible();
-      expect(Number(await rotationHandle.locator('path').getAttribute('stroke-width'))).toBe(1);
+      expect(Number(await rotationHandle.locator('path').getAttribute('stroke-width'))).toBe(1.5);
 
       const screenshot = await page.screenshot({ scale: 'css' });
       const screenshotPixels = await loadImageData(screenshot);
@@ -2561,14 +2586,19 @@ test.describe('Crop history', () => {
 
       // Move the whole crop rectangle after resizing it. Its top edge should move by the same
       // document-space delta while the underlying document remains in place.
-      const moveFrom = documentPoint(fit, fit.documentWidth / 2, 120);
-      const moveTo = documentPoint(fit, fit.documentWidth / 2 + 30, 145);
+      const movedFit = await readFit(page);
+      const moveFrom = documentPoint(movedFit, movedFit.documentWidth / 2, 120);
+      const moveTo = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, 145);
       await page.mouse.move(moveFrom.x, moveFrom.y);
+      await expect(page.locator('.cursor-crop'), 'the crop interior exposes its move cursor').toHaveCSS(
+        'cursor',
+        'move'
+      );
       await page.mouse.down();
       await page.mouse.move(moveTo.x, moveTo.y, { steps: 12 });
       await page.mouse.up();
 
-      const movedTop = documentPoint(fit, fit.documentWidth / 2 + 30, -15);
+      const movedTop = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, -15);
       await expect
         .poll(async () => {
           const actual = await readTopOutlineCenter();
@@ -2606,7 +2636,7 @@ test.describe('Crop history', () => {
       await page.mouse.move(rotation.start.x, rotation.start.y);
       await expect(surface, 'the expanded corner still exposes the rotation handle').toHaveCSS(
         'cursor',
-        /url.*ew-resize/
+        /url.*data:image\/svg\+xml/
       );
       await page.mouse.down();
       await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
@@ -2788,7 +2818,10 @@ test.describe('Crop history', () => {
       const surface = page.locator('.cursor-crop');
       const rotation = await cropRotationGesturePoints(page);
       await page.mouse.move(rotation.start.x, rotation.start.y);
-      await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+      await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS(
+        'cursor',
+        /url.*data:image\/svg\+xml/
+      );
 
       await page.mouse.down();
       await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
@@ -2813,7 +2846,10 @@ test.describe('Crop history', () => {
       const surface = page.locator('.cursor-crop');
       const gripPoint = documentPoint(fit, fit.documentWidth / 2, -12);
       await page.mouse.move(gripPoint.x, gripPoint.y);
-      await expect(surface, 'the rendered midpoint grip advertises rotation').toHaveCSS('cursor', /url.*ew-resize/);
+      await expect(surface, 'the rendered midpoint grip advertises rotation').toHaveCSS(
+        'cursor',
+        /url.*data:image\/svg\+xml/
+      );
       const rotatedPoint = documentPoint(
         fit,
         fit.documentWidth / 2 + fit.documentHeight / 2 + 12,
@@ -2871,7 +2907,11 @@ test.describe('Crop history', () => {
           width: 64,
           height: 64,
         });
-      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute(
+        'data-durable-fallback-reason',
+        'ownership-unproven'
+      );
       await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64)).toEqual(originalPixels);
@@ -2884,6 +2924,10 @@ test.describe('Crop history', () => {
           height: 32,
         });
       await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute(
+        'data-durable-fallback-reason',
+        'ownership-unproven'
+      );
       await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect
@@ -3122,6 +3166,77 @@ test.describe('Crop history', () => {
       expect(result.durablePixels).not.toEqual(untransformedControl.durablePixels);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
+    });
+
+    test('an affine raster preserves combined layer opacity and blend mode exactly', async ({ page }) => {
+      await openDocument(page);
+
+      const fixture: CropParityFixture = {
+        caseName: 'affine raster opacity and multiply blend',
+        documentId: 'affine-raster-opacity-multiply-parity',
+        layerTransforms: [
+          {
+            id: 'affine-opacity-multiply',
+            layerId: 'foreground',
+            args: {
+              toolName: 'transform',
+              rotate: 23,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 4,
+              skewY: -3,
+              trapezoid: 0,
+              resizeX: 109,
+              resizeY: 91,
+            },
+          },
+        ],
+        transitions: [{ angleDegrees: 31, nextFrame: { x: 7.25, y: 8.5, width: 50.75, height: 45.25 } }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [{ x: 0, y: 0, width: 64, height: 64, color: '#5070a0' }],
+          },
+          {
+            kind: 'raster',
+            id: 'foreground',
+            order: 1,
+            pos: { x: 12, y: 16, width: 40, height: 32 },
+            fills: [
+              { x: 0, y: 0, width: 19, height: 32, color: '#e04020' },
+              { x: 19, y: 0, width: 21, height: 32, color: '#40d020' },
+            ],
+            layerOpacity: 0.58,
+            blendMode: 'multiply',
+          },
+        ],
+      };
+      const result = await compareCropRenderers(page, fixture);
+      const normalComposite = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'normal composite control for affine raster opacity and blend',
+        documentId: 'affine-raster-opacity-multiply-control',
+        layers: fixture.layers.map((layer) =>
+          layer.id === 'foreground' ? { ...layer, layerOpacity: 1, blendMode: 'source-over' } : layer
+        ),
+      });
+
+      expect(result.layerTransformResults).toHaveLength(1);
+      const transformed = result.layerTransformResults[0];
+      expect(transformed?.differingBytes, 'affine composite must preserve opacity and blend byte-for-byte').toBe(0);
+      expect(transformed?.legacyDiffersFromUntransformed).toBe(true);
+      expect(transformed?.durableDiffersFromUntransformed).toBe(true);
+
+      expect(result.transitionResults).toHaveLength(1);
+      expect(result.transitionResults[0]?.differingBytes, 'frame composite must remain byte-identical').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(result.transitionResults[0]?.legacyPixels).not.toEqual(normalComposite.transitionResults[0]?.legacyPixels);
+      expect(result.transitionResults[0]?.durablePixels).not.toEqual(
+        normalComposite.transitionResults[0]?.durablePixels
+      );
     });
 
     test('a retained styled text transform matches through a sequence of frame transforms', async ({ page }) => {

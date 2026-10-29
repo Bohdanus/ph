@@ -138,12 +138,11 @@ function selectParagraphAtClientPoint(host: HTMLElement, clientX: number, client
  * of them to the engine that already implements them, and the canvas keeps the one thing only it
  * can do: put the glyphs into the layer.
  *
- * **Why the canvas does not also draw the glyphs while the overlay is up.** Two renderers showing
- * the same string in the same box either agree exactly or show doubled, offset type. They CAN agree
- * exactly — see {@link domOverlayStyle} — but the honest arrangement is that only one of them is
- * visible at a time, so a future divergence is visible as a reflow at commit rather than as
- * permanently doubled ink while typing. The user clicks the glyphs the DOM drew, which is also what
- * makes click-to-place-caret exact by construction rather than by metric agreement.
+ * **How the preview shares rendering with commit.** Ordinary text uses the DOM element's glyphs.
+ * Small Caps uses the Canvas renderer for visible glyphs, and makes the DOM glyphs transparent,
+ * because system-specific DOM synthesis can otherwise diverge from Canvas fallback rendering.
+ * The contenteditable still supplies the caret, selection, hit testing, IME composition and
+ * clipboard behavior in either mode.
  *
  * **Why this is a `div[contenteditable]` and not a `<textarea>`.** A textarea's value ignores the
  * element's `white-space` entirely and no author declaration escapes it: MEASURED, headless Chromium
@@ -569,6 +568,7 @@ export const TextEditOverlay = () => {
   if (!args?.rect) return null;
   const rect = args.rect;
   const style = resolveTextStyle(args);
+  const canvasOwnsSmallCapsPreview = style.smallCaps && !style.allCaps;
   const scale = fit?.scale ?? 1;
 
   const editLayerId = args.editingLayerId;
@@ -657,6 +657,14 @@ export const TextEditOverlay = () => {
         // allowed to overflow in Adobe anyway — that is what the overflow icon reports.
         overflow: 'visible',
         ...domOverlayStyle(measureCtx, style, scale),
+        ...(canvasOwnsSmallCapsPreview
+          ? {
+              color: 'transparent',
+              textDecorationColor: 'transparent',
+              textDecorationLine: 'none',
+              WebkitTextFillColor: 'transparent',
+            }
+          : {}),
       }}
     />
   );
