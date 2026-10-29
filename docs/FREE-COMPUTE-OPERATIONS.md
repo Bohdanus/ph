@@ -42,10 +42,13 @@ protected environment setup to provide it. Check the account's daily counter wit
 node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
-The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Laguna S 2.1
-first when it is present, and stops that provider for the run on HTTP 401, 402, or 429. Inference
-gets five minutes; catalog and quota requests keep a separate 15-second timeout. A quota snapshot
-is only current at the time it was read and can change when other tools use the account.
+The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, and tries Laguna S
+2.1 first when it is present. HTTP 401/402 exhausts the source. A model HTTP 429 triggers a check
+of the account's daily free-model counter: the runner rotates to another exact-zero model while
+requests remain and stops when the counter is exhausted. If the counter cannot be read, it tries
+another verified-free model within the three-model run limit. Inference gets five minutes; catalog
+and quota requests keep a separate 15-second timeout. A quota snapshot is only current at the time
+it was read and can change when other tools use the account.
 OpenRouter Laguna receives at least 1,024 completion tokens so reasoning has room to finish; other
 models use the requested token limit.
 
@@ -97,8 +100,10 @@ node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt 
 
 The inference fallback order is Kilo, OpenRouter, Groq, then OpenCode; catalog checks can run in
 parallel, but completions are attempted in that order. The pool tries at most three eligible
-models per provider; HTTP 401, 402, or 429 exhausts that provider for the run. It never falls back
-to paid models. `--list` refreshes public catalogs and
+models per provider and never falls back to paid models. OpenRouter HTTP 401/402 exhausts that
+source; an OpenRouter model HTTP 429 checks the daily counter and rotates models while requests
+remain, stopping when the counter reaches zero. Groq rotates per-key on HTTP 401/402/429. `--list`
+refreshes public catalogs and
 does not send an inference request. For Kilo, `configured: null` means the CLI was found but its
 saved login was not probed; for OpenRouter, `configured` reflects `OPENROUTER_API_KEY`. The
 OpenRouter quota command does not report Kilo's separate IP-based free-model limit. See
