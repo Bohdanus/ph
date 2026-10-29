@@ -283,7 +283,7 @@ describe('free model rotation', () => {
       source: 'groq',
       model: 'openai/gpt-oss-120b',
       content: 'Groq result from key2',
-      groqKeysAvailable: 2,
+      groqKeysAvailable: 1,
     });
     const auths = chat.mock.calls.map((call) => call[1].headers.Authorization);
     expect(auths).toEqual(['Bearer groq-key1', 'Bearer groq-key2']);
@@ -406,6 +406,30 @@ describe('free model rotation', () => {
     const auths = chat.mock.calls.map((call) => call[1].headers.Authorization);
     expect(auths).toEqual(['Bearer k1', 'Bearer k2', 'Bearer k3']);
     expect(auths).toHaveLength(3);
+  });
+
+  it('reports groqKeysAvailable as remaining non-exhausted keys after rotation', async () => {
+    const chat = vi.fn(async (url, options) => {
+      const auth = options.headers.Authorization;
+      if (auth === 'Bearer bad-key1') return { ok: false, status: 401, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'success' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKeys: ['bad-key1', 'good-key', 'good-key2'],
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+    expect(result.groqKeysAvailable).toBe(2);
   });
 
   it('uses the first Groq key for catalog loading and rotates on failures', async () => {
@@ -557,6 +581,19 @@ describe('free model rotation', () => {
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
     await expect(completeWithFreeModel('prompt', { fetchImpl })).rejects.toThrow(/No free model completed/);
     expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('exhausts a single-key provider on HTTP 401 to avoid retrying an invalid key', async () => {
+    const chat = vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('o1'), openRouterRow('o2')],
+      chat,
+    });
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'expired-key' })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer expired-key');
   });
 
   it('caps retries to three model requests per source before rotating providers', async () => {
