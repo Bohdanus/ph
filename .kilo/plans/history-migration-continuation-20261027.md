@@ -1,13 +1,20 @@
 # Continue durable history from current main
 
-## Latest checkpoint — 2026-10-29 (typed vector create committed; main landing paused)
+## Latest checkpoint — 2026-10-29 (typed-vector characterization committed; main synced)
 
-- The actual local `main` is landed at `730339e5983d42f52fe102d83d8bfd286137a6c5`, with first
-  parent `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
-  `080144c22157c446b75eca7d15dabce661af10ec`, and tree
-  `df24312c10849921d6b6ce6704dba9ccf66aed76`. The task worktree
-  `/Users/bkalynovskyi/ph/.kilo/worktrees/history-disabled-blank-root-e2e-20261029` was
-  fast-forwarded to that exact main pin after landing the raster and tablet blank-source UI proof.
+- The raster/tablet blank-source proof remains landed on actual local `main` at
+  `730339e5983d42f52fe102d83d8bfd286137a6c5` (first parent
+  `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
+  `080144c22157c446b75eca7d15dabce661af10ec`, tree
+  `df24312c10849921d6b6ce6704dba9ccf66aed76`). Local `main` later advanced through the
+  quota-documentation change `c9234285913f958b1e6c8a36457251a309b045d3` in merge
+  `8ec99d6e97df3e6098565fc27b40553716de52e7` (tree
+  `44a3dbede72a0163f89915d7c53a11a0017c4f9a`). On 2026-10-29 this actual `main` checkout was
+  clean. The task branch synced it in merge `1bd4a8a4d048103591dcad16b690586ebb658eaf`
+  (parents `1c9c563fae4fed40da551213694a0b21fbba97d4` and
+  `8ec99d6e97df3e6098565fc27b40553716de52e7`, tree
+  `fb5e1ef07c3037e2dd76004244bf56d01aa7fa21`); the merge was conflict-free and carries the
+  native `Chat:` trailer. This is branch sync, not the pending `ph-14` landing.
 - `ph-12` was resolved after that landing. `ph-14` is the active characterization-only task. Verify
   live claim and path locks before continuing or landing; the exact current diff is the live source
   for edited files. Do not take the independently owned frame-parity or import/replacement work.
@@ -17,35 +24,35 @@
   pencil source families. The Shape Tool E2E checks the disabled-root route, legacy paint marker,
   exact canvas/PNG/PSD output, undo/redo pixels, and `ownership-unproven` redo fallback. This is
   characterization only; no production eligibility or logical-authority code changed.
-- Candidate validation passes: 38 focused unit tests across the append planner and StoreContext
+- Before the main sync, candidate validation passed: 38 focused unit tests across the append planner and StoreContext
   suites; all five `e2e/source-backed-history.spec.ts` browser cases; `npm run test:e2e:unit` (21
   files, 1,536 passed, 13 established expected failures); full unit suite (400 files, 11,524
   passed, 215 established expected failures); `npm run tsc`; `npm run build`; and
   `npm run lint:check` (64 existing warnings, zero errors). The first full-suite attempt hit the
   existing `e2e-run` test's ephemeral free-port race; its isolated rerun and the complete retry
   both passed. Final independent reviews of the test diff (Sol) and documentation diff (Luna) found
-  no actionable issues after the reported findings were corrected. Earlier free-pool requests
-  returned provider rate limits, a length-ended empty completion, or a missing OpenCode CLI; those
-  attempts were not review evidence. Candidate commit
-  `4678e34ae9c6c45d87f27d46b16a18d472a3390b` has tree
-  `8d21351a85b360f2862b75b135d3481ab1a2c722`; the task worktree is clean.
-- The pinned landing was not prepared. Its preflight stopped because the actual `main` worktree
-  `/Users/bkalynovskyi/ph/.kilo/worktrees/main-clean-20261028` has staged changes in
-  `.skills/free-model-chat-sweep.md` and `MODELS.md`. Preserve those paths and their index exactly;
-  do not unstage, discard, stage over, commit, or merge them as part of this task. `main` is still
-  at `730339e5983d42f52fe102d83d8bfd286137a6c5`; no merge operation was started and no
-  `MERGE_HEAD` was created. The source branch already contains this exact main pin.
+  no actionable issues after the reported findings were corrected; these reviews preceded the
+  main sync and do not satisfy the fresh-review gate on the current tree. Earlier free-pool review
+  requests that returned provider limits, empty or truncated completions, or a missing OpenCode CLI
+  were not review evidence. Candidate commit `4678e34ae9c6c45d87f27d46b16a18d472a3390b` has tree
+  `8d21351a85b360f2862b75b135d3481ab1a2c722`; blocked-landing handoff commit
+  `1c9c563fae4fed40da551213694a0b21fbba97d4` follows it; the main-sync merge is above.
+- An earlier landing preflight stopped before touching `main` because
+  `.skills/free-model-chat-sweep.md` and `MODELS.md` were staged there. Their owner landed them in
+  `c9234285`, now included in `8ec99d6`; current main status is clean (`main` is ahead 53 and behind
+  1 versus `origin/main`). The required inventory script reported that it writes ignored
+  `WORKTREES.json` into the main checkout; Git confirmed that file is ignored and `git status`
+  remained clean. Avoid rerunning inventory unnecessarily. No merge into `main` has started for
+  `ph-14`.
 - `HistoryItem[]` and `replayHistory()` remain logical authority. The default active root, imported
   raster baselines, source replacement/import, merge, frame-changing commits, broader source
   families, durable-first navigation, and replay-budget/cancellation behavior remain unproven. Do
-  not widen production gates. Next: wait for the main owner to settle the two staged files, then
-  rerun `git worktree list --porcelain`, `npm run repo:state`, fresh inventory, board status/doctor,
-  and the exact clean-main/HEAD checks. If local `main` has advanced, merge it into this task branch
-  in this worktree and rerun the affected validation plus two independent reviews on the exact
-  composition. Only then prepare and commit the pinned non-fast-forward landing. After landing,
-  reassess live ownership and choose the next implementation from this plan; keep the default root,
-  vector publication, import/replacement ownership, frame parity, authority cutover, and replay
-  budget gates closed until their proofs are complete.
+  not widen production gates. Next: rerun the focused/full checks and obtain two fresh reviews on
+  the exact synced tree. Then repeat the clean-main/HEAD and `repo:state` checks, and prepare the
+  pinned non-fast-forward landing if every gate passes. After landing, resolve `ph-14`, reassess
+  live ownership, and choose the next implementation from this plan; keep the default root, vector
+  publication, import/replacement ownership, frame parity, authority cutover, and replay-budget
+  gates closed until their proofs are complete.
 
 ## Previous checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
 
@@ -604,6 +611,39 @@ Adobe primary-source checks on 2026-10-27:
   describes selecting earlier states. Exact app labels, replay budgeting, ownership,
   linear branching, and rasterization consent remain repository/operator contracts.
 
+Source-checked history algorithm research on 2026-10-29 used two successful zero-cost
+`kilo/poolside/laguna-s-2.1:free` completions, then direct inspection of upstream source. These are
+implementation analogies, not Photoshop requirements:
+
+- [miniPaint `Base_state_class`](https://github.com/viliusle/miniPaint/blob/master/src/js/core/base-state.js)
+  keeps a linear action array and cursor. A new action after undo removes and frees the redo tail;
+  it caps the stack at 50 items, estimates action memory/database cost, and prunes undo before redo
+  in its cleanup routine. [Its `Bundle_action`](https://github.com/viliusle/miniPaint/blob/master/src/js/actions/bundle.js)
+  rolls back already-run children in reverse order when a later child throws. The project describes
+  action grouping in its [Undo/Redo system](https://github.com/viliusle/miniPaint/wiki/Undo-Redo-system).
+- GIMP's [`gimpimage-undo.c`](https://github.com/GNOME/gimp/blob/master/app/core/gimpimage-undo.c)
+  supports nested group scopes with a depth counter; only the outermost start clears redo and
+  creates the compound item. It discards redo on a new push, and compresses matching command
+  type/class only when the image is dirty and redo is empty. Its budget trims oldest entries when
+  the configured byte limit or 1024-level cap is exceeded, while preserving the configured minimum.
+  Undo/redo moves the popped entry between stacks and reverses child order for grouped entries;
+  see also [`gimpundostack.c`](https://github.com/GNOME/gimp/blob/master/app/core/gimpundostack.c).
+- Krita separates its [`KisUndoStore`](https://github.com/KDE/krita/blob/master/libs/command/kis_undo_store.h)
+  storage interface from command-submission adapters; the store belongs to the image. Its separate
+  [`KisMementoManager`](https://github.com/KDE/krita/blob/master/libs/image/tiles3/kis_memento_manager.cc)
+  records tile revisions. Each `getMemento()` clears cancelled redo revisions, commits current
+  changes and starts a named memento; rollback restores parent tile records in reverse with
+  registration blocked, rollforward restores records forward and recommits, and history purge drops
+  revisions older than the chosen memento. Do not conflate this tile-memento algorithm with
+  `KisUndoStore` command grouping.
+
+Once `ph-14` lands and the next owned family is selected, use these only as prompts for repository-
+specific tests: append after undo invalidates redo resources once; failed grouped work restores state
+in reverse without leaving a partial logical entry or published state; replay/rollback does not
+accidentally append a new logical item; bounded cleanup preserves cursor and retained-source
+ownership. Do not implement a
+generic transaction, cleanup budget, or new source family based on analogies alone.
+
 For each implementation slice: focused unit tests, headless production-seam/pixel E2E,
 `npm run tsc`, `npm run build`, lint/format checks, and two fresh independent read-only
 reviews for migration changes. Use verified free routes without private transcripts,
@@ -618,10 +658,12 @@ legacy path and record an explicit blocked/unproven handoff with the next action
 
 Broader migration: **unproven**. The bounded raster/tablet blank-source proof is landed on actual
 local `main` at `730339e5983d42f52fe102d83d8bfd286137a6c5`. `ph-12` was resolved after landing;
-`ph-14` tracks the current typed-vector characterization. All focused, full unit, E2E helper,
-browser, typecheck, build, and lint gates now pass; the full test suite's one initial ephemeral
-port-race failure passed both isolated and full-suite retries. The independent Sol test review and
-Luna docs review found no actionable issues. Commit and pinned landing remain. The current change
+`ph-14` tracks the committed typed-vector characterization, still unlanded at this checkpoint. The
+task branch includes current `main` through sync merge `1bd4a8a4d048103591dcad16b690586ebb658eaf`;
+fresh validation and two independent reviews on that exact tree remain. Earlier focused, full unit,
+E2E helper, browser, typecheck, build, and lint gates passed on the pre-sync tree; the full test
+suite's initial ephemeral port-race failure passed isolated and full-suite retries. The earlier Sol
+test review and Luna docs review found no actionable issues before the sync. The characterization
 does not widen production eligibility. After landing, reassess frame and import/replacement
 worktree ownership before selecting the next slice. Keep vector publication, Slices 2A through 4,
 and all other unproven source families gated until their listed evidence is complete.
