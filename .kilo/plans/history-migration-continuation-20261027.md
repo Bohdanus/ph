@@ -1,17 +1,20 @@
 # Continue durable history from current main
 
-## Latest checkpoint — 2026-10-29 (History-panel reachability proof)
+## Latest checkpoint — 2026-10-29 (History-panel raster and blank-source proof)
 
 - Slice 1 landed on the actual local `main` as `f723394b47872bc579913af763d1ea32a56f1d1b`.
   Its first parent is the reviewed main pin `84c1c9200f7a8c14f88fca1b4b465d0fa9430785`, its
   second parent is candidate `c9b52cd39e5b3aa59b4b2961f6e7dbf12021fb86`, and the landed tree is
   `2402ee0d958ba23b1aa0cf7fa242cf087058d7c8`. The required `Branch` and native `Chat` trailers
   were verified; `main` is clean and `npm run repo:state` is clear.
-- This checkpoint's E2E and documentation candidate is based on that exact pin in
-  `/Users/bkalynovskyi/ph/.kilo/worktrees/history-disabled-blank-root-e2e-20261029`, branch
-  `task/history-disabled-blank-root-e2e-20261029`. It owns the `ph-12` E2E/docs paths; refresh the
-  claim and verify its held paths, including `src/contexts/useLayer.ts`, before another edit or
-  landing.
+- The raster reachability proof was merged to the actual local `main` as `f43d7e52b3dc4a4150e89eece6ee20e09e9ac7d9`.
+  Its parents are `f723394b47872bc579913af763d1ea32a56f1d1b` and
+  `7235da5075a6aec8f5bb67fab08184506231c0a7`; the landed tree is
+  `be7e96aa6d9a3df15c58d832b742a0a8c8fb9246`. Its `Branch` and native `Chat` trailers were
+  verified. The continuation branch
+  `/Users/bkalynovskyi/ph/.kilo/worktrees/history-disabled-blank-root-e2e-20261029`,
+  `task/history-disabled-blank-root-e2e-20261029`, starts at that main pin and holds the `ph-12`
+  E2E/docs paths. Refresh the claim and verify held paths before each edit or landing.
 - The History-panel reachability E2E now passes from the real startup blank document. It disables
   the first `new layer` row through the visible eye control, checks the current row and exact empty
   transparent pixels, pastes the deterministic raster through the clipboard/UI path, and requires
@@ -21,15 +24,28 @@
   complete legacy fallback with `ownership-unproven`; this proves one bounded append route, not
   broad navigation eligibility. The first `OPEN_DOCUMENT_ACTION` disable refusal remains covered
   by `useHistory.test.tsx`.
-- Validation on this exact candidate: both History E2E specs passed (7 tests);
-  `npm run test:e2e:unit` passed (21 files, 1,536 passed, 13 expected failures); the full unit suite
-  passed (400 files, 11,518 passed, 215 expected failures); `npm run tsc` and `npm run build`
-  passed; `npm run lint:check` passed with 64 existing warnings and no errors. Fresh read-only
-  reviews are complete: Sol found and verified closure of the pre-repaint false-pass risk, and the
-  final Kilo review used `poolside/laguna-s-2.1:free` at reported cost zero. Kilo's proposed locator,
-  cursor, and renderer concerns were checked against the final source/test behavior; none was
-  actionable. The final candidate is ready for the pinned landing after the normal live-main,
-  ownership, and clean-checkout gates.
+- A second source family is now covered by tablet E2E candidate `fff5660c85eac12766a6930c8011a190c7324186`
+  (parent `f43d7e52b3dc4a4150e89eece6ee20e09e9ac7d9`, tree
+  `b5a02caa07150d7ba60039bf88ef7e5c4e989e67`). From a 744×1133,
+  touch-enabled, 2× display, it disables the default blank row and creates a transparent layer
+  through the mobile Layers drawer. The test requires a successful durable paint at cursor 1, checks
+  exact empty canvas pixels, PSD composite and blank-layer pixels/bounds, and native 800×600 PNG
+  pixels, then verifies exact undo/redo rendering and that the root stays disabled. Redo remains on
+  the legacy fallback. This does not change publication eligibility.
+- Current validation is `npm run test:e2e -- --verbose e2e/source-backed-history.spec.ts` (4 passed),
+  `npm run test:e2e:unit` (21 files, 1,536 passed, 13 expected failures), `npm run tsc`,
+  `npm run build`, and `npm run lint:check` (64 existing warnings, no errors). The independent
+  Luna 6 read-only review found no actionable findings. Free review routes were attempted first but
+  returned timeouts, empty responses, rate limits, or no CLI; those results are not review evidence.
+  Actual local `main` advanced to `ce1aedec0ddc619ea92414444377f1b243bc29b9`; this branch now
+  contains it through sync merge `9f84f7eaa8942e2c340d340771fde6f0b509ff13` (parents
+  `187d782072328c4c17ef3cfb5da6b6066ea5aac5` and
+  `ce1aedec0ddc619ea92414444377f1b243bc29b9`). The earlier in-progress merge is complete and
+  `repo:state` is clear. After the sync, the focused E2E passed (4 tests), the E2E helper suite
+  passed (21 files, 1,536 passed, 13 expected failures), `npm run tsc` and `npm run build` passed,
+  and `npm run lint:check` passed with 64 existing warnings and no errors. Before landing, rerun
+  `repo:state` and confirm the actual main pin is still `ce1aedec`; sync and rerun these gates if it
+  moved. The earlier raster candidate's validation and reviews are recorded in merge `f43d7e52`.
 - The production gate was not changed. `HistoryItem[]` and `replayHistory()` remain logical
   authority. Slices 2A and 2B are still independent and unproven. At resume, inspect live ownership:
   the existing frame-parity task retains Slice 2A until explicit handoff, and the separate
@@ -46,9 +62,6 @@
 - The latest user instruction authorizes extensive free compute. `MODELS.md` identifies the verified
   zero-cost runner and live catalog as the route; use them for bounded reviews. Codex `spawn_agent`
   does not expose provider routing, so do not describe an unverified subagent route as free.
-- The latest user instruction authorizes extensive free compute. Use `MODELS.md` and the verified
-  zero-cost runner for bounded research/reviews; Codex `spawn_agent` does not expose provider
-  routing. Do not infer that an unverified subagent route is free.
 
 ## Prelanding checkpoint — 2026-10-29
 
@@ -183,7 +196,7 @@ not attempt the authority cutover as a continuation shortcut.
    their owners' explicit handoff and a current-main diff review. Run `node scripts/worktree-inventory.mjs`
    only after tests and commits stop changing the roster; never add `--quiet`.
 
-### First bounded objective: prove the gate-free append through the existing UI
+### First bounded objective — complete: prove the gate-free append through the existing UI
 
 The default blank-document path is still gated: `BlankImageStarter` calls `setBlankImage()`,
 `createBlankLayer(..., true)` records a `NEW_LAYER_ACTION`, and `_addLayer()` replaces the document.
@@ -192,42 +205,37 @@ appends and store-owned reorder commits invoke that publisher. Ordinary paste an
 conversion therefore begin with an active gated prefix. The existing E2E proves their legacy
 fallback and exact pixels/exports.
 
-A concrete alternate route is visible in source but has not been proven in a browser test:
+A tested alternate route now proves that the existing gate can be satisfied through visible UI:
 
 - `HistoryTab.tsx` exposes an eye button to disable any history row.
 - `useHistory.toggleDisabled()` refuses to disable the first `OPEN_DOCUMENT_ACTION`, but it does
   not apply that protection to the default first `NEW_LAYER_ACTION`.
 - `replayHistory()` skips disabled entries, and `durablePresentationGateReason()` skips them too.
 
-Therefore a user may be able to disable the initial blank row and then append a source-backed
-layer whose prior active prefix passes the existing gate. This is an inference from code, not a
-verified product flow. Test it before changing production gates:
+Disabling the initial blank `NEW_LAYER_ACTION` makes the replayed active prefix empty, so a
+subsequent supported create can pass the existing gate. This is now verified by two UI routes:
 
-1. In headless E2E, start from the real default blank document and disable its first History row
-   through the visible History-tab control. Verify the row is disabled, the replayed empty/current
-   document remains usable, and an external paste through the existing deterministic clipboard
-   fixture reaches the real `COMMIT_DOCUMENT_EDIT` path.
-2. Before undo/redo, assert the append becomes `current` and its presentation selector is `durable`.
-   Compare the exact composite and layer pixels, then verify native-resolution PNG and PSD output.
-   Undo and redo must retain exact pixels and the disabled root entry; this is the only evidence
-   that the UI flow, source transaction and navigation all agree.
-3. Keep the first-row `OPEN_DOCUMENT_ACTION` disable refusal covered. Preserve existing tests for
-   stale replacement, incomplete coverage, finalization failure, tool sources, lease retirement,
-   and legacy fallback. No tolerance, implicit rasterization, or broad generic image opt-in.
-4. If this flow is valid and passes, document the result narrowly: the create exception is
-   reachable after the user disables the default blank history row; ordinary new-document,
-   paste and imported-raster flows remain gated unless separately proven. If disabling the root
-   creates an invalid document or the append cannot publish safely, leave the gate unchanged and
-   hand the baseline ownership decision to Sol. Do not claim the exception is unreachable in all
-   UI states, and do not exempt the root entry by assumption.
+1. The landed raster E2E starts at the real default blank document, disables its first History row,
+   pastes a deterministic raster through the clipboard/UI path, and verifies the durable append,
+   exact canvas/PSD/PNG pixels, undo/redo, and disabled root row.
+2. The tablet E2E candidate follows the same root-disable path, then creates a transparent blank
+   through the mobile Layers drawer. It requires a durable paint at the append cursor, exact canvas
+   and export pixels, the PSD blank-layer bounds and pixels, and exact undo/redo while the root stays
+   disabled.
+3. Keep the first-row `OPEN_DOCUMENT_ACTION` disable refusal covered. Preserve the existing tests
+   for stale replacement, incomplete coverage, finalization failure, tool sources, lease retirement,
+   and legacy fallback. Redo remains a complete `ownership-unproven` fallback. No tolerance,
+   implicit rasterization, or broad generic image opt-in.
 
-This closes or blocks the existing `ph-12` slice; it does **not** finish durable history migration.
-The known positive unit fixture uses a synthetic gate-free `OPEN_DOCUMENT_ACTION` baseline, and
-the Sol audit did not test the History-tab disable route.
+Together the routes establish one narrow product condition: supported source-backed create can
+publish a durable append after a user disables the default blank History row. The default active
+root, imported-raster baselines, later source-backed edits and frame-changing commits remain gated
+unless separately proven. This closes the `ph-12` reachability slice only; it does **not** finish
+durable history migration or change production eligibility.
 
 ### Choose the next implementation slice only after the first objective
 
-After the gate-reachability E2E, re-read the current plan's Slice 2A/2B acceptance tables and
+After the blank-source E2E has passed review and landed, re-read the current plan's Slice 2A/2B acceptance tables and
 inspect live ownership. Slice 2A frame parity and Slice 2B source-family ownership are independent;
 neither can be declared complete from the other. The current source-backed import/replacement
 branch is a separate seven-commit candidate with one local-main commit missing, so it is not ready
