@@ -7,6 +7,9 @@ import { getRedoButton, getUndoButton } from './helpers/history-helpers';
 import { openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { fillSaveDialog, openSaveDialog, submitSaveDialogForDownload } from './export/helpers';
 
+const SHAPE_TEST_STROKE_WIDTH = 4;
+const SHAPE_TEST_RECTANGLE = { left: 140.25, top: 120.25, width: 160, height: 130 };
+
 function expectedPixels(background: 'white' | 'transparent' = 'white') {
   const expected = Buffer.alloc(800 * 600 * 4, background === 'white' ? 255 : 0);
   for (let y = 288; y < 312; y += 1) {
@@ -35,17 +38,20 @@ function expectedLayerPixels() {
 }
 
 async function expectedShapePixels(page: Page) {
-  const dataUrl = await page.evaluate(() => {
-    const expected = document.createElement('canvas');
-    expected.width = 800;
-    expected.height = 600;
-    const context = expected.getContext('2d');
-    if (!context) throw new Error('Missing expected shape context');
-    context.strokeStyle = '#000000';
-    context.lineWidth = 5;
-    context.strokeRect(140, 120, 160, 130);
-    return expected.toDataURL();
-  });
+  const dataUrl = await page.evaluate(
+    ({ lineWidth, rectangle }) => {
+      const expected = document.createElement('canvas');
+      expected.width = 800;
+      expected.height = 600;
+      const context = expected.getContext('2d');
+      if (!context) throw new Error('Missing expected shape context');
+      context.strokeStyle = '#000000';
+      context.lineWidth = lineWidth;
+      context.strokeRect(rectangle.left, rectangle.top, rectangle.width, rectangle.height);
+      return expected.toDataURL();
+    },
+    { lineWidth: SHAPE_TEST_STROKE_WIDTH, rectangle: SHAPE_TEST_RECTANGLE }
+  );
   return sharp(Buffer.from(dataUrl.split(',')[1]!, 'base64'))
     .ensureAlpha()
     .raw()
@@ -59,6 +65,35 @@ function cropPixels(pixels: Buffer, canvasWidth: number, left: number, top: numb
     cropped.set(pixels.subarray(sourceOffset, sourceOffset + width * 4), row * width * 4);
   }
   return cropped;
+}
+
+function describePixelDifferences(expected: Buffer, actual: Buffer, width: number) {
+  let count = 0;
+  let minX = width;
+  let minY = Math.floor(expected.length / 4 / width);
+  let maxX = -1;
+  let maxY = -1;
+  const first: string[] = [];
+
+  for (let offset = 0; offset < Math.min(expected.length, actual.length); offset += 4) {
+    if ([0, 1, 2, 3].every((channel) => expected[offset + channel] === actual[offset + channel])) continue;
+
+    const pixelIndex = offset / 4;
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    count += 1;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    if (first.length < 8) {
+      first.push(
+        `(${x},${y}) expected [${[...expected.subarray(offset, offset + 4)]}] actual [${[...actual.subarray(offset, offset + 4)]}]`
+      );
+    }
+  }
+
+  return `differing pixels=${count}, bounds=${JSON.stringify({ minX, minY, maxX, maxY })}, first=${first.join('; ')}`;
 }
 
 async function pasteDeterministicRaster(page: Page) {
@@ -104,11 +139,19 @@ async function openTabletSaveDialog(page: Page) {
 async function drawRectangle(page: Page) {
   await openToolFlyout(page, 'shape');
   await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+  const thickness = page.getByRole('slider', { name: /^Thickness/ });
+  await expect(thickness).toHaveValue('5');
+  await thickness.fill(String(SHAPE_TEST_STROKE_WIDTH));
+  await expect(thickness).toHaveValue(String(SHAPE_TEST_STROKE_WIDTH));
   const canvas = getWorkspaceCanvas(page);
   const box = await canvas.boundingBox();
   if (!box) throw new Error('The workspace canvas has no box for a Shape Tool drag');
-  const start = documentToCanvasOffset(box, 140, 120);
-  const end = documentToCanvasOffset(box, 300, 250);
+  const start = documentToCanvasOffset(box, SHAPE_TEST_RECTANGLE.left, SHAPE_TEST_RECTANGLE.top);
+  const end = documentToCanvasOffset(
+    box,
+    SHAPE_TEST_RECTANGLE.left + SHAPE_TEST_RECTANGLE.width,
+    SHAPE_TEST_RECTANGLE.top + SHAPE_TEST_RECTANGLE.height
+  );
   await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
 }
 
@@ -376,9 +419,12 @@ test('a Shape Tool create remains ownership-gated with exact pixels and exports'
     channels: 4,
   });
   expect(shape.data.equals(transparentPixels), 'the committed rectangle changes the document pixels').toBe(false);
-  expect(shape.data.equals(expectedShape), 'the entire visible document matches an independent rectangle oracle').toBe(
-    true
-  );
+  const shapeMatchesExpected = shape.data.equals(expectedShape);
+  const shapeDifference = shapeMatchesExpected ? '' : `: ${describePixelDifferences(expectedShape, shape.data, 800)}`;
+  expect(
+    shapeMatchesExpected,
+    `the entire visible document matches an independent rectangle oracle${shapeDifference}`
+  ).toBe(true);
   const pixelAt = (x: number, y: number) => Buffer.from(shape.data.subarray((y * 800 + x) * 4, (y * 800 + x) * 4 + 4));
   const opaqueBlack = Buffer.from([0, 0, 0, 255]);
   const transparentPixel = Buffer.from([0, 0, 0, 0]);
@@ -417,7 +463,7 @@ test('a Shape Tool create remains ownership-gated with exact pixels and exports'
   const left = vectorLayer.left ?? 0;
   const top = vectorLayer.top ?? 0;
   const { width, height, data } = vectorLayer.imageData;
-  const shapeBounds = { left: 136, top: 116, width: 168, height: 138 };
+  const shapeBounds = { left: 137, top: 117, width: 167, height: 137 };
   expect({ left, top, width, height }).toEqual(shapeBounds);
   const expectedShapeLayerPixels = cropPixels(
     expectedShape,
