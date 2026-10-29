@@ -19,13 +19,14 @@ Code, Cursor, and Windsurf extension folders. If discovery misses the installed 
 print the Kilo auth database or JSON file.
 
 `kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
-tool name, and each prompt is attached through a private temporary file that is removed when the
-request ends. The runner still verifies a clean JSON completion, rejects tool events and reported
-non-zero cost, and allows up to five minutes for inference. It uses the public Kilo catalog only
-for model and exact-zero price discovery; it does not send inference requests anonymously to the
-public Gateway endpoint. The child environment is limited to runtime paths and locale settings,
-including the Kilo database selector; unrelated provider keys and `KILO_CONFIG_CONTENT` are not
-passed through.
+tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
+Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
+broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
+rejects tool events and reported non-zero cost, and allows up to five minutes for inference. It
+uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
+inference requests anonymously to the public Gateway endpoint. The child environment is limited to
+runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
+and `KILO_CONFIG_CONTENT` are not passed through.
 
 The current Kilo CLI has no `--max-tokens` option. For Kilo completions, the runner's
 `--max-tokens` value is a response-length instruction; Kilo and the model control the actual

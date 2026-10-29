@@ -43,22 +43,25 @@ describe('Kilo CLI discovery', () => {
 });
 
 describe('authenticated Kilo CLI completion', () => {
-  it('uses the logged-in provider, private prompt file, no-tools agent, and strict JSON completion', async () => {
+  it('uses the logged-in provider, private stdin prompt, no-tools agent, and strict JSON completion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const command = join(directory, 'fake-kilo');
     await writeExecutable(
       command,
       `const fs = require('node:fs');
 const args = process.argv.slice(2);
+const message = fs.readFileSync(0, 'utf8');
 const valueAfter = (flag) => args[args.indexOf(flag) + 1];
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
 if (valueAfter('--model') !== 'kilo/poolside/laguna-s-2.1:free') process.exit(5);
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
 if (!args.includes('--variant') || valueAfter('--variant') !== 'thinking') process.exit(7);
-if (!fs.readFileSync(valueAfter('--file'), 'utf8').includes('private prompt')) process.exit(8);
-if (args.join(' ').includes('private prompt')) process.exit(9);
-if (process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || process.env.KILO_CONFIG_CONTENT || process.env.NODE_OPTIONS || process.env.NODE_PATH || process.env.PWD || process.env.UNRELATED_SECRET) process.exit(10);
-if (process.env.HOME !== '/fixture/home' || process.env.XDG_DATA_HOME !== '/fixture/kilo-data' || process.env.KILO_DB !== '/fixture/kilo.db') process.exit(11);
+if (args.includes('--file')) process.exit(8);
+if (!message.startsWith('Answer the provided request directly, in plain text, using at most 40 output tokens.')) process.exit(9);
+if (!message.includes('private prompt')) process.exit(10);
+if (args.join(' ').includes('private prompt')) process.exit(11);
+if (process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || process.env.KILO_CONFIG_CONTENT || process.env.NODE_OPTIONS || process.env.NODE_PATH || process.env.PWD || process.env.UNRELATED_SECRET) process.exit(12);
+if (process.env.HOME !== '/fixture/home' || process.env.XDG_DATA_HOME !== '/fixture/kilo-data' || process.env.KILO_DB !== '/fixture/kilo.db') process.exit(13);
 console.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));
 console.log(JSON.stringify({ type: 'text', part: { text: 'safe response' } }));
 console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0, tokens: { input: 10, output: 3, reasoning: 1 } } }));`

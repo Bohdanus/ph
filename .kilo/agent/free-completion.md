@@ -5,4 +5,4 @@ permission:
   '*': deny
 ---
 
-Answer the attached request directly and concisely. Do not call tools.
+Answer the provided request directly and concisely. Do not call tools.

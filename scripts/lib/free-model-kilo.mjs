@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { access, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 export const COMPLETION_TIMEOUT_MS = 300_000;
@@ -187,35 +187,21 @@ export async function runKiloCompletion({
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) return { error: 'Invalid token limit' };
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };
 
-  const directory = await mkdtemp(join(tmpdir(), 'free-model-kilo-'));
-  const promptPath = join(directory, 'request.txt');
+  const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
   try {
-    await writeFile(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
-    const args = [
-      'run',
-      '--pure',
-      '--format',
-      'json',
-      '--model',
-      `kilo/${model}`,
-      '--agent',
-      'free-completion',
-      '--file',
-      promptPath,
-      `Answer the attached request directly, in plain text, using at most ${maxTokens} output tokens.`,
-    ];
+    const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
     if (model === 'poolside/laguna-s-2.1:free') {
-      args.splice(8, 0, '--variant', 'thinking');
+      args.push('--variant', 'thinking');
     }
 
-    const { events, stderrText, code, signal, timedOut, outputOverflow, malformed } = await new Promise(
+    const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError } = await new Promise(
       (resolve, reject) => {
         let child;
         try {
           child = spawnImpl(command, args, {
             cwd: projectRoot,
             env: kiloRuntimeEnvironment(env),
-            stdio: ['ignore', 'pipe', 'pipe'],
+            stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
           });
         } catch {
@@ -228,6 +214,7 @@ export async function runKiloCompletion({
         let outputBytes = 0;
         let timedOut = false;
         let outputOverflow = false;
+        let inputError = false;
         let settled = false;
         let killTimer;
         const timer = setTimeout(() => {
@@ -255,6 +242,9 @@ export async function runKiloCompletion({
           const combined = Buffer.concat([stderrTail, chunk]);
           stderrTail = Buffer.from(combined.subarray(Math.max(0, combined.length - MAX_KILO_STDERR_BYTES)));
         });
+        child.stdin.on('error', () => {
+          inputError = true;
+        });
         child.once('error', () => {
           if (settled) return;
           settled = true;
@@ -277,18 +267,29 @@ export async function runKiloCompletion({
                 signal,
                 timedOut,
                 outputOverflow,
+                inputError,
                 malformed: true,
               });
               return;
             }
           }
-          resolve({ events, stderrText: stderrTail.toString('utf8'), code, signal, timedOut, outputOverflow });
+          resolve({
+            events,
+            stderrText: stderrTail.toString('utf8'),
+            code,
+            signal,
+            timedOut,
+            outputOverflow,
+            inputError,
+          });
         });
+        child.stdin.end(message);
       }
     );
 
     if (timedOut) return { error: `Kilo completion exceeded ${timeoutMs} ms` };
     if (outputOverflow) return { error: `Kilo CLI output exceeded ${MAX_KILO_OUTPUT_BYTES} bytes` };
+    if (inputError) return { error: 'Kilo CLI did not accept the complete prompt' };
     if (malformed) return { error: 'Kilo CLI returned malformed JSONL output', exhaustSource: true };
     if (hasToolActivity(events))
       return { error: 'Kilo attempted a tool call; the completion was rejected', exhaustSource: true };
@@ -330,7 +331,5 @@ export async function runKiloCompletion({
       error: error?.code === 'KILO_SPAWN' ? 'Kilo CLI could not be started' : 'Kilo completion failed locally',
       exhaustSource: error?.code === 'KILO_SPAWN',
     };
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
 }
