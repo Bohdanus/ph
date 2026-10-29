@@ -8,7 +8,7 @@ import { openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { fillSaveDialog, openSaveDialog, submitSaveDialogForDownload } from './export/helpers';
 
 const SHAPE_TEST_STROKE_WIDTH = 4;
-const SHAPE_TEST_RECTANGLE = { left: 140.25, top: 120.25, width: 160, height: 130 };
+const SHAPE_TEST_RECTANGLE = { left: 140, top: 120, width: 160, height: 130 };
 
 function expectedPixels(background: 'white' | 'transparent' = 'white') {
   const expected = Buffer.alloc(800 * 600 * 4, background === 'white' ? 255 : 0);
@@ -463,16 +463,16 @@ test('a Shape Tool create remains ownership-gated with exact pixels and exports'
   const left = vectorLayer.left ?? 0;
   const top = vectorLayer.top ?? 0;
   const { width, height, data } = vectorLayer.imageData;
-  const shapeBounds = { left: 137, top: 117, width: 167, height: 137 };
-  expect({ left, top, width, height }).toEqual(shapeBounds);
-  const expectedShapeLayerPixels = cropPixels(
-    expectedShape,
-    800,
-    shapeBounds.left,
-    shapeBounds.top,
-    shapeBounds.width,
-    shapeBounds.height
-  );
+  // Pointer-coordinate roundoff can expand shapeGeometryBounds by one transparent pixel.
+  expect(left).toBeGreaterThanOrEqual(136);
+  expect(left).toBeLessThanOrEqual(137);
+  expect(top).toBeGreaterThanOrEqual(116);
+  expect(top).toBeLessThanOrEqual(117);
+  expect(width).toBeGreaterThanOrEqual(166);
+  expect(width).toBeLessThanOrEqual(168);
+  expect(height).toBeGreaterThanOrEqual(136);
+  expect(height).toBeLessThanOrEqual(138);
+  const expectedShapeLayerPixels = cropPixels(expectedShape, 800, left, top, width, height);
   expect(
     Buffer.from(data).equals(expectedShapeLayerPixels),
     'PSD layer pixels must match the independent rectangle oracle crop'
