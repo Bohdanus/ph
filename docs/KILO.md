@@ -1,7 +1,8 @@
 # Kilo configuration
 
 The agent-facing Kilo configuration this repository depends on, including its
-tracked research profile and the settings that only exist in local Kilo config.
+tracked research and completion profiles and the settings that only exist in local
+Kilo config.
 
 Read this before changing [`../kilo.jsonc`](../kilo.jsonc), before editing an agent
 definition, and before concluding that a setting "is not configured".
@@ -14,14 +15,16 @@ Kilo configuration spans these project and user surfaces:
 | ------------------------------------------------------------------------------ | ------- | -------------------------------------------------------------------------------------------- |
 | [`../kilo.jsonc`](../kilo.jsonc) — project permissions, MCP servers            | yes     | itself; this document links to it and never restates it                                      |
 | [`../.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) | yes     | the project-owned read-only profile used for bounded free-model research                     |
+| [`../.kilo/agent/free-completion.md`](../.kilo/agent/free-completion.md)       | yes     | the tool-free profile used by the authenticated free-model completion runner                 |
 | `.kilo/agents/*.md` — four local primary agent definitions                     | **no**  | this document records their recommended shape; [`../.gitignore`](../.gitignore) ignores them |
 | `~/.config/kilo/kilo.jsonc` — model, tools, global permissions                 | **no**  | this document                                                                                |
 
 `.kilo/` is gitignored by default because it holds one worktree per task under
-`.kilo/worktrees/`. The tracked research profile is an explicit exception: `AGENTS.md`
-and `MODELS.md` direct coordinators to use it for read-only research. The four
-`.kilo/agents/` definitions remain local-only; a fresh clone has none of them, so
-their recommended shape is recorded here.
+`.kilo/worktrees/`. The tracked research and completion profiles are explicit
+exceptions: `AGENTS.md` and `MODELS.md` direct coordinators to use them for free
+read-only research and tool-free completions. The four `.kilo/agents/` definitions
+remain local-only; a fresh clone has none of them, so their recommended shape is
+recorded here.
 
 ## The one non-obvious thing about agent permissions
 
@@ -43,6 +46,10 @@ permission:
   serena_replace_content: deny
   serena_replace_in_files: deny
 ```
+
+The `free-completion` profile uses a catch-all `'*': deny` with no allow exceptions;
+the completion runner rejects any tool event as a failed response. Keep the profile
+tool-free even when adding new MCP or built-in tools.
 
 Deny the mutating Serena tools and leave the read-only ones allowed. A code reviewer
 that cannot follow a reference with `serena_find_referencing_symbols` is a reviewer
