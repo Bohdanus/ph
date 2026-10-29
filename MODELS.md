@@ -26,10 +26,10 @@ operator authorization before using paid inference.
 
 A provider name alone does not establish that a route is free. Verify the exact model/provider pair in the live catalog. Kilo and OpenRouter use separate free-model quotas:
 
-| Provider ID  | Published free-model limit                                                                                                    | What the quota check covers                                                                  |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `kilo`       | 200 requests per hour per IP, for authenticated and anonymous free-model requests.                                            | `--openrouter-quota` does not read this Kilo gateway limit.                                  |
-| `openrouter` | 20 requests per minute; 50 per day on the base tier or 1,000 per day after the account has purchased at least $10 in credits. | `node scripts/free-model-pool.mjs --openrouter-quota` reads OpenRouter's daily counter only. |
+| Provider ID  | Published free-model limit                                                         | What the quota check covers                                                                  |
+| ------------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `kilo`       | 200 requests per hour per IP, for authenticated and anonymous free-model requests. | `--openrouter-quota` does not read this Kilo gateway limit.                                  |
+| `openrouter` | 20 requests per minute; 1,000 per day.                                             | `node scripts/free-model-pool.mjs --openrouter-quota` reads OpenRouter's daily counter only. |
 
 A 429 or exhausted counter applies to the provider that returned it. Stop using that source for the run, and switch only to another model/provider pair verified as free. See [Kilo's gateway rate limits](https://kilo.ai/docs/gateway/usage-and-billing) and [OpenRouter's pricing and rate limits](https://openrouter.ai/pricing) for current published limits.
 
