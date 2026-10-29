@@ -528,17 +528,35 @@ export async function materializeLayer(
         try {
           const frameRenderSurface = createCanvas(request.frame.width, request.frame.height);
           const frameContext = context2d(frameRenderSurface);
-          const frameEvaluation = evaluatePresentation({
-            position: bounds,
-            sourceSize: { width: bounds.width, height: bounds.height },
-            operations: [],
-            frame: request.frame,
-            mode: 'frame-bounds',
-          });
-          drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
-            kind: 'document',
-            frame: request.frame,
-          });
+          const pixelGridFrame = request.pixelGridFrame;
+          const frameAlreadyRasterized = Boolean(
+            hasRetainedAffine &&
+            pixelGridFrame &&
+            pixelGridFrame.x === request.frame.x &&
+            pixelGridFrame.y === request.frame.y &&
+            pixelGridFrame.width === request.frame.width &&
+            pixelGridFrame.height === request.frame.height &&
+            frameSurface
+          );
+          if (frameAlreadyRasterized && frameSurface) {
+            // renderRetainedSegment already drew the affine presentation in this
+            // exact frame's pixel grid. Copy those pixels without shifting them
+            // through a second fractional frame transform.
+            frameContext.imageSmoothingEnabled = false;
+            frameContext.drawImage(frameSurface as CanvasImageSource, 0, 0);
+          } else {
+            const frameEvaluation = evaluatePresentation({
+              position: bounds,
+              sourceSize: { width: bounds.width, height: bounds.height },
+              operations: [],
+              frame: request.frame,
+              mode: 'frame-bounds',
+            });
+            drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
+              kind: 'document',
+              frame: request.frame,
+            });
+          }
           return {
             bitmap: await toOwnedBitmap(frameRenderSurface),
             metadata: {
