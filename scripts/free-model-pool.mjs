@@ -259,8 +259,8 @@ export async function loadCatalogs({
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
-  sources.push({ source: 'opencode', url: OPENCODE_MODELS });
   if (groqKeys.length > 0 || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS, groqKeys });
+  sources.push({ source: 'opencode', url: OPENCODE_MODELS });
   const results = await Promise.allSettled(
     sources.map(async ({ source, url, groqKeys: sourceGroqKeys }) => {
       const headers = {};

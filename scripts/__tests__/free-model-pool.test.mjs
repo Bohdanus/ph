@@ -302,6 +302,48 @@ describe('free model rotation', () => {
     expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ reasoning_effort: 'low', max_tokens: 1200 });
   });
 
+  it('tries Groq before OpenCode after Kilo and OpenRouter are exhausted', async () => {
+    const chat = vi.fn(async (url) => {
+      if (url.includes('openrouter')) return { ok: false, status: 429, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'Groq result' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('kilo:free')],
+      openrouter: [openRouterRow('openrouter/model')],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      chat,
+    });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'Kilo quota', exhaustSource: true });
+    const runOpenCode = vi.fn().mockResolvedValue({ content: 'OpenCode result', finishReason: 'stop' });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: 'openrouter-test',
+      groqApiKey: 'groq-test',
+      groqFreePlan: true,
+      kiloCommand: '/fake-kilo',
+      runKilo,
+      opencodeCommand: '/opt/opencode',
+      runOpenCode,
+    });
+
+    expect(result).toMatchObject({ source: 'groq', model: 'openai/gpt-oss-120b', content: 'Groq result' });
+    expect(runKilo).toHaveBeenCalledTimes(1);
+    expect(runOpenCode).not.toHaveBeenCalled();
+    expect(chat.mock.calls.map(([url]) => url)).toEqual([
+      'https://openrouter.ai/api/v1/chat/completions',
+      'https://api.groq.com/openai/v1/chat/completions',
+    ]);
+    expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1, groq: 1 });
+  });
+
   it('rotates to the next Groq key on HTTP 429 from the first key', async () => {
     const chat = vi.fn(async (url, options) => {
       const auth = options.headers.Authorization;
