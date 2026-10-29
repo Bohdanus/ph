@@ -95,8 +95,10 @@ node scripts/free-model-pool.mjs --openrouter-quota
 node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt --output-file ./summary.md --max-tokens 1500
 ```
 
-The pool tries at most three eligible models per provider; HTTP 401, 402, or 429 exhausts that
-provider for the run. It never falls back to paid models. `--list` refreshes public catalogs and
+The inference fallback order is Kilo, OpenRouter, Groq, then OpenCode; catalog checks can run in
+parallel, but completions are attempted in that order. The pool tries at most three eligible
+models per provider; HTTP 401, 402, or 429 exhausts that provider for the run. It never falls back
+to paid models. `--list` refreshes public catalogs and
 does not send an inference request. For Kilo, `configured: null` means the CLI was found but its
 saved login was not probed; for OpenRouter, `configured` reflects `OPENROUTER_API_KEY`. The
 OpenRouter quota command does not report Kilo's separate IP-based free-model limit. See
