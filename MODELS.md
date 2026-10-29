@@ -36,6 +36,10 @@ A provider name alone does not establish that a route is free. Verify the exact 
 
 A 429 or exhausted counter applies to the provider that returned it. Stop using that source for the run, and switch only to another model/provider pair verified as free. See [Kilo's gateway rate limits](https://kilo.ai/docs/gateway/usage-and-billing) and [OpenRouter's pricing and rate limits](https://openrouter.ai/pricing) for current published limits.
 
+### Groq
+
+Groq serves only `openai/gpt-oss-120b` on the Free plan — no per-model pricing, so routing requires `GROQ_FREE_PLAN=1` (see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md)). The operator maintains multiple Free-plan keys rotated by account file under `~/.config/groq/`; never auto-rotate through account files. GPT-OSS reasoning is low but speed is very fast: use Groq only for bulk text sweeps (chat search, chat-history processing), never for deep reasoning or code review.
+
 ## Free-agent boundaries
 
 - Free Kilo children are read-only: use `read-only-research` for visible sessions and `explore` for internal tasks. Deny shell, edit, write, patch, and all connected file-mutation tools. If the host cannot verify this boundary, use the completion runner or do not launch the child.

@@ -68,6 +68,11 @@ Entries are added per [ORCHESTRATION.md](../ORCHESTRATION.md#incoming-commits-re
 - d6968c47 (d6968c47e1ae5ba6a85bc4cd9bb2e0adad9b0176) "docs(history): finalize validated migration restart checkpoint" — Bohdan Kalynovskyi (Dan)
 - eeed3af4 (eeed3af4b613d7a14e2821016038e7ee05508769) "feat(history): stage durable raster and blank layer creates" — Bohdan Kalynovskyi (Dan)
 
+## 2026-10-30 — origin/main (fetch + merge)
+
+- 67e4ceb8 (67e4ceb8bf81a0ecdc5cfabba4f3412ddfea2eb6) "Merge docs/groq-routing-notes into main" — Bohdan Kalynovskyi (Dan)
+- f5210606 (f5210606dc0092eb8c356e48cdb6232e0a214529) "docs(modes): add Groq Free-plan routing and use-case guidance" — Kilo Agent
+
 ## 2026-10-29 — origin/main (fetch + merge)
 
 - db0c4f66 (db0c4f666b2d10e7de74b839ba81d6d40bef227c) "Merge task/free-provider-order-20261029 into main" — Bohdan Kalynovskyi (Dan)
