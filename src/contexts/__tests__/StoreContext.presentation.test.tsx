@@ -103,12 +103,22 @@ async function promote(store: StoreData, requests: Parameters<StoreData['promote
 
 /** Navigates history: the second way a layer can leave the live record. */
 function replayTo(dispatch: StoreDispatch, layers: LayersRecord, deletedLayers: LayersRecord, cursor = 0) {
+  replayHistoryTo(dispatch, layers, [baselineItem(layers, 'baseline')], deletedLayers, cursor);
+}
+
+function replayHistoryTo(
+  dispatch: StoreDispatch,
+  layers: LayersRecord,
+  entries: readonly HistoryItem[],
+  deletedLayers: LayersRecord,
+  cursor: number
+) {
   act(() => {
     dispatch({
       type: 'APPLY_HISTORY_REPLAY',
       payload: {
         updates: { layers, deletedLayers, activeLayerId: null },
-        timeline: { entries: [baselineItem(layers, 'baseline')], cursor, branchRevision: 0 },
+        timeline: { entries, cursor, branchRevision: 0 },
       },
     });
   });
@@ -492,6 +502,82 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
     ).toBe(true);
     expect(owned.close).toHaveBeenCalledTimes(1);
   });
+
+  it('retains an adopted image source in redo history, then closes it once on replacement', () => {
+    const bitmap = createMockImageBitmap(100, 80);
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const importedLayerId = 'imported-layer';
+    const baseLayer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
+    };
+    const source: ImageLayerSource = { kind: 'image', bitmap, isBedrock: false, pos };
+    const importedLayer: Layer = {
+      ...createMockLayer({ id: importedLayerId, pos }),
+      bitmap,
+      source,
+    };
+    const baseLayers = { [layerId]: baseLayer };
+    const importedLayers = { ...baseLayers, [importedLayerId]: importedLayer };
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), baseLayers, 'doc-import');
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: importedLayers },
+          historyItem: {
+            id: 'create-imported-layer',
+            actionName: NEW_LAYER_ACTION,
+            layerId: importedLayerId,
+            layerSource: source,
+          },
+        },
+      });
+    });
+    act(() => store().adoptLayerBitmaps([bitmap]));
+    const history = store().history;
+    expect(history).toHaveLength(2);
+    expect((history[1].layerSource as ImageLayerSource).bitmap).toBe(bitmap);
+    expect(bitmap.close).not.toHaveBeenCalled();
+
+    // Undo makes the source absent from live layers, but the redo entry retains it.
+    const undoAttempt = store().beginHistoryReplayPresentation(store().documentId, store().documentRevision);
+    replayHistoryTo(dispatch(), baseLayers, history, { [importedLayerId]: importedLayer }, 0);
+    const undone = store();
+    expect(
+      undone.finalizeHistoryReplayPresentation({
+        attemptId: undoAttempt,
+        documentId: undone.documentId,
+        documentRevision: undone.documentRevision,
+        branchRevision: undone.branchRevision,
+        historyIndex: undone.historyIndex,
+      })
+    ).toBe(true);
+    expect(undone.layers[importedLayerId]).toBeUndefined();
+    expect(undone.history).toEqual(history);
+    expect(undone.historyIndex).toBe(0);
+    expect(bitmap.close).not.toHaveBeenCalled();
+
+    const redoAttempt = store().beginHistoryReplayPresentation(store().documentId, store().documentRevision);
+    replayHistoryTo(dispatch(), importedLayers, history, {}, 1);
+    const redone = store();
+    expect(
+      redone.finalizeHistoryReplayPresentation({
+        attemptId: redoAttempt,
+        documentId: redone.documentId,
+        documentRevision: redone.documentRevision,
+        branchRevision: redone.branchRevision,
+        historyIndex: redone.historyIndex,
+      })
+    ).toBe(true);
+    expect(redone.layers[importedLayerId].source).toBe(source);
+    expect(bitmap.close).not.toHaveBeenCalled();
+
+    replaceDocument(dispatch(), { 'replacement-layer': layerWithCanvas('replacement-layer') }, 'doc-replacement');
+    expect(bitmap.close).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('durable navigation presentation freshness', () => {
@@ -499,7 +585,7 @@ describe('durable navigation presentation freshness', () => {
     const sourceBitmap = createMockImageBitmap(100, 80);
     const staged = canvas(100, 80);
     const pos = { x: 0, y: 0, width: 100, height: 80 };
-    const source: ImageLayerSource = { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos };
+    const source = { kind: 'blank' as const, color: '#ffffff', opacity: 1, isBedrock: false as const, pos };
     const existingLayer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
@@ -609,7 +695,7 @@ describe('durable navigation presentation freshness', () => {
     const sourceBitmap = createMockImageBitmap(100, 80);
     const staged = canvas(100, 80);
     const pos = { x: 0, y: 0, width: 100, height: 80 };
-    const source: ImageLayerSource = { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos };
+    const source = { kind: 'blank' as const, color: '#ffffff', opacity: 1, isBedrock: false as const, pos };
     const existingLayer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
@@ -892,7 +978,7 @@ describe('renderSelector contract', () => {
     const layer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
-      source: { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos },
+      source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
     };
     const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
     const releaseMaterialized = vi.fn();
@@ -941,7 +1027,9 @@ describe('renderSelector contract', () => {
 
   function rasterLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): Layer {
     const bitmap = createMockImageBitmap(pos.width, pos.height);
-    const source: ImageLayerSource = { kind: 'image', bitmap, isBedrock: false, pos };
+    // These publication tests use a bitmap cache on an eligible blank source;
+    // imported image ownership is covered by history-presentation-authority.
+    const source = { kind: 'blank' as const, color: '#ffffff', opacity: 1, isBedrock: false as const, pos };
     return { ...createMockLayer({ id, pos }), bitmap, source };
   }
 
@@ -1558,7 +1646,7 @@ describe('renderSelector contract', () => {
     const layer: Layer = {
       ...createMockLayer({ id: layerId, pos }),
       bitmap: sourceBitmap,
-      source: { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos },
+      source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
     };
     const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
     const releaseMaterialized = vi.fn();

@@ -323,6 +323,7 @@ describe('MagicWandToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
 
     expect(dispatchMock).not.toHaveBeenCalled();
+    expect(getContextSpy).not.toHaveBeenCalled();
   });
 
   it('ignores clicks when the current tool is not the magic wand', () => {

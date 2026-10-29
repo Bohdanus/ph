@@ -571,14 +571,24 @@ export const useLayers = () => {
     );
   };
 
-  const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
+  const createLayerFromBitmap = async (
+    params: FileImageParams,
+    replaceDocument = false,
+    isCurrentRequest?: () => boolean
+  ) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
     if (currentLayers === null) return false;
 
+    const ownsMaterializedBitmap = typeof (params.bitmap as { close?: unknown }).close !== 'function';
+    const bitmap = await immutableRaster(params.bitmap);
+    if (isCurrentRequest && !isCurrentRequest()) {
+      if (ownsMaterializedBitmap) (bitmap as ImageBitmap).close();
+      return false;
+    }
     const source: ImageLayerSource = {
       kind: 'image',
       ...params,
-      bitmap: await immutableRaster(params.bitmap),
+      bitmap,
     };
     const newLayer = createLayerSource({ layers: currentLayers, source });
 
@@ -1414,11 +1424,23 @@ export const useLayers = () => {
   };
 
   const drawAllLayers = useCallback(() => {
-    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const setDevPaintState = (source: 'pending' | 'rendering' | 'durable' | 'legacy' | 'failed', cursor: number) => {
+      if (!import.meta.env.DEV) return;
+      if (canvas.dataset.presentationPaintSource !== source) canvas.dataset.presentationPaintSource = source;
+      const cursorValue = String(cursor);
+      if (canvas.dataset.presentationPaintCursor !== cursorValue) canvas.dataset.presentationPaintCursor = cursorValue;
+    };
 
     // Navigation has moved logical state but no complete presentation authority
     // has been accepted yet. Keep the prior canvas intact until then.
-    if (renderSelector.source === 'pending') return;
+    if (renderSelector.source === 'pending') {
+      setDevPaintState('pending', historyIndex);
+      return;
+    }
+    setDevPaintState('rendering', historyIndex);
 
     const previewLayerIds = Object.keys(previewLayersRef.current);
     const hasPreview = previewLayerIds.length > 0;
@@ -1449,10 +1471,14 @@ export const useLayers = () => {
     const sorted = getSortedLayersArray(renderLayers);
     const renderFrame = durableProjection ? durableProjection.frame : documentFrame;
     try {
-      if (!drawLayersToCanvas(canvasRef.current, sorted, renderFrame, new Set(previewLayerIds), dpr)) {
+      if (drawLayersToCanvas(canvas, sorted, renderFrame, new Set(previewLayerIds), dpr)) {
+        setDevPaintState(durableProjection ? 'durable' : 'legacy', durableProjection?.historyCursor ?? historyIndex);
+      } else {
+        setDevPaintState('failed', durableProjection?.historyCursor ?? historyIndex);
         console.error('Unable to publish runtime layer presentation');
       }
     } catch (error) {
+      setDevPaintState('failed', durableProjection?.historyCursor ?? historyIndex);
       // Pointer-move callers must not receive renderer failures through React's
       // event boundary. The renderer already preserves the last good canvas.
       console.error('Unable to publish runtime layer presentation', error);

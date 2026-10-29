@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
+  discoverGroqKeyFiles,
   loadCatalogs,
   main,
   MAX_CATALOG_RESPONSE_BYTES,
   MAX_COMPLETION_RESPONSE_BYTES,
+  normalizeGroqKeys,
   readBoundedPrompt,
   runOpenCodeCompletion,
   zeroPriced,
@@ -256,6 +258,232 @@ describe('free model rotation', () => {
     expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ reasoning_effort: 'low', max_tokens: 1200 });
   });
 
+  it('rotates to the next Groq key on HTTP 429 from the first key', async () => {
+    const chat = vi.fn(async (url, options) => {
+      const auth = options.headers.Authorization;
+      if (auth === 'Bearer groq-key1') return { ok: false, status: 429, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'Groq result from key2' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKeys: ['groq-key1', 'groq-key2'],
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+    expect(result).toMatchObject({
+      source: 'groq',
+      model: 'openai/gpt-oss-120b',
+      content: 'Groq result from key2',
+      groqKeysAvailable: 1,
+    });
+    const auths = chat.mock.calls.map((call) => call[1].headers.Authorization);
+    expect(auths).toEqual(['Bearer groq-key1', 'Bearer groq-key2']);
+    expect(auths).not.toContain('Bearer groq-key1' + ' ' + 'groq-key1');
+  });
+
+  it('rotates to the next Groq key on HTTP 401 from an invalid first key', async () => {
+    const chat = vi.fn(async (url, options) => {
+      const auth = options.headers.Authorization;
+      if (auth === 'Bearer invalid-key') return { ok: false, status: 401, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'Groq result from valid key' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKeys: ['invalid-key', 'valid-key'],
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+    expect(result).toMatchObject({
+      source: 'groq',
+      model: 'openai/gpt-oss-120b',
+      content: 'Groq result from valid key',
+    });
+    const auths = chat.mock.calls.map((call) => call[1].headers.Authorization);
+    expect(auths).toEqual(['Bearer invalid-key', 'Bearer valid-key']);
+  });
+
+  it('does not retry a Groq key that returned 401 within the same run', async () => {
+    const chat = vi.fn(async (url, options) => {
+      const auth = options.headers.Authorization;
+      if (auth === 'Bearer dead-key') return { ok: false, status: 401, json: async () => ({}) };
+      return { ok: false, status: 429, json: async () => ({}) };
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    await expect(
+      completeWithFreeModel('safe prompt', {
+        fetchImpl,
+        openRouterKey: '',
+        groqApiKeys: ['dead-key', 'other-key'],
+        groqFreePlan: true,
+        opencodeCommand: '',
+      })
+    ).rejects.toThrow(/No free model completed/);
+    const auths = chat.mock.calls.map((call) => call[1].headers.Authorization);
+    expect(auths).toEqual(['Bearer dead-key', 'Bearer other-key']);
+  });
+
+  it('rotates to the next Groq key on HTTP 402', async () => {
+    const chat = vi.fn(async (url, options) => {
+      if (options.headers.Authorization === 'Bearer groq-key1')
+        return { ok: false, status: 402, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'success' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKeys: ['groq-key1', 'groq-key2'],
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+    expect(result).toMatchObject({ source: 'groq', content: 'success' });
+  });
+
+  it('skips multiple invalid Groq keys and uses a valid one further down the list', async () => {
+    const chat = vi.fn(async (url, options) => {
+      const auth = options.headers.Authorization;
+      if (auth === 'Bearer bad1' || auth === 'Bearer bad2') return { ok: false, status: 401, json: async () => ({}) };
+      if (auth === 'Bearer bad3') return { ok: false, status: 429, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'recovered' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKeys: ['bad1', 'bad2', 'bad3', 'good-key'],
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+    expect(result).toMatchObject({ source: 'groq', content: 'recovered' });
+    const auths = chat.mock.calls.map((call) => call[1].headers.Authorization);
+    expect(auths).toEqual(['Bearer bad1', 'Bearer bad2', 'Bearer bad3', 'Bearer good-key']);
+  });
+
+  it('marks the Groq source exhausted when all keys return per-key failures', async () => {
+    const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    await expect(
+      completeWithFreeModel('prompt', {
+        fetchImpl,
+        openRouterKey: '',
+        groqApiKeys: ['k1', 'k2', 'k3'],
+        groqFreePlan: true,
+        opencodeCommand: '',
+      })
+    ).rejects.toThrow(/No free model completed/);
+    const auths = chat.mock.calls.map((call) => call[1].headers.Authorization);
+    expect(auths).toEqual(['Bearer k1', 'Bearer k2', 'Bearer k3']);
+    expect(auths).toHaveLength(3);
+  });
+
+  it('reports groqKeysAvailable as remaining non-exhausted keys after rotation', async () => {
+    const chat = vi.fn(async (url, options) => {
+      const auth = options.headers.Authorization;
+      if (auth === 'Bearer bad-key1') return { ok: false, status: 401, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'success' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKeys: ['bad-key1', 'good-key', 'good-key2'],
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+    expect(result.groqKeysAvailable).toBe(2);
+  });
+
+  it('uses the first Groq key for catalog loading and rotates on failures', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'openai/gpt-oss-120b',
+        choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
+    await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: '',
+      groqApiKeys: ['k1', 'k2'],
+      groqFreePlan: true,
+      opencodeCommand: '',
+    });
+    const groqUrl = 'https://api.groq.com/openai/v1/models';
+    const catalogCalls = fetchImpl.mock.calls.filter((call) => call[0] === groqUrl);
+    expect(catalogCalls[0][1].headers.Authorization).toBe('Bearer k1');
+    const chatAuths = chat.mock.calls.map((call) => call[1].headers.Authorization);
+    expect(chatAuths).toEqual(['Bearer k1']);
+  });
+
+  it('loads Groq key files from a directory in sorted order', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'groq-keys-test-'));
+    try {
+      await writeFile(join(dir, 'api_key'), 'key-z', { mode: 0o600 });
+      await writeFile(join(dir, 'api_key_account3'), 'key-3', { mode: 0o600 });
+      await writeFile(join(dir, 'api_key_account2'), 'key-2', { mode: 0o600 });
+      await writeFile(join(dir, 'not_a_key.txt'), 'ignore-me', { mode: 0o600 });
+      await writeFile(join(dir, 'api_key_account5'), 'key-5', { mode: 0o600 });
+      const { discoverGroqKeyFiles } = await import('../free-model-pool.mjs');
+      const files = await discoverGroqKeyFiles(dir);
+      expect(files.length).toBe(4);
+      expect(files.map((f) => f.split('/').pop())).toEqual([
+        'api_key',
+        'api_key_account2',
+        'api_key_account3',
+        'api_key_account5',
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes empty or missing Groq keys to an empty array', () => {
+    expect(normalizeGroqKeys(undefined, [])).toEqual([]);
+    expect(normalizeGroqKeys(null, undefined)).toEqual([]);
+    expect(normalizeGroqKeys('', [null, '', undefined, 'real-key'])).toEqual(['real-key']);
+  });
+
   it('does not query or route to Groq without the free-plan opt-in', async () => {
     const chat = vi.fn().mockRejectedValue(new Error('unexpected inference request'));
     const fetchImpl = catalogFetch({ groq: [{ id: 'openai/gpt-oss-120b' }], chat });
@@ -353,6 +581,19 @@ describe('free model rotation', () => {
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
     await expect(completeWithFreeModel('prompt', { fetchImpl })).rejects.toThrow(/No free model completed/);
     expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('exhausts a single-key provider on HTTP 401 to avoid retrying an invalid key', async () => {
+    const chat = vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('o1'), openRouterRow('o2')],
+      chat,
+    });
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'expired-key' })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer expired-key');
   });
 
   it('caps retries to three model requests per source before rotating providers', async () => {

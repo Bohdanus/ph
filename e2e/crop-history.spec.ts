@@ -6,6 +6,7 @@ import { setForegroundColor } from './helpers/color-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
+import { documentFrameSize as getDocumentFrameSize } from '../src/contexts/document-frame.ts';
 import type { DrawToolArgs } from '../src/tools/draw.ts';
 import type { ShapeToolArgs } from '../src/tools/shape.ts';
 import type { TransformToolArgs } from '../src/tools/transform.ts';
@@ -833,6 +834,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       { AssetRegistry },
       { composeDurableDocument },
       { isIdentityAffineTransform, rotationAffineAroundPoint },
+      { documentFrameSize },
       { legacyHistoryToDurable },
       { drawLayer, drawLayersToCanvas },
       { evaluatePresentation, retainedPresentationOperations },
@@ -844,6 +846,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       load('/src/contexts/asset-registry.ts'),
       load('/src/contexts/durable-compositor.ts'),
       load('/src/contexts/affine-transform.ts'),
+      load('/src/contexts/document-frame.ts'),
       load('/src/contexts/history-adapter.ts'),
       load('/src/contexts/layer-renderer.ts'),
       load('/src/contexts/presentation-evaluator.ts'),
@@ -1026,6 +1029,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           throw new Error(`Legacy replay failed at ${stage}: ${JSON.stringify(legacyReplay.diagnostics)}`);
         }
         const frame = legacyReplay.documentFrame;
+        const frameSize = documentFrameSize(frame);
         const legacySurface = document.createElement('canvas');
         const legacyLayers = (Object.values(legacyReplay.layers) as Layer[]).sort(
           (left, right) => left.order - right.order
@@ -1035,7 +1039,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         }
         const legacyContext = legacySurface.getContext('2d');
         if (!legacyContext) throw new Error(`Legacy composition produced no 2D context at ${stage}`);
-        const legacyPixels = Array.from(legacyContext.getImageData(0, 0, frame.width, frame.height).data);
+        const legacyPixels = Array.from(legacyContext.getImageData(0, 0, frameSize.width, frameSize.height).data);
         const differsFromUntransformed = (pixels: number[]) =>
           untransformedBaselinePixels !== null &&
           (pixels.length !== untransformedBaselinePixels.length ||
@@ -1052,12 +1056,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         });
         try {
           const durableSurface = document.createElement('canvas');
-          durableSurface.width = frame.width;
-          durableSurface.height = frame.height;
+          durableSurface.width = frameSize.width;
+          durableSurface.height = frameSize.height;
           const durableContext = durableSurface.getContext('2d');
           if (!durableContext) throw new Error(`Durable composition produced no 2D context at ${stage}`);
           durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
-          const durablePixels = Array.from(durableContext.getImageData(0, 0, frame.width, frame.height).data);
+          const durablePixels = Array.from(durableContext.getImageData(0, 0, frameSize.width, frameSize.height).data);
           let differingBytes = 0;
           let differingPixels = 0;
           let lastDifferingPixel = -1;
@@ -1080,8 +1084,8 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             );
             if (differingSamples.length < 8) {
               differingSamples.push({
-                x: pixel % frame.width,
-                y: Math.floor(pixel / frame.width),
+                x: pixel % frameSize.width,
+                y: Math.floor(pixel / frameSize.width),
                 channel: channels[byte % 4],
                 legacy,
                 durable,
@@ -1099,12 +1103,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             (fixture.materializedLayerIds?.length ?? 0) > 0
               ? (() => {
                   const legacyFrameSurface = document.createElement('canvas');
-                  legacyFrameSurface.width = frame.width;
-                  legacyFrameSurface.height = frame.height;
+                  legacyFrameSurface.width = frameSize.width;
+                  legacyFrameSurface.height = frameSize.height;
                   const legacyFrameContext = legacyFrameSurface.getContext('2d');
                   const durableFrameSurface = document.createElement('canvas');
-                  durableFrameSurface.width = frame.width;
-                  durableFrameSurface.height = frame.height;
+                  durableFrameSurface.width = frameSize.width;
+                  durableFrameSurface.height = frameSize.height;
                   const durableFrameContext = durableFrameSurface.getContext('2d');
                   if (!legacyFrameContext || !durableFrameContext) {
                     throw new Error(`Unable to create reusable frame comparison surfaces at ${stage}`);
@@ -1142,7 +1146,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               context.globalAlpha = 1;
               context.globalCompositeOperation = 'source-over';
               context.imageSmoothingEnabled = false;
-              context.clearRect(0, 0, frame.width, frame.height);
+              context.clearRect(0, 0, frameSize.width, frameSize.height);
             }
             if (!drawLayer(legacyFrameContext, legacyLayer, frame)) {
               throw new Error(`Legacy renderer refused ${layerId} frame comparison at ${stage}`);
@@ -1156,8 +1160,8 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               materializedLayer.bounds.width,
               materializedLayer.bounds.height
             );
-            const legacyFramePixels = legacyFrameContext.getImageData(0, 0, frame.width, frame.height).data;
-            const durableFramePixels = durableFrameContext.getImageData(0, 0, frame.width, frame.height).data;
+            const legacyFramePixels = legacyFrameContext.getImageData(0, 0, frameSize.width, frameSize.height).data;
+            const durableFramePixels = durableFrameContext.getImageData(0, 0, frameSize.width, frameSize.height).data;
             const frameChannels = ['r', 'g', 'b', 'a'] as const;
             let frameDifferingBytes = 0;
             let frameDifferingPixels = 0;
@@ -1174,8 +1178,8 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 lastFrameDifferingPixel = pixel;
               }
               if (frameDifferingSamples.length < 8) {
-                const x = pixel % frame.width;
-                const y = Math.floor(pixel / frame.width);
+                const x = pixel % frameSize.width;
+                const y = Math.floor(pixel / frameSize.width);
                 frameDifferingSamples.push({
                   x,
                   y,
@@ -1222,6 +1226,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
       };
 
       const layerTransformResults = [];
+      const differsFromPrevious = (pixels: number[], previous: number[] | null) =>
+        previous === null ||
+        pixels.length !== previous.length ||
+        pixels.some((pixel, index) => pixel !== previous[index]);
+      let previousLegacyTransformPixels = untransformedBaselinePixels;
+      let previousDurableTransformPixels = untransformedBaselinePixels;
       for (const [index, layerTransform] of layerTransforms.entries()) {
         const result = await compareAtCursor(index + 1, `layer transform ${index + 1}`);
         layerTransformResults.push({
@@ -1233,8 +1243,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           differingBytes: result.differingBytes,
           legacyDiffersFromUntransformed: result.legacyDiffersFromUntransformed,
           durableDiffersFromUntransformed: result.durableDiffersFromUntransformed,
+          legacyDiffersFromPrevious: differsFromPrevious(result.legacyPixels, previousLegacyTransformPixels),
+          durableDiffersFromPrevious: differsFromPrevious(result.durablePixels, previousDurableTransformPixels),
           materializedLayerComparisons: result.materializedLayerComparisons,
         });
+        previousLegacyTransformPixels = result.legacyPixels;
+        previousDurableTransformPixels = result.durablePixels;
       }
 
       const transitionResults = [];
@@ -1264,6 +1278,8 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           differingPixels: result.differingPixels,
           maxChannelDelta: result.maxChannelDelta,
           differingSamples: result.differingSamples,
+          legacyPixels: result.legacyPixels,
+          durablePixels: result.durablePixels,
           materializedBounds: result.materializedBounds,
           materializedLayerComparisons: result.materializedLayerComparisons,
         });
@@ -2881,7 +2897,6 @@ test.describe('Crop history', () => {
       page,
     }) => {
       await openDocument(page);
-
       const result = await compareCropRenderers(page, {
         caseName: 'quarter-turn crop',
         documentId: 'quarter-turn-crop-pixel-parity',
@@ -2980,8 +2995,26 @@ test.describe('Crop history', () => {
               resizeY: 84,
             },
           },
+          {
+            id: 'retained-affine-background',
+            layerId: 'background',
+            args: {
+              toolName: 'transform',
+              rotate: -11,
+              mirrorH: true,
+              mirrorV: false,
+              skewX: -2,
+              skewY: 3,
+              trapezoid: 0,
+              resizeX: 93,
+              resizeY: 107,
+            },
+          },
         ],
-        transitions: [{ angleDegrees: 37, nextFrame: { x: 8, y: 9, width: 48, height: 44 } }],
+        transitions: [
+          { angleDegrees: 37, nextFrame: { x: 8.25, y: 9.5, width: 47.75, height: 43.25 } },
+          { angleDegrees: -17, nextFrame: { x: 7.75, y: 8.125, width: 45.6, height: 41.3 } },
+        ],
         layers: [
           {
             kind: 'raster',
@@ -3013,20 +3046,41 @@ test.describe('Crop history', () => {
         layerTransforms: [],
       });
 
-      expect(result.layerTransformResults).toHaveLength(1);
-      expect(result.layerTransformResults[0]?.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
-      expect(result.layerTransformResults[0]?.durableFrame).toEqual(result.layerTransformResults[0]?.frame);
-      expect(result.layerTransformResults[0]?.differingBytes).toBe(0);
-      expect(result.layerTransformResults[0]?.legacyDiffersFromUntransformed).toBe(true);
-      expect(result.layerTransformResults[0]?.durableDiffersFromUntransformed).toBe(true);
-      expect(result.transitionResults).toHaveLength(1);
-      expect(result.transitionResults[0]?.differingBytes).toBe(0);
-      expect(result.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
+      expect(result.layerTransformResults).toHaveLength(fixture.layerTransforms?.length ?? 0);
+      for (const transform of result.layerTransformResults) {
+        expect(transform.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+        expect(transform.durableFrame).toEqual(transform.frame);
+        expect(transform.differingBytes).toBe(0);
+        expect(transform.legacyDiffersFromUntransformed).toBe(true);
+        expect(transform.durableDiffersFromUntransformed).toBe(true);
+        expect(transform.legacyDiffersFromPrevious).toBe(true);
+        expect(transform.durableDiffersFromPrevious).toBe(true);
+        expect(transform.materializedLayerComparisons).toHaveLength(fixture.materializedLayerIds?.length ?? 0);
+        expect(transform.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual(
+          fixture.materializedLayerIds
+        );
+      }
+      expect(result.transitionResults).toHaveLength(fixture.transitions.length);
+      for (const [index, transition] of result.transitionResults.entries()) {
+        const controlTransition = untransformedControl.transitionResults[index];
+        expect(controlTransition).toBeDefined();
+        expect(transition.frame).toEqual(fixture.transitions[index]?.nextFrame);
+        expect(transition.durableFrame).toEqual(transition.frame);
+        expect(transition.differingBytes).toBe(0);
+        expect(transition.legacyPixels).not.toEqual(controlTransition?.legacyPixels);
+        expect(transition.durablePixels).not.toEqual(controlTransition?.durablePixels);
+        expect(transition.materializedLayerComparisons).toHaveLength(fixture.materializedLayerIds?.length ?? 0);
+        expect(transition.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual(
+          fixture.materializedLayerIds
+        );
+      }
       const layerComparisons = [
         ...result.layerTransformResults.flatMap((transform) => transform.materializedLayerComparisons),
         ...result.transitionResults.flatMap((transition) => transition.materializedLayerComparisons),
       ];
-      expect(layerComparisons).toHaveLength(4);
+      expect(layerComparisons).toHaveLength(
+        fixture.layers.length * ((fixture.layerTransforms?.length ?? 0) + fixture.transitions.length)
+      );
       for (const comparison of layerComparisons) {
         expect(
           comparison.materializedBounds,
@@ -3041,24 +3095,26 @@ test.describe('Crop history', () => {
           `${comparison.layerId} frame raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
         ).toBe(0);
       }
-      expect(untransformedControl.transitionResults[0]?.frame).toEqual(result.transitionResults[0]?.frame);
-      expect(untransformedControl.transitionResults[0]?.durableFrame).toEqual(result.transitionResults[0]?.frame);
-      expect(
-        untransformedControl.transitionResults[0]?.differingBytes,
-        'frame-only final composite must match legacy exactly'
-      ).toBe(0);
-      const controlLayerComparisons = untransformedControl.transitionResults[0]?.materializedLayerComparisons ?? [];
-      expect(controlLayerComparisons).toHaveLength(2);
-      for (const comparison of controlLayerComparisons) {
-        expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
-        expect(comparison.bitmapSize).toEqual({
-          width: comparison.expectedBounds.width,
-          height: comparison.expectedBounds.height,
-        });
-        expect(
-          comparison.frameDifferingBytes,
-          `frame-only ${comparison.layerId} raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
-        ).toBe(0);
+      expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
+      for (const [index, transition] of untransformedControl.transitionResults.entries()) {
+        expect(transition.frame).toEqual(fixture.transitions[index]?.nextFrame);
+        expect(transition.durableFrame).toEqual(transition.frame);
+        expect(transition.differingBytes, 'frame-only composite must match legacy exactly').toBe(0);
+        expect(transition.materializedLayerComparisons).toHaveLength(fixture.layers.length);
+        expect(transition.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual(
+          fixture.materializedLayerIds
+        );
+        for (const comparison of transition.materializedLayerComparisons) {
+          expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+          expect(comparison.bitmapSize).toEqual({
+            width: comparison.expectedBounds.width,
+            height: comparison.expectedBounds.height,
+          });
+          expect(
+            comparison.frameDifferingBytes,
+            `frame-only ${comparison.layerId} raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
+          ).toBe(0);
+        }
       }
       // This control isolates the retained operation within each renderer; the broader frame-only
       // parity matrix remains open and is not treated as an oracle by this fixture.
@@ -3066,6 +3122,123 @@ test.describe('Crop history', () => {
       expect(result.durablePixels).not.toEqual(untransformedControl.durablePixels);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
+    });
+
+    test('a retained styled text transform matches through a sequence of frame transforms', async ({ page }) => {
+      await openDocument(page);
+
+      const fixture: CropParityFixture = {
+        caseName: 'retained styled text affine followed by frame sequence',
+        documentId: 'retained-styled-text-frame-sequence-parity',
+        materializedLayerIds: ['styled-text'],
+        layerTransforms: [
+          {
+            id: 'styled-text-affine',
+            layerId: 'styled-text',
+            args: {
+              toolName: 'transform',
+              rotate: 19,
+              mirrorH: true,
+              mirrorV: false,
+              skewX: 4,
+              skewY: -2,
+              trapezoid: 0,
+              resizeX: 108,
+              resizeY: 92,
+            },
+          },
+        ],
+        transitions: [
+          { angleDegrees: -23, nextFrame: { x: 6.25, y: 8.5, width: 49.6, height: 43.25 } },
+          { angleDegrees: 11, nextFrame: { x: 7.75, y: 9.125, width: 47.5, height: 41.875 } },
+        ],
+        layers: [
+          {
+            kind: 'text',
+            id: 'styled-text',
+            order: 0,
+            pos: { x: 10, y: 14, width: 44, height: 30 },
+            textArgs: {
+              toolName: 'text',
+              align: 'center',
+              bold: true,
+              color: '#ff00aa',
+              fontFamily: 'serif',
+              fontSize: 13,
+              italic: true,
+              lineHeight: 1.25,
+              text: 'Frame\nparity',
+              rect: { x1: 0, y1: 0, x2: 44, y2: 30 },
+              kind: 'paragraph',
+            },
+          },
+        ],
+      };
+
+      const result = await compareCropRenderers(page, fixture);
+      const untransformedControl = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'untransformed control for retained styled text frame sequence',
+        documentId: 'retained-styled-text-frame-sequence-control',
+        layerTransforms: [],
+      });
+
+      expect(result.layerTransformResults).toHaveLength(1);
+      expect(result.layerTransformResults[0]?.frame).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+      expect(result.layerTransformResults[0]?.durableFrame).toEqual(result.layerTransformResults[0]?.frame);
+      expect(result.layerTransformResults[0]?.differingBytes).toBe(0);
+      expect(result.layerTransformResults[0]?.legacyDiffersFromUntransformed).toBe(true);
+      expect(result.layerTransformResults[0]?.durableDiffersFromUntransformed).toBe(true);
+      expect(result.layerTransformResults[0]?.legacyDiffersFromPrevious).toBe(true);
+      expect(result.layerTransformResults[0]?.durableDiffersFromPrevious).toBe(true);
+      const textTransformComparisons = result.layerTransformResults[0]?.materializedLayerComparisons ?? [];
+      expect(textTransformComparisons).toHaveLength(1);
+      expect(textTransformComparisons.map((comparison) => comparison.layerId)).toEqual(['styled-text']);
+      for (const comparison of textTransformComparisons) {
+        expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+        expect(comparison.bitmapSize).toEqual({
+          width: comparison.expectedBounds.width,
+          height: comparison.expectedBounds.height,
+        });
+        expect(comparison.frameDifferingBytes).toBe(0);
+      }
+      expect(result.transitionResults).toHaveLength(fixture.transitions.length);
+      expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
+      for (const [index, transition] of result.transitionResults.entries()) {
+        const controlTransition = untransformedControl.transitionResults[index];
+        expect(controlTransition).toBeDefined();
+        expect(controlTransition?.frame).toEqual(fixture.transitions[index]?.nextFrame);
+        expect(controlTransition?.durableFrame).toEqual(controlTransition?.frame);
+        expect(controlTransition?.differingBytes).toBe(0);
+        expect(transition.frame).toEqual(fixture.transitions[index]?.nextFrame);
+        expect(transition.durableFrame).toEqual(transition.frame);
+        expect(transition.differingBytes).toBe(0);
+        expect(transition.legacyPixels).not.toEqual(controlTransition?.legacyPixels);
+        expect(transition.durablePixels).not.toEqual(controlTransition?.durablePixels);
+        expect(transition.materializedLayerComparisons).toHaveLength(1);
+        expect(controlTransition?.materializedLayerComparisons).toHaveLength(1);
+        expect(controlTransition?.materializedLayerComparisons.map((comparison) => comparison.layerId)).toEqual([
+          'styled-text',
+        ]);
+        for (const comparison of controlTransition?.materializedLayerComparisons ?? []) {
+          expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+          expect(comparison.bitmapSize).toEqual({
+            width: comparison.expectedBounds.width,
+            height: comparison.expectedBounds.height,
+          });
+          expect(comparison.frameDifferingBytes).toBe(0);
+        }
+        for (const comparison of transition.materializedLayerComparisons) {
+          expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
+          expect(comparison.bitmapSize).toEqual({
+            width: comparison.expectedBounds.width,
+            height: comparison.expectedBounds.height,
+          });
+          expect(comparison.frameDifferingBytes).toBe(0);
+        }
+      }
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds)).toEqual(['styled-text']);
     });
 
     test('a 37-degree crop preserves a committed text source across renderers', async ({ page }) => {
@@ -3300,6 +3473,99 @@ test.describe('Crop history', () => {
       const result = await compareCropRenderers(page, {
         caseName: 'multi-step mixed-source crop',
         documentId: 'multi-step-mixed-source-crop-pixel-parity',
+        materializedLayerIds: ['blank', 'blank-semi', 'vector', 'paint', 'text'],
+        layerTransforms: [
+          {
+            id: 'blank-affine',
+            layerId: 'blank',
+            args: {
+              toolName: 'transform',
+              rotate: 13,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 2,
+              skewY: -1,
+              trapezoid: 0,
+              resizeX: 105,
+              resizeY: 90,
+            },
+          },
+          {
+            id: 'blank-affine-follow-up',
+            layerId: 'blank',
+            args: {
+              toolName: 'transform',
+              rotate: -5,
+              mirrorH: true,
+              mirrorV: false,
+              skewX: -1,
+              skewY: 2,
+              trapezoid: 0,
+              resizeX: 96,
+              resizeY: 103,
+            },
+          },
+          {
+            id: 'blank-opacity-affine',
+            layerId: 'blank-semi',
+            args: {
+              toolName: 'transform',
+              rotate: 9,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 1,
+              skewY: -2,
+              trapezoid: 0,
+              resizeX: 104,
+              resizeY: 94,
+            },
+          },
+          {
+            id: 'vector-affine',
+            layerId: 'vector',
+            args: {
+              toolName: 'transform',
+              rotate: -9,
+              mirrorH: true,
+              mirrorV: false,
+              skewX: 3,
+              skewY: 2,
+              trapezoid: 0,
+              resizeX: 92,
+              resizeY: 108,
+            },
+          },
+          {
+            id: 'paint-affine',
+            layerId: 'paint',
+            args: {
+              toolName: 'transform',
+              rotate: 17,
+              mirrorH: false,
+              mirrorV: false,
+              skewX: -4,
+              skewY: 1,
+              trapezoid: 0,
+              resizeX: 112,
+              resizeY: 84,
+            },
+          },
+          {
+            id: 'point-text-affine',
+            layerId: 'text',
+            args: {
+              toolName: 'transform',
+              rotate: -6,
+              mirrorH: false,
+              mirrorV: false,
+              skewX: 1,
+              skewY: 3,
+              trapezoid: 0,
+              resizeX: 99,
+              resizeY: 106,
+            },
+          },
+        ],
         transitions: [
           { angleDegrees: 37, nextFrame: { x: 4, y: 4, width: 56, height: 56 } },
           { angleDegrees: 0, nextFrame: { x: 5, y: 6, width: 54, height: 52 } },
@@ -3315,9 +3581,17 @@ test.describe('Crop history', () => {
             opacity: 1,
           },
           {
+            kind: 'blank',
+            id: 'blank-semi',
+            order: 1,
+            pos: { x: 7, y: 8, width: 9, height: 10 },
+            color: '#ffff00',
+            opacity: 0.45,
+          },
+          {
             kind: 'vector',
             id: 'vector',
-            order: 1,
+            order: 2,
             pos: { x: 14, y: 18, width: 14, height: 14 },
             args: {
               toolName: 'shape',
@@ -3335,7 +3609,7 @@ test.describe('Crop history', () => {
           {
             kind: 'paint',
             id: 'paint',
-            order: 2,
+            order: 3,
             pos: { x: 40, y: 24, width: 16, height: 18 },
             args: {
               toolName: 'draw',
@@ -3352,7 +3626,7 @@ test.describe('Crop history', () => {
           {
             kind: 'text',
             id: 'text',
-            order: 3,
+            order: 4,
             pos: { x: 18, y: 38, width: 28, height: 18 },
             textArgs: {
               toolName: 'text',
@@ -3371,11 +3645,46 @@ test.describe('Crop history', () => {
         ],
       });
 
+      const assertMixedLayerParity = (comparisons: readonly CropParityLayerComparison[], stage: string) => {
+        expect(comparisons, `${stage} materialized layer count`).toHaveLength(5);
+        expect(comparisons.map((comparison) => comparison.layerId)).toEqual([
+          'blank',
+          'blank-semi',
+          'vector',
+          'paint',
+          'text',
+        ]);
+        for (const comparison of comparisons) {
+          expect(comparison.materializedBounds, `${comparison.layerId} bounds at ${stage}`).toEqual(
+            comparison.expectedBounds
+          );
+          expect(comparison.bitmapSize, `${comparison.layerId} bitmap size at ${stage}`).toEqual({
+            width: comparison.expectedBounds.width,
+            height: comparison.expectedBounds.height,
+          });
+          expect(
+            comparison.frameDifferingBytes,
+            `${comparison.layerId} pixels at ${stage} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
+          ).toBe(0);
+        }
+      };
+
+      expect(result.layerTransformResults).toHaveLength(6);
+      for (const transform of result.layerTransformResults) {
+        assertMixedLayerParity(transform.materializedLayerComparisons, `retained affine ${transform.id}`);
+        expect(transform.differingBytes, `retained affine ${transform.id} composite parity`).toBe(0);
+        expect(transform.legacyDiffersFromUntransformed).toBe(true);
+        expect(transform.durableDiffersFromUntransformed).toBe(true);
+        expect(transform.legacyDiffersFromPrevious).toBe(true);
+        expect(transform.durableDiffersFromPrevious).toBe(true);
+      }
       expect(result.transitionResults).toHaveLength(3);
       for (const transition of result.transitionResults) {
         expect(transition.durableFrame).toEqual(transition.frame);
-        expect(transition.legacyByteLength).toBe(transition.frame.width * transition.frame.height * 4);
+        const frameSize = getDocumentFrameSize(transition.frame);
+        expect(transition.legacyByteLength).toBe(frameSize.width * frameSize.height * 4);
         expect(transition.durableByteLength).toBe(transition.legacyByteLength);
+        assertMixedLayerParity(transition.materializedLayerComparisons, `frame transition ${transition.index}`);
         expect(
           transition.differingBytes,
           `frame transition ${transition.index} must match byte-for-byte; ${pixelDifferenceSummary(transition)}`
@@ -3386,7 +3695,7 @@ test.describe('Crop history', () => {
         expect(presence.durable, `durable mixed-source crop should contain ${color}`).toBe(true);
       }
       expect(result.durablePixels).toEqual(result.legacyPixels);
-      expect(Object.keys(result.materializedBounds).sort()).toEqual(['blank', 'paint', 'text', 'vector']);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['blank', 'blank-semi', 'paint', 'text', 'vector']);
     });
   });
 });

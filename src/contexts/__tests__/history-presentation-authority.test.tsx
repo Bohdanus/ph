@@ -95,6 +95,13 @@ function rasterLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 })
   return { ...createMockLayer({ id, pos }), bitmap, source };
 }
 
+function blankLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): Layer {
+  return {
+    ...createMockLayer({ id, pos }),
+    source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
+  };
+}
+
 function legacyToolLayer(id = layerId): Layer {
   return {
     ...createMockLayer({ id, pos: { x: 0, y: 0, width: 100, height: 80 } }),
@@ -165,6 +172,32 @@ describe('publishDurablePresentation authority boundaries', () => {
     expect(store().durableRenderProjection).toBeNull();
   });
 
+  it('keeps imported raster baselines on legacy presentation while durable conversion stays current', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const { store, dispatch } = renderWithProbe();
+    const importedLayers = { [layerId]: rasterLayer() };
+    replaceDocument(dispatch(), importedLayers);
+    replayTo(dispatch(), importedLayers, {});
+
+    expect(store().durableStatus).toBe('current');
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(compose).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ status: 'legacy-fallback', reason: 'ownership-unproven', cursor: -1 });
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toMatchObject({
+      status: 'legacy-fallback',
+      reason: 'ownership-unproven',
+      cursor: -1,
+    });
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durableStatus).toBe('current');
+  });
+
   it('releases the composite in finally when a navigation composition becomes stale', async () => {
     const composite = makeComposite();
     let resolveComposition!: () => void;
@@ -177,7 +210,7 @@ describe('publishDurablePresentation authority boundaries', () => {
     });
 
     const { store, dispatch } = renderWithProbe();
-    const layer = rasterLayer();
+    const layer = blankLayer();
     replaceDocument(dispatch(), { [layerId]: layer });
     replayTo(dispatch(), { [layerId]: layer }, {});
     expect(store().renderSelector.source).toBe('pending');
@@ -214,7 +247,7 @@ describe('publishDurablePresentation authority boundaries', () => {
       .mockReturnValue(appendComposition);
 
     const { store, dispatch } = renderWithProbe();
-    const layer = rasterLayer();
+    const layer = blankLayer();
     replaceDocument(dispatch(), { [layerId]: layer });
     replayTo(dispatch(), { [layerId]: layer }, {});
 
