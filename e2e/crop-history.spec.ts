@@ -1,4 +1,4 @@
-import { expect, type Page, test } from './fixtures/extended-test';
+import { expect, type Page, type TestInfo, test } from './fixtures/extended-test';
 import path from 'node:path';
 import { getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
 import type { BoundingBox } from './helpers/canvas-helpers';
@@ -375,6 +375,83 @@ async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint
   const dx = start.x - center.x;
   const dy = start.y - center.y;
   return { start, end: { x: center.x - dy, y: center.y + dx } };
+}
+
+async function installCropInputProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const events: Array<Record<string, unknown>> = [];
+    const windowWithProbe = window as Window & { __cropInputEvents?: Array<Record<string, unknown>> };
+    windowWithProbe.__cropInputEvents = events;
+    const describe = (target: EventTarget | null): unknown => {
+      if (!(target instanceof Element)) return target instanceof Document ? '#document' : null;
+      return {
+        tag: target.tagName.toLowerCase(),
+        id: target.id || null,
+        className: String(target.className),
+        draggable: target instanceof HTMLElement ? target.draggable : null,
+        connected: target.isConnected,
+      };
+    };
+    const record = (event: Event, phase: string) => {
+      const pointer = event instanceof PointerEvent ? event : null;
+      const surface = document.querySelector('.cursor-crop');
+      events.push({
+        phase,
+        type: event.type,
+        isTrusted: event.isTrusted,
+        cancelable: event.cancelable,
+        defaultPrevented: event.defaultPrevented,
+        pointerType: pointer?.pointerType ?? null,
+        pointerId: pointer?.pointerId ?? null,
+        button: pointer?.button ?? null,
+        buttons: pointer?.buttons ?? null,
+        clientX: pointer?.clientX ?? null,
+        clientY: pointer?.clientY ?? null,
+        target: describe(event.target),
+        currentSurface: describe(surface),
+        composedPath: event
+          .composedPath()
+          .slice(0, 6)
+          .map((target) => describe(target as EventTarget)),
+        hasCapture: pointer ? (surface?.hasPointerCapture(pointer.pointerId) ?? false) : null,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+    };
+    for (const type of [
+      'pointerdown',
+      'pointermove',
+      'pointerup',
+      'pointercancel',
+      'gotpointercapture',
+      'lostpointercapture',
+      'dragstart',
+      'selectstart',
+    ]) {
+      document.addEventListener(type, (event) => record(event, 'capture'), true);
+    }
+    const dispatchEvent = EventTarget.prototype.dispatchEvent;
+    EventTarget.prototype.dispatchEvent = function (event: Event): boolean {
+      if (event.type === 'pointercancel') {
+        events.push({
+          phase: 'dispatch',
+          isTrusted: event.isTrusted,
+          target: describe(this),
+          stack: new Error().stack,
+        });
+      }
+      return dispatchEvent.call(this, event);
+    };
+  });
+}
+
+async function attachCropInputProbe(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  const events = await page.evaluate(
+    () => (window as Window & { __cropInputEvents?: Array<Record<string, unknown>> }).__cropInputEvents ?? []
+  );
+  await testInfo.attach(name, {
+    body: JSON.stringify(events, null, 2),
+    contentType: 'application/json',
+  });
 }
 
 /**
@@ -2564,32 +2641,7 @@ test.describe('Crop history', () => {
       // transformed view when the crop box grows outside its current frame.
       await clickToolButton(page, 'move');
       const fit = await openCropTool(page);
-      await page.evaluate(() => {
-        const pointerEvents: Array<Record<string, unknown>> = [];
-        const windowWithProbe = window as Window & { __cropPointerEvents?: Array<Record<string, unknown>> };
-        windowWithProbe.__cropPointerEvents = pointerEvents;
-        const record = (event: Event) => {
-          const pointer = event as PointerEvent;
-          const surface = document.querySelector('.cursor-crop');
-          const snapshot = (phase: string) =>
-            pointerEvents.push({
-              phase,
-              type: event.type,
-              pointerId: pointer.pointerId,
-              button: pointer.button,
-              buttons: pointer.buttons,
-              clientX: pointer.clientX,
-              clientY: pointer.clientY,
-              target: (event.target as Element | null)?.className ?? null,
-              captured: surface?.hasPointerCapture(pointer.pointerId) ?? false,
-            });
-          snapshot('capture');
-          if (event.type === 'pointerdown' || event.type === 'pointerup') queueMicrotask(() => snapshot('settled'));
-        };
-        for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) {
-          document.addEventListener(type, record, true);
-        }
-      });
+      await installCropInputProbe(page);
       const topEdge = documentPoint(fit, fit.documentWidth / 2, 0);
       const extendedTop = documentPoint(fit, fit.documentWidth / 2, -40);
       await page.mouse.move(topEdge.x, topEdge.y);
@@ -2623,13 +2675,7 @@ test.describe('Crop history', () => {
       await page.mouse.down();
       await page.mouse.move(moveTo.x, moveTo.y, { steps: 12 });
       await page.mouse.up();
-      const pointerEvents = await page.evaluate(
-        () => (window as Window & { __cropPointerEvents?: Array<Record<string, unknown>> }).__cropPointerEvents ?? []
-      );
-      await testInfo.attach('recrop-move-pointer-events', {
-        body: JSON.stringify(pointerEvents, null, 2),
-        contentType: 'application/json',
-      });
+      await attachCropInputProbe(page, testInfo, 'recrop-move-input-events');
 
       const movedTop = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, -15);
       await expect
@@ -2665,6 +2711,7 @@ test.describe('Crop history', () => {
         .toEqual([255, 0, 0, 255]);
 
       const surface = page.locator('.cursor-crop');
+      await installCropInputProbe(page);
       const rotation = await cropRotationGesturePoints(page);
       await page.mouse.move(rotation.start.x, rotation.start.y);
       await expect(surface, 'the expanded corner still exposes the rotation handle').toHaveCSS(
@@ -2674,6 +2721,7 @@ test.describe('Crop history', () => {
       await page.mouse.down();
       await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
+      await attachCropInputProbe(page, testInfo, 'rotated-recrops-input-events');
       await expect(surface, 'the recrop can be rotated after expanding its bounds').toHaveAttribute(
         'data-rotation',
         /8[5-9]|9[0-5]/
@@ -2843,12 +2891,15 @@ test.describe('Crop history', () => {
       ).toBeDisabled();
     });
 
-    test('the crop corner exposes a rotation cursor and dragging it rotates the pending box', async ({ page }) => {
+    test('the crop corner exposes a rotation cursor and dragging it rotates the pending box', async ({
+      page,
+    }, testInfo) => {
       await openDocument(page);
       const fit = await openCropTool(page);
       await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
 
       const surface = page.locator('.cursor-crop');
+      await installCropInputProbe(page);
       const rotation = await cropRotationGesturePoints(page);
       await page.mouse.move(rotation.start.x, rotation.start.y);
       await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
@@ -2856,6 +2907,7 @@ test.describe('Crop history', () => {
       await page.mouse.down();
       await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
+      await attachCropInputProbe(page, testInfo, 'crop-corner-rotation-input-events');
 
       await expect(surface, 'the pending crop keeps the rotated angle').toHaveAttribute(
         'data-rotation',
@@ -2905,11 +2957,13 @@ test.describe('Crop history', () => {
       const cropFit = await openCropTool(page);
       await dragOnCanvas(page, cropFit, { x: 16, y: 16 }, { x: 48, y: 48 });
       const surface = page.locator('.cursor-crop');
+      await installCropInputProbe(page);
       const rotation = await cropRotationGesturePoints(page);
       await page.mouse.move(rotation.start.x, rotation.start.y);
       await page.mouse.down();
       await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
       await page.mouse.up();
+      await attachCropInputProbe(page, testInfo, 'crop-rotation-input-events');
       await expect(surface, 'the pending crop has a nonzero rotation').toHaveAttribute(
         'data-rotation',
         /8[5-9]|9[0-5]/
