@@ -1,23 +1,21 @@
 # Continue durable history from current main
 
-## Latest checkpoint — 2026-10-29 (typed-vector characterization committed; main synced)
+## Latest checkpoint — 2026-10-29 (Shape Tool E2E hardened; broad gate red; landing gates unresolved)
 
 - The raster/tablet blank-source proof remains landed on actual local `main` at
-  `730339e5983d42f52fe102d83d8bfd286137a6c5` (first parent
-  `ce1aedec0ddc619ea92414444377f1b243bc29b9`, second parent
-  `080144c22157c446b75eca7d15dabce661af10ec`, tree
-  `df24312c10849921d6b6ce6704dba9ccf66aed76`). Local `main` later advanced through the
-  quota-documentation change `c9234285913f958b1e6c8a36457251a309b045d3` in merge
-  `8ec99d6e97df3e6098565fc27b40553716de52e7` (tree
-  `44a3dbede72a0163f89915d7c53a11a0017c4f9a`). On 2026-10-29 this actual `main` checkout was
-  clean. The task branch synced it in merge `1bd4a8a4d048103591dcad16b690586ebb658eaf`
-  (parents `1c9c563fae4fed40da551213694a0b21fbba97d4` and
-  `8ec99d6e97df3e6098565fc27b40553716de52e7`, tree
-  `fb5e1ef07c3037e2dd76004244bf56d01aa7fa21`); the merge was conflict-free and carries the
-  native `Chat:` trailer. This is branch sync, not the pending `ph-14` landing.
-- `ph-12` was resolved after that landing. `ph-14` is the active characterization-only task. Verify
-  live claim and path locks before continuing or landing; the exact current diff is the live source
-  for edited files. Do not take the independently owned frame-parity or import/replacement work.
+  `730339e5983d42f52fe102d83d8bfd286137a6c5`. The task branch synced the latest committed actual
+  `refs/heads/main` pin `1b0b55a80da7da17022deea87f8248abdcbc92d4` in merge
+  `331103961e3f58eeae3cd43cccaf2be8d355cc90` (first parent
+  `a9b8060a80d7fb54a1a87966596d81ccacc690c6`, second parent
+  `1b0b55a80da7da17022deea87f8248abdcbc92d4`), with the native `Chat:` trailer. That actual main
+  worktree was clean when synced. The most recent `repo:state` check found an in-progress merge in
+  that actual main worktree (`MERGE_HEAD`, target `be4c35579896dd10e90024e449dec03c30750cf1`). Do
+  not inspect or resolve that operation here; its owner must finish it. Landing and any further main
+  sync remain gated until a fresh state check confirms it is clear. Never use the root `main-sync`
+  checkout as the baseline.
+- `ph-12` is resolved. `ph-14` remains the active characterization-only task. Its claim and all
+  eight owned path locks have been re-established on this branch; check them again before edits or
+  landing. Do not take the independently owned frame-parity or import/replacement work.
 - `ShapeToolArea` and `useLayer.createLayerFromTool` source inspection shows a shape create is a
   `NEW_LAYER_ACTION` with a tool source. Planner and StoreContext tests separately prove a valid
   shape source converts to a current typed vector entry while the ownership gate leaves presentation
@@ -28,18 +26,27 @@
   inspect the UI-created `HistoryItem` payload or directly join that browser action to the typed
   vector unit assertion. Keep those evidence claims separate. This is characterization only; no
   production eligibility or logical-authority code changed.
-- Post-sync checks now pass: 38 focused append-planner/StoreContext tests; all five
-  `e2e/source-backed-history.spec.ts` browser cases; `npm run test:e2e:unit` (21 files, 1,536
-  passed, 13 expected); full unit suite (400 files, 11,524 passed, 215 expected); `npm run tsc`;
-  `npm run build`; and `npm run lint:check` (64 existing warnings, zero errors, formatting clean).
-  The first lint run exposed only a formatting error in the new valid pencil fixture; it was fixed
-  and the full lint/format gate passed. Sol's fresh review found three proof gaps: weak E2E linkage
-  to the UI-created entry, export comparison against the same canvas, and invalid text/pencil
-  fixture args. The pixel oracle and fixture args are now fixed, and the E2E/test claims explicitly
-  distinguish source inspection, unit conversion, and browser evidence. Sol's follow-up code review
-  found no actionable issues. Luna's docs review found a stale status contradiction lower in this
-  plan; that status is being corrected and needs a final docs-only recheck. The broad E2E mirror run
-  remains.
+- The final Shape Tool test uses a 4px stroke on integer document coordinates, reports exact pixel
+  mismatch bounds and samples, requires byte-exact document/PNG/PSD composite pixels and a byte-exact
+  PSD layer crop, and allows at most one extra transparent allocation pixel at each edge because
+  pointer-coordinate roundoff can widen `shapeGeometryBounds`. Luna's fresh read-only review found
+  no actionable issue. The focused file passed locally (5/5) and on the Linux mirror. Its first
+  focused Windows mirror run was marked flaky because the earlier pasted-raster Undo click timed out
+  once and passed on retry; a repeated Windows run passed (5/5). The full mirror's per-platform
+  result artifacts also show all five `source-backed-history.spec.ts` cases passing on Linux,
+  macOS, and Windows.
+- The broad mirror run `40880825184` at exact candidate `ba9dc09a341d7fa3be8e93b86f50afa49c7fe001`
+  failed. Dispatch validation, audit, E2E unit, CI checks (lint, type-check, tests, and build), and
+  the skip baseline passed; all six browser shards failed on other suites. Failures include crop
+  resize/rotation and frame-parity cases in `e2e/crop-history.spec.ts`; the three Small Caps cases
+  in `e2e/text-tool.spec.ts`; and vector, background-conversion, and live-Brush durable-presentation
+  expectations in `e2e/undo-redo.spec.ts`. Those files are outside this task's eight held paths.
+  Preserve their current ownership boundaries; do not change them from this branch. Artifacts are
+  under `test-results/remote-e2e/40880825184-1-3c843e2081564aa49931452da0c7212f/`.
+  The last board check showed `ph-10` (crop-history audit) and `ph-13` (Small Caps parity) open and
+  unclaimed; `e2e/undo-redo.spec.ts` had no open issue reference or reservation. Treat those as
+  routing leads only and recheck ownership before any work. This broad failure blocks the `ph-14`
+  landing.
 - Before the main sync, candidate validation passed: 38 focused unit tests across the append planner and StoreContext
   suites; all five `e2e/source-backed-history.spec.ts` browser cases; `npm run test:e2e:unit` (21
   files, 1,536 passed, 13 established expected failures); full unit suite (400 files, 11,524
@@ -55,18 +62,20 @@
   `1c9c563fae4fed40da551213694a0b21fbba97d4` follows it; the main-sync merge is above.
 - An earlier landing preflight stopped before touching `main` because
   `.skills/free-model-chat-sweep.md` and `MODELS.md` were staged there. Their owner landed them in
-  `c9234285`, now included in `8ec99d6`; current main status is clean (`main` is ahead 53 and behind
-  1 versus `origin/main`). The required inventory script reported that it writes ignored
+  `c9234285`, now included in `8ec99d6`; at that preflight, main was clean (`main` was ahead 53 and
+  behind 1 versus `origin/main`). The required inventory script reported that it writes ignored
   `WORKTREES.json` into the main checkout; Git confirmed that file is ignored and `git status`
   remained clean. Avoid rerunning inventory unnecessarily. No merge into `main` has started for
   `ph-14`.
 - `HistoryItem[]` and `replayHistory()` remain logical authority. The default active root, imported
   raster baselines, source replacement/import, merge, frame-changing commits, broader source
   families, durable-first navigation, and replay-budget/cancellation behavior remain unproven. Do
-  not widen production gates. Post-sync focused/full checks and Sol's code review have passed;
-  Luna's docs-only recheck and the broad E2E mirror remain. After those pass, repeat the clean-main/
-  HEAD and `repo:state` checks, then prepare the pinned landing. After landing, resolve `ph-14`, reassess
-  live ownership, and choose the next implementation from this plan; keep the default root, vector
+  not widen production gates. The current Shape Tool characterization is not landed. The current
+  code-specific focused checks pass, while the broad mirror is red and the last observed actual-main
+  state had an unrelated in-progress merge; both gates must clear before landing. Afterward, repeat the
+  clean-main/HEAD and `repo:state` checks, rerun the broad gate on the exact candidate, and prepare
+  the pinned landing only when all gates pass. After landing, resolve `ph-14`, reassess live
+  ownership, and choose the next implementation from this plan; keep the default root, vector
   publication, import/replacement ownership, frame parity, authority cutover, and replay-budget
   gates closed until their proofs are complete.
 
@@ -441,18 +450,25 @@ provider snapshots below are historical evidence. The disabled-root UI path is a
 raster paste and tablet blank creation. Do not repeat that discovery task or describe it as
 unproven. The vector test is characterization only and does not open the production gate.
 
-For the current `ph-14` candidate, verify the live claim and all eight held paths before landing.
-The earlier Sol and Luna reviews were pre-sync and are historical only. The fresh Sol code review
-found no actionable findings; Luna's current docs review caught the stale status contradiction
-below, which must be corrected and re-reviewed. Local validation on the synced candidate passes,
-but the broad E2E mirror run is still required. Do not stage or commit until both review groups cover
-the exact final diff. Then stage only those owned paths, commit with
-`Chat: 01a17f24-9224-7aa0-a412-3afafa09f797`, and run the full mirror gate on the clean candidate.
-Land only after that gate completes. Use the pinned local-main landing procedure. The plan is
-tracked; stage it normally. Recheck actual `refs/heads/main`, checkout mappings, cleanliness,
-`repo:state`, candidate parents/tree and current inventory immediately before landing. Never use
-the root `main-sync` checkout as the baseline. Any product-behavior or gate-related edit after
-review invalidates the relevant final review/gate evidence and must be checked again.
+For the current `ph-14` candidate, the live claim and eight path locks are held by this branch.
+The focused Shape Tool suite passes locally and on each platform; the broad mirror at `ba9dc09a`
+fails on crop-history, Small Caps, and durable-presentation cases outside this task's locks. Do
+not stage or edit those paths without their owners' handoff. The full broad gate must be green on
+the exact candidate before landing. A current read-only Luna review of the Shape Tool test found no
+actionable issue. Continue to follow the current operator instruction not to run Sol or Terra
+reviewers; obtain fresh allowed read-only reviews for any new non-trivial changes.
+
+The most recent `repo:state` check reported an in-progress merge in the actual local `main`
+worktree. Do not inspect or resolve it here, and do not start a landing. Once its owner completes
+it, refresh `git worktree list --porcelain`, confirm the actual `refs/heads/main` checkout and clean status,
+run `npm run repo:state`, and sync that exact committed main pin into this branch with a no-commit
+merge for inspection. Review the merge, commit it with the native `Chat:` trailer, and rerun all
+gates the sync invalidates. Only after the full broad mirror is green should the pinned local-main
+landing procedure begin. Recheck live issue/file locks, checkout mappings, both parents, tree,
+native chat ID, and current inventory immediately before landing; never use the root `main-sync`
+checkout. After landing, resolve `ph-14`, recheck ownership, and select the next bounded source
+family from this plan. Any product-behavior or gate-related edit after review invalidates the
+relevant review and gate evidence.
 
 After this candidate lands, resolve `ph-14` and recheck current ownership before choosing another
 bounded slice. The frame-parity and import/replacement investigations are independent and remain in
@@ -677,13 +693,17 @@ legacy path and record an explicit blocked/unproven handoff with the next action
 ## Remaining status
 
 Broader migration: **unproven**. The bounded raster/tablet blank-source proof is landed on actual
-local `main` at `730339e5983d42f52fe102d83d8bfd286137a6c5`. `ph-12` was resolved after landing;
-`ph-14` tracks the committed typed-vector characterization, still unlanded at this checkpoint. The
-task branch includes current `main` through sync merge `1bd4a8a4d048103591dcad16b690586ebb658eaf`;
-post-sync focused, E2E unit, full unit, browser, typecheck, build, and lint gates now pass. Sol's
-fresh code review found no actionable findings. Luna's docs review found and is helping correct a
-stale status contradiction in this plan; a docs-only recheck and the broad E2E mirror run remain.
-Pre-sync reviews and validation are historical evidence only. The characterization does not widen
-production eligibility. After landing, reassess frame and import/replacement
-worktree ownership before selecting the next slice. Keep vector publication, Slices 2A through 4,
-and all other unproven source families gated until their listed evidence is complete.
+local `main` at `730339e5983d42f52fe102d83d8bfd286137a6c5`. `ph-12` is resolved; `ph-14` remains
+claimed and unlanded. The full mirror tested code candidate
+`ba9dc09a341d7fa3be8e93b86f50afa49c7fe001`, which includes committed main through
+`1b0b55a80da7da17022deea87f8248abdcbc92d4` via sync merge
+`331103961e3f58eeae3cd43cccaf2be8d355cc90`. Its Shape Tool characterization passes focused local,
+Linux, Windows, and full-mirror per-platform checks without changing production eligibility. The
+full broad mirror fails on owned-by-others crop-history, Small Caps, and durable-presentation
+expectations. The last observed state of the actual local main worktree was an unrelated
+in-progress merge. Do not land or widen production gates until both blockers are cleared. When
+main is clear, sync its latest committed pin, rerun the required exact-candidate gates, then use
+the pinned landing procedure.
+After landing, reassess frame and import/replacement ownership before selecting the next slice.
+Keep vector publication, Slices 2A through 4, and all other unproven source families gated until
+their listed evidence is complete.
