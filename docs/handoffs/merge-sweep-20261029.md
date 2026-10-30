@@ -230,3 +230,11 @@ The recent `fix-push-gate-text-toolbar-20261030` worktree is classified
 `landed-main-for-push.bundle` and recent activity at `02:42:53` are preserved.
 Do not treat its tip being contained in main as permission to discard that
 payload.
+
+The dirty `test-scan` worktree is also preserved. Its staged additions
+`TEST-AUDIT-RESULTS.md` and `audit-findings.json` contain the results of a
+parallel test-suite audit; the audit is unique, uncommitted material even
+though its branch has no commits ahead of main. The checkout was created at
+`2026-10-29 23:13:08` and last written at `00:51:36`; its four-hour mark is
+`03:13:08`, but it is not a disposal candidate while these reports remain
+unreviewed or unsalvaged.
