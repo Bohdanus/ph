@@ -198,3 +198,35 @@ This cleanup session also created the clean helper worktree
 currently `in-use` by this session and was created at `01:58:23`; do not remove
 it while the session is active. Once ownership ends and the age gate is met,
 handle it only through the normal inventory and disposer workflow.
+
+## Completed cleanup (2026-10-30 02:47 +01:00)
+
+After both creation-age thresholds passed, the guarded disposer removed the
+two clean, landed checkouts. It anchored each tip before deleting its branch:
+
+- `land-wsl` / `land/wsl`: `decafba0de2d18452df3b2e58a02836aadf0be16` is
+  retained at `refs/keep/disposed/land-wsl`.
+- `sync-origin-main-20261029` /
+  `chore/sync-origin-main-20261029`:
+  `ecb18176a213962ec631c76ac5ebbed89656f6e8` is retained at
+  `refs/keep/disposed/chore-sync-origin-main-20261029`.
+
+The inventory was regenerated after each disposal. The final snapshot at
+`2026-10-30T01:46:38.113Z` is based on main
+`b44373895654b097cb5693abecb85b47638e56df` and reports 18 worktrees, one
+disposal candidate, five ready-to-land, six at-risk, four in-use, and two
+undecided. `npm run repo:state` is clean across all 18 worktrees;
+`npm run branches:orphan` found none; `npm run swarm -- doctor --dry-run`
+found no stale claims or locks. The main-checkout sync session remains active;
+this cleanup changed no main files or ref.
+
+Preserve `sync-origin-main-20261030`: its tip is contained in main, it is clean,
+and its disposal dry-run passes, but it was created at `00:40:06`, so at
+`02:47` it is only about 2h07 old. Its earliest four-hour threshold is
+`04:40:06`; regenerate inventory and repeat every gate then.
+
+The recent `fix-push-gate-text-toolbar-20261030` worktree is classified
+`in-use` with `derivedLive: true`; its untracked
+`landed-main-for-push.bundle` and recent activity at `02:42:53` are preserved.
+Do not treat its tip being contained in main as permission to discard that
+payload.
