@@ -238,3 +238,12 @@ though its branch has no commits ahead of main. The checkout was created at
 `2026-10-29 23:13:08` and last written at `00:51:36`; its four-hour mark is
 `03:13:08`, but it is not a disposal candidate while these reports remain
 unreviewed or unsalvaged.
+
+The detached `e2e-hardening-plan` worktree is `undecided` and not a cleanup
+target. Although its `HEAD` is an ancestor of main and tracked status is clean,
+it contains ignored `.kilo/plans/e2e-hardening-plan.md`, a substantial final
+discovery plan with open test defects and evidence. The inventory reports its
+status as unreadable, and the disposer does not accept `undecided`; preserve
+the plan rather than treating clean tracked status as evidence of no useful
+data. It was created at `2026-10-29 23:12:47`, but its age does not change this
+decision.
