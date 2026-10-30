@@ -7,6 +7,7 @@ import {
   completeWithFreeModel as completeWithFreeModelImplementation,
   CONTROL_PLANE_TIMEOUT_MS,
   discoverGroqKeyFiles,
+  isContentPolicyError,
   loadCatalogs,
   main,
   MAX_CATALOG_RESPONSE_BYTES,
@@ -43,7 +44,7 @@ function readableFetch(fetchImpl) {
   return vi.fn(async (...args) => responseWithReadableBody(await fetchImpl(...args)));
 }
 
-function catalogFetch({ kilo = [], openrouter = [], opencode = [], groq = [], chat }) {
+function catalogFetch({ kilo = [], openrouter = [], opencode = [], groq = [], keyInfo, chat }) {
   return readableFetch(async (url, options = {}) => {
     let response;
     if (url.endsWith('/models') && url.includes('openrouter')) {
@@ -52,6 +53,8 @@ function catalogFetch({ kilo = [], openrouter = [], opencode = [], groq = [], ch
       response = { ok: true, json: async () => ({ data: opencode }) };
     } else if (url.includes('api.groq.com') && url.endsWith('/models')) {
       response = { ok: true, json: async () => ({ data: groq }) };
+    } else if (url.includes('/api/v1/key')) {
+      response = keyInfo?.() ?? { ok: false, status: 503 };
     } else if (url.endsWith('/models')) {
       response = { ok: true, json: async () => kilo };
     } else {
@@ -319,6 +322,10 @@ describe('free model rotation', () => {
       openrouter: [openRouterRow('openrouter/model')],
       groq: [{ id: 'openai/gpt-oss-120b' }],
       opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      keyInfo: () => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 1000, remaining: 990 } } }),
+      }),
       chat,
     });
     const runKilo = vi.fn().mockResolvedValue({ error: 'Kilo quota', exhaustSource: true });
@@ -932,7 +939,87 @@ describe('free model rotation', () => {
   });
 });
 
+describe('provider content policy handling', () => {
+  it.each([
+    ['content-filter error code', { error: { code: 'content_filter' } }],
+    ['content policy message', { error: { message: 'This prompt violates our usage policy.' } }],
+    [
+      'OpenRouter prompt-injection guardrail',
+      { error: { message: 'Request blocked: prompt injection patterns detected' } },
+    ],
+    ['prompt rejection message', { error: { message: 'Prompt was rejected by the model.' } }],
+    ['filtered completion finish reason', { choices: [{ finish_reason: 'content_filter' }] }],
+    ['filtered completion result', { choices: [{ content_filter_results: { violence: { filtered: true } } }] }],
+    ['filtered prompt result', { prompt_filter_results: [{ content_filter_results: { hate: { filtered: true } } }] }],
+  ])('detects an explicit content-policy signal: %s', (_label, payload) => {
+    expect(isContentPolicyError(payload)).toBe(true);
+  });
+
+  it.each([
+    ['organization model policy', { error: { message: 'Model not allowed by organization policy.' } }],
+    [
+      'moderation system unavailable',
+      { error: { code: 'content_filter_error', message: 'Content filter unavailable.' } },
+    ],
+    ['ordinary rate limit', { error: { code: 429, message: 'Rate limited.' } }],
+    ['generic bad request', { error: { message: 'Bad request.' } }],
+    ['empty payload', null],
+  ])('does not confuse a non-rejection with a content-policy block: %s', (_label, payload) => {
+    expect(isContentPolicyError(payload)).toBe(false);
+  });
+
+  it('stops provider fallback after an explicit HTTP content-policy rejection', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: { code: 403, message: 'Request blocked by content filter.' } }),
+    });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+
+    await expect(completeWithFreeModel('blocked prompt', { fetchImpl, openRouterKey: 'test' })).rejects.toThrow(
+      /provider content policy rejected or filtered this request/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops provider fallback when a successful response has finish_reason content_filter', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ model: 'k1', choices: [{ message: { content: '' }, finish_reason: 'content_filter' }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'o1:free',
+          choices: [{ message: { content: 'should not be used' }, finish_reason: 'stop' }],
+        }),
+      });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+
+    await expect(completeWithFreeModel('filtered response', { fetchImpl, openRouterKey: 'test' })).rejects.toThrow(
+      /provider content policy rejected or filtered this request/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('free model runner CLI', () => {
+  it('prints help without making network requests', async () => {
+    const fetchImpl = vi.fn();
+    const stdout = { write: vi.fn() };
+
+    const code = await main(['--help'], { fetchImpl, stdout });
+
+    expect(code).toBe(0);
+    expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('Usage: node scripts/free-model-pool.mjs'));
+    expect(stdout.write).toHaveBeenCalledWith(expect.stringContaining('--help prints this usage'));
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('writes a bounded completion for a catalog-verified free model when usage is omitted', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-pool-'));
     const promptPath = join(directory, 'prompt.txt');
