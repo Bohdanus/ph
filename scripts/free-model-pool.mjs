@@ -375,8 +375,12 @@ function failureReason(response, payload) {
   return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
 }
 
+function isAccountFailure(status) {
+  return status === 401 || status === 402;
+}
+
 function isPerKeyFailure(status) {
-  return status === 401 || status === 402 || status === 429;
+  return isAccountFailure(status) || status === 429;
 }
 
 function hasReportedNonZeroCost(usage) {
@@ -635,6 +639,35 @@ export async function completeWithFreeModel(
   const exhaustedGroqKeys = new Set();
   const attempts = new Map();
   const errors = [];
+  const handleOpenRouterFailure = async (status, model) => {
+    if (isAccountFailure(status)) {
+      exhausted.add('openrouter');
+      return;
+    }
+    if (status !== 429) return;
+
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (quota.reason === 'ok') {
+      onOpenRouterQuota(quota);
+      if (quota.remaining <= 0) {
+        exhausted.add('openrouter');
+        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter models.\n');
+        return;
+      }
+      stderr.write(
+        `OpenRouter model ${model} returned HTTP 429 with ${quota.remaining} daily free requests remaining; trying another verified-free model.\n`
+      );
+      return;
+    }
+    if (/^http_(?:401|402)$/.test(quota.reason)) {
+      exhausted.add('openrouter');
+      stderr.write(`OpenRouter quota check returned ${quota.reason}; skipping OpenRouter for this run.\n`);
+      return;
+    }
+    stderr.write(
+      `OpenRouter model ${model} returned HTTP 429; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so trying another verified-free model within the per-run limit.\n`
+    );
+  };
   if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
     exhausted.add('kilo');
     errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
@@ -654,7 +687,7 @@ export async function completeWithFreeModel(
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
       if (quota.remaining <= 0) exhausted.add('openrouter');
-    } else if (/^http_(?:401|402|429)$/.test(quota.reason)) {
+    } else if (/^http_(?:401|402)$/.test(quota.reason)) {
       exhausted.add('openrouter');
       stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
     } else if (quota.reason !== 'no_key') {
@@ -829,7 +862,7 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
+      await handleOpenRouterFailure(response.status, candidate.model);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -868,7 +901,7 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
+    await handleOpenRouterFailure(response.status, candidate.model);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
@@ -886,12 +919,13 @@ function usage() {
     'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
     'Kilo completions use the authenticated Kilo CLI; set KILO_CLI only when its automatic discovery fails.\n' +
     'Inference calls can run for up to five minutes; catalog and quota checks use a separate 15-second timeout.\n' +
-    'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
-    'OpenCode free models run through the opencode CLI with tool permissions denied.\n' +
+    'Set GROQ_FREE_PLAN=1 only for confirmed Free-plan accounts; keys come from GROQ_API_KEY or comma-separated GROQ_API_KEYS.\n' +
+    'Groq limits are organization-level; use keys from distinct organizations. Inference reads environment keys, not saved files.\n' +
+    'OpenRouter 401/402 exhausts its source; model 429 checks the daily counter before another free-model attempt.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
     '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.\n' +
-    '--probe-groq probes one or more Groq API keys to verify authentication; --groq-key-dir discovers api_key files in a directory (default ~/.config/groq); --groq-key-files is a comma-separated list of explicit key file paths. GROQ_API_KEYS (comma-separated) or GROQ_API_KEY may also supply keys directly. No inference request is sent.\n' +
-    'With multiple Groq keys, the pool rotates to the next key on HTTP 401/402/429; a permanently invalid key (401) is retired for the run while a single account is never reused to evade its per-account limits.\n'
+    '--probe-groq checks supplied keys or discovers ~/.config/groq/api_key* files for authentication only; it sends no inference request.\n' +
+    'Inference rotates supplied Groq keys on HTTP 401/402/429; only distinct organizations should be configured because Groq limits are organization-level.\n'
   );
 }
 
