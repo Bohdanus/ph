@@ -694,6 +694,8 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.code).toBe(1);
     expect(r.err).toContain('run the guarded recovery preflight from this worktree');
     expect(r.err).toContain('npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"');
+    expect(r.err).toContain('--preserve-matching-worktree preflight');
+    expect(r.err).toContain('--confirm-owner-stopped');
   });
 
   it('does not print the recovery command for an AUTO_MERGE on main', () => {
