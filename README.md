@@ -28,6 +28,11 @@ A web-based photo editor built with React 19, TypeScript, Vite, and Tailwind CSS
 - Node.js 24+ (`.nvmrc`, and the version CI pins)
 - npm 10+
 
+#### WSL2 (optional)
+
+For native Linux development and headless Playwright tests on Windows, see
+[`docs/WSL-SETUP.md`](docs/WSL-SETUP.md).
+
 ### Installation
 
 ```bash
