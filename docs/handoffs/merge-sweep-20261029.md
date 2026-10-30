@@ -403,3 +403,31 @@ The latest inventory is based on clean `main` at
 analyzer candidate; no at-risk worktree remains. `repo:state` is clean, the
 orphan-branch report is empty, and `swarm doctor --dry-run` reports no stale
 claims or locks. Main remains in use; no landing was attempted.
+
+## Age-gated cleanup completed (2026-10-30 10:52 +01:00)
+
+- Removed `e2e-input-guards` only after more than four hours since its last
+  commit (`7f1501bb01cc4d830b04857e94dcbd4545b899e8`). The fresh inventory
+  classified it as clean, landed, unprotected, and not live; the guarded
+  dry-run passed. Its commit is anchored at
+  `refs/keep/disposed/fix-e2e-input-guards`; the worktree and branch were
+  removed.
+- Removed `merge-sweep-20261029-2220` under the same checks, after more than
+  four hours since its last commit (`95207d48e7174332f7cf09ce405cdb73a8debd69`).
+  Its commit is anchored at
+  `refs/keep/disposed/audit-merge-sweep-20261029-2220`; the worktree and branch
+  were removed.
+- Regenerated the inventory after both removals. It reports 6 worktrees, no
+  disposal candidates, 1 at-risk worktree, 2 in-use, 2 undecided, and
+  `activity-analyzer` as ready to land. Do not treat that analyzer label as
+  approval: its import-failing tests, overlapping-interval double counting,
+  and raw activity-payload output still block landing.
+- Preserve `systemic-hardening` (13 commits ahead, 39 behind, four dirty files),
+  detached `e2e-hardening-plan`, pooled `mewing-perfume`, and the unique
+  `task/wsl-files` branch-only patch. No additional worktree was safe to land
+  or remove.
+- Main remained clean at
+  `589a60b2448b27f6cdf83546459488a55ae35dae`, equal to `origin/main`; no
+  landing was attempted. Post-cleanup `repo:state` was clean, the orphan-branch
+  report was empty, swarm status showed no claims or locks, and
+  `swarm doctor --dry-run` found no stale signals.
