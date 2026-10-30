@@ -67,3 +67,22 @@ Entries are added per [ORCHESTRATION.md](../ORCHESTRATION.md#incoming-commits-re
 - 96b9387b (96b9387b24a9b5f450f7b7879b8ed58dd4e95f4c) "fix: cancel magnetic lasso drafts during replay" — Bohdan Kalynovskyi (Dan)
 - d6968c47 (d6968c47e1ae5ba6a85bc4cd9bb2e0adad9b0176) "docs(history): finalize validated migration restart checkpoint" — Bohdan Kalynovskyi (Dan)
 - eeed3af4 (eeed3af4b613d7a14e2821016038e7ee05508769) "feat(history): stage durable raster and blank layer creates" — Bohdan Kalynovskyi (Dan)
+
+## 2026-10-30 — origin/main (fetch + merge)
+
+- 67e4ceb8 (67e4ceb8bf81a0ecdc5cfabba4f3412ddfea2eb6) "Merge docs/groq-routing-notes into main" — Bohdan Kalynovskyi (Dan)
+- f5210606 (f5210606dc0092eb8c356e48cdb6232e0a214529) "docs(modes): add Groq Free-plan routing and use-case guidance" — Kilo Agent
+
+## 2026-10-29 — origin/main (fetch + merge)
+
+- db0c4f66 (db0c4f666b2d10e7de74b839ba81d6d40bef227c) "Merge task/free-provider-order-20261029 into main" — Bohdan Kalynovskyi (Dan)
+- 23057e47 (23057e47b1890ec7a833f71f3f5a18e0ebdbaf4c) "fix: honor free provider fallback order" — Bohdan Kalynovskyi (Dan)
+- dc02bede (dc02bededf107f863471fd99a77d26a466d54dec) "Merge fix/worktree-main-protection-20261029 into main" — Bohdan Kalynovskyi (Dan)
+- b8143828 (b81438280a6f2d49f76eca8215925c229355f95e) "fix: protect linked main in worktree inventory" — Bohdan Kalynovskyi (Dan)
+- e87c05ff (e87c05ff72ff895112cefdc88c9d70ca836670a1) "Merge task/free-compute-recovery-20261029 into main" — Bohdan Kalynovskyi (Dan)
+- be4c3557 (be4c35579896dd10e90024e449dec03c30750cf1) "sync: latest main into free compute recovery" — Bohdan Kalynovskyi (Dan)
+- 01dbf778 (01dbf778bf03b86a24cbb535fed74304c90539fe) "sync: main into free compute recovery" — Bohdan Kalynovskyi (Dan)
+- 54d59ba3 (54d59ba3346ce1aa5c655f12b830b5307491ce8d) "fix: pipe free Kilo prompts through stdin" — Bohdan Kalynovskyi (Dan)
+- 7f3d3afe (7f3d3afef35c071ebdef3172ebc4e9b35641ba89) "docs: index free Kilo completion profile" — Bohdan Kalynovskyi (Dan)
+- 38511ab3 (38511ab31bd233b9fb2d7c1b342aee9c1fd5ad6d) "Merge current main into free-compute recovery" — Bohdan Kalynovskyi (Dan)
+- 25acbe94 (25acbe944d6771bf86163ff67900f56de3a96be2) "fix: route free completions through authenticated Kilo CLI" — Bohdan Kalynovskyi (Dan)
