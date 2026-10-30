@@ -157,6 +157,26 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', cost
     }
   });
 
+  it('rejects malformed JSONL stdout as a contained completion error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
+    const command = join(directory, 'fake-kilo');
+    await writeExecutable(
+      command,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'partial response' } }));
+console.log('{"type":');
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }));`
+    );
+
+    try {
+      await expect(runKiloCompletion({ command, model: 'model:free', prompt: 'prompt' })).resolves.toEqual({
+        error: 'Kilo CLI returned malformed JSONL output',
+        exhaustSource: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('exhausts a Kilo source after an authentication or quota status and hides provider bodies', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
     const command = join(directory, 'fake-kilo');

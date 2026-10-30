@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toOwnedBitmap } from '../materialization-bitmap.ts';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('toOwnedBitmap', () => {
   it('uses createImageBitmap when the platform provides it', async () => {

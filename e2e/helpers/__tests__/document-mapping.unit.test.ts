@@ -461,6 +461,31 @@ describe('documentFrame', () => {
     expect(documentToCanvasOffset(BOX, CROP.x, CROP.y, cropped, CROP)).toEqual({ x: offsetX, y: offsetY });
   });
 
+  it('round-trips off-origin points with both a crop frame and non-default document size', () => {
+    const cropped: DocumentSize = { width: 680, height: 560 };
+    const points = [
+      { x: CROP.x, y: CROP.y },
+      { x: CROP.x + 123.25, y: CROP.y + 78.5 },
+      { x: CROP.x + cropped.width, y: CROP.y + cropped.height },
+    ];
+
+    for (const box of [BOX, { x: 0, y: 0, width: 1200, height: 400 }]) {
+      const scale = Math.min(box.width / cropped.width, box.height / cropped.height);
+      const frameOrigin = documentToCanvasOffset(box, CROP.x, CROP.y, cropped, CROP);
+
+      expect(frameOrigin.x).toBeCloseTo((box.width - cropped.width * scale) / 2, 9);
+      expect(frameOrigin.y).toBeCloseTo((box.height - cropped.height * scale) / 2, 9);
+
+      for (const point of points) {
+        const offset = documentToCanvasOffset(box, point.x, point.y, cropped, CROP);
+        const back = canvasOffsetToDocument(box, offset.x, offset.y, cropped, CROP);
+
+        expect(back.x).toBeCloseTo(point.x, 9);
+        expect(back.y).toBeCloseTo(point.y, 9);
+      }
+    }
+  });
+
   it('does not mutate the frame it is handed', () => {
     const frame: DocumentFrameOrigin = { x: 120, y: 40 };
     const snapshot = { ...frame };
