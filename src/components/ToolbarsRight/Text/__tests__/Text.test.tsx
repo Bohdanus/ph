@@ -447,7 +447,7 @@ describe('Text toolbar', () => {
     const tracking = screen.getByLabelText(/Tracking/) as HTMLInputElement;
     expect(tracking.value).toBe('0');
     // The readout follows the field rather than going blank with it.
-    expect(screen.getByText('Tracking')).toHaveTextContent(/^Tracking0$/);
+    expect(screen.getByTestId('tracking-readout')).toHaveTextContent(/^0$/);
 
     for (const name of ['All Caps', 'Small Caps', 'Underline', 'Strikethrough']) {
       expect(screen.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false');
@@ -987,7 +987,7 @@ describe('Text toolbar', () => {
       expect(tracking.max).toBe('1000');
       expect(tracking.step).toBe('1');
       expect(tracking.value).toBe('250');
-      expect(screen.getByText('Tracking')).toHaveTextContent(/^Tracking250$/);
+      expect(screen.getByTestId('tracking-readout')).toHaveTextContent(/^250$/);
     });
 
     it('steps the field by one unit per arrow key', () => {
