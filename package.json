@@ -42,6 +42,7 @@
     "free:models": "node scripts/free-model-pool.mjs",
     "free:quarantine": "node scripts/free-model-quarantine.mjs",
     "free:research": "node scripts/free-research.mjs",
+    "free:chat-search": "node scripts/free-chat-search.mjs",
     "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
     "gate:verify": "npm run --silent tsc && npm run --silent build",
     "gate:commit": "node scripts/quiet-command.mjs lint-staged --fail-on-changes --no-stash && npm run --silent gate:verify",
