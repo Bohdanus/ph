@@ -274,3 +274,63 @@ The helper worktree `cleanup-merge-sweep-20261030-0157` is still `in-use` by
 this session. It is clean and based on an older main tip, but must not be
 removed while this chat is active. Reassess it through the normal disposer
 workflow after this session ends.
+
+## Follow-up landing and cleanup (2026-10-30 05:33 +01:00)
+
+The WSL setup was landed on `main` as `2dddc8ef5e64a66f8c7d486b9e7a98b3c40a4229`.
+Its parents are `b44373895654b097cb5693abecb85b47638e56df` and
+`b794880adede10e52677ed163f0500b56d1d730b`; its tree is
+`133391e4fb1a0c8956333268cac97f1243ba945a`. The setup guide warns that binding
+Vite to `0.0.0.0` can expose the development server to reachable local-network
+devices. In the synced candidate, `npm run tsc`, `npm run build`, and `bash -n`
+against the committed setup-script blob passed. The full `npm run test` run
+reported 15 failed files and 57 failed tests (11,508 passed, 215 expected
+failures, 18 skipped); failures include Windows/POSIX path, symlink, shell-shim,
+and timeout assumptions. No clean-main baseline was run, so these failures are
+not attributed to the WSL change.
+
+After the four-hour threshold and fresh disposal gates, the guarded disposer
+removed the `prepare-wsl` and `task-wsl-files` worktrees. It retained
+`prep/wsl` at `refs/keep/disposed/prep-wsl`; `task/wsl-files` was removed with
+`--keep-branch` because its sole unmatched commit is a reviewed unsafe duplicate
+of the landed WSL setup. The branch remains preserved as
+`7241b8ca4a6f67b5135625ee33fa715f45b15ab0` and must not be treated as merged.
+The superseded `fix-push-gate-text-toolbar-20261030` worktree was also removed
+through the disposer; its tip is retained at
+`refs/keep/disposed/fix-push-gate-text-toolbar-20261030`, and its branch was
+left intact after safe deletion was refused.
+
+The post-disposal inventory at `2026-10-30T05:33:35.998Z` is based on clean
+main `2dddc8ef5e64a66f8c7d486b9e7a98b3c40a4229` and reports 14 worktrees: two
+ready-to-land, one disposal candidate, seven at-risk, two in-use, and two
+undecided. `repo:state` reports no operation in progress; the orphan report
+shows the preserved unmatched `task/wsl-files` patch and two ancestor branches;
+the swarm doctor reports no stale claims or locks. `fix/e2e-input-guards`
+remains in-use because the board still reports a live agent. Although its prior
+review and focused tests passed, do not sync, test, or land it until a fresh
+inventory confirms the live signal has expired. `fix/activity-analyzer` remains
+unsafe to land for the correctness and privacy defects recorded above.
+
+Preserve the dirty worktrees and the two undecided worktrees from the inventory.
+In particular, do not dispose the active cleanup worktree or infer that a
+branch-only unmatched patch is expendable merely because its checkout is gone.
+
+## E2E input guards landed (2026-10-30 06:42 +01:00)
+
+The board's live signal for `fix/e2e-input-guards` expired. A fresh review
+against main `2dddc8ef5e64a66f8c7d486b9e7a98b3c40a4229` confirmed the four-file
+patch rejects non-finite color-sampling radii and page-scroll offsets, bounds
+large finite radii to the image, and covers fractional-radius sampling. Its
+synced candidate was `7f1501bb01cc4d830b04857e94dcbd4545b899e8`, tree
+`b24f7c4f59db050af4e10ae65132eaec09e062e9`; the focused E2E helper tests passed
+(369 passed, 5 expected failures) and `npm run tsc` passed.
+
+The candidate was pinned into main as
+`7c5585771b342768a23c24c24e58d91d0e00199c`, with first parent
+`2dddc8ef5e64a66f8c7d486b9e7a98b3c40a4229`, second parent the reviewed
+candidate, and tree `b24f7c4f59db050af4e10ae65132eaec09e062e9`. Main is clean.
+The branch tip is now an ancestor of main and the checkout is clean, but the
+sync wrote to the worktree at `2026-10-30 06:37 +01:00`. Preserve it until the
+four-hour inactivity threshold has passed, then regenerate inventory and run
+the full disposal preflight; do not treat its older checkout creation time as
+proof that the recent activity is stale.
