@@ -82,6 +82,10 @@ If it is not reachable, start Vite with `npm run dev -- --host 0.0.0.0` and use
 the WSL IP address from Windows. Find that address inside WSL with
 `hostname -I | awk '{print $1}'`.
 
+Binding to `0.0.0.0` listens on all WSL interfaces; depending on WSL networking
+and firewall settings, the server may be reachable from other devices on your
+local network. Use it only on a trusted network, and stop the server when done.
+
 Run the headless checks with:
 
 ```bash
