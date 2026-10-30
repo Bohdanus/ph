@@ -411,22 +411,35 @@ describe('Reasoning parameter is not sent to any provider', () => {
 });
 
 describe('provider rate-limit diagnostics', () => {
-  it('reports Retry-After and exhausts the source without retrying it', async () => {
-    const fetchImpl = catalogFetch({
-      kilo: [],
-      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
-      chat: vi.fn().mockResolvedValue(
+  it('rotates to next OpenRouter model on 429 without exhausting the provider', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
           status: 429,
           headers: { 'retry-after': '30', 'content-type': 'application/json' },
         })
-      ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'rotated' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      chat,
     });
-    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
-      /429: rate limited \(Retry-After: 30\)/
-    );
+    const result = await completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk' });
+    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'rotated' });
     const completionCalls = fetchImpl.mock.calls.filter(([url]) => String(url).includes('openrouter.ai/api/v1/chat'));
-    expect(completionCalls).toHaveLength(1);
+    expect(completionCalls).toHaveLength(2);
+    expect(JSON.parse(completionCalls[0][1].body).model).toBe('r1:free');
+    expect(JSON.parse(completionCalls[1][1].body).model).toBe('r2:free');
   });
 
   it('preserves Retry-After when a rate-limit response body is malformed', async () => {

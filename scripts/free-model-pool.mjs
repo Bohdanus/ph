@@ -829,7 +829,7 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
+      if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -868,7 +868,7 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
+    if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
