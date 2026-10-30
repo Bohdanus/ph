@@ -77,11 +77,12 @@ export default defineConfig({
   // trace, no diff image. The timeout and the evidence it was meant to preserve cancel
   // out, and that is the whole reason this number is not 1800 or more.
   //
-  // Hosted two-way shards use one worker on some runners; a Windows shard recently
-  // needed 15 minutes. Keep enough headroom for retries, with the Playwright limit
-  // below every workflow job timeout so its reports upload before GitHub kills it.
+  // The macOS two-way shard reached the 20-minute limit after 280 tests, leaving
+  // 11 assigned tests unrun. Give macOS 30 minutes while preserving 10 minutes
+  // before its 40-minute job timeout for report upload. Linux and Windows keep
+  // 20 minutes because this run had no timeout there (jobs 35/40 minutes).
   // Local diagnostics retain the longer limit, and --debug disables it.
-  globalTimeout: process.env.CI ? 20 * 60_000 : 45 * 60_000,
+  globalTimeout: process.env.CI ? (process.platform === 'darwin' ? 30 : 20) * 60_000 : 45 * 60_000,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
   // machine is not running two browsers per core. The port argument that used to sit

@@ -424,7 +424,8 @@ function isMissingPath(error) {
  * matches.
  */
 function isOutsideRepoPath(path) {
-  return path.startsWith('/') || path.startsWith('..') || /^[a-z]:\//i.test(path);
+  const p = String(path ?? '').split('\\').join('/');
+  return p.startsWith('/') || p === '..' || p.startsWith('../') || /^[a-z]:/i.test(p);
 }
 
 /**
@@ -432,7 +433,7 @@ function isOutsideRepoPath(path) {
  * components. A failed stat leaves a differently-cased path distinct.
  */
 function canonicalizeExistingPathCase(root, path) {
-  if (!root || path.startsWith('/') || /^[a-z]:\//i.test(path) || path === '..' || path.startsWith('../')) {
+  if (!root || isOutsideRepoPath(path)) {
     return path;
   }
 

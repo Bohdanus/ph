@@ -176,43 +176,51 @@ describe('dispose preflight', () => {
     expect(verdict.ok).toBe(true);
   });
 
-  it('permits a net-no-op non-ancestor only with a matching main snapshot and recovery deletion proof', () => {
-    const inventory = greenInventory({
-      record: {
-        action: ACTION.DISPOSE,
-        prunable: true,
-        mergedIntoMain: false,
-        mergeResultMatchesBase: true,
-        patchEquivalence: 'unmerged',
-        mustNotPrune: false,
-        derivedLive: false,
-        writeHistory: { derivedChatIds: [] },
-      },
-    });
-    const verdict = green({ inventory });
-    expect(verdict.ok).toBe(true);
-    expect(verdict.deleteUnmergedBranch).toBe(true);
-    expect(verdict.deleteReason).toBe('merge-tree-no-op');
-    expect(verdict.expectedBaseHead).toBe('base-sha');
-  });
+  it.each(['main', 'refs/heads/main'])(
+    'permits a net-no-op non-ancestor with a matching %s snapshot and recovery deletion proof',
+    (base) => {
+      const inventory = greenInventory({
+        base,
+        record: {
+          action: ACTION.DISPOSE,
+          prunable: true,
+          mergedIntoMain: false,
+          mergeResultMatchesBase: true,
+          patchEquivalence: 'unmerged',
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: { derivedChatIds: [] },
+        },
+      });
+      const verdict = green({ inventory });
+      expect(verdict.ok).toBe(true);
+      expect(verdict.deleteUnmergedBranch).toBe(true);
+      expect(verdict.deleteReason).toBe('merge-tree-no-op');
+      expect(verdict.expectedBaseHead).toBe('base-sha');
+    }
+  );
 
-  it('refuses a net-no-op deletion when main advanced since the inventory snapshot', () => {
-    const inventory = greenInventory({
-      record: {
-        action: ACTION.DISPOSE,
-        prunable: true,
-        mergedIntoMain: false,
-        mergeResultMatchesBase: true,
-        patchEquivalence: 'unmerged',
-        mustNotPrune: false,
-        derivedLive: false,
-        writeHistory: { derivedChatIds: [] },
-      },
-    });
-    const verdict = green({ inventory, gitState: greenState({ mainHead: 'advanced-main-sha' }) });
-    expect(codes(verdict)).toContain('inventory-base-moved');
-    expect(verdict.deleteUnmergedBranch).toBe(false);
-  });
+  it.each(['main', 'refs/heads/main'])(
+    'refuses a net-no-op deletion when %s advanced since the inventory snapshot',
+    (base) => {
+      const inventory = greenInventory({
+        base,
+        record: {
+          action: ACTION.DISPOSE,
+          prunable: true,
+          mergedIntoMain: false,
+          mergeResultMatchesBase: true,
+          patchEquivalence: 'unmerged',
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: { derivedChatIds: [] },
+        },
+      });
+      const verdict = green({ inventory, gitState: greenState({ mainHead: 'advanced-main-sha' }) });
+      expect(codes(verdict)).toContain('inventory-base-moved');
+      expect(verdict.deleteUnmergedBranch).toBe(false);
+    }
+  );
 
   it('keeps patch-absorbed deletion independent of the no-op merge snapshot', () => {
     const inventory = greenInventory({
@@ -1408,13 +1416,23 @@ describe('unregistered worktree directories', () => {
     writeFileSync(file, 'not a directory');
     mkdirSync(outside);
     mkdirSync(nested, { recursive: true });
-    symlinkSync(outside, link);
+    let symlinkCreated = false;
+    try {
+      symlinkSync(outside, link);
+      symlinkCreated = true;
+    } catch {
+      // On Windows without developer mode, creating a symlink requires elevation.
+      // The symlink-specific assertion is skipped below; the other four cases
+      // still run and remain verifiable.
+    }
 
     expect(resolveOrphan(root, 'missing')).toMatchObject({ found: false, reason: 'missing' });
     expect(resolveOrphan(root, file)).toMatchObject({ found: false, reason: 'not-directory' });
     expect(resolveOrphan(root, outside)).toMatchObject({ found: false, reason: 'outside-worktrees' });
     expect(resolveOrphan(root, nested)).toMatchObject({ found: false, reason: 'not-direct-child' });
-    expect(resolveOrphan(root, link)).toMatchObject({ found: false, reason: 'not-directory' });
+    if (symlinkCreated) {
+      expect(resolveOrphan(root, link)).toMatchObject({ found: false, reason: 'not-directory' });
+    }
   });
 
   it('reports regenerable output and refuses source, protected notes, or nested worktrees', () => {

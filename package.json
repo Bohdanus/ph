@@ -10,6 +10,7 @@
     "dist": "vite build",
     "swarm": "node scripts/agent-board.mjs",
     "repo:state": "node scripts/repo-state-gate.mjs",
+    "repo:state:recover-auto-merge": "node scripts/recover-stale-auto-merge.mjs",
     "branches:orphan": "node scripts/orphan-branches.mjs",
     "swarm:release-merged": "node scripts/merge-release.mjs",
     "dispose": "node scripts/dispose-worktree.mjs",
@@ -41,10 +42,13 @@
     "free:models": "node scripts/free-model-pool.mjs",
     "free:quarantine": "node scripts/free-model-quarantine.mjs",
     "free:research": "node scripts/free-research.mjs",
+    "free:chat-search": "node scripts/free-chat-search.mjs",
+    "free:sweep": "node scripts/cron/free-model-sweep.mjs --report-only",
     "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
     "gate:verify": "npm run --silent tsc && npm run --silent build",
     "gate:commit": "node scripts/quiet-command.mjs lint-staged --fail-on-changes --no-stash && npm run --silent gate:verify",
-    "gate:push": "node scripts/quiet-command.mjs npm run --silent test -- --silent"
+    "gate:push": "node scripts/quiet-command.mjs npm run --silent test -- --silent",
+    "free:web-research": "node scripts/free-web-research.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -92,7 +96,6 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
     "eslint-plugin-promise": "^7.3.0",
-    "eslint-plugin-react-compiler": "^19.1.0-rc.2",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.7.0",

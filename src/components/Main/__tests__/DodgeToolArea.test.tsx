@@ -7,6 +7,7 @@ import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
+const cancelLayerPreviewMock = vi.hoisted(() => vi.fn());
 /**
  * `createLayerFromTool` is present in the mock on purpose even though the component must never
  * reach it. A `useLayers` mock that simply omitted it would make a regression that committed
@@ -52,6 +53,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: tempUpdateLayerMock,
     updateLayerByTool: updateLayerByToolMock,
+    cancelLayerPreview: cancelLayerPreviewMock,
     createLayerFromTool: createLayerFromToolMock,
   }),
 }));
@@ -157,6 +159,7 @@ describe('DodgeToolArea', () => {
     resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
+    cancelLayerPreviewMock.mockClear();
     createLayerFromToolMock.mockClear();
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;

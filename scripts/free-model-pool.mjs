@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { mkdtemp, open, rm, writeFile } from 'node:fs/promises';
+import { readdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { COMPLETION_TIMEOUT_MS, resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
 import {
   activeQuarantineKeys,
   DEFAULT_QUARANTINE_FILE,
@@ -13,21 +14,23 @@ import {
 } from './lib/free-model-quarantine.mjs';
 
 const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
-const KILO_CHAT = 'https://api.kilo.ai/api/gateway/chat/completions';
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_KEY_INFO = 'https://openrouter.ai/api/v1/key';
 const OPENCODE_MODELS = 'https://opencode.ai/inference/v1/models';
 const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
 const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
-const REQUEST_TIMEOUT_MS = 15_000;
+export const CONTROL_PLANE_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
-const PREFERRED_KILO_MODELS = ['poolside/laguna-s-2.1:free'];
+const LAGUNA_MODEL = 'poolside/laguna-s-2.1:free';
+const MIN_REASONING_COMPLETION_TOKENS = 1024;
+const PREFERRED_KILO_MODELS = [LAGUNA_MODEL];
+const PREFERRED_OPENROUTER_MODELS = [LAGUNA_MODEL];
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
@@ -35,6 +38,94 @@ const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:fr
 // Reject unknown override conditions instead of guessing whether a paid price applies.
 const PRICING_OVERRIDE_CONDITIONS = new Set(['min_prompt_tokens', 'utc_days', 'utc_end', 'utc_start']);
 const NON_PRICE_PRICING_FIELDS = new Set(['discount']);
+
+const GROQ_KEY_DIR = join(homedir(), '.config', 'groq');
+const GROQ_KEY_FILE_PATTERN = /^api_key(_.*)?$/;
+export const GROQ_KEY_FILE_MAX_BYTES = 256;
+export const MAX_GROQ_KEYS = 8;
+
+export function normalizeGroqKeys(groqApiKey, groqApiKeys) {
+  const fromExplicit = Array.isArray(groqApiKeys) ? groqApiKeys.filter(Boolean) : [];
+  if (fromExplicit.length > 0) return fromExplicit.slice(0, MAX_GROQ_KEYS);
+  if (groqApiKey) return [groqApiKey];
+  return [];
+}
+
+export async function discoverGroqKeyFiles(dir = GROQ_KEY_DIR) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return [];
+    throw error;
+  }
+  return entries
+    .filter((entry) => entry.isFile() && GROQ_KEY_FILE_PATTERN.test(entry.name))
+    .map((entry) => join(dir, entry.name))
+    .sort();
+}
+
+export async function loadGroqKeyFromFile(filePath) {
+  const handle = await open(filePath, 'r');
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error('Groq key path is not a regular file');
+    if (metadata.size > GROQ_KEY_FILE_MAX_BYTES) {
+      throw new Error(`Groq key file exceeds ${GROQ_KEY_FILE_MAX_BYTES} bytes`);
+    }
+    const buffer = Buffer.alloc(GROQ_KEY_FILE_MAX_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const key = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead)).trim();
+    if (key.length === 0) throw new Error('Groq key file is empty');
+    return key;
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function probeGroqKey({ fetchImpl = fetch, groqApiKey, timeoutMs = CONTROL_PLANE_TIMEOUT_MS } = {}) {
+  if (!groqApiKey) return { ok: false, reason: 'no_key' };
+  let response;
+  try {
+    response = await fetchImpl(GROQ_MODELS, {
+      headers: { Authorization: `Bearer ${groqApiKey}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    return { ok: false, reason: 'network_error', detail: error.message };
+  }
+  if (!response.ok) {
+    await discardResponseBody(response);
+    return { ok: false, reason: `http_${response.status}` };
+  }
+  try {
+    await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, 'Groq catalog');
+  } catch (error) {
+    return { ok: false, reason: 'parse_error', detail: error.message };
+  }
+  return { ok: true, reason: 'ok' };
+}
+
+export async function probeGroqKeys({
+  fetchImpl = fetch,
+  keyDir = GROQ_KEY_DIR,
+  timeoutMs = CONTROL_PLANE_TIMEOUT_MS,
+} = {}) {
+  const files = await discoverGroqKeyFiles(keyDir);
+  const results = [];
+  for (const file of files) {
+    let key;
+    try {
+      key = await loadGroqKeyFromFile(file);
+    } catch (error) {
+      results.push({ keyFile: file, ok: false, reason: 'file_error', detail: error.message });
+      continue;
+    }
+    const probe = await probeGroqKey({ fetchImpl, groqApiKey: key, timeoutMs });
+    results.push({ keyFile: file, ...probe });
+  }
+  return results;
+}
 
 async function discardResponseBody(response) {
   try {
@@ -137,8 +228,9 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
       return source === 'kilo' && (row.isFree === true || row.id.endsWith(':free'));
     })
     .map((row) => ({ source, model: row.id, name: row.name ?? row.id }));
-  if (source !== 'kilo') return candidates;
-  const preference = new Map(PREFERRED_KILO_MODELS.map((model, index) => [model, index]));
+  if (source !== 'kilo' && source !== 'openrouter') return candidates;
+  const preferredModels = source === 'kilo' ? PREFERRED_KILO_MODELS : PREFERRED_OPENROUTER_MODELS;
+  const preference = new Map(preferredModels.map((model, index) => [model, index]));
   return candidates.sort(
     (left, right) =>
       (preference.get(left.model) ?? Number.MAX_SAFE_INTEGER) - (preference.get(right.model) ?? Number.MAX_SAFE_INTEGER)
@@ -149,26 +241,69 @@ export async function loadCatalogs({
   fetchImpl = fetch,
   openRouterKey = process.env.OPENROUTER_API_KEY,
   groqApiKey = process.env.GROQ_API_KEY,
+  groqApiKeys = process.env.GROQ_API_KEYS
+    ? process.env.GROQ_API_KEYS.split(',')
+        .map((k) => k.trim())
+        .filter(Boolean)
+    : [],
   includeOpenRouterCatalog = false,
   includeGroq = false,
   quarantineFile = DEFAULT_QUARANTINE_FILE,
   initializeLegacyQuarantine = false,
   onCatalogError = () => {},
 } = {}) {
+  const groqKeys = normalizeGroqKeys(groqApiKey, groqApiKeys);
   const quarantineState = initializeLegacyQuarantine
     ? await loadQuarantineState(quarantineFile)
     : await readQuarantineState(quarantineFile);
   const quarantinedKeys = activeQuarantineKeys(quarantineState);
   const sources = [{ source: 'kilo', url: KILO_MODELS }];
   if (openRouterKey || includeOpenRouterCatalog) sources.push({ source: 'openrouter', url: OPENROUTER_MODELS });
+  if (groqKeys.length > 0 || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS, groqKeys });
   sources.push({ source: 'opencode', url: OPENCODE_MODELS });
-  if (groqApiKey || includeGroq) sources.push({ source: 'groq', url: GROQ_MODELS });
   const results = await Promise.allSettled(
-    sources.map(async ({ source, url }) => {
+    sources.map(async ({ source, url, groqKeys: sourceGroqKeys }) => {
       const headers = {};
       if (source === 'openrouter' && openRouterKey) headers.Authorization = `Bearer ${openRouterKey}`;
-      if (source === 'groq' && groqApiKey) headers.Authorization = `Bearer ${groqApiKey}`;
-      const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      if (source === 'groq' && sourceGroqKeys && sourceGroqKeys.length > 0) {
+        let groqResponse;
+        let lastGroqError = '';
+        for (const key of sourceGroqKeys) {
+          try {
+            const attempt = await fetchImpl(url, {
+              headers: { Authorization: `Bearer ${key}` },
+              signal: AbortSignal.timeout(CONTROL_PLANE_TIMEOUT_MS),
+            });
+            if (attempt.ok) {
+              groqResponse = attempt;
+              break;
+            }
+            await discardResponseBody(attempt);
+            lastGroqError = `HTTP ${attempt.status}`;
+          } catch (error) {
+            lastGroqError = error.message;
+          }
+        }
+        if (!groqResponse) throw new Error(`groq catalog failed for all keys: ${lastGroqError}`);
+        return catalogCandidates(
+          source,
+          await readBoundedJson(groqResponse, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`),
+          quarantinedKeys
+        );
+      }
+      if (source === 'groq' && (!sourceGroqKeys || sourceGroqKeys.length === 0)) {
+        const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(CONTROL_PLANE_TIMEOUT_MS) });
+        if (!response.ok) {
+          await discardResponseBody(response);
+          throw new Error(`${source} catalog returned HTTP ${response.status}`);
+        }
+        return catalogCandidates(
+          source,
+          await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, `${source} catalog`),
+          quarantinedKeys
+        );
+      }
+      const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(CONTROL_PLANE_TIMEOUT_MS) });
       if (!response.ok) {
         await discardResponseBody(response);
         throw new Error(`${source} catalog returned HTTP ${response.status}`);
@@ -187,26 +322,30 @@ export async function loadCatalogs({
   });
 }
 
-export async function probeOpenRouterQuota({ fetchImpl = fetch, openRouterKey, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
-  if (!openRouterKey) return null;
+export async function probeOpenRouterQuota({
+  fetchImpl = fetch,
+  openRouterKey,
+  timeoutMs = CONTROL_PLANE_TIMEOUT_MS,
+} = {}) {
+  if (!openRouterKey) return { remaining: null, limit: null, used: null, reason: 'no_key' };
   let response;
   try {
     response = await fetchImpl(OPENROUTER_KEY_INFO, {
       headers: { Authorization: `Bearer ${openRouterKey}` },
       signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch {
-    return null;
+  } catch (error) {
+    return { remaining: null, limit: null, used: null, reason: 'network_error', detail: error.message };
   }
   if (!response.ok) {
     await discardResponseBody(response);
-    return null;
+    return { remaining: null, limit: null, used: null, reason: `http_${response.status}` };
   }
   let payload;
   try {
     payload = await readBoundedJson(response, MAX_CATALOG_RESPONSE_BYTES, 'OpenRouter key info');
-  } catch {
-    return null;
+  } catch (error) {
+    return { remaining: null, limit: null, used: null, reason: 'parse_error', detail: error.message };
   }
   const info = payload?.data?.free_model_daily_requests;
   if (
@@ -218,9 +357,9 @@ export async function probeOpenRouterQuota({ fetchImpl = fetch, openRouterKey, t
     !Number.isSafeInteger(info.used) ||
     info.used < 0
   ) {
-    return null;
+    return { remaining: null, limit: null, used: null, reason: 'invalid_payload' };
   }
-  return { remaining: info.remaining, limit: info.limit, used: info.used };
+  return { remaining: info.remaining, limit: info.limit, used: info.used, reason: 'ok' };
 }
 
 function retryAfterHint(response) {
@@ -234,6 +373,72 @@ function failureReason(response, payload) {
   const message = payload?.error?.message ?? payload?.message ?? '';
   const retryAfter = retryAfterHint(response);
   return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
+}
+
+function isPerKeyFailure(status) {
+  return status === 401 || status === 402 || status === 429;
+}
+
+const CONTENT_POLICY_ERROR_CODES = new Set([
+  'content_filter',
+  'content_filter_blocked',
+  'content_filter_violation',
+  'content_policy_blocked',
+  'content_policy_violation',
+  'moderation_blocked',
+  'moderation_rejected',
+  'prompt_injection_detected',
+  'safety_filter',
+  'safety_violation',
+]);
+
+const CONTENT_POLICY_ERROR_PATTERNS = [
+  /flagged as potentially violating/i,
+  /(?:content|safety) filter (?:was |has been )?(?:triggered|blocked|rejected|flagged)/i,
+  /(?:content|safety|usage) policy (?:violation|blocked|rejected|flagged)/i,
+  /prompt (?:injection )?patterns? detected/i,
+  /prompt (?:was |is )?(?:flagged|rejected|blocked|not allowed)/i,
+  /(?:request|content) (?:was |is )?(?:blocked|rejected) by (?:the )?(?:content|safety|moderation) (?:filter|policy)/i,
+  /moderation (?:flagged|blocked|rejected|detected)/i,
+  /content failed moderation/i,
+  /violates? (?:our |the )?(?:content|safety|usage) policy/i,
+];
+
+function hasFilteredContent(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  return Object.values(result).some((category) => category?.filtered === true);
+}
+
+export function isContentPolicyError(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  if (
+    choices.some(
+      (choice) =>
+        String(choice?.finish_reason ?? '').toLowerCase() === 'content_filter' ||
+        hasFilteredContent(choice?.content_filter_results)
+    )
+  ) {
+    return true;
+  }
+  if (Array.isArray(payload.prompt_filter_results)) {
+    if (payload.prompt_filter_results.some((result) => hasFilteredContent(result?.content_filter_results))) return true;
+  }
+
+  const error = payload.error;
+  const codes = [error?.code, error?.type, payload.code, payload.type];
+  if (
+    codes.some(
+      (code) =>
+        typeof code === 'string' && CONTENT_POLICY_ERROR_CODES.has(code.trim().toLowerCase().replaceAll('-', '_'))
+    )
+  ) {
+    return true;
+  }
+
+  const message = String(error?.message ?? payload.message ?? '');
+  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 function hasReportedNonZeroCost(usage) {
@@ -354,7 +559,7 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
         child.kill('SIGTERM');
         killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
       };
-      const timer = setTimeout(stopChild, 90_000);
+      const timer = setTimeout(stopChild, COMPLETION_TIMEOUT_MS);
       child.stdout.on('data', (chunk) => {
         outputBytes += chunk.byteLength;
         if (outputBytes > MAX_OPENCODE_OUTPUT_BYTES) stopChild();
@@ -452,7 +657,14 @@ export async function completeWithFreeModel(
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
     groqApiKey = process.env.GROQ_API_KEY,
+    groqApiKeys = process.env.GROQ_API_KEYS
+      ? process.env.GROQ_API_KEYS.split(',')
+          .map((k) => k.trim())
+          .filter(Boolean)
+      : [],
     groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
+    kiloCommand,
+    runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
     checkOpenRouterQuota = false,
@@ -461,6 +673,7 @@ export async function completeWithFreeModel(
     initializeLegacyQuarantine = true,
     onCatalogError = () => {},
     onOpenRouterQuota = () => {},
+    stderr = { write: () => {} },
   } = {}
 ) {
   if (typeof prompt !== 'string' || prompt.length === 0 || prompt.length > MAX_PROMPT_CHARS) {
@@ -469,17 +682,25 @@ export async function completeWithFreeModel(
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
     throw new Error('maxTokens must be an integer from 1 to 4000');
   }
+  const effectiveKiloCommand = kiloCommand === '' ? '' : (kiloCommand ?? (await resolveKiloCli()));
+  const groqKeys = normalizeGroqKeys(groqApiKey, groqApiKeys);
   const available = await loadCatalogs({
     fetchImpl,
     openRouterKey,
-    groqApiKey: groqFreePlan ? groqApiKey : '',
+    groqApiKey: groqFreePlan ? groqKeys[0] : '',
+    groqApiKeys: groqFreePlan ? groqKeys : [],
     quarantineFile,
     initializeLegacyQuarantine,
     onCatalogError,
   });
   const exhausted = new Set();
+  const exhaustedGroqKeys = new Set();
   const attempts = new Map();
   const errors = [];
+  if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
+    exhausted.add('kilo');
+    errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
+  }
   const requestCounts = () => {
     const counts = {
       kilo: attempts.get('kilo') ?? 0,
@@ -492,19 +713,172 @@ export async function completeWithFreeModel(
   };
   if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (quota) {
+    if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
       if (quota.remaining <= 0) exhausted.add('openrouter');
+    } else if (/^http_(?:401|402|429)$/.test(quota.reason)) {
+      exhausted.add('openrouter');
+      stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
+    } else if (quota.reason !== 'no_key') {
+      // Log unknown quota state so callers can distinguish from "available"
+      stderr.write(
+        `OpenRouter quota unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); proceeding with fail-open routing.\n`
+      );
     }
   }
+  const handleOpenRouterFailure = async (status, model, response) => {
+    if (status === 401 || status === 402) {
+      exhausted.add('openrouter');
+      return;
+    }
+    if (status !== 429) return;
+
+    const remainingHeader = response?.headers?.get?.('x-ratelimit-remaining');
+    if (typeof remainingHeader === 'string' && remainingHeader.trim() !== '') {
+      const remaining = Number(remainingHeader);
+      if (Number.isFinite(remaining) && remaining <= 0) {
+        exhausted.add('openrouter');
+        stderr.write(
+          `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping this source for the run.\n`
+        );
+        return;
+      }
+    }
+
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (quota.reason === 'ok') {
+      onOpenRouterQuota(quota);
+      if (quota.remaining <= 0) {
+        exhausted.add('openrouter');
+        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter models.\n');
+      } else {
+        stderr.write(
+          `OpenRouter model ${model} returned HTTP 429 with ${quota.remaining} daily free requests remaining; trying another verified-free model.\n`
+        );
+      }
+      return;
+    }
+    if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+      exhausted.add('openrouter');
+      stderr.write(`OpenRouter quota check returned ${quota.reason}; skipping OpenRouter for this run.\n`);
+      return;
+    }
+
+    stderr.write(
+      `OpenRouter model ${model} returned HTTP 429; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so trying another verified-free model within the per-run limit.\n`
+    );
+  };
   for (const candidate of available) {
     if (exhausted.has(candidate.source)) continue;
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
     if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
     if (candidate.source === 'openrouter' && !openRouterKey) continue;
-    if (candidate.source === 'groq' && (!groqApiKey || !groqFreePlan)) continue;
+    if (candidate.source === 'groq' && (!groqKeys.length || !groqFreePlan)) continue;
     if (candidate.source === 'opencode' && !opencodeCommand) continue;
     attempts.set(candidate.source, sourceAttempts + 1);
+    if (candidate.source === 'kilo') {
+      try {
+        const result = await runKilo({
+          command: effectiveKiloCommand,
+          source: 'kilo',
+          model: candidate.model,
+          prompt,
+          maxTokens,
+        });
+        if (result?.content && result.finishReason === 'stop') {
+          return {
+            source: candidate.source,
+            model: result.model ?? candidate.model,
+            content: result.content,
+            finishReason: result.finishReason,
+            usage: result.usage ?? null,
+            requestCounts: requestCounts(),
+          };
+        }
+        errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
+        if (result?.exhaustSource) exhausted.add(candidate.source);
+      } catch (error) {
+        errors.push(`kilo/${candidate.model}: ${error.message}`);
+        if (error.code === 'ENOENT' || error.code === 'KILO_SPAWN') exhausted.add(candidate.source);
+      }
+      continue;
+    }
+    if (candidate.source === 'groq') {
+      const effectiveMaxTokens = Math.max(maxTokens, 1024);
+      for (const key of groqKeys) {
+        if (exhaustedGroqKeys.has(key)) continue;
+        let response;
+        try {
+          response = await fetchImpl(GROQ_CHAT, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${key}`,
+            },
+            signal: AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
+            body: JSON.stringify({
+              model: candidate.model,
+              messages: [{ role: 'user', content: prompt }],
+              max_tokens: effectiveMaxTokens,
+              reasoning_effort: 'low',
+            }),
+          });
+        } catch (error) {
+          const retryAfter = retryAfterHint(response);
+          errors.push(`groq/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`);
+          continue;
+        }
+        let payload;
+        try {
+          payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
+        } catch (error) {
+          const retryAfter = retryAfterHint(response);
+          errors.push(`groq/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`);
+          if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+          continue;
+        }
+        if (hasReportedNonZeroCost(payload?.usage)) {
+          throw new Error(
+            `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
+          );
+        }
+        const choice = payload?.choices?.[0];
+        const content = choice?.message?.content;
+        const finishReason = choice?.finish_reason;
+        if (response.ok && typeof content === 'string' && content.trim() && finishReason === 'stop') {
+          const resolvedModel = payload.model;
+          const stillFree = available.some(
+            (entry) => entry.source === candidate.source && entry.model === resolvedModel
+          );
+          if (!stillFree) {
+            errors.push(
+              `groq/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
+            );
+            continue;
+          }
+          return {
+            source: candidate.source,
+            model: resolvedModel,
+            content,
+            finishReason,
+            usage: payload.usage ?? null,
+            requestCounts: requestCounts(),
+            groqKeysAvailable: groqKeys.length - exhaustedGroqKeys.size,
+          };
+        }
+        if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
+          errors.push(`groq/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`);
+          continue;
+        }
+        const reason = response.ok
+          ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
+          : failureReason(response, payload);
+        errors.push(`groq/${candidate.model}: ${reason}`);
+        if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+      }
+      if (groqKeys.every((key) => exhaustedGroqKeys.has(key))) exhausted.add('groq');
+      continue;
+    }
     if (candidate.source === 'opencode') {
       try {
         const result = await runOpenCode({ command: opencodeCommand, model: candidate.model, prompt, maxTokens });
@@ -525,21 +899,23 @@ export async function completeWithFreeModel(
       }
       continue;
     }
-    const url = candidate.source === 'kilo' ? KILO_CHAT : candidate.source === 'groq' ? GROQ_CHAT : OPENROUTER_CHAT;
+    const url = OPENROUTER_CHAT;
     const headers = { 'Content-Type': 'application/json' };
     if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
-    if (candidate.source === 'groq') headers.Authorization = `Bearer ${groqApiKey}`;
+    const effectiveMaxTokens =
+      candidate.source === 'openrouter' && candidate.model === LAGUNA_MODEL
+        ? Math.max(maxTokens, MIN_REASONING_COMPLETION_TOKENS)
+        : maxTokens;
     let response;
     try {
       response = await fetchImpl(url, {
         method: 'POST',
         headers,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
         body: JSON.stringify({
           model: candidate.model,
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: maxTokens,
-          ...(candidate.source === 'groq' ? { reasoning_effort: 'low' } : {}),
+          max_tokens: effectiveMaxTokens,
         }),
       });
     } catch (error) {
@@ -557,12 +933,18 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (response.status === 402 || response.status === 429) exhausted.add(candidate.source);
+      if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
+      if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
       throw new Error(
         `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
+      );
+    }
+    if (isContentPolicyError(payload)) {
+      throw new Error(
+        `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
     }
     const choice = payload?.choices?.[0];
@@ -596,7 +978,8 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    if (response.status === 402 || response.status === 429) exhausted.add(candidate.source);
+    if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
+    if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
@@ -605,16 +988,23 @@ export async function completeWithFreeModel(
 
 function usage() {
   return (
+    'Usage: node scripts/free-model-pool.mjs --help\n' +
     'Usage: node scripts/free-model-pool.mjs --list [--limit N]\n' +
     '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--probe-openrouter-quota]\n' +
     '       node scripts/free-model-pool.mjs --openrouter-quota\n' +
+    '       node scripts/free-model-pool.mjs --probe-groq [--groq-key-dir DIR] [--groq-key-files PATH1,PATH2]\n' +
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
-    '--list fetches public model catalogs; configured=null means the OpenCode CLI was not probed.\n' +
+    '--list fetches public model catalogs; configured=null means local CLI credentials were not checked.\n' +
     'configured=false means provider credentials/opt-in are missing, not that a model is invalid.\n' +
+    'Kilo completions use the authenticated Kilo CLI; set KILO_CLI only when its automatic discovery fails.\n' +
+    'Inference calls can run for up to five minutes; catalog and quota checks use a separate 15-second timeout.\n' +
     'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
     'OpenCode free models run through the opencode CLI with tool permissions denied.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
-    '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.'
+    '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.\n' +
+    '--probe-groq probes one or more Groq API keys to verify authentication; --groq-key-dir discovers api_key files in a directory (default ~/.config/groq); --groq-key-files is a comma-separated list of explicit key file paths. GROQ_API_KEYS (comma-separated) or GROQ_API_KEY may also supply keys directly. No inference request is sent.\n' +
+    'With multiple Groq keys, the pool rotates to the next key on HTTP 401/402/429; a permanently invalid key (401) is retired for the run while a single account is never reused to evade its per-account limits.\n' +
+    '--help prints this usage without making a network request.\n'
   );
 }
 
@@ -624,30 +1014,47 @@ export async function main(
     fetchImpl = fetch,
     openRouterKey = process.env.OPENROUTER_API_KEY,
     groqApiKey = process.env.GROQ_API_KEY,
+    groqApiKeys = process.env.GROQ_API_KEYS
+      ? process.env.GROQ_API_KEYS.split(',')
+          .map((k) => k.trim())
+          .filter(Boolean)
+      : [],
     groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
+    kiloCommand,
+    runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
     stdout = process.stdout,
     stderr = process.stderr,
+    groqKeyDir = join(homedir(), '.config', 'groq'),
+    groqKeyFilePaths = [],
+    probeGroqKeysImpl = probeGroqKeys,
   } = {}
 ) {
+  if (args.includes('--help') || args.includes('-h')) {
+    stdout.write(`${usage()}\n`);
+    return 0;
+  }
   const list = args.includes('--list');
   const promptAt = args.indexOf('--prompt-file');
   const outputFileAt = args.indexOf('--output-file');
   const limitAt = args.indexOf('--limit');
   const tokenAt = args.indexOf('--max-tokens');
   const checkOpenRouterQuota = args.includes('--probe-openrouter-quota');
+  const probeGroq = args.includes('--probe-groq');
+  const groqKeyDirAt = args.indexOf('--groq-key-dir');
+  const groqKeyFilesAt = args.indexOf('--groq-key-files');
   if (args.includes('--openrouter-quota')) {
     if (args.length !== 1) {
       stderr.write(`${usage()}\n`);
       return 2;
     }
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (!quota) {
+    if (quota.reason !== 'ok') {
       stderr.write(
-        'Unable to read OpenRouter daily quota; check the API key and network. No inference request was sent.\n'
+        `Unable to read OpenRouter daily quota (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); check the API key and network. No inference request was sent.\n`
       );
       return 2;
     }
@@ -668,6 +1075,9 @@ export async function main(
     '--limit',
     '--max-tokens',
     '--probe-openrouter-quota',
+    '--probe-groq',
+    '--groq-key-dir',
+    '--groq-key-files',
   ]);
   const unknownOption = args.find((arg) => arg.startsWith('--') && !knownOptions.has(arg));
   if (unknownOption) {
@@ -676,22 +1086,58 @@ export async function main(
   }
   const hasValue = (index) => index < 0 || (args[index + 1] && !args[index + 1].startsWith('--'));
   if (
-    (!list && promptAt < 0) ||
+    (!list && promptAt < 0 && !probeGroq) ||
     (list && promptAt >= 0) ||
+    (probeGroq && (list || promptAt >= 0)) ||
     (promptAt >= 0 && !hasValue(promptAt)) ||
     (outputFileAt >= 0 && !hasValue(outputFileAt)) ||
     (limitAt >= 0 && !hasValue(limitAt)) ||
-    (tokenAt >= 0 && !hasValue(tokenAt))
+    (tokenAt >= 0 && !hasValue(tokenAt)) ||
+    (groqKeyDirAt >= 0 && !hasValue(groqKeyDirAt)) ||
+    (groqKeyFilesAt >= 0 && !hasValue(groqKeyFilesAt))
   ) {
     stderr.write(`${usage()}\n`);
     return 2;
   }
+  if (probeGroq) {
+    const effectiveKeyDir = groqKeyDirAt >= 0 ? args[groqKeyDirAt + 1] : groqKeyDir;
+    let filePaths = groqKeyFilePaths;
+    if (groqKeyFilesAt >= 0) {
+      filePaths = args[groqKeyFilesAt + 1]
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+    }
+    let results;
+    if (filePaths.length > 0) {
+      results = [];
+      for (const filePath of filePaths) {
+        let key;
+        try {
+          key = await loadGroqKeyFromFile(filePath);
+        } catch (error) {
+          results.push({ keyFile: filePath, ok: false, reason: 'file_error', detail: error.message });
+          continue;
+        }
+        const probed = await probeGroqKey({ fetchImpl, groqApiKey: key });
+        results.push({ keyFile: filePath, ...probed });
+      }
+    } else {
+      results = await probeGroqKeysImpl({ fetchImpl, keyDir: effectiveKeyDir });
+    }
+    stdout.write(`${JSON.stringify({ checkedAt: new Date().toISOString(), keys: results }, null, 2)}\n`);
+    return 0;
+  }
+  const effectiveKiloCommand = kiloCommand === '' ? '' : (kiloCommand ?? (await resolveKiloCli()));
   if (list) {
+    const effectiveGroqKeys = groqApiKeys.length > 0 ? groqApiKeys : groqApiKey ? [groqApiKey] : [];
+    const groqConfigured = effectiveGroqKeys.length > 0 && groqFreePlan;
     const candidates = await loadCatalogs({
       fetchImpl,
       openRouterKey,
-      groqApiKey,
-      includeGroq: Boolean(groqApiKey),
+      groqApiKey: effectiveGroqKeys[0] ?? '',
+      groqApiKeys: groqFreePlan ? effectiveGroqKeys : [],
+      includeGroq: Boolean(effectiveGroqKeys[0]),
       quarantineFile,
       includeOpenRouterCatalog: true,
       initializeLegacyQuarantine,
@@ -699,10 +1145,10 @@ export async function main(
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
     const configured = (source) => {
-      if (source === 'kilo') return true;
+      if (source === 'kilo') return effectiveKiloCommand ? null : false;
       if (source === 'openrouter') return Boolean(openRouterKey);
       if (source === 'opencode') return null;
-      return source === 'groq' && Boolean(groqApiKey) && groqFreePlan;
+      return source === 'groq' && groqConfigured;
     };
     const listed = candidates.slice(0, limit).map((entry) => ({ ...entry, configured: configured(entry.source) }));
     stdout.write(`${JSON.stringify(listed, null, 2)}\n`);
@@ -724,7 +1170,10 @@ export async function main(
     fetchImpl,
     openRouterKey,
     groqApiKey,
+    groqApiKeys,
     groqFreePlan,
+    kiloCommand: effectiveKiloCommand,
+    runKilo,
     opencodeCommand,
     runOpenCode,
     maxTokens,
@@ -736,12 +1185,14 @@ export async function main(
       stderr.write(
         `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
       ),
+    stderr,
   });
   const output = [
     `[${result.source}/${result.model}]`,
     `Finish reason: ${result.finishReason}`,
     `Usage: ${JSON.stringify(result.usage)}`,
     `Requests attempted (this run): ${JSON.stringify(result.requestCounts)}`,
+    ...(result.groqKeysAvailable ? [`Groq keys available: ${result.groqKeysAvailable}`] : []),
     '',
     result.content,
     '',

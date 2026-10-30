@@ -158,6 +158,41 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
   });
 
+  it('reports refusal when an uncommittable text edit blocks bitmap layer creation', async () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    act(() => result.current.layers.beginTextLayerEdit(layer.id));
+
+    result.current.store.currentArgs.current = {
+      ...editArgsForExistingLayer(layer),
+      text: 'Updated',
+    };
+    vi.mocked(createLayerSource).mockImplementationOnce(() => {
+      throw new Error('render failed');
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let created: boolean | undefined;
+    try {
+      await act(async () => {
+        created = await result.current.layers.createLayerFromBitmap({
+          bitmap: new OffscreenCanvas(20, 10),
+          name: 'Clipboard image',
+          pos: { x: 0, y: 0, width: 20, height: 10 },
+        });
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(created).toBe(false);
+    expect(Object.keys(result.current.store.layers)).toEqual([layer.id]);
+  });
+
   it('creates only one layer when Apply fires after commitDirtyTool on the same args', () => {
     const result = setupTextTool();
     const args = makeTextArgs();

@@ -125,6 +125,10 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
       pointerState.isMouseDown.current = false;
       return true;
     }),
+    releasePointer: vi.fn(() => {
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
+    }),
     getLocalCoords: vi.fn((event: PointerEvent) => ({ x: event.clientX, y: event.clientY })),
     isMouseDown: pointerState.isMouseDown,
   }),
@@ -1305,7 +1309,7 @@ describe('ShapeToolArea', () => {
 
       // Cancel first, then clear: a frame that survived would have repainted after the clear.
       expect(drawShapeMock).not.toHaveBeenCalled();
-      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
+      expect(vi.mocked(storeMocks.ctx.clearRect)).toHaveBeenCalledWith(0, 0, 640, 480);
     });
 
     it('clears the preview after committing a shape', () => {
@@ -1795,15 +1799,34 @@ describe('ShapeToolArea', () => {
       expect(isDocumentGestureOpen()).toBe(true);
     });
 
-    it('releases the claim on a pointer cancel, which is the abort route', () => {
+    it('ignores a foreign pointer cancel while preserving the owner shape gesture', () => {
       const { toolArea } = renderToolArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
-      expect(isDocumentGestureOpen()).toBe(true);
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 4, clientX: 160, clientY: 180 });
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 42 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'shape-draw', pointerId: 4 });
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, clientX: 160, clientY: 180 });
+
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim and clears the shape preview on an owning pointer cancel', () => {
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 4, clientX: 160, clientY: 180 });
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
 
       fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 4 });
 
       expect(isDocumentGestureOpen()).toBe(false);
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
     });
 
     it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {

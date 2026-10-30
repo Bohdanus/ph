@@ -1,7 +1,6 @@
 import { afterEach, describe, it, expect } from 'vitest';
+import { ANTIALIASED_FLANGE_CSS_PX, DRAW_HALF_WIDTH_DOC_PX, toleranceFor } from '../viewport-tolerance';
 import {
-  ANTIALIASED_FLANGE_CSS_PX,
-  DRAW_HALF_WIDTH_DOC_PX,
   buildClip,
   canvasOffsetToDocument,
   containFit,
@@ -19,7 +18,6 @@ import {
   screenshotBoundsToCss,
   STROKE_ANALYSIS,
   takeLineScreenshot,
-  toleranceFor,
   waitForCanvasPixels,
   type BoundingBox,
   type ClipOptions,
@@ -857,17 +855,32 @@ describe('known gaps (it.fails tripwires)', () => {
   });
 
   describe('getColorAtPoint input validation', () => {
-    // NaN radius: Math.max(0, NaN) yields NaN, so the loop bounds NaN <= NaN are
-    // false and the body never runs — the result is null, correct only by accident.
-    //
-    // NOTE: an Infinity radius is NOT tripwired here because it would enter an
-    // infinite loop — pointY - Infinity is -Infinity and -Infinity + 1 stays
-    // -Infinity in IEEE 754, so the sampling loop never advances. A guard that
-    // rejects non-finite radii before the loop would fix both NaN and Infinity.
-    it.fails('throws on a NaN radius', async () => {
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'rejects non-finite radius %s',
+      async (radius) => {
+        const image = createImageData(10, 10);
+        fillAll(image, RED);
+        await expect(getColorAtPoint(image, 5, 5, radius)).rejects.toThrow(/getColorAtPoint: radius must be finite/);
+      }
+    );
+
+    it('bounds a very large finite radius to the image dimensions', async () => {
       const image = createImageData(10, 10);
       fillAll(image, RED);
-      await expect(getColorAtPoint(image, 5, 5, Number.NaN)).rejects.toThrow();
+      setPixel(image, 0, 0, { red: 0, green: 0, blue: 255 });
+      await expect(getColorAtPoint(image, 5, 5, Number.MAX_VALUE)).resolves.toEqual({
+        red: 252,
+        green: 0,
+        blue: 3,
+      });
+    });
+
+    it('samples integer pixels inside a fractional radius', async () => {
+      const image = createImageData(3, 1);
+      setPixel(image, 0, 0, { red: 0, green: 0, blue: 255 });
+      setPixel(image, 1, 0, RED);
+      setPixel(image, 2, 0, { red: 0, green: 0, blue: 255 });
+      await expect(getColorAtPoint(image, 1, 0, 0.5)).resolves.toEqual(RED);
     });
   });
 });

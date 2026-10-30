@@ -366,50 +366,6 @@ export function documentStrokeBoundaryMargin(
   );
 }
 
-/**
- * Half of the Draw tool's default `lineWidth`, which is 10 DOCUMENT pixels
- * (`savedDrawPerPen.pen` in `src/tools/settings.ts`, spread into `defaultSettings.draw`).
- * A stroke's painted extent therefore runs half a stroke WIDER than the
- * point that was asked for on each side, and `getDarkPixelBounds` reports the whole painted
- * extent rather than its centre line. That is the entire legitimate reason a stroke's edge
- * is not at the cursor, and it is why the bound below is a function of the fit scale rather
- * than a constant: the same 10 document pixels scale to more CSS pixels in a wider window
- * and fewer in a narrower one, so any single constant is either loose or tight depending on
- * the viewport.
- */
-export const DRAW_HALF_WIDTH_DOC_PX = 5;
-
-/**
- * What is left after the geometric half-width: the faint antialiased fringe of the round
- * cap, and the one-image-pixel convention of `imageBoundsToCss`, which maps an inclusive
- * pixel index to the CENTRE of that pixel (see `imageBoundsToCss` in `screenshot-scale.ts`) and
- * so under-reports a covered span by half a CSS pixel on a 1:1 capture. `getDarkPixelBounds`
- * also applies a DARK THRESHOLD, so it discards the faintest fringe pixels entirely, which
- * is why the measured deviation lands a little UNDER `DRAW_HALF_WIDTH_DOC_PX * scale` rather
- * than on it. 2px covers both; the measured slack over it is a margin and not a fit.
- */
-export const ANTIALIASED_FLANGE_CSS_PX = 2;
-
-/**
- * How far the stroke's painted edge may sit from the cursor point that asked for it: the
- * brush's own half-width converted to CSS by the app's contain fit, plus the fringe above.
- *
- * Derived from `containFit`, which is the suite's single implementation of the app's fit and
- * is asserted equal to the app's own published `data-fit-*` at more than one rect size by
- * `e2e/export/visual-regression.spec.ts`. So the bound moves WITH the viewport instead of
- * being a constant that happened to hold.
- *
- * What it does NOT absorb is any mapping error, and that is the load-bearing property. A
- * contain-scale mismatch (the `drawLine` coordinate gap) is worth tens of CSS pixels: the
- * difference between painting the document stretched across the box and painting it
- * contained is the box's letterbox margin on each axis. A tolerance of this magnitude still
- * catches that with an order of magnitude to spare, so this number can absorb the stroke's
- * own width and nothing else.
- */
-export function toleranceFor(box: BoundingBox): number {
-  return DRAW_HALF_WIDTH_DOC_PX * containFit(box, DEFAULT_DOCUMENT_SIZE).scale + ANTIALIASED_FLANGE_CSS_PX;
-}
-
 /** `[ms]` — the shared default timeout of every redraw wait below. Not a coordinate. */
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 /** `[ms]` — the shared default poll interval of every redraw wait below. */
@@ -1291,6 +1247,9 @@ export async function getSelectionBounds(
  * window used to select no pixels at all, which reads as "nothing at this point" — a
  * legitimate miss — rather than as the misconfigured constant it is. A clamped radius
  * still returns null when the centre pixel itself is transparent.
+ *
+ * A non-finite radius throws before image decoding or sampling. The sampling window is
+ * clipped to the image, so even a very large finite radius visits each pixel at most once.
  */
 export async function getColorAtPoint(
   screenshot: Buffer | ImageDataResult,
@@ -1299,6 +1258,10 @@ export async function getColorAtPoint(
   radius: number = STROKE_ANALYSIS.COLOR_SAMPLE_RADIUS,
   options?: { ignoreNearWhite?: boolean; nearWhiteThreshold?: number }
 ): Promise<{ red: number; green: number; blue: number } | null> {
+  if (!Number.isFinite(radius)) {
+    throw new RangeError(`getColorAtPoint: radius must be finite; received ${radius}`);
+  }
+
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
 
@@ -1320,10 +1283,13 @@ export async function getColorAtPoint(
 
   const colors = { red: 0, green: 0, blue: 0, count: 0 };
   const sampleRadius = Math.max(0, radius);
+  const minX = Math.max(0, Math.ceil(pointX - sampleRadius));
+  const maxX = Math.min(width - 1, Math.floor(pointX + sampleRadius));
+  const minY = Math.max(0, Math.ceil(pointY - sampleRadius));
+  const maxY = Math.min(height - 1, Math.floor(pointY + sampleRadius));
   const nearWhiteThreshold = options?.nearWhiteThreshold ?? STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD;
-  for (let y = pointY - sampleRadius; y <= pointY + sampleRadius; y++) {
-    for (let x = pointX - sampleRadius; x <= pointX + sampleRadius; x++) {
-      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
       const index = (y * width + x) * 4;
       const red = data[index];
       const green = data[index + 1];

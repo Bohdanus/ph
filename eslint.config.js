@@ -2,7 +2,6 @@ import js from '@eslint/js';
 import globals from 'globals';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
-import reactCompiler from 'eslint-plugin-react-compiler';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-plugin-prettier';
 import eslintConfigPrettier from 'eslint-config-prettier';
@@ -49,12 +48,10 @@ export default defineConfig([
     ],
     plugins: {
       prettier,
-      'react-compiler': reactCompiler,
       promise,
     },
     rules: {
       'prettier/prettier': 'error',
-      'react-compiler/react-compiler': 'error',
       'react-hooks/exhaustive-deps': 'warn',
       'react-hooks/globals': 'error',
       'react-hooks/refs': 'error',
@@ -93,7 +90,7 @@ export default defineConfig([
       // react-hooks/set-state-in-effect - setState in useEffect
       // react-hooks/globals - reassignment outside component
       // react-hooks/rules-of-hooks - hook rules violations
-      // react-compiler/react-compiler - compiler violations
+      // React Compiler diagnostics are surfaced by the recommended react-hooks rules.
       // react-hooks/immutability - mutating refs
       // @typescript-eslint/no-non-null-asserted-optional-chain - unsafe optional chain
     },
@@ -126,7 +123,6 @@ export default defineConfig([
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/immutability': 'off',
       'react-hooks/preserve-manual-memoization': 'off',
-      'react-compiler/react-compiler': 'off',
       'react-refresh/only-export-components': 'off',
       // `args: 'all'` rather than the inherited default `after-used`. The default
       // ignores a dead parameter that sits before a used one, so `tsc` and ESLint

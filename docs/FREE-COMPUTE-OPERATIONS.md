@@ -10,6 +10,45 @@ are absent: use [Kilo chat history](../.skills/kilo-chat-history.md) or [Codex c
 Never print key files, dump the environment, include credentials in prompts, or copy secret values
 into logs. Report only the provider, path, and whether authentication is available.
 
+## Kilo Code
+
+The runner uses `kilo run` for Kilo inference, which picks up the logged-in Kilo Gateway OAuth
+account used by the Kilo Code extension. It discovers `kilo` on `PATH` and then checks common VS
+Code, Cursor, and Windsurf extension folders. If discovery misses the installed CLI, set
+`KILO_CLI` to its executable path. Check saved provider names with `kilo auth list`; never read or
+print the Kilo auth database or JSON file.
+
+`kilo run` starts with `--pure` and the tracked `free-completion` agent. That profile denies every
+tool name. The prompt is piped through stdin, keeping it out of process arguments and avoiding
+Kilo's file-attachment and external-directory permission checks. Do not add `--auto`: it would
+broaden permissions beyond the tool-free profile. The runner verifies a clean JSON completion,
+rejects tool events and reported non-zero cost, and allows up to five minutes for inference. It
+uses the public Kilo catalog only for model and exact-zero price discovery; it does not send
+inference requests anonymously to the public Gateway endpoint. The child environment is limited to
+runtime paths and locale settings, including the Kilo database selector; unrelated provider keys
+and `KILO_CONFIG_CONTENT` are not passed through.
+
+The current Kilo CLI has no `--max-tokens` option. For Kilo completions, the runner's
+`--max-tokens` value is a response-length instruction; Kilo and the model control the actual
+generation budget. The OpenRouter and Groq routes send a provider-side token limit.
+
+## OpenRouter
+
+OpenRouter inference uses `OPENROUTER_API_KEY` from the runner process. The runner neither reads
+Kilo's saved OpenRouter credential nor prints the API key. Use a secret manager or an existing
+protected environment setup to provide it. Check the account's daily counter without inference:
+
+```sh
+node scripts/free-model-pool.mjs --openrouter-quota
+```
+
+The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Laguna S 2.1
+first when it is present, and stops that provider for the run on HTTP 401, 402, or 429. Inference
+gets five minutes; catalog and quota requests keep a separate 15-second timeout. A quota snapshot
+is only current at the time it was read and can change when other tools use the account.
+OpenRouter Laguna receives at least 1,024 completion tokens so reasoning has room to finish; other
+models use the requested token limit.
+
 ## OpenCode
 
 The runner calls `opencode run` through the OpenCode CLI; it does not call a generic model HTTP API.
@@ -50,13 +89,51 @@ result's provider/model before treating a run as a Groq smoke test.
 ## Runner commands
 
 ```sh
+node scripts/free-model-pool.mjs --help
 node scripts/free-model-pool.mjs --list
 node scripts/free-model-pool.mjs --prompt-file ./prompt.txt --max-tokens 1200 --output-file ./result.txt
 node scripts/free-model-pool.mjs --openrouter-quota
 node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt --output-file ./summary.md --max-tokens 1500
 ```
 
-The pool tries at most three eligible models per provider; HTTP 402/429 exhausts that provider for
-the run. It never falls back to paid models. `--list` refreshes public catalogs and does not send
-an inference request. The URL runner accepts at most 20 public HTTPS URLs and writes only its
-condensed result. Quarantine operations are `npm run free:quarantine -- list|add|release|prune`.
+The inference fallback order is Kilo, OpenRouter, Groq, then OpenCode; catalog checks can run in
+parallel, but completions are attempted in that order. The pool tries at most three eligible
+models per provider and never falls back to paid models. Kilo tries other eligible models after request errors. Groq stops for the run on HTTP 401/402/429.
+OpenRouter 401/402 exhausts the source; on 429,
+the runner stops when the platform remaining-request header or daily counter is zero, and
+otherwise tries another verified-free model within the three-model cap. If the quota counter is
+unavailable, rotation stays bounded by that cap. Explicit content-policy rejections and
+`finish_reason: content_filter` stop routing across providers so the same request is not retried
+elsewhere. `--list` refreshes public catalogs and does not send an inference request.
+`--openrouter-quota` reads OpenRouter's daily counter only; it does not report Kilo's separate
+IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. The URL runner
+accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
+`npm run free:quarantine -- list|add|release|prune`.
+
+### Thinking-model token budgets
+
+Kilo's Laguna S and other reasoning/thinking models consume internal reasoning tokens before
+producing visible output. A small `--max-tokens` value (e.g. 20) can be exhausted entirely by
+reasoning tokens, producing an `empty completion (finish_reason=length)` error. The runner
+clamps `max_tokens` to a minimum of 1024 for Kilo thinking models so the output budget is not
+zeroed out. Passing `--max-tokens` below 1024 is accepted but the effective request uses 1024.
+Similarly, GPT-OSS models on Groq burn ~254 hidden reasoning tokens and are clamped to 1024.
+
+### Catalog ordering
+
+Within each provider, candidate models are sorted by preference. Kilo prefers
+`poolside/laguna-s-2.1:free`; OpenRouter prefers the same model when present. Without this
+preference sort, OpenRouter's catalog returns models in its default order (Flint, XingChen,
+etc.), which may not match the desired free model and can exhaust the three-per-provider
+attempt cap before reaching Laguna.
+
+### Scheduled failure reports
+
+The hourly `free-model-sweep` cron job scans Kilo, Codex, and OpenRouter logs for quota/capacity
+errors (429s, empty completions, content-policy blocks) and writes a summary to
+`docs/handoffs/free-model-sweep-<date>.md`. It runs report-only: it does not modify quarantine
+state or rotate credentials. Start it with `npm run free:sweep`:
+
+```sh
+node scripts/cron/free-model-sweep.mjs --report-only
+```

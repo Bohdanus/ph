@@ -48,43 +48,6 @@ observation, not a baseline; run `npm run test:e2e` for the current result. The
 open findings below describe independent weaknesses in the suite and remain work
 even when a full run passes.
 
-The earlier export-line and `pen-types` failures recorded here are gone because
-their causes were fixed, not because assertions were relaxed:
-`ab5f53c` corrected the export line's document constant, which had been derived
-from the canvas box rather than from the document, so the stroke landed 23 rows
-off the committed baseline. The recorded pixels were correct all along. The
-Chrome 155 visual mismatches recorded in the 2026-10-07 run were not reproduced
-by the latest full headless run.
-
-Three defect groups used to fail here and have been fixed in this repository. Their
-evidence is kept below rather than deleted, because each explains a shape the suite
-must not drift back into:
-
-| was failing                                                                                                                       | was                                     | now                                            |
-| --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------- |
-| `e2e/helpers/cdp-helpers.spec.ts`                                                                                                 | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
-| `e2e/sidebar-keyboard.spec.ts` — its `Enter activates focused flyout item` and `full keyboard flow: open, navigate, select` tests | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
-| `e2e/levels.spec.ts` — its `changes red line via brightness` and `changes red line via contrast` tests                            | 2, both modes                           | canvas found by test id, not document order    |
-
-All of these historical failures were introduced with the specs and were
-independent of how they were moved into this repository: each was reproducible
-with no changes to the specs or to `src/`. The current failures above are separate
-from that fixed history.
-
-### P2 — the 37-degree frame-only raster control differs by one pixel
-
-In `e2e/crop-history.spec.ts`, the frame-only control for `a retained layer transform matches
-legacy before and after a later frame transform` uses the same two raster layers and 37-degree frame
-change with no retained layer transform. Run `2026-10-26T18-36-15-473Z-15825` measured
-`differingBytes=2`, `differingPixels=1`, and `maxChannelDelta=1`: at pixel `(36, 26)`, the legacy
-green/blue channels were `97/158` and the durable channels were `98/157`.
-
-The control is only used to prove the retained affine operation changes each renderer's final
-pixels; it is not counted as a parity pass. Frame-changing commits remain on the legacy path, so
-this does not change current presentation. It is still an open durable frame-parity case. Reproduce
-the fixture, determine the source of the one-pixel delta, and add exact pixel/bounds coverage before
-considering frame publication. Do not hide it with a tolerance.
-
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
@@ -114,24 +77,6 @@ comment of `sidebar-keyboard.spec.ts`, above `GROUPED_TILE`. The hazard is
 reported as recurring across this project's test work generally, which is why the
 default is structural rather than procedural: it removes the failure class instead
 of relying on everyone to remember.
-
-Headless is also simply better for this suite, and that part is measured. The
-failure sets are disjoint per mode and deterministic across repeats:
-
-| specs                                                                                                                                   | headed | headless |
-| --------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------- |
-| CDP, deriving expected size from `getDevicePixelRatio()` (the `captureCanvasScreenshot` block in `e2e/helpers/cdp-helpers.spec.ts`)     | 5 fail | pass     |
-| CDP, explicit `deviceScaleFactor: 2` block (the `captureCanvasScreenshot at an emulated deviceScaleFactor of 2` block in the same spec) | pass   | 2 fail   |
-
-So headless was the better mode even then, and both sets have since been fixed
-(below).
-
-**Headed runs are for looking at, not for gating on.** If you must run headed, a
-headless result is what CI will produce. The five CDP failures in the table above
-were _expected_ in a headed run at the time and are fixed now, so a headed run is
-expected to be green too — which is the one claim in this file that no run in this
-repository can establish. `test:e2e:headed` prints its warning on every invocation,
-so the tradeoff is visible at the moment it is accepted.
 
 **The invariant is layered, not "impossible".** Without the explicit
 `PLAYWRIGHT_ALLOW_HEADED=1` opt-in, `refuseVisibleBrowser()` rejects `--headed`,
@@ -246,51 +191,6 @@ document. Otherwise, keep dark-theme captures out of color-only helper calls. Re
 coverage for a future fix must retain true `#000` document ink while excluding dark cells,
 dark gaps, and antialiased checkerboard edges.
 
-## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
-
-`@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
-
-Every options bar in this repository wraps its own control in a `<label>`
-(the `<label htmlFor="eraser-mode">` in
-`src/components/ToolbarsRight/Eraser/Eraser.tsx` and every sibling bar), so the
-markup that makes a control's accessible name is the same markup that defeats the
-assertion on it. Playwright's `disabled` state does not test the element the locator
-resolved: `retarget` first walks a non-form-control up to
-`button, [role=button], [role=checkbox], [role=radio]`, and then — for the
-`follow-label` behaviour it uses for `disabled` — up to `element.closest('label')` and
-returns `enclosingLabel.control`. An `<option>` is neither a form control nor a member
-of that first selector list, and its ancestor _is_ the label, so the check is made
-against the `<select>`, which carries no `disabled` attribute. The result is
-`Received: enabled` for an option that demonstrably has `disabled=""` and
-`option.disabled === true`.
-
-This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
-cannot render, would still be reported as correct. It is also invisible in jsdom —
-`it('offers the three Photoshop modes, all of them selectable')` in
-`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx` asserts
-`expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
-because that matcher reads the DOM property directly and has no retarget step. A
-jsdom pass is therefore not evidence that the browser assertion works.
-
-Workaround used by `test('the eraser mode select offers all three Photoshop modes, and the
-select is live')` in `e2e/erase-fill-eyedropper.spec.ts`: assert the attribute and
-the enabled set, both read straight off the DOM.
-
-```ts
-await expect(brushOption).toHaveAttribute('disabled', '');
-const selectable = await mode
-  .locator('option')
-  .evaluateAll((nodes) =>
-    nodes.filter((n) => !(n as HTMLOptionElement).disabled).map((n) => (n as HTMLOptionElement).value)
-  );
-expect(selectable).toEqual(['pencil', 'block']);
-```
-
-`toHaveAttribute` is unaffected (it reads the resolved element), and the enabled set is
-the same fact stated as what a user can actually choose. No fix is proposed here: the
-retarget is upstream behaviour, and the only way to remove it from the assertions is
-to stop wrapping the control in its label, which is the repo's markup convention.
-
 ## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
 
 `e2e/helpers/cdp-helpers.ts`
@@ -344,45 +244,7 @@ Two specs are `test.skip` by declaration:
   declaration's own reason is the intermittent CDP capture drift that `TEST-FLAKES.md`
   §12 still records as open, behind an operator decision dated 2026-09-29.
 
-## Verified and still unverified
-
-**Verified by running the suite against a real browser:**
-
-- The 7 comparison formats matched the committed baselines, before the toolbar
-  grew. `e2e/export/visual-regression.spec.ts` passed, so every baseline the spec
-  reads decoded and matched its committed pixels on this host. The ICO spec passes
-  in-browser against the source canvas. They no longer match; the one layout change
-  that moved them and the three ways out are recorded under **Checked here and
-  rejected** below, which is where a re-derived claim about them belongs.
-
-  **This was not true until the `updateSnapshots` guard was fixed** — see the
-  transferred-findings section, whose deleted P1 recorded it. The check that produced
-  this claim was `if (testInfo.config.updateSnapshots)`,
-  and Playwright's default for that option is the string `'missing'`, so the branch was
-  always taken: every run re-recorded the baseline and returned before
-  `compareScreenshots`. The comparison below it was unreachable, so "matches the
-  committed baselines" was never actually established by any run. It is now, and it was
-  established by mutation testing rather than by a green bar: a corrupted baseline fails
-  with a sharp decode error, and a valid-but-different baseline fails with
-  `Visual mismatch for PNG: 480000 diff pixels (ratio: 1.0000)`. Before the fix both
-  were silently overwritten and the spec passed.
-
-- The CDP failing set used to be deterministic per browser mode with disjoint sets. The numbers
-  are the finding here — they are the line numbers the failing run's own output carried, quoted
-  as it printed them:
-
-  ```
-  headed failed :128 :142 :157 :179 :208
-  headless failed :272 :287
-  ```
-
-  Both sets reproduced identically across repeats and are now empty, and the new
-  assertions are mode-independent by construction rather than by observation.
-
-- `levels.spec.ts` — its `changes red line via brightness` and `changes red line via contrast`
-  cases — used to fail in both modes, 2/2 each, which is
-  what established the `getWorkspaceCanvas` index shift as a real defect rather
-  than a mode artifact. Both pass now that the canvas is found by test id.
+## Still unverified
 
 **Not verified:**
 
@@ -635,9 +497,13 @@ still worth having.
 
 `compareScreenshots` is called with `threshold: 0.01` and `maxDiffPixels: 100` over an
 800x600 baseline — 100 pixels is 0.021%, and four of the seven compared formats are lossy
-(JPEG, WebP, GIF, AVIF). `channel: 'chrome'` is the **system** browser and CI installs
-`google-chrome-stable` with no version, so any encoder change is a hard red on a blocking
-gate.
+(JPEG, WebP, GIF, AVIF). `channel: 'chrome'` selects branded Google Chrome Stable rather
+than Playwright's bundled Chromium. CI invokes `npx playwright install chrome` (with
+`--with-deps` on Linux); neither the project configuration nor those install commands
+specify an exact Chrome revision. See Playwright's
+[Chrome and Edge channel guidance](https://playwright.dev/docs/browsers#google-chrome--microsoft-edge).
+The resolved stable version can therefore differ across OS runners and drift from the
+visual baselines.
 
 The tolerance question has been answered: the 100-pixel budget is a **tripwire, not a
 tolerance**, and the argument is written out at the call site so it is not widened later to

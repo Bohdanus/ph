@@ -151,33 +151,16 @@ describe('levels processor', () => {
   });
 
   describe('edge values', () => {
-    it('passes NaN straight through into the filter string (known behaviour)', () => {
-      const [result] = levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
+    it.each([
+      ['NaN brightness', Number.NaN, 20, 'brightness(100%) contrast(120%)'],
+      ['positive-infinite contrast', 30, Number.POSITIVE_INFINITY, 'brightness(120%) contrast(100%)'],
+      ['negative-infinite brightness', Number.NEGATIVE_INFINITY, 40, 'brightness(100%) contrast(140%)'],
+      ['both infinite values', Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 'brightness(100%) contrast(100%)'],
+    ] as const)('normalizes %s to neutral before assigning the CSS filter', (_case, brightness, contrast, expected) => {
+      const [result] = levels(params)({ brightness, contrast, toolName: 'levels' });
 
-      expect(lastCanvas().ctx.filter).toBe('brightness(NaN%) contrast(NaN%)');
+      expect(lastCanvas().ctx.filter).toBe(expected);
       expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
-    });
-
-    it.fails('sanitizes a non-finite brightness/contrast before it reaches the CSS filter (levels.ts)', () => {
-      levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
-
-      expect(lastCanvas().ctx.filter).not.toContain('NaN');
-    });
-
-    it('passes +Infinity straight through into the filter string without throwing', () => {
-      expect(() =>
-        levels(params)({ brightness: Number.POSITIVE_INFINITY, contrast: Number.POSITIVE_INFINITY, toolName: 'levels' })
-      ).not.toThrow();
-
-      expect(lastCanvas().ctx.filter).toBe('brightness(Infinity%) contrast(Infinity%)');
-    });
-
-    it('passes -Infinity straight through into the filter string without throwing', () => {
-      expect(() =>
-        levels(params)({ brightness: Number.NEGATIVE_INFINITY, contrast: Number.NEGATIVE_INFINITY, toolName: 'levels' })
-      ).not.toThrow();
-
-      expect(lastCanvas().ctx.filter).toBe('brightness(-Infinity%) contrast(-Infinity%)');
     });
   });
 

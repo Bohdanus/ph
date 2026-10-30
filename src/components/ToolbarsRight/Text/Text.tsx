@@ -8,6 +8,7 @@ import { isValidTextLayerGeometry, isValidTextRect } from '../../../contexts/tex
 import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
 import {
+  AUTO_LEADING,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   MAX_LINE_HEIGHT,
@@ -141,6 +142,19 @@ const Text: React.FC<{}> = () => {
     publishStyle({ lineHeight: Number(event.target.value) });
   };
 
+  /**
+   * Reset line height to Adobe's auto-leading default (120% of the type size).
+   *
+   * Adobe's `CharacterStyle.leading` is `null` for Auto, and `JustificationProperties.autoLeadingAmount`
+   * defaults to `120`. This app's `lineHeight` is a ratio rather than a length (§5 of
+   * `TEXT_TOOL_REQUIREMENTS.md` records the divergence), so `AUTO_LEADING = 1.2` is the
+   * closest faithful reproduction. The button gives the user one click back to the default
+   * the way Photoshop's Character panel does when leading is cleared.
+   */
+  const handleAutoLeading = () => {
+    publishStyle({ lineHeight: AUTO_LEADING });
+  };
+
   const handleFontFamilyChange = (fontFamilyValue: string) => {
     publishStyle({ fontFamily: fontFamilyValue });
   };
@@ -259,7 +273,7 @@ const Text: React.FC<{}> = () => {
   };
 
   return (
-    <div className="flex flex-row items-center gap-4 h-full min-w-[1020px]">
+    <div className="flex flex-row items-center gap-4 h-full min-w-[1100px]">
       {/*
        * Adobe's ONE visible tell for edit mode, and the reason there is no text field here any more.
        *
@@ -304,7 +318,7 @@ const Text: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="font-size-input"
-          className="flex mb-2 justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex mb-1 justify-between text-[10px] leading-none font-medium text-gray-700 dark:text-gray-300"
         >
           Font Size
           <span className="text-gray-500 dark:text-gray-400">
@@ -331,35 +345,46 @@ const Text: React.FC<{}> = () => {
           onChange={handleFontSizeChange}
           onBlur={handleFontSizeCommit}
           onKeyDown={handleFontSizeKeyDown}
-          className="w-24 h-9 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          className="w-24 h-8 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>
 
+      <div className="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-2" aria-hidden="true" />
+
       <div className="flex flex-col">
-        <label
-          htmlFor="line-height-slider"
-          className="flex mb-2 justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
-        >
+        <label htmlFor="line-height-slider" className="text-[10px] font-medium text-gray-700 dark:text-gray-300 mb-2">
           Line Height
-          {/* `aria-hidden`, and moved out of the `<label>`: the readout is the control's LIVE VALUE,
-              so inside the label it became part of the accessible NAME and a screen reader
-              re-announced "Line Height 1.2" on every arrow press. The value is still announced — it
-              is the slider's own `aria-valuenow` — and a `<label>` is the wrong home for it. */}
-          <span aria-hidden="true" className="font-bold text-gray-900 dark:text-gray-200">
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="line-height-slider"
+            data-testid="line-height-slider"
+            type="range"
+            min={MIN_LINE_HEIGHT}
+            max={MAX_LINE_HEIGHT}
+            step="0.05"
+            value={style.lineHeight}
+            onChange={handleLineHeightChange}
+            className="h-1.5 w-40 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          />
+          <span
+            data-testid="line-height-readout"
+            aria-hidden="true"
+            className="text-xs font-mono font-bold text-gray-900 dark:text-gray-200 min-w-[2.5rem] text-right"
+          >
             {style.lineHeight.toFixed(1)}
           </span>
-        </label>
-        <input
-          id="line-height-slider"
-          data-testid="line-height-slider"
-          type="range"
-          min={MIN_LINE_HEIGHT}
-          max={MAX_LINE_HEIGHT}
-          step="0.05"
-          value={style.lineHeight}
-          onChange={handleLineHeightChange}
-          className="h-1.5 w-21 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-        />
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="Reset line height to Auto (1.2)"
+            title="Reset to Auto leading (120% of type size)"
+            onClick={handleAutoLeading}
+            className="text-xs px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+          >
+            Auto
+          </button>
+        </div>
       </div>
 
       {/*
@@ -368,28 +393,32 @@ const Text: React.FC<{}> = () => {
        * out — `trackingPx` in `src/tools/text.ts` is the one place that converts it to px.
        */}
       <div className="flex flex-col">
-        <label
-          htmlFor="tracking-slider"
-          className="flex mb-2 justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
-        >
+        <label htmlFor="tracking-slider" className="text-[10px] font-medium text-gray-700 dark:text-gray-300 mb-2">
           Tracking
-          {/* `aria-hidden` for the same reason as the leading readout above. */}
-          <span aria-hidden="true" className="font-bold text-gray-900 dark:text-gray-200">
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="tracking-slider"
+            data-testid="tracking-slider"
+            type="range"
+            min={TRACKING_MIN}
+            max={TRACKING_MAX}
+            step={1}
+            value={style.tracking}
+            onChange={handleTrackingChange}
+            className="h-1.5 w-40 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          />
+          <span
+            data-testid="tracking-readout"
+            aria-hidden="true"
+            className="text-xs font-mono font-bold text-gray-900 dark:text-gray-200 min-w-[3rem] text-right"
+          >
             {style.tracking}
           </span>
-        </label>
-        <input
-          id="tracking-slider"
-          data-testid="tracking-slider"
-          type="range"
-          min={TRACKING_MIN}
-          max={TRACKING_MAX}
-          step={1}
-          value={style.tracking}
-          onChange={handleTrackingChange}
-          className="h-1.5 w-21 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-        />
+        </div>
       </div>
+
+      <div className="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-2" aria-hidden="true" />
 
       <div className="flex flex-col">
         <label htmlFor="text-color" className="mb-2 text-[10px] font-medium text-gray-700 dark:text-gray-300">
@@ -425,6 +454,8 @@ const Text: React.FC<{}> = () => {
           </span>
         )}
       </div>
+
+      <div className="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-2" aria-hidden="true" />
 
       {/*
        * `aria-label` rather than the glyph, because a control whose accessible name is "B" tells a
@@ -506,6 +537,8 @@ const Text: React.FC<{}> = () => {
           <span className="line-through">S</span>
         </button>
       </div>
+
+      <div className="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-2" aria-hidden="true" />
 
       {editing && (
         <div className="flex gap-2 ml-2">

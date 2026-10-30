@@ -1,11 +1,6 @@
 import { expect, test, type Page } from './fixtures/extended-test';
-import {
-  drawLine,
-  getDarkPixelBounds,
-  getWorkspaceCanvas,
-  toleranceFor,
-  waitForCanvasRedraw,
-} from './helpers/canvas-helpers';
+import { drawLine, getDarkPixelBounds, getWorkspaceCanvas, waitForCanvasRedraw } from './helpers/canvas-helpers';
+import { toleranceFor } from './helpers/viewport-tolerance';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';

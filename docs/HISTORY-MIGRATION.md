@@ -186,8 +186,9 @@ variant or an equivalent atomic history action.
    presentation and both raster/PSD export paths. Ownership checks, production
    adapter parity, and atomic failure fallback are closed; supported committed
    eligible append/reorder presentation now composes in the background with legacy
-   as the immediate selector; source-backed imports/replacements and frame-changing
-   commits remain legacy until their ownership or frame-parity gates are explicit. A
+   as the immediate selector. Image/blank layer creates also request background presentation
+   after asset finalization. Tool-source creates, source replacements, merge and frame-changing
+   commits retain their independent ownership or frame-parity gates. A
    rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
    operation, and legacy plus durable logical replay both transform every extant layer.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
@@ -195,15 +196,28 @@ variant or an equivalent atomic history action.
    legacy/durable composition for a 90-degree single-raster crop (exact `0,0,64,64` materialized
    bounds), a non-quarter 37-degree crop with two differently positioned raster layers, Arial point
    text, serif paragraph text, non-centered right-aligned monospace point text, blank, vector-shape,
-   and Draw paint sources. A three-transition mixed-source case checks each durable cursor against
-   the matching legacy frame: 37-degree transform, frame-only transition, then -17-degree transform.
+   and Draw paint sources. A three-transition mixed-source case checks the durable cursor after each
+   transition against the matching legacy frame: 37-degree transform, frame-only transition, then
+   -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. Only the 90-degree fixture pins exact materialized bounds; the remaining cases assert
-   byte-identical pixels and materialized-layer presence, not exact fractional per-layer bounds.
+   pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
+   mixed-source fixture pin exact materialized bounds; the latter also checks bitmap dimensions and
+   pixels for its blank, vector, paint, and point-text layers at each affine cursor and after each
+   transition. It applies two sequential retained affines to an opaque blank, one affine to a 45%-
+   opacity blank, and one each to the other layers, checking per-layer bounds, dimensions, and pixels
+   at all nine changed cursors. The other source-only cases assert
+   byte-identical pixels and materialized-layer presence. The
+   mixed-source fixture uses integer frame origins and extents; a fractional-frame probe retained
+   exact per-layer bounds and pixels but its first composite transition differed at canvas pixel
+   (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not count that mixed-source
+   fractional case as parity proof until the composite mismatch is resolved. The
+   retained-affine fixtures below separately pin exact per-layer bounds for their listed raster and
+   styled-text combinations.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
-   variants, additional text styling/rotation combinations, other frame sequences and the full
-   retained-affine operation surface still need parity proof. Previews and unsupported documents
+   variants, additional text styling/rotation combinations, other frame sequences and other
+   retained-affine operation combinations still need parity proof. The blank pair and 45%-opacity case
+   close only those tested settings. Previews and unsupported documents
    still use the complete legacy compatibility path.
    Unsupported-source fallback is pinned by the StoreContext publication seam. Preview safety is
    also pinned at the renderer boundary: while a preview is live, `drawAllLayers` receives the
@@ -215,16 +229,29 @@ variant or an equivalent atomic history action.
    previews remain a legacy presentation surface and these tests do not authorize a logical
    authority cutover.
 
-   The retained-affine/frame proof is now pinned for one raster fixture. It compares both history
-   cursors, verifies each renderer changes from the untransformed baseline, and checks the final
-   output against a frame-only control. Do not add frame-changing commits to durable publication
-   from this case alone. Next expand the frame matrix across the remaining angles, retained-affine
-   combinations, source/tool variants, text styling/rotation, frame sequences and exact fractional
-   materialized bounds. The same fixture's frame-only control showed a one-pixel/two-channel delta;
-   it is recorded in `e2e/OPEN_PROBLEMS.md` and is not a parity pass. Establish ownership and parity
-   for source-backed imports/replacements as a separate, unordered gate; it may proceed before,
-   after, or in parallel with the broader frame matrix. Keep the unsupported-source fallback
-   explicit.
+   The retained-affine/frame proof now covers two transformed raster layers across two successive
+   non-quarter frame transforms with fractional origins and extents, checking exact per-layer bounds
+   and pixels at both affine cursors, both frame cursors, and a frame-only control. A separate styled
+   paragraph-text fixture checks its affine cursor and two frame cursors against exact per-layer
+   bounds and pixels. Both fixtures also require byte-identical composites, and their frame-only
+   controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not
+   add frame-changing commits to durable publication from these cases alone. Continue across the
+   remaining angles, retained-affine combinations, source/tool variants, text styling/rotation,
+   frame sequences and exact fractional materialized bounds across the wider source matrix. Establish
+   ownership and parity for source-backed imports/replacements as a separate, unordered gate; it may
+   proceed before, after, or in parallel with the broader frame matrix. Keep the unsupported-source
+   fallback explicit.
+
+   The image/blank create slice is separately scoped to background publication for the current
+   `NEW_LAYER_ACTION`: it is permitted only after asset reconciliation and only when the preceding
+   active cursor prefix passes the ownership and frame gates. The create cursor itself still uses the
+   full legacy navigation fallback. `StoreContext.source-backed-presentation.test.tsx` pins stale,
+   incomplete, and failed finalization behavior; `e2e/source-backed-history.spec.ts` pins paste,
+   Background conversion, exact legacy undo/redo pixels, and PNG/PSD output. On the current app
+   boot path, the initial blank baseline is itself a `NEW_LAYER_ACTION`, so the source-backed
+   cursor gate prevents those UI flows from reaching this exception. The eligible prefix is
+   unit-tested with a gate-free blank `OPEN_DOCUMENT_ACTION`, but is not yet product-reachable.
+   This is presentation progress, not a logical authority change.
 
    Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
    which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),

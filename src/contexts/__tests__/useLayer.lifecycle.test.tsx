@@ -314,10 +314,13 @@ describe('useLayers createLayerFromBitmap raster import', () => {
       });
     });
 
-    expect(createImageBitmapSpy).not.toHaveBeenCalled();
+    // Background durable composition may allocate its own presentation bitmap.
+    expect(createImageBitmapSpy.mock.calls.some(([source]) => source === bitmap)).toBe(false);
     const store = result.current.store;
     const layerId = store.activeLayerId!;
     expect(store.layers[layerId]!.bitmap).toBe(bitmap);
+    const source = store.layers[layerId]!.source;
+    expect(source?.kind === 'image' && source.bitmap).toBe(bitmap);
     expect(store.layers[layerId]!.pos).toEqual({ x: 5, y: 6, width: 12, height: 8 });
   });
 

@@ -65,7 +65,10 @@ allows it and no suitable free reviewer can do the bounded task.
   `node scripts/free-model-pool.mjs --list` and the 200 req/hour ceiling (MODELS.md). For bounded
   single-model calls, use
   `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N` to keep
-  large responses out of context. Never launch GPT (Luna/Terra/Sol) subagents from a free session.
+  large responses out of context. The runner uses the authenticated Kilo Code CLI, discovers it
+  from `PATH` or the editor extension, and gives it a tool-denied profile; do not replace it with
+  direct Kilo Gateway HTTP inference. Inference can take five minutes, separately from catalog and
+  quota checks. Never launch GPT (Luna/Terra/Sol) subagents from a free session.
   Always pass `model` and `provider` together so a named paid model does not fall back to the
   zero-token gateway. Before and after a large OpenRouter-backed fan-out, run
   `node scripts/free-model-pool.mjs --openrouter-quota`; its server-side daily counter is

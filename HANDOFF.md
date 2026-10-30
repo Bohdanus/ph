@@ -37,8 +37,11 @@ Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHis
 the mapped durable cursor after that transition and publishes a separate
 `durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; successful
 eligible committed append/reorder transitions run the same composition in the background while
-keeping the legacy selector immediately visible; source-backed imports/replacements and
-frame-changing commits remain legacy until their ownership or frame-parity gates are explicit. The
+keeping the legacy selector immediately visible, including image/blank layer creates after asset
+finalization only when the prior active cursor prefix passes the ownership and frame gates. The
+create's own navigation cursor and later appends remain on the legacy fallback until the broader
+source-ownership proof is explicit. Other source-backed commits and frame-changing commits retain
+their independent ownership or frame-parity gates. The
 legacy layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
@@ -74,8 +77,9 @@ affine arithmetic of its own. `renderRetainedSegment()` hands the retained opera
 through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 `presentation-evaluator.ts` — `scaleVectorArgs()`, which `materialization.ts` imports directly and
 `layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation
-and eligible committed append/reorder are now staged callers; source-backed imports/replacements,
-frame changes, previews, and the
+and eligible committed append/reorder, including image/blank creates from a gate-free prior
+prefix, are now staged callers; navigation through their source-backed cursors, other source-backed
+commits, frame changes, previews, and the
 remaining surfaces still need independent parity gates before they are mounted.
 
 **Rotated crop is now an explicit logical operation, but its presentation gate remains closed.**
@@ -86,19 +90,30 @@ undo/redo restores the exact pixels. Its direct browser differentials now prove 
 legacy/durable composition for a 90-degree single-raster crop (materialized bounds `0,0,64,64`), a
 non-quarter 37-degree crop with two differently positioned raster layers, Arial point text, serif
 paragraph text, non-centered right-aligned monospace point text, blank, vector-shape, and Draw paint
-sources, plus a three-transition mixed-source sequence. The sequence checks every durable cursor
-against its corresponding legacy composition: a 37-degree frame transform, a frame-only transition,
-and a -17-degree frame transform. The text cases cover left, center and right alignment; the rotated
-fixtures use non-zero frame origins. Exact quarter-turn matrices avoid a phantom edge from
-`cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the 90-degree
-case pins exact materialized bounds. The remaining parity cases assert source pixels and
-materialized-layer presence but not exact fractional bounds. A new browser differential compares
-one retained affine layer transform both before and after a later 37-degree frame transform. This
-closes those two listed cursors for that raster fixture only; it does not close the general frame
-gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: additional angles, vector
-tool variants, blank opacities, paint tools, text styling/rotation combinations, other frame
-sequences and exact fractional bounds remain unproven. The UI test intentionally continues to
-observe legacy presentation on commit and renderer-incompatible fallback on redo.
+sources, plus a three-transition mixed-source sequence. The sequence checks the durable cursor after
+each of the three transitions against its corresponding legacy composition: a 37-degree frame
+transform, a frame-only transition, and a -17-degree frame transform. These fixtures use non-zero
+frame origins. Exact quarter-turn matrices avoid a phantom edge from
+`cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; the plain
+90-degree case pins exact bounds, while most source-only cases assert source pixels and
+materialized-layer presence. The mixed-source three-transition fixture additionally checks exact
+per-layer bounds and pixels after two sequential retained affines on an opaque blank, one retained
+affine on a 45%-opacity blank, and one each on vector, paint, and point text, at all six affine cursors
+and after each frame transition. The retained-affine raster
+fixture checks two transformed layers through two successive non-quarter frame transforms
+with fractional origins and extents, including composite parity and exact per-layer bounds and
+pixels at each tested affine or frame-transition cursor plus a frame-only control. A second fixture applies a retained affine to a
+bold-italic serif paragraph text layer through a two-frame sequence, with exact per-layer
+comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
+combinations; other retained-affine operation combinations and angles, blank opacity variants, other
+text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
+An exploratory mixed-source fractional-frame variant kept exact per-layer pixels and bounds but its
+first composite transition differed at canvas pixel (5, 26): legacy red/alpha 188/122 versus durable
+190/121. Keep mixed-source fractional composition open until this one-pixel mismatch is explained.
+Do not add `SET_DOCUMENT_FRAME_ACTION` to background
+presentation until the full frame gate is explicit.
+The UI test intentionally continues to observe legacy presentation on commit and
+renderer-incompatible fallback on redo.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
@@ -114,18 +129,31 @@ previews keep the complete legacy base through accepted and refused append publi
 `resetHistoryTo.durable.test.tsx` proves a refused final durable draw restores the real timeline.
 `e2e/undo-redo.spec.ts` also checks live Brush preview pixels while durable status is current and
 pixel preservation when that stroke commits. These are preview-interleaving and rollback proofs;
-they do not move previews to durable authority or permit removal of legacy logical replay. The next
-retained-affine/frame differential now compares the transform cursor and a later frame cursor with
-legacy replay, verifies both renderers change from the untransformed baseline, and compares the
-final output with a frame-only control. It covers one raster fixture only. Next expand the frame
-matrix across the open angles, retained-affine combinations, source/tool variants, text
-styling/rotation, frame sequences, and exact fractional bounds. Establish source-backed
-import/replacement ownership as a separate gate. The frame matrix and ownership gate are unordered
-and may proceed independently. Keep both surfaces legacy-gated until their parity and
-failure-containment evidence is explicit. The
-frame-only control for this fixture shows a one-pixel/two-channel delta and is recorded in
-`e2e/OPEN_PROBLEMS.md`; resolve it before frame publication. See `docs/HISTORY-MIGRATION-NEXT.md`
-for the migration sequence.
+they do not move previews to durable authority or permit removal of legacy logical replay. The
+retained-affine/frame differentials now establish exact layer bounds and pixel parity for two raster
+layers across successive fractional frame transforms, and for a styled paragraph-text layer across
+two frame transforms. A three-transition mixed-source differential also checks exact per-layer bounds
+and pixels after two sequential affines on an opaque blank, one affine on a 45%-opacity blank, and one
+each on vector, paint, and point text, at all six affine cursors and after each frame transition. Next
+expand the frame matrix across open angles, other affine combinations, other blank opacity values,
+other text styling/rotation, and resolve the mixed-source fractional-frame composite mismatch before
+claiming broader exact fractional bounds. Establish
+source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
+are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
+failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
+sequence.
+
+A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to
+request background composition only when the active cursor prefix before that create passes the
+ownership and frame gates. The create's own undo/redo cursor still takes the legacy fallback, and
+later edits cannot use this exception to skip that gate. The default app starts with a blank
+`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too;
+the tested paste and Background flows therefore remain on the legacy presentation. The browser
+spec verifies their exact undo/redo pixels and PNG/PSD exports, not durable presentation.
+The eligible gate-free prefix is covered by a focused unit test but has no proven normal UI entry
+point yet. A source-derived candidate is disabling the default blank history row through the
+History panel; validate it with the next-run E2E in `docs/HISTORY-MIGRATION-NEXT.md` before calling
+the exception product-reachable. Logical replay remains legacy-owned.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,

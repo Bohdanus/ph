@@ -11,7 +11,7 @@ const dispatchMock = vi.hoisted(() => vi.fn());
 
 type CreateLayerInput = { bitmap: unknown; name: string; pos: { x: number; y: number; width: number; height: number } };
 
-const createLayerFromBitmapMock = vi.hoisted(() => vi.fn(async () => undefined));
+const createLayerFromBitmapMock = vi.hoisted(() => vi.fn(async () => true));
 
 const storeState = vi.hoisted(
   (): {
@@ -87,7 +87,7 @@ function polygonSelection(overrides: Partial<Selection> = {}): Selection {
 beforeEach(() => {
   dispatchMock.mockClear();
   createLayerFromBitmapMock.mockClear();
-  createLayerFromBitmapMock.mockImplementation(async () => undefined);
+  createLayerFromBitmapMock.mockImplementation(async () => true);
   storeState.activeSelectionId = null;
   storeState.canvasRef = { current: createMockCanvas({ width: 100, height: 100 }) };
   storeState.documentFrame = undefined;
@@ -351,6 +351,14 @@ describe('useSelectionClipboard layerViaCopy', () => {
 
     expect(api.activeSelection?.id).toBe('second');
     await expect(api.layerViaCopy()).resolves.toBe(true);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledOnce();
+  });
+
+  it('reports failure when layer creation refuses a copied selection', async () => {
+    createLayerFromBitmapMock.mockResolvedValueOnce(false);
+    const api = renderProbe();
+
+    await expect(api.layerViaCopy()).resolves.toBe(false);
     expect(createLayerFromBitmapMock).toHaveBeenCalledOnce();
   });
 

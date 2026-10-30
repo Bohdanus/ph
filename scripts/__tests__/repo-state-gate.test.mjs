@@ -681,6 +681,30 @@ describe('the report says which remedy applies, and warns about the destructive 
     expect(r.err).not.toContain('CAREFUL');
     expect(r.err).not.toContain('DISCARDS resolution state');
     expect(r.err).toMatch(/decide by hand/);
+    expect(r.err).not.toContain('repo:state:recover-auto-merge');
+  });
+
+  it('prints guarded recovery preflight for a clean orphan marker in a non-main worktree', () => {
+    const repo = makeRepo();
+    const path = addWorktree(repo, 'linked');
+    const tree = git(path, 'rev-parse', 'HEAD^{tree}');
+    writeFileSync(join(resolveGitDir(path), 'AUTO_MERGE'), `${tree}\n`);
+
+    const r = report(repo);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('run the guarded recovery preflight from this worktree');
+    expect(r.err).toContain('npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"');
+  });
+
+  it('does not print the recovery command for an AUTO_MERGE on main', () => {
+    const repo = makeRepo();
+    const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+    writeFileSync(join(resolveGitDir(repo), 'AUTO_MERGE'), `${tree}\n`);
+
+    const r = report(repo);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('AUTO_MERGE');
+    expect(r.err).not.toContain('repo:state:recover-auto-merge');
   });
 
   it('emits findings as JSON with no prose mixed in', () => {

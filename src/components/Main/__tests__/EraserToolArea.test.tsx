@@ -7,6 +7,7 @@ import type { Selection } from '../../../contexts/general-types.ts';
 
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
+const cancelLayerPreviewMock = vi.hoisted(() => vi.fn());
 const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false }, activePointer: null as number | null }));
 const storeState = vi.hoisted(
@@ -62,6 +63,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     updateLayerByTool: updateLayerByToolMock,
     tempUpdateLayer: tempUpdateLayerMock,
+    cancelLayerPreview: cancelLayerPreviewMock,
     createLayerFromTool: createLayerFromToolMock,
   }),
 }));
@@ -94,6 +96,10 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
       pointerState.activePointer = null;
       pointerState.isMouseDown.current = false;
       return true;
+    }),
+    releasePointer: vi.fn(() => {
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
     }),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: pointerState.isMouseDown,
@@ -132,6 +138,8 @@ const stroke = (toolArea: HTMLDivElement, from: number[], ...to: number[][]) => 
 describe('EraserToolArea', () => {
   beforeEach(() => {
     updateLayerByToolMock.mockClear();
+    tempUpdateLayerMock.mockClear();
+    cancelLayerPreviewMock.mockClear();
     createLayerFromToolMock.mockClear();
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
@@ -540,17 +548,55 @@ describe('document gesture gate', () => {
     expect(isDocumentGestureOpen()).toBe(true);
   });
 
-  it('releases the claim on a pointer cancel, which is the abort route', () => {
+  it('ignores a foreign pointer cancel while preserving the owner stroke', () => {
+    const { toolArea } = renderGate();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 7, clientX: 30, clientY: 40 });
+    fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 99 });
+
+    expect(readDocumentGesture()).toEqual({ kind: 'eraser-stroke', pointerId: 7 });
+    expect(cancelLayerPreviewMock).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, clientX: 60, clientY: 40 });
+
+    expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it('releases the claim and rolls back the temporary raster on an owning pointer cancel', () => {
     const { toolArea } = renderGate();
 
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 10, clientY: 20 });
     expect(isDocumentGestureOpen()).toBe(true);
 
-    // A cancel is a gesture that will never commit, so a claim left open here would
-    // gate every later keystroke for a stroke that does not exist.
     fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 7 });
 
     expect(isDocumentGestureOpen()).toBe(false);
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
+  });
+
+  it('cancels a preview when the active layer changes during an owned stroke', () => {
+    const { container, rerender } = render(<EraserToolArea className="test-eraser-area" />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 10, clientY: 20 });
+    expect(tempUpdateLayerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'base', toolArgs: expect.objectContaining({ toolName: 'eraser' }) })
+    );
+    expect(readDocumentGesture()).toEqual({ kind: 'eraser-stroke', pointerId: 7 });
+
+    storeState.layers.other = makeLayer('other', { x: 0, y: 0, width: 300, height: 200 });
+    storeState.activeLayerId = 'other';
+    rerender(<EraserToolArea className="test-eraser-area" />);
+
+    expect(cancelLayerPreviewMock).toHaveBeenCalledWith('base');
+    expect(isDocumentGestureOpen()).toBe(false);
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, clientX: 30, clientY: 40 });
+
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
+    expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
   });
 
   it('releases the claim on unmount, so a gesture that dies mid-stroke cannot leave the keyboard dead', () => {
@@ -671,6 +717,29 @@ describe('EraserToolArea straight line', () => {
     // One point, not two: with no anchor a Shift-click is an ordinary click, which is what keeps
     // a Shift-held pointer from chaining lines off the end of the last one.
     expect(committedPoints()).toEqual([[{ x: 60, y: 90 }]]);
+  });
+
+  it('restores the last committed anchor when a later stroke is cancelled', () => {
+    const { toolArea } = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 30 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 30 });
+    updateLayerByToolMock.mockClear();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 90, clientY: 90 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 2, clientX: 100, clientY: 100 });
+    fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 2 });
+    updateLayerByToolMock.mockClear();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 3, shiftKey: true, clientX: 200, clientY: 130 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 3, shiftKey: true, clientX: 200, clientY: 130 });
+
+    expect(committedPoints()).toEqual([
+      [
+        { x: 20, y: 30 },
+        { x: 200, y: 130 },
+      ],
+    ]);
   });
 
   it('an unshifted press re-anchors, so the line starts from the last place the user clicked', () => {

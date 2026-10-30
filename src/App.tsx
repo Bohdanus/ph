@@ -9,6 +9,7 @@ import { MobileShell } from './components/Mobile/MobileShell.tsx';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { StoreProvider, useStore } from './contexts/StoreContext.tsx';
 import { UnsavedChangesProvider } from './contexts/UnsavedChangesContext.tsx';
+import { AutoSaveProvider, useAutoSave } from './contexts/AutoSaveContext.tsx';
 import { CurrentToolProvider } from './contexts/useCurrentTool.tsx';
 import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
@@ -50,13 +51,17 @@ function AppContainer() {
   const [{ hasImage, toolName }] = useStore();
   const layout = usePanelLayout();
   const isMobile = useIsMobileViewport();
+  const { autosaveMetadata } = useAutoSave();
 
   // Defer the first-use tour until the blank document is ready: SidebarLeft is
   // intentionally absent before then, and the tour's steps point at its tiles.
   // Keep eligibility separate from viewport visibility so crossing into the
   // mobile band hides, but does not permanently dismiss, the desktop/tablet tour.
+  // Suppress the tour while an autosave recovery banner is mounted so the two
+  // modal surfaces never stack — they share a single document-level focus trap
+  // and an Escape key dismisses whichever trap loses capture.
   const [shouldOfferFirstUseTour, setShouldOfferFirstUseTour] = useState(() => !hasImage && !hasSeenFirstUseTour());
-  const isFirstUseTourVisible = shouldOfferFirstUseTour && hasImage && !isMobile;
+  const isFirstUseTourVisible = shouldOfferFirstUseTour && hasImage && !isMobile && !autosaveMetadata;
   const completeFirstUseTour = useCallback(() => setShouldOfferFirstUseTour(false), []);
   const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
   const rightPanelPlacement = edgePlacement(
@@ -170,19 +175,21 @@ function App() {
               replace the document — the desktop header, the mobile drawer, `Main`'s drop
               handler — and below nothing that needs it. */}
           <UnsavedChangesProvider>
-            <KeyboardEventsProvider>
-              <CurrentToolProvider>
-                {/* Above `RightPanelVisibilityProvider` and beside it: both are shell state, and
-                    neither reads the store. Order between them does not matter. */}
-                <PanelLayoutProvider>
-                  <RightPanelVisibilityProvider>
-                    <FirstUseProvider>
-                      <AppContainer />
-                    </FirstUseProvider>
-                  </RightPanelVisibilityProvider>
-                </PanelLayoutProvider>
-              </CurrentToolProvider>
-            </KeyboardEventsProvider>
+            <AutoSaveProvider>
+              <KeyboardEventsProvider>
+                <CurrentToolProvider>
+                  {/* Above `RightPanelVisibilityProvider` and beside it: both are shell state, and
+                       neither reads the store. Order between them does not matter. */}
+                  <PanelLayoutProvider>
+                    <RightPanelVisibilityProvider>
+                      <FirstUseProvider>
+                        <AppContainer />
+                      </FirstUseProvider>
+                    </RightPanelVisibilityProvider>
+                  </PanelLayoutProvider>
+                </CurrentToolProvider>
+              </KeyboardEventsProvider>
+            </AutoSaveProvider>
           </UnsavedChangesProvider>
         </StoreProvider>
       </ThemeProvider>

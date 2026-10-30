@@ -1,26 +1,30 @@
 # Kilo configuration
 
-The agent-facing Kilo configuration this repository depends on, and the part of
-it that no tracked file holds.
+The agent-facing Kilo configuration this repository depends on, including its
+tracked research and completion profiles and the settings that only exist in local
+Kilo config.
 
 Read this before changing [`../kilo.jsonc`](../kilo.jsonc), before editing an agent
 definition, and before concluding that a setting "is not configured".
 
 ## Why this document exists
 
-Kilo is configured in three places, and only one of them is in git:
+Kilo configuration spans these project and user surfaces:
 
-| Surface                                                             | Tracked | Its home                                                                    |
-| ------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------- |
-| [`../kilo.jsonc`](../kilo.jsonc) — project permissions, MCP servers | yes     | itself; this document links to it and never restates it                     |
-| `.kilo/agents/*.md` — the four agent definitions                    | **no**  | **this document**, because [`../.gitignore`](../.gitignore) ignores `.kilo` |
-| `~/.config/kilo/kilo.jsonc` — model, tools, global permissions      | **no**  | **this document**                                                           |
+| Surface                                                                        | Tracked | Its home                                                                                     |
+| ------------------------------------------------------------------------------ | ------- | -------------------------------------------------------------------------------------------- |
+| [`../kilo.jsonc`](../kilo.jsonc) — project permissions, MCP servers            | yes     | itself; this document links to it and never restates it                                      |
+| [`../.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) | yes     | the project-owned read-only profile used for bounded free-model research                     |
+| [`../.kilo/agent/free-completion.md`](../.kilo/agent/free-completion.md)       | yes     | the tool-free profile used by the authenticated free-model completion runner                 |
+| `.kilo/agents/*.md` — four local primary agent definitions                     | **no**  | this document records their recommended shape; [`../.gitignore`](../.gitignore) ignores them |
+| `~/.config/kilo/kilo.jsonc` — model, tools, global permissions                 | **no**  | this document                                                                                |
 
-`.kilo/` is gitignored on purpose: it holds one worktree per task under
-`.kilo/worktrees/`, and tracking that would be absurd. The side effect is that the
-four agent definitions are **local-only**. A fresh clone has none of them. So the
-recommended shape is recorded here, and an agent that finds `.kilo/agents/` missing
-or diverged should reconcile it against this file rather than invent a new policy.
+`.kilo/` is gitignored by default because it holds one worktree per task under
+`.kilo/worktrees/`. The tracked research and completion profiles are explicit
+exceptions: `AGENTS.md` and `MODELS.md` direct coordinators to use them for free
+read-only research and tool-free completions. The four `.kilo/agents/` definitions
+remain local-only; a fresh clone has none of them, so their recommended shape is
+recorded here.
 
 ## The one non-obvious thing about agent permissions
 
@@ -43,13 +47,19 @@ permission:
   serena_replace_in_files: deny
 ```
 
+The `free-completion` profile uses a catch-all `'*': deny` with no allow exceptions;
+the completion runner rejects any tool event as a failed response. Keep the profile
+tool-free even when adding new MCP or built-in tools.
+
 Deny the mutating Serena tools and leave the read-only ones allowed. A code reviewer
 that cannot follow a reference with `serena_find_referencing_symbols` is a reviewer
 that guesses, and guessing is the failure mode a reviewer exists to prevent.
 
-## The four agent definitions
+## The four local primary agent definitions
 
-All four are `mode: primary`. All four keep `read: allow` and `question: allow`.
+This section describes local profiles under `.kilo/agents/`; it does not describe the
+tracked project profile at `.kilo/agent/read-only-research.md`. All four local profiles
+are `mode: primary` and keep `read: allow` and `question: allow`.
 
 | Agent                 | `edit`                                 | `bash`  | Notes                                                          |
 | --------------------- | -------------------------------------- | ------- | -------------------------------------------------------------- |
@@ -68,10 +78,13 @@ Two of these are only as good as their honesty about limits:
   the intended trade for a planning agent, and it is why its plan must name the
   command that would confirm each claim rather than asserting it.
 
-`subagent_type: 'explore'` is a **built-in** agent and is not one of these four. Its
-bash layer denies every process invocation, so it cannot run `npm run test`,
-`npx playwright test --list` or `git log`. Use `general` for research that has to
-execute something.
+`subagent_type: 'explore'` is a **built-in** role, not one of these four local
+profiles. Its Bash interface is limited to an allowlist of read-only commands; that
+limit is not a tool-level deny. Project rules in [`../AGENTS.md`](../AGENTS.md) and
+[`../MODELS.md`](../MODELS.md) are stricter for free task children: deny `bash`,
+editing, and file-mutating MCP tools, and never let free children perform Git
+operations. Use only an explicitly permitted agent for required scripts or tests;
+the coordinator owns all Git operations.
 
 ## Global configuration that must be true
 

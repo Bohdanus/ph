@@ -214,25 +214,29 @@ describe('tool image processors', () => {
       }
     });
 
-    it('propagates a non-finite saturation into the filter string', () => {
-      const [result] = colors(params)({ grayscale: 0, sepia: 0, saturation: Number.NaN, toolName: 'color' });
+    it('normalizes non-finite Colors values to neutral before assigning the CSS filter', () => {
+      const [result] = colors(params)({
+        grayscale: Number.NaN,
+        sepia: Number.POSITIVE_INFINITY,
+        saturation: Number.NaN,
+        toolName: 'color',
+      });
 
-      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(NaN%)');
+      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(100%)');
       expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
-    it.fails('sanitizes a non-finite saturation before it reaches the CSS filter (src/tools/colors.ts:12)', () => {
-      colors(params)({ grayscale: 0, sepia: 0, saturation: Number.NaN, toolName: 'color' });
+    it('clamps Colors values to their slider ranges before assigning the CSS filter', () => {
+      colors(params)({ grayscale: -30, sepia: 400, saturation: 100, toolName: 'color' });
+      const [grayscale, sepia, saturation] = parseFilter(lastCanvas().ctx.filter as string, [
+        'grayscale',
+        'sepia',
+        'saturate',
+      ]);
 
-      expect(lastCanvas().ctx.filter).not.toContain('NaN');
-    });
-
-    it.fails('clamps out-of-range grayscale and sepia into valid percentages (src/tools/colors.ts:12)', () => {
-      colors(params)({ grayscale: -30, sepia: 400, saturation: 0, toolName: 'color' });
-      const [grayscale, sepia] = parseFilter(lastCanvas().ctx.filter as string, ['grayscale', 'sepia']);
-
-      expect(grayscale).toBeGreaterThanOrEqual(0);
-      expect(sepia).toBeLessThanOrEqual(100);
+      expect(grayscale).toBe(0);
+      expect(sepia).toBe(100);
+      expect(saturation).toBeCloseTo(916.62, 2);
     });
   });
 
@@ -311,25 +315,12 @@ describe('tool image processors', () => {
       }
     });
 
-    it('passes a NaN brightness/contrast straight into the filter string (levels.ts — the levels() processor)', () => {
-      // `proportionateFactor` has no guard, so non-finite inputs survive into the composed CSS
-      // filter. `presentation-evaluator.ts` — `numericFilterArg()` is what refuses them on the
-      // live render path; this processor has no such gate, which is what the tripwire below
-      // records.
-      const [result] = levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
+    it('normalizes non-finite Levels arguments before applying the processor filter', () => {
+      const [result] = levels(params)({ brightness: Number.NaN, contrast: 40, toolName: 'levels' });
 
-      expect(lastCanvas().ctx.filter).toBe('brightness(NaN%) contrast(NaN%)');
+      expect(lastCanvas().ctx.filter).toBe('brightness(100%) contrast(140%)');
       expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
-
-    it.fails(
-      'sanitizes a non-finite brightness/contrast before it reaches the CSS filter (levels.ts — the levels() processor)',
-      () => {
-        levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
-
-        expect(lastCanvas().ctx.filter).not.toContain('NaN');
-      }
-    );
   });
 
   describe('crop', () => {

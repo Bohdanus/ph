@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { useRef, type RefObject } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -62,7 +62,7 @@ type smudgeToolAreaProps = {
  */
 export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
   const [{ containerRef, activeLayerId, layers, totalSize }] = useStore();
-  const { tempUpdateLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, updateLayerByTool, cancelLayerPreview } = useLayers();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as SmudgeToolArgs;
@@ -85,10 +85,14 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
    * writes that presentation rather than the raw layer.
    */
   const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
+  const previewLayerIdRef = useRef<typeof activeLayerId>(null);
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
-    { imageSize: totalSize, containerRef, enabled: isEnabled },
+    { imageSize: totalSize, containerRef, enabled: isEnabled, gestureKey: activeLayerId },
     {
+      onStart: () => {
+        previewLayerIdRef.current = activeLayerId;
+      },
       onMove: (points) => {
         /**
          * The invariant this establishes: the processor addresses the LAYER's own raster,
@@ -114,6 +118,12 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
           id: activeLayerId!,
           toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
+        previewLayerIdRef.current = null;
+      },
+      onCancel: () => {
+        const layerId = previewLayerIdRef.current;
+        previewLayerIdRef.current = null;
+        if (layerId) cancelLayerPreview(layerId);
       },
     }
   );
