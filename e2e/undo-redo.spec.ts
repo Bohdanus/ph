@@ -601,8 +601,8 @@ test.describe('Undo and redo', () => {
           comparable: false,
           reason: 'tool-overlay and workspace backing dimensions differ',
         };
-    // Backing-store equality pins the document raster. Keep the CSS-scaled screenshot difference as
-    // a diagnostic because the browser composites the preview's canvas stack at display resolution.
+    // The screenshot clip is CSS-scaled. Gate exact document pixels on the backing stores, and
+    // retain screenshot parity as diagnostic evidence for display-stage resampling differences.
     let screenshotPixelParity: ReturnType<typeof pixelDifference> | null = null;
     try {
       expect(backingPixelParity, 'committing the stroke must preserve exact document backing pixels').toMatchObject({
