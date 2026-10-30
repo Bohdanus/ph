@@ -2107,7 +2107,9 @@ inside the document and at its bottom edge; record whether overflow ink is visib
 while editing and after commit; expand the canvas without resizing the box and check whether any ink
 appears; then re-enter the layer, resize the box, and confirm all text remains. Use that observation to
 choose between a single fixed layout/raster extent and separate retained layout/raster extents. Until
-then, leave the product code and tests unchanged.
+then, do not change committed pixel/raster behavior or add tests that assume unverified Photoshop
+behavior. Keep the existing test for this editor's draft overlay; add Photoshop parity assertions only
+after observing the corresponding behavior.
 
 ## 197. Multi-layer bedrock conversion remains intentionally unavailable
 
