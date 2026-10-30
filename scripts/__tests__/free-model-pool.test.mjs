@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
+  CONTROL_PLANE_TIMEOUT_MS,
   discoverGroqKeyFiles,
   loadCatalogs,
   main,
@@ -15,9 +16,19 @@ import {
   runOpenCodeCompletion,
   zeroPriced,
 } from '../free-model-pool.mjs';
+import { COMPLETION_TIMEOUT_MS } from '../lib/free-model-kilo.mjs';
 
 const completeWithFreeModel = (prompt, options = {}) =>
-  completeWithFreeModelImplementation(prompt, { ...options, initializeLegacyQuarantine: false });
+  completeWithFreeModelImplementation(prompt, {
+    kiloCommand: '',
+    openRouterKey: '',
+    groqApiKey: '',
+    groqApiKeys: [],
+    groqFreePlan: false,
+    opencodeCommand: '',
+    ...options,
+    initializeLegacyQuarantine: false,
+  });
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -172,6 +183,15 @@ describe('free model catalog filtering', () => {
     ]);
   });
 
+  it('tries OpenRouter Laguna first and preserves catalog order for the remaining free models', () => {
+    const data = [openRouterRow('vendor/first'), openRouterRow('poolside/laguna-s-2.1'), openRouterRow('vendor/last')];
+    expect(catalogCandidates('openrouter', data).map((row) => row.model)).toEqual([
+      'poolside/laguna-s-2.1:free',
+      'vendor/first:free',
+      'vendor/last:free',
+    ]);
+  });
+
   it('keeps Kilo candidates available when the optional OpenRouter catalog is down', async () => {
     const fetchImpl = readableFetch((url) =>
       url.includes('openrouter')
@@ -209,6 +229,30 @@ describe('free model catalog filtering', () => {
 });
 
 describe('free model rotation', () => {
+  it('gives preferred OpenRouter Laguna enough tokens for reasoning when the requested cap is tiny', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'poolside/laguna-s-2.1:free',
+        choices: [{ message: { content: 'Laguna result' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('poolside/laguna-s-2.1')], chat });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: 'test',
+      maxTokens: 20,
+    });
+
+    expect(result).toMatchObject({
+      source: 'openrouter',
+      model: 'poolside/laguna-s-2.1:free',
+      content: 'Laguna result',
+    });
+    expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ max_tokens: 1024 });
+  });
+
   it('falls through to OpenCode using its tool-disabled completion adapter', async () => {
     const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
     const fetchImpl = catalogFetch({
@@ -256,6 +300,48 @@ describe('free model rotation', () => {
     expect(chat.mock.calls[0][0]).toBe('https://api.groq.com/openai/v1/chat/completions');
     expect(chat.mock.calls[0][1].headers.Authorization).toBe('Bearer groq-test');
     expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ reasoning_effort: 'low', max_tokens: 1200 });
+  });
+
+  it('tries Groq before OpenCode after Kilo and OpenRouter are exhausted', async () => {
+    const chat = vi.fn(async (url) => {
+      if (url.includes('openrouter')) return { ok: false, status: 429, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'openai/gpt-oss-120b',
+          choices: [{ message: { content: 'Groq result' }, finish_reason: 'stop' }],
+        }),
+      };
+    });
+    const fetchImpl = catalogFetch({
+      kilo: [kiloRow('kilo:free')],
+      openrouter: [openRouterRow('openrouter/model')],
+      groq: [{ id: 'openai/gpt-oss-120b' }],
+      opencode: [{ id: 'beam-free', owned_by: 'opencode' }],
+      chat,
+    });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'Kilo quota', exhaustSource: true });
+    const runOpenCode = vi.fn().mockResolvedValue({ content: 'OpenCode result', finishReason: 'stop' });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: 'openrouter-test',
+      groqApiKey: 'groq-test',
+      groqFreePlan: true,
+      kiloCommand: '/fake-kilo',
+      runKilo,
+      opencodeCommand: '/opt/opencode',
+      runOpenCode,
+    });
+
+    expect(result).toMatchObject({ source: 'groq', model: 'openai/gpt-oss-120b', content: 'Groq result' });
+    expect(runKilo).toHaveBeenCalledTimes(1);
+    expect(runOpenCode).not.toHaveBeenCalled();
+    expect(chat.mock.calls.map(([url]) => url)).toEqual([
+      'https://openrouter.ai/api/v1/chat/completions',
+      'https://api.groq.com/openai/v1/chat/completions',
+    ]);
+    expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1, groq: 1 });
   });
 
   it('rotates to the next Groq key on HTTP 429 from the first key', async () => {
@@ -561,26 +647,51 @@ describe('free model rotation', () => {
   });
 
   it('moves to the next provider after exhaustion and never retries that source', async () => {
-    const chat = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 429, json: async () => ({ error: { message: 'limit' } }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
-      });
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
+    });
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1'), kiloRow('k2')], openrouter: [openRouterRow('o1')], chat });
-    const result = await completeWithFreeModel('safe prompt', { fetchImpl, openRouterKey: 'test' });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'provider quota', exhaustSource: true });
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: 'test',
+      kiloCommand: '/fake-kilo',
+      runKilo,
+    });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'done' });
-    expect(chat).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(chat.mock.calls[1][1].body).model).toBe('o1:free');
+    expect(runKilo).toHaveBeenCalledTimes(1);
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(chat.mock.calls[0][1].body).model).toBe('o1:free');
+  });
+
+  it('exhausts Kilo after its resolved CLI cannot start instead of retrying every model', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
+    });
+    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1'), kiloRow('k2')], openrouter: [openRouterRow('o1')], chat });
+    const spawnError = Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' });
+    const runKilo = vi.fn().mockRejectedValue(spawnError);
+    const result = await completeWithFreeModel('safe prompt', {
+      fetchImpl,
+      openRouterKey: 'test',
+      kiloCommand: '/invalid-kilo-cli',
+      runKilo,
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'done' });
+    expect(runKilo).toHaveBeenCalledTimes(1);
+    expect(result.requestCounts).toMatchObject({ kilo: 1, openrouter: 1 });
   });
 
   it('stops with a clear error when every free source is exhausted', async () => {
-    const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
+    const chat = vi.fn();
     const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
     await expect(completeWithFreeModel('prompt', { fetchImpl })).rejects.toThrow(/No free model completed/);
-    expect(chat).toHaveBeenCalledTimes(1);
+    expect(chat).not.toHaveBeenCalled();
   });
 
   it('exhausts a single-key provider on HTTP 401 to avoid retrying an invalid key', async () => {
@@ -597,26 +708,28 @@ describe('free model rotation', () => {
   });
 
   it('caps retries to three model requests per source before rotating providers', async () => {
-    const chat = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
-      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
-      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
-      });
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
+    });
+    const runKilo = vi.fn().mockResolvedValue({ error: 'model unavailable' });
     const fetchImpl = catalogFetch({
       kilo: [kiloRow('k1'), kiloRow('k2'), kiloRow('k3'), kiloRow('k4')],
       openrouter: [openRouterRow('o1')],
       chat,
     });
-    const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'test',
+      kiloCommand: '/fake-kilo',
+      runKilo,
+    });
     expect(result.source).toBe('openrouter');
-    expect(chat).toHaveBeenCalledTimes(4);
-    expect(JSON.parse(chat.mock.calls[2][1].body).model).toBe('k3');
-    expect(JSON.parse(chat.mock.calls[3][1].body).model).toBe('o1:free');
+    expect(runKilo).toHaveBeenCalledTimes(3);
+    expect(runKilo.mock.calls.map(([options]) => options.model)).toEqual(['k1', 'k2', 'k3']);
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(chat.mock.calls[0][1].body).model).toBe('o1:free');
   });
 
   it('ignores caller supplied paid candidates and only uses the live filtered catalog', async () => {
@@ -653,7 +766,7 @@ describe('free model rotation', () => {
           choices: [{ message: { content: 'free result' }, finish_reason: 'stop' }],
         }),
       });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('k1'), openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free', content: 'free result' });
     expect(chat).toHaveBeenCalledTimes(2);
@@ -668,11 +781,35 @@ describe('free model rotation', () => {
         status: 200,
         json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
       });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('o1'), openRouterRow('o2')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     expect(result.source).toBe('openrouter');
     expect(chat.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
     expect(chat).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses short control-plane timeouts and a five-minute inference timeout', async () => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeoutDurations = [];
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((duration) => {
+      timeoutDurations.push(duration);
+      return originalTimeout(duration);
+    });
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
+    });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('o1')], chat });
+
+    try {
+      await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
+      expect(timeoutDurations).toContain(CONTROL_PLANE_TIMEOUT_MS);
+      expect(timeoutDurations).toContain(COMPLETION_TIMEOUT_MS);
+      expect(COMPLETION_TIMEOUT_MS).toBe(300_000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it('rotates after a successful HTTP response with a truncated completion', async () => {
@@ -682,7 +819,7 @@ describe('free model rotation', () => {
         ok: true,
         status: 200,
         json: async () => ({
-          model: 'k1',
+          model: 'r1:free',
           choices: [{ message: { content: 'partial text' }, finish_reason: 'length' }],
         }),
       })
@@ -691,7 +828,7 @@ describe('free model rotation', () => {
         status: 200,
         json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
       });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('r1'), openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     expect(result.source).toBe('openrouter');
   });
@@ -702,14 +839,14 @@ describe('free model rotation', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ model: 'k1', choices: [{ message: { content: null }, finish_reason: 'length' }] }),
+        json: async () => ({ model: 'r1:free', choices: [{ message: { content: null }, finish_reason: 'length' }] }),
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         json: async () => ({ model: 'o1:free', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] }),
       });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('r1'), openRouterRow('o1')], chat });
     const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     expect(result.source).toBe('openrouter');
     expect(chat).toHaveBeenCalledTimes(2);
@@ -728,13 +865,13 @@ describe('free model rotation', () => {
       ok: true,
       status: 200,
       json: async () => ({
-        model: 'k1',
+        model: 'k1:free',
         usage,
         choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
       }),
     });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
-    const completion = completeWithFreeModel('prompt', { fetchImpl });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('k1')], chat });
+    const completion = completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' });
     if (shouldAccept) {
       await expect(completion).resolves.toMatchObject({ finishReason: 'stop', content: 'done' });
     } else {
@@ -749,7 +886,7 @@ describe('free model rotation', () => {
         ok: true,
         status: 200,
         json: async () => ({
-          model: 'k1',
+          model: 'k1:free',
           usage: { cost: '0.02' },
           choices: [{ message: { content: 'partial result' }, finish_reason: 'length' }],
         }),
@@ -762,7 +899,7 @@ describe('free model rotation', () => {
           choices: [{ message: { content: 'apparently free result' }, finish_reason: 'stop' }],
         }),
       });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('k1'), openRouterRow('o1')], chat });
 
     await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' })).rejects.toThrow(
       /provider reported non-zero or invalid usage cost; refusing further requests/
@@ -786,7 +923,7 @@ describe('free model rotation', () => {
           choices: [{ message: { content: 'apparently free result' }, finish_reason: 'stop' }],
         }),
       });
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], openrouter: [openRouterRow('o1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('k1'), openRouterRow('o1')], chat });
 
     await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' })).rejects.toThrow(
       /provider reported non-zero or invalid usage cost; refusing further requests/
@@ -818,6 +955,8 @@ describe('free model runner CLI', () => {
       const code = await main(['--prompt-file', promptPath, '--output-file', outputPath], {
         fetchImpl,
         openRouterKey: '',
+        kiloCommand: '/fake-kilo',
+        runKilo: vi.fn().mockResolvedValue({ content: 'concise result', finishReason: 'stop' }),
         initializeLegacyQuarantine: false,
         stdout,
         stderr,
@@ -863,9 +1002,9 @@ describe('free model runner CLI', () => {
 
   it('refuses an oversized completion body', async () => {
     const chat = vi.fn().mockResolvedValue(new Response(Buffer.alloc(MAX_COMPLETION_RESPONSE_BYTES + 1)));
-    const fetchImpl = catalogFetch({ kilo: [kiloRow('k1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('k1')], chat });
 
-    await expect(completeWithFreeModel('prompt', { fetchImpl })).rejects.toThrow(
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test' })).rejects.toThrow(
       `Model response exceeds the ${MAX_COMPLETION_RESPONSE_BYTES}-byte limit`
     );
     expect(chat).toHaveBeenCalledTimes(1);
