@@ -648,6 +648,28 @@ recommend the command that destroys it.
 `git merge --squash` writes no `MERGE_HEAD` and git cannot abandon a squash at all, so
 its remedy is nothing rather than a plausible-looking command that fatals.
 
+**An orphan `AUTO_MERGE` has guarded recovery paths, not a guessed abort.** When it is
+the only operation marker, the worktree is clean, the index has no unresolved paths,
+and the marker names exactly `HEAD^{tree}`, the remaining file can be a stale artifact from a completed
+rebase. `npm run repo:state:recover-auto-merge -- --expected-head <full-sha>` performs
+a read-only preflight from the target task worktree. Only after independently
+establishing that its owner has stopped may the operator repeat the command with
+`--apply --confirm-owner-stopped`; it rechecks every predicate and removes only that
+worktree's `AUTO_MERGE` file.
+
+Dirty work may be preserved when the index still matches `HEAD`, there are no
+unresolved paths or other operation markers, and every tracked working file exactly
+matches the tree named by `AUTO_MERGE`. Run the read-only preflight with
+`--preserve-matching-worktree`; it prints the marker-tree and worktree-status pins.
+After confirming the owner stopped, apply only with those exact pins, `--apply`, and
+`--confirm-owner-stopped`. This path unlinks only `AUTO_MERGE`: it does not reset,
+stage, commit, or alter tracked or untracked files. Continue to review and preserve
+that work under the normal landing procedure. It refuses `main`, staged changes,
+conflicts, other operation markers, changed HEAD or status, malformed markers, and
+tracked content that differs from the marker. Do not use either path for a live or
+unresolved merge. Board file claims are separate: wait for their leases to expire or
+release them as their owner; Git recovery never overrides or clears board locks.
+
 ## The list of worktrees: `WORKTREES.json`
 
 `WORKTREES.json` at the canonical checkout root is a generated inventory of every

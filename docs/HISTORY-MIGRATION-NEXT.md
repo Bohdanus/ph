@@ -36,15 +36,35 @@ is for this review closeout.
   projection with legacy fallback, not a completed undo/redo authority cutover. Supported committed
   eligible append/reorder transitions also compose a durable presentation in the background, but keep
   the already-visible legacy selector active while composition runs so transient previews are not
-  blocked. Source-backed imports/replacements and frame-changing commits remain legacy until their
-  ownership or frame-parity gates are explicit.
+  blocked. Image/blank layer creates can request that presentation after asset finalization only if
+  the preceding active cursor prefix passes the existing ownership and frame gates; their own
+  navigation cursor remains on the legacy fallback. Tool-source creates, later source-backed edits,
+  source replacements, merge and frame-changing commits retain their gates.
+
+The default active UI prefix remains gated: `App.tsx` boots a blank document through
+`setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a `NEW_LAYER_ACTION` that the
+ownership gate treats as unproven. Imported-raster baselines are gated as well. A narrow alternate
+route is now verified in headless UI tests: disable the default blank History row, then either paste
+a deterministic raster or add a transparent blank layer from the tablet Layers drawer. Both
+appends paint from the durable cursor and preserve exact empty/composite/layer pixels in the canvas,
+PNG, and PSD. Undo/redo keeps exact canvas pixels; redo uses the complete `ownership-unproven`
+legacy fallback while the root stays disabled. This proves only the user-disabled-root prefix. The
+default active prefix, imported-raster starts, later source-backed edits, and frame-changing commits
+remain gated. Do not broaden the exception to bypass the active-prefix gate.
 
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
    staged presentation projection, and eligible committed append/reorder presentation composes in
-   the background. Source-backed imports/replacements and frame-changing commits remain on the
-   complete legacy path. Live previews also keep the complete legacy layer base until they clear;
+   the background. A new image/blank layer create may request composition after asset finalization
+   only if the prior active prefix passes the ownership and frame gates; its own navigation cursor
+   and later appends still use the complete legacy fallback. Other source-backed commits and
+   frame-changing commits remain on the complete legacy path.
+   The image/blank exception is reachable only after disabling the default blank History row, as
+   the raster-paste and tablet blank-layer tests now prove. The default active new-document prefix
+   and imported-raster starts remain gated; keep those paths unproven until their baseline ownership
+   is resolved explicitly.
+   Live previews also keep the complete legacy layer base until they clear;
    the preview tests pin that interleaving behavior but do not make preview a durable authority
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
@@ -93,9 +113,12 @@ priority or dependency. They may be pursued in either order or in parallel.
    variants, and exact fractional materialized bounds across the wider source matrix. Keep
    `SET_DOCUMENT_FRAME_ACTION` out of durable publication until that matrix is explicit; add
    cursor checks without changing publication, cursor, or lease ownership.
-4. Establish source-backed import/replacement ownership and parity as the other independent gate.
-   Keep the unsupported-source refusal explicit, and do not treat either gate's passing differential
-   as authority to promote that surface.
+4. Keep the image/blank create exception scoped to the current append. It may request background
+   composition after asset finalization only when the preceding active cursor prefix passes the
+   ownership and frame gates. The create's own navigation cursor and later appends remain on the
+   current legacy fallback until the broader source-ownership proof is explicit. Continue source-backed
+   import/replacement ownership and parity as the other independent gate; keep unsupported-source
+   refusal explicit and do not use either gate's differential to promote broader surfaces.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
@@ -167,3 +190,34 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
   fixture pins exact bounds for its listed integer-origin frame cases; a fractional-frame probe keeps
   per-layer bounds and pixels exact but differs in its first composite transition by one pixel. The
   raster and styled paragraph-text fixtures cover fractional frame origins and extents.
+
+## Current continuation plan
+
+The source of truth for this migration's implementation slices and acceptance gates is
+[the durable history continuation plan](../.kilo/plans/history-migration-continuation-20261027.md).
+The `976a201e` sync and `3ccccba0` main pin above describe the 2026-10-28 checkpoint. Slice 1
+landed on `main` on 2026-10-29 as `f723394b`, after the full unit suite, source-backed E2E,
+typecheck, build, lint and read-only reviews passed. The latest plan checkpoint records its exact
+parents/tree and the History-panel proof based on that landed pin. The headless E2E now proves one
+bounded route: disable the default blank `NEW_LAYER_ACTION` row, then paste one supported raster
+through the UI and publish its append cursor with durable presentation. It checks the empty
+transparent state, exact composite and layer pixels, PNG and PSD output, then exact undo/redo pixels
+while the root stays disabled. A DEV-only canvas marker is written after the renderer succeeds, so
+the E2E confirms the durable and legacy repaint sources before reading their pixels. Redo correctly
+takes the legacy fallback with `ownership-unproven`. This does not widen production eligibility or finish history migration;
+`HistoryItem[]` and `replayHistory()` remain authoritative. Recheck live worktree ownership before
+selecting Slice 2A or one Slice 2B family, as recorded in the plan.
+
+The tablet blank-layer case extends the same disabled-root route through the mobile Layers drawer.
+It requires a successful durable paint at cursor 1, exact transparent canvas/PNG pixels, exact PSD
+composite and blank-layer pixels/bounds, then exact undo/redo pixels with the root still disabled.
+The existing raster case covers deterministic clipboard paste on the same prefix. Both check the
+DEV-only paint source/cursor after renderer completion; redo remains the complete
+`ownership-unproven` legacy fallback. These tests demonstrate only this reachable prefix and do not
+change any production publication gate.
+
+At the latest sync, actual local `main` was `ce1aedec0ddc619ea92414444377f1b243bc29b9`; this
+candidate contains it through merge `9f84f7eaa8942e2c340d340771fde6f0b509ff13`. After syncing, the
+focused browser suite (4 tests), E2E helper suite (21 files), typecheck, production build, and lint
+all passed. Before the pinned landing, recheck live main and `repo:state`; sync and rerun the focused
+gates if main has moved.

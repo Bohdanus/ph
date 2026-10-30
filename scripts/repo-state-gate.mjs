@@ -93,6 +93,22 @@ function describeWorktree(finding) {
     if (operation.value) lines.push(`      ${operation.operation} target: ${operation.value}`);
   }
 
+  if (
+    finding.present !== false &&
+    finding.branch !== 'main' &&
+    finding.operations.length === 1 &&
+    finding.unmerged.length === 0 &&
+    finding.operations[0].marker === 'AUTO_MERGE'
+  ) {
+    lines.push(
+      '    If the owner has stopped and this is a stale marker, run the guarded recovery preflight from this worktree:',
+      '      npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"',
+      '    For dirty work, also try the read-only --preserve-matching-worktree preflight; it requires the index at HEAD and tracked files identical to AUTO_MERGE.',
+      '    Apply preserved work only with the exact marker-tree and worktree-status pins it prints, --apply, and --confirm-owner-stopped.',
+      '    Apply only after reviewing the proof and confirming the owner stopped.'
+    );
+  }
+
   if (finding.unmerged.length > 0) {
     lines.push(`    unmerged in the index: ${finding.unmerged.length} path(s)`);
     for (const path of finding.unmerged.slice(0, 10)) lines.push(`      ${path}`);

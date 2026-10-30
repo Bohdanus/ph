@@ -37,8 +37,11 @@ Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHis
 the mapped durable cursor after that transition and publishes a separate
 `durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; successful
 eligible committed append/reorder transitions run the same composition in the background while
-keeping the legacy selector immediately visible; source-backed imports/replacements and
-frame-changing commits remain legacy until their ownership or frame-parity gates are explicit. The
+keeping the legacy selector immediately visible, including image/blank layer creates after asset
+finalization only when the prior active cursor prefix passes the ownership and frame gates. The
+create's own navigation cursor and later appends remain on the legacy fallback until the broader
+source-ownership proof is explicit. Other source-backed commits and frame-changing commits retain
+their independent ownership or frame-parity gates. The
 legacy layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
@@ -74,8 +77,9 @@ affine arithmetic of its own. `renderRetainedSegment()` hands the retained opera
 through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 `presentation-evaluator.ts` — `scaleVectorArgs()`, which `materialization.ts` imports directly and
 `layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation
-and eligible committed append/reorder are now staged callers; source-backed imports/replacements,
-frame changes, previews, and the
+and eligible committed append/reorder, including image/blank creates from a gate-free prior
+prefix, are now staged callers; navigation through their source-backed cursors, other source-backed
+commits, frame changes, previews, and the
 remaining surfaces still need independent parity gates before they are mounted.
 
 **Rotated crop is now an explicit logical operation, but its presentation gate remains closed.**
@@ -138,6 +142,18 @@ source-backed import/replacement ownership as a separate gate. The frame matrix 
 are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
 failure-containment evidence is explicit. See `docs/HISTORY-MIGRATION-NEXT.md` for the migration
 sequence.
+
+A bounded source-backed create exception allows an image or blank `NEW_LAYER_ACTION` to
+request background composition only when the active cursor prefix before that create passes the
+ownership and frame gates. The create's own undo/redo cursor still takes the legacy fallback, and
+later edits cannot use this exception to skip that gate. The default app starts with a blank
+`NEW_LAYER_ACTION`, which is already ownership-gated, and imported raster baselines are gated too;
+the tested paste and Background flows therefore remain on the legacy presentation. The browser
+spec verifies their exact undo/redo pixels and PNG/PSD exports, not durable presentation.
+The eligible gate-free prefix is covered by a focused unit test but has no proven normal UI entry
+point yet. A source-derived candidate is disabling the default blank history row through the
+History panel; validate it with the next-run E2E in `docs/HISTORY-MIGRATION-NEXT.md` before calling
+the exception product-reachable. Logical replay remains legacy-owned.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,
@@ -2070,21 +2086,21 @@ already-landed patch-equivalence logic.
 **Confirmed app behavior.** `calculateNewRect` in `src/util/rect.ts` measures all wrapped
 paragraph lines with `layoutText`, grows `y2` to the required height, and then clamps the rectangle
 with `trimRect2`. In `src/tools/text.ts`, `layoutText` returns every wrapped or hard-broken line; its
-optional box height sets the `overflow` flag but does not discard lines. `renderTextInto` draws every
-returned line. `createLayerFromTool` sets the committed `pos` from the rect, and `createLayerSource`
+optional `boxHeight` contributes to the returned `overflow` boolean, but all lines remain in the
+result. `renderTextInto` draws every returned line. `createLayerFromTool` sets the committed `pos`
+from the rect, and `createLayerSource`
 passes that `pos` as the creator size (`src/contexts/useLayer.ts`, `src/contexts/layer-utils.ts`). The
 text creator allocates an `OffscreenCanvas` at that size (`src/tools/text.ts`); pixels drawn beyond it
-are clipped
-by its raster bounds. `TextEditOverlay` sets its contenteditable element to `overflow: visible`
-(`src/components/Main/TextEditOverlay.tsx`); that establishes the element's CSS behavior but not
-whether excess ink remains visible outside the document workspace.
+are clipped by its raster bounds. `TextEditOverlay` requests CSS `overflow: visible` for the editable
+content; that property alone does not establish how the draft overlay is clipped or composited at the
+document edge.
 
 The current tool-layer source retains the text and paragraph rectangle in `source.args`
 (`src/contexts/useLayer.ts`); `textLayerEditTarget` hydrates those values for editing
-(`src/contexts/text-layer-edit.ts`). The text data is therefore not deleted by this raster crop in the
-editor's source-backed path. This does not establish Photoshop export or serialization behavior. The
-unresolved question is whether Photoshop clips committed overflow to the paragraph boundary or renders
-any of it beyond that boundary, and whether canvas expansion reveals it.
+(`src/contexts/text-layer-edit.ts`). This confirms that the editor's source-backed re-edit path retains
+the text and rect; it does not establish how much text is rendered or how Photoshop exports or
+serializes it. The unresolved question is whether Photoshop clips committed overflow to the paragraph
+boundary or renders any of it beyond that boundary, and whether canvas expansion reveals it.
 
 **Current Adobe documentation.** Adobe's current desktop guide says paragraph type wraps text within a bounding box, allows resizing that box after the type layer is created, and lists committing the type layer. It does not describe an overflow indicator or say what happens to text beyond the box at commit. The current UXP `TextItem` reference exposes `contents` and `isParagraphText`; it does not specify overflow rasterization or serialization. The current Canvas Size guide describes adding workspace while preserving image pixels, but does not say whether canvas expansion reveals paragraph text outside the former canvas. The previously cited `/in/photoshop/using/creating-type.html` URL now returns 404; the nonregional `/photoshop/using/creating-type.html` redirects to the current [Type layers in Photoshop guide](https://helpx.adobe.com/photoshop/desktop/text-typography/type-layers-creation/type-layers-in-photoshop.html), which also omits overflow. The currently accessible sources therefore do not confirm the overflow and conversion claims from the older guide.
 
@@ -2095,12 +2111,11 @@ Sources: [Adobe, create point type and paragraph type](https://helpx.adobe.com/p
 **Coverage.** The E2E `the overflow icon is on the draft overlay only while the type outgrows the box`
 in `e2e/text-tool.spec.ts` starts from `OVERFLOW_RECT`, whose bottom is row 560 of the default
 800x600 document (`src/App.tsx`). The initial drag is 40px from the edge; replacing its text with three hard-broken
-lines makes `calculateNewRect` grow and clamp the box to the document bottom. The test explicitly
-waits for the box there and measures the icon at that edge. The earlier note was right about the
+lines make `calculateNewRect` grow and clamp the box to the document bottom. The test waits for that
+box position and measures the icon at the bottom-right edge. The earlier note was right about the
 initial rectangle but wrong to infer that the fixture never exercises the clamp. After commit, the
-pixel check establishes only that some in-frame text ink remains and that the icon is absent; it does
-not establish whether the overflow line survives, re-editing restores it, or canvas expansion reveals
-it.
+test waits for some in-frame text ink and confirms the icon is absent; it does not establish whether
+the overflow line survives, re-editing restores it, or canvas expansion reveals it.
 
 **Next step.** Verify in Photoshop before implementing: create paragraph text with known overflow
 inside the document and at its bottom edge; record whether overflow ink is visible outside the box

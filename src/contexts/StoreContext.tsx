@@ -1309,6 +1309,16 @@ function durablePresentationGateReason(
   return null;
 }
 
+function isEligibleSourceBackedCreateAppend(history: readonly HistoryItem[], cursor: number): boolean {
+  if (cursor < 0) return false;
+  const entry = history[cursor];
+  if (!entry || entry.disabled || entry.actionName !== NEW_LAYER_ACTION) return false;
+  const source = entry.layerSource ?? entry.args;
+  if (!source || typeof source !== 'object') return false;
+  const kind = (source as { kind?: unknown }).kind;
+  return (kind === 'image' || kind === 'blank') && durablePresentationGateReason(history, cursor - 1) === null;
+}
+
 function collectLivePresentationBitmaps(
   next: LayersRecord,
   history: readonly HistoryItem[],
@@ -1574,7 +1584,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const gateReason = durablePresentationGateReason(state.history, state.historyIndex);
-    if (gateReason) {
+    const allowedSourceCreateAppend =
+      allowLegacySelector && isEligibleSourceBackedCreateAppend(state.history, state.historyIndex);
+    if (gateReason && !allowedSourceCreateAppend) {
       const accepted = publishRecord({
         status: 'legacy-fallback',
         cursor: durableCursor,
@@ -1976,9 +1988,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
       const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
-      // Apply the same cursor-prefix policy to background publication and
-      // navigation so a later ordinary edit cannot bypass a legacy-only event.
-      const allowBackgroundPresentation = durablePresentationGateReason(timeline.entries, timeline.cursor) === null;
+      // Navigation and later appends still use the gate over the complete active
+      // prefix. A newly appended raster or blank create may compose in the
+      // background only when the prefix before this commit already passes it;
+      // the create cursor itself remains legacy-gated for navigation.
+      const currentGateReason = durablePresentationGateReason(timeline.entries, timeline.cursor);
+      const allowBackgroundPresentation =
+        currentGateReason === null || isEligibleSourceBackedCreateAppend(timeline.entries, timeline.cursor);
       // One append, one durable entry: the boundary's plan is published when the
       // store's durable document still describes the timeline it was planned
       // against, and the whole timeline is reconverted otherwise.
