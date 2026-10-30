@@ -247,3 +247,30 @@ status as unreadable, and the disposer does not accept `undecided`; preserve
 the plan rather than treating clean tracked status as evidence of no useful
 data. It was created at `2026-10-29 23:12:47`, but its age does not change this
 decision.
+
+## Latest disposal recheck (2026-10-30 04:42 +01:00)
+
+After the 2026-10-30 origin-sync checkout passed four hours, the guarded
+disposer removed it and anchored
+`b0e3e5a416e44210bb3bc5061a671c9040c7a161` at
+`refs/keep/disposed/chore-sync-origin-main-20261030`. The final inventory after
+that removal reports 17 worktrees, five ready-to-land, seven at-risk, two
+in-use, two undecided, and one disposal candidate. `repo:state` is clean;
+`branches:orphan` found none; `swarm doctor --dry-run` found no stale claims or
+locks. The three disposal anchors for this sweep were verified, and the three
+corresponding worktree paths are absent.
+
+The remaining disposal candidate is `fix-push-gate-text-toolbar-20261030`,
+branch `fix/push-gate-text-toolbar-20261030`, tip
+`6cad1f8bada2e65d30ef47c16b43b04fc225f24b`. The latest inventory classifies
+it clean, landed, and not live; its dry-run passes. This supersedes the
+earlier-in-this-sweep observation of a live untracked bundle, which is no
+longer present. However, the checkout was created at `2026-10-30 01:58:51`,
+so at 04:42 it is only about 2h44 old. Preserve it until after `05:58:51`, then
+regenerate inventory and repeat the complete ownership, repository-state, and
+disposal preflight.
+
+The helper worktree `cleanup-merge-sweep-20261030-0157` is still `in-use` by
+this session. It is clean and based on an older main tip, but must not be
+removed while this chat is active. Reassess it through the normal disposer
+workflow after this session ends.
