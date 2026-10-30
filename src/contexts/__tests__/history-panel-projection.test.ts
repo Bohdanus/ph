@@ -76,7 +76,10 @@ describe('selectHistoryPanelProjection', () => {
   });
 
   it('falls back when durable status is partial even with a valid safe-prefix document', () => {
-    expect(project(history, documentFor(), 1, 'partial').source).toBe('legacy');
+    const projection = project(history, documentFor(), 1, 'partial');
+
+    expect(projection.source).toBe('legacy');
+    expect(projection.rows.map((row) => row.item.id)).toEqual(history.map((item) => item.id));
   });
 
   it('falls back for duplicate legacy or durable ids', () => {
