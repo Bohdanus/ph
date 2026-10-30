@@ -2086,30 +2086,11 @@ editor's source-backed path. This does not establish Photoshop export or seriali
 unresolved question is whether Photoshop clips committed overflow to the paragraph boundary or renders
 any of it beyond that boundary, and whether canvas expansion reveals it.
 
-**Adobe contract.** Adobe describes paragraph type as text inside a user-created bounding box that
-wraps to the box dimensions, shows an overflow icon when the content does not fit, permits resizing
-the box after creating the layer, and lists committing the layer as the next step without requiring
-overflow to be cleared. Adobe also says converting paragraph type to point type deletes characters
-that overflow the box. The UXP `TextItem` reference exposes the `contents` string and whether the
-layer is paragraph type. Together with the conversion warning, these sources support preserving all
-text and allowing Apply with overflow. Treating the authored rectangle as a fixed layout boundary
-while typing is a reasonable inference, but Adobe does not explicitly guarantee that the box stays at
-its original size as the text changes. The Canvas Size guide describes
-adding workspace while preserving image pixels, but does not say whether enlarging the document reveals
-paragraph text that was previously outside the canvas.
+**Current Adobe documentation.** Adobe's current desktop guide says paragraph type wraps text within a bounding box, allows resizing that box after the type layer is created, and lists committing the type layer. It does not describe an overflow indicator or say what happens to text beyond the box at commit. The current UXP `TextItem` reference exposes `contents` and `isParagraphText`; it does not specify overflow rasterization or serialization. The current Canvas Size guide describes adding workspace while preserving image pixels, but does not say whether canvas expansion reveals paragraph text outside the former canvas. The previously cited `/in/photoshop/using/creating-type.html` URL now returns 404; the nonregional `/photoshop/using/creating-type.html` redirects to the current [Type layers in Photoshop guide](https://helpx.adobe.com/photoshop/desktop/text-typography/type-layers-creation/type-layers-in-photoshop.html), which also omits overflow. The currently accessible sources therefore do not confirm the overflow and conversion claims from the older guide.
 
-Sources: [Adobe, create point and paragraph type](https://helpx.adobe.com/photoshop/desktop/text-typography/type-layers-creation/create-point-type-and-paragraph-type.html);
-[Adobe, paragraph overflow and commit](https://helpx.adobe.com/in/photoshop/using/creating-type.html);
-[Adobe UXP, `TextItem`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem);
-[Adobe, change canvas size](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/resize-adjust-resolution/change-the-canvas-size.html).
+Sources: [Adobe, create point type and paragraph type](https://helpx.adobe.com/photoshop/desktop/text-typography/type-layers-creation/create-point-and-paragraph-type.html); [Adobe UXP, `TextItem`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem); [Adobe, change canvas size](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/resize-adjust-resolution/change-the-canvas-size.html).
 
-**Decision and blocker.** Adobe documents a user-created paragraph boundary that controls wrapping,
-shows overflow when text does not fit, and can be resized to reflow. The app's content-driven height
-growth is not described in those sources. Still, do not change code yet: the exact committed raster
-behavior is undocumented, and the current live draft (`overflow: visible`) and committed layer (canvas
-bounded by `pos`) can disagree. Choosing a shared fixed extent or separate layout and raster extents
-without checking Photoshop would encode an unverified behavior and may add unneeded serialization
-state.
+**Decision and blocker.** The app's content-driven height growth is not described in the current Adobe sources, but those sources do not explicitly say whether Photoshop grows the box as text is entered. Treating the authored rectangle as the layout boundary remains an inference. The app's live draft can show an overflow indicator at the document edge while the committed raster is bounded by `pos`; current Adobe documentation does not establish whether that mismatch matches Photoshop or how off-canvas text should behave after commit. Do not change code or tests until this is checked in Photoshop.
 
 **Coverage.** The E2E `the overflow icon is on the draft overlay only while the type outgrows the box`
 in `e2e/text-tool.spec.ts` starts from `OVERFLOW_RECT`, whose bottom is row 560 of the default
