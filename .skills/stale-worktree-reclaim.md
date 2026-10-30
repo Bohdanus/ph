@@ -65,6 +65,10 @@ and `docs/ORCHESTRATION.md` are the authorities; this is the short form.
 MERGE_HEAD` before committing — an interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG`
   behind with no `MERGE_HEAD`, and `git commit` then lands a single-parent commit that reads
   as a resolution.
+- If `repo:state` reports only an orphan `AUTO_MERGE`, never edit `.git` or reset a dirty
+  worktree to clear it. After proving the owner and descendants stopped, use the guarded
+  recovery paths in `docs/ORCHESTRATION.md`; preserve-mode recovery requires the tracked
+  worktree to match the marker and pins the dirty status before removing only the marker.
 - **Stage only your own paths, and know which checkout you are in.**
   `git rev-parse --show-toplevel` before the first edit: the checkout path is not proof.
   **Never `git add -A` in a worktree** — the root is a different checkout at a different

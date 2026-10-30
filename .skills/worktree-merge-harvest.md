@@ -682,6 +682,9 @@ skipped its own safety steps.
   before committing — an interrupted merge can leave `AUTO_MERGE` and
   `MERGE_MSG` behind with no `MERGE_HEAD`, and `git commit` then lands a
   single-parent commit that reads as a resolution.
+  For an orphan `AUTO_MERGE` with no other operation markers, use the guarded recovery
+  paths in `docs/ORCHESTRATION.md` after proving its owner stopped; dirty work is eligible
+  only when its tracked contents match the marker and the command pins the worktree status.
 - **Hand-edit `WORKTREES.json`.** It is generated and untracked; the edit is lost
   on the next run, and a hand-edited `prunable: true` is a licence to delete.
 - **`git add -A` in a worktree whose root checkout is dirty.** This is the more
