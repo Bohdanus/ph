@@ -329,14 +329,9 @@ function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoin
 /**
  * Find a point just outside a real crop corner that the app identifies as its rotation hotspot,
  * then rotate 90 degrees clockwise around the visible box center. The DOM corner is rendered from
-<<<<<<< HEAD
- * rounded document coordinates while the pointer hook hit-tests the fractional selection rect, so
- * a fixed CSS offset can land inside the corner on one scale and outside the hot zone on another.
-=======
  * rounded document coordinates while the pointer hook hit-tests the fractional selection rect,
  * so a fixed CSS offset can land just inside a corner on one scale and outside the hot zone on
  * another.
->>>>>>> 1f32e7da (test: harden crop history e2e across zoom)
  */
 async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint; end: PagePoint }> {
   const corner = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
@@ -358,31 +353,18 @@ async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint
     )
     .sort((left, right) => left.distance - right.distance);
   let start: PagePoint | null = null;
-<<<<<<< HEAD
-=======
-
->>>>>>> 1f32e7da (test: harden crop history e2e across zoom)
   for (const candidate of candidates) {
     const point = { x: cornerX - candidate.offsetX, y: cornerY - candidate.offsetY };
     await page.mouse.move(point.x, point.y);
     const cursor = await surface.evaluate((element) => getComputedStyle(element).cursor);
-<<<<<<< HEAD
-    if (cursor.includes('data:image/svg+xml')) {
-=======
     if (/url.*ew-resize/.test(cursor)) {
->>>>>>> 1f32e7da (test: harden crop history e2e across zoom)
       start = point;
       break;
     }
   }
-<<<<<<< HEAD
-  if (!start) throw new Error('No point outside the visible crop corner exposed the rotation cursor');
-=======
-
   if (!start) {
     throw new Error('No point outside the visible crop corner exposed the rotation cursor');
   }
->>>>>>> 1f32e7da (test: harden crop history e2e across zoom)
 
   const center = {
     x: outlineBounds.x + outlineBounds.width / 2,
