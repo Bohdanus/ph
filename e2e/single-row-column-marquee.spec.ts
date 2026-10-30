@@ -1,6 +1,11 @@
 import { expect, type Page, test } from './fixtures/extended-test';
-import { type BoundingBox, getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { type AntRun, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
+import {
+  CANVAS_REDRAW_POLL_INTERVAL_MS,
+  CANVAS_REDRAW_TIMEOUT_MS,
+  type BoundingBox,
+  getWorkspaceCanvas,
+} from './helpers/canvas-helpers';
+import { type AntRun, readAntRuns } from './helpers/selection-ants';
 import { expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 /**
@@ -285,16 +290,34 @@ async function scanAntsOnce(page: Page, fit: Fit, axis: 'row' | 'column'): Promi
 }
 
 /**
- * Waits for a band, then reads the ants canvas: the thin axis and the coverage from the first
- * frame that holds one, the cross extremes from every frame over a whole dash cycle.
+ * Waits for the expected band's exact thin-axis extents, then reads the ants canvas: the thin
+ * axis and the coverage from the first frame at that position, the cross extremes from every
+ * frame over a whole dash cycle. A previous nonempty band cannot satisfy this wait.
  *
  * One function so no test can read the two halves at different instants, and so the reason the
  * two halves are read differently is stated once. See the header.
  */
-async function committedAntsBand(page: Page, fit: Fit, axis: 'row' | 'column'): Promise<AntsScan> {
-  await waitForCommittedAnts(page, 'the committed band on the ants canvas');
-  const first = await scanAntsOnce(page, fit, axis);
-  if (!first) throw new Error('committedAntsBand: the ants canvas held no band between the wait and the read');
+async function committedAntsBand(page: Page, fit: Fit, axis: 'row' | 'column', index: number): Promise<AntsScan> {
+  const expected = expectedAntsExtent(fit, axis, index);
+  const deadline = Date.now() + CANVAS_REDRAW_TIMEOUT_MS;
+  let first: AntsScan | null = null;
+
+  // A nonempty canvas is not enough after replacing or moving a selection: it can still hold the
+  // previous band's ants for one animation frame. Wait for the exact target geometry before
+  // taking the first thin-axis sample; the later samples still sweep only the animated cross axis.
+  while (Date.now() < deadline) {
+    first = await scanAntsOnce(page, fit, axis);
+    if (first && first.first === expected.first && first.last === expected.last) break;
+    await page.waitForTimeout(CANVAS_REDRAW_POLL_INTERVAL_MS);
+  }
+
+  if (!first || first.first !== expected.first || first.last !== expected.last) {
+    const observed = first ? `${first.first}..${first.last}` : 'no ants';
+    throw new Error(
+      `Timed out after ${CANVAS_REDRAW_TIMEOUT_MS}ms waiting for ${axis} ${index} ants ` +
+        `at ${expected.first}..${expected.last}; last scan was ${observed}`
+    );
+  }
 
   let swept = first;
   for (let sample = 1; sample < SPAN_SAMPLES; sample += 1) {
@@ -467,7 +490,7 @@ test.describe('Single row and single column marquee', () => {
     expect.soft(documentAxisOf(fit, press.y, 'row'), 'the press is built to land on its row').toBe(252);
     await page.mouse.click(press.x, press.y);
 
-    const band = await committedAntsBand(page, fit, 'row');
+    const band = await committedAntsBand(page, fit, 'row', 252);
     const readBack = await readFit(page);
     expect.soft(readBack.scale, 'the fit must not have changed between the press and the read').toBe(fit.scale);
 
@@ -498,7 +521,7 @@ test.describe('Single row and single column marquee', () => {
     expect.soft(documentAxisOf(fit, press.x, 'column'), 'the press is built to land on its column').toBe(530);
     await page.mouse.click(press.x, press.y);
 
-    const band = await committedAntsBand(page, fit, 'column');
+    const band = await committedAntsBand(page, fit, 'column', 530);
     expectAntsBand(band, fit, 'column', 530);
   });
 
@@ -567,9 +590,9 @@ test.describe('Single row and single column marquee', () => {
     expect.soft(expectedDelta, 'the two presses are 300 document rows apart by construction').toBe(300);
 
     await page.mouse.click(upper.x, upper.y);
-    const first = await committedAntsBand(page, fit, 'row');
+    const first = await committedAntsBand(page, fit, 'row', 120);
     await page.mouse.click(lower.x, lower.y);
-    const second = await committedAntsBand(page, fit, 'row');
+    const second = await committedAntsBand(page, fit, 'row', 420);
     const readBack = await readFit(page);
     expect.soft(readBack.scale, 'the fit must not have changed between the two presses').toBe(fit.scale);
 
@@ -610,7 +633,7 @@ test.describe('Single row and single column marquee', () => {
     await page.mouse.move(release.x, release.y, { steps: 12 });
     await page.mouse.up();
 
-    const band = await committedAntsBand(page, fit, 'column');
+    const band = await committedAntsBand(page, fit, 'column', 600);
     const released = expectedAntsExtent(fit, 'column', 600);
     const pressed = expectedAntsExtent(fit, 'column', 200);
     expectAntsBand(band, fit, 'column', 600);
@@ -667,7 +690,7 @@ test.describe('Single row and single column marquee', () => {
     // around a rounded half-stroke. Main's `spanStart <= window.x + 3` / `spanEnd >=
     // window.x + window.width - 4` become exact `crossFirst === 0` / `crossLast === 799`, again
     // tighter, plus the span-coverage floor the old reader never had.
-    const band = await committedAntsBand(page, fit, 'row');
+    const band = await committedAntsBand(page, fit, 'row', 200);
     expectAntsBand(band, fit, 'row', 200);
   });
 
@@ -685,7 +708,7 @@ test.describe('Single row and single column marquee', () => {
 
     const press = pointOn(fit, 'row', 200, 0.5);
     await page.mouse.click(press.x, press.y);
-    const first = await committedAntsBand(page, fit, 'row');
+    const first = await committedAntsBand(page, fit, 'row', 200);
     // PORTED FROM MAIN — see the note on the row-drag test above. `committedBand` ->
     // `committedAntsBand`, and the exact-extent assertion replaces main's
     // `|start - (200 - halfStroke)| <= STROKE_TOLERANCE_PX`.
@@ -702,7 +725,7 @@ test.describe('Single row and single column marquee', () => {
     await page.mouse.move(release.x, release.y, { steps: 12 });
     await page.mouse.up();
 
-    const moved = await committedAntsBand(page, fit, 'row');
+    const moved = await committedAntsBand(page, fit, 'row', 300);
     // PORTED FROM MAIN. `expectAntsBand(..., 300)` is exact where main asserted
     // `|moved.start - (300 - halfStroke)| <= STROKE_TOLERANCE_PX`.
     expectAntsBand(moved, fit, 'row', 300);
@@ -745,7 +768,7 @@ test.describe('Single row and single column marquee', () => {
     const { fit } = await measure(page);
     const press = pointOn(fit, 'row', 300, 0.5);
     await page.mouse.click(press.x, press.y);
-    const band = await committedAntsBand(page, fit, 'row');
+    const band = await committedAntsBand(page, fit, 'row', 300);
     expect.soft(band.first, 'the press should have committed a band on row 300').toBe(299);
     expect.soft(await anyAntsPaint(page), 'the band is painted on the ants canvas').toBeGreaterThan(0);
     await expect(undo, 'the band is a history state, unlike the eyedropper').toBeEnabled();
@@ -777,7 +800,7 @@ test.describe('Single row and single column marquee', () => {
     // read a dashed line's ENDS), so gating on a single frame and then comparing a single frame
     // against the phase-complete `committed` would be comparing two different instruments. Gate on
     // "ants are painted again", then read with the same instrument the commit was read with.
-    const committed = await committedAntsBand(page, fit, 'row');
+    const committed = await committedAntsBand(page, fit, 'row', 300);
     const geometry = (band: AntsScan) => ({
       first: band.first,
       last: band.last,
@@ -795,7 +818,7 @@ test.describe('Single row and single column marquee', () => {
       })
       .toBe(true);
     expect(
-      geometry(await committedAntsBand(page, fit, 'row')),
+      geometry(await committedAntsBand(page, fit, 'row', 300)),
       'redo must repaint the band exactly where it was committed'
     ).toEqual(geometry(committed));
   });
