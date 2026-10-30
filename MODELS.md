@@ -21,7 +21,7 @@ operator authorization before using paid inference.
 - The Kilo CLI has no `--max-tokens` option. The runner's `--max-tokens` value is a response-length instruction for Kilo; the CLI/model controls the actual generation budget. OpenRouter and Groq receive a provider-side token limit.
 - OpenRouter inference uses `OPENROUTER_API_KEY`. When Laguna S 2.1 appears in that live catalog, the runner tries it first, then preserves the catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
 - OpenRouter Laguna receives at least 1,024 completion tokens so reasoning does not consume a tiny caller budget before a visible answer. The other OpenRouter models receive the requested `--max-tokens` value.
-- Never silently fall back to paid inference. The runner tries up to three eligible models per source; a provider quota or rate-limit failure exhausts that source for the run.
+- Never silently fall back to paid inference. The runner tries up to three eligible models per source. An OpenRouter model HTTP 429 triggers a daily-counter check: it stops OpenRouter only when the counter is exhausted, and rotates to another exact-zero model when requests remain. If the counter cannot be read, it continues within the same three-model cap. OpenRouter HTTP 401/402 exhausts the source; Groq keeps its per-key 401/402/429 handling.
 - Catalog and quota requests have a 15-second timeout. Model inference has a five-minute timeout so reasoning models are not cut off by a catalog-sized deadline.
 - In Kilo tasks, pass `model` and `provider` together; GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.
 
@@ -34,7 +34,7 @@ A provider name alone does not establish that a route is free. Verify the exact 
 | `kilo`       | 200 requests per hour per IP, for authenticated and anonymous free-model requests. | `--openrouter-quota` does not read this Kilo gateway limit.                                  |
 | `openrouter` | 20 requests per minute; 1,000 per day.                                             | `node scripts/free-model-pool.mjs --openrouter-quota` reads OpenRouter's daily counter only. |
 
-A 429 or exhausted counter applies to the provider that returned it. Stop using that source for the run, and switch only to another model/provider pair verified as free. See [Kilo's gateway rate limits](https://kilo.ai/docs/gateway/usage-and-billing) and [OpenRouter's pricing and rate limits](https://openrouter.ai/pricing) for current published limits.
+Handle rate limits according to the provider route. For OpenRouter, a model-level 429 does not by itself exhaust the provider: check the daily counter and try another exact-zero OpenRouter model while requests remain. Stop when the counter is zero; if the counter is unavailable, continue only within the runner's three-model cap. See [Kilo's gateway rate limits](https://kilo.ai/docs/gateway/usage-and-billing) and [OpenRouter's pricing and rate limits](https://openrouter.ai/pricing) for current published limits.
 
 ### Groq
 
