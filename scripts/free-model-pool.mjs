@@ -375,8 +375,12 @@ function failureReason(response, payload) {
   return `${response.status}${message ? `: ${message}` : ''}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`;
 }
 
+function isAccountFailure(status) {
+  return status === 401 || status === 402;
+}
+
 function isPerKeyFailure(status) {
-  return status === 401 || status === 402 || status === 429;
+  return isAccountFailure(status) || status === 429;
 }
 
 function hasReportedNonZeroCost(usage) {
@@ -635,6 +639,35 @@ export async function completeWithFreeModel(
   const exhaustedGroqKeys = new Set();
   const attempts = new Map();
   const errors = [];
+  const handleOpenRouterFailure = async (status, model) => {
+    if (isAccountFailure(status)) {
+      exhausted.add('openrouter');
+      return;
+    }
+    if (status !== 429) return;
+
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (quota.reason === 'ok') {
+      onOpenRouterQuota(quota);
+      if (quota.remaining <= 0) {
+        exhausted.add('openrouter');
+        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter models.\n');
+        return;
+      }
+      stderr.write(
+        `OpenRouter model ${model} returned HTTP 429 with ${quota.remaining} daily free requests remaining; trying another verified-free model.\n`
+      );
+      return;
+    }
+    if (/^http_(?:401|402)$/.test(quota.reason)) {
+      exhausted.add('openrouter');
+      stderr.write(`OpenRouter quota check returned ${quota.reason}; skipping OpenRouter for this run.\n`);
+      return;
+    }
+    stderr.write(
+      `OpenRouter model ${model} returned HTTP 429; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so trying another verified-free model within the per-run limit.\n`
+    );
+  };
   if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
     exhausted.add('kilo');
     errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
@@ -654,7 +687,7 @@ export async function completeWithFreeModel(
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
       if (quota.remaining <= 0) exhausted.add('openrouter');
-    } else if (/^http_(?:401|402|429)$/.test(quota.reason)) {
+    } else if (/^http_(?:401|402)$/.test(quota.reason)) {
       exhausted.add('openrouter');
       stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
     } else if (quota.reason !== 'no_key') {
@@ -829,7 +862,7 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
+      await handleOpenRouterFailure(response.status, candidate.model);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -868,7 +901,7 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    if (isPerKeyFailure(response.status)) exhausted.add(candidate.source);
+    await handleOpenRouterFailure(response.status, candidate.model);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`

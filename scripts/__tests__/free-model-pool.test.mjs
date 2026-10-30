@@ -43,7 +43,14 @@ function readableFetch(fetchImpl) {
   return vi.fn(async (...args) => responseWithReadableBody(await fetchImpl(...args)));
 }
 
-function catalogFetch({ kilo = [], openrouter = [], opencode = [], groq = [], chat }) {
+function catalogFetch({
+  kilo = [],
+  openrouter = [],
+  opencode = [],
+  groq = [],
+  keyInfo = () => ({ ok: false, status: 500 }),
+  chat,
+}) {
   return readableFetch(async (url, options = {}) => {
     let response;
     if (url.endsWith('/models') && url.includes('openrouter')) {
@@ -52,6 +59,8 @@ function catalogFetch({ kilo = [], openrouter = [], opencode = [], groq = [], ch
       response = { ok: true, json: async () => ({ data: opencode }) };
     } else if (url.includes('api.groq.com') && url.endsWith('/models')) {
       response = { ok: true, json: async () => ({ data: groq }) };
+    } else if (url.includes('/api/v1/key')) {
+      response = keyInfo();
     } else if (url.endsWith('/models')) {
       response = { ok: true, json: async () => kilo };
     } else {

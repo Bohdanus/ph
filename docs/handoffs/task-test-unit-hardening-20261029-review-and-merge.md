@@ -1,30 +1,25 @@
-# Handoff: test unit hardening review and merge
+# Review and merge record: test unit hardening
 
 **Branch:** `task/test-unit-hardening-20261029`
-**Base:** `db0c4f666b2d10e7de74b839ba81d6d40bef227c`
-**Status:** self-review fixes applied; independent test review and landing are blocked pending a fresh free review and synchronization with current `main`.
+**Reviewed source:** `b218b555f156045f59af278c43036a71f82c11df`
+**Synchronized with main:** `0ebf38535f7e683b0d04acd5e11e5a38e72f33f5`
 
 ## Scope
 
-Reviewed all ten unit-test shards, all three E2E spec shards, and both documentation shards. OpenRouter calls used catalog-verified zero-cost model IDs; two earlier unit shards used Groq Free before the provider was switched back to OpenRouter. Model findings were checked against the source. Static-summary claims about absent assertions, placeholders, weak mocks, and fixed waits were rejected where the tests already covered the behavior or the documentation was historical. The concrete fixes are in the reviewed diff.
+The branch adds unit-test coverage and fixes three documentation links. It changes no production implementation. The tests cover cropped document-coordinate round trips, malformed Kilo JSONL rejection, native range-input change events, disabled unsupported transforms, full legacy history fallback, bitmap-global cleanup, hidden affine-layer compositing, and fit-scale retention when document dimensions are temporarily unavailable.
 
-The documentation sweep fixed two broken sibling links to `docs/ORCHESTRATION.md`. Self-review also corrected the incoming-commits fragment and this handoff's links to the root flake report and orchestration guide; the handoff is indexed in `docs/README.md`.
+## Independent review
+
+Three read-only free-model reviews returned no findings: Kilo Laguna S 2.1, Kilo Cohere North Mini Code, and OpenRouter Laguna S 2.1. The reviewers received the full candidate diff and current implementation excerpts; the OpenRouter review also reported file-by-file coverage. Each route reported zero cost.
 
 ## Validation
 
-- `npm test -- --reporter=dot --silent` — 401 files; 11,545 passed and 215 expected failures.
-- `npm run test:e2e:unit -- --reporter=dot --silent` — 21 files; 1,537 passed and 13 expected failures.
+- `npm test -- --reporter=dot --silent` — 401 files passed; 11,556 passed and 215 expected failures.
+- `npm run test:e2e:unit -- --reporter=dot --silent` — 21 files passed; 1,537 passed and 13 expected failures.
 - `npm run tsc` — passed.
-- `npm run lint:check` — 0 errors; 64 warnings.
+- `npm run lint:check` — 0 errors and 64 warnings; Prettier check passed.
+- `npm run build` — passed.
 
-The undiagnosed intermittent unit-suite failure documented in [`TEST-FLAKES.md`](../../TEST-FLAKES.md) §1 remains open; this green run does not resolve it.
+The known intermittent unit-suite issue documented in [TEST-FLAKES.md](../../TEST-FLAKES.md) §1 remains open; this passing run does not resolve it.
 
-## Re-review status
-
-Self-review found and corrected the invalid fragment in `INCOMING_COMMITS.md` and the handoff's relative path to `TEST-FLAKES.md`. OpenRouter then returned HTTP 429; the confirmed Groq Free route later returned a token-per-minute 429. Inference stopped after each provider's limit. The available completed model reviews did not cover the changed test files, so independent code review remains incomplete and the branch is not ready to land.
-
-At the latest 2026-10-30 re-review, `refs/heads/main` pointed to `671e0f7de7690e29a5c4342e0f6d9f567db8d585`, and the designated main worktree had no operation in progress. `npm run repo:state` still reported three other worktrees in Git operations, including one `AUTO_MERGE` and two merges. None was inspected or changed. Re-run repository state and ownership checks after those operations clear, sync this branch against the then-current `main`, obtain fresh read-only review, and rerun the full gates before pinned landing.
-
-## Landing gate
-
-At this handoff snapshot, `refs/heads/main` points to `671e0f7de7690e29a5c4342e0f6d9f567db8d585`; this task branch was created from `db0c4f666b2d10e7de74b839ba81d6d40bef227c`. Do not land it from that stale base. The next owner should sync against the current `main`, review the resulting diff and ownership state, rerun the gates, then use the pinned landing process from [`ORCHESTRATION.md`](../ORCHESTRATION.md).
+The local main landing is recorded by the pinned merge commit's `Branch:` and `Chat:` trailers.
