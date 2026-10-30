@@ -470,6 +470,12 @@ describe('documentFrame', () => {
     ];
 
     for (const box of [BOX, { x: 0, y: 0, width: 1200, height: 400 }]) {
+      const scale = Math.min(box.width / cropped.width, box.height / cropped.height);
+      const frameOrigin = documentToCanvasOffset(box, CROP.x, CROP.y, cropped, CROP);
+
+      expect(frameOrigin.x).toBeCloseTo((box.width - cropped.width * scale) / 2, 9);
+      expect(frameOrigin.y).toBeCloseTo((box.height - cropped.height * scale) / 2, 9);
+
       for (const point of points) {
         const offset = documentToCanvasOffset(box, point.x, point.y, cropped, CROP);
         const back = canvasOffsetToDocument(box, offset.x, offset.y, cropped, CROP);

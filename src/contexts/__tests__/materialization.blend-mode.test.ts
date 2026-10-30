@@ -339,8 +339,8 @@ describe('the compositing boundary', () => {
   });
 
   it('leaves a hidden layer out of the composite entirely', async () => {
-    // The hidden multiply layer carries an affine operation too, so it must be skipped before the
-    // scratch materialization path and issue no draw or composite write on the document surface.
+    // The hidden multiply layer carries an affine operation too, so none of its work may reach the
+    // document surface as a draw or blend-mode write.
     const canvases = installBlendingCanvas();
     const registry = new AssetRegistry();
     try {

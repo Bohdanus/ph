@@ -155,17 +155,20 @@ describe('durable history adapter and replay', () => {
   });
 
   it('diagnoses a disabled mixed transform without making the conversion partial', () => {
-    const converted = convert({
-      id: 'disabled-mixed-transform',
-      actionName: TOOL_ACTION,
-      layerId,
-      disabled: true,
-      args: { ...rawTransform, trapezoid: 25 },
-    });
+    const converted = convert(
+      {
+        id: 'disabled-mixed-transform',
+        actionName: TOOL_ACTION,
+        layerId,
+        disabled: true,
+        args: { ...rawTransform, trapezoid: 25 },
+      },
+      { id: 'after-disabled-transform', actionName: TOOL_ACTION, layerId, args: rawTransform }
+    );
 
-    expect(converted.document.history).toEqual([]);
+    expect(converted.document.history.map((entry) => entry.id)).toEqual(['after-disabled-transform']);
     expect(converted.firstErrorIndex).toBeUndefined();
-    expect(converted.legacyCursorToDurableCursor).toEqual([-1, -1]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, -1, 0]);
     expect(converted.diagnostics).toEqual([
       expect.objectContaining({
         historyId: 'disabled-mixed-transform',
@@ -174,7 +177,7 @@ describe('durable history adapter and replay', () => {
         message: 'Mixed trapezoid and affine transform is unsupported',
       }),
     ]);
-    expect(replayDurableDocument(converted.document).layers[layerId]?.operations).toEqual([]);
+    expect(replayDurableDocument(converted.document).layers[layerId]?.operations).toHaveLength(1);
   });
 
   it('returns logical replay state without bitmap or temporary-canvas fields', () => {
