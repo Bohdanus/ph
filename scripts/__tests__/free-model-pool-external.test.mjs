@@ -140,11 +140,11 @@ describe('OpenRouter quota probe', () => {
     const fetchImpl = readableFetch(() => ({
       ok: true,
       json: async () => ({
-        data: { free_model_daily_requests: { used: 12, limit: 50, remaining: 38 } },
+        data: { free_model_daily_requests: { used: 12, limit: 1000, remaining: 988 } },
       }),
     }));
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: 'rk' });
-    expect(quota).toEqual({ remaining: 38, limit: 50, used: 12, reason: 'ok' });
+    expect(quota).toEqual({ remaining: 988, limit: 1000, used: 12, reason: 'ok' });
   });
 
   it('returns reason:no_key when no OpenRouter key is supplied', async () => {
@@ -189,10 +189,10 @@ describe('OpenRouter quota probe', () => {
 
   it('rejects malformed quota fields instead of treating them as capacity', async () => {
     for (const info of [
-      { used: 1, limit: 50, remaining: -1 },
-      { used: -1, limit: 50, remaining: 1 },
+      { used: 1, limit: 1000, remaining: -1 },
+      { used: -1, limit: 1000, remaining: 1 },
       { used: 0, limit: 0, remaining: 0 },
-      { used: 'unknown', limit: 50, remaining: 50 },
+      { used: 'unknown', limit: 1000, remaining: 1000 },
     ]) {
       const fetchImpl = readableFetch(() => ({
         ok: true,
@@ -319,7 +319,7 @@ describe('OpenRouter pre-routing quota check', () => {
       keyInfo: () => ({
         ok: true,
         json: async () => ({
-          data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } },
+          data: { free_model_daily_requests: { used: 10, limit: 1000, remaining: 990 } },
         }),
       }),
       chat,
@@ -333,7 +333,7 @@ describe('OpenRouter pre-routing quota check', () => {
     });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free' });
     expect(result.requestCounts).toEqual({ kilo: 0, openrouter: 1 });
-    expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 10, limit: 50, remaining: 40, reason: 'ok' });
+    expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 10, limit: 1000, remaining: 990, reason: 'ok' });
   });
 
   it('rotates to another OpenRouter model after a model 429 while daily requests remain', async () => {
@@ -342,7 +342,7 @@ describe('OpenRouter pre-routing quota check', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: { message: 'upstream model quota' } }), {
           status: 429,
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '1' },
         })
       )
       .mockResolvedValueOnce(
@@ -435,7 +435,7 @@ describe('OpenRouter pre-routing quota check', () => {
     const chat = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: { message: 'upstream unavailable' } }), {
         status: 429,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': 'invalid' },
       })
     );
     const fetchImpl = catalogFetch({
@@ -450,6 +450,31 @@ describe('OpenRouter pre-routing quota check', () => {
     );
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(3);
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
+  });
+
+  it('skips the quota probe when OpenRouter reports zero rate-limit requests remaining', async () => {
+    const chat = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '0' },
+      })
+    );
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } }),
+    }));
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(keyInfo).not.toHaveBeenCalled();
   });
 
   it('does not probe when OpenRouter is not in the catalog', async () => {
