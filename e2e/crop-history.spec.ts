@@ -862,6 +862,10 @@ type CropParityLayerComparison = Readonly<{
   offscreenFrameDifferingBytes: number;
   frameDifferingPixels: number;
   frameDifferingSamples: readonly CropParityFramePixelSample[];
+  tightBitmapDifferingBytes: number;
+  offscreenTightBitmapDifferingBytes: number;
+  tightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
+  offscreenTightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
 }>;
 
 async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
@@ -1278,6 +1282,174 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               frameSize.height
             ).data;
             const frameChannels = ['r', 'g', 'b', 'a'] as const;
+            const createComparisonSurfaces = (label: string, width: number, height: number) => {
+              const htmlSurface = document.createElement('canvas');
+              htmlSurface.width = width;
+              htmlSurface.height = height;
+              const htmlContext = htmlSurface.getContext('2d');
+              const offscreenSurface =
+                typeof OffscreenCanvas === 'undefined' ? htmlSurface : new OffscreenCanvas(width, height);
+              const offscreenContext = offscreenSurface.getContext('2d');
+              if (!htmlContext || !offscreenContext) {
+                throw new Error(`Unable to create ${label} pixel comparison surfaces at ${stage}`);
+              }
+              return { htmlContext, offscreenContext };
+            };
+            const legacyTightSurfaces = createComparisonSurfaces(
+              'legacy tight bitmap',
+              expectedBounds.width,
+              expectedBounds.height
+            );
+            const durableTightSurfaces = createComparisonSurfaces(
+              'durable tight bitmap',
+              expectedBounds.width,
+              expectedBounds.height
+            );
+            const legacyRawFrameSurfaces = createComparisonSurfaces(
+              'legacy raw frame',
+              frameSize.width,
+              frameSize.height
+            );
+            for (const context of [
+              legacyTightSurfaces.htmlContext,
+              legacyTightSurfaces.offscreenContext,
+              durableTightSurfaces.htmlContext,
+              durableTightSurfaces.offscreenContext,
+            ]) {
+              context.setTransform(1, 0, 0, 1, 0, 0);
+              context.globalAlpha = 1;
+              context.globalCompositeOperation = 'source-over';
+              context.imageSmoothingEnabled = false;
+              context.clearRect(0, 0, expectedBounds.width, expectedBounds.height);
+            }
+            const legacyPixelLayer = { ...legacyLayer, opacity: 1, blendMode: 'source-over' };
+            for (const context of [legacyRawFrameSurfaces.htmlContext, legacyRawFrameSurfaces.offscreenContext]) {
+              context.setTransform(1, 0, 0, 1, 0, 0);
+              context.globalAlpha = 1;
+              context.globalCompositeOperation = 'source-over';
+              context.imageSmoothingEnabled = false;
+              context.clearRect(0, 0, frameSize.width, frameSize.height);
+            }
+            if (!drawLayer(legacyRawFrameSurfaces.htmlContext, legacyPixelLayer, frame)) {
+              throw new Error(`Legacy renderer refused ${layerId} raw frame comparison at ${stage}`);
+            }
+            if (legacyRawFrameSurfaces.offscreenContext !== legacyRawFrameSurfaces.htmlContext) {
+              if (
+                !drawLayer(legacyRawFrameSurfaces.offscreenContext as CanvasRenderingContext2D, legacyPixelLayer, frame)
+              ) {
+                throw new Error(`Legacy renderer refused ${layerId} OffscreenCanvas raw frame comparison at ${stage}`);
+              }
+            }
+            if (!drawLayer(legacyTightSurfaces.htmlContext, legacyPixelLayer, expectedBounds)) {
+              throw new Error(`Legacy renderer refused ${layerId} tight bitmap comparison at ${stage}`);
+            }
+            if (legacyTightSurfaces.offscreenContext !== legacyTightSurfaces.htmlContext) {
+              if (
+                !drawLayer(
+                  legacyTightSurfaces.offscreenContext as CanvasRenderingContext2D,
+                  legacyPixelLayer,
+                  expectedBounds
+                )
+              ) {
+                throw new Error(`Legacy renderer refused ${layerId} OffscreenCanvas tight comparison at ${stage}`);
+              }
+            }
+            durableTightSurfaces.htmlContext.drawImage(materializedLayer.bitmap as CanvasImageSource, 0, 0);
+            if (durableTightSurfaces.offscreenContext !== durableTightSurfaces.htmlContext) {
+              durableTightSurfaces.offscreenContext.drawImage(materializedLayer.bitmap as CanvasImageSource, 0, 0);
+            }
+            const compareTightPixels = (expectedBytes: Uint8ClampedArray, materializedBytes: Uint8ClampedArray) => {
+              let diffCount = 0;
+              const diffSamples: CropParityFramePixelSample[] = [];
+              for (let byte = 0; byte < Math.max(expectedBytes.length, materializedBytes.length); byte += 1) {
+                const legacy = expectedBytes[byte] ?? null;
+                const durable = materializedBytes[byte] ?? null;
+                if (legacy === durable) continue;
+                diffCount += 1;
+                if (diffSamples.length < 8) {
+                  const pixel = Math.floor(byte / 4);
+                  const x = pixel % expectedBounds.width;
+                  const y = Math.floor(pixel / expectedBounds.width);
+                  diffSamples.push({
+                    x,
+                    y,
+                    documentX: expectedBounds.x + x,
+                    documentY: expectedBounds.y + y,
+                    channel: frameChannels[byte % 4],
+                    legacy,
+                    durable,
+                  });
+                }
+              }
+              return { differingBytes: diffCount, differingSamples: diffSamples };
+            };
+            const legacyTightPixels = legacyTightSurfaces.htmlContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const durableTightPixels = durableTightSurfaces.htmlContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const legacyOffscreenTightPixels = legacyTightSurfaces.offscreenContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const durableOffscreenTightPixels = durableTightSurfaces.offscreenContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const legacyRawFramePixels = legacyRawFrameSurfaces.htmlContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
+            const legacyOffscreenRawFramePixels = legacyRawFrameSurfaces.offscreenContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
+            const combineFrameGridPixels = (tightPixels: Uint8ClampedArray, framePixels: Uint8ClampedArray) => {
+              const expectedPixels = new Uint8ClampedArray(tightPixels);
+              const frameOffsetX = Math.round(expectedBounds.x - frame.x);
+              const frameOffsetY = Math.round(expectedBounds.y - frame.y);
+              const sourceX = Math.max(0, frameOffsetX);
+              const sourceY = Math.max(0, frameOffsetY);
+              const destinationX = Math.max(0, -frameOffsetX);
+              const destinationY = Math.max(0, -frameOffsetY);
+              const copyWidth = Math.max(0, Math.min(frameSize.width - sourceX, expectedBounds.width - destinationX));
+              const copyHeight = Math.max(
+                0,
+                Math.min(frameSize.height - sourceY, expectedBounds.height - destinationY)
+              );
+              for (let y = 0; y < copyHeight; y += 1) {
+                const frameStart = ((sourceY + y) * frameSize.width + sourceX) * 4;
+                const tightStart = ((destinationY + y) * expectedBounds.width + destinationX) * 4;
+                expectedPixels.set(framePixels.subarray(frameStart, frameStart + copyWidth * 4), tightStart);
+              }
+              return expectedPixels;
+            };
+            const legacyHybridTightPixels = combineFrameGridPixels(legacyTightPixels, legacyRawFramePixels);
+            const legacyOffscreenHybridTightPixels = combineFrameGridPixels(
+              legacyOffscreenTightPixels,
+              legacyOffscreenRawFramePixels
+            );
+            // The tight raster uses frame-grid pixels inside the frame and bounded pixels outside it.
+            const tightBitmapComparison = compareTightPixels(legacyHybridTightPixels, durableTightPixels);
+            const offscreenTightBitmapComparison = compareTightPixels(
+              legacyOffscreenHybridTightPixels,
+              durableOffscreenTightPixels
+            );
             let frameDifferingBytes = 0;
             let frameDifferingPixels = 0;
             let lastFrameDifferingPixel = -1;
@@ -1339,6 +1511,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenFrameDifferingBytes,
               frameDifferingPixels,
               frameDifferingSamples,
+              tightBitmapDifferingBytes: tightBitmapComparison.differingBytes,
+              offscreenTightBitmapDifferingBytes: offscreenTightBitmapComparison.differingBytes,
+              tightBitmapDifferingSamples: tightBitmapComparison.differingSamples,
+              offscreenTightBitmapDifferingSamples: offscreenTightBitmapComparison.differingSamples,
             };
           });
           return {
@@ -3253,6 +3429,13 @@ test.describe('Crop history', () => {
           },
           `${comparison.layerId} frame raster at ${comparison.stage} must match; positions ${JSON.stringify(comparison.positions)}, affine transforms ${JSON.stringify(comparison.affineTransforms)}, samples ${JSON.stringify(comparison.frameDifferingSamples)}`
         ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
+        expect(
+          {
+            htmlCanvas: comparison.tightBitmapDifferingBytes,
+            offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
+          },
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} must match; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+        ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
       for (const [index, transition] of untransformedControl.transitionResults.entries()) {
@@ -3273,6 +3456,13 @@ test.describe('Crop history', () => {
             comparison.frameDifferingBytes,
             `frame-only ${comparison.layerId} raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
           ).toBe(0);
+          expect(
+            {
+              htmlCanvas: comparison.tightBitmapDifferingBytes,
+              offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
+            },
+            `frame-only ${comparison.layerId} full tight bitmap must match at ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
         }
       }
       // This control isolates the retained operation within each renderer; the broader frame-only
@@ -3431,6 +3621,8 @@ test.describe('Crop history', () => {
           height: comparison.expectedBounds.height,
         });
         expect(comparison.frameDifferingBytes).toBe(0);
+        expect(comparison.tightBitmapDifferingBytes).toBe(0);
+        expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
       }
       expect(result.transitionResults).toHaveLength(fixture.transitions.length);
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
@@ -3457,6 +3649,8 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
+          expect(comparison.tightBitmapDifferingBytes).toBe(0);
+          expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
         }
         for (const comparison of transition.materializedLayerComparisons) {
           expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
@@ -3465,6 +3659,8 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
+          expect(comparison.tightBitmapDifferingBytes).toBe(0);
+          expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
         }
       }
       expect(result.durablePixels).toEqual(result.legacyPixels);
@@ -3896,6 +4092,13 @@ test.describe('Crop history', () => {
             comparison.frameDifferingBytes,
             `${comparison.layerId} pixels at ${stage} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
           ).toBe(0);
+          expect(
+            {
+              htmlCanvas: comparison.tightBitmapDifferingBytes,
+              offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
+            },
+            `${comparison.layerId} full tight bitmap at ${stage} differs at ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
         }
       };
 
