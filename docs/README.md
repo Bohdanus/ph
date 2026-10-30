@@ -74,6 +74,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../.kilo/skills/parallel-test-hardening/SKILL.md`](../.kilo/skills/parallel-test-hardening/SKILL.md) | The wave-based workflow for hardening tests with small parallel agents                               |
 | [`../.kilo/skills/kilo-chat-history/SKILL.md`](../.kilo/skills/kilo-chat-history/SKILL.md)             | Kilo-local mirror of the chat-history workflow used by Kilo agents; keep identical to the repo skill |
 | [`../README.md`](../README.md)                                                                         | Install, run, test, and the CI jobs — for a new clone                                                |
+| [`WSL-SETUP.md`](WSL-SETUP.md)                                                                         | Set up and run the project inside WSL2 on Windows                                                    |
 | [`../e2e/README.md`](../e2e/README.md)                                                                 | The Playwright suite: helpers, conventions, and how to add a spec                                    |
 | [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md)                                                 | What the history migration left undone, in the e2e suite's own words                                 |
 | [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)                                                       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again          |
@@ -112,6 +113,7 @@ its tool permissions.
 
 | Profile                                                                        | Its one job                                                                        |
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`../.kilo/agent/free-completion.md`](../.kilo/agent/free-completion.md)       | Deny every tool for authenticated free-model text completions                      |
 | [`../.kilo/agent/read-only-research.md`](../.kilo/agent/read-only-research.md) | Deny file writes, patches, shell, and task delegation to free Kilo research agents |
 
 `e2e/fixtures/README.md` is the Playwright fixture conventions note.

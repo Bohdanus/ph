@@ -623,6 +623,16 @@ describe('viewportRectToPageRect', () => {
       height: 120,
     });
   });
+
+  it.each([
+    { name: 'NaN x', scroll: { x: Number.NaN, y: 0 } },
+    { name: 'NaN y', scroll: { x: 0, y: Number.NaN } },
+    { name: 'positive infinity', scroll: { x: Number.POSITIVE_INFINITY, y: 0 } },
+    { name: 'negative infinity', scroll: { x: 0, y: Number.NEGATIVE_INFINITY } },
+    { name: 'mixed non-finite offsets', scroll: { x: Number.NaN, y: Number.POSITIVE_INFINITY } },
+  ])('rejects non-finite $name scroll offsets', ({ scroll }) => {
+    expect(() => viewportRectToPageRect(RECT, scroll)).toThrow(/viewportRectToPageRect: scroll offsets must be finite/);
+  });
 });
 
 describe('the coordinate shapes have exactly one declaration', () => {
