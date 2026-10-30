@@ -639,12 +639,25 @@ export async function completeWithFreeModel(
   const exhaustedGroqKeys = new Set();
   const attempts = new Map();
   const errors = [];
-  const handleOpenRouterFailure = async (status, model) => {
+  const handleOpenRouterFailure = async (status, model, response) => {
     if (isAccountFailure(status)) {
       exhausted.add('openrouter');
       return;
     }
     if (status !== 429) return;
+
+    // A zero platform header is authoritative; avoid a redundant daily-counter probe.
+    const rateLimitRemaining = response?.headers?.get?.('x-ratelimit-remaining');
+    if (typeof rateLimitRemaining === 'string' && rateLimitRemaining.trim() !== '') {
+      const remaining = Number(rateLimitRemaining);
+      if (Number.isFinite(remaining) && remaining === 0) {
+        exhausted.add('openrouter');
+        stderr.write(
+          `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping OpenRouter for this run.\n`
+        );
+        return;
+      }
+    }
 
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
@@ -862,7 +875,7 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      await handleOpenRouterFailure(response.status, candidate.model);
+      await handleOpenRouterFailure(response.status, candidate.model, response);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -901,7 +914,7 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    await handleOpenRouterFailure(response.status, candidate.model);
+    await handleOpenRouterFailure(response.status, candidate.model, response);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
@@ -921,7 +934,7 @@ function usage() {
     'Inference calls can run for up to five minutes; catalog and quota checks use a separate 15-second timeout.\n' +
     'Set GROQ_FREE_PLAN=1 only for confirmed Free-plan accounts; keys come from GROQ_API_KEY or comma-separated GROQ_API_KEYS.\n' +
     'Groq limits are organization-level; use keys from distinct organizations. Inference reads environment keys, not saved files.\n' +
-    'OpenRouter 401/402 exhausts its source; model 429 checks the daily counter before another free-model attempt.\n' +
+    'OpenRouter 401/402 exhausts its source; model 429 honors a zero platform X-RateLimit-Remaining header before daily quota.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
     '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.\n' +
     '--probe-groq checks supplied keys or discovers ~/.config/groq/api_key* files for authentication only; it sends no inference request.\n' +

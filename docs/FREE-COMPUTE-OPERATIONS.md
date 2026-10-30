@@ -31,10 +31,11 @@ node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
 The runner requires exact-zero OpenRouter models and tries Laguna S 2.1 first. HTTP 401/402
-exhausts OpenRouter. On a model HTTP 429, it checks the account's daily counter, tries another
-free model while requests remain, and stops at zero; an unavailable counter stays within the
-three-model cap. This account has a 1,000/day quota; the snapshot does not include the separate
-20/minute limit. Laguna receives at least 1,024 output tokens.
+exhausts OpenRouter. On HTTP 429, a zero OpenRouter platform `X-RateLimit-Remaining` header exhausts the source for
+that run; otherwise it checks the daily counter, tries another free model while requests remain,
+and stops at zero. An unavailable counter stays within the three-model cap. This account has a
+1,000/day quota; the snapshot does not include the separate 20/minute limit. Laguna receives at
+least 1,024 output tokens. See [OpenRouter limits](https://openrouter.ai/docs/api-reference/limits).
 
 ## Groq
 

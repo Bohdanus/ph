@@ -342,7 +342,7 @@ describe('OpenRouter pre-routing quota check', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: { message: 'upstream model quota' } }), {
           status: 429,
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '1' },
         })
       )
       .mockResolvedValueOnce(
@@ -435,7 +435,7 @@ describe('OpenRouter pre-routing quota check', () => {
     const chat = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: { message: 'upstream unavailable' } }), {
         status: 429,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': 'invalid' },
       })
     );
     const fetchImpl = catalogFetch({
@@ -450,6 +450,31 @@ describe('OpenRouter pre-routing quota check', () => {
     );
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(3);
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
+  });
+
+  it('skips the quota probe when OpenRouter reports zero rate-limit requests remaining', async () => {
+    const chat = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '0' },
+      })
+    );
+    const keyInfo = vi.fn(() => ({
+      ok: true,
+      json: async () => ({ data: { free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } } }),
+    }));
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo,
+      chat,
+    });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(keyInfo).not.toHaveBeenCalled();
   });
 
   it('does not probe when OpenRouter is not in the catalog', async () => {
