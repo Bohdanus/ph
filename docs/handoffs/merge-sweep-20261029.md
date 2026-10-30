@@ -163,3 +163,38 @@ The inventory at the time continued to identify `activity-analyzer` and
 safety reviews above still rule out landing them as-is. Re-run the live-session
 overlay, inventory, repository state, and disposal dry-run after the four-hour
 threshold before removing any checkout.
+
+## Cleanup recheck (2026-10-30 02:03 +01:00)
+
+The current-main inventory command again failed with `spawn ENAMETOOLONG`.
+Running the Windows-hardened inventory generator from `systemic-hardening`
+wrote the canonical root inventory at `2026-10-30T01:02:57.578Z`, against main
+`4a72d30d981965950bbad6a47ad70f98d6589f7d`. It reports 20 worktrees, three
+disposal candidates, four ready-to-land, seven at-risk, four in-use, two
+undecided, and no branch-only refs. `npm run repo:state` is clean across all 20
+worktrees; `npm run branches:orphan` found none; `npm run swarm -- doctor
+--dry-run` found no stale claims or locks. The live-session overlay still shows
+the main-checkout sessions; there are no sessions opened in the three landed
+disposal candidates.
+
+| Worktree                                                        | Supersession evidence                                                                                                         | Current age / payload                                                                                                       | Decision                                                                                                |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `land-wsl` (`land/wsl`)                                         | Tip `decafba0de2d18452df3b2e58a02836aadf0be16` is an ancestor of main; clean, with no unique commit. Disposal dry-run passes. | Created `2026-10-29 22:37:24`; last written `23:25:38`; ignored `node_modules/`. At 02:03 it is about 3h26 old.             | Preserve until older than four hours; earliest threshold is 02:37:24, then rerun the gates and dry-run. |
+| `sync-origin-main-20261029` (`chore/sync-origin-main-20261029`) | Tip `ecb18176a213962ec631c76ac5ebbed89656f6e8` is an ancestor of main; clean, with no unique commit. Disposal dry-run passes. | Created `2026-10-29 22:42:14`; last written `23:03:36`; ignored `dist/` and `node_modules/`. At 02:03 it is about 3h21 old. | Preserve until older than four hours; earliest threshold is 02:42:14, then rerun the gates and dry-run. |
+| `sync-origin-main-20261030` (`chore/sync-origin-main-20261030`) | Tip `b0e3e5a416e44210bb3bc5061a671c9040c7a161` is an ancestor of main; clean, with no unique commit. Disposal dry-run passes. | Created `2026-10-30 00:40:06`; last written `00:42:38`; ignored `dist/` and `node_modules/`. At 02:03 it is about 1h23 old. | Preserve until older than four hours; earliest threshold is 04:40:06, then rerun the gates and dry-run. |
+
+No worktree or branch was removed. The fresh inventory initially observed
+`fix-push-gate-text-toolbar-20261030` as a disposal candidate, but a subsequent
+direct status check found it dirty and the next inventory correctly classified
+it `at-risk`. It is based on the main tip but has three modified tracked files:
+`docs/TOOLS.md`, `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`,
+and `src/tools/descriptions/type-crop.ts`. Its directory was created at
+`01:58:51` and last written at `02:02:14`; preserve these recent changes and do
+not run disposal against it.
+
+This cleanup session also created the clean helper worktree
+`cleanup-merge-sweep-20261030-0157` on branch
+`chore/cleanup-merge-sweep-20261030-0157`, based on current main. It is
+currently `in-use` by this session and was created at `01:58:23`; do not remove
+it while the session is active. Once ownership ends and the age gate is met,
+handle it only through the normal inventory and disposer workflow.
