@@ -43,10 +43,12 @@
     "free:quarantine": "node scripts/free-model-quarantine.mjs",
     "free:research": "node scripts/free-research.mjs",
     "free:chat-search": "node scripts/free-chat-search.mjs",
+    "free:sweep": "node scripts/cron/free-model-sweep.mjs --report-only",
     "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
     "gate:verify": "npm run --silent tsc && npm run --silent build",
     "gate:commit": "node scripts/quiet-command.mjs lint-staged --fail-on-changes --no-stash && npm run --silent gate:verify",
-    "gate:push": "node scripts/quiet-command.mjs npm run --silent test -- --silent"
+    "gate:push": "node scripts/quiet-command.mjs npm run --silent test -- --silent",
+    "free:web-research": "node scripts/free-web-research.mjs"
   },
   "engines": {
     "node": ">=24"

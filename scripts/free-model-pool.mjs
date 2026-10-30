@@ -379,6 +379,68 @@ function isPerKeyFailure(status) {
   return status === 401 || status === 402 || status === 429;
 }
 
+const CONTENT_POLICY_ERROR_CODES = new Set([
+  'content_filter',
+  'content_filter_blocked',
+  'content_filter_violation',
+  'content_policy_blocked',
+  'content_policy_violation',
+  'moderation_blocked',
+  'moderation_rejected',
+  'prompt_injection_detected',
+  'safety_filter',
+  'safety_violation',
+]);
+
+const CONTENT_POLICY_ERROR_PATTERNS = [
+  /flagged as potentially violating/i,
+  /(?:content|safety) filter (?:was |has been )?(?:triggered|blocked|rejected|flagged)/i,
+  /(?:content|safety|usage) policy (?:violation|blocked|rejected|flagged)/i,
+  /prompt (?:injection )?patterns? detected/i,
+  /prompt (?:was |is )?(?:flagged|rejected|blocked|not allowed)/i,
+  /(?:request|content) (?:was |is )?(?:blocked|rejected) by (?:the )?(?:content|safety|moderation) (?:filter|policy)/i,
+  /moderation (?:flagged|blocked|rejected|detected)/i,
+  /content failed moderation/i,
+  /violates? (?:our |the )?(?:content|safety|usage) policy/i,
+];
+
+function hasFilteredContent(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  return Object.values(result).some((category) => category?.filtered === true);
+}
+
+export function isContentPolicyError(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  if (
+    choices.some(
+      (choice) =>
+        String(choice?.finish_reason ?? '').toLowerCase() === 'content_filter' ||
+        hasFilteredContent(choice?.content_filter_results)
+    )
+  ) {
+    return true;
+  }
+  if (Array.isArray(payload.prompt_filter_results)) {
+    if (payload.prompt_filter_results.some((result) => hasFilteredContent(result?.content_filter_results))) return true;
+  }
+
+  const error = payload.error;
+  const codes = [error?.code, error?.type, payload.code, payload.type];
+  if (
+    codes.some(
+      (code) =>
+        typeof code === 'string' && CONTENT_POLICY_ERROR_CODES.has(code.trim().toLowerCase().replaceAll('-', '_'))
+    )
+  ) {
+    return true;
+  }
+
+  const message = String(error?.message ?? payload.message ?? '');
+  return CONTENT_POLICY_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 function hasReportedNonZeroCost(usage) {
   if (usage === undefined || usage === null) return false;
   if (typeof usage !== 'object' || Array.isArray(usage)) return true;
@@ -664,6 +726,48 @@ export async function completeWithFreeModel(
       );
     }
   }
+  const handleOpenRouterFailure = async (status, model, response) => {
+    if (status === 401 || status === 402) {
+      exhausted.add('openrouter');
+      return;
+    }
+    if (status !== 429) return;
+
+    const remainingHeader = response?.headers?.get?.('x-ratelimit-remaining');
+    if (typeof remainingHeader === 'string' && remainingHeader.trim() !== '') {
+      const remaining = Number(remainingHeader);
+      if (Number.isFinite(remaining) && remaining <= 0) {
+        exhausted.add('openrouter');
+        stderr.write(
+          `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping this source for the run.\n`
+        );
+        return;
+      }
+    }
+
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
+    if (quota.reason === 'ok') {
+      onOpenRouterQuota(quota);
+      if (quota.remaining <= 0) {
+        exhausted.add('openrouter');
+        stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter models.\n');
+      } else {
+        stderr.write(
+          `OpenRouter model ${model} returned HTTP 429 with ${quota.remaining} daily free requests remaining; trying another verified-free model.\n`
+        );
+      }
+      return;
+    }
+    if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+      exhausted.add('openrouter');
+      stderr.write(`OpenRouter quota check returned ${quota.reason}; skipping OpenRouter for this run.\n`);
+      return;
+    }
+
+    stderr.write(
+      `OpenRouter model ${model} returned HTTP 429; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so trying another verified-free model within the per-run limit.\n`
+    );
+  };
   for (const candidate of available) {
     if (exhausted.has(candidate.source)) continue;
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
@@ -829,12 +933,18 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
+      if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
       if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
       throw new Error(
         `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
+      );
+    }
+    if (isContentPolicyError(payload)) {
+      throw new Error(
+        `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
     }
     const choice = payload?.choices?.[0];
@@ -868,6 +978,7 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
+    if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
     if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
   }
   throw new Error(
@@ -877,6 +988,7 @@ export async function completeWithFreeModel(
 
 function usage() {
   return (
+    'Usage: node scripts/free-model-pool.mjs --help\n' +
     'Usage: node scripts/free-model-pool.mjs --list [--limit N]\n' +
     '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--probe-openrouter-quota]\n' +
     '       node scripts/free-model-pool.mjs --openrouter-quota\n' +
@@ -891,7 +1003,8 @@ function usage() {
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
     '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.\n' +
     '--probe-groq probes one or more Groq API keys to verify authentication; --groq-key-dir discovers api_key files in a directory (default ~/.config/groq); --groq-key-files is a comma-separated list of explicit key file paths. GROQ_API_KEYS (comma-separated) or GROQ_API_KEY may also supply keys directly. No inference request is sent.\n' +
-    'With multiple Groq keys, the pool rotates to the next key on HTTP 401/402/429; a permanently invalid key (401) is retired for the run while a single account is never reused to evade its per-account limits.\n'
+    'With multiple Groq keys, the pool rotates to the next key on HTTP 401/402/429; a permanently invalid key (401) is retired for the run while a single account is never reused to evade its per-account limits.\n' +
+    '--help prints this usage without making a network request.\n'
   );
 }
 
@@ -920,6 +1033,10 @@ export async function main(
     probeGroqKeysImpl = probeGroqKeys,
   } = {}
 ) {
+  if (args.includes('--help') || args.includes('-h')) {
+    stdout.write(`${usage()}\n`);
+    return 0;
+  }
   const list = args.includes('--list');
   const promptAt = args.indexOf('--prompt-file');
   const outputFileAt = args.indexOf('--output-file');
