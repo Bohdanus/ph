@@ -327,22 +327,42 @@ function documentPoint(fit: Fit, documentX: number, documentY: number): PagePoin
 }
 
 /**
- * Start just outside a real crop corner and rotate 90 degrees clockwise around the visible box
- * center. CSS-pixel offsets keep the gesture inside the UI's fixed-size rotation hot zone at every
- * document zoom; a fixed document-space offset silently leaves that hot zone on larger canvases.
+ * Find a point just outside a real crop corner that the app identifies as its rotation hotspot,
+ * then rotate 90 degrees clockwise around the visible box center. The DOM corner is rendered from
+ * rounded document coordinates while the pointer hook hit-tests the fractional selection rect, so
+ * a fixed CSS offset can land inside the corner on one scale and outside the hot zone on another.
  */
 async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint; end: PagePoint }> {
   const corner = page.locator('[data-testid="crop-selection-handle"][data-corner="top-left"]');
   const outline = page.getByTestId('crop-selection-outline');
+  const surface = page.locator('.cursor-crop');
   await expect(corner, 'the top-left crop handle is rendered').toBeVisible();
   const cornerBounds = await corner.boundingBox();
   const outlineBounds = await outline.boundingBox();
   if (!cornerBounds || !outlineBounds) throw new Error('the crop rotation gesture has no visible bounds');
 
-  const start = {
-    x: cornerBounds.x + cornerBounds.width / 2 - 8,
-    y: cornerBounds.y + cornerBounds.height / 2 - 8,
-  };
+  const cornerX = cornerBounds.x + cornerBounds.width / 2;
+  const cornerY = cornerBounds.y + cornerBounds.height / 2;
+  const offsets = [4, 8, 12, 16, 20];
+  const candidates = offsets
+    .flatMap((offsetX) =>
+      offsets
+        .filter((offsetY) => Math.hypot(offsetX, offsetY) <= 23)
+        .map((offsetY) => ({ offsetX, offsetY, distance: Math.hypot(offsetX, offsetY) }))
+    )
+    .sort((left, right) => left.distance - right.distance);
+  let start: PagePoint | null = null;
+  for (const candidate of candidates) {
+    const point = { x: cornerX - candidate.offsetX, y: cornerY - candidate.offsetY };
+    await page.mouse.move(point.x, point.y);
+    const cursor = await surface.evaluate((element) => getComputedStyle(element).cursor);
+    if (cursor.includes('data:image/svg+xml')) {
+      start = point;
+      break;
+    }
+  }
+  if (!start) throw new Error('No point outside the visible crop corner exposed the rotation cursor');
+
   const center = {
     x: outlineBounds.x + outlineBounds.width / 2,
     y: outlineBounds.y + outlineBounds.height / 2,
@@ -743,55 +763,60 @@ function expectRasterRegionToEqual(
 
 type CropParityFrame = Readonly<{ x: number; y: number; width: number; height: number }>;
 
-type CropParityLayerFixture =
-  | Readonly<{
-      kind: 'raster';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
-    }>
-  | Readonly<{
-      kind: 'blank';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      color: string;
-      opacity: number;
-    }>
-  | Readonly<{
-      kind: 'text';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      textArgs: Readonly<{
-        toolName: 'text';
-        align: 'left' | 'center' | 'right';
-        bold: boolean;
+type CropParityLayerFixture = Readonly<{
+  layerOpacity?: number;
+  blendMode?: GlobalCompositeOperation;
+}> &
+  (
+    | Readonly<{
+        kind: 'raster';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
+      }>
+    | Readonly<{
+        kind: 'blank';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
         color: string;
-        fontFamily: string;
-        fontSize: number;
-        italic: boolean;
-        lineHeight: number;
-        text: string;
-        rect: Readonly<{ x1: number; y1: number; x2: number; y2: number }>;
-        kind: 'point' | 'paragraph';
-      }>;
-    }>
-  | Readonly<{
-      kind: 'vector';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      args: ShapeToolArgs;
-    }>
-  | Readonly<{
-      kind: 'paint';
-      id: string;
-      order: number;
-      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-      args: DrawToolArgs;
-    }>;
+        opacity: number;
+      }>
+    | Readonly<{
+        kind: 'text';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        textArgs: Readonly<{
+          toolName: 'text';
+          align: 'left' | 'center' | 'right';
+          bold: boolean;
+          color: string;
+          fontFamily: string;
+          fontSize: number;
+          italic: boolean;
+          lineHeight: number;
+          text: string;
+          rect: Readonly<{ x1: number; y1: number; x2: number; y2: number }>;
+          kind: 'point' | 'paragraph';
+        }>;
+      }>
+    | Readonly<{
+        kind: 'vector';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        args: ShapeToolArgs;
+      }>
+    | Readonly<{
+        kind: 'paint';
+        id: string;
+        order: number;
+        pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+        args: DrawToolArgs;
+      }>
+  );
 
 type CropParityTransition = Readonly<{
   angleDegrees: number;
@@ -817,14 +842,30 @@ type CropParityFramePixelSample = Readonly<
   PixelDifference['differingSamples'][number] & { documentX: number; documentY: number }
 >;
 
+type CropParityAffineTransform = Readonly<{ a: number; b: number; c: number; d: number; e: number; f: number }>;
+
 type CropParityLayerComparison = Readonly<{
   layerId: string;
+  stage: string;
+  positions: Readonly<{
+    legacy: Readonly<{ x: number; y: number; width: number; height: number }>;
+    durable: Readonly<{ x: number; y: number; width: number; height: number }>;
+  }>;
+  affineTransforms: Readonly<{
+    legacy: readonly CropParityAffineTransform[];
+    durable: readonly CropParityAffineTransform[];
+  }>;
   expectedBounds: CropParityFrame;
   materializedBounds: CropParityFrame;
   bitmapSize: Readonly<{ width: number; height: number }>;
   frameDifferingBytes: number;
+  offscreenFrameDifferingBytes: number;
   frameDifferingPixels: number;
   frameDifferingSamples: readonly CropParityFramePixelSample[];
+  tightBitmapDifferingBytes: number;
+  offscreenTightBitmapDifferingBytes: number;
+  tightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
+  offscreenTightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
 }>;
 
 async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
@@ -857,110 +898,8 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
     ]);
 
     const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
-    const layers = fixture.layers.map((layerFixture) => {
-      const createSourceCanvas = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = layerFixture.pos.width;
-        canvas.height = layerFixture.pos.height;
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error(`A 2D context is required for ${layerFixture.id}`);
-        return { canvas, context };
-      };
-      let runtimeSource:
-        | Readonly<{ bitmap: HTMLCanvasElement | OffscreenCanvas; source: Readonly<Record<string, unknown>> }>
-        | Readonly<{ bitmap: null; source: Readonly<Record<string, unknown>> }>;
-      switch (layerFixture.kind) {
-        case 'raster': {
-          const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
-          for (const fill of layerFixture.fills) {
-            sourceContext.fillStyle = fill.color;
-            sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
-          }
-          runtimeSource = {
-            bitmap: sourceCanvas,
-            source: {
-              kind: 'image',
-              bitmap: sourceCanvas,
-              name: `${layerFixture.id}.png`,
-              isBedrock: false,
-              pos: layerFixture.pos,
-            },
-          };
-          break;
-        }
-        case 'blank': {
-          const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
-          sourceContext.globalAlpha = layerFixture.opacity;
-          sourceContext.fillStyle = layerFixture.color;
-          sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
-          runtimeSource = {
-            bitmap: sourceCanvas,
-            source: {
-              kind: 'blank',
-              color: layerFixture.color,
-              opacity: layerFixture.opacity,
-              isBedrock: false,
-              pos: layerFixture.pos,
-            },
-          };
-          break;
-        }
-        case 'text':
-          runtimeSource = {
-            bitmap: null,
-            source: { kind: 'tool', args: layerFixture.textArgs, isBedrock: false, pos: layerFixture.pos },
-          };
-          break;
-        case 'vector':
-          runtimeSource = {
-            bitmap: null,
-            source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
-          };
-          break;
-        case 'paint': {
-          const processor = findToolProcessor(layerFixture.args.toolName);
-          if (!processor?.creator) throw new Error(`Paint source ${layerFixture.id} is not a deterministic creator`);
-          const [bitmap] = processor.imageProcessor({ size: layerFixture.pos })(layerFixture.args);
-          if (!bitmap) throw new Error(`Paint source ${layerFixture.id} produced no raster`);
-          runtimeSource = {
-            bitmap,
-            source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
-          };
-          break;
-        }
-      }
-      return {
-        id: layerFixture.id,
-        name: layerFixture.id,
-        isBedrock: false,
-        tmpCanvas: null,
-        bitmap: runtimeSource.bitmap,
-        visible: true,
-        opacity: 1,
-        locked: false,
-        blendMode: 'source-over',
-        order: layerFixture.order,
-        pos: layerFixture.pos,
-        presentationBounds: null,
-        source: runtimeSource.source,
-        operations: [],
-      };
-    });
     if (fixture.transitions.length === 0) throw new Error(`No frame transitions were supplied for ${fixture.caseName}`);
     const layerTransforms = fixture.layerTransforms ?? [];
-    let untransformedBaselinePixels: number[] | null = null;
-    if (layerTransforms.length > 0) {
-      const baselineSurface = document.createElement('canvas');
-      const baselineLayers = (layers as unknown as Layer[]).slice().sort((left, right) => left.order - right.order);
-      if (!drawLayersToCanvas(baselineSurface, baselineLayers, baseFrame)) {
-        throw new Error(`Untransformed baseline composition was refused for ${fixture.caseName}`);
-      }
-      const baselineContext = baselineSurface.getContext('2d');
-      if (!baselineContext) throw new Error(`Untransformed baseline produced no 2D context for ${fixture.caseName}`);
-      untransformedBaselinePixels = Array.from(
-        baselineContext.getImageData(0, 0, baseFrame.width, baseFrame.height).data
-      );
-    }
     const transitions = fixture.transitions.map((transition, index) => {
       const frameCenter = {
         x: transition.nextFrame.x + transition.nextFrame.width / 2,
@@ -976,8 +915,130 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         transform,
       };
     });
-
     const registry = new AssetRegistry();
+    const layerResults = await Promise.allSettled(
+      fixture.layers.map(async (layerFixture) => {
+        const createSourceCanvas = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = layerFixture.pos.width;
+          canvas.height = layerFixture.pos.height;
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error(`A 2D context is required for ${layerFixture.id}`);
+          return { canvas, context };
+        };
+        let runtimeSource:
+          | Readonly<{
+              bitmap: ImageBitmap | HTMLCanvasElement | OffscreenCanvas;
+              source: Readonly<Record<string, unknown>>;
+            }>
+          | Readonly<{ bitmap: null; source: Readonly<Record<string, unknown>> }>;
+        switch (layerFixture.kind) {
+          case 'raster': {
+            const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
+            for (const fill of layerFixture.fills) {
+              sourceContext.fillStyle = fill.color;
+              sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
+            }
+            const bitmap = await createImageBitmap(sourceCanvas);
+            registry.registerBaseline(fixture.documentId, bitmap);
+            runtimeSource = {
+              bitmap,
+              source: {
+                kind: 'image',
+                bitmap,
+                name: `${layerFixture.id}.png`,
+                isBedrock: false,
+                pos: layerFixture.pos,
+              },
+            };
+            break;
+          }
+          case 'blank': {
+            const { canvas: sourceCanvas, context: sourceContext } = createSourceCanvas();
+            sourceContext.globalAlpha = layerFixture.opacity;
+            sourceContext.fillStyle = layerFixture.color;
+            sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+            runtimeSource = {
+              bitmap: sourceCanvas,
+              source: {
+                kind: 'blank',
+                color: layerFixture.color,
+                opacity: layerFixture.opacity,
+                isBedrock: false,
+                pos: layerFixture.pos,
+              },
+            };
+            break;
+          }
+          case 'text':
+            runtimeSource = {
+              bitmap: null,
+              source: { kind: 'tool', args: layerFixture.textArgs, isBedrock: false, pos: layerFixture.pos },
+            };
+            break;
+          case 'vector':
+            runtimeSource = {
+              bitmap: null,
+              source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
+            };
+            break;
+          case 'paint': {
+            const processor = findToolProcessor(layerFixture.args.toolName);
+            if (!processor?.creator) throw new Error(`Paint source ${layerFixture.id} is not a deterministic creator`);
+            const [bitmap] = processor.imageProcessor({ size: layerFixture.pos })(layerFixture.args);
+            if (!bitmap) throw new Error(`Paint source ${layerFixture.id} produced no raster`);
+            runtimeSource = {
+              bitmap,
+              source: { kind: 'tool', args: layerFixture.args, isBedrock: false, pos: layerFixture.pos },
+            };
+            break;
+          }
+        }
+        return {
+          id: layerFixture.id,
+          name: layerFixture.id,
+          isBedrock: false,
+          tmpCanvas: null,
+          bitmap: runtimeSource.bitmap,
+          visible: true,
+          opacity: layerFixture.layerOpacity ?? 1,
+          locked: false,
+          blendMode: layerFixture.blendMode ?? 'source-over',
+          order: layerFixture.order,
+          pos: layerFixture.pos,
+          presentationBounds: null,
+          source: runtimeSource.source,
+          operations: [],
+        };
+      })
+    );
+    const rejectedLayer = layerResults.find((result) => result.status === 'rejected');
+    if (rejectedLayer?.status === 'rejected') {
+      registry.shutdown();
+      throw rejectedLayer.reason;
+    }
+    const layers = layerResults.map((result) => {
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    });
+    let untransformedBaselinePixels: number[] | null = null;
+    try {
+      if (layerTransforms.length > 0) {
+        const baselineSurface = document.createElement('canvas');
+        const baselineLayers = (layers as unknown as Layer[]).slice().sort((left, right) => left.order - right.order);
+        if (!drawLayersToCanvas(baselineSurface, baselineLayers, baseFrame)) {
+          throw new Error(`Untransformed baseline composition was refused for ${fixture.caseName}`);
+        }
+        const baselineContext = baselineSurface.getContext('2d');
+        if (!baselineContext) throw new Error(`Untransformed baseline produced no 2D context for ${fixture.caseName}`);
+        untransformedBaselinePixels = Array.from(
+          baselineContext.getImageData(0, 0, baseFrame.width, baseFrame.height).data
+        );
+      }
+    } catch (error) {
+      registry.shutdown();
+      throw error;
+    }
     try {
       const history = [
         {
@@ -1113,13 +1174,32 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                   if (!legacyFrameContext || !durableFrameContext) {
                     throw new Error(`Unable to create reusable frame comparison surfaces at ${stage}`);
                   }
-                  return { legacyContext: legacyFrameContext, durableContext: durableFrameContext };
+                  const legacyOffscreenSurface =
+                    typeof OffscreenCanvas === 'undefined'
+                      ? legacyFrameSurface
+                      : new OffscreenCanvas(frameSize.width, frameSize.height);
+                  const durableOffscreenSurface =
+                    typeof OffscreenCanvas === 'undefined'
+                      ? durableFrameSurface
+                      : new OffscreenCanvas(frameSize.width, frameSize.height);
+                  const legacyOffscreenContext = legacyOffscreenSurface.getContext('2d');
+                  const durableOffscreenContext = durableOffscreenSurface.getContext('2d');
+                  if (!legacyOffscreenContext || !durableOffscreenContext) {
+                    throw new Error(`Unable to create OffscreenCanvas comparison surfaces at ${stage}`);
+                  }
+                  return {
+                    legacyContext: legacyFrameContext,
+                    durableContext: durableFrameContext,
+                    legacyOffscreenContext,
+                    durableOffscreenContext,
+                  };
                 })()
               : null;
           const materializedLayerComparisons = (fixture.materializedLayerIds ?? []).map((layerId) => {
             const legacyLayer = legacyReplay.layers[layerId];
             const materializedLayer = composite.layers[layerId];
-            if (!legacyLayer || !materializedLayer) {
+            const durableLayer = replay.layers[layerId];
+            if (!legacyLayer || !materializedLayer || !durableLayer) {
               throw new Error(`Missing ${layerId} layer for materialized parity at ${stage}`);
             }
 
@@ -1140,8 +1220,18 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 Math.floor(evaluation.bounds.y - frame.y),
             };
             if (!frameComparisonSurfaces) throw new Error(`Missing frame comparison surfaces at ${stage}`);
-            const { legacyContext: legacyFrameContext, durableContext: durableFrameContext } = frameComparisonSurfaces;
-            for (const context of [legacyFrameContext, durableFrameContext]) {
+            const {
+              legacyContext: legacyFrameContext,
+              durableContext: durableFrameContext,
+              legacyOffscreenContext,
+              durableOffscreenContext,
+            } = frameComparisonSurfaces;
+            for (const context of [
+              legacyFrameContext,
+              durableFrameContext,
+              legacyOffscreenContext,
+              durableOffscreenContext,
+            ]) {
               context.setTransform(1, 0, 0, 1, 0, 0);
               context.globalAlpha = 1;
               context.globalCompositeOperation = 'source-over';
@@ -1150,6 +1240,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             }
             if (!drawLayer(legacyFrameContext, legacyLayer, frame)) {
               throw new Error(`Legacy renderer refused ${layerId} frame comparison at ${stage}`);
+            }
+            if (
+              legacyOffscreenContext !== legacyFrameContext &&
+              !drawLayer(legacyOffscreenContext, legacyLayer, frame)
+            ) {
+              throw new Error(`Legacy renderer refused ${layerId} OffscreenCanvas comparison at ${stage}`);
             }
             durableFrameContext.globalAlpha = materializedLayer.opacity;
             durableFrameContext.globalCompositeOperation = materializedLayer.blendMode;
@@ -1160,16 +1256,209 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               materializedLayer.bounds.width,
               materializedLayer.bounds.height
             );
+            if (durableOffscreenContext !== durableFrameContext) {
+              durableOffscreenContext.globalAlpha = materializedLayer.opacity;
+              durableOffscreenContext.globalCompositeOperation = materializedLayer.blendMode;
+              durableOffscreenContext.drawImage(
+                materializedLayer.bitmap as CanvasImageSource,
+                materializedLayer.bounds.x - frame.x,
+                materializedLayer.bounds.y - frame.y,
+                materializedLayer.bounds.width,
+                materializedLayer.bounds.height
+              );
+            }
             const legacyFramePixels = legacyFrameContext.getImageData(0, 0, frameSize.width, frameSize.height).data;
             const durableFramePixels = durableFrameContext.getImageData(0, 0, frameSize.width, frameSize.height).data;
+            const legacyOffscreenPixels = legacyOffscreenContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
+            const durableOffscreenPixels = durableOffscreenContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
             const frameChannels = ['r', 'g', 'b', 'a'] as const;
+            const createComparisonSurfaces = (label: string, width: number, height: number) => {
+              const htmlSurface = document.createElement('canvas');
+              htmlSurface.width = width;
+              htmlSurface.height = height;
+              const htmlContext = htmlSurface.getContext('2d');
+              const offscreenSurface =
+                typeof OffscreenCanvas === 'undefined' ? htmlSurface : new OffscreenCanvas(width, height);
+              const offscreenContext = offscreenSurface.getContext('2d');
+              if (!htmlContext || !offscreenContext) {
+                throw new Error(`Unable to create ${label} pixel comparison surfaces at ${stage}`);
+              }
+              return { htmlContext, offscreenContext };
+            };
+            const legacyTightSurfaces = createComparisonSurfaces(
+              'legacy tight bitmap',
+              expectedBounds.width,
+              expectedBounds.height
+            );
+            const durableTightSurfaces = createComparisonSurfaces(
+              'durable tight bitmap',
+              expectedBounds.width,
+              expectedBounds.height
+            );
+            const legacyRawFrameSurfaces = createComparisonSurfaces(
+              'legacy raw frame',
+              frameSize.width,
+              frameSize.height
+            );
+            for (const context of [
+              legacyTightSurfaces.htmlContext,
+              legacyTightSurfaces.offscreenContext,
+              durableTightSurfaces.htmlContext,
+              durableTightSurfaces.offscreenContext,
+            ]) {
+              context.setTransform(1, 0, 0, 1, 0, 0);
+              context.globalAlpha = 1;
+              context.globalCompositeOperation = 'source-over';
+              context.imageSmoothingEnabled = false;
+              context.clearRect(0, 0, expectedBounds.width, expectedBounds.height);
+            }
+            const legacyPixelLayer = { ...legacyLayer, opacity: 1, blendMode: 'source-over' };
+            for (const context of [legacyRawFrameSurfaces.htmlContext, legacyRawFrameSurfaces.offscreenContext]) {
+              context.setTransform(1, 0, 0, 1, 0, 0);
+              context.globalAlpha = 1;
+              context.globalCompositeOperation = 'source-over';
+              context.imageSmoothingEnabled = false;
+              context.clearRect(0, 0, frameSize.width, frameSize.height);
+            }
+            if (!drawLayer(legacyRawFrameSurfaces.htmlContext, legacyPixelLayer, frame)) {
+              throw new Error(`Legacy renderer refused ${layerId} raw frame comparison at ${stage}`);
+            }
+            if (legacyRawFrameSurfaces.offscreenContext !== legacyRawFrameSurfaces.htmlContext) {
+              if (
+                !drawLayer(legacyRawFrameSurfaces.offscreenContext as CanvasRenderingContext2D, legacyPixelLayer, frame)
+              ) {
+                throw new Error(`Legacy renderer refused ${layerId} OffscreenCanvas raw frame comparison at ${stage}`);
+              }
+            }
+            if (!drawLayer(legacyTightSurfaces.htmlContext, legacyPixelLayer, expectedBounds)) {
+              throw new Error(`Legacy renderer refused ${layerId} tight bitmap comparison at ${stage}`);
+            }
+            if (legacyTightSurfaces.offscreenContext !== legacyTightSurfaces.htmlContext) {
+              if (
+                !drawLayer(
+                  legacyTightSurfaces.offscreenContext as CanvasRenderingContext2D,
+                  legacyPixelLayer,
+                  expectedBounds
+                )
+              ) {
+                throw new Error(`Legacy renderer refused ${layerId} OffscreenCanvas tight comparison at ${stage}`);
+              }
+            }
+            durableTightSurfaces.htmlContext.drawImage(materializedLayer.bitmap as CanvasImageSource, 0, 0);
+            if (durableTightSurfaces.offscreenContext !== durableTightSurfaces.htmlContext) {
+              durableTightSurfaces.offscreenContext.drawImage(materializedLayer.bitmap as CanvasImageSource, 0, 0);
+            }
+            const compareTightPixels = (expectedBytes: Uint8ClampedArray, materializedBytes: Uint8ClampedArray) => {
+              let diffCount = 0;
+              const diffSamples: CropParityFramePixelSample[] = [];
+              for (let byte = 0; byte < Math.max(expectedBytes.length, materializedBytes.length); byte += 1) {
+                const legacy = expectedBytes[byte] ?? null;
+                const durable = materializedBytes[byte] ?? null;
+                if (legacy === durable) continue;
+                diffCount += 1;
+                if (diffSamples.length < 8) {
+                  const pixel = Math.floor(byte / 4);
+                  const x = pixel % expectedBounds.width;
+                  const y = Math.floor(pixel / expectedBounds.width);
+                  diffSamples.push({
+                    x,
+                    y,
+                    documentX: expectedBounds.x + x,
+                    documentY: expectedBounds.y + y,
+                    channel: frameChannels[byte % 4],
+                    legacy,
+                    durable,
+                  });
+                }
+              }
+              return { differingBytes: diffCount, differingSamples: diffSamples };
+            };
+            const legacyTightPixels = legacyTightSurfaces.htmlContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const durableTightPixels = durableTightSurfaces.htmlContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const legacyOffscreenTightPixels = legacyTightSurfaces.offscreenContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const durableOffscreenTightPixels = durableTightSurfaces.offscreenContext.getImageData(
+              0,
+              0,
+              expectedBounds.width,
+              expectedBounds.height
+            ).data;
+            const legacyRawFramePixels = legacyRawFrameSurfaces.htmlContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
+            const legacyOffscreenRawFramePixels = legacyRawFrameSurfaces.offscreenContext.getImageData(
+              0,
+              0,
+              frameSize.width,
+              frameSize.height
+            ).data;
+            const combineFrameGridPixels = (tightPixels: Uint8ClampedArray, framePixels: Uint8ClampedArray) => {
+              const expectedPixels = new Uint8ClampedArray(tightPixels);
+              const frameOffsetX = Math.round(expectedBounds.x - frame.x);
+              const frameOffsetY = Math.round(expectedBounds.y - frame.y);
+              const sourceX = Math.max(0, frameOffsetX);
+              const sourceY = Math.max(0, frameOffsetY);
+              const destinationX = Math.max(0, -frameOffsetX);
+              const destinationY = Math.max(0, -frameOffsetY);
+              const copyWidth = Math.max(0, Math.min(frameSize.width - sourceX, expectedBounds.width - destinationX));
+              const copyHeight = Math.max(
+                0,
+                Math.min(frameSize.height - sourceY, expectedBounds.height - destinationY)
+              );
+              for (let y = 0; y < copyHeight; y += 1) {
+                const frameStart = ((sourceY + y) * frameSize.width + sourceX) * 4;
+                const tightStart = ((destinationY + y) * expectedBounds.width + destinationX) * 4;
+                expectedPixels.set(framePixels.subarray(frameStart, frameStart + copyWidth * 4), tightStart);
+              }
+              return expectedPixels;
+            };
+            const legacyHybridTightPixels = combineFrameGridPixels(legacyTightPixels, legacyRawFramePixels);
+            const legacyOffscreenHybridTightPixels = combineFrameGridPixels(
+              legacyOffscreenTightPixels,
+              legacyOffscreenRawFramePixels
+            );
+            // The tight raster uses frame-grid pixels inside the frame and bounded pixels outside it.
+            const tightBitmapComparison = compareTightPixels(legacyHybridTightPixels, durableTightPixels);
+            const offscreenTightBitmapComparison = compareTightPixels(
+              legacyOffscreenHybridTightPixels,
+              durableOffscreenTightPixels
+            );
             let frameDifferingBytes = 0;
             let frameDifferingPixels = 0;
             let lastFrameDifferingPixel = -1;
             const frameDifferingSamples: CropParityFramePixelSample[] = [];
+            let offscreenFrameDifferingBytes = 0;
             for (let byte = 0; byte < legacyFramePixels.length; byte += 1) {
               const legacy = legacyFramePixels[byte] ?? null;
               const durable = durableFramePixels[byte] ?? null;
+              if (legacyOffscreenPixels[byte] !== durableOffscreenPixels[byte]) offscreenFrameDifferingBytes += 1;
               if (legacy === durable) continue;
               frameDifferingBytes += 1;
               const pixel = Math.floor(byte / 4);
@@ -1193,6 +1482,25 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             }
             return {
               layerId,
+              stage,
+              positions: {
+                legacy: legacyLayer.pos,
+                durable: durableLayer.snapshot.pos,
+              },
+              affineTransforms: {
+                legacy: legacyLayer.operations
+                  .filter(
+                    (operation: { kind: string; enabled: boolean; transform: CropParityAffineTransform }) =>
+                      operation.kind === 'affine-transform' && operation.enabled
+                  )
+                  .map((operation: { transform: CropParityAffineTransform }) => operation.transform),
+                durable: durableLayer.operations
+                  .filter(
+                    (operation: { kind: string; transform: CropParityAffineTransform }) =>
+                      operation.kind === 'apply-affine-transform'
+                  )
+                  .map((operation: { transform: CropParityAffineTransform }) => operation.transform),
+              },
               expectedBounds,
               materializedBounds: materializedLayer.bounds,
               bitmapSize: {
@@ -1200,8 +1508,13 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 height: materializedLayer.bitmap.height,
               },
               frameDifferingBytes,
+              offscreenFrameDifferingBytes,
               frameDifferingPixels,
               frameDifferingSamples,
+              tightBitmapDifferingBytes: tightBitmapComparison.differingBytes,
+              offscreenTightBitmapDifferingBytes: offscreenTightBitmapComparison.differingBytes,
+              tightBitmapDifferingSamples: tightBitmapComparison.differingSamples,
+              offscreenTightBitmapDifferingSamples: offscreenTightBitmapComparison.differingSamples,
             };
           });
           return {
@@ -2381,7 +2694,7 @@ test.describe('Crop history', () => {
       expect(Number(await resizedOutlineRect.getAttribute('stroke-width'))).toBeGreaterThan(0);
       expect(await resizedOutlineRect.getAttribute('stroke-dasharray')).toMatch(/\d/);
       await expect(rotationHandle, 'the rotation grip stays visible and aligned after resize').toBeVisible();
-      expect(Number(await rotationHandle.locator('path').getAttribute('stroke-width'))).toBe(1);
+      expect(Number(await rotationHandle.locator('path').getAttribute('stroke-width'))).toBe(1.5);
 
       const screenshot = await page.screenshot({ scale: 'css' });
       const screenshotPixels = await loadImageData(screenshot);
@@ -2561,14 +2874,19 @@ test.describe('Crop history', () => {
 
       // Move the whole crop rectangle after resizing it. Its top edge should move by the same
       // document-space delta while the underlying document remains in place.
-      const moveFrom = documentPoint(fit, fit.documentWidth / 2, 120);
-      const moveTo = documentPoint(fit, fit.documentWidth / 2 + 30, 145);
+      const movedFit = await readFit(page);
+      const moveFrom = documentPoint(movedFit, movedFit.documentWidth / 2, 120);
+      const moveTo = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, 145);
       await page.mouse.move(moveFrom.x, moveFrom.y);
+      await expect(page.locator('.cursor-crop'), 'the crop interior exposes its move cursor').toHaveCSS(
+        'cursor',
+        'move'
+      );
       await page.mouse.down();
       await page.mouse.move(moveTo.x, moveTo.y, { steps: 12 });
       await page.mouse.up();
 
-      const movedTop = documentPoint(fit, fit.documentWidth / 2 + 30, -15);
+      const movedTop = documentPoint(movedFit, movedFit.documentWidth / 2 + 30, -15);
       await expect
         .poll(async () => {
           const actual = await readTopOutlineCenter();
@@ -2606,7 +2924,7 @@ test.describe('Crop history', () => {
       await page.mouse.move(rotation.start.x, rotation.start.y);
       await expect(surface, 'the expanded corner still exposes the rotation handle').toHaveCSS(
         'cursor',
-        /url.*ew-resize/
+        /url.*data:image\/svg\+xml/
       );
       await page.mouse.down();
       await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
@@ -2788,7 +3106,10 @@ test.describe('Crop history', () => {
       const surface = page.locator('.cursor-crop');
       const rotation = await cropRotationGesturePoints(page);
       await page.mouse.move(rotation.start.x, rotation.start.y);
-      await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+      await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS(
+        'cursor',
+        /url.*data:image\/svg\+xml/
+      );
 
       await page.mouse.down();
       await page.mouse.move(rotation.end.x, rotation.end.y, { steps: 12 });
@@ -2813,7 +3134,10 @@ test.describe('Crop history', () => {
       const surface = page.locator('.cursor-crop');
       const gripPoint = documentPoint(fit, fit.documentWidth / 2, -12);
       await page.mouse.move(gripPoint.x, gripPoint.y);
-      await expect(surface, 'the rendered midpoint grip advertises rotation').toHaveCSS('cursor', /url.*ew-resize/);
+      await expect(surface, 'the rendered midpoint grip advertises rotation').toHaveCSS(
+        'cursor',
+        /url.*data:image\/svg\+xml/
+      );
       const rotatedPoint = documentPoint(
         fit,
         fit.documentWidth / 2 + fit.documentHeight / 2 + 12,
@@ -2871,7 +3195,11 @@ test.describe('Crop history', () => {
           width: 64,
           height: 64,
         });
-      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute(
+        'data-durable-fallback-reason',
+        'ownership-unproven'
+      );
       await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasRegion(page, 'workspace-canvas', 0, 0, 64, 64)).toEqual(originalPixels);
@@ -2884,6 +3212,10 @@ test.describe('Crop history', () => {
           height: 32,
         });
       await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute(
+        'data-durable-fallback-reason',
+        'ownership-unproven'
+      );
       await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
       await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
       await expect
@@ -3091,9 +3423,19 @@ test.describe('Crop history', () => {
           height: comparison.expectedBounds.height,
         });
         expect(
-          comparison.frameDifferingBytes,
-          `${comparison.layerId} frame raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
-        ).toBe(0);
+          {
+            htmlCanvas: comparison.frameDifferingBytes,
+            offscreenCanvas: comparison.offscreenFrameDifferingBytes,
+          },
+          `${comparison.layerId} frame raster at ${comparison.stage} must match; positions ${JSON.stringify(comparison.positions)}, affine transforms ${JSON.stringify(comparison.affineTransforms)}, samples ${JSON.stringify(comparison.frameDifferingSamples)}`
+        ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
+        expect(
+          {
+            htmlCanvas: comparison.tightBitmapDifferingBytes,
+            offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
+          },
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} must match; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+        ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
       for (const [index, transition] of untransformedControl.transitionResults.entries()) {
@@ -3114,6 +3456,13 @@ test.describe('Crop history', () => {
             comparison.frameDifferingBytes,
             `frame-only ${comparison.layerId} raster must match at ${JSON.stringify(comparison.frameDifferingSamples)}`
           ).toBe(0);
+          expect(
+            {
+              htmlCanvas: comparison.tightBitmapDifferingBytes,
+              offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
+            },
+            `frame-only ${comparison.layerId} full tight bitmap must match at ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
         }
       }
       // This control isolates the retained operation within each renderer; the broader frame-only
@@ -3122,6 +3471,77 @@ test.describe('Crop history', () => {
       expect(result.durablePixels).not.toEqual(untransformedControl.durablePixels);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'foreground']);
+    });
+
+    test('an affine raster preserves combined layer opacity and blend mode exactly', async ({ page }) => {
+      await openDocument(page);
+
+      const fixture: CropParityFixture = {
+        caseName: 'affine raster opacity and multiply blend',
+        documentId: 'affine-raster-opacity-multiply-parity',
+        layerTransforms: [
+          {
+            id: 'affine-opacity-multiply',
+            layerId: 'foreground',
+            args: {
+              toolName: 'transform',
+              rotate: 23,
+              mirrorH: false,
+              mirrorV: true,
+              skewX: 4,
+              skewY: -3,
+              trapezoid: 0,
+              resizeX: 109,
+              resizeY: 91,
+            },
+          },
+        ],
+        transitions: [{ angleDegrees: 31, nextFrame: { x: 7.25, y: 8.5, width: 50.75, height: 45.25 } }],
+        layers: [
+          {
+            kind: 'raster',
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [{ x: 0, y: 0, width: 64, height: 64, color: '#5070a0' }],
+          },
+          {
+            kind: 'raster',
+            id: 'foreground',
+            order: 1,
+            pos: { x: 12, y: 16, width: 40, height: 32 },
+            fills: [
+              { x: 0, y: 0, width: 19, height: 32, color: '#e04020' },
+              { x: 19, y: 0, width: 21, height: 32, color: '#40d020' },
+            ],
+            layerOpacity: 0.58,
+            blendMode: 'multiply',
+          },
+        ],
+      };
+      const result = await compareCropRenderers(page, fixture);
+      const normalComposite = await compareCropRenderers(page, {
+        ...fixture,
+        caseName: 'normal composite control for affine raster opacity and blend',
+        documentId: 'affine-raster-opacity-multiply-control',
+        layers: fixture.layers.map((layer) =>
+          layer.id === 'foreground' ? { ...layer, layerOpacity: 1, blendMode: 'source-over' } : layer
+        ),
+      });
+
+      expect(result.layerTransformResults).toHaveLength(1);
+      const transformed = result.layerTransformResults[0];
+      expect(transformed?.differingBytes, 'affine composite must preserve opacity and blend byte-for-byte').toBe(0);
+      expect(transformed?.legacyDiffersFromUntransformed).toBe(true);
+      expect(transformed?.durableDiffersFromUntransformed).toBe(true);
+
+      expect(result.transitionResults).toHaveLength(1);
+      expect(result.transitionResults[0]?.differingBytes, 'frame composite must remain byte-identical').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(result.transitionResults[0]?.legacyPixels).not.toEqual(normalComposite.transitionResults[0]?.legacyPixels);
+      expect(result.transitionResults[0]?.durablePixels).not.toEqual(
+        normalComposite.transitionResults[0]?.durablePixels
+      );
     });
 
     test('a retained styled text transform matches through a sequence of frame transforms', async ({ page }) => {
@@ -3201,6 +3621,8 @@ test.describe('Crop history', () => {
           height: comparison.expectedBounds.height,
         });
         expect(comparison.frameDifferingBytes).toBe(0);
+        expect(comparison.tightBitmapDifferingBytes).toBe(0);
+        expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
       }
       expect(result.transitionResults).toHaveLength(fixture.transitions.length);
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
@@ -3227,6 +3649,8 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
+          expect(comparison.tightBitmapDifferingBytes).toBe(0);
+          expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
         }
         for (const comparison of transition.materializedLayerComparisons) {
           expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
@@ -3235,6 +3659,8 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
+          expect(comparison.tightBitmapDifferingBytes).toBe(0);
+          expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
         }
       }
       expect(result.durablePixels).toEqual(result.legacyPixels);
@@ -3666,6 +4092,13 @@ test.describe('Crop history', () => {
             comparison.frameDifferingBytes,
             `${comparison.layerId} pixels at ${stage} differ at ${JSON.stringify(comparison.frameDifferingSamples)}`
           ).toBe(0);
+          expect(
+            {
+              htmlCanvas: comparison.tightBitmapDifferingBytes,
+              offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
+            },
+            `${comparison.layerId} full tight bitmap at ${stage} differs at ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
         }
       };
 

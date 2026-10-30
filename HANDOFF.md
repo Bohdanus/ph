@@ -102,14 +102,25 @@ affine on a 45%-opacity blank, and one each on vector, paint, and point text, at
 and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
 with fractional origins and extents, including composite parity and exact per-layer bounds and
-pixels at each tested affine or frame-transition cursor plus a frame-only control. A second fixture applies a retained affine to a
-bold-italic serif paragraph text layer through a two-frame sequence, with exact per-layer
+pixels at each tested affine or frame-transition cursor plus a frame-only control. Mirror runs
+40963949888, 40966738289, and 40969207836 disproved that per-layer gate on Linux and Windows: the
+retained `background` raster differed by three bytes at the first frame transition while the whole
+composite remained exact. The frame affine and layer bounds agree; the failure is isolated to the
+tight raster published by `materializeLayer()` after `renderRetainedSegment()`, while the whole
+composite uses `drawDirectAffineSourceLayer()` and bypasses that tight bitmap for affine-only
+layers. Keep the exact per-layer gate open until this publication path matches legacy's direct
+frame draw byte-for-byte. Retaining the intermediate canvas did not remove the mismatch, and
+preferring `HTMLCanvasElement` broke the OffscreenCanvas materialization unit contracts.
+A second fixture applies a retained affine to a bold-italic serif
+paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
 combinations; other retained-affine operation combinations and angles, blank opacity variants, other
 text styling/rotation, and exact fractional bounds across the wider source matrix remain unproven.
-An exploratory mixed-source fractional-frame variant kept exact per-layer pixels and bounds but its
-first composite transition differed at canvas pixel (5, 26): legacy red/alpha 188/122 versus durable
-190/121. Keep mixed-source fractional composition open until this one-pixel mismatch is explained.
+The three-transition mixed-source fixture pins composite pixels byte-for-byte after every frame
+transition. Do not infer exact per-layer or export parity from that gate: a separate transformed
+raster with layer opacity 0.58 and `multiply` blend mode had 146 differing bytes in its isolated
+materialized-layer comparison while its legacy and durable composites matched exactly. Keep
+per-layer and export parity open for non-default layer opacity and blend combinations.
 Do not add `SET_DOCUMENT_FRAME_ACTION` to background
 presentation until the full frame gate is explicit.
 The UI test intentionally continues to observe legacy presentation on commit and
@@ -127,16 +138,21 @@ background publication is guarded, unsupported-source fallback and the raster/bl
 pinned by tests, and nested `args.enabled` parity is explicit. `useLayer.render.test.tsx` proves live
 previews keep the complete legacy base through accepted and refused append publication, and
 `resetHistoryTo.durable.test.tsx` proves a refused final durable draw restores the real timeline.
-`e2e/undo-redo.spec.ts` also checks live Brush preview pixels while durable status is current and
-pixel preservation when that stroke commits. These are preview-interleaving and rollback proofs;
-they do not move previews to durable authority or permit removal of legacy logical replay. The
+`e2e/undo-redo.spec.ts` also checks exact live Brush preview pixels while startup and imported
+baselines remain ownership-gated, and proves a refused navigation restores the committed raster.
+Its browser screenshot remains attached as a diagnostic: in mirror run 40963949888 Linux and
+Windows had exact 800x600 preview/commit backing pixels, while the 974x583 CSS screenshot differed
+at 834 pixels by at most one channel value. Keep the exact backing-pixel assertion as the document
+gate and do not treat screenshot-resampling deltas as document-raster differences.
+These are preview-interleaving and rollback proofs; they do not move previews to durable authority or permit removal of legacy logical replay. The
 retained-affine/frame differentials now establish exact layer bounds and pixel parity for two raster
 layers across successive fractional frame transforms, and for a styled paragraph-text layer across
 two frame transforms. A three-transition mixed-source differential also checks exact per-layer bounds
 and pixels after two sequential affines on an opaque blank, one affine on a 45%-opacity blank, and one
-each on vector, paint, and point text, at all six affine cursors and after each frame transition. Next
-expand the frame matrix across open angles, other affine combinations, other blank opacity values,
-other text styling/rotation, and resolve the mixed-source fractional-frame composite mismatch before
+each on vector, paint, and point text, at all six affine cursors and after each frame transition. A
+separate raster differential also pins the composite with non-default layer opacity and `multiply`
+blend mode, but not its isolated materialization. Next expand the frame matrix across open angles,
+other affine combinations, other blank opacity values, and other text styling/rotation before
 claiming broader exact fractional bounds. Establish
 source-backed import/replacement ownership as a separate gate. The frame matrix and ownership gate
 are unordered and may proceed independently. Keep both surfaces legacy-gated until their parity and
