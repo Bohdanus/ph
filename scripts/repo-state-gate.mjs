@@ -103,7 +103,9 @@ function describeWorktree(finding) {
     lines.push(
       '    If the owner has stopped and this is a stale marker, run the guarded recovery preflight from this worktree:',
       '      npm run repo:state:recover-auto-merge -- --expected-head "$(git rev-parse HEAD)"',
-      '    Apply only after reviewing its proof and confirming the owner stopped.'
+      '    For dirty work, also try the read-only --preserve-matching-worktree preflight; it requires the index at HEAD and tracked files identical to AUTO_MERGE.',
+      '    Apply preserved work only with the exact marker-tree and worktree-status pins it prints, --apply, and --confirm-owner-stopped.',
+      '    Apply only after reviewing the proof and confirming the owner stopped.'
     );
   }
 
