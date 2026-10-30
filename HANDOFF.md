@@ -2111,7 +2111,7 @@ Sources: [Adobe, create point type and paragraph type](https://helpx.adobe.com/p
 **Coverage.** The E2E `the overflow icon is on the draft overlay only while the type outgrows the box`
 in `e2e/text-tool.spec.ts` starts from `OVERFLOW_RECT`, whose bottom is row 560 of the default
 800x600 document (`src/App.tsx`). The initial drag is 40px from the edge; replacing its text with three hard-broken
-lines make `calculateNewRect` grow and clamp the box to the document bottom. The test waits for that
+lines makes `calculateNewRect` grow and clamp the box to the document bottom. The test waits for that
 box position and measures the icon at the bottom-right edge. The earlier note was right about the
 initial rectangle but wrong to infer that the fixture never exercises the clamp. After commit, the
 test waits for some in-frame text ink and confirms the icon is absent; it does not establish whether
