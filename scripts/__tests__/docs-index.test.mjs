@@ -53,6 +53,12 @@ const ALLOWED_UNLISTED = new Map([
       'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
   ],
   [
+    'docs/handoffs/merge-sweep-20261029.md',
+    'covered by the docs/handoffs/ directory row, which states the ' +
+      '<branch>-<topic>.md naming convention. One row per merged branch would make the ' +
+      'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
+  ],
+  [
     '.kilo/plans/test-hardening-plan.md',
     'archived history-migration test plan; it records task-specific work already merged ' +
       'to main. The maintained repository-wide workflow is .skills/parallel-test-hardening.md, ' +
