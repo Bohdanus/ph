@@ -92,23 +92,25 @@ describe('unverifiable free routers', () => {
     expect(catalogCandidates('kilo', [row]).map(({ model }) => model)).toEqual(['reflection/beam-free']);
   });
 
-  it('tries Laguna first in the OpenRouter catalog and preserves the order of other free models', () => {
+  it('tries Nemotron 3 Ultra first in the OpenRouter catalog and preserves other free-model order', () => {
     const rows = [
       openRouterRow('recursive/flint-v1.0'),
-      openRouterRow('poolside/laguna-s-2.1'),
+      openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
       openRouterRow('xingchen-agi/xing4.0-29b-a4b'),
     ];
     expect(catalogCandidates('openrouter', { data: rows }).map(({ model }) => model)).toEqual([
-      'poolside/laguna-s-2.1:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'recursive/flint-v1.0:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
     ]);
   });
 
   it('excludes the dynamic OpenRouter router from Kilo and OpenRouter catalogs', () => {
-    const kiloRows = [kiloRow('poolside/laguna-s-2.1:free'), kiloRow('openrouter/free')];
+    const kiloRows = [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'), kiloRow('openrouter/free')];
     const routerRows = [openRouterRow('openrouter/free')];
-    expect(catalogCandidates('kilo', kiloRows).map(({ model }) => model)).toEqual(['poolside/laguna-s-2.1:free']);
+    expect(catalogCandidates('kilo', kiloRows).map(({ model }) => model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+    ]);
     expect(catalogCandidates('openrouter', { data: routerRows })).toEqual([]);
   });
 });

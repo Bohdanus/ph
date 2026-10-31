@@ -1490,10 +1490,9 @@ Six ways to get an answer that looks right and is not:
   the ones that died — `Add credits to continue, or switch to a free model` is a
   `status = 'error'` row, and a completed-only filter hides every one of them. All
   4 such rows are `error`; there is no `completed` row among them.
-- **Do not read `providerID` as a cost.** `providerID = 'kilo'` covers both
-  `stealth/space-bunny-alpha` and `~openai/gpt-luna-latest`, `openai/gpt-6-sol`,
-  `poolside/laguna-s-2.1` and `nvidia/nemotron-3-super-120b-a12b` without its
-  `:free` suffix. Read the resolved id too.
+- **Do not read `providerID` as a cost.** `providerID = 'kilo'` covers paid and
+  free routes, and a model ID with versus without its `:free` suffix can represent
+  different pricing. Read the resolved model ID too.
 - **Do not read a successful launch as a correct pair.** An off-catalog pair can
   complete on a model nobody named.
 - **A `GROUP BY` over `session` alone answers neither question.** It cannot see

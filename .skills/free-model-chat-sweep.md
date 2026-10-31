@@ -226,17 +226,16 @@ expire after seven days, so the owning active session/goal must renew them as ne
 Serialize quarantine mutations through the CLI lock; if a schedule collides with another
 writer, retry on a later pass.
 
-## Laguna reasoning
+## Nemotron reasoning
 
-Kilo's `thinking` variant is a Kilo-side variant label. OpenRouter lists
-`poolside/laguna-s-2.1:free` with reasoning support, but expresses reasoning through its
-request `reasoning` parameter, not Kilo's variant string. Do not blindly send
-`variant: thinking` to OpenRouter; the existing free-model runner intentionally leaves
-provider reasoning defaults untouched unless its contract is explicitly extended.
+The free-model runner prefers `nvidia/nemotron-3-ultra-550b-a55b:free` on Kilo and OpenRouter
+when the live catalog verifies it as free. Kilo uses its `high` variant through the Kilo CLI.
+OpenRouter receives the model's completion-token budget through `max_tokens`; the runner does not
+send Kilo's variant flag to OpenRouter.
 
 ## References
 
 - Kilo session history: https://kilo.ai/docs/code-with-ai/agents/session-history
 - Codex CLI session persistence: https://developers.openai.com/codex/cli
 - OpenRouter limits and UTC daily counter: https://openrouter.ai/docs/api-reference/limits
-- OpenRouter Laguna S 2.1 model record: https://openrouter.ai/api/v1/model/poolside/laguna-s-2.1%3Afree
+- OpenRouter model catalog: https://openrouter.ai/api/v1/models

@@ -97,7 +97,7 @@ describe('free model catalog filtering', () => {
 
   it('filters only currently quarantined source/model pairs', () => {
     const data = [
-      kiloRow('poolside/laguna-s-2.1:free'),
+      kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
       kiloRow('kilo-auto/free'),
       kiloRow('nvidia/nemotron-3.5-super-vl:free'),
       kiloRow('recursive/flint-v1.0:free'),
@@ -108,7 +108,7 @@ describe('free model catalog filtering', () => {
       'kilo:recursive/flint-v1.0:free',
     ]);
     expect(catalogCandidates('kilo', data, quarantined).map((row) => row.model)).toEqual([
-      'poolside/laguna-s-2.1:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
     ]);
   });
 
@@ -178,18 +178,26 @@ describe('free model catalog filtering', () => {
   });
 
   it('tries the observed reliable Kilo model before other eligible candidates', () => {
-    const data = [kiloRow('unverified:free'), kiloRow('poolside/laguna-s-2.1:free'), kiloRow('also-unverified')];
+    const data = [
+      kiloRow('unverified:free'),
+      kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
+      kiloRow('also-unverified'),
+    ];
     expect(catalogCandidates('kilo', data).map((row) => row.model)).toEqual([
-      'poolside/laguna-s-2.1:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'unverified:free',
       'also-unverified',
     ]);
   });
 
-  it('tries OpenRouter Laguna first and preserves catalog order for the remaining free models', () => {
-    const data = [openRouterRow('vendor/first'), openRouterRow('poolside/laguna-s-2.1'), openRouterRow('vendor/last')];
+  it('tries OpenRouter Nemotron 3 Ultra first and preserves catalog order for remaining free models', () => {
+    const data = [
+      openRouterRow('vendor/first'),
+      openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
+      openRouterRow('vendor/last'),
+    ];
     expect(catalogCandidates('openrouter', data).map((row) => row.model)).toEqual([
-      'poolside/laguna-s-2.1:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'vendor/first:free',
       'vendor/last:free',
     ]);
@@ -199,7 +207,7 @@ describe('free model catalog filtering', () => {
     const fetchImpl = readableFetch((url) =>
       url.includes('openrouter')
         ? Promise.resolve({ ok: false, status: 401 })
-        : Promise.resolve({ ok: true, json: async () => [kiloRow('poolside/laguna-s-2.1:free')] })
+        : Promise.resolve({ ok: true, json: async () => [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')] })
     );
     const errors = [];
     const candidates = await loadCatalogs({
@@ -207,7 +215,7 @@ describe('free model catalog filtering', () => {
       openRouterKey: 'test',
       onCatalogError: (source) => errors.push(source),
     });
-    expect(candidates.map((row) => row.model)).toEqual(['poolside/laguna-s-2.1:free']);
+    expect(candidates.map((row) => row.model)).toEqual(['nvidia/nemotron-3-ultra-550b-a55b:free']);
     expect(errors).toEqual(['openrouter']);
   });
 
@@ -232,16 +240,16 @@ describe('free model catalog filtering', () => {
 });
 
 describe('free model rotation', () => {
-  it('gives preferred OpenRouter Laguna enough tokens for reasoning when the requested cap is tiny', async () => {
+  it('gives preferred OpenRouter Nemotron 3 Ultra enough tokens when the requested cap is tiny', async () => {
     const chat = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
-        model: 'poolside/laguna-s-2.1:free',
-        choices: [{ message: { content: 'Laguna result' }, finish_reason: 'stop' }],
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        choices: [{ message: { content: 'Nemotron result' }, finish_reason: 'stop' }],
       }),
     });
-    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('poolside/laguna-s-2.1')], chat });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('nvidia/nemotron-3-ultra-550b-a55b')], chat });
     const result = await completeWithFreeModel('safe prompt', {
       fetchImpl,
       openRouterKey: 'test',
@@ -250,8 +258,8 @@ describe('free model rotation', () => {
 
     expect(result).toMatchObject({
       source: 'openrouter',
-      model: 'poolside/laguna-s-2.1:free',
-      content: 'Laguna result',
+      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      content: 'Nemotron result',
     });
     expect(JSON.parse(chat.mock.calls[0][1].body)).toMatchObject({ max_tokens: 1024 });
   });
@@ -1028,11 +1036,11 @@ describe('free model runner CLI', () => {
     const stderr = { write: vi.fn() };
     const fetchImpl = readableFetch((url) =>
       url.endsWith('/models')
-        ? Promise.resolve({ ok: true, json: async () => [kiloRow('poolside/laguna-s-2.1:free')] })
+        ? Promise.resolve({ ok: true, json: async () => [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free')] })
         : Promise.resolve({
             ok: true,
             json: async () => ({
-              model: 'poolside/laguna-s-2.1:free',
+              model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
               choices: [{ message: { content: 'concise result' }, finish_reason: 'stop' }],
             }),
           })
@@ -1050,7 +1058,7 @@ describe('free model runner CLI', () => {
       });
       expect(code).toBe(0);
       expect(await readFile(outputPath, 'utf8')).toBe(
-        '[kilo/poolside/laguna-s-2.1:free]\nFinish reason: stop\nUsage: null\n' +
+        '[kilo/nvidia/nemotron-3-ultra-550b-a55b:free]\nFinish reason: stop\nUsage: null\n' +
           'Requests attempted (this run): {"kilo":1,"openrouter":0}\n\nconcise result\n'
       );
       expect(stdout.write).not.toHaveBeenCalled();

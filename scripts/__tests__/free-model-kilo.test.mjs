@@ -53,9 +53,9 @@ const args = process.argv.slice(2);
 const message = fs.readFileSync(0, 'utf8');
 const valueAfter = (flag) => args[args.indexOf(flag) + 1];
 if (!args.includes('--pure') || valueAfter('--format') !== 'json') process.exit(4);
-if (valueAfter('--model') !== 'kilo/poolside/laguna-s-2.1:free') process.exit(5);
+if (valueAfter('--model') !== 'kilo/nvidia/nemotron-3-ultra-550b-a55b:free') process.exit(5);
 if (valueAfter('--agent') !== 'free-completion') process.exit(6);
-if (!args.includes('--variant') || valueAfter('--variant') !== 'thinking') process.exit(7);
+if (!args.includes('--variant') || valueAfter('--variant') !== 'high') process.exit(7);
 if (args.includes('--file')) process.exit(8);
 if (!message.startsWith('Answer the provided request directly, in plain text, using at most 40 output tokens.')) process.exit(9);
 if (!message.includes('private prompt')) process.exit(10);
@@ -71,7 +71,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
       await expect(
         runKiloCompletion({
           command,
-          model: 'poolside/laguna-s-2.1:free',
+          model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
           prompt: 'private prompt',
           maxTokens: 40,
           env: {
@@ -90,7 +90,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
           },
         })
       ).resolves.toEqual({
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         content: 'safe response',
         finishReason: 'stop',
         usage: { input_tokens: 10, output_tokens: 3, reasoning_tokens: 1, cost: 0 },

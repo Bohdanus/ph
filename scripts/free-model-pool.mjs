@@ -27,10 +27,10 @@ const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
-const LAGUNA_MODEL = 'poolside/laguna-s-2.1:free';
+const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const MIN_REASONING_COMPLETION_TOKENS = 1024;
-const PREFERRED_KILO_MODELS = [LAGUNA_MODEL];
-const PREFERRED_OPENROUTER_MODELS = [LAGUNA_MODEL];
+const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_MODEL];
+const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_MODEL];
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
@@ -903,7 +903,7 @@ export async function completeWithFreeModel(
     const headers = { 'Content-Type': 'application/json' };
     if (candidate.source === 'openrouter') headers.Authorization = `Bearer ${openRouterKey}`;
     const effectiveMaxTokens =
-      candidate.source === 'openrouter' && candidate.model === LAGUNA_MODEL
+      candidate.source === 'openrouter' && candidate.model === NEMOTRON_3_ULTRA_MODEL
         ? Math.max(maxTokens, MIN_REASONING_COMPLETION_TOKENS)
         : maxTokens;
     let response;
@@ -934,7 +934,11 @@ export async function completeWithFreeModel(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
       if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
-      if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
+      if (
+        response.status === 401 ||
+        (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
+      )
+        exhausted.add(candidate.source);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -979,7 +983,11 @@ export async function completeWithFreeModel(
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
     if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
-    if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
+    if (
+      response.status === 401 ||
+      (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
+    )
+      exhausted.add(candidate.source);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
