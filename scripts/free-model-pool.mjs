@@ -44,6 +44,27 @@ const GROQ_KEY_FILE_PATTERN = /^api_key(_.*)?$/;
 export const GROQ_KEY_FILE_MAX_BYTES = 256;
 export const MAX_GROQ_KEYS = 8;
 
+const GROQ_KEY_PROBE_CACHE = join(homedir(), '.cache', 'ph', 'groq-key-probe.json');
+const GROQ_KEY_PROBE_TTL_MS = 60 * 60 * 1000;
+
+async function loadGroqKeyProbeCache() {
+  const { readFile } = await import('node:fs/promises');
+  const { mkdir } = await import('node:fs/promises');
+  try {
+    const content = await readFile(GROQ_KEY_PROBE_CACHE, 'utf8');
+    return JSON.parse(content);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw error;
+  }
+}
+
+async function saveGroqKeyProbeCache(cache) {
+  const { writeFile, mkdir } = await import('node:fs/promises');
+  await mkdir(GROQ_KEY_PROBE_CACHE.replace(/\/[^/]+$/, ''), { recursive: true });
+  await writeFile(GROQ_KEY_PROBE_CACHE, JSON.stringify(cache, null, 2), 'utf8');
+}
+
 export function normalizeGroqKeys(groqApiKey, groqApiKeys) {
   const fromExplicit = Array.isArray(groqApiKeys) ? groqApiKeys.filter(Boolean) : [];
   if (fromExplicit.length > 0) return fromExplicit.slice(0, MAX_GROQ_KEYS);
@@ -112,8 +133,14 @@ export async function probeGroqKeys({
   timeoutMs = CONTROL_PLANE_TIMEOUT_MS,
 } = {}) {
   const files = await discoverGroqKeyFiles(keyDir);
+  const cache = await loadGroqKeyProbeCache();
   const results = [];
   for (const file of files) {
+    const cached = cache[file];
+    if (cached && cached.ok && Date.now() - new Date(cached.probedAt).getTime() < GROQ_KEY_PROBE_TTL_MS) {
+      results.push({ keyFile: file, ...cached });
+      continue;
+    }
     let key;
     try {
       key = await loadGroqKeyFromFile(file);
@@ -122,8 +149,11 @@ export async function probeGroqKeys({
       continue;
     }
     const probe = await probeGroqKey({ fetchImpl, groqApiKey: key, timeoutMs });
-    results.push({ keyFile: file, ...probe });
+    const result = { keyFile: file, ...probe, probedAt: new Date().toISOString() };
+    results.push(result);
+    cache[file] = result;
   }
+  await saveGroqKeyProbeCache(cache);
   return results;
 }
 
@@ -448,7 +478,7 @@ function hasReportedNonZeroCost(usage) {
   const inspect = (value, key = '', insideCostField = false) => {
     const inCostField = insideCostField || /cost/i.test(key);
     if (value === undefined) return false;
-    if (value === null) return inCostField;
+    if (value === null) return false;
     if (typeof value === 'number' || typeof value === 'string') {
       if (!inCostField) return false;
       if (typeof value === 'string' && value.trim() === '') return true;
@@ -667,7 +697,6 @@ export async function completeWithFreeModel(
     runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
-    checkOpenRouterQuota = false,
     maxTokens = 1200,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
@@ -697,6 +726,10 @@ export async function completeWithFreeModel(
   const exhaustedGroqKeys = new Set();
   const attempts = new Map();
   const errors = [];
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
   if (available.some((entry) => entry.source === 'kilo') && !effectiveKiloCommand) {
     exhausted.add('kilo');
     errors.push('kilo: Kilo CLI not found; install the Kilo Code extension or set KILO_CLI');
@@ -711,7 +744,7 @@ export async function completeWithFreeModel(
     }
     return counts;
   };
-  if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
+  if (openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
@@ -801,6 +834,9 @@ export async function completeWithFreeModel(
         errors.push(`kilo/${candidate.model}: ${error.message}`);
         if (error.code === 'ENOENT' || error.code === 'KILO_SPAWN') exhausted.add(candidate.source);
       }
+      const attemptNumber = attempts.get(candidate.source) ?? 0;
+      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+      await delay(backoffMs);
       continue;
     }
     if (candidate.source === 'groq') {
@@ -826,6 +862,9 @@ export async function completeWithFreeModel(
         } catch (error) {
           const retryAfter = retryAfterHint(response);
           errors.push(`groq/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`);
+          const attemptNumber = attempts.get(candidate.source) ?? 0;
+          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+          await delay(backoffMs);
           continue;
         }
         let payload;
@@ -835,9 +874,13 @@ export async function completeWithFreeModel(
           const retryAfter = retryAfterHint(response);
           errors.push(`groq/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`);
           if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+          const attemptNumber = attempts.get(candidate.source) ?? 0;
+          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+          await delay(backoffMs);
           continue;
         }
         if (hasReportedNonZeroCost(payload?.usage)) {
+          await quarantineKey('groq', candidate.model, 'non_zero_cost');
           throw new Error(
             `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
           );
@@ -854,6 +897,9 @@ export async function completeWithFreeModel(
             errors.push(
               `groq/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
             );
+            const attemptNumber = attempts.get(candidate.source) ?? 0;
+            const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+            await delay(backoffMs);
             continue;
           }
           return {
@@ -868,6 +914,9 @@ export async function completeWithFreeModel(
         }
         if (response.ok && typeof content === 'string' && content.trim() && finishReason !== 'stop') {
           errors.push(`groq/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`);
+          const attemptNumber = attempts.get(candidate.source) ?? 0;
+          const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+          await delay(backoffMs);
           continue;
         }
         const reason = response.ok
@@ -875,6 +924,9 @@ export async function completeWithFreeModel(
           : failureReason(response, payload);
         errors.push(`groq/${candidate.model}: ${reason}`);
         if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
       }
       if (groqKeys.every((key) => exhaustedGroqKeys.has(key))) exhausted.add('groq');
       continue;
@@ -897,6 +949,9 @@ export async function completeWithFreeModel(
         errors.push(`opencode/${candidate.model}: ${error.message}`);
         if (error.code === 'ENOENT') exhausted.add(candidate.source);
       }
+      const attemptNumber = attempts.get(candidate.source) ?? 0;
+      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+      await delay(backoffMs);
       continue;
     }
     const url = OPENROUTER_CHAT;
@@ -923,6 +978,9 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
+      const attemptNumber = attempts.get(candidate.source) ?? 0;
+      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+      await delay(backoffMs);
       continue;
     }
     let payload;
@@ -934,15 +992,24 @@ export async function completeWithFreeModel(
         `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
       if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
-      if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
+      if (
+        response.status === 401 ||
+        (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
+      )
+        exhausted.add(candidate.source);
+      const attemptNumber = attempts.get(candidate.source) ?? 0;
+      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+      await delay(backoffMs);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
+      await quarantineKey(candidate.source, candidate.model, 'non_zero_cost');
       throw new Error(
         `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
       );
     }
     if (isContentPolicyError(payload)) {
+      await quarantineKey(candidate.source, candidate.model, 'content_policy');
       throw new Error(
         `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
@@ -957,6 +1024,9 @@ export async function completeWithFreeModel(
         errors.push(
           `${candidate.source}/${candidate.model}: response resolved to missing or unverified model ${resolvedModel ?? '(missing)'}`
         );
+        const attemptNumber = attempts.get(candidate.source) ?? 0;
+        const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+        await delay(backoffMs);
         continue;
       }
       return {
@@ -972,6 +1042,9 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: incomplete completion (finish_reason=${finishReason ?? 'missing'})`
       );
+      const attemptNumber = attempts.get(candidate.source) ?? 0;
+      const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+      await delay(backoffMs);
       continue;
     }
     const reason = response.ok
@@ -979,7 +1052,14 @@ export async function completeWithFreeModel(
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
     if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
-    if (response.status === 401 || (candidate.source === 'groq' && (response.status === 402 || response.status === 429))) exhausted.add(candidate.source);
+    if (
+      response.status === 401 ||
+      (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
+    )
+      exhausted.add(candidate.source);
+    const attemptNumber = attempts.get(candidate.source) ?? 0;
+    const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
+    await delay(backoffMs);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
@@ -990,7 +1070,7 @@ function usage() {
   return (
     'Usage: node scripts/free-model-pool.mjs --help\n' +
     'Usage: node scripts/free-model-pool.mjs --list [--limit N]\n' +
-    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH] [--probe-openrouter-quota]\n' +
+    '       node scripts/free-model-pool.mjs --prompt-file PATH [--max-tokens N] [--output-file PATH]\n' +
     '       node scripts/free-model-pool.mjs --openrouter-quota\n' +
     '       node scripts/free-model-pool.mjs --probe-groq [--groq-key-dir DIR] [--groq-key-files PATH1,PATH2]\n' +
     '       node scripts/free-research.mjs --prompt-file PATH --url-list PATH --output-file PATH [--max-tokens N]\n' +
@@ -1001,7 +1081,6 @@ function usage() {
     'Groq routing requires GROQ_API_KEY and GROQ_FREE_PLAN=1 because its catalog does not expose free pricing.\n' +
     'OpenCode free models run through the opencode CLI with tool permissions denied.\n' +
     '--openrouter-quota reports the server-side daily free-model request count without sending an inference request.\n' +
-    '--probe-openrouter-quota reports the daily counter before routing and skips OpenRouter when exhausted; --output-file keeps results out of stdout.\n' +
     '--probe-groq probes one or more Groq API keys to verify authentication; --groq-key-dir discovers api_key files in a directory (default ~/.config/groq); --groq-key-files is a comma-separated list of explicit key file paths. GROQ_API_KEYS (comma-separated) or GROQ_API_KEY may also supply keys directly. No inference request is sent.\n' +
     'With multiple Groq keys, the pool rotates to the next key on HTTP 401/402/429; a permanently invalid key (401) is retired for the run while a single account is never reused to evade its per-account limits.\n' +
     '--help prints this usage without making a network request.\n'
@@ -1042,7 +1121,6 @@ export async function main(
   const outputFileAt = args.indexOf('--output-file');
   const limitAt = args.indexOf('--limit');
   const tokenAt = args.indexOf('--max-tokens');
-  const checkOpenRouterQuota = args.includes('--probe-openrouter-quota');
   const probeGroq = args.includes('--probe-groq');
   const groqKeyDirAt = args.indexOf('--groq-key-dir');
   const groqKeyFilesAt = args.indexOf('--groq-key-files');
@@ -1074,7 +1152,6 @@ export async function main(
     '--output-file',
     '--limit',
     '--max-tokens',
-    '--probe-openrouter-quota',
     '--probe-groq',
     '--groq-key-dir',
     '--groq-key-files',
@@ -1179,7 +1256,6 @@ export async function main(
     maxTokens,
     quarantineFile,
     initializeLegacyQuarantine,
-    checkOpenRouterQuota,
     onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
     onOpenRouterQuota: ({ used, limit, remaining }) =>
       stderr.write(

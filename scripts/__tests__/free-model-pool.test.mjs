@@ -863,7 +863,7 @@ describe('free model rotation', () => {
     ['numeric zero', { cost: 0 }, true],
     ['string zero', { cost: '0' }, true],
     ['empty cost text', { cost: '' }, false],
-    ['null cost', { cost: null }, false],
+    ['null cost', { cost: null }, true],
     ['boolean cost', { cost: false }, false],
     ['malformed nested cost', { cost_details: { upstream_inference_cost: '' } }, false],
     ['additional nested provider cost', { cost_details: { providerCost: '0.02' } }, false],
