@@ -7,6 +7,7 @@ import { completeWithFreeModel } from './free-model-pool.mjs';
 const MAX_PROMPT_CHARS = 2000;
 const MAX_PROMPT_FILE_BYTES = 4 * 1024;
 const MAX_SEARCH_TERMS = 5;
+const MAX_SEARCH_TERM_CHARS = 200;
 const MAX_RESULT_SESSIONS = 10;
 const MAX_MATCHES_PER_QUERY = 200;
 const DEFAULT_SEARCH_SESSIONS = 50;
@@ -96,15 +97,6 @@ function escapeSqlValue(value) {
   return String(value).replace(/'/g, "''");
 }
 
-export function resolveKiloDbPath({ kiloDbPath, homeDir, xdgDataHome, platform: plat } = {}) {
-  if (kiloDbPath) return kiloDbPath;
-  const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
-  const xdg = xdgDataHome ?? process.env.XDG_DATA_HOME;
-  if (xdg) return `${xdg}/kilo/kilo.db`;
-  if (home) return `${home}/.local/share/kilo/kilo.db`;
-  return '/tmp/kilo/kilo.db';
-}
-
 export function resolveKiloDbCandidates({ kiloDbPath, homeDir, xdgDataHome, platform: plat } = {}) {
   if (kiloDbPath) return [kiloDbPath];
   const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
@@ -133,16 +125,6 @@ export async function findExistingDbPath(options = {}, { statFn = stat } = {}) {
     }
   }
   return candidates[0];
-}
-
-export function resolveCodexDbPath({ codexDbPath, homeDir, platform: plat } = {}) {
-  if (codexDbPath) return codexDbPath;
-  const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
-  if (!home) return '/tmp/codex/session-store.db';
-  if (plat === 'darwin') {
-    return `${home}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/session-store.db`;
-  }
-  return `${home}/.config/Code/User/globalStorage/github.copilot-chat/session-store.db`;
 }
 
 export function resolveCodexDbCandidates({ codexDbPath, homeDir, platform: plat } = {}) {
@@ -240,9 +222,10 @@ WITH recent AS (
 )
 SELECT
   s.id AS session_id,
-  s.summary AS title,
+  substr(coalesce(t.user_message, ''), 1, 80) AS title_source,
+  s.summary AS summary,
   s.cwd AS directory,
-  datetime(s.updated_at / 1000, 'unixepoch') AS updated,
+  datetime(s.updated_at) AS updated,
   t.turn_index,
   substr(coalesce(t.user_message, '') || ' ' || coalesce(t.assistant_response, ''), 1, ${MAX_SNIPPET_CHARS}) AS snippet
 FROM recent r
@@ -263,7 +246,11 @@ export function deduplicateSessions(rows, { source = CHAT_STORE_KILO } = {}) {
     seen.add(key);
     results.push({
       session_id: key,
-      title: row.title || '',
+      title:
+        (row.title_source && row.title_source.trim()) ||
+        (row.summary && row.summary.trim()) ||
+        (row.title && row.title.trim()) ||
+        key.slice(0, 8),
       directory: row.directory || '',
       source,
       updated: row.updated || '',
@@ -279,7 +266,7 @@ export function shapeSessions(sessions, { verbose = false } = {}) {
     const fullSnippet = session.snippet || '';
     const shaped = {
       session_id: session.session_id,
-      title: session.title,
+      title: session.title || session.session_id?.slice(0, 8) || '',
       updated: session.updated,
       snippet: fullSnippet.slice(0, DEFAULT_SNIPPET_CHARS),
     };
@@ -308,15 +295,16 @@ export function defaultTerms(prompt) {
 
 export async function expandSearchTerms(
   prompt,
-  { completeImpl = completeWithFreeModel, maxTokens = 200, onError, ...completeOpts } = {}
+  { completeImpl = completeWithFreeModel, maxTokens = 200, onError, onCatalogError, ...completeOpts } = {}
 ) {
   const filled = EXPAND_TERMS_PROMPT.replace('{PROMPT}', prompt.slice(0, MAX_PROMPT_CHARS));
   try {
-    const result = await completeImpl(filled, { maxTokens, onCatalogError: onError, ...completeOpts });
+    const result = await completeImpl(filled, { maxTokens, onCatalogError, ...completeOpts });
     const terms = (result.content || '')
       .split(/\r?\n/)
       .map((line) => line.trim().toLowerCase())
       .map((term) => term.replace(/[^\w\s-]/g, '').trim())
+      .map((term) => term.slice(0, MAX_SEARCH_TERM_CHARS))
       .filter((term) => term && term.length >= 2 && !STOP_WORDS.has(term));
     if (terms.length > 0) return terms.slice(0, MAX_SEARCH_TERMS);
   } catch (error) {
@@ -413,33 +401,68 @@ export async function searchChatHistory(
 
 export async function searchAllSources(
   terms,
-  { queryDb = queryKiloDb, maxMatches = MAX_MATCHES_PER_QUERY, maxSessions = DEFAULT_SEARCH_SESSIONS } = {}
+  {
+    queryDb = queryKiloDb,
+    statFn = stat,
+    homeDir,
+    xdgDataHome,
+    platform: plat,
+    maxMatches = MAX_MATCHES_PER_QUERY,
+    maxSessions = DEFAULT_SEARCH_SESSIONS,
+    onInfo = () => {},
+  } = {}
 ) {
   const allResults = [];
-  // Search Kilo DB
+  const dbPaths = [];
+
+  const kiloDbPath = await findExistingDbPath({ homeDir, xdgDataHome, platform: plat }, { statFn });
+  dbPaths.push(kiloDbPath);
+  let kiloDbExists = false;
   try {
-    const kiloDbPath = await findExistingDbPath({});
+    await statFn(kiloDbPath);
+    kiloDbExists = true;
+  } catch {
+    kiloDbExists = false;
+  }
+  if (kiloDbExists) {
     const sql = buildSearchQuery(terms, { maxMatches, maxSessions });
     if (sql) {
       const rows = await queryDb(kiloDbPath, sql);
       allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_KILO }));
     }
-  } catch (error) {
-    // Log but continue with other sources
+  } else {
+    onInfo(`Skipping Kilo source: DB not found at ${kiloDbPath}`);
   }
-  // Search Codex DB
+
+  const codexDbPath = await findExistingCodexDbPath({ homeDir, platform: plat }, { statFn });
+  dbPaths.push(codexDbPath);
+  let codexDbExists = false;
   try {
-    const codexDbPath = await findExistingCodexDbPath({});
+    await statFn(codexDbPath);
+    codexDbExists = true;
+  } catch {
+    codexDbExists = false;
+  }
+  if (codexDbExists) {
     const sql = buildCodexSearchQuery(terms, { maxMatches, maxSessions });
     if (sql) {
       const rows = await queryDb(codexDbPath, sql);
       allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_CODEX }));
     }
-  } catch (error) {
-    // Log but continue with other sources
+  } else {
+    onInfo(`Skipping Codex source: DB not found at ${codexDbPath}`);
   }
-  allResults.sort((a, b) => b.updated.localeCompare(a.updated));
-  return allResults.slice(0, MAX_RESULT_SESSIONS);
+
+  const seenIds = new Set();
+  const deduped = [];
+  for (const row of allResults) {
+    if (!row.session_id || seenIds.has(row.session_id)) continue;
+    seenIds.add(row.session_id);
+    deduped.push(row);
+    if (deduped.length >= MAX_RESULT_SESSIONS) break;
+  }
+  deduped.sort((a, b) => b.updated.localeCompare(a.updated));
+  return { results: deduped, dbPaths };
 }
 
 export function fallbackSummary(sessions, terms) {
@@ -453,7 +476,14 @@ export function fallbackSummary(sessions, terms) {
 export async function summarizeSearchResults(
   prompt,
   sessions,
-  { completeImpl = completeWithFreeModel, maxTokens = DEFAULT_SUMMARY_TOKENS, onError, terms, ...completeOpts } = {}
+  {
+    completeImpl = completeWithFreeModel,
+    maxTokens = DEFAULT_SUMMARY_TOKENS,
+    onError,
+    onCatalogError,
+    terms,
+    ...completeOpts
+  } = {}
 ) {
   if (!sessions.length) return 'No matching chat history found.';
   const json = JSON.stringify(
@@ -472,7 +502,7 @@ export async function summarizeSearchResults(
     snippets
   );
   try {
-    const result = await completeImpl(filled, { maxTokens, onCatalogError: onError, ...completeOpts });
+    const result = await completeImpl(filled, { maxTokens, onCatalogError, ...completeOpts });
     return (result.content || '').trim();
   } catch (error) {
     if (onError) onError(error);
@@ -602,7 +632,7 @@ function usage() {
   );
 }
 
-async function readPrompt(args, { openFn = open } = {}) {
+export async function readPrompt(args, { openFn = open } = {}) {
   if (args.rawPrompt) {
     const text = args.rawPrompt.trim();
     if (!text) throw new Error('Search query is empty');
@@ -676,13 +706,15 @@ export async function main(
     return 2;
   }
 
-  const dbPath = parsed.dbPath
-    ? parsed.dbPath
-    : await findExistingDbPath({ homeDir, xdgDataHome, platform: plat }, { statFn });
-
   stderr.write(`Chat search: "${prompt.slice(0, 80)}"\n`);
 
-  const completeOpts = { fetchImpl, openRouterKey, groqApiKey, groqFreePlan };
+  const completeOpts = {
+    fetchImpl,
+    openRouterKey,
+    groqApiKey,
+    groqFreePlan,
+    checkOpenRouterQuota: parsed.probeOpenRouterQuota,
+  };
 
   let terms;
   if (parsed.noSummarize) {
@@ -693,7 +725,9 @@ export async function main(
       terms = await expandSearchTerms(prompt, {
         completeImpl,
         maxTokens: 200,
-        onError: (error) => stderr.write(`Term expansion via free model failed: ${error.message}\n`),
+        onCatalogError: (source, error) =>
+          stderr.write(`Term expansion via free model failed: ${source}: ${error.message}\n`),
+        onError: (error) => stderr.write(`Term expansion failed: ${error.message}\n`),
         ...completeOpts,
       });
     } catch (error) {
@@ -707,11 +741,17 @@ export async function main(
   let usedDbPaths = [];
   try {
     if (parsed.source === SEARCH_ALL) {
-      sessions = await searchAllSources(terms, { queryDb, maxSessions: parsed.maxSessions });
-      usedDbPaths = [
-        resolveKiloDbCandidates({ homeDir, xdgDataHome, platform: plat })[0],
-        resolveCodexDbCandidates({ homeDir, platform: plat })[0],
-      ];
+      const searchResult = await searchAllSources(terms, {
+        queryDb,
+        statFn,
+        homeDir,
+        xdgDataHome,
+        platform: plat,
+        maxSessions: parsed.maxSessions,
+        onInfo: (msg) => stderr.write(`${msg}\n`),
+      });
+      sessions = searchResult.results;
+      usedDbPaths = searchResult.dbPaths;
     } else if (parsed.source === CHAT_STORE_CODEX) {
       const codexDbPath = parsed.dbPath
         ? parsed.dbPath
@@ -749,7 +789,9 @@ export async function main(
       completeImpl,
       maxTokens: parsed.maxSummaryTokens,
       terms,
-      onError: (error) => stderr.write(`Summarization via free model failed: ${error.message}\n`),
+      onCatalogError: (source, error) =>
+        stderr.write(`Summarization via free model failed: ${source}: ${error.message}\n`),
+      onError: (error) => stderr.write(`Summarization failed: ${error.message}\n`),
       ...completeOpts,
     });
   }

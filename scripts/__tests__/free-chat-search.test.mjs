@@ -16,9 +16,9 @@ import {
   main,
   parseArgs,
   queryKiloDb,
+  readPrompt,
   resolveCodexDbCandidates,
   resolveKiloDbCandidates,
-  resolveKiloDbPath,
   searchAllSources,
   searchChatHistory,
   shapeSessions,
@@ -81,39 +81,6 @@ describe('SQL escaping', () => {
   it('prevents SQL injection by doubling injected quotes', () => {
     const sql = buildSearchQuery(["'; DROP TABLE session; --"]) ?? '';
     expect(sql).toContain("'''; DROP TABLE session; --");
-  });
-});
-
-describe('resolveKiloDbPath', () => {
-  it('uses the explicitly provided kiloDbPath', () => {
-    expect(resolveKiloDbPath({ kiloDbPath: '/custom/path/kilo.db' })).toBe('/custom/path/kilo.db');
-  });
-
-  it('falls back to XDG_DATA_HOME', () => {
-    expect(resolveKiloDbPath({ homeDir: '/home/user', xdgDataHome: '/xdg' })).toBe('/xdg/kilo/kilo.db');
-  });
-
-  it('falls back to ~/.local/share on Linux', () => {
-    expect(resolveKiloDbPath({ homeDir: '/home/user', platform: 'linux' })).toBe(
-      '/home/user/.local/share/kilo/kilo.db'
-    );
-  });
-
-  it('uses ~/.local/share on macOS without XDG (XDG takes priority over Library)', () => {
-    expect(resolveKiloDbPath({ homeDir: '/Users/user', xdgDataHome: undefined, platform: 'darwin' })).toBe(
-      '/Users/user/.local/share/kilo/kilo.db'
-    );
-  });
-
-  it('prefers XDG_DATA_HOME over the macOS Library path', () => {
-    expect(resolveKiloDbPath({ homeDir: '/Users/user', xdgDataHome: '/custom/xdg', platform: 'darwin' })).toBe(
-      '/custom/xdg/kilo/kilo.db'
-    );
-  });
-
-  it('handles empty home gracefully', () => {
-    const path = resolveKiloDbPath({ homeDir: '', platform: 'linux' });
-    expect(path).toBe('/tmp/kilo/kilo.db');
   });
 });
 
@@ -252,11 +219,16 @@ describe('buildCodexSearchQuery', () => {
     expect(buildCodexSearchQuery([null])).toBeNull();
   });
 
-  it('uses s.summary as title and s.cwd as directory', () => {
+  it('uses user_message as title_source, summary as separate column, and ISO 8601 datetime', () => {
     const sql = buildCodexSearchQuery(['test']) ?? '';
-    expect(sql).toContain('s.summary AS title');
+    expect(sql).toContain("substr(coalesce(t.user_message, ''), 1, 80) AS title_source");
+    expect(sql).toContain('s.summary AS summary');
     expect(sql).toContain('s.cwd AS directory');
+    expect(sql).not.toContain('s.summary AS title');
     expect(sql).not.toContain('s.title');
+    expect(sql).toContain('datetime(s.updated_at)');
+    expect(sql).not.toContain('updated_at / 1000');
+    expect(sql).not.toContain("datetime(s.updated_at / 1000, 'unixepoch')");
   });
 });
 
@@ -332,7 +304,8 @@ describe('searchAllSources', () => {
   const mockCodexRows = [
     {
       session_id: 'codex_1',
-      title: 'Codex Session',
+      title_source: 'How to use brush tools',
+      summary: 'Codex Session',
       directory: '/codex',
       updated: '2026-10-30 13:00:00',
       snippet: 'codex content',
@@ -340,40 +313,146 @@ describe('searchAllSources', () => {
   ];
 
   it('queries both Kilo and Codex DBs and merges results', async () => {
+    const statFn = vi.fn().mockResolvedValue(undefined);
     const queryDb = vi.fn().mockResolvedValueOnce(mockKiloRows).mockResolvedValueOnce(mockCodexRows);
-    const results = await searchAllSources(['test'], { queryDb, maxSessions: 50 });
+    const onInfo = vi.fn();
+    const result = await searchAllSources(['test'], {
+      queryDb,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      maxSessions: 50,
+      onInfo,
+    });
     expect(queryDb).toHaveBeenCalledTimes(2);
-    expect(results).toHaveLength(2);
-    expect(results[0].source).toBe('codex');
-    expect(results[1].source).toBe('kilo');
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].source).toBe('codex');
+    expect(result.results[1].source).toBe('kilo');
+    expect(result.dbPaths).toHaveLength(2);
+    expect(result.results[0].title).toBe('How to use brush tools');
+    expect(onInfo).not.toHaveBeenCalled();
   });
 
   it('handles missing Codex DB gracefully', async () => {
-    const queryDb = vi.fn().mockResolvedValueOnce(mockKiloRows).mockRejectedValueOnce(new Error('not found'));
-    const results = await searchAllSources(['test'], { queryDb, maxSessions: 50 });
-    expect(results).toHaveLength(1);
-    expect(results[0].source).toBe('kilo');
+    const statFn = vi.fn().mockImplementation((path) => {
+      if (path.includes('copilot-chat') || path.includes('vscode-server')) {
+        return Promise.reject(new Error('no such file'));
+      }
+      return Promise.resolve();
+    });
+    const queryDb = vi.fn().mockResolvedValueOnce(mockKiloRows);
+    const onInfo = vi.fn();
+    const result = await searchAllSources(['test'], {
+      queryDb,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      maxSessions: 50,
+      onInfo,
+    });
+    expect(queryDb).toHaveBeenCalledTimes(1);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].source).toBe('kilo');
+    expect(onInfo).toHaveBeenCalledWith(expect.stringContaining('Skipping Codex source'));
   });
 
   it('handles missing Kilo DB gracefully', async () => {
-    const queryDb = vi.fn().mockRejectedValueOnce(new Error('not found')).mockResolvedValueOnce(mockCodexRows);
-    const results = await searchAllSources(['test'], { queryDb, maxSessions: 50 });
-    expect(results).toHaveLength(1);
-    expect(results[0].source).toBe('codex');
+    const statFn = vi.fn().mockImplementation((path) => {
+      if (path.includes('kilo')) {
+        return Promise.reject(new Error('no such file'));
+      }
+      return Promise.resolve();
+    });
+    const queryDb = vi.fn().mockResolvedValueOnce(mockCodexRows);
+    const onInfo = vi.fn();
+    const result = await searchAllSources(['test'], {
+      queryDb,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      maxSessions: 50,
+      onInfo,
+    });
+    expect(queryDb).toHaveBeenCalledTimes(1);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].source).toBe('codex');
+    expect(onInfo).toHaveBeenCalledWith(expect.stringContaining('Skipping Kilo source'));
   });
 
-  it('returns empty array when both DBs fail', async () => {
-    const queryDb = vi.fn().mockRejectedValue(new Error('not found'));
-    const results = await searchAllSources(['test'], { queryDb, maxSessions: 50 });
-    expect(results).toHaveLength(0);
+  it('returns empty results when both DBs are missing', async () => {
+    const statFn = vi.fn().mockRejectedValue(new Error('no such file'));
+    const queryDb = vi.fn();
+    const onInfo = vi.fn();
+    const result = await searchAllSources(['test'], {
+      queryDb,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      maxSessions: 50,
+      onInfo,
+    });
+    expect(queryDb).not.toHaveBeenCalled();
+    expect(result.results).toHaveLength(0);
+    expect(onInfo).toHaveBeenCalledTimes(2);
+    expect(onInfo).toHaveBeenCalledWith(expect.stringContaining('Kilo'));
+    expect(onInfo).toHaveBeenCalledWith(expect.stringContaining('Codex'));
+  });
+
+  it('surfaces unexpected queryDb errors instead of swallowing them', async () => {
+    const statFn = vi.fn().mockResolvedValue(undefined);
+    const queryDb = vi.fn().mockRejectedValue(new Error('SQL syntax error'));
+    await expect(
+      searchAllSources(['test'], {
+        queryDb,
+        statFn,
+        homeDir: '/home/user',
+        platform: 'linux',
+        maxSessions: 50,
+      })
+    ).rejects.toThrow('SQL syntax error');
+  });
+
+  it('deduplicates session IDs across sources', async () => {
+    const statFn = vi.fn().mockResolvedValue(undefined);
+    const queryDb = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { session_id: 'shared_id', title: 'Kilo', directory: '/kilo', updated: '2026-10-30 12:00:00', snippet: 'kilo' },
+      ])
+      .mockResolvedValueOnce([
+        {
+          session_id: 'shared_id',
+          title_source: 'Codex',
+          summary: 'Codex',
+          directory: '/codex',
+          updated: '2026-10-30 13:00:00',
+          snippet: 'codex',
+        },
+      ]);
+    const result = await searchAllSources(['test'], {
+      queryDb,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      maxSessions: 50,
+    });
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].session_id).toBe('shared_id');
+    expect(result.results[0].title).toBe('Kilo');
   });
 
   it('sorts results by updated descending', async () => {
+    const statFn = vi.fn().mockResolvedValue(undefined);
     const queryDb = vi.fn().mockResolvedValueOnce(mockKiloRows).mockResolvedValueOnce(mockCodexRows);
-    const results = await searchAllSources(['test'], { queryDb, maxSessions: 50 });
-    // Codex session is more recent (13:00 vs 12:00), should come first
-    expect(results[0].session_id).toBe('codex_1');
-    expect(results[1].session_id).toBe('kilo_1');
+    const result = await searchAllSources(['test'], {
+      queryDb,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      maxSessions: 50,
+    });
+    expect(result.results[0].session_id).toBe('codex_1');
+    expect(result.results[1].session_id).toBe('kilo_1');
   });
 });
 
@@ -416,6 +495,42 @@ describe('deduplicateSessions', () => {
     const row = { session_id: 'ses_1', title: 't', directory: 'd', updated: 'u', snippet: long };
     expect(deduplicateSessions([row])[0].snippet.length).toBeLessThanOrEqual(300);
   });
+
+  it('prefers title_source (user_message) over summary and title for Codex', () => {
+    const rows = [
+      {
+        session_id: 'codex_1',
+        title_source: 'How to use brushes',
+        summary: '{"intent":"fix"}',
+        title: 'Old Title',
+        directory: '/d',
+        updated: 'u',
+        snippet: 'x',
+      },
+    ];
+    const results = deduplicateSessions(rows, { source: 'codex' });
+    expect(results[0].title).toBe('How to use brushes');
+  });
+
+  it('falls back to summary when title_source is empty', () => {
+    const rows = [
+      { session_id: 'codex_1', title_source: '', summary: 'Plain text summary', title: 'Old', snippet: 'x' },
+    ];
+    const results = deduplicateSessions(rows, { source: 'codex' });
+    expect(results[0].title).toBe('Plain text summary');
+  });
+
+  it('falls back to title when title_source and summary are empty', () => {
+    const rows = [{ session_id: 'ses_1', title_source: '', summary: '', title: 'Kilo Title', snippet: 'x' }];
+    const results = deduplicateSessions(rows, { source: 'kilo' });
+    expect(results[0].title).toBe('Kilo Title');
+  });
+
+  it('falls back to session_id prefix when all title fields are empty', () => {
+    const rows = [{ session_id: 'ses_abcdef123456', title_source: '', summary: '', title: '', snippet: 'x' }];
+    const results = deduplicateSessions(rows, { source: 'kilo' });
+    expect(results[0].title).toBe('ses_abcd');
+  });
 });
 
 describe('shapeSessions', () => {
@@ -452,6 +567,12 @@ describe('shapeSessions', () => {
     expect(shaped[0].directory).toBe('');
     expect(shaped[0].source).toBe('kilo');
     expect(shaped[0].snippet_full).toBe('hello');
+  });
+
+  it('falls back to session_id prefix when title is missing', () => {
+    const sessions = [{ session_id: 'ses_abcdef123456', title: '', directory: '/d', updated: 'u', snippet: 'hello' }];
+    const shaped = shapeSessions(sessions, { verbose: true });
+    expect(shaped[0].title).toBe('ses_abcd');
   });
 });
 
@@ -511,6 +632,39 @@ describe('expandSearchTerms', () => {
     const completeImpl = vi.fn().mockResolvedValue({ content: 'the\nand\nbrush' });
     const terms = await expandSearchTerms('query', { completeImpl });
     expect(terms).toEqual(['brush']);
+  });
+
+  it('passes a distinct onCatalogError callback (source, error) instead of reusing onError', async () => {
+    const catalogError = new Error('rate limited');
+    const completeImpl = vi.fn().mockImplementation((promptText, opts) => {
+      opts.onCatalogError('openrouter', catalogError);
+      return Promise.resolve({ content: 'brush\ncolor' });
+    });
+    const onCatalogError = vi.fn();
+    const onError = vi.fn();
+    const terms = await expandSearchTerms('brush color tool', { completeImpl, onCatalogError, onError });
+    expect(onCatalogError).toHaveBeenCalledWith('openrouter', catalogError);
+    expect(onError).not.toHaveBeenCalled();
+    expect(terms).toEqual(['brush', 'color']);
+  });
+
+  it('routes thrown errors to onError (single-arg) and falls back to defaultTerms', async () => {
+    const completeImpl = vi.fn().mockRejectedValue(new Error('boom'));
+    const onCatalogError = vi.fn();
+    const onError = vi.fn();
+    const terms = await expandSearchTerms('brush tool', { completeImpl, onCatalogError, onError });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onCatalogError).not.toHaveBeenCalled();
+    expect(terms).toEqual(['brush', 'tool']);
+  });
+
+  it('caps individual search-term length to MAX_SEARCH_TERM_CHARS', async () => {
+    const longTerm = 'a'.repeat(300);
+    const completeImpl = vi.fn().mockResolvedValue({ content: longTerm });
+    const terms = await expandSearchTerms('query', { completeImpl });
+    expect(terms).toEqual([longTerm.slice(0, 200)]);
+    expect(terms[0].length).toBe(200);
   });
 });
 
@@ -642,6 +796,63 @@ describe('summarizeSearchResults', () => {
     const result = await summarizeSearchResults('query', longSession, { completeImpl, terms: ['q'] });
     expect(result).toContain('A'.repeat(120));
   });
+
+  it('routes thrown errors to onError (single-arg) and falls back to fallbackSummary', async () => {
+    const completeImpl = vi.fn().mockRejectedValue(new Error('model down'));
+    const onCatalogError = vi.fn();
+    const onError = vi.fn();
+    const sessions = deduplicateSessions(sampleDbRows);
+    const result = await summarizeSearchResults('brush tool', sessions, {
+      completeImpl,
+      onCatalogError,
+      onError,
+      terms: ['brush'],
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onCatalogError).not.toHaveBeenCalled();
+    expect(result).toContain('Searched for: brush');
+    expect(result).toContain('ses_abc1');
+  });
+
+  it('passes a distinct onCatalogError callback (source, error) and uses the model summary', async () => {
+    const catalogError = new Error('catalog down');
+    const completeImpl = vi.fn().mockImplementation((promptText, opts) => {
+      opts.onCatalogError('openrouter', catalogError);
+      return Promise.resolve({ content: '## Summary' });
+    });
+    const onCatalogError = vi.fn();
+    const onError = vi.fn();
+    const sessions = deduplicateSessions(sampleDbRows);
+    const result = await summarizeSearchResults('brush tool', sessions, {
+      completeImpl,
+      onCatalogError,
+      onError,
+      terms: ['brush'],
+    });
+    expect(onCatalogError).toHaveBeenCalledWith('openrouter', catalogError);
+    expect(onError).not.toHaveBeenCalled();
+    expect(result).toBe('## Summary');
+  });
+
+  it('truncates the sessions JSON payload to MAX_RAW_RESULTS_JSON_CHARS when oversized', async () => {
+    const completeImpl = vi.fn().mockResolvedValue({ content: 'summary' });
+    const bigSessions = Array.from({ length: 50 }, (_, i) => ({
+      session_id: `ses_${i}`,
+      title: `Session ${i}`,
+      directory: '/d',
+      updated: '2026-10-30',
+      snippet: 'x'.repeat(300),
+    }));
+    await summarizeSearchResults('query', bigSessions, { completeImpl });
+    expect(completeImpl).toHaveBeenCalledTimes(1);
+    const filled = completeImpl.mock.calls[0][0];
+    const prefix = 'Results (JSON):\n';
+    const idx = filled.indexOf(prefix);
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const snippets = filled.slice(idx + prefix.length);
+    expect(snippets.length).toBe(8000);
+  });
 });
 
 describe('fallbackSummary', () => {
@@ -750,6 +961,82 @@ describe('parseArgs', () => {
   it('parses --source codex', () => {
     expect(parseArgs(['--prompt', 'q', '--source', 'codex']).source).toBe('codex');
   });
+
+  it('errors on non-integer --max-sessions', () => {
+    expect(parseArgs(['--prompt', 'q', '--max-sessions', 'abc']).error).toContain('must be an integer');
+    expect(parseArgs(['--prompt', 'q', '--max-sessions', '3.5']).error).toContain('must be an integer');
+  });
+
+  it('errors on non-integer --max-summary-tokens', () => {
+    expect(parseArgs(['--prompt', 'q', '--max-summary-tokens', 'abc']).error).toContain('must be an integer');
+    expect(parseArgs(['--prompt', 'q', '--max-summary-tokens', '3.5']).error).toContain('must be an integer');
+  });
+});
+
+describe('readPrompt', () => {
+  function mockFileHandle(content) {
+    const buf = Buffer.from(content);
+    return {
+      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: buf.length }),
+      read: vi.fn().mockImplementation(async (target, offset, length, position) => {
+        const start = position ?? 0;
+        const n = Math.min(buf.length - start, length);
+        if (n <= 0) return { bytesRead: 0 };
+        buf.copy(target, offset, start, start + n);
+        return { bytesRead: n };
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it('reads an inline prompt directly', async () => {
+    const result = await readPrompt({ rawPrompt: '  brush tool  ', promptFile: null });
+    expect(result).toBe('brush tool');
+  });
+
+  it('rejects when the prompt file does not exist', async () => {
+    const openFn = vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    await expect(readPrompt({ rawPrompt: null, promptFile: '/nonexistent/prompt.txt' }, { openFn })).rejects.toThrow(
+      'ENOENT'
+    );
+  });
+
+  it('rejects when the prompt path is a directory, not a regular file', async () => {
+    const handle = {
+      stat: vi.fn().mockResolvedValue({ isFile: () => false, size: 10 }),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const openFn = vi.fn().mockResolvedValue(handle);
+    await expect(readPrompt({ rawPrompt: null, promptFile: '/tmp/dir' }, { openFn })).rejects.toThrow(
+      'Prompt file must be a regular file'
+    );
+    expect(handle.close).toHaveBeenCalled();
+  });
+
+  it('rejects a prompt file larger than 4KB (4KB + 1 byte)', async () => {
+    const handle = {
+      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 4097 }),
+      read: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const openFn = vi.fn().mockResolvedValue(handle);
+    await expect(readPrompt({ rawPrompt: null, promptFile: '/tmp/big.txt' }, { openFn })).rejects.toThrow(
+      'at most 4096 bytes'
+    );
+    expect(handle.close).toHaveBeenCalled();
+  });
+
+  it('rejects a prompt file containing invalid UTF-8', async () => {
+    const openFn = vi.fn().mockResolvedValue(mockFileHandle(Buffer.from([0xff, 0xfe, 0x00])));
+    await expect(readPrompt({ rawPrompt: null, promptFile: '/tmp/bad-utf8.txt' }, { openFn })).rejects.toThrow();
+  });
+
+  it('rejects a prompt file that is whitespace-only', async () => {
+    const openFn = vi.fn().mockResolvedValue(mockFileHandle('   \n\t  '));
+    await expect(readPrompt({ rawPrompt: null, promptFile: '/tmp/ws.txt' }, { openFn })).rejects.toThrow(
+      'Search query is empty'
+    );
+  });
 });
 
 describe('CLI: --no-summarize returns raw JSON', async () => {
@@ -764,6 +1051,7 @@ describe('CLI: --no-summarize returns raw JSON', async () => {
       const code = await main(['--prompt-file', promptPath, '--output-file', outputPath, '--no-summarize'], {
         queryDb,
         completeImpl,
+        statFn: vi.fn().mockResolvedValue(undefined),
         homeDir: '/home/user',
         platform: 'linux',
         stderr: { write: vi.fn() },
@@ -804,6 +1092,7 @@ describe('CLI: full integration with mocked deps', async () => {
       const code = await main(['--prompt-file', promptPath, '--max-summary-tokens', '200'], {
         queryDb,
         completeImpl,
+        statFn: vi.fn().mockResolvedValue(undefined),
         homeDir: '/home/user',
         platform: 'linux',
         stdout,
@@ -868,6 +1157,7 @@ describe('CLI: full integration with mocked deps', async () => {
     const code = await main(['--prompt', 'worktree inventory'], {
       queryDb,
       completeImpl,
+      statFn: vi.fn().mockResolvedValue(undefined),
       homeDir: '/home/user',
       platform: 'linux',
       stdout,
@@ -902,6 +1192,7 @@ describe('CLI: --verbose --no-summarize includes directory, source, snippet_full
         {
           queryDb,
           completeImpl,
+          statFn: vi.fn().mockResolvedValue(undefined),
           homeDir: '/home/user',
           platform: 'linux',
           stderr: { write: vi.fn() },
@@ -932,6 +1223,7 @@ describe('CLI: default --no-summarize omits directory, source, snippet_full', as
       const code = await main(['--prompt-file', promptPath, '--output-file', outputPath, '--no-summarize'], {
         queryDb,
         completeImpl,
+        statFn: vi.fn().mockResolvedValue(undefined),
         homeDir: '/home/user',
         platform: 'linux',
         stderr: { write: vi.fn() },
@@ -947,5 +1239,67 @@ describe('CLI: default --no-summarize omits directory, source, snippet_full', as
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe('CLI: --output-file writes the free-model summary', async () => {
+  it('writes the summarization result to the output file via writeFileFn', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'chat-search-'));
+    const promptPath = join(directory, 'prompt.txt');
+    const outputPath = join(directory, 'out.txt');
+    const queryDb = vi.fn().mockResolvedValue(sampleDbRows);
+    const writeFileFn = vi.fn().mockResolvedValue(undefined);
+    const completeImpl = vi.fn().mockImplementation((promptText) => {
+      if (promptText.includes('Extract 1-5')) {
+        return Promise.resolve({ content: 'brush\ncolor' });
+      }
+      if (promptText.includes('chat-history search assistant')) {
+        return Promise.resolve({ content: '## Summary\nFound 2 sessions about brushes.' });
+      }
+      return Promise.resolve({ content: '' });
+    });
+    try {
+      await writeFile(promptPath, 'How do I use the brush and color tools?');
+      const code = await main(['--prompt-file', promptPath, '--output-file', outputPath], {
+        queryDb,
+        completeImpl,
+        writeFileFn,
+        statFn: vi.fn().mockResolvedValue(undefined),
+        homeDir: '/home/user',
+        platform: 'linux',
+        stderr: { write: vi.fn() },
+      });
+      expect(code).toBe(0);
+      expect(writeFileFn).toHaveBeenCalledTimes(1);
+      const [writtenPath, content, encoding] = writeFileFn.mock.calls[0];
+      expect(writtenPath).toBe(outputPath);
+      expect(encoding).toBe('utf8');
+      expect(content).toContain('## Summary');
+      expect(content).toContain('Found 2 sessions about brushes.');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('CLI: --db-path bypasses DB discovery', async () => {
+  it('uses the explicit dbPath with --source kilo without calling findExistingDbPath/stat', async () => {
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const statFn = vi.fn();
+    const queryDb = vi.fn().mockResolvedValue([]);
+    const completeImpl = vi.fn().mockResolvedValue({ content: '' });
+    const code = await main(['--prompt', 'worktree inventory', '--source', 'kilo', '--db-path', '/custom/custom.db'], {
+      queryDb,
+      completeImpl,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      stdout,
+      stderr,
+    });
+    expect(code).toBe(0);
+    expect(statFn).not.toHaveBeenCalled();
+    expect(queryDb).toHaveBeenCalledWith('/custom/custom.db', expect.any(String));
   });
 });

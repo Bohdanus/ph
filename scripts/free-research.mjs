@@ -385,6 +385,89 @@ export async function readBoundedUtf8File(path, maxBytes, label) {
   }
 }
 
+const HTML_NAMED_ENTITIES = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  copy: '\u00A9',
+  reg: '\u00AE',
+  trade: '\u2122',
+  euro: '\u20AC',
+  mdash: '\u2014',
+  ndash: '\u2013',
+  hellip: '\u2026',
+  laquo: '\u00AB',
+  raquo: '\u00BB',
+  lsquo: '\u2018',
+  rsquo: '\u2019',
+  sbquo: '\u201A',
+  ldquo: '\u201C',
+  rdquo: '\u201D',
+  bdquo: '\u201E',
+  dagger: '\u2020',
+  Dagger: '\u2021',
+  bull: '\u2022',
+  permil: '\u2030',
+  prime: '\u2032',
+  Prime: '\u2033',
+  lsaquo: '\u2039',
+  rsaquo: '\u203A',
+  oline: '\u203E',
+  frasl: '\u2044',
+  cent: '\u00A2',
+  pound: '\u00A3',
+  yen: '\u00A5',
+  sect: '\u00A7',
+  para: '\u00B6',
+  middot: '\u00B7',
+  deg: '\u00B0',
+  plusmn: '\u00B1',
+  frac12: '\u00BD',
+  frac14: '\u00BC',
+  frac34: '\u00BE',
+  sup1: '\u00B9',
+  sup2: '\u00B2',
+  sup3: '\u00B3',
+  times: '\u00D7',
+  divide: '\u00F7',
+  acute: '\u00B4',
+  micro: '\u00B5',
+  cedil: '\u00B8',
+  ordf: '\u00AA',
+  ordm: '\u00BA',
+  iexcl: '\u00A1',
+  iquest: '\u00BF',
+  fnof: '\u0192',
+  shy: '\u00AD',
+  asymp: '\u2248',
+  ne: '\u2260',
+  le: '\u2264',
+  ge: '\u2265',
+  minus: '\u2212',
+  emsp: '\u2003',
+  thinsp: '\u2009',
+  zwnj: '\u200C',
+  zwj: '\u200D',
+  lrm: '\u200E',
+  rlm: '\u200F',
+};
+
+function decodeEntity(entity) {
+  if (entity.startsWith('&#x')) {
+    const code = parseInt(entity.slice(3, -1), 16);
+    return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : entity;
+  }
+  if (entity.startsWith('&#')) {
+    const code = parseInt(entity.slice(2, -1), 10);
+    return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : entity;
+  }
+  const name = entity.slice(1, -1);
+  return Object.prototype.hasOwnProperty.call(HTML_NAMED_ENTITIES, name) ? HTML_NAMED_ENTITIES[name] : entity;
+}
+
 export function stripHtml(html) {
   return html
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -392,13 +475,7 @@ export function stripHtml(html) {
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(/&#\d+;|&#x[0-9a-fA-F]+;|&[a-zA-Z][a-zA-Z0-9]*;/g, (entity) => decodeEntity(entity))
     .replace(/\s+/g, ' ')
     .trim();
 }
