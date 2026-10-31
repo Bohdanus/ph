@@ -72,8 +72,8 @@ host's permission boundary.
   substitute `schedule_wakeup`: it fires once and will not re-arm itself if the chat dies. If
   cron creation returns an actual error, report it and use the normal operator recovery path
   rather than silently switching to a one-shot wake.
-- Model routing (read MODELS.md first): the free route is `Poolside: Laguna S 2.1 (free)`,
-  provider `kilo`, variant `thinking`. Verify against the live catalog with
+- Model routing (read MODELS.md first): prefer NVIDIA Nemotron 3 Ultra
+  (`nvidia/nemotron-3-ultra-550b-a55b:free`), provider `kilo`, variant `high`. Verify against the live catalog with
   `node scripts/free-model-pool.mjs --list` and the 200 req/hour ceiling (MODELS.md). For
   bounded single-model calls, use
   `node scripts/free-model-pool.mjs --prompt-file PATH --output-file PATH --max-tokens N` to
@@ -195,8 +195,8 @@ initial template to the actual request, preserving its scope and constraints.
 > codebase. Fan out bounded **free read-only** subagents (`explore` role, writes/shell/git
 > denied) to do deep research: scan CI logs, read specs/helpers, audit coordinate handling,
 > survey chat transcripts. Keep the coordinator's own context lean by persisting wave results
-> to `.kilo/plans/` before each dispatch. Use the catalog entry `Poolside: Laguna S 2.1
-(free)` (provider `kilo`, variant `thinking`) heavily for broad investigations when it
+> to `.kilo/plans/` before each dispatch. Prefer NVIDIA Nemotron 3 Ultra
+> (`nvidia/nemotron-3-ultra-550b-a55b:free`, provider `kilo`, variant `high`) for broad investigations when it
 > appears in the refreshed free catalog; otherwise rotate to another verified zero-priced
 > model/provider or pause when none is available. Resume hourly via `cron_create` with
 > `cron: "0 * * * *"` and the resumer prompt below. Take most complex and prioritised issues

@@ -190,8 +190,8 @@ export async function runKiloCompletion({
   const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
   try {
     const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
-    if (model === 'poolside/laguna-s-2.1:free') {
-      args.push('--variant', 'thinking');
+    if (model === 'nvidia/nemotron-3-ultra-550b-a55b:free') {
+      args.push('--variant', 'high');
     }
 
     const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError } = await new Promise(

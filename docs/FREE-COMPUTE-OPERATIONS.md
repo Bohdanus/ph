@@ -42,11 +42,11 @@ protected environment setup to provide it. Check the account's daily counter wit
 node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
-The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Laguna S 2.1
+The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Nemotron 3 Ultra
 first when it is present, and stops that provider for the run on HTTP 401, 402, or 429. Inference
 gets five minutes; catalog and quota requests keep a separate 15-second timeout. A quota snapshot
 is only current at the time it was read and can change when other tools use the account.
-OpenRouter Laguna receives at least 1,024 completion tokens so reasoning has room to finish; other
+OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning has room to finish; other
 models use the requested token limit.
 
 ## OpenCode
@@ -110,22 +110,21 @@ IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. T
 accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
 `npm run free:quarantine -- list|add|release|prune`.
 
-### Thinking-model token budgets
+### Reasoning-model token budgets
 
-Kilo's Laguna S and other reasoning/thinking models consume internal reasoning tokens before
-producing visible output. A small `--max-tokens` value (e.g. 20) can be exhausted entirely by
-reasoning tokens, producing an `empty completion (finish_reason=length)` error. The runner
-clamps `max_tokens` to a minimum of 1024 for Kilo thinking models so the output budget is not
-zeroed out. Passing `--max-tokens` below 1024 is accepted but the effective request uses 1024.
-Similarly, GPT-OSS models on Groq burn ~254 hidden reasoning tokens and are clamped to 1024.
+Kilo Nemotron 3 Ultra uses the Kilo CLI's `high` variant. The CLI has no provider-side
+`--max-tokens` option, so the runner uses the requested value only as a response-length instruction.
+For OpenRouter, the preferred Nemotron 3 Ultra model receives at least 1,024 completion tokens so
+reasoning has room to finish; other models use the requested token limit. GPT-OSS models on Groq
+are also clamped to 1,024 tokens to account for hidden reasoning tokens.
 
 ### Catalog ordering
 
-Within each provider, candidate models are sorted by preference. Kilo prefers
-`poolside/laguna-s-2.1:free`; OpenRouter prefers the same model when present. Without this
+Within each provider, candidate models are sorted by preference. Kilo and OpenRouter prefer
+`nvidia/nemotron-3-ultra-550b-a55b:free` when present. Without this
 preference sort, OpenRouter's catalog returns models in its default order (Flint, XingChen,
 etc.), which may not match the desired free model and can exhaust the three-per-provider
-attempt cap before reaching Laguna.
+attempt cap before reaching Nemotron 3 Ultra.
 
 ### Scheduled failure reports
 

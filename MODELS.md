@@ -2,10 +2,10 @@
 
 ## Current defaults
 
-| Model                         | Provider | Variant    | Use                                        |
-| ----------------------------- | -------- | ---------- | ------------------------------------------ |
-| Luna 6                        | `openai` | `xhigh`    | Paid; keep context under 272k tokens       |
-| Poolside: Laguna S 2.1 (free) | `kilo`   | `thinking` | Preferred when present in the live catalog |
+| Model                          | Provider | Variant | Use                                       |
+| ------------------------------ | -------- | ------- | ----------------------------------------- |
+| Luna 6                         | `openai` | `xhigh` | Paid; keep context under 272k tokens      |
+| NVIDIA Nemotron 3 Ultra (free) | `kilo`   | `high`  | Preferred when exact-zero in live catalog |
 
 Use live catalogs, not stale model lists. Prefer verified free models for bounded research,
 text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit
@@ -19,8 +19,8 @@ operator authorization before using paid inference.
 - Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
 - The runner sends Kilo inference through the installed Kilo Code CLI, so its saved Kilo Gateway OAuth is used. It searches `PATH` and common editor extension directories; set `KILO_CLI` only when discovery misses the executable. The child receives runtime paths but not other provider credentials or `KILO_CONFIG_CONTENT`; the tool-free `free-completion` agent and `--pure` mode block agent tools and external plugins.
 - The Kilo CLI has no `--max-tokens` option. The runner's `--max-tokens` value is a response-length instruction for Kilo; the CLI/model controls the actual generation budget. OpenRouter and Groq receive a provider-side token limit.
-- OpenRouter inference uses `OPENROUTER_API_KEY`. When Laguna S 2.1 appears in that live catalog, the runner tries it first, then preserves the catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
-- OpenRouter Laguna receives at least 1,024 completion tokens so reasoning does not consume a tiny caller budget before a visible answer. The other OpenRouter models receive the requested `--max-tokens` value.
+- OpenRouter inference uses `OPENROUTER_API_KEY`. When Nemotron 3 Ultra appears as an exact-zero model in that live catalog, the runner tries it first, then preserves the catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
+- OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning does not consume a tiny caller budget before a visible answer. The other OpenRouter models receive the requested `--max-tokens` value.
 - OpenRouter 401/402 exhausts the source. On HTTP 429, a zero platform `X-RateLimit-Remaining` header exhausts it for the run; otherwise the daily counter controls model rotation. Unknown counters stay within the three-model cap. Content-policy rejections — including successful HTTP responses with `finish_reason: content_filter` — stop routing across providers so the same request is not retried elsewhere.
 - Catalog and quota requests have a 15-second timeout. Model inference has a five-minute timeout so reasoning models are not cut off by a catalog-sized deadline.
 - In Kilo tasks, pass `model` and `provider` together; GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.

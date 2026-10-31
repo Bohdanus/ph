@@ -291,10 +291,10 @@ as unordered, independent gates, each with parity and failure-containment eviden
 
 ## Test delegation
 
-For each implementation slice, delegate focused unit-test files to Poolside
-Laguna subagents after the production contract is fixed. Keep one test file per
-agent, never let two agents edit the same file, and cap Laguna concurrency at
-four sessions. Discard tests that encode a legacy
+For each implementation slice, delegate focused unit-test files to free
+Nemotron 3 Ultra subagents after the production contract is fixed. Keep one test file per
+agent, never let two agents edit the same file, and cap concurrency at four sessions.
+Discard tests that encode a legacy
 authority, compare two paths fed the same wrong input, or weaken a gate. The
 coordinator owns integration, differential review and all Git operations.
 

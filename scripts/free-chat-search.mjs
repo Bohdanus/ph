@@ -104,6 +104,10 @@ export function resolveKiloDbCandidates({ kiloDbPath, homeDir, xdgDataHome, plat
   const candidates = [];
   if (xdg) candidates.push(`${xdg}/kilo/kilo.db`);
   if (home) {
+    const appData = process.env.APPDATA;
+    const localAppData = process.env.LOCALAPPDATA;
+    if (appData) candidates.push(`${appData}\\kilo\\kilo.db`);
+    if (localAppData) candidates.push(`${localAppData}\\kilo\\kilo.db`);
     candidates.push(`${home}/.local/share/kilo/kilo.db`);
     if (plat === 'darwin') {
       candidates.push(`${home}/Library/Application Support/kilo/kilo.db`);
@@ -303,7 +307,12 @@ export async function expandSearchTerms(
     const terms = (result.content || '')
       .split(/\r?\n/)
       .map((line) => line.trim().toLowerCase())
-      .map((term) => term.replace(/[^\w\s-]/g, '').trim())
+      .map((term) =>
+        term
+          .replace(/[^\w\s-]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+      )
       .map((term) => term.slice(0, MAX_SEARCH_TERM_CHARS))
       .filter((term) => term && term.length >= 2 && !STOP_WORDS.has(term));
     if (terms.length > 0) return terms.slice(0, MAX_SEARCH_TERMS);
@@ -323,61 +332,104 @@ export async function queryKiloDb(
   { spawnImpl = spawn, sqlitePath = 'sqlite3', timeoutMs = SQLITE_TIMEOUT_MS } = {}
 ) {
   if (!sql || typeof sql !== 'string') throw new Error('SQL query must be a non-empty string');
-  return new Promise((resolveP, rejectP) => {
-    const child = spawnImpl(sqlitePath, ['-readonly', '-json', '-bail', dbPath, sql], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill('SIGTERM');
-      safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
-      rejectP(new Error(`sqlite3 query timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
-      if (stdout.length > MAX_SQLITE_OUTPUT_BYTES) {
+
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 100;
+
+  function isLockedError(code, stderr) {
+    if (code === 5) return true;
+    const s = (stderr || '').toLowerCase();
+    return s.includes('locked') || s.includes('busy');
+  }
+
+  async function attempt(attemptNumber) {
+    return new Promise((resolveP, rejectP) => {
+      const child = spawnImpl(sqlitePath, ['-readonly', '-json', '-bail', dbPath, sql], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill('SIGTERM');
+        safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
+        rejectP(new Error(`sqlite3 query timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString('utf8');
+        if (stdout.length > MAX_SQLITE_OUTPUT_BYTES) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          child.kill('SIGTERM');
+          safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
+          rejectP(new Error('SQLite response exceeded the output byte limit'));
+        }
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString('utf8');
+        if (stderr.length > 4096) stderr = stderr.slice(0, 4096);
+      });
+      child.once('error', (error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        child.kill('SIGTERM');
-        safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
-        rejectP(new Error('SQLite response exceeded the output byte limit'));
-      }
+        if (error.code === 'ENOENT') {
+          rejectP(new Error(`SQLite CLI not found at "${sqlitePath}"; install sqlite3 and ensure it is on PATH`));
+        } else {
+          rejectP(error);
+        }
+      });
+      child.once('close', (code, signal) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (code !== 0) {
+          const error = new Error(
+            `sqlite3 exited with code ${code ?? signal}${stderr ? `: ${stderr.slice(0, 500)}` : ''}`
+          );
+          error.exitCode = code;
+          error.stderr = stderr;
+          rejectP(error);
+          return;
+        }
+        try {
+          const parsed = JSON.parse(stdout);
+          if (!Array.isArray(parsed)) {
+            rejectP(new Error('SQLite output is not an array'));
+            return;
+          }
+          const validRows = parsed.filter(
+            (row) => row && typeof row === 'object' && typeof row.session_id === 'string'
+          );
+          resolveP(validRows);
+        } catch {
+          resolveP([]);
+        }
+      });
     });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-      if (stderr.length > 4096) stderr = stderr.slice(0, 4096);
-    });
-    child.once('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error.code === 'ENOENT') {
-        rejectP(new Error(`SQLite CLI not found at "${sqlitePath}"; install sqlite3 and ensure it is on PATH`));
-      } else {
-        rejectP(error);
+  }
+
+  let lastError;
+  for (let attemptNumber = 1; attemptNumber <= MAX_RETRIES; attemptNumber++) {
+    try {
+      return await attempt(attemptNumber);
+    } catch (error) {
+      lastError = error;
+      const code = error.exitCode;
+      const stderr = error.stderr;
+      if (attemptNumber < MAX_RETRIES && isLockedError(code, stderr)) {
+        const delay = BASE_DELAY_MS * Math.pow(2, attemptNumber - 1);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
       }
-    });
-    child.once('close', (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code !== 0) {
-        rejectP(new Error(`sqlite3 exited with code ${code ?? signal}${stderr ? `: ${stderr.slice(0, 500)}` : ''}`));
-        return;
-      }
-      try {
-        resolveP(JSON.parse(stdout));
-      } catch {
-        resolveP([]);
-      }
-    });
-  });
+      throw error;
+    }
+  }
+  throw lastError;
 }
 
 export async function searchChatHistory(
@@ -410,10 +462,13 @@ export async function searchAllSources(
     maxMatches = MAX_MATCHES_PER_QUERY,
     maxSessions = DEFAULT_SEARCH_SESSIONS,
     onInfo = () => {},
+    stderr = process.stderr,
   } = {}
 ) {
   const allResults = [];
   const dbPaths = [];
+  const queryErrors = [];
+  let successfulQueries = 0;
 
   const kiloDbPath = await findExistingDbPath({ homeDir, xdgDataHome, platform: plat }, { statFn });
   dbPaths.push(kiloDbPath);
@@ -427,8 +482,14 @@ export async function searchAllSources(
   if (kiloDbExists) {
     const sql = buildSearchQuery(terms, { maxMatches, maxSessions });
     if (sql) {
-      const rows = await queryDb(kiloDbPath, sql);
-      allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_KILO }));
+      try {
+        const rows = await queryDb(kiloDbPath, sql);
+        allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_KILO }));
+        successfulQueries += 1;
+      } catch (error) {
+        queryErrors.push(error);
+        stderr.write?.(`Kilo DB query failed: ${error.message}\n`);
+      }
     }
   } else {
     onInfo(`Skipping Kilo source: DB not found at ${kiloDbPath}`);
@@ -446,11 +507,21 @@ export async function searchAllSources(
   if (codexDbExists) {
     const sql = buildCodexSearchQuery(terms, { maxMatches, maxSessions });
     if (sql) {
-      const rows = await queryDb(codexDbPath, sql);
-      allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_CODEX }));
+      try {
+        const rows = await queryDb(codexDbPath, sql);
+        allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_CODEX }));
+        successfulQueries += 1;
+      } catch (error) {
+        queryErrors.push(error);
+        stderr.write?.(`Codex DB query failed: ${error.message}\n`);
+      }
     }
   } else {
     onInfo(`Skipping Codex source: DB not found at ${codexDbPath}`);
+  }
+
+  if (queryErrors.length > 0 && successfulQueries === 0) {
+    throw new AggregateError(queryErrors, 'All available chat-history queries failed');
   }
 
   const seenIds = new Set();
@@ -503,7 +574,11 @@ export async function summarizeSearchResults(
   );
   try {
     const result = await completeImpl(filled, { maxTokens, onCatalogError, ...completeOpts });
-    return (result.content || '').trim();
+    const content = (result.content || '').trim();
+    if (!content && onError) {
+      onError(new Error('Empty summary from model'));
+    }
+    return content || fallbackSummary(sessions, terms || []);
   } catch (error) {
     if (onError) onError(error);
     return fallbackSummary(sessions, terms || []);
