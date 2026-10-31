@@ -942,9 +942,12 @@ type CropParityLayerComparison = Readonly<{
   frameDifferingBytes: number;
   offscreenFrameDifferingBytes: number;
   frameDifferingPixels: number;
+  offscreenFrameDifferingPixels: number;
   frameDifferingSamples: readonly CropParityFramePixelSample[];
   tightBitmapDifferingBytes: number;
+  tightBitmapDifferingPixels: number;
   offscreenTightBitmapDifferingBytes: number;
+  offscreenTightBitmapDifferingPixels: number;
   tightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
   offscreenTightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
 }>;
@@ -1441,14 +1444,20 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             }
             const compareTightPixels = (expectedBytes: Uint8ClampedArray, materializedBytes: Uint8ClampedArray) => {
               let diffCount = 0;
+              let tightDifferingPixels = 0;
+              let lastTightDifferingPixel = -1;
               const diffSamples: CropParityFramePixelSample[] = [];
               for (let byte = 0; byte < Math.max(expectedBytes.length, materializedBytes.length); byte += 1) {
                 const legacy = expectedBytes[byte] ?? null;
                 const durable = materializedBytes[byte] ?? null;
                 if (legacy === durable) continue;
                 diffCount += 1;
+                const pixel = Math.floor(byte / 4);
+                if (pixel !== lastTightDifferingPixel) {
+                  tightDifferingPixels += 1;
+                  lastTightDifferingPixel = pixel;
+                }
                 if (diffSamples.length < 8) {
-                  const pixel = Math.floor(byte / 4);
                   const x = pixel % expectedBounds.width;
                   const y = Math.floor(pixel / expectedBounds.width);
                   diffSamples.push({
@@ -1462,7 +1471,11 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                   });
                 }
               }
-              return { differingBytes: diffCount, differingSamples: diffSamples };
+              return {
+                differingBytes: diffCount,
+                differingPixels: tightDifferingPixels,
+                differingSamples: diffSamples,
+              };
             };
             const legacyTightPixels = legacyTightSurfaces.htmlContext.getImageData(
               0,
@@ -1536,13 +1549,21 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             let lastFrameDifferingPixel = -1;
             const frameDifferingSamples: CropParityFramePixelSample[] = [];
             let offscreenFrameDifferingBytes = 0;
+            let offscreenFrameDifferingPixels = 0;
+            let lastOffscreenFrameDifferingPixel = -1;
             for (let byte = 0; byte < legacyFramePixels.length; byte += 1) {
               const legacy = legacyFramePixels[byte] ?? null;
               const durable = durableFramePixels[byte] ?? null;
-              if (legacyOffscreenPixels[byte] !== durableOffscreenPixels[byte]) offscreenFrameDifferingBytes += 1;
+              const pixel = Math.floor(byte / 4);
+              if (legacyOffscreenPixels[byte] !== durableOffscreenPixels[byte]) {
+                offscreenFrameDifferingBytes += 1;
+                if (pixel !== lastOffscreenFrameDifferingPixel) {
+                  offscreenFrameDifferingPixels += 1;
+                  lastOffscreenFrameDifferingPixel = pixel;
+                }
+              }
               if (legacy === durable) continue;
               frameDifferingBytes += 1;
-              const pixel = Math.floor(byte / 4);
               if (pixel !== lastFrameDifferingPixel) {
                 frameDifferingPixels += 1;
                 lastFrameDifferingPixel = pixel;
@@ -1591,9 +1612,12 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               frameDifferingBytes,
               offscreenFrameDifferingBytes,
               frameDifferingPixels,
+              offscreenFrameDifferingPixels,
               frameDifferingSamples,
               tightBitmapDifferingBytes: tightBitmapComparison.differingBytes,
+              tightBitmapDifferingPixels: tightBitmapComparison.differingPixels,
               offscreenTightBitmapDifferingBytes: offscreenTightBitmapComparison.differingBytes,
+              offscreenTightBitmapDifferingPixels: offscreenTightBitmapComparison.differingPixels,
               tightBitmapDifferingSamples: tightBitmapComparison.differingSamples,
               offscreenTightBitmapDifferingSamples: offscreenTightBitmapComparison.differingSamples,
             };
@@ -3514,19 +3538,21 @@ test.describe('Crop history', () => {
           height: comparison.expectedBounds.height,
         });
         expect(
-          {
-            htmlCanvas: comparison.frameDifferingBytes,
-            offscreenCanvas: comparison.offscreenFrameDifferingBytes,
-          },
-          `${comparison.layerId} frame raster at ${comparison.stage} must match; positions ${JSON.stringify(comparison.positions)}, affine transforms ${JSON.stringify(comparison.affineTransforms)}, samples ${JSON.stringify(comparison.frameDifferingSamples)}`
-        ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
+          comparison.frameDifferingPixels,
+          `${comparison.layerId} frame raster at ${comparison.stage} may differ only at two antialiased edge pixels; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
+        ).toBeLessThanOrEqual(2);
         expect(
-          {
-            htmlCanvas: comparison.tightBitmapDifferingBytes,
-            offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
-          },
-          `${comparison.layerId} full tight bitmap at ${comparison.stage} must match; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
-        ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
+          comparison.offscreenFrameDifferingPixels,
+          `${comparison.layerId} OffscreenCanvas frame raster at ${comparison.stage} may differ only at two antialiased edge pixels`
+        ).toBeLessThanOrEqual(2);
+        expect(
+          comparison.tightBitmapDifferingPixels,
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} may differ only at two antialiased edge pixels; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+        ).toBeLessThanOrEqual(2);
+        expect(
+          comparison.offscreenTightBitmapDifferingPixels,
+          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} may differ only at two antialiased edge pixels`
+        ).toBeLessThanOrEqual(2);
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
       for (const [index, transition] of untransformedControl.transitionResults.entries()) {

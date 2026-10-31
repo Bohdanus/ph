@@ -1632,12 +1632,6 @@ test.describe('Text tool', () => {
   test('resizing a committed text layer rerenders glyphs from its retained text source', async ({ page }, testInfo) => {
     test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
     const box = await canvasBox(page);
-    const canvasClip = toClip({
-      left: box.x,
-      top: box.y,
-      right: box.x + box.width,
-      bottom: box.y + box.height,
-    });
 
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box);
@@ -1648,34 +1642,45 @@ test.describe('Text tool', () => {
       description: 'committed text before resize',
     });
 
-    const beforeCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-before-layer-resize');
+    await clickToolButton(page, 'reposition');
+    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
+    const resizeBox = await canvasBox(page);
+    const resizeClip = toClip({
+      left: resizeBox.x,
+      top: resizeBox.y,
+      right: resizeBox.x + resizeBox.width,
+      bottom: resizeBox.y + resizeBox.height,
+    });
+    const beforeCapture = await captureCanvasScreenshot(page, resizeBox, testInfo, 'text-before-layer-resize');
     const beforeInk = await scanPixelsForBounds(await loadImageData(beforeCapture), isRedInk);
     expect(beforeInk.found, 'committed text was not visible before resizing').toBe(true);
 
-    await clickToolButton(page, 'reposition');
-    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
-    await page.mouse.move(box.x + 300, box.y + 250);
+    await page.mouse.move(resizeBox.x + 300, resizeBox.y + 250);
     await page.mouse.down();
-    await page.mouse.move(box.x + 302, box.y + 252, { steps: 2 });
+    await page.mouse.move(resizeBox.x + 302, resizeBox.y + 252, { steps: 2 });
     await page.mouse.up();
-    await waitForCanvasPixels(page, canvasClip, async (png) => (await getSelectionBounds(png)) !== null, {
+    await waitForCanvasPixels(page, resizeClip, async (png) => (await getSelectionBounds(png)) !== null, {
       description: 'the text layer transform frame',
     });
 
-    const selectedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-selected-for-resize');
+    const selectedCapture = await captureCanvasScreenshot(page, resizeBox, testInfo, 'text-layer-selected-for-resize');
     const selectedFrame = await getSelectionBounds(selectedCapture);
     expect(selectedFrame, 'the committed text layer has no transform handles').toBeTruthy();
-    const handle = imagePointToCss({ width: selectedFrame!.imageWidth, height: selectedFrame!.imageHeight }, box, {
-      x: selectedFrame!.right - TEXT_RESIZE_HANDLE_OFFSET,
-      y: selectedFrame!.bottom - TEXT_RESIZE_HANDLE_OFFSET,
-    });
+    const handle = imagePointToCss(
+      { width: selectedFrame!.imageWidth, height: selectedFrame!.imageHeight },
+      resizeBox,
+      {
+        x: selectedFrame!.right - TEXT_RESIZE_HANDLE_OFFSET,
+        y: selectedFrame!.bottom - TEXT_RESIZE_HANDLE_OFFSET,
+      }
+    );
     await page.mouse.move(handle.x, handle.y);
     await page.mouse.down();
     await page.mouse.move(handle.x + 100, handle.y + 60, { steps: 8 });
     await page.mouse.up();
     await waitForCanvasPixels(
       page,
-      canvasClip,
+      resizeClip,
       async (png) => {
         const current = await getSelectionBounds(png);
         return (
@@ -1687,7 +1692,7 @@ test.describe('Text tool', () => {
       { description: 'the expanded text layer transform frame' }
     );
 
-    const resizedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-resized');
+    const resizedCapture = await captureCanvasScreenshot(page, resizeBox, testInfo, 'text-layer-resized');
     const resizedImage = await loadImageData(resizedCapture);
     const resizedInk = await scanPixelsForBounds(resizedImage, isRedInk);
     expect(resizedInk.found, 'committed text disappeared while its layer was resized').toBe(true);
