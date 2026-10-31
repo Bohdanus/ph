@@ -342,11 +342,11 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
     let inString = false;
     let stringChar = '';
     const result = [];
-    
+
     for (let i = 0; i < sql.length; i++) {
       const char = sql[i];
       const nextChar = sql[i + 1];
-      
+
       if (!inString && (char === '"' || char === "'")) {
         inString = true;
         stringChar = char;
@@ -367,10 +367,10 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
         result.push(char);
       }
     }
-    
+
     cliSql = result.join('');
   }
-  
+
   const sqlitePath = opts.sqlitePath || 'sqlite3';
   const timeoutMs = opts.timeoutMs || DEFAULTS.sqliteTimeoutMs;
 
@@ -707,19 +707,19 @@ Examples:
     return 1;
   }
 
-  const limit = parseInt(getFlag('--limit', '20'), 10);
+  const limit = Number(getFlag('--limit', '20'));
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     console.error('Error: --limit must be an integer between 1 and 200');
     return 1;
   }
 
-  const maxSessions = parseInt(getFlag('--max-sessions', '50'), 10);
+  const maxSessions = Number(getFlag('--max-sessions', '50'));
   if (!Number.isInteger(maxSessions) || maxSessions < 10 || maxSessions > 500) {
     console.error('Error: --max-sessions must be an integer between 10 and 500');
     return 1;
   }
 
-  const summaryTokens = parseInt(getFlag('--summary-tokens', '400'), 10);
+  const summaryTokens = Number(getFlag('--summary-tokens', '400'));
   if (!Number.isInteger(summaryTokens) || summaryTokens < 1 || summaryTokens > 800) {
     console.error('Error: --summary-tokens must be an integer between 1 and 800');
     return 1;
