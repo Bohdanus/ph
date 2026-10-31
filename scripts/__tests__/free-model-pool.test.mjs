@@ -19,17 +19,24 @@ import {
 } from '../free-model-pool.mjs';
 import { COMPLETION_TIMEOUT_MS } from '../lib/free-model-kilo.mjs';
 
-const completeWithFreeModel = (prompt, options = {}) =>
-  completeWithFreeModelImplementation(prompt, {
-    kiloCommand: '',
-    openRouterKey: '',
-    groqApiKey: '',
-    groqApiKeys: [],
-    groqFreePlan: false,
-    opencodeCommand: '',
-    ...options,
-    initializeLegacyQuarantine: false,
-  });
+const completeWithFreeModel = async (prompt, options = {}) => {
+  const temporaryDirectory = options.quarantineFile ? null : await mkdtemp(join(tmpdir(), 'free-model-pool-test-'));
+  try {
+    return await completeWithFreeModelImplementation(prompt, {
+      kiloCommand: '',
+      openRouterKey: '',
+      groqApiKey: '',
+      groqApiKeys: [],
+      groqFreePlan: false,
+      opencodeCommand: '',
+      quarantineFile: options.quarantineFile ?? join(temporaryDirectory, 'quarantine.json'),
+      ...options,
+      initializeLegacyQuarantine: false,
+    });
+  } finally {
+    if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+};
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -871,7 +878,7 @@ describe('free model rotation', () => {
     ['numeric zero', { cost: 0 }, true],
     ['string zero', { cost: '0' }, true],
     ['empty cost text', { cost: '' }, false],
-    ['null cost', { cost: null }, false],
+    ['null cost', { cost: null }, true],
     ['boolean cost', { cost: false }, false],
     ['malformed nested cost', { cost_details: { upstream_inference_cost: '' } }, false],
     ['additional nested provider cost', { cost_details: { providerCost: '0.02' } }, false],
@@ -944,6 +951,35 @@ describe('free model rotation', () => {
       /provider reported non-zero or invalid usage cost; refusing further requests/
     );
     expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a quarantine when a provider reports a non-zero cost', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-cost-quarantine-'));
+    const quarantineFile = join(directory, 'quarantine.json');
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'k1:free',
+        usage: { cost: 0.02 },
+        choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('k1')], chat });
+
+    try {
+      await expect(
+        completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'test', quarantineFile })
+      ).rejects.toThrow(/provider reported non-zero or invalid usage cost/);
+      const state = JSON.parse(await readFile(quarantineFile, 'utf8'));
+      expect(state.entries['openrouter:k1:free']).toMatchObject({
+        source: 'openrouter',
+        model: 'k1:free',
+        reason: 'non_zero_cost',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

@@ -258,7 +258,7 @@ describe('free-model-sweep evidence classification', () => {
   });
 
   it('accepts explicit model rate limits but not a bare 429', () => {
-    expect(classifyFailure('[Poolside] Rate limit exceeded')).toBe('explicit_upstream_rate_limit');
+    expect(classifyFailure('[Kilo] Rate limit exceeded')).toBe('explicit_upstream_rate_limit');
     expect(classifyFailure('temporarily rate-limited upstream')).toBe('explicit_upstream_rate_limit');
     expect(classifyFailure('HTTP 429')).toBe('unclassified');
   });

@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
@@ -8,17 +11,24 @@ import {
   zeroPriced,
 } from '../free-model-pool.mjs';
 
-const completeWithFreeModel = (prompt, options = {}) =>
-  completeWithFreeModelImplementation(prompt, {
-    kiloCommand: '',
-    openRouterKey: '',
-    groqApiKey: '',
-    groqApiKeys: [],
-    groqFreePlan: false,
-    opencodeCommand: '',
-    ...options,
-    initializeLegacyQuarantine: false,
-  });
+const completeWithFreeModel = async (prompt, options = {}) => {
+  const temporaryDirectory = options.quarantineFile ? null : await mkdtemp(join(tmpdir(), 'free-model-pool-test-'));
+  try {
+    return await completeWithFreeModelImplementation(prompt, {
+      kiloCommand: '',
+      openRouterKey: '',
+      groqApiKey: '',
+      groqApiKeys: [],
+      groqFreePlan: false,
+      opencodeCommand: '',
+      quarantineFile: options.quarantineFile ?? join(temporaryDirectory, 'quarantine.json'),
+      ...options,
+      initializeLegacyQuarantine: false,
+    });
+  } finally {
+    if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+};
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -286,6 +296,33 @@ describe('OpenRouter quota status command', () => {
 });
 
 describe('OpenRouter pre-routing quota check', () => {
+  it('does not probe quota unless the caller opts in', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'o1:free',
+        choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('o1')],
+      keyInfo: () => ({
+        ok: true,
+        json: async () => ({
+          data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } },
+        }),
+      }),
+      chat,
+    });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).resolves.toMatchObject({
+      source: 'openrouter',
+      model: 'o1:free',
+    });
+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('api/v1/key'))).toBe(false);
+  });
+
   it('skips OpenRouter when the daily quota is exhausted and never calls its chat endpoint', async () => {
     const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
     const fetchImpl = catalogFetch({

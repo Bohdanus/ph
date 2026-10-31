@@ -398,9 +398,42 @@ describe('searchAllSources', () => {
     expect(onInfo).toHaveBeenCalledWith(expect.stringContaining('Codex'));
   });
 
-  it('surfaces unexpected queryDb errors instead of swallowing them', async () => {
+  it('logs queryDb errors to stderr and continues with other sources', async () => {
+    const stderr = { write: vi.fn() };
     const statFn = vi.fn().mockResolvedValue(undefined);
-    const queryDb = vi.fn().mockRejectedValue(new Error('SQL syntax error'));
+    const queryDb = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Kilo SQL error'))
+      .mockResolvedValueOnce([
+        {
+          session_id: 'codex_id',
+          title_source: 'Codex',
+          directory: '/codex',
+          updated: '2026-10-30 13:00:00',
+          snippet: 'codex',
+        },
+      ]);
+    const result = await searchAllSources(['test'], {
+      queryDb,
+      statFn,
+      homeDir: '/home/user',
+      platform: 'linux',
+      maxSessions: 50,
+      stderr,
+    });
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Kilo DB query failed'));
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].session_id).toBe('codex_id');
+  });
+
+  it('surfaces an error when every available database query fails', async () => {
+    const stderr = { write: vi.fn() };
+    const statFn = vi.fn().mockResolvedValue(undefined);
+    const queryDb = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Kilo SQL error'))
+      .mockRejectedValueOnce(new Error('Codex SQL error'));
+
     await expect(
       searchAllSources(['test'], {
         queryDb,
@@ -408,8 +441,11 @@ describe('searchAllSources', () => {
         homeDir: '/home/user',
         platform: 'linux',
         maxSessions: 50,
+        stderr,
       })
-    ).rejects.toThrow('SQL syntax error');
+    ).rejects.toThrow('All available chat-history queries failed');
+    expect(queryDb).toHaveBeenCalledTimes(2);
+    expect(stderr.write).toHaveBeenCalledTimes(2);
   });
 
   it('deduplicates session IDs across sources', async () => {

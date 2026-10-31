@@ -15,14 +15,14 @@
  *   --max-tokens     Completion token budget (default: 800, max: 4000)
  *   --output-file    Write result to this file instead of stdout
  *   --probe-openrouter-quota  Check OpenRouter free quota before routing
- *   --groq-api-key KEY        Override Groq API key
  *   --groq-free-plan          Enable Groq free plan routing
  *   --opencode-command CMD    Override OpenCode CLI command
  *
  * The script searches local Kilo, Codex, and Copilot chat histories for sessions
  * matching the query, extracts bounded transcript excerpts, ranks them by
  * relevance using a free model, then synthesizes a concise answer using a free
- * model. Databases are opened read-only.
+ * model. Matching transcript excerpts are sent to the selected free-model
+ * provider. Databases are opened read-only.
  */
 
 import { executeChatSearch } from './lib/chat-search.mjs';
@@ -39,10 +39,12 @@ const USAGE = `Usage: node scripts/chat-search.mjs --query "question" [options]
   --max-tokens N            Completion tokens (default: 800, max: 4000)
   --output-file PATH        Write result to file
   --probe-openrouter-quota  Check OpenRouter free quota before routing
-  --groq-api-key KEY        Override Groq API key
   --groq-free-plan          Enable Groq free plan routing
   --opencode-command CMD    Override OpenCode CLI command
   --help, -h                Show this help
+
+Matching transcript excerpts are sent to the selected free-model provider.
+Groq keys must use GROQ_API_KEY or configured key files; command-line keys are unsupported.
 
 Examples:
   node scripts/chat-search.mjs --query "worst damage in kilo chats last month" --providers kilo --days 30
@@ -58,7 +60,6 @@ const VALUE_FLAGS = new Set([
   '--max-sessions',
   '--max-tokens',
   '--output-file',
-  '--groq-api-key',
   '--opencode-command',
 ]);
 
@@ -154,7 +155,6 @@ export async function main(
   }
 
   const outputFile = values.get('--output-file');
-  const cliGroqApiKey = values.get('--groq-api-key') || groqApiKey;
   const cliOpencodeCommand = values.get('--opencode-command') || opencodeCommand;
   const effectiveGroqFreePlan = cliGroqFreePlan || groqFreePlan;
 
@@ -169,7 +169,7 @@ export async function main(
     outputFile,
     fetchImpl,
     openRouterKey,
-    groqApiKey: cliGroqApiKey,
+    groqApiKey,
     groqFreePlan: effectiveGroqFreePlan,
     opencodeCommand: cliOpencodeCommand,
     probeOpenRouterQuota: probeQuota,
