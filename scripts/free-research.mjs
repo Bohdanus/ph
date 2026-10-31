@@ -8,6 +8,7 @@ import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { toUnicode as punycodeToUnicode } from 'node:punycode';
+import { sanitizeErrorMessage, sanitizeForLogging } from './lib/secrets.mjs';
 
 const MAX_CONCURRENCY = 4;
 const MAX_ALLOWED_CONCURRENCY = 8;
@@ -758,7 +759,7 @@ export async function main(
   try {
     parsed = parseArgs(args);
   } catch (error) {
-    stderr.write(`${error.message}\n${USAGE}`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 2;
   }
   if (parsed.help) {
@@ -828,7 +829,7 @@ export async function main(
   try {
     urls = [...new Set(listedUrls.map(validateResearchUrl))];
   } catch (error) {
-    stderr.write(`${error.message}\n`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 3;
   }
 
@@ -846,7 +847,8 @@ export async function main(
   const result = await completeImpl(researchPrompt, {
     maxTokens,
     checkOpenRouterQuota: probeOpenRouterQuota,
-    onCatalogError: (source, error) => stderr.write(`${source} free-model catalog unavailable: ${error.message}\n`),
+    onCatalogError: (source, error) =>
+      stderr.write(`${source} free-model catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
     onOpenRouterQuota: ({ used, limit, remaining }) =>
       stderr.write(
         `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
@@ -883,7 +885,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }

@@ -26,6 +26,7 @@
  */
 
 import { executeChatSearch } from './lib/chat-search.mjs';
+import { sanitizeErrorMessage } from './lib/secrets.mjs';
 
 const USAGE = `Usage: node scripts/chat-search.mjs --query "question" [options]
        node scripts/chat-search.mjs --prompt-file PATH [options]
@@ -121,7 +122,7 @@ export async function main(
   try {
     parsed = parseArgs(args);
   } catch (error) {
-    stderr.write(`${error.message}\n${USAGE}`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n${USAGE}`);
     return 2;
   }
   if (parsed.help) {
@@ -150,7 +151,7 @@ export async function main(
     maxSessions = integerOption(values, '--max-sessions', 10, 1, 50);
     maxTokens = integerOption(values, '--max-tokens', 800, 1, 4000);
   } catch (error) {
-    stderr.write(`${error.message}\n`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 2;
   }
 
@@ -186,7 +187,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }

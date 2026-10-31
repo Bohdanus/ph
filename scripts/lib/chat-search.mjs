@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
+import { sanitizeErrorMessage } from '../lib/secrets.mjs';
 
 const DEFAULT_MAX_RESULTS = 20;
 const DEFAULT_MAX_SESSIONS = 10;
@@ -819,7 +820,7 @@ export async function executeChatSearch(options) {
     try {
       question = readQueryFile(promptFile);
     } catch (err) {
-      stderr.write(`chat-search: failed to read prompt file: ${err.message}\n`);
+      stderr.write(`chat-search: failed to read prompt file: ${sanitizeErrorMessage(err.message)}\n`);
       return 2;
     }
   }
@@ -887,7 +888,7 @@ export async function executeChatSearch(options) {
         stderr.write(`chat-search: found ${kiloSessions.length} Kilo sessions\n`);
         allSessions.push(...kiloSessions);
       } catch (err) {
-        stderr.write(`chat-search: Kilo query failed (${err.message}); treating as 0 sessions\n`);
+        stderr.write(`chat-search: Kilo query failed (${sanitizeErrorMessage(err.message)}); treating as 0 sessions\n`);
       } finally {
         db.close();
       }
@@ -925,7 +926,9 @@ export async function executeChatSearch(options) {
               stderr.write('chat-search: Codex backfill not complete\n');
             }
           } catch (err) {
-            stderr.write(`chat-search: Codex query failed (${err.message}); treating as 0 sessions\n`);
+            stderr.write(
+              `chat-search: Codex query failed (${sanitizeErrorMessage(err.message)}); treating as 0 sessions\n`
+            );
           }
         } finally {
           db.close();
@@ -942,7 +945,9 @@ export async function executeChatSearch(options) {
         stderr.write(`chat-search: found ${rolledSessions.length} Codex sessions via rollout scan\n`);
         allSessions.push(...rolledSessions);
       } catch (err) {
-        stderr.write(`chat-search: Codex rollout scan failed (${err.message}); treating as 0 sessions\n`);
+        stderr.write(
+          `chat-search: Codex rollout scan failed (${sanitizeErrorMessage(err.message)}); treating as 0 sessions\n`
+        );
       }
     }
   }
@@ -960,7 +965,9 @@ export async function executeChatSearch(options) {
             allSessions.push(...copilotSessions);
           }
         } catch (err) {
-          stderr.write(`chat-search: Copilot query failed (${err.message}); treating as 0 sessions\n`);
+          stderr.write(
+            `chat-search: Copilot query failed (${sanitizeErrorMessage(err.message)}); treating as 0 sessions\n`
+          );
         }
       } finally {
         db.close();
@@ -998,7 +1005,9 @@ export async function executeChatSearch(options) {
               });
             }
           } catch (err) {
-            stderr.write(`chat-search: error extracting Kilo excerpt for ${session.id}: ${err.message}\n`);
+            stderr.write(
+              `chat-search: error extracting Kilo excerpt for ${session.id}: ${sanitizeErrorMessage(err.message)}\n`
+            );
           }
         }
       } else if (session.provider === 'codex') {
@@ -1015,7 +1024,9 @@ export async function executeChatSearch(options) {
               });
             }
           } catch (err) {
-            stderr.write(`chat-search: error reading rollout ${session.rolloutPath}: ${err.message}\n`);
+            stderr.write(
+              `chat-search: error reading rollout ${session.rolloutPath}: ${sanitizeErrorMessage(err.message)}\n`
+            );
           }
         }
       } else if (session.provider === 'copilot') {
@@ -1046,7 +1057,7 @@ export async function executeChatSearch(options) {
   try {
     poolModule = await import('../free-model-pool.mjs');
   } catch (err) {
-    stderr.write(`chat-search: Failed to load free-model-pool module: ${err.message}\n`);
+    stderr.write(`chat-search: Failed to load free-model-pool module: ${sanitizeErrorMessage(err.message)}\n`);
     return 1;
   }
 
@@ -1075,7 +1086,7 @@ export async function executeChatSearch(options) {
         stderr,
         checkOpenRouterQuota: probeOpenRouterQuota,
         onCatalogError: (source, error) =>
-          stderr.write(`chat-search: ${source} catalog unavailable: ${error.message}\n`),
+          stderr.write(`chat-search: ${source} catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
         onOpenRouterQuota: ({ used, limit, remaining }) =>
           stderr.write(`chat-search: OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining\n`),
       });
@@ -1085,7 +1096,7 @@ export async function executeChatSearch(options) {
       ranked.sort((a, b) => b.relevance - a.relevance);
       stderr.write(`chat-search: top relevance score: ${ranked[0]?.relevance ?? 0}\n`);
     } catch (err) {
-      stderr.write(`chat-search: ranking pass failed (${err.message}); using recency order\n`);
+      stderr.write(`chat-search: ranking pass failed (${sanitizeErrorMessage(err.message)}); using recency order\n`);
     }
   } else {
     ranked.sort((a, b) => b.timeUpdatedMs - a.timeUpdatedMs);
@@ -1123,12 +1134,13 @@ export async function executeChatSearch(options) {
       opencodeCommand,
       stderr,
       checkOpenRouterQuota: probeOpenRouterQuota,
-      onCatalogError: (source, error) => stderr.write(`chat-search: ${source} catalog unavailable: ${error.message}\n`),
+      onCatalogError: (source, error) =>
+        stderr.write(`chat-search: ${source} catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
       onOpenRouterQuota: ({ used, limit, remaining }) =>
         stderr.write(`chat-search: OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining\n`),
     });
   } catch (err) {
-    stderr.write(`chat-search: synthesis failed: ${err.message}\n`);
+    stderr.write(`chat-search: synthesis failed: ${sanitizeErrorMessage(err.message)}\n`);
     return 1;
   }
 
@@ -1149,7 +1161,7 @@ export async function executeChatSearch(options) {
     try {
       await writeFileAsync(outputFile, output, 'utf8');
     } catch (err) {
-      stderr.write(`chat-search: Failed to write output file: ${err.message}\n`);
+      stderr.write(`chat-search: Failed to write output file: ${sanitizeErrorMessage(err.message)}\n`);
       return 1;
     }
     stderr.write(`chat-search: result written to ${outputFile}\n`);

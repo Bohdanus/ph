@@ -2,6 +2,7 @@
 import { writeFile } from 'node:fs/promises';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { fetchUrl, validateResearchUrl } from './free-research.mjs';
+import { sanitizeErrorMessage } from './lib/secrets.mjs';
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_SUMMARY_TOKENS = 800;
@@ -217,7 +218,7 @@ export async function main(
   try {
     validatedUrl = validateResearchUrl(url);
   } catch (error) {
-    stderr.write(`Invalid URL: ${error.message}\n`);
+    stderr.write(`Invalid URL: ${sanitizeErrorMessage(error.message)}\n`);
     return 2;
   }
 
@@ -235,7 +236,7 @@ export async function main(
       timeout: fetchTimeout,
     });
   } catch (error) {
-    stderr.write(`Fetch failed: ${error.message}\n`);
+    stderr.write(`Fetch failed: ${sanitizeErrorMessage(error.message)}\n`);
     return 3;
   }
 
@@ -258,7 +259,7 @@ export async function main(
       checkOpenRouterQuota: probeOpenRouterQuota,
     });
   } catch (error) {
-    stderr.write(`Free model completion failed: ${error.message}\n`);
+    stderr.write(`Free model completion failed: ${sanitizeErrorMessage(error.message)}\n`);
     // Fallback: return truncated content
     result = { content: content.slice(0, 2000), source: 'fallback', model: 'none' };
     degraded = true;
@@ -287,7 +288,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }
