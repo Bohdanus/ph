@@ -3,20 +3,20 @@
  * Agent-friendly chat history search - simplified API for coding agents
  *
  * Usage (programmatic):
- *   import { search, searchAll, summarize } from './free-chat-search-agent.mjs';
+ *   import { search, searchAll, searchStream, summarizeResults } from './free-chat-search-agent.mjs';
  *   const results = await searchAll({ query: 'how to fix bug', limit: 20 });
- *   const summary = await summarize(results, { query: 'how to fix bug' });
+ *   const summary = await summarizeResults('how to fix bug', results);
  *
  * Usage (CLI):
  *   node scripts/free-chat-search-agent.mjs "search query" [--json] [--limit N] [--source kilo|codex|all]
  */
 
 import { spawn } from 'node:child_process';
-import { open, stat, writeFile, readFile } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -186,26 +186,23 @@ async function findExistingDb(candidates) {
 }
 
 /**
- * Build SQL query for Kilo database
+ * Build SQL query for Kilo database - returns parameterized query for better-sqlite3
  * @param {string[]} terms
  * @param {Object} opts
- * @returns {string|null}
+ * @returns {{sql: string, params: string[]}|null}
  */
 export function buildKiloQuery(terms, opts = {}) {
   const validTerms = terms.filter((t) => t && t.trim());
   if (!validTerms.length) return null;
 
   const conditions = validTerms
-    .map((term) => {
-      const escaped = term.replace(/'/g, "''");
-      return `instr(lower(coalesce(json_extract(p.data, '$.text'), '')), lower('${escaped}')) > 0`;
-    })
+    .map(() => `instr(lower(coalesce(json_extract(p.data, '$.text'), '')), lower(?)) > 0`)
     .join(' OR ');
 
   const limit = Math.min(opts.limit || DEFAULTS.maxResults, 200);
   const sessionLimit = Math.min(opts.maxSessions || DEFAULTS.maxSessions, 500);
 
-  return `
+  const sql = `
 WITH recent AS (
   SELECT id FROM session ORDER BY time_updated DESC LIMIT ${sessionLimit}
 )
@@ -228,29 +225,28 @@ WHERE json_valid(p.data)
 ORDER BY s.time_updated DESC, m.time_created, p.time_created
 LIMIT ${limit};
 `.trim();
+
+  return { sql, params: validTerms };
 }
 
 /**
- * Build SQL query for Codex database
+ * Build SQL query for Codex database - returns parameterized query for better-sqlite3
  * @param {string[]} terms
  * @param {Object} opts
- * @returns {string|null}
+ * @returns {{sql: string, params: string[]}|null}
  */
 export function buildCodexQuery(terms, opts = {}) {
   const validTerms = terms.filter((t) => t && t.trim());
   if (!validTerms.length) return null;
 
   const conditions = validTerms
-    .map((term) => {
-      const escaped = term.replace(/'/g, "''");
-      return `instr(lower(coalesce(t.user_message, '') || ' ' || coalesce(t.assistant_response, '')), lower('${escaped}')) > 0`;
-    })
+    .map(() => `instr(lower(coalesce(t.user_message, '') || ' ' || coalesce(t.assistant_response, '')), lower(?)) > 0`)
     .join(' OR ');
 
   const limit = Math.min(opts.limit || DEFAULTS.maxResults, 200);
   const sessionLimit = Math.min(opts.maxSessions || DEFAULTS.maxSessions, 500);
 
-  return `
+  const sql = `
 WITH recent AS (
   SELECT id FROM sessions ORDER BY updated_at DESC LIMIT ${sessionLimit}
 )
@@ -268,6 +264,8 @@ WHERE (${conditions})
 ORDER BY s.updated_at DESC, t.turn_index
 LIMIT ${limit};
 `.trim();
+
+  return { sql, params: validTerms };
 }
 
 /**
@@ -299,14 +297,15 @@ export function deduplicateSessions(rows, source, maxResults = DEFAULTS.maxResul
 }
 
 /**
- * Query SQLite database - tries better-sqlite3 first, falls back to CLI
+ * Query SQLite database - tries better-sqlite3 first (with parameterized queries), falls back to CLI
  * @param {string} dbPath
  * @param {string} sql
+ * @param {string[]} [params] - Parameters for parameterized query
  * @param {Object} opts
  * @returns {Promise<Object[]>}
  */
-export async function queryDb(dbPath, sql, opts = {}) {
-  // Try native better-sqlite3 first
+export async function queryDb(dbPath, sql, params = [], opts = {}) {
+  // Try native better-sqlite3 first with parameterized queries
   if (opts.useNative !== false) {
     try {
       const Database = await import('better-sqlite3').catch(() => null);
@@ -314,7 +313,7 @@ export async function queryDb(dbPath, sql, opts = {}) {
         const db = new Database.default(dbPath, { readonly: true });
         try {
           const stmt = db.prepare(sql);
-          return stmt.all();
+          return params.length > 0 ? stmt.all(...params) : stmt.all();
         } finally {
           db.close();
         }
@@ -324,12 +323,22 @@ export async function queryDb(dbPath, sql, opts = {}) {
     }
   }
 
-  // Fallback to sqlite3 CLI
+  // Fallback to sqlite3 CLI - need to inline parameters for CLI
+  let cliSql = sql;
+  if (params.length > 0) {
+    // Simple inline substitution for CLI fallback (escape single quotes)
+    let paramIndex = 0;
+    cliSql = sql.replace(/\?/g, () => {
+      const escaped = params[paramIndex++].replace(/'/g, "''");
+      return `'${escaped}'`;
+    });
+  }
+
   const sqlitePath = opts.sqlitePath || 'sqlite3';
   const timeoutMs = opts.timeoutMs || DEFAULTS.sqliteTimeoutMs;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(sqlitePath, ['-readonly', '-json', '-bail', dbPath, sql], {
+    const child = spawn(sqlitePath, ['-readonly', '-json', '-bail', dbPath, cliSql], {
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
     });
@@ -399,12 +408,26 @@ export async function queryDb(dbPath, sql, opts = {}) {
  */
 export async function searchDatabase(dbPath, terms, opts = {}) {
   const isCodex = opts.source === CHAT_STORE_CODEX;
-  const sql = isCodex ? buildCodexQuery(terms, opts) : buildKiloQuery(terms, opts);
+  const query = isCodex ? buildCodexQuery(terms, opts) : buildKiloQuery(terms, opts);
 
-  if (!sql) return [];
+  if (!query) return [];
 
-  const rows = await queryDb(dbPath, sql, opts);
+  const rows = await queryDb(dbPath, query.sql, query.params, opts);
   return deduplicateSessions(rows, opts.source || CHAT_STORE_KILO, opts.limit);
+}
+
+/**
+ * Validate and clamp options
+ * @param {Object} options
+ * @returns {Object}
+ */
+function validateOptions(options) {
+  return {
+    ...options,
+    limit: Math.min(Math.max(options.limit || DEFAULTS.maxResults, 1), 200),
+    maxSessions: Math.min(Math.max(options.maxSessions || DEFAULTS.maxSessions, 10), 500),
+    summaryTokens: Math.min(Math.max(options.summaryTokens || DEFAULTS.summaryTokens, 1), 800),
+  };
 }
 
 /**
@@ -413,11 +436,12 @@ export async function searchDatabase(dbPath, terms, opts = {}) {
  * @returns {Promise<SearchResponse>}
  */
 export async function searchAll(options = {}) {
-  const query = options.query || '';
-  const terms = options.terms || extractTerms(query);
-  const source = options.source || SEARCH_ALL;
-  const limit = options.limit || DEFAULTS.maxResults;
-  const maxSessions = options.maxSessions || DEFAULTS.maxSessions;
+  const opts = validateOptions(options);
+  const query = opts.query || '';
+  const terms = opts.terms || extractTerms(query);
+  const source = opts.source || SEARCH_ALL;
+  const limit = opts.limit;
+  const maxSessions = opts.maxSessions;
 
   const allResults = [];
   const dbPaths = [];
@@ -425,41 +449,38 @@ export async function searchAll(options = {}) {
   // Search Kilo
   if (source === SEARCH_ALL || source === CHAT_STORE_KILO) {
     try {
-      const kiloDbPath = options.kiloDbPath || resolveKiloDbPath({ homeDir: options.homeDir });
-      const existingPath = await findExistingDb([kiloDbPath, ...resolveKiloDbCandidates({ homeDir: options.homeDir })]);
+      const kiloDbPath = opts.kiloDbPath || resolveKiloDbPath({ homeDir: opts.homeDir });
+      const existingPath = await findExistingDb([kiloDbPath, ...resolveKiloDbCandidates({ homeDir: opts.homeDir })]);
       dbPaths.push({ source: CHAT_STORE_KILO, path: existingPath });
 
       const results = await searchDatabase(existingPath, terms, {
         source: CHAT_STORE_KILO,
         limit,
         maxSessions,
-        useNative: options.useNative,
+        useNative: opts.useNative,
       });
       allResults.push(...results);
     } catch (e) {
-      // Ignore Kilo DB errors
+      // Ignore Kilo DB errors - continue with other sources
     }
   }
 
   // Search Codex
   if (source === SEARCH_ALL || source === CHAT_STORE_CODEX) {
     try {
-      const codexDbPath = options.codexDbPath || resolveCodexDbPath({ homeDir: options.homeDir });
-      const existingPath = await findExistingDb([
-        codexDbPath,
-        ...resolveCodexDbCandidates({ homeDir: options.homeDir }),
-      ]);
+      const codexDbPath = opts.codexDbPath || resolveCodexDbPath({ homeDir: opts.homeDir });
+      const existingPath = await findExistingDb([codexDbPath, ...resolveCodexDbCandidates({ homeDir: opts.homeDir })]);
       dbPaths.push({ source: CHAT_STORE_CODEX, path: existingPath });
 
       const results = await searchDatabase(existingPath, terms, {
         source: CHAT_STORE_CODEX,
         limit,
         maxSessions,
-        useNative: options.useNative,
+        useNative: opts.useNative,
       });
       allResults.push(...results);
     } catch (e) {
-      // Ignore Codex DB errors
+      // Ignore Codex DB errors - continue with other sources
     }
   }
 
@@ -476,9 +497,9 @@ export async function searchAll(options = {}) {
   };
 
   // Add summary if requested
-  if (options.includeSummary && finalResults.length > 0) {
+  if (opts.includeSummary && finalResults.length > 0) {
     response.summary = await summarizeResults(query, finalResults, {
-      maxTokens: options.summaryTokens || DEFAULTS.summaryTokens,
+      maxTokens: opts.summaryTokens,
     });
   }
 
@@ -491,25 +512,26 @@ export async function searchAll(options = {}) {
  * @returns {Promise<SearchResponse>}
  */
 export async function search(options = {}) {
-  const query = options.query || '';
-  const terms = options.terms || extractTerms(query);
-  const source = options.source || SEARCH_ALL;
+  const opts = validateOptions(options);
+  const query = opts.query || '';
+  const terms = opts.terms || extractTerms(query);
+  const source = opts.source || SEARCH_ALL;
 
   if (source === SEARCH_ALL) {
-    return searchAll(options);
+    return searchAll(opts);
   }
 
   const dbPath =
     source === CHAT_STORE_CODEX
-      ? options.codexDbPath || resolveCodexDbPath({ homeDir: options.homeDir })
-      : options.kiloDbPath || resolveKiloDbPath({ homeDir: options.homeDir });
+      ? opts.codexDbPath || resolveCodexDbPath({ homeDir: opts.homeDir })
+      : opts.kiloDbPath || resolveKiloDbPath({ homeDir: opts.homeDir });
 
   const existingPath = await findExistingDb([dbPath]);
   const results = await searchDatabase(existingPath, terms, {
     source,
-    limit: options.limit || DEFAULTS.maxResults,
-    maxSessions: options.maxSessions || DEFAULTS.maxSessions,
-    useNative: options.useNative,
+    limit: opts.limit,
+    maxSessions: opts.maxSessions,
+    useNative: opts.useNative,
   });
 
   const response = {
@@ -519,9 +541,9 @@ export async function search(options = {}) {
     dbPaths: [{ source, path: existingPath }],
   };
 
-  if (options.includeSummary && results.length > 0) {
+  if (opts.includeSummary && results.length > 0) {
     response.summary = await summarizeResults(query, results, {
-      maxTokens: options.summaryTokens || DEFAULTS.summaryTokens,
+      maxTokens: opts.summaryTokens,
     });
   }
 
@@ -537,6 +559,7 @@ export async function search(options = {}) {
  */
 export async function summarizeResults(query, results, opts = {}) {
   const maxTokens = opts.maxTokens || DEFAULTS.summaryTokens;
+  const searchTerms = extractTerms(query);
 
   const json = JSON.stringify(
     results.map((r) => ({
@@ -568,7 +591,7 @@ ${snippets}`;
     return (result.content || '').trim();
   } catch (error) {
     // Fallback summary
-    const lines = [`Searched for: ${terms.join(', ')}`, `Found ${results.length} matching session(s):`, ''];
+    const lines = [`Searched for: ${searchTerms.join(', ')}`, `Found ${results.length} matching session(s):`, ''];
     for (const r of results) {
       lines.push(
         `  - ${r.session_id.slice(0, 8)} (${r.updated}) [${r.source}] ${r.title}\n    ${r.snippet.slice(0, 120)}`
@@ -601,11 +624,11 @@ Usage: node scripts/free-chat-search-agent.mjs "query" [options]
 
 Options:
   --json              Output raw JSON (default: human-readable)
-  --limit N           Max results (default: 20)
-  --max-sessions N    Max sessions to search (default: 50)
+  --limit N           Max results (default: 20, max: 200)
+  --max-sessions N    Max sessions to search (default: 50, max: 500)
   --source NAME       Source: kilo, codex, or all (default: all)
   --summary           Include AI summary
-  --summary-tokens N  Max tokens for summary (default: 400)
+  --summary-tokens N  Max tokens for summary (default: 400, max: 800)
   --no-native         Force sqlite3 CLI instead of better-sqlite3
   --help, -h          Show this help
 
@@ -617,8 +640,16 @@ Examples:
     return 0;
   }
 
-  // Parse simple args
-  const query = args.find((a) => !a.startsWith('--'));
+  // Parse args - query is first non-flag argument, or everything before first flag
+  let query = '';
+  const flagIndices = args.findIndex((a) => a.startsWith('--'));
+  if (flagIndices >= 0) {
+    query = args.slice(0, flagIndices).join(' ');
+  } else {
+    query = args.join(' ');
+  }
+  query = query.trim();
+
   if (!query) {
     console.error('Error: Query required. Use --help for usage.');
     return 1;
@@ -626,7 +657,7 @@ Examples:
 
   const getFlag = (flag, def) => {
     const idx = args.indexOf(flag);
-    return idx >= 0 && args[idx + 1] ? args[idx + 1] : def;
+    return idx >= 0 && args[idx + 1] && !args[idx + 1].startsWith('--') ? args[idx + 1] : def;
   };
 
   const hasFlag = (flag) => args.includes(flag);
