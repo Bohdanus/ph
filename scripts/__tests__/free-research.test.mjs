@@ -342,6 +342,17 @@ describe('fetchAll', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(5);
   });
 
+  it('returns invalid URLs as per-source failures without rejecting the whole batch', async () => {
+    const urls = ['https://valid.example.com', 'not a URL'];
+    const fetchImpl = vi.fn(async () => htmlResponse('<p>ok</p>'));
+
+    const results = await fetchAll(urls, { fetchImpl, maxConcurrency: 2 });
+
+    expect(results.map((result) => result.ok)).toEqual([true, false]);
+    expect(results[1].error).toMatch(/Invalid research URL/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('records failures without dropping other results', async () => {
     const urls = ['https://ok.example.com', 'https://fail.example.com', 'https://also-ok.example.com'];
     const fetchImpl = vi.fn((url) =>

@@ -668,7 +668,13 @@ export async function fetchAll(
       nextIndex += 1;
       if (index >= urls.length) return;
       const url = urls[index];
-      const host = new URL(url).hostname;
+      let host;
+      try {
+        host = new URL(validateResearchUrl(url)).hostname;
+      } catch (error) {
+        results[index] = { url, ok: false, error: error.message };
+        continue;
+      }
 
       // Wait for per-host slot
       let hostCount = hostConcurrency.get(host) || 0;

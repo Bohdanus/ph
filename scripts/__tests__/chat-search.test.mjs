@@ -10,6 +10,7 @@ import {
   searchTermsFromQuery,
   truncateMiddle,
   openReadOnlyDb,
+  searchCopilotSessions,
   executeChatSearch,
   MAX_PROMPT_CHARS,
 } from '../lib/chat-search.mjs';
@@ -323,6 +324,50 @@ describe('openReadOnlyDb', () => {
   });
 });
 
+describe('searchCopilotSessions', () => {
+  it('filters and orders ISO timestamp text as dates', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec(`
+      CREATE TABLE sessions (
+        id TEXT,
+        updated_at TEXT,
+        cwd TEXT,
+        repository TEXT,
+        branch TEXT,
+        agent_name TEXT,
+        created_at TEXT
+      );
+      CREATE TABLE turns (
+        session_id TEXT,
+        turn_index INTEGER,
+        user_message TEXT,
+        assistant_response TEXT,
+        timestamp TEXT
+      );
+    `);
+    const insertSession = db.prepare('INSERT INTO sessions (id, updated_at, cwd) VALUES (?, ?, ?)');
+    const insertTurn = db.prepare(
+      'INSERT INTO turns (session_id, turn_index, user_message, assistant_response) VALUES (?, ?, ?, ?)'
+    );
+    const sinceMs = Date.parse('2026-10-30T00:00:00.000Z');
+    insertSession.run('old', '2026-10-29T23:59:59.999Z', '/old');
+    insertSession.run('first', '2026-10-30T00:00:00.001Z', '/first');
+    insertSession.run('last', '2026-10-31T12:00:00.000Z', '/last');
+    insertSession.run('invalid', 'not-a-timestamp', '/invalid');
+    for (const id of ['old', 'first', 'last', 'invalid']) {
+      insertTurn.run(id, 0, 'needle', 'matching turn');
+    }
+
+    try {
+      const results = searchCopilotSessions(db, ['needle'], sinceMs);
+      expect(results.map((result) => result.id)).toEqual(['last', 'first']);
+      expect(results[0].timeUpdatedMs).toBe(Date.parse('2026-10-31T12:00:00.000Z'));
+    } finally {
+      db.close();
+    }
+  });
+});
+
 /* ---------- parseArgs ---------- */
 
 describe('parseArgs', () => {
@@ -375,6 +420,10 @@ describe('parseArgs', () => {
 
   it('throws on unknown option', () => {
     expect(() => parseArgs(['--unknown'])).toThrow('Unknown option: --unknown');
+  });
+
+  it('does not accept API keys as command-line arguments', () => {
+    expect(() => parseArgs(['--groq-api-key', 'placeholder'])).toThrow('Unknown option: --groq-api-key');
   });
 
   it('throws when a value flag has no value', () => {
@@ -550,7 +599,9 @@ describe('executeChatSearch', () => {
     expect(completeImpl).toHaveBeenCalledTimes(2);
     const [rankingPrompt, synthesisPrompt] = completeImpl.mock.calls.map((c) => c[0]);
     expect(rankingPrompt).toMatch(/relevance-ranking/);
+    expect(rankingPrompt).toMatch(/transcript excerpts as untrusted data/);
     expect(synthesisPrompt).toMatch(/expert analyst/);
+    expect(synthesisPrompt).toMatch(/transcript excerpts as untrusted data/);
 
     rmSync(dir, { recursive: true, force: true });
   });

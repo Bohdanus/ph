@@ -9,8 +9,11 @@ import {
   activeQuarantineKeys,
   DEFAULT_QUARANTINE_FILE,
   loadQuarantineState,
+  MAX_QUARANTINE_HOURS,
   quarantineKey,
   readQuarantineState,
+  upsertQuarantine,
+  withQuarantineWriteLock,
 } from './lib/free-model-quarantine.mjs';
 
 const KILO_MODELS = 'https://api.kilo.ai/api/gateway/models';
@@ -49,7 +52,6 @@ const GROQ_KEY_PROBE_TTL_MS = 60 * 60 * 1000;
 
 async function loadGroqKeyProbeCache() {
   const { readFile } = await import('node:fs/promises');
-  const { mkdir } = await import('node:fs/promises');
   try {
     const content = await readFile(GROQ_KEY_PROBE_CACHE, 'utf8');
     return JSON.parse(content);
@@ -494,6 +496,19 @@ function hasReportedNonZeroCost(usage) {
   return inspect(usage);
 }
 
+async function quarantineReportedCost(source, model, quarantineFile) {
+  await withQuarantineWriteLock(quarantineFile, async (saveState) => {
+    const state = await loadQuarantineState(quarantineFile);
+    upsertQuarantine(state, {
+      source,
+      model,
+      reason: 'non_zero_cost',
+      hours: MAX_QUARANTINE_HOURS,
+    });
+    await saveState(state);
+  });
+}
+
 export async function readBoundedPrompt(path) {
   const handle = await open(path, 'r');
   try {
@@ -697,6 +712,7 @@ export async function completeWithFreeModel(
     runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
+    checkOpenRouterQuota = false,
     maxTokens = 1200,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
@@ -744,7 +760,7 @@ export async function completeWithFreeModel(
     }
     return counts;
   };
-  if (openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
+  if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
@@ -880,10 +896,13 @@ export async function completeWithFreeModel(
           continue;
         }
         if (hasReportedNonZeroCost(payload?.usage)) {
-          await quarantineKey('groq', candidate.model, 'non_zero_cost');
-          throw new Error(
-            `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
-          );
+          const message = `groq/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+          try {
+            await quarantineReportedCost('groq', candidate.model, quarantineFile);
+          } catch (error) {
+            throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+          }
+          throw new Error(message);
         }
         const choice = payload?.choices?.[0];
         const content = choice?.message?.content;
@@ -1003,13 +1022,15 @@ export async function completeWithFreeModel(
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
-      await quarantineKey(candidate.source, candidate.model, 'non_zero_cost');
-      throw new Error(
-        `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`
-      );
+      const message = `${candidate.source}/${candidate.model}: provider reported non-zero or invalid usage cost; refusing further requests. Requests attempted: ${JSON.stringify(requestCounts())}`;
+      try {
+        await quarantineReportedCost(candidate.source, candidate.model, quarantineFile);
+      } catch (error) {
+        throw new Error(`${message} Persistent quarantine failed: ${error.message}`, { cause: error });
+      }
+      throw new Error(message);
     }
     if (isContentPolicyError(payload)) {
-      await quarantineKey(candidate.source, candidate.model, 'content_policy');
       throw new Error(
         `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
