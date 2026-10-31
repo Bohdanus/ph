@@ -6,6 +6,7 @@
  *   import { search, searchAll, searchStream, summarizeResults } from './free-chat-search-agent.mjs';
  *   const results = await searchAll({ query: 'how to fix bug', limit: 20 });
  *   const summary = await summarizeResults('how to fix bug', results);
+ *   const single = await search({ query: 'error', source: 'kilo' });
  *
  * Usage (CLI):
  *   node scripts/free-chat-search-agent.mjs "search query" [--json] [--limit N] [--source kilo|codex|all]
@@ -15,11 +16,6 @@ import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { completeWithFreeModel } from './free-model-pool.mjs';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // Constants - simplified and agent-friendly
 const CHAT_STORE_KILO = 'kilo';
@@ -85,6 +81,20 @@ const STOP_WORDS = new Set([
   'should',
   'could',
 ]);
+
+const VALID_SOURCES = new Set([SEARCH_ALL, CHAT_STORE_KILO, CHAT_STORE_CODEX]);
+
+/**
+ * Validate source value
+ * @param {string} source
+ * @returns {string}
+ */
+function validateSource(source) {
+  if (!VALID_SOURCES.has(source)) {
+    throw new Error(`Invalid source: "${source}". Must be one of: ${[...VALID_SOURCES].join(', ')}`);
+  }
+  return source;
+}
 
 // Types (as JSDoc for IDE support)
 /**
@@ -318,22 +328,49 @@ export async function queryDb(dbPath, sql, params = [], opts = {}) {
           db.close();
         }
       }
-    } catch {
-      // Fall through to CLI
+    } catch (err) {
+      // Fall through to CLI - log for debugging if needed
+      if (opts.debug) console.error('[queryDb] better-sqlite3 failed:', err.message);
     }
   }
 
   // Fallback to sqlite3 CLI - need to inline parameters for CLI
+  // Use a proper parameter substitution that respects SQL string literals
   let cliSql = sql;
   if (params.length > 0) {
-    // Simple inline substitution for CLI fallback (escape single quotes)
     let paramIndex = 0;
-    cliSql = sql.replace(/\?/g, () => {
-      const escaped = params[paramIndex++].replace(/'/g, "''");
-      return `'${escaped}'`;
-    });
+    let inString = false;
+    let stringChar = '';
+    const result = [];
+    
+    for (let i = 0; i < sql.length; i++) {
+      const char = sql[i];
+      const nextChar = sql[i + 1];
+      
+      if (!inString && (char === '"' || char === "'")) {
+        inString = true;
+        stringChar = char;
+        result.push(char);
+      } else if (inString && char === stringChar && nextChar === stringChar) {
+        // Escaped quote inside string
+        result.push(char, char);
+        i++; // Skip next char
+      } else if (inString && char === stringChar) {
+        inString = false;
+        stringChar = '';
+        result.push(char);
+      } else if (!inString && char === '?') {
+        // Replace placeholder with escaped parameter
+        const escaped = params[paramIndex++].replace(/'/g, "''");
+        result.push(`'${escaped}'`);
+      } else {
+        result.push(char);
+      }
+    }
+    
+    cliSql = result.join('');
   }
-
+  
   const sqlitePath = opts.sqlitePath || 'sqlite3';
   const timeoutMs = opts.timeoutMs || DEFAULTS.sqliteTimeoutMs;
 
@@ -422,8 +459,10 @@ export async function searchDatabase(dbPath, terms, opts = {}) {
  * @returns {Object}
  */
 function validateOptions(options) {
+  const source = options.source ? validateSource(options.source) : SEARCH_ALL;
   return {
     ...options,
+    source,
     limit: Math.min(Math.max(options.limit || DEFAULTS.maxResults, 1), 200),
     maxSessions: Math.min(Math.max(options.maxSessions || DEFAULTS.maxSessions, 10), 500),
     summaryTokens: Math.min(Math.max(options.summaryTokens || DEFAULTS.summaryTokens, 1), 800),
@@ -439,7 +478,7 @@ export async function searchAll(options = {}) {
   const opts = validateOptions(options);
   const query = opts.query || '';
   const terms = opts.terms || extractTerms(query);
-  const source = opts.source || SEARCH_ALL;
+  const source = validateSource(opts.source || SEARCH_ALL);
   const limit = opts.limit;
   const maxSessions = opts.maxSessions;
 
@@ -515,7 +554,7 @@ export async function search(options = {}) {
   const opts = validateOptions(options);
   const query = opts.query || '';
   const terms = opts.terms || extractTerms(query);
-  const source = opts.source || SEARCH_ALL;
+  const source = validateSource(opts.source || SEARCH_ALL);
 
   if (source === SEARCH_ALL) {
     return searchAll(opts);
@@ -640,7 +679,7 @@ Examples:
     return 0;
   }
 
-  // Parse args - query is first non-flag argument, or everything before first flag
+  // Parse args - query is everything before first flag
   let query = '';
   const flagIndices = args.findIndex((a) => a.startsWith('--'));
   if (flagIndices >= 0) {
@@ -662,13 +701,37 @@ Examples:
 
   const hasFlag = (flag) => args.includes(flag);
 
+  const source = getFlag('--source', 'all');
+  if (!VALID_SOURCES.has(source)) {
+    console.error(`Error: Invalid --source "${source}". Must be one of: ${[...VALID_SOURCES].join(', ')}`);
+    return 1;
+  }
+
+  const limit = parseInt(getFlag('--limit', '20'), 10);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    console.error('Error: --limit must be an integer between 1 and 200');
+    return 1;
+  }
+
+  const maxSessions = parseInt(getFlag('--max-sessions', '50'), 10);
+  if (!Number.isInteger(maxSessions) || maxSessions < 10 || maxSessions > 500) {
+    console.error('Error: --max-sessions must be an integer between 10 and 500');
+    return 1;
+  }
+
+  const summaryTokens = parseInt(getFlag('--summary-tokens', '400'), 10);
+  if (!Number.isInteger(summaryTokens) || summaryTokens < 1 || summaryTokens > 800) {
+    console.error('Error: --summary-tokens must be an integer between 1 and 800');
+    return 1;
+  }
+
   const options = {
     query,
-    limit: parseInt(getFlag('--limit', '20'), 10),
-    maxSessions: parseInt(getFlag('--max-sessions', '50'), 10),
-    source: getFlag('--source', 'all'),
+    limit,
+    maxSessions,
+    source,
     includeSummary: hasFlag('--summary'),
-    summaryTokens: parseInt(getFlag('--summary-tokens', '400'), 10),
+    summaryTokens,
     useNative: !hasFlag('--no-native'),
     outputJson: hasFlag('--json'),
   };
