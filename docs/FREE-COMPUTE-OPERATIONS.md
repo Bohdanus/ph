@@ -86,6 +86,22 @@ account dashboard confirms Free tier; an API key alone is not evidence of free p
 This enables Groq in the automatic pool, but another eligible source may answer first; check the
 result's provider/model before treating a run as a Groq smoke test.
 
+**Groq GPT-OSS-120B is very fast** — use for bulk text sweeps (chat search, chat-history processing,
+large prompt batches). It is not a reasoning model; do not use for deep reasoning or code review.
+Latency is typically sub-second for short prompts.
+
+### No local-model fallback (Jan removed)
+
+A local `Jan-v3.5-4B-Q4_K_XL` server was previously tested (commit 48848017). It ran on `127.0.0.1:6767`
+and was **very slow**: a bounded review prompt of ~4.1K input tokens took ~32 seconds, ended with
+`finish_reason: length`, and included a false claim. The review was unusable. Local inference avoids
+provider API charges but uses host resources; trust output only when complete and verified.
+
+**No `--local-only` option exists and none is needed.** There are no secrets to hide in chat-history
+search or text sweeps — the data is already local. Groq GPT-OSS-120B provides equivalent privacy
+(no data leaves the Groq API request) with far better speed and reliability. The inference pool
+already prefers cloud free models (Kilo, OpenRouter, Groq) over any local option.
+
 ## Runner commands
 
 ```sh
