@@ -287,7 +287,7 @@ function buildSessionScope(updatedColumn, directoryColumn, { sinceMs, directory,
     conditions.push(
       timeUnit === 'milliseconds'
         ? `${updatedColumn} >= ${since.getTime()}`
-        : `datetime(${updatedColumn}) >= datetime('${escapeSqlValue(since.toISOString())}')`
+        : `julianday(${updatedColumn}) >= julianday('${escapeSqlValue(since.toISOString())}')`
     );
   }
   if (directory !== undefined) {
@@ -484,10 +484,19 @@ export async function queryKiloDb(
             rejectP(new Error('SQLite output is not an array'));
             return;
           }
-          const validRows = parsed.filter(
-            (row) => row && typeof row === 'object' && typeof row.session_id === 'string'
+          const invalidRowIndex = parsed.findIndex(
+            (row) =>
+              !row ||
+              typeof row !== 'object' ||
+              Array.isArray(row) ||
+              typeof row.session_id !== 'string' ||
+              row.session_id.length === 0
           );
-          resolveP(validRows);
+          if (invalidRowIndex !== -1) {
+            rejectP(new Error(`SQLite output row ${invalidRowIndex + 1} has no valid session_id`));
+            return;
+          }
+          resolveP(parsed);
         } catch (error) {
           rejectP(new Error(`SQLite output is not valid JSON: ${error.message}`));
         }
@@ -819,8 +828,8 @@ function usage() {
     '  --directory PATH         Limit to this workspace directory and its descendants\n' +
     '  --offset N               Skip N candidate sessions per source page (default 0)\n' +
     '  --verbose, -v            Include a diagnostic header and the directory, source, and snippet_full fields\n' +
-    '  --no-summarize           Skip free-model summarization; return raw JSON results\n' +
-    '  --local-only             Do not use a model; return local JSON results\n' +
+    '  --no-summarize           Skip model inference; return raw JSON results\n' +
+    '  --local-only             Alias for --no-summarize\n' +
     '  --probe-openrouter-quota Check OpenRouter daily free counter before routing\n' +
     '\n' +
     'Discovers the Kilo SQLite DB (kilo db path or ~/.local/share/kilo/kilo.db),\n' +

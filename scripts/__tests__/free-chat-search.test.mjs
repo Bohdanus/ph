@@ -233,16 +233,16 @@ describe('buildCodexSearchQuery', () => {
   });
 
   it('applies normalized date and directory-scope filters before paging', () => {
-    const sinceMs = Date.parse('2026-10-21T00:00:00Z');
+    const sinceMs = Date.parse('2026-10-21T01:00:00.500Z');
     const sql = buildCodexSearchQuery(['test'], {
       maxSessions: 25,
       offset: 50,
       sinceMs,
       directory: '/Users/test/ph',
     });
-    expect(sql).toContain("datetime(updated_at) >= datetime('2026-10-21T00:00:00.000Z')");
+    expect(sql).toContain("julianday(updated_at) >= julianday('2026-10-21T01:00:00.500Z')");
     expect(sql).toContain("replace(coalesce(cwd, ''), char(92), '/') = '/Users/test/ph'");
-    expect(sql.indexOf('WHERE datetime(updated_at)')).toBeLessThan(sql.indexOf('ORDER BY updated_at'));
+    expect(sql.indexOf('WHERE julianday(updated_at)')).toBeLessThan(sql.indexOf('ORDER BY updated_at'));
     expect(sql).toContain('LIMIT 25 OFFSET 50');
   });
 
@@ -830,7 +830,23 @@ describe('queryKiloDb', () => {
     await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).rejects.toThrow('SQLite output is not valid JSON');
   });
 
-  it('returns an empty array when stdout is not valid JSON', async () => {
+  it('returns an empty array for valid empty SQLite results', async () => {
+    const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout: '[]', code: 0 }));
+    await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).resolves.toEqual([]);
+  });
+
+  it.each([
+    ['missing session_id', JSON.stringify([{ title: 'unusable row' }])],
+    ['non-string session_id', JSON.stringify([{ session_id: 42 }])],
+    ['non-object row', JSON.stringify([null])],
+  ])('rejects malformed SQLite rows (%s)', async (_description, stdout) => {
+    const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout, code: 0 }));
+    await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).rejects.toThrow(
+      'SQLite output row 1 has no valid session_id'
+    );
+  });
+
+  it('rejects invalid JSON stdout', async () => {
     const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout: 'not json', code: 0 }));
     await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).rejects.toThrow('SQLite output is not valid JSON');
   });
