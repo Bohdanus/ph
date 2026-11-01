@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { open, stat, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { completeWithFreeModel } from './free-model-pool.mjs';
+import { sanitizeErrorMessage, sanitizeForLogging } from './lib/secrets.mjs';
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_PROMPT_FILE_BYTES = 4 * 1024;
@@ -488,7 +489,7 @@ export async function searchAllSources(
         successfulQueries += 1;
       } catch (error) {
         queryErrors.push(error);
-        stderr.write?.(`Kilo DB query failed: ${error.message}\n`);
+        stderr.write?.(`Kilo DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
       }
     }
   } else {
@@ -513,7 +514,7 @@ export async function searchAllSources(
         successfulQueries += 1;
       } catch (error) {
         queryErrors.push(error);
-        stderr.write?.(`Codex DB query failed: ${error.message}\n`);
+        stderr.write?.(`Codex DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
       }
     }
   } else {
@@ -777,7 +778,7 @@ export async function main(
   try {
     prompt = await readPrompt(parsed, { openFn });
   } catch (error) {
-    stderr.write(`${error.message}\n`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 2;
   }
 
@@ -801,12 +802,12 @@ export async function main(
         completeImpl,
         maxTokens: 200,
         onCatalogError: (source, error) =>
-          stderr.write(`Term expansion via free model failed: ${source}: ${error.message}\n`),
-        onError: (error) => stderr.write(`Term expansion failed: ${error.message}\n`),
+          stderr.write(`Term expansion via free model failed: ${source}: ${sanitizeErrorMessage(error.message)}\n`),
+        onError: (error) => stderr.write(`Term expansion failed: ${sanitizeErrorMessage(error.message)}\n`),
         ...completeOpts,
       });
     } catch (error) {
-      stderr.write(`Term expansion failed: ${error.message}\n`);
+      stderr.write(`Term expansion failed: ${sanitizeErrorMessage(error.message)}\n`);
       terms = defaultTerms(prompt);
     }
     stderr.write(`Search terms: ${terms.join(', ')}\n`);
@@ -849,7 +850,7 @@ export async function main(
       usedDbPaths = [kiloDbPath];
     }
   } catch (error) {
-    stderr.write(`Database query failed: ${error.message}\n`);
+    stderr.write(`Database query failed: ${sanitizeErrorMessage(error.message)}\n`);
     return 4;
   }
 
@@ -865,8 +866,8 @@ export async function main(
       maxTokens: parsed.maxSummaryTokens,
       terms,
       onCatalogError: (source, error) =>
-        stderr.write(`Summarization via free model failed: ${source}: ${error.message}\n`),
-      onError: (error) => stderr.write(`Summarization failed: ${error.message}\n`),
+        stderr.write(`Summarization via free model failed: ${source}: ${sanitizeErrorMessage(error.message)}\n`),
+      onError: (error) => stderr.write(`Summarization failed: ${sanitizeErrorMessage(error.message)}\n`),
       ...completeOpts,
     });
   }
@@ -895,7 +896,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }
