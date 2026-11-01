@@ -110,6 +110,28 @@ IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. T
 accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
 `npm run free:quarantine -- list|add|release|prune`.
 
+### Chat-history search
+
+`npm run free:chat-search -- --help` lists the search options. By default, the tool uses free
+inference to extract terms and summarize results from the local Kilo and VS Code chat databases.
+In model mode, the query and matching excerpts are sent to the configured free provider after
+best-effort redaction.
+Redaction catches common credential formats and assignments, but is best-effort, not a secret
+scanner. Use `--local-only` to avoid all model calls, or `--no-summarize` for local term extraction
+and raw JSON results. Local results may still contain sensitive conversation text; protect output
+files and avoid copying them into shared logs.
+
+Use `--since YYYY-MM-DD` for an inclusive UTC date boundary, or an ISO-8601 timestamp with an
+explicit timezone. `--directory PATH` restricts results to that workspace and descendants. Results
+are paged by candidate sessions (before text matching), independently for each source, ordered by
+update time and session ID. Thus a page can contain fewer matches than `--max-sessions`; use the
+reported next `--offset` to continue, and keep the same date and directory filters between pages.
+
+```sh
+npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 \
+  --directory /path/to/workspace --max-sessions 100 --local-only
+```
+
 ### Reasoning-model token budgets
 
 Kilo Nemotron 3 Ultra uses the Kilo CLI's `high` variant. The CLI has no provider-side
