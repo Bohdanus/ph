@@ -62,10 +62,9 @@ Provider rows are docs research unless an observed result is explicitly stated.
 | Cloudflare Workers AI            | 10,000 neurons/day on Workers Free.                                    | Neurons are not tokens; some models require paid Workers. [Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)                                                                      |
 | Hugging Face Inference Providers | No free monthly credits.                                               | Requires purchased credits or PRO. [Pricing](https://huggingface.co/docs/inference-providers/pricing)                                                                                                    |
 
-**Local Jan removed** — tested 2026-10-29: ~32s for 4.1K tokens, truncated output, and a false
-claim. Chat-history search supports `--local-only`; otherwise, query text and matching excerpts
-are sent to the configured free provider after best-effort redaction. Free inference is not local
-processing. See [`FREE-COMPUTE-OPERATIONS.md`](FREE-COMPUTE-OPERATIONS.md#chat-history-search).
+**Local Jan removed:** testing took ~32s for 4.1K tokens and produced truncated output and a false
+claim. Chat-search model mode sends query text and excerpts to a provider; use `--local-only` for
+local search. See [chat-search details](FREE-COMPUTE-OPERATIONS.md#chat-history-search).
 
 ## Usage notes
 

@@ -153,11 +153,10 @@ hierarchy.
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
 | `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
 
-They are still where they are because `scripts/lib/worktree-inventory/curated.mjs`
-keys on `TEST_ISSUES.md` as `ref:` values, and `../AUDIT-STASHED-DOCS.md` cross-references
-it by name. Moving them is a change to that data file plus a sweep of every tracked
-markdown file that names them, which is why it belongs in its own worktree rather
-than inside a documentation change. See `HANDOFF.md` §139.
+`scripts/lib/worktree-inventory/curated.mjs` still carries three `ref:` entries
+pointing to `TEST_ISSUES.md` (which is now deleted — those refs are stale and
+should be cleaned in a follow-up), and `../AUDIT-STASHED-DOCS.md`
+cross-references it by name.
 
 Do not hand-maintain a count of how many files mention them here. That number was
 in this sentence once, was wrong within a day, and `git grep` is the answer when

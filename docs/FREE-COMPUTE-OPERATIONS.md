@@ -86,14 +86,10 @@ account dashboard confirms Free tier; an API key alone is not evidence of free p
 This enables Groq in the automatic pool, but another eligible source may answer first; check the
 result's provider/model before treating a run as a Groq smoke test.
 
-**Groq GPT-OSS-120B is very fast** — use for bulk text sweeps (chat search, chat-history processing,
-large prompt batches). Not a reasoning model; do not use for deep reasoning or code review.
-Latency is typically sub-second for short prompts.
+**Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
+relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
 
-**No local-model fallback.** Jan `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017): ~32s for
-4.1K tokens, truncated output, and a false claim. It was unusable. Chat-history search supports
-`--local-only`; without it, the query and matching excerpts are sent to a configured free provider
-after best-effort redaction. Free inference is not local processing.
+**No local-model fallback:** Jan was slow and unreliable (commit 48848017).
 
 ## Runner commands
 
@@ -121,24 +117,14 @@ accepts at most 20 public HTTPS URLs and writes only its condensed result. Quara
 
 ### Chat-history search
 
-`npm run free:chat-search -- --help` lists the search options. By default, the tool uses free
-inference to extract terms and summarize results from the local Kilo and VS Code chat databases.
-In model mode, the query and matching excerpts are sent to the configured free provider after
-best-effort redaction.
-Redaction catches common credential formats and assignments, but is best-effort, not a secret
-scanner. Use `--local-only` to avoid all model calls, or `--no-summarize` for local term extraction
-and raw JSON results. Local results may still contain sensitive conversation text; protect output
-files and avoid copying them into shared logs.
-
-Use `--since YYYY-MM-DD` for an inclusive UTC date boundary, or an ISO-8601 timestamp with an
-explicit timezone. `--directory PATH` restricts results to that workspace and descendants. Results
-are paged by candidate sessions (before text matching), independently for each source, ordered by
-update time and session ID. Thus a page can contain fewer matches than `--max-sessions`; use the
-reported next `--offset` to continue, and keep the same date and directory filters between pages.
+Searches local Kilo and Codex databases. Model mode sends the query and excerpts to a free provider
+after best-effort redaction; `--local-only` and `--no-summarize` make no model calls. Local output
+may contain sensitive text. `--since DATE` and `--directory PATH` scope results; `--offset` pages
+candidate sessions per source before matching. Keep filters fixed between pages and use the printed
+next offset. Run `npm run free:chat-search -- --help` for options.
 
 ```sh
-npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 \
-  --directory /path/to/workspace --max-sessions 100 --local-only
+npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 --local-only
 ```
 
 ### Reasoning-model token budgets
