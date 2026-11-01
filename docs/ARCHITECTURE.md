@@ -271,13 +271,15 @@ Promotion replaces the mutable canvas with an immutable `ImageBitmap` —
 `materializePresentationBitmap()`, applied by the reducer's
 `PROMOTE_LAYER_PRESENTATIONS` arm in `StoreContext.tsx`.
 
-`DocumentPresentationScope` owns them, and is **provider-scoped rather than
-document-scoped** — the rationale is the comment above the `useMemo` that builds
-one `presentationScope` in `StoreContext.tsx`. It closes only
-the bitmaps it created — `closePresentationBitmap()` — releases on document teardown
-— `DocumentPresentationScope.releaseDocument()` — and
-retires unreferenced ones against a liveness thunk —
-`DocumentPresentationScope.retireUnreferenced()`.
+`DocumentPresentationScope` tracks published bitmap identities and their document
+owners, and is **provider-scoped rather than document-scoped** — the rationale is
+the comment above the `useMemo` that builds one `presentationScope` in
+`StoreContext.tsx`. Document teardown uses
+`DocumentPresentationScope.releaseDocument()`, and normal transitions retire only
+unreferenced identities through `DocumentPresentationScope.retireUnreferenced()`.
+When multiple documents publish the same bitmap, its leases and bitmap remain live
+until the final owning document releases it; same-id replacement retires against
+the replacement record because the document-change effect does not run.
 
 The guard that makes a promotion safe is `layersDifferOnlyByPresentation()`
 over `PRESENTATION_FIELDS = ['bitmap', 'tmpCanvas', 'presentationBounds']`: a
