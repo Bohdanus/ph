@@ -825,13 +825,8 @@ describe('queryKiloDb', () => {
     expect(result).toEqual(sampleDbRows);
   });
 
-  it('rejects empty stdout as malformed SQLite output', async () => {
+  it('returns an empty array when sqlite3 emits no output for a valid empty result', async () => {
     const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout: '', code: 0 }));
-    await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).rejects.toThrow('SQLite output is not valid JSON');
-  });
-
-  it('returns an empty array for valid empty SQLite results', async () => {
-    const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout: '[]', code: 0 }));
     await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).resolves.toEqual([]);
   });
 

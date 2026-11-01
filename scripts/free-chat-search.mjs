@@ -479,6 +479,10 @@ export async function queryKiloDb(
           return;
         }
         try {
+          if (stdout.length === 0) {
+            resolveP([]);
+            return;
+          }
           const parsed = JSON.parse(stdout);
           if (!Array.isArray(parsed)) {
             rejectP(new Error('SQLite output is not an array'));
