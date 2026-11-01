@@ -132,6 +132,12 @@ async function displayMetrics(page: Page, documentSize: Size): Promise<DisplayMe
     rectY: containerViewport.y,
     outerWidth: containerViewport.width,
     outerHeight: containerViewport.height,
+    scale: Math.min(containerViewport.width / documentSize.width, containerViewport.height / documentSize.height),
+  };
+  const expectedFitWithOffsets = {
+    ...expectedFit,
+    offsetX: (containerViewport.width - documentSize.width * expectedFit.scale) / 2,
+    offsetY: (containerViewport.height - documentSize.height * expectedFit.scale) / 2,
   };
   const fitSnapshot = async () => {
     const fit = await publishedFit(page);
@@ -142,9 +148,14 @@ async function displayMetrics(page: Page, documentSize: Size): Promise<DisplayMe
       rectY: fit.rectY,
       outerWidth: fit.outerWidth,
       outerHeight: fit.outerHeight,
+      scale: fit.scale,
+      offsetX: fit.offsetX,
+      offsetY: fit.offsetY,
     };
   };
-  await expect.poll(fitSnapshot, 'the app-published fit matches the current document and canvas').toEqual(expectedFit);
+  await expect
+    .poll(fitSnapshot, 'the app-published fit matches the current document and canvas')
+    .toEqual(expectedFitWithOffsets);
   const fit = await publishedFit(page);
   if (fit.scale <= 0 || fit.viewZoom <= 0) {
     throw new Error(`The app published an invalid display scale: ${JSON.stringify(fit)}`);
