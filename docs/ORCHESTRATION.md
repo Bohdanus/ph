@@ -534,6 +534,12 @@ repo:state` is what reports an operation in progress, and it separates the two s
   what makes it misleading. Vite does **not** walk up, so fonts, images and AVIF
   assets from the ancestor checkout 404 in a worktree. Run `npm ci` there before
   debugging an asset that will not load.
+- **A symlinked `node_modules` is a shared toolchain, not an isolated install.**
+  Its `.bin` entries and packages resolve from the symlink target, while child
+  processes still use the worktree as their working directory. Before replacing
+  such a link with an install, remove the link itself; do not let an installer
+  mutate the target. Tests that write through resolved dependency paths must
+  compare physical ownership and must not edit an ancestor checkout's `node_modules`.
 - **Every worktree's dev server wants :5173, and that used to be the reason e2e lied.** A bare
   `npx playwright test` in a worktree attached to whichever server got to :5173 first — another
   checkout — and passed for the wrong reason; `TEST-FLAKES.md` §10 is a mutation campaign that
@@ -607,6 +613,14 @@ a report that answered them with exit 0 would be the surface a person trusts mor
 **Run it before you believe the repository is quiet.** It exits non-zero when
 anything is in progress, and it is the check to run before a sweep, before a landing,
 and before you conclude that a worktree is finished.
+
+**A non-zero report is repository-wide, not a command to stop all independent work.**
+Read the exact worktree paths and operation markers it reports. Do not run
+`--abort`, clear markers, resolve conflicts, or otherwise alter another worktree
+without first establishing its owner and following that worktree's recovery
+procedure. A blocked landing remains blocked; unrelated research and implementation
+can continue in clean task worktrees. Re-run `repo:state` before each landing attempt,
+because resolving one operation does not prove that the rest of the fleet is clear.
 
 **It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
 worktree, so it scales with the fleet — measured in seconds on a fleet of this
@@ -753,7 +767,10 @@ a disposition.
 as `main`. In particular, a branch can contain merge commits whose resolution added or removed
 content while `git cherry main <branch>` prints no unmatched patches. For a non-ancestor branch,
 inspect its parents, `git diff main <branch>`, and the relevant files even when the cherry count is
-zero. An unknown comparison remains unknown.
+zero. An ancestor commit is historical evidence, not proof that its behavior is still present in
+the current `main` tree: a later commit or merge resolution may have reverted it. Before calling
+work landed, inspect the current call sites and behavior in `main`; when a specific implementation
+matters, compare the relevant files or tests on both trees. An unknown comparison remains unknown.
 
 Some local or remote refs preserve an upstream or earlier implementation rather than task work for
 the current application. Missing patches alone do not make such a ref a merge candidate. Verify its
