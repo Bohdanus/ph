@@ -100,12 +100,32 @@ result's provider/model before treating a run as a Groq smoke test.
 **Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
 relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
 
-**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) —
-~32s for 4.1K tokens, truncated output, false claims. Unusable. Chat-history search reads the
-database locally, but model mode sends the query for term extraction and matched snippets for
-summarization to the selected provider. Redaction is best-effort; do not summarize sensitive history
-with a cloud provider. Use `--local-only` or `--no-summarize` to return raw local results without
-model inference.
+**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq provides equivalent privacy with far better speed/reliability. No `--local-only` option exists; none needed — chat-history search data is already local, no secrets to hide.
+
+## Free Subagent Launch Enforcement (NEW)
+
+Mandatory pre-launch checks for ALL subagents:
+
+```javascript
+import { validateSubagentConfig } from '../scripts/free-model-validator.mjs';
+await validateSubagentConfig({ model, provider, maxSubagents: 5 });
+```
+
+| Check                            | Module                     | Failure =        |
+| -------------------------------- | -------------------------- | ---------------- |
+| Model + provider together        | `free-model-validator.mjs` | Hard stop        |
+| Model in verified free catalog   | `validateFreeModel()`      | Hard stop        |
+| Known paid patterns rejected     | `isKnownPaidModel()`       | Hard stop        |
+| OpenRouter quota >= maxSubagents | `probeOpenRouterQuota()`   | Hard stop        |
+| Provider credentials present     | ENV check                  | Hard stop        |
+| Max 15 concurrent free subagents | Config                     | Hard stop        |
+| No fallback to paid              | `free-subagent-retry.mjs`  | Exhausted = stop |
+
+New modules:
+
+- `scripts/free-model-validator.mjs` — Programmatic free model validation
+- `scripts/free-subagent-launcher.mjs` — Wrapper enforcing free-only routing
+- `scripts/free-subagent-retry.mjs` — Rate-limit aware retry with exponential backoff
 
 ## Runner commands
 

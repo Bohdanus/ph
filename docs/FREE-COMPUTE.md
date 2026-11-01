@@ -77,6 +77,23 @@ summarize sensitive history with a cloud provider. Use `--local-only` or `--no-s
 model inference and keep results local. See
 [chat-search details](FREE-COMPUTE-OPERATIONS.md#chat-history-search).
 
+## Free Subagent Launch Enforcement (NEW)
+
+Before launching ANY subagent, the following checks are MANDATORY and programmatically enforced:
+
+1. **Model + Provider required together** — `validateSubagentConfig({ model, provider, maxSubagents })` from `scripts/free-model-validator.mjs` throws if missing.
+2. **Model must be in verified free catalog** — `validateFreeModel()` checks live catalog; known paid patterns (GPT, Claude, etc.) are rejected by `isKnownPaidModel()`.
+3. **OpenRouter quota checked before fan-out** — `probeOpenRouterQuota()` called pre-launch; fan-out aborted if quota < maxSubagents.
+4. **Max 15 concurrent free subagents** — Configurable cap, default 15.
+5. **Provider credentials verified** — Keys required for OpenRouter/Groq.
+6. **No fallback to paid models** — Exhausted free sources = hard stop; use `withFreeRetry()` for rate-limit handling.
+
+New modules:
+
+- `scripts/free-model-validator.mjs` — Programmatic free model validation
+- `scripts/free-subagent-launcher.mjs` — Wrapper enforcing free-only routing
+- `scripts/free-subagent-retry.mjs` — Rate-limit aware retry with exponential backoff
+
 ## Usage notes
 
 - OpenRouter credentials are read from `OPENROUTER_API_KEY` in the environment. Never put keys in files, arguments, or logs, and never rotate accounts to bypass limits.
