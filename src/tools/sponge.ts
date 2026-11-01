@@ -93,19 +93,17 @@ export const SPONGE_FLOW_DEFAULT = 50;
  *
  * **This app has no Grayscale document mode, so that branch does not exist and is NOT
  * implemented here.** `Image > Mode` is not a surface this application has; `color`'s
- * `grayscale` is a per-layer filter amount, not a document mode, and a layer made grey by
- * it is still an RGB layer — where Photoshop's own rule does not apply, because on an RGB
- * pixel with no chroma the chroma scale below is an exact no-op. Implementing the tonal
- * pivot anyway would make this tool behave the way Photoshop behaves in a mode this app
- * does not have, which is a deviation `docs/OVERRIDES.md` would have to authorise and no
- * agent may authorise. Recorded in `HANDOFF.md` instead.
+ * `grayscale` is a per-layer filter amount, not a document mode. Grayscale PSDs are also
+ * converted to RGB without retaining their source mode, so the app cannot distinguish those
+ * imports from ordinary RGB gray. A tonal pivot on every achromatic RGB pixel would therefore
+ * be wrong; supporting the imported case requires document-mode metadata, which the app does
+ * not have. `docs/FEATURES.md` records this capability boundary, and the Sponge research notes
+ * record the Photoshop-specific caveat.
  */
 /**
  * NOT READ BY ANY PRODUCT CODE, and that is deliberate. It is the Adobe sentence's own number,
- * published as a constant so the unimplemented rule has one named anchor instead of a number
- * repeated in prose, and `HANDOFF.md` §147 cites it as the record of the branch that is absent.
- * Deleting it loses that anchor; wiring it up would be implementing a mode this app does not
- * have, which is the thing the comment above refuses.
+ * kept as a named anchor for the researched but unsupported grayscale-mode pivot. It remains
+ * unused until the app retains document-mode metadata.
  */
 export const SPONGE_MIDDLE_GREY = 128;
 

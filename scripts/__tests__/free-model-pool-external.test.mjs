@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -10,6 +10,7 @@ import {
   probeOpenRouterQuota,
   zeroPriced,
 } from '../free-model-pool.mjs';
+import { readQuarantineState } from '../lib/free-model-quarantine.mjs';
 
 const completeWithFreeModel = async (prompt, options = {}) => {
   const temporaryDirectory = options.quarantineFile ? null : await mkdtemp(join(tmpdir(), 'free-model-pool-test-'));
@@ -409,6 +410,51 @@ describe('OpenRouter pre-routing quota check', () => {
       checkOpenRouterQuota: true,
     });
     expect(result).toMatchObject({ source: 'openrouter', model: 'o1:free' });
+  });
+
+  it('fails open when the quota endpoint returns HTTP 429', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'o1:free',
+        choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('o1')],
+      keyInfo: () => ({ ok: false, status: 429 }),
+      chat,
+    });
+
+    await expect(
+      completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', checkOpenRouterQuota: true })
+    ).resolves.toMatchObject({ source: 'openrouter', model: 'o1:free' });
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops routing after a content-policy rejection without pretending to persist a quarantine', async () => {
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), 'free-model-policy-test-'));
+    const quarantineFile = join(temporaryDirectory, 'quarantine.json');
+    const chat = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: { code: 'content_policy_violation', message: 'content was rejected by policy' },
+      }),
+    });
+    const fetchImpl = catalogFetch({ openrouter: [openRouterRow('o1')], chat });
+
+    try {
+      await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk', quarantineFile })).rejects.toThrow(
+        /content policy rejected or filtered this request/
+      );
+      expect(chat).toHaveBeenCalledTimes(1);
+      await expect(readQuarantineState(quarantineFile)).resolves.toMatchObject({ entries: {} });
+      await expect(readFile(quarantineFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 });
 
