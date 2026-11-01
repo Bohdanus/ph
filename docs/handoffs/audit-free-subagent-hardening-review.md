@@ -1,7 +1,7 @@
 # Review: free subagent hardening
 
-**Branch:** `audit/free-subagent-hardening-20261102`  
-**Base:** `b8426757a4e4f0ef952fbad060c63e87b9ff24ad`  
+**Branch:** `audit/free-subagent-hardening-20261102`
+**Base:** `b8426757a4e4f0ef952fbad060c63e87b9ff24ad`
 **Implementation commit reviewed:** `7bc8b200c79ebb2e5aa38ea921ec860be2affdde`
 
 ## Scope and outcome
