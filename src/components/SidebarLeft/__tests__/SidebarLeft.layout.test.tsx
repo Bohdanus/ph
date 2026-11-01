@@ -75,7 +75,9 @@ describe('SidebarLeft layout toggle', () => {
     // panel's double chevrons face right in one column and left once the toolbar is two columns.
     expect(glyphOf(toggle), 'one column: the chevrons point the way pressing this grows the rail').toBe('»');
     // One `<ul>` per toolbar section; the two-column rail interleaves them into one grid.
-    expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(toolbarMap.length);
+    expect(toolbar.querySelectorAll(':scope > ul:not([data-toolbar-fit-overflow-list])')).toHaveLength(
+      toolbarMap.length
+    );
     expect(toolbar.querySelector('ul')).toHaveClass('grid-cols-1');
 
     act(() => {
@@ -86,7 +88,7 @@ describe('SidebarLeft layout toggle', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
     expect(glyphOf(toggle), 'two columns: and now the other way, because the rail shrinks back').toBe('«');
     expect(toolbar.querySelector('ul')).toHaveClass('grid-cols-2');
-    expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(1);
+    expect(toolbar.querySelectorAll(':scope > ul:not([data-toolbar-fit-overflow-list])')).toHaveLength(1);
 
     // The point of two columns, stated as the relation it exists to produce: the same tools
     // in less height, bought with width — which is the whole reason the toggle is there, and

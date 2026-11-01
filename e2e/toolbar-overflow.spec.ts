@@ -91,21 +91,21 @@ test.describe('Left tool rail overflow', () => {
 
     // A tile with nothing to hold is noise, so it is not rendered at all rather than
     // rendered disabled: a permanent dead affordance trains people to look past it.
-    await expect(overflowTile(page)).toHaveCount(0);
-    await expect(page.locator('[data-testid^="tool-button-"]')).toHaveCount(toolbarMap.flat().length);
+    await expect(overflowTile(page)).toBeHidden();
+    await expect(page.locator('[data-testid^="tool-button-"]:visible')).toHaveCount(toolbarMap.flat().length);
   });
 
   test('a short rail collapses a SUFFIX of the rows, and keeps the top', async ({ page }) => {
     await open(page, TALL);
     const before = await page
-      .locator('[data-testid^="tool-button-"]')
+      .locator('[data-testid^="tool-button-"]:visible')
       .evaluateAll((tiles) => tiles.map((tile) => (tile as HTMLElement).dataset.testid?.replace('tool-button-', '')));
 
     await page.setViewportSize(SHORT);
     await expect(overflowTile(page)).toBeVisible();
 
     const after = await page
-      .locator('[data-testid^="tool-button-"]')
+      .locator('[data-testid^="tool-button-"]:visible')
       .evaluateAll((tiles) => tiles.map((tile) => (tile as HTMLElement).dataset.testid?.replace('tool-button-', '')));
 
     // A PREFIX, and a strictly shorter one. The top of a tool rail is the most-used end, and
@@ -128,7 +128,7 @@ test.describe('Left tool rail overflow', () => {
     // the two-column rail exists to avoid, reintroduced by the tile.
     for (const size of [TALL, SHORT, { width: 1024, height: 500 }, { width: 900, height: 640 }]) {
       await open(page, size);
-      const hasOverflowTile = (await overflowTile(page).count()) > 0;
+      const hasOverflowTile = await overflowTile(page).isVisible();
       if (hasOverflowTile) await openOverflowFlyout(page);
 
       // Counted in TOOLS, not in tiles, and the difference is the whole trap: a tile is a
@@ -136,7 +136,7 @@ test.describe('Left tool rail overflow', () => {
       // calling the result a reachability count is a comparison between two different units.
       let toolsOnTiles = 0;
       for (const group of ALL_GROUPS) {
-        const hasTile = (await page.getByTestId(`tool-button-${group.name}`).count()) > 0;
+        const hasTile = await page.getByTestId(`tool-button-${group.name}`).isVisible();
         if (hasTile) toolsOnTiles += group.tools.length;
         for (const tool of group.tools) {
           const inMenu = hasOverflowTile ? (await page.getByTestId(itemTestId(tool)).count()) > 0 : false;
@@ -196,8 +196,8 @@ test.describe('Left tool rail overflow', () => {
 
     await page.setViewportSize(TALL);
 
-    await expect(overflowTile(page)).toHaveCount(0);
-    await expect(page.locator('[data-testid^="tool-button-"]')).toHaveCount(toolbarMap.flat().length);
+    await expect(overflowTile(page)).toBeHidden();
+    await expect(page.locator('[data-testid^="tool-button-"]:visible')).toHaveCount(toolbarMap.flat().length);
   });
 
   test('the rail no longer makes the page scroll', async ({ page }) => {
@@ -261,7 +261,7 @@ test.describe('Left tool rail overflow', () => {
     // `openGroup` still naming a group that is no longer rendered, the flyout would reopen
     // by itself the moment the window grew back, with nothing the user did to open it.
     await expect(page.locator('[role="menu"]')).toHaveCount(0);
-    await expect(page.getByTestId(`tool-button-${openable!.name}`)).toHaveCount(0);
+    await expect(page.getByTestId(`tool-button-${openable!.name}`)).not.toBeVisible();
 
     await page.setViewportSize(TALL);
     await expect(page.locator('[role="menu"]'), 'the flyout must not reopen by itself').toHaveCount(0);

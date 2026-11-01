@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 148-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1403,59 +1403,6 @@ grayscale branch is a small consumer of it rather than the reason to build it.
 and the `ctx.filter` assignment in `colors()`;
 `src/components/ToolbarsRight/Colors/Color.tsx` — its `Grayscale` slider;
 `src/contexts/psd-utils.ts` — `loadPsd()`
-
-## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
-
-**Problem.** `useToolbarOverflow` (`src/components/SidebarLeft/use-toolbar-overflow.ts`) measures the
-rail from a ref callback, which runs during commit. React subscribes to an external store in a
-**passive** effect, so at that moment there is no listener to notify, and the `setSlots` layout
-effect publishes into the same empty set. The committed tree therefore holds the plan from _before_
-the measurement, and `planToolbarOverflow`'s own answer to an unmeasurable rail is
-`everythingVisible` — so the first committed rail is **every tool on screen**, fifteen tiles in a
-slot that fits eight at 1280x720, corrected on a later commit. `SidebarLeft` returns above the
-`<aside>` when there is no document while this hook sits above that check, so the hook survives and
-the sequence repeats on **every document close and open**, not only on the first page load.
-
-**It has not been observed failing, and that is measured rather than assumed.** A
-`MutationObserver` installed by `page.addInitScript` — before the app's own script, and with
-microtask callbacks, which run before the paint the mutation enables — recorded the first rail it
-ever saw as already fitted: eight tiles at 720. Chrome flushes React's passive effects inside the
-mounting task, so the refit lands before the first frame in practice. **In practice is not a
-promise**, and the promise is what a load-time flash of a full rail would rest on.
-
-**The obvious fix is refused by the repository's own rule.** A layout effect that re-renders when
-the snapshot has moved ahead of the render is exactly what closes the window, and
-`react-hooks/set-state-in-effect` rejects it: _"Calling setState synchronously within an effect can
-trigger cascading renders"_. That rule is right in general and the effect is a cascading render, so
-it was **not** suppressed to make the warning disappear. No gate was weakened and the rail behaves
-as it is measured to behave.
-
-**There is a lint-compliant alternative, but it is not a settled fix.** The codebase already uses
-`useState` setters as callback refs (`SidebarLeft` for the rail element, `ToolTooltip` for its
-anchor). A stable callback ref could compare the store snapshot before/after `store.attach()` and
-force an update when measurement changed. That update would run from a ref callback, not an effect,
-so it avoids `set-state-in-effect`; it also avoids reading a mutable `ref.current`. However, it relies
-on React processing that ref-triggered update before paint, and there is no meaningful test oracle:
-the existing browser test observes a fitted rail even without the fix because the browser never
-paints the transient tree.
-
-**What would close it.** A decision, and this entry is the finding rather than the decision: choose
-between the callback-ref update (small but timing-dependent and not regression-testable), a
-CSS-driven fit (`@container` queries or CSS overflow arithmetic, the structural solution but a
-subsystem rewrite), or an explicit `OVERRIDES.md` exception for the effect rule. Do not treat the
-callback-ref alternative as already approved merely because the lint rule permits it.
-
-**Why there is no test.** A pin that could not fail was written, measured, and removed: the
-`MutationObserver` assertion above passes identically with and without the fix, because the browser
-never paints the unrefitted tree here. `e2e/toolbar-fit.spec.ts` deliberately has **no** test for
-this, and that absence is the honest state — if one is added it must be able to go red when the
-scheduling changes, or it is a tripwire for a defect that cannot occur.
-
-**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`,
-`src/components/SidebarLeft/SidebarLeft.tsx` — `twoColumnEntries` and the rail-element callback ref;
-`src/components/Common/ToolTooltip.tsx` — the callback-ref pattern;
-`react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
-runs on a concurrent render that yielded — neither is a pre-paint refit).
 
 ---
 
