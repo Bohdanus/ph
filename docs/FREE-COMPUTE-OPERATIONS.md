@@ -87,21 +87,13 @@ This enables Groq in the automatic pool, but another eligible source may answer 
 result's provider/model before treating a run as a Groq smoke test.
 
 **Groq GPT-OSS-120B is very fast** — use for bulk text sweeps (chat search, chat-history processing,
-large prompt batches). It is not a reasoning model; do not use for deep reasoning or code review.
+large prompt batches). Not a reasoning model; do not use for deep reasoning or code review.
 Latency is typically sub-second for short prompts.
 
-### No local-model fallback (Jan removed)
-
-A local `Jan-v3.5-4B-Q4_K_XL` server was previously tested (commit 48848017). It ran on `127.0.0.1:6767`
-and was **very slow**: a bounded review prompt of ~4.1K input tokens took ~32 seconds, ended with
-`finish_reason: length`, and included a false claim. The review was unusable. Local inference avoids
-provider API charges but uses host resources; trust output only when complete and verified.
-
-Chat-history search supports `--local-only` to keep both term selection and result processing on
-the machine. Without it, the query and matching excerpts are sent to the configured free provider
-after best-effort redaction; free inference is not equivalent to local processing. The search
-databases remain local, but model mode does not. The inference pool otherwise prefers cloud free
-models (Kilo, OpenRouter, Groq) over any local-model fallback.
+**No local-model fallback.** Jan `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017): ~32s for
+4.1K tokens, truncated output, and a false claim. It was unusable. Chat-history search supports
+`--local-only`; without it, the query and matching excerpts are sent to a configured free provider
+after best-effort redaction. Free inference is not local processing.
 
 ## Runner commands
 

@@ -62,20 +62,10 @@ Provider rows are docs research unless an observed result is explicitly stated.
 | Cloudflare Workers AI            | 10,000 neurons/day on Workers Free.                                    | Neurons are not tokens; some models require paid Workers. [Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)                                                                      |
 | Hugging Face Inference Providers | No free monthly credits.                                               | Requires purchased credits or PRO. [Pricing](https://huggingface.co/docs/inference-providers/pricing)                                                                                                    |
 
-### Local model note (Jan removed)
-
-A local `Jan-v3.5-4B-Q4_K_XL` server was tested (2026-10-29) but removed due to poor performance:
-
-- ~32 seconds for a ~4.1K token bounded review prompt
-- Ended with `finish_reason: length` (truncated)
-- Included a false claim in output
-- Unusable for review tasks
-
-Chat-history search supports `--local-only` to keep term selection and result processing on the
-machine. Without it, the query and matching excerpts are sent to the configured free provider after
-best-effort redaction; free inference is not equivalent to local processing. The inference pool
-prefers cloud free models (Kilo, OpenRouter, Groq) — see
-[`FREE-COMPUTE-OPERATIONS.md`](FREE-COMPUTE-OPERATIONS.md#groq).
+**Local Jan removed** — tested 2026-10-29: ~32s for 4.1K tokens, truncated output, and a false
+claim. Chat-history search supports `--local-only`; otherwise, query text and matching excerpts
+are sent to the configured free provider after best-effort redaction. Free inference is not local
+processing. See [`FREE-COMPUTE-OPERATIONS.md`](FREE-COMPUTE-OPERATIONS.md#chat-history-search).
 
 ## Usage notes
 
