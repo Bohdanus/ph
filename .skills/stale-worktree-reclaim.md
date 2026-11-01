@@ -223,7 +223,14 @@ stop rather than a formality to clear.
 
 ## 3 — Find the exact chat that owned the worktree
 
-`session.directory` is the authoritative link. This is the query the sweep depends on:
+For Kilo, `session.directory` is the authoritative link. This is the query the sweep depends on:
+
+The SQL and `kilo_local_recall` examples below are Kilo-specific. For Codex and Copilot sessions,
+use the host-specific history procedures in [`codex-chat-history.md`](codex-chat-history.md) and
+[`copilot-chat-history.md`](copilot-chat-history.md); do not treat an empty Kilo query as evidence
+that no other-host session worked in the tree, or translate session IDs between stores. Verify the
+complete root/descendant family and real activity in the host's own history. If the host's store
+cannot establish the family or its activity, classify death as **unproven**.
 
 ```bash
 DB="${XDG_DATA_HOME:-$HOME/.local/share}/kilo/kilo.db"
