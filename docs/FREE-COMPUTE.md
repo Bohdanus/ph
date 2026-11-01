@@ -2,13 +2,13 @@
 
 **Policy checked: 2026-10-31.** Catalogs, pricing, terms, and quotas change; refresh before use.
 
-## Model preferences (operator experience)
+## Model preferences
 
-| Model                               | Rating      | Notes                                                                            |
-| ----------------------------------- | ----------- | -------------------------------------------------------------------------------- |
-| **NVIDIA Nemotron 3 Ultra (free)**  | **Best**    | Strong reasoning, reliable completions, preferred for all free inference tasks   |
-| **XingChen Xing4.0 29B A4B (free)** | Maybe       | Works for simple prompts but hits 429 under load; not reliable for large prompts |
-| **Poolside Laguna (free)**          | **Removed** | Rate-limited (429s), unreliable; do not use                                      |
+| Model                               | Rating      | Notes                                                                          |
+| ----------------------------------- | ----------- | ------------------------------------------------------------------------------ |
+| **NVIDIA Nemotron 3 Ultra (free)**  | **Best**    | Strong reasoning, reliable completions, preferred for all free inference tasks |
+| **XingChen Xing4.0 29B A4B (free)** | Alternative | Works for simple prompts; hits 429 under load                                  |
+| **Poolside Laguna (free)**          | Turned off  | Rate-limited (429s), unreliable                                                |
 
 ## Routing
 
