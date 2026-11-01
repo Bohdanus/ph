@@ -1,8 +1,8 @@
 /**
- * The canvas must not grow. An ordinary tool commit, an undo, a redo, a crop and an
- * opened document each leave the workspace canvas backing store and the Footer's
- * `totalSize` readout exactly where they were — measured through the real UI, so a
- * re-allocation that only the runtime `Layer` objects would hide still fails here.
+ * Ordinary tool commits, undos and redos must preserve the workspace document size.
+ * A crop intentionally changes that frame, and undo/redo must restore each respective
+ * size; opening a document must use its imported dimensions. These are measured through
+ * the real UI, so a re-allocation hidden by runtime `Layer` objects still fails here.
  *
  * Written as a reproduction first (`zzz-probe-`, logged, no assertions) and kept as a
  * regression test once it had caught the defect it was built for. The measurements
@@ -22,13 +22,180 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 type Size = { width: number; height: number };
 
-/** Settling time for the Crop tool's Enter-commit to finish re-allocating the backing store. */
-const CROP_COMMIT_SETTLE_MS = 400;
-
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (!box) throw new Error('The workspace canvas has no box');
   return box;
+}
+
+type DisplayMetrics = {
+  canvasBox: BoundingBox;
+  canvasStyle: { width: string; height: string; objectFit: string; objectPosition: string };
+  fit: { scale: number; offsetX: number; offsetY: number; viewZoom: number; panX: number; panY: number };
+  containerViewport: BoundingBox;
+  documentRect: { x: number; y: number; width: number; height: number };
+  page: { clientWidth: number; clientHeight: number; scrollWidth: number; scrollHeight: number };
+};
+
+type PublishedFit = {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  outerWidth: number;
+  outerHeight: number;
+  documentWidth: number;
+  documentHeight: number;
+  rectX: number;
+  rectY: number;
+  viewZoom: number;
+  panX: number;
+  panY: number;
+};
+
+function cssPixel(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+async function publishedFit(page: Page): Promise<PublishedFit> {
+  return await page.getByTestId('workspace-container').evaluate((node) => {
+    const read = (name: string) => {
+      const raw = node.getAttribute(name);
+      if (raw === null) throw new Error(`The app has not published ${name}`);
+      const value = Number(raw);
+      if (!Number.isFinite(value)) throw new Error(`The app published invalid ${name}: ${raw}`);
+      return value;
+    };
+    return {
+      scale: read('data-fit-scale'),
+      offsetX: read('data-fit-offset-x'),
+      offsetY: read('data-fit-offset-y'),
+      outerWidth: read('data-fit-outer-width'),
+      outerHeight: read('data-fit-outer-height'),
+      documentWidth: read('data-fit-document-width'),
+      documentHeight: read('data-fit-document-height'),
+      rectX: read('data-fit-rect-x'),
+      rectY: read('data-fit-rect-y'),
+      viewZoom: read('data-view-effective-zoom'),
+      panX: read('data-view-pan-x'),
+      panY: read('data-view-pan-y'),
+    };
+  });
+}
+
+/** The rendered document bounds plus the canvas layout and page geometry around it. */
+async function displayMetrics(page: Page, documentSize: Size): Promise<DisplayMetrics> {
+  const canvas = getWorkspaceCanvas(page);
+  const container = page.getByTestId('workspace-container');
+  const box = await canvasBox(page);
+  if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0) {
+    throw new Error(`The workspace canvas has invalid bounds: ${JSON.stringify(box)}`);
+  }
+  const canvasStyle = await canvas.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return {
+      width: style.width,
+      height: style.height,
+      objectFit: style.objectFit,
+      objectPosition: style.objectPosition,
+    };
+  });
+  if (canvasStyle.objectFit !== 'contain') {
+    throw new Error(`The workspace canvas uses unexpected object-fit: ${canvasStyle.objectFit}`);
+  }
+  if (canvasStyle.objectPosition !== '50% 50%') {
+    throw new Error(`The workspace canvas uses unexpected object-position: ${canvasStyle.objectPosition}`);
+  }
+
+  const rotationAttribute = await page.getByTestId('workspace-container').getAttribute('data-view-rotation');
+  if (rotationAttribute === null) throw new Error('The workspace container has no view-rotation measurement');
+  const rotation = Number(rotationAttribute);
+  if (!Number.isFinite(rotation) || rotation !== 0) {
+    throw new Error(`The document bounds probe requires an unrotated view, got ${rotationAttribute}`);
+  }
+
+  const containerViewport = await container.evaluate((node) => {
+    if (!(node instanceof HTMLElement)) throw new Error('The workspace container is not an HTML element');
+    const rect = node.getBoundingClientRect();
+    const borderWidth = node.offsetWidth > 0 ? node.offsetWidth : Math.round(rect.width);
+    const borderHeight = node.offsetHeight > 0 ? node.offsetHeight : Math.round(rect.height);
+    return {
+      x: rect.left + node.clientLeft,
+      y: rect.top + node.clientTop,
+      width: Math.max(0, node.clientWidth + rect.width - borderWidth),
+      height: Math.max(0, node.clientHeight + rect.height - borderHeight),
+    };
+  });
+  const expectedFit = {
+    documentWidth: documentSize.width,
+    documentHeight: documentSize.height,
+    rectX: containerViewport.x,
+    rectY: containerViewport.y,
+    outerWidth: containerViewport.width,
+    outerHeight: containerViewport.height,
+  };
+  const fitSnapshot = async () => {
+    const fit = await publishedFit(page);
+    return {
+      documentWidth: fit.documentWidth,
+      documentHeight: fit.documentHeight,
+      rectX: fit.rectX,
+      rectY: fit.rectY,
+      outerWidth: fit.outerWidth,
+      outerHeight: fit.outerHeight,
+    };
+  };
+  await expect.poll(fitSnapshot, 'the app-published fit matches the current document and canvas').toEqual(expectedFit);
+  const fit = await publishedFit(page);
+  if (fit.scale <= 0 || fit.viewZoom <= 0) {
+    throw new Error(`The app published an invalid display scale: ${JSON.stringify(fit)}`);
+  }
+  const viewportCenterX = fit.rectX + fit.outerWidth / 2;
+  const viewportCenterY = fit.rectY + fit.outerHeight / 2;
+  const documentOriginX = fit.rectX + fit.offsetX;
+  const documentOriginY = fit.rectY + fit.offsetY;
+  // Main applies translate and scale around the workspace center; rotation is excluded above.
+  const documentRect = {
+    x: viewportCenterX + fit.panX + (documentOriginX - viewportCenterX) * fit.viewZoom,
+    y: viewportCenterY + fit.panY + (documentOriginY - viewportCenterY) * fit.viewZoom,
+    width: fit.documentWidth * fit.scale * fit.viewZoom,
+    height: fit.documentHeight * fit.scale * fit.viewZoom,
+  };
+  const pageSize = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    clientHeight: document.documentElement.clientHeight,
+    scrollWidth: document.documentElement.scrollWidth,
+    scrollHeight: document.documentElement.scrollHeight,
+  }));
+  return {
+    canvasBox: {
+      x: cssPixel(box.x),
+      y: cssPixel(box.y),
+      width: cssPixel(box.width),
+      height: cssPixel(box.height),
+    },
+    canvasStyle,
+    fit: {
+      scale: cssPixel(fit.scale),
+      offsetX: cssPixel(fit.offsetX),
+      offsetY: cssPixel(fit.offsetY),
+      viewZoom: cssPixel(fit.viewZoom),
+      panX: cssPixel(fit.panX),
+      panY: cssPixel(fit.panY),
+    },
+    containerViewport: {
+      x: cssPixel(fit.rectX),
+      y: cssPixel(fit.rectY),
+      width: cssPixel(fit.outerWidth),
+      height: cssPixel(fit.outerHeight),
+    },
+    documentRect: {
+      x: cssPixel(documentRect.x),
+      y: cssPixel(documentRect.y),
+      width: cssPixel(documentRect.width),
+      height: cssPixel(documentRect.height),
+    },
+    page: pageSize,
+  };
 }
 
 /** The canvas element's own backing store — the document's pixel dimensions. */
@@ -108,6 +275,8 @@ test.describe('document size across many tool commits', () => {
 
     const baseline = await backingStore(page);
     const baselineFooter = await footerDimensions(page);
+    expect(baselineFooter).toContain(`${baseline.width} × ${baseline.height} px`);
+    const baselineDisplay = await displayMetrics(page, baseline);
     // The app boots with one bedrock background layer, so the row count starts at 1 and
     // each shape commit adds one.
     const baselineRows = await page.getByTestId('layer-row').count();
@@ -135,6 +304,9 @@ test.describe('document size across many tool commits', () => {
       );
       expect(size, `backing store moved after commit ${i + 1}`).toEqual(baseline);
       expect(footer, `footer totalSize moved after commit ${i + 1}`).toBe(baselineFooter);
+      await expect
+        .poll(() => displayMetrics(page, baseline), `display geometry after commit ${i + 1}`)
+        .toEqual(baselineDisplay);
     }
 
     for (let k = 0; k < 10; k += 1) {
@@ -148,6 +320,9 @@ test.describe('document size across many tool commits', () => {
       );
       expect(size, `backing store moved after undo ${k + 1}`).toEqual(baseline);
       expect(footer, `footer totalSize moved after undo ${k + 1}`).toBe(baselineFooter);
+      await expect
+        .poll(() => displayMetrics(page, baseline), `display geometry after undo ${k + 1}`)
+        .toEqual(baselineDisplay);
     }
 
     for (let k = 0; k < 10; k += 1) {
@@ -161,6 +336,9 @@ test.describe('document size across many tool commits', () => {
       );
       expect(size, `backing store moved after redo ${k + 1}`).toEqual(baseline);
       expect(footer, `footer totalSize moved after redo ${k + 1}`).toBe(baselineFooter);
+      await expect
+        .poll(() => displayMetrics(page, baseline), `display geometry after redo ${k + 1}`)
+        .toEqual(baselineDisplay);
     }
 
     console.log(`[PW-PROBE-SUMMARY] ${JSON.stringify({ baseline, rows: rows.length })}`);
@@ -174,11 +352,9 @@ test.describe('document size across many tool commits', () => {
     await clickToolButton(page, 'draw');
 
     const baseline = await backingStore(page);
-    const baselineBox = await canvasBox(page);
-    const baselinePageHeight = await page.evaluate(() => ({
-      clientHeight: document.documentElement.clientHeight,
-      scrollHeight: document.documentElement.scrollHeight,
-    }));
+    const baselineFooter = await footerDimensions(page);
+    expect(baselineFooter).toContain(`${baseline.width} × ${baseline.height} px`);
+    const baselineDisplay = await displayMetrics(page, baseline);
     const baselineRows = await page.getByTestId('layer-row').count();
 
     for (let i = 0; i < 12; i += 1) {
@@ -187,17 +363,10 @@ test.describe('document size across many tool commits', () => {
       await dragInDocument(page, from, to);
       await expect(page.getByTestId('layer-row'), `Draw commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       await expect.poll(() => backingStore(page), `backing store after Draw commit ${i + 1}`).toEqual(baseline);
-      await expect.poll(() => canvasBox(page), `canvas box after Draw commit ${i + 1}`).toEqual(baselineBox);
+      await expect.poll(() => footerDimensions(page), `Footer after Draw commit ${i + 1}`).toBe(baselineFooter);
       await expect
-        .poll(
-          () =>
-            page.evaluate(() => ({
-              clientHeight: document.documentElement.clientHeight,
-              scrollHeight: document.documentElement.scrollHeight,
-            })),
-          `page geometry after Draw commit ${i + 1}`
-        )
-        .toEqual(baselinePageHeight);
+        .poll(() => displayMetrics(page, baseline), `display geometry after Draw commit ${i + 1}`)
+        .toEqual(baselineDisplay);
     }
   });
 
@@ -206,9 +375,17 @@ test.describe('document size across many tool commits', () => {
 
     await page.goto('/');
     await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await openToolFlyout(page, 'shape');
+    await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
 
     const baseline = await backingStore(page);
-    console.log(`[PW-CROP] baseline backingStore=${JSON.stringify(baseline)}`);
+    const baselineFooter = await footerDimensions(page);
+    expect(baselineFooter).toContain(`${baseline.width} × ${baseline.height} px`);
+    const baselineDisplay = await displayMetrics(page, baseline);
+    const baselineRows = await page.getByTestId('layer-row').count();
+    console.log(
+      `[PW-CROP] baseline backingStore=${JSON.stringify(baseline)} footer="${baselineFooter}" display=${JSON.stringify(baselineDisplay)}`
+    );
 
     // The Crop tool commits with Enter (`src/components/Main/CropToolArea.tsx:53`); its bar
     // publishes `#aspect-ratio` (`src/components/ToolbarsRight/Crop/Crop.tsx:62`).
@@ -220,47 +397,84 @@ test.describe('document size across many tool commits', () => {
     const end = documentToCanvasOffset(box, 520, 420);
     await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(CROP_COMMIT_SETTLE_MS);
+    await expect.poll(() => backingStore(page), 'the crop changes the document frame').not.toEqual(baseline);
     const afterCrop = await backingStore(page);
-    const cropFooter = await footerDimensions(page);
-    console.log(`[PW-CROP] after-crop backingStore=${JSON.stringify(afterCrop)} footer="${cropFooter}"`);
+    expect(afterCrop.width).toBeGreaterThan(0);
+    expect(afterCrop.height).toBeGreaterThan(0);
+    expect(afterCrop.width).toBeLessThan(baseline.width);
+    expect(afterCrop.height).toBeLessThan(baseline.height);
 
     await openToolFlyout(page, 'shape');
     await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
-    const rowsBefore = await page.getByTestId('layer-row').count();
+    const cropFooter = await footerDimensions(page);
+    const cropDisplay = await displayMetrics(page, afterCrop);
+    expect(cropFooter).toContain(`${afterCrop.width} × ${afterCrop.height} px`);
+    expect(await page.getByTestId('layer-row').count()).toBe(baselineRows);
+    console.log(
+      `[PW-CROP] after-crop backingStore=${JSON.stringify(afterCrop)} footer="${cropFooter}" display=${JSON.stringify(cropDisplay)}`
+    );
 
     for (let i = 0; i < 5; i += 1) {
       const from = { x: 20 + i * 60, y: 20 };
       const to = { x: from.x + 50, y: 70 };
       await dragInDocument(page, from, to);
-      await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(rowsBefore + 1 + i);
+      await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       const size = await backingStore(page);
-      console.log(
-        `[PW-CROP] post-crop-commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
-      );
+      expect(size, `backing store moved after post-crop commit ${i + 1}`).toEqual(afterCrop);
+      expect(await footerDimensions(page), `footer moved after post-crop commit ${i + 1}`).toBe(cropFooter);
+      await expect
+        .poll(() => displayMetrics(page, afterCrop), `display geometry after post-crop commit ${i + 1}`)
+        .toEqual(cropDisplay);
     }
 
-    const afterCommits = await backingStore(page);
-    console.log(`[PW-CROP] after-commits backingStore=${JSON.stringify(afterCommits)}`);
-
-    const rowsAfterCrop = rowsBefore + 5;
-    for (let k = 0; k < 3; k += 1) {
+    for (let k = 0; k < 5; k += 1) {
       await page.keyboard.press('ControlOrMeta+z');
-      const expectedRows = rowsAfterCrop - 1 - k;
+      const expectedRows = baselineRows + 4 - k;
       await expect(page.getByTestId('layer-row'), `crop-flow undo ${k + 1}`).toHaveCount(expectedRows);
-      const size = await backingStore(page);
-      console.log(
-        `[PW-CROP] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
-      );
+      expect(await backingStore(page), `backing store moved after post-crop undo ${k + 1}`).toEqual(afterCrop);
+      expect(await footerDimensions(page), `footer moved after post-crop undo ${k + 1}`).toBe(cropFooter);
+      await expect
+        .poll(() => displayMetrics(page, afterCrop), `display geometry after post-crop undo ${k + 1}`)
+        .toEqual(cropDisplay);
     }
-    for (let k = 0; k < 3; k += 1) {
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.getByTestId('layer-row'), 'undoing the crop leaves the original layer stack').toHaveCount(
+      baselineRows
+    );
+    await expect
+      .poll(() => backingStore(page), 'undoing the crop restores the original document size')
+      .toEqual(baseline);
+    await expect
+      .poll(() => footerDimensions(page), 'undoing the crop restores the original Footer size')
+      .toBe(baselineFooter);
+    await expect
+      .poll(() => displayMetrics(page, baseline), 'undoing the crop restores the original display')
+      .toEqual(baselineDisplay);
+
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(page.getByTestId('layer-row'), 'redoing the crop preserves the original layer stack').toHaveCount(
+      baselineRows
+    );
+    await expect
+      .poll(() => backingStore(page), 'redoing the crop restores the cropped document size')
+      .toEqual(afterCrop);
+    await expect
+      .poll(() => footerDimensions(page), 'redoing the crop restores the cropped Footer size')
+      .toBe(cropFooter);
+    await expect
+      .poll(() => displayMetrics(page, afterCrop), 'redoing the crop restores the cropped display')
+      .toEqual(cropDisplay);
+
+    for (let k = 0; k < 5; k += 1) {
       await page.keyboard.press('ControlOrMeta+Shift+z');
-      const expectedRows = rowsAfterCrop - 3 + 1 + k;
+      const expectedRows = baselineRows + 1 + k;
       await expect(page.getByTestId('layer-row'), `crop-flow redo ${k + 1}`).toHaveCount(expectedRows);
-      const size = await backingStore(page);
-      console.log(
-        `[PW-CROP] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
-      );
+      expect(await backingStore(page), `backing store moved after post-crop redo ${k + 1}`).toEqual(afterCrop);
+      expect(await footerDimensions(page), `footer moved after post-crop redo ${k + 1}`).toBe(cropFooter);
+      await expect
+        .poll(() => displayMetrics(page, afterCrop), `display geometry after post-crop redo ${k + 1}`)
+        .toEqual(cropDisplay);
     }
   });
 });
@@ -293,6 +507,7 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
     const baselineRows = await page.getByTestId('layer-row').count();
     const baseline = await backingStore(page);
     const baselineFooter = await footerDimensions(page);
+    expect(baselineFooter).toContain(`${baseline.width} × ${baseline.height} px`);
     console.log(
       `[PW-OPEN] after-open backingStore=${JSON.stringify(baseline)} footer="${baselineFooter}" layerRows=${baselineRows}`
     );
@@ -300,6 +515,9 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
 
     await openToolFlyout(page, 'shape');
     await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+    const baselineDisplay = await displayMetrics(page, baseline);
+    expect(await backingStore(page)).toEqual(baseline);
+    expect(await footerDimensions(page)).toBe(baselineFooter);
 
     for (let i = 0; i < 5; i += 1) {
       const from = { x: 3 + i * 11, y: 3 };
@@ -311,6 +529,12 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
         `[PW-OPEN] commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
       );
       expect(size, `backing store moved after commit ${i + 1} on the opened document`).toEqual(baseline);
+      expect(await footerDimensions(page), `footer moved after commit ${i + 1} on the opened document`).toBe(
+        baselineFooter
+      );
+      await expect
+        .poll(() => displayMetrics(page, baseline), `display geometry after opened-doc commit ${i + 1}`)
+        .toEqual(baselineDisplay);
     }
 
     for (let k = 0; k < 5; k += 1) {
@@ -321,6 +545,12 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
         `[PW-OPEN] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
       );
       expect(size, `backing store moved after undo ${k + 1} on the opened document`).toEqual(baseline);
+      expect(await footerDimensions(page), `footer moved after undo ${k + 1} on the opened document`).toBe(
+        baselineFooter
+      );
+      await expect
+        .poll(() => displayMetrics(page, baseline), `display geometry after opened-doc undo ${k + 1}`)
+        .toEqual(baselineDisplay);
     }
 
     for (let k = 0; k < 5; k += 1) {
@@ -331,6 +561,12 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
         `[PW-OPEN] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
       );
       expect(size, `backing store moved after redo ${k + 1} on the opened document`).toEqual(baseline);
+      expect(await footerDimensions(page), `footer moved after redo ${k + 1} on the opened document`).toBe(
+        baselineFooter
+      );
+      await expect
+        .poll(() => displayMetrics(page, baseline), `display geometry after opened-doc redo ${k + 1}`)
+        .toEqual(baselineDisplay);
     }
   });
 });
