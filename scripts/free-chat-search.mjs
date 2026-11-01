@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { open, stat, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { completeWithFreeModel } from './free-model-pool.mjs';
+import { sanitizeErrorMessage, sanitizeForOutput } from './lib/secrets.mjs';
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_PROMPT_FILE_BYTES = 4 * 1024;
@@ -96,20 +97,22 @@ const SUMMARIZE_PROMPT =
 
 export function redactSensitiveText(value) {
   if (typeof value !== 'string') return value;
-  return value
-    .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]')
-    .replace(
-      /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
-      '[REDACTED]'
-    )
-    .replace(
-      /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
-      (_match, prefix, value) => {
-        const quote = value.startsWith('"') || value.startsWith("'") ? value[0] : '';
-        return `${prefix}${quote}[REDACTED]${quote}`;
-      }
-    )
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]');
+  return sanitizeForOutput(
+    value
+      .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]')
+      .replace(
+        /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
+        '[REDACTED]'
+      )
+      .replace(
+        /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
+        (_match, prefix, value) => {
+          const quote = value.startsWith('"') || value.startsWith("'") ? value[0] : '';
+          return `${prefix}${quote}[REDACTED]${quote}`;
+        }
+      )
+      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]')
+  );
 }
 
 function escapeSqlValue(value) {
@@ -573,7 +576,7 @@ export async function searchAllSources(
         successfulQueries += 1;
       } catch (error) {
         queryErrors.push(error);
-        stderr.write?.(`Kilo DB query failed: ${error.message}\n`);
+        stderr.write?.(`Kilo DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
       }
     }
   } else {
@@ -598,7 +601,7 @@ export async function searchAllSources(
         successfulQueries += 1;
       } catch (error) {
         queryErrors.push(error);
-        stderr.write?.(`Codex DB query failed: ${error.message}\n`);
+        stderr.write?.(`Codex DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
       }
     }
   } else {
@@ -896,7 +899,7 @@ export async function main(
   try {
     prompt = await readPrompt(parsed, { openFn });
   } catch (error) {
-    stderr.write(`${error.message}\n`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 2;
   }
 
@@ -923,12 +926,12 @@ export async function main(
         completeImpl,
         maxTokens: 200,
         onCatalogError: (source, error) =>
-          stderr.write(`Term expansion via free model failed: ${source}: ${error.message}\n`),
-        onError: (error) => stderr.write(`Term expansion failed: ${error.message}\n`),
+          stderr.write(`Term expansion via free model failed: ${source}: ${sanitizeErrorMessage(error.message)}\n`),
+        onError: (error) => stderr.write(`Term expansion failed: ${sanitizeErrorMessage(error.message)}\n`),
         ...completeOpts,
       });
     } catch (error) {
-      stderr.write(`Term expansion failed: ${error.message}\n`);
+      stderr.write(`Term expansion failed: ${sanitizeErrorMessage(error.message)}\n`);
       terms = defaultTerms(prompt);
     }
     stderr.write(`Search terms selected: ${terms.length}.\n`);
@@ -980,7 +983,7 @@ export async function main(
       usedDbPaths = [kiloDbPath];
     }
   } catch (error) {
-    stderr.write(`Database query failed: ${error.message}\n`);
+    stderr.write(`Database query failed: ${sanitizeErrorMessage(error.message)}\n`);
     return 4;
   }
 
@@ -1008,8 +1011,8 @@ export async function main(
       maxTokens: parsed.maxSummaryTokens,
       terms,
       onCatalogError: (source, error) =>
-        stderr.write(`Summarization via free model failed: ${source}: ${error.message}\n`),
-      onError: (error) => stderr.write(`Summarization failed: ${error.message}\n`),
+        stderr.write(`Summarization via free model failed: ${source}: ${sanitizeErrorMessage(error.message)}\n`),
+      onError: (error) => stderr.write(`Summarization failed: ${sanitizeErrorMessage(error.message)}\n`),
       ...completeOpts,
     });
   }
@@ -1038,7 +1041,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }

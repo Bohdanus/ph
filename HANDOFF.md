@@ -1185,49 +1185,6 @@ assert a canvas box, so the earlier blanket claim that no test ever does is too 
 measurement plan in `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 as the worklist; no
 E2E assertion change was made in this audit.
 
-## 135. Symlinking a worktree's `node_modules` uses the parent compiler and must remain owner-aware
-
-**Problem.** A shortcut for a worktree with no `node_modules` is to link the parent's dependency
-tree. It appears to work — `tsc` and `vitest` both run — but it is not an isolated toolchain: the
-`.bin/tsc` guard and compiler resolve through the parent `node_modules`, and package dependencies
-also come from there. The child compiler inherits the worktree's current directory, so this alone
-does not redirect its project/source inputs to the parent. Use a worktree-local install for a
-reproducible toolchain.
-
-`node_modules/.bin/tsc` is itself a **relative** symlink:
-
-```
-$ readlink node_modules/.bin/tsc
-../../scripts/tsc-guard.mjs
-```
-
-So with a symlinked worktree dependency tree, the guard and its real TypeScript compiler resolve from
-the parent checkout. The guard's compiler subprocess retains the invoking working directory; the
-shared toolchain is the issue, not an automatic switch to the parent's source tree.
-
-**Observed and fixed.** The tsc-guard installer tests once treated a symlinked `.bin` path as owned
-because they compared logical path strings. Their write tests could then mutate the parent
-checkout's `node_modules`. The ownership predicate in `tsc-guard.test.mjs` now compares physical paths;
-non-owning tests return without writing, and a focused test pins that a shared symlink is not owned.
-Read-only assertions intentionally inspect the guard that the current `.bin` resolves to.
-
-**Fix / convention.** Either run `npm ci` in the worktree, or accept the symlink and know that
-the compiler and dependencies come from its parent. If replacing a shared link with a local install,
-remove the symlink itself first; do not let an install command mutate its target. The guard test's
-writing cases are now owner-aware:
-
-```
-ls -l node_modules/.bin/tsc | awk '{print $NF}'     # a relative path means it escapes
-```
-
-`docs/ORCHESTRATION.md`'s "Worktrees" section documents the missing-dependency behavior: Node walks
-up to the parent for `tsc`/`vitest`, while Vite does not. The previous attribution to `AGENTS.md`
-was stale. Keep the distinction clear: parent toolchain/dependencies do not by themselves change the
-child process working directory.
-
-**Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
----
-
 ## 139. The superseded point-in-time reports cannot be moved without editing a data file
 
 `AUDIT-STASHED-DOCS.md`, `FOCUSED-REVIEW-2026-09-28.md`, `MIGRATION_NEXT_STEPS_SUNDAY.md`,

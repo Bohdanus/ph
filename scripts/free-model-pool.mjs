@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { COMPLETION_TIMEOUT_MS, resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
+import { sanitizeForLogging, sanitizeErrorMessage, sanitizeErrorStack } from './lib/secrets.mjs';
 import {
   activeQuarantineKeys,
   DEFAULT_QUARANTINE_FILE,
@@ -712,7 +713,6 @@ export async function completeWithFreeModel(
     runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
-    checkOpenRouterQuota = false,
     maxTokens = 1200,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
@@ -760,7 +760,7 @@ export async function completeWithFreeModel(
     }
     return counts;
   };
-  if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
+  if (openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
@@ -847,7 +847,7 @@ export async function completeWithFreeModel(
         errors.push(`kilo/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
         if (result?.exhaustSource) exhausted.add(candidate.source);
       } catch (error) {
-        errors.push(`kilo/${candidate.model}: ${error.message}`);
+        errors.push(`kilo/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
         if (error.code === 'ENOENT' || error.code === 'KILO_SPAWN') exhausted.add(candidate.source);
       }
       const attemptNumber = attempts.get(candidate.source) ?? 0;
@@ -877,7 +877,9 @@ export async function completeWithFreeModel(
           });
         } catch (error) {
           const retryAfter = retryAfterHint(response);
-          errors.push(`groq/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`);
+          errors.push(
+            `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+          );
           const attemptNumber = attempts.get(candidate.source) ?? 0;
           const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
           await delay(backoffMs);
@@ -888,7 +890,9 @@ export async function completeWithFreeModel(
           payload = await readBoundedJson(response, MAX_COMPLETION_RESPONSE_BYTES, 'Model response');
         } catch (error) {
           const retryAfter = retryAfterHint(response);
-          errors.push(`groq/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`);
+          errors.push(
+            `groq/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+          );
           if (isPerKeyFailure(response.status)) exhaustedGroqKeys.add(key);
           const attemptNumber = attempts.get(candidate.source) ?? 0;
           const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
@@ -965,7 +969,7 @@ export async function completeWithFreeModel(
         }
         errors.push(`opencode/${candidate.model}: ${result?.error ?? 'incomplete completion'}`);
       } catch (error) {
-        errors.push(`opencode/${candidate.model}: ${error.message}`);
+        errors.push(`opencode/${candidate.model}: ${sanitizeErrorMessage(error.message)}`);
         if (error.code === 'ENOENT') exhausted.add(candidate.source);
       }
       const attemptNumber = attempts.get(candidate.source) ?? 0;
@@ -995,7 +999,7 @@ export async function completeWithFreeModel(
     } catch (error) {
       const retryAfter = retryAfterHint(response);
       errors.push(
-        `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
@@ -1008,7 +1012,7 @@ export async function completeWithFreeModel(
     } catch (error) {
       const retryAfter = retryAfterHint(response);
       errors.push(
-        `${candidate.source}/${candidate.model}: ${error.message}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
+        `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
       if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
       if (
@@ -1031,6 +1035,7 @@ export async function completeWithFreeModel(
       throw new Error(message);
     }
     if (isContentPolicyError(payload)) {
+      await quarantineKey(candidate.source, candidate.model, 'content_policy');
       throw new Error(
         `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
@@ -1083,7 +1088,7 @@ export async function completeWithFreeModel(
     await delay(backoffMs);
   }
   throw new Error(
-    `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.join(' | ') || 'No eligible free models were available.'}`
+    `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`
   );
 }
 
@@ -1153,16 +1158,17 @@ export async function main(
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason !== 'ok') {
       stderr.write(
-        `Unable to read OpenRouter daily quota (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}); check the API key and network. No inference request was sent.\n`
+        `Unable to read OpenRouter daily quota (${sanitizeErrorMessage(quota.reason)}${quota.detail ? `: ${sanitizeErrorMessage(quota.detail)}` : ''}); check the API key and network. No inference request was sent.\n`
       );
       return 2;
     }
+    const sanitizedQuota = sanitizeForLogging(quota);
     stdout.write(
       `${JSON.stringify({
         provider: 'openrouter',
         counter: 'free_model_daily_requests',
         checkedAt: new Date().toISOString(),
-        ...quota,
+        ...sanitizedQuota,
       })}\n`
     );
     return 0;
@@ -1214,7 +1220,12 @@ export async function main(
         try {
           key = await loadGroqKeyFromFile(filePath);
         } catch (error) {
-          results.push({ keyFile: filePath, ok: false, reason: 'file_error', detail: error.message });
+          results.push({
+            keyFile: filePath,
+            ok: false,
+            reason: 'file_error',
+            detail: sanitizeErrorMessage(error.message),
+          });
           continue;
         }
         const probed = await probeGroqKey({ fetchImpl, groqApiKey: key });
@@ -1223,7 +1234,8 @@ export async function main(
     } else {
       results = await probeGroqKeysImpl({ fetchImpl, keyDir: effectiveKeyDir });
     }
-    stdout.write(`${JSON.stringify({ checkedAt: new Date().toISOString(), keys: results }, null, 2)}\n`);
+    const sanitizedResults = sanitizeForLogging({ checkedAt: new Date().toISOString(), keys: results });
+    stdout.write(`${JSON.stringify(sanitizedResults, null, 2)}\n`);
     return 0;
   }
   const effectiveKiloCommand = kiloCommand === '' ? '' : (kiloCommand ?? (await resolveKiloCli()));
@@ -1239,7 +1251,8 @@ export async function main(
       quarantineFile,
       includeOpenRouterCatalog: true,
       initializeLegacyQuarantine,
-      onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
+      onCatalogError: (source, error) =>
+        stderr.write(`${source} catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
     });
     const limit = limitAt >= 0 ? Math.max(1, Number(args[limitAt + 1]) || 1) : candidates.length;
     const configured = (source) => {
@@ -1277,7 +1290,8 @@ export async function main(
     maxTokens,
     quarantineFile,
     initializeLegacyQuarantine,
-    onCatalogError: (source, error) => stderr.write(`${source} catalog unavailable: ${error.message}\n`),
+    onCatalogError: (source, error) =>
+      stderr.write(`${source} catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
     onOpenRouterQuota: ({ used, limit, remaining }) =>
       stderr.write(
         `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
@@ -1310,7 +1324,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }

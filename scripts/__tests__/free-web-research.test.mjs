@@ -134,7 +134,8 @@ describe('buildPrompt', () => {
   it('truncates content to MAX_CONTENT_CHARS', () => {
     const longContent = 'x'.repeat(20_000);
     const result = buildPrompt({ url: 'https://example.com', content: longContent, prompt: null });
-    expect(result.length).toBeLessThan(20_000);
+    // MAX_CONTENT_CHARS is 10_000, template adds ~500 chars
+    expect(result.length).toBeLessThan(11_000);
   });
 
   it('truncates prompt to MAX_PROMPT_CHARS', () => {

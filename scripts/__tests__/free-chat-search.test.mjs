@@ -308,6 +308,12 @@ describe('buildCodexSearchQuery', () => {
       expect(redacted).toContain(`${awsKey}=[REDACTED]`);
       expect(redacted).toContain(`${openAiKey}="[REDACTED]"`);
     });
+
+    it('uses the shared secret sanitizer for Kilo CLI credentials', () => {
+      const redacted = redactSensitiveText('KILO_CLI=fixtureSecretValue123');
+      expect(redacted).not.toContain('fixtureSecretValue123');
+      expect(redacted).toContain('KILO_CLI=***REDACTED***');
+    });
   });
 
   it('escapes single quotes in terms', () => {
