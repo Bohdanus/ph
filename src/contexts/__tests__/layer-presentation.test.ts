@@ -519,6 +519,50 @@ describe('DocumentPresentationScope ownership', () => {
     expect(staying.close).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a shared bitmap alive until its last document owner releases it', () => {
+    const scope = new DocumentPresentationScope();
+    const shared = createMockImageBitmap();
+    scope.trackPublished('doc-old', shared);
+    scope.trackPublished('doc-new', shared);
+
+    scope.retireUnreferenced('doc-old', () => new Set());
+
+    expect(shared.close).not.toHaveBeenCalled();
+
+    scope.releaseDocument('doc-new');
+
+    expect(shared.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers a shared bitmap lease until its last document owner releases it', () => {
+    const scope = new DocumentPresentationScope();
+    const shared = createMockImageBitmap();
+    const release = vi.fn();
+    scope.trackPublishedLease('doc-old', shared, release);
+    scope.trackPublished('doc-new', shared);
+
+    scope.releaseDocument('doc-old');
+
+    expect(release).not.toHaveBeenCalled();
+    expect(shared.close).not.toHaveBeenCalled();
+
+    scope.releaseDocument('doc-new');
+
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(shared.close).not.toHaveBeenCalled();
+  });
+
+  it('disposes a bitmap shared by documents exactly once', () => {
+    const scope = new DocumentPresentationScope();
+    const shared = createMockImageBitmap();
+    scope.trackPublished('doc-old', shared);
+    scope.trackPublished('doc-new', shared);
+
+    scope.dispose();
+
+    expect(shared.close).toHaveBeenCalledTimes(1);
+  });
+
   it('disposes each published bitmap exactly once', () => {
     const scope = new DocumentPresentationScope();
     const bitmap = createMockImageBitmap();
