@@ -57,6 +57,10 @@ This sweep is read-only until a case is classified. Everything below binds the m
 land something, and each rule exists because it has already cost real work here. `AGENTS.md`
 and `docs/ORCHESTRATION.md` are the authorities; this is the short form.
 
+- **Preflight every sweep.** Before taking over, harvesting, or cleaning anything, verify the
+  coordinator task worktree, run `npm run repo:state`, inspect status, and read the relevant
+  handoff, as [`AGENTS.md`](../AGENTS.md) requires. If the gate reports an in-progress operation,
+  leave that worktree to its owner; do not resolve or repair it from another checkout.
 - **Never resolve _or repair_ a merge conflict in the main worktree.** Bring `main` into the
   branch **in the branch's own worktree**, resolve there, run the gates there.
   `reset --hard` and `checkout --ours`/`--theirs` in `main` destroy another session's
