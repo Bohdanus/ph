@@ -153,10 +153,10 @@ hierarchy.
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
 | `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
 
-`scripts/lib/worktree-inventory/curated.mjs` still carries three `ref:` entries
-pointing to `TEST_ISSUES.md` (which is now deleted — those refs are stale and
-should be cleaned in a follow-up), and `../AUDIT-STASHED-DOCS.md`
-cross-references it by name.
+`scripts/lib/worktree-inventory/curated.mjs` no longer carries `ref:` entries
+pointing to `TEST_ISSUES.md` (they were replaced with `AUDIT-STASHED-DOCS.md` refs
+in bea9ab29). `../AUDIT-STASHED-DOCS.md` cross-references the original
+`TEST_ISSUES.md` sections by name.
 
 Do not hand-maintain a count of how many files mention them here. That number was
 in this sentence once, was wrong within a day, and `git grep` is the answer when
