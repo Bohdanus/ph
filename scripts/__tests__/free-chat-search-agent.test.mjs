@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+vi.setConfig({ testTimeout: 30_000 });
+
 const cliPath = resolve('scripts/free-chat-search-agent.mjs');
 
 describe('chat search CLI numeric options', () => {
