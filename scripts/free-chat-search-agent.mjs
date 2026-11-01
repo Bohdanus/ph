@@ -264,7 +264,7 @@ SELECT
   s.id AS session_id,
   s.summary AS title,
   s.cwd AS directory,
-  datetime(s.updated_at / 1000, 'unixepoch') AS updated,
+  datetime(s.updated_at) AS updated,
   t.turn_index,
   substr(coalesce(t.user_message, '') || ' ' || coalesce(t.assistant_response, ''), 1, ${opts.maxSnippetChars || DEFAULTS.maxSnippetChars}) AS snippet
 FROM recent r
