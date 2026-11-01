@@ -2,9 +2,11 @@
 
 # Merge Preparation Research
 
-A **preparational read-only pass** that performs rigorous, parallelized, systemic research on a
+## 🚫 **THIS SKILL IS STRICTLY READ-ONLY — NO MUTATIONS ALLOWED** 🚫
+
+A **preparational READ-ONLY pass** that performs rigorous, parallelized, systemic research on a
 specific stale/unmerged worktree before any merge attempt. The output is a **complete research
-dossier file** — never code edits, never git mutations, never merge resolution.
+dossier file** — **NEVER** code edits, **NEVER** git mutations, **NEVER** merge resolution.
 
 ## When to use
 
@@ -17,13 +19,13 @@ dossier file** — never code edits, never git mutations, never merge resolution
 
 ## Core Principles
 
-| Principle                       | Enforcement                                                       |
-| ------------------------------- | ----------------------------------------------------------------- |
-| **Read-only**                   | NEVER edit code files, tracked docs, or run git mutating commands |
-| **Context-safe**                | Dump raw data to a file in Wave 1; fan out subagents in Wave 2    |
-| **Correctness over speed**      | Cross-validate heavily; no false positives                        |
-| **Deep understanding first**    | Recover the actual requirement from chats, not commit subjects    |
-| **Data collection is the goal** | Conflict analysis is optional; understanding is mandatory         |
+| Principle                       | Enforcement                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------- |
+| **🚫 READ-ONLY — NO MUTATIONS** | **NEVER** edit code files, **NEVER** edit tracked docs, **NEVER** run git mutating commands |
+| **Context-safe**                | Dump raw data to a file in Wave 1; fan out subagents in Wave 2                              |
+| **Correctness over speed**      | Cross-validate heavily; no false positives                                                  |
+| **Deep understanding first**    | Recover the actual requirement from chats, not commit subjects                              |
+| **Data collection is the goal** | Conflict analysis is optional; understanding is mandatory                                   |
 
 ## Wave Architecture
 
@@ -110,7 +112,9 @@ A single comprehensive dossier file at:
 | `worktree-merge-harvest` | Runs after; uses this dossier to decide land/salvage/reimplement.                |
 | `hard-merge`             | If conflicts are complex, this dossier feeds hard-merge Phase 1-2.               |
 
-## Never
+## 🚫 **NEVER — ABSOLUTE PROHIBITIONS**
+
+**THIS SKILL MUST NEVER:**
 
 - Edit any code file, tracked document, or config
 - Run `git merge`, `git rebase`, `git cherry-pick`, `git push`, `git commit`, `git reset`, `git stash`
@@ -118,6 +122,8 @@ A single comprehensive dossier file at:
 - Weaken gates or skip validation
 - Assume the branch's commit subjects reflect the true requirement
 - Trust inventory `action` field without independent verification
+
+**ANY VIOLATION OF THESE RULES IS A FUNDAMENTAL BREACH OF THIS SKILL'S PURPOSE.**
 
 ## Entry Point
 
