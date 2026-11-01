@@ -53,6 +53,11 @@ describe('stripHtml', () => {
     expect(stripHtml(html)).toBe('visible');
   });
 
+  it('preserves invalid numeric entities instead of throwing during extraction', () => {
+    const html = '<p>&#x110000; &#1114112; &#55296; &#x1F600;</p>';
+    expect(stripHtml(html)).toBe('&#x110000; &#1114112; &#55296; 😀');
+  });
+
   it('collapses whitespace', () => {
     expect(stripHtml('<p>line1</p>\n  \n  <p>line2</p>')).toBe('line1 line2');
   });

@@ -493,14 +493,18 @@ const HTML_NAMED_ENTITIES = {
 function decodeEntity(entity) {
   if (entity.startsWith('&#x')) {
     const code = parseInt(entity.slice(3, -1), 16);
-    return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : entity;
+    return isValidCodePoint(code) ? String.fromCodePoint(code) : entity;
   }
   if (entity.startsWith('&#')) {
     const code = parseInt(entity.slice(2, -1), 10);
-    return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : entity;
+    return isValidCodePoint(code) ? String.fromCodePoint(code) : entity;
   }
   const name = entity.slice(1, -1);
   return Object.prototype.hasOwnProperty.call(HTML_NAMED_ENTITIES, name) ? HTML_NAMED_ENTITIES[name] : entity;
+}
+
+function isValidCodePoint(code) {
+  return Number.isInteger(code) && code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
 }
 
 export function stripHtml(html) {
