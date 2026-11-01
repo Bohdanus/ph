@@ -62,6 +62,8 @@ Provider rows are docs research unless an observed result is explicitly stated.
 | Cloudflare Workers AI            | 10,000 neurons/day on Workers Free.                                    | Neurons are not tokens; some models require paid Workers. [Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)                                                                      |
 | Hugging Face Inference Providers | No free monthly credits.                                               | Requires purchased credits or PRO. [Pricing](https://huggingface.co/docs/inference-providers/pricing)                                                                                                    |
 
+**Local Jan removed** — tested 2026-10-29: ~32s for 4.1K tokens, truncated, false claims. Unusable. No `--local-only` option; Groq GPT-OSS-120B is sub-second with equivalent privacy.
+
 ## Usage notes
 
 - OpenRouter credentials are read from `OPENROUTER_API_KEY` in the environment. Never put keys in files, arguments, or logs, and never rotate accounts to bypass limits.

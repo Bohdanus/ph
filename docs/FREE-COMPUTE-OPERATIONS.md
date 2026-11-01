@@ -86,6 +86,15 @@ account dashboard confirms Free tier; an API key alone is not evidence of free p
 This enables Groq in the automatic pool, but another eligible source may answer first; check the
 result's provider/model before treating a run as a Groq smoke test.
 
+**Groq GPT-OSS-120B is very fast** — use for bulk text sweeps (chat search, chat-history processing,
+large prompt batches). Not a reasoning model; do not use for deep reasoning or code review.
+Latency is typically sub-second for short prompts.
+
+**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) —
+~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq provides equivalent privacy
+with far better speed/reliability. No `--local-only` option exists; none needed — chat-history
+search data is already local, no secrets to hide.
+
 ## Runner commands
 
 ```sh
