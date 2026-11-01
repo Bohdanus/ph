@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 141-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1118,73 +1118,6 @@ point prefix changes.
 **Files.** `src/contexts/useLayer.ts` — `tempUpdateLayer()` and the processor-specific incremental
 guards; the remaining processor modules still need the same contract.
 
-## 124. An ordinary tool commit can move the document's size
-
-**Problem.** A tool commit is supposed to change pixels, not the document. The store-level guard is
-structural: `totalSize` changes only with `documentFrame`, and ordinary tool commits do not dispatch
-a frame update. The remaining concern is display measurement across these three production entry
-points, all of them live code:
-
-1. ten Rectangle commits, then ten undos and ten redos — the canvas backing store and the footer's
-   `totalSize` text must never move
-2. crop, then five more commits, then three undos and three redos — the pre-crop cursor must stay at
-   the pre-crop size and every later cursor at the cropped one
-3. a 64×64 document opened from a fixture, then five commits and five undo/redo rounds (the import is
-   async, so it must be polled, and the opened size must be passed in rather than the seeded default)
-
-**The former mobile-shell trigger is closed.** `MobileLayersDrawer.tsx` now calls
-`createBlankLayer` without `isBedrock`, passes the document-frame position, and the
-`MobileLayersDrawer.test.tsx` test titled `creates an ordinary blank layer covering the document
-frame` pins that contract. Adobe documents that the Layers-panel New Layer control creates a regular
-pixel layer above the selected layer; Background is a separate, explicitly converted layer type.
-
-The remaining work in this entry is the store-level size and display measurement for entry points 1–3.
-
-**Current E2E harness.** The probe cases are now in the checked-in
-`e2e/canvas-growth.spec.ts`; run them with `npm run test:e2e -- e2e/canvas-growth.spec.ts` from a
-worktree. The old `salvage/probe-canvas-growth` instructions and hidden-probe paths are historical;
-do not recreate or merge them.
-
-**Store-level boundary.** `totalSize` is recomputed only from `updates.documentFrame`
-(`src/contexts/StoreContext.tsx` — `projectPublishedTimeline()`, reached from the
-`COMMIT_DOCUMENT_EDIT` case), and of the `COMMIT_DOCUMENT_EDIT` dispatches in `src/contexts/useLayer.ts`
-exactly one carries a frame — `applyDocumentCrop()`. Take the dispatch count from the file; it moves
-as writers are added.
-
-**Correction to the reason that was written here.** This paragraph used to say `applyDocumentCrop()`
-"cannot grow the document because `trimRect()` clamps every edge into `[0, totalSize]`". **That is
-false, and inverted.** `applyDocumentCrop()` normalises with `sortRoundRect()`
-(`src/contexts/useLayer.ts` — `applyDocumentCrop()`), not `trimRect()`. `rect.ts` documents the
-difference deliberately: `trimRect` feeds `roundedPos` clamped edges, `sortRoundRect` feeds it
-unclamped ones, "the rounding is the same, the clamp is the caller's decision"
-(`src/util/rect.ts` — `roundedPos()`, `trimRect()`, `sortRoundRect()`, `clampEdge()`), and
-`applyDocumentCrop()`'s own comment says "Unclamped on purpose, and that is the whole feature"
-(`src/contexts/useLayer.ts` — `applyDocumentCrop()`). So `applyDocumentCrop()` **can** and does
-grow the document, and the added band stays transparent — that is OVR-1 in `docs/OVERRIDES.md`. The
-green probes are still explained, by the other half of the sentence: only this one dispatch carries a
-frame, so no _ordinary tool commit_ moves `totalSize`. The conclusion stands; the mechanism named for
-it did not. `trimRect()` is real and does clamp via `clampEdge()`, but it is not on the crop commit
-path: `CropToolArea`'s `onChangeEnd` hands `applyDocumentCrop()` the `sortRoundRect()` result, and
-`crop`'s own `imageProcessor` (`src/tools/crop.ts`) is reached by nothing in that flow.
-`operationForTool()` (`src/contexts/history-adapter.ts`) returns `null` for a `document-operation`
-tool, so the durable converter derives nothing from it either.
-
-**Current E2E coverage is partial.** The rectangle-commit test asserts backing-store dimensions and
-Footer text after its commits/undo/redo, but not the canvas box or computed CSS dimensions. The
-Draw-commit test asserts backing store, canvas bounding box, and page geometry, but not Footer text or
-computed CSS size. The crop flow logs backing-store/Footer values but asserts only layer-row counts;
-its three undo/redo steps match this entry's stated sequence but do not cross the crop boundary to
-verify restoration of the pre-crop size. The opened-64x64 test asserts backing-store size after
-commit/undo/redo; Footer is diagnostic-only and canvas box/CSS size are not measured. No inspected
-scenario derives the letterboxed document rect with `containFit()`.
-
-The remaining gap is therefore specific: Footer/backing-store assertions are incomplete in crop and
-opened-document flows, and canvas `boundingBox()`, computed CSS width/height, and the on-screen
-document rect are not consistently compared across the three §124 entry points. The Draw test does
-assert a canvas box, so the earlier blanket claim that no test ever does is too broad. Keep the
-measurement plan in `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 as the worklist; no
-E2E assertion change was made in this audit.
-
 ## 139. The superseded point-in-time reports cannot be moved without editing a data file
 
 `AUDIT-STASHED-DOCS.md`, `FOCUSED-REVIEW-2026-09-28.md`, `MIGRATION_NEXT_STEPS_SUNDAY.md`,
@@ -1359,50 +1292,6 @@ the commit until the user chooses, which is worse and is not recommended.
 `SPONGE_MODE_DEFAULT` and `SPONGE_FLOW_DEFAULT`;
 `src/tools/descriptions/focus.ts` §sponge `appNotes`;
 `src/tools/descriptions/focus.notes.md` §Sponge Tool and items 15-16
-
-## 147. The app has no document colour modes, so every Photoshop rule scoped to one is unimplementable
-
-**Problem.** Adobe scopes behaviour to `Image > Mode` in several places, and this app has no such
-document property or menu surface. `grayscale` appears in source as a per-layer CSS filter amount,
-filter-builder and capability-probe implementation, the Color options slider, PSD import warnings,
-Sponge logic/prose, and disabled adjustment-menu labels; these are not a persisted document color
-mode. `StoreData`, `Layer`, `NewDocumentBlankParams`, and `NewImageDialog` carry no mode field or
-selector. The PSD loader reads the imported file's mode to issue a warning, but does not retain that
-source metadata in the app's document state.
-
-The Sponge is the case that surfaced it. Adobe: "When an image is in Grayscale mode, the tool
-increases or decreases contrast by moving gray levels away from or toward the middle gray"
-(<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and Photoshop
-Elements splits the direction — "In grayscale, Saturate increases contrast … In grayscale,
-Desaturate decreases contrast" (<https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html>).
-That rule is **deliberately not implemented** (`SPONGE_MIDDLE_GREY`, in `src/tools/sponge.ts`), and
-the limitation is structural: on an ordinary achromatic RGB pixel, the chroma scale is an exact no-op.
-But imported grayscale PSDs are expanded to RGB while their source mode is discarded, so this does
-not mean the Photoshop rule is irrelevant to those pixels — the app cannot distinguish them from
-ordinary RGB gray. Do not apply a tonal pivot to every achromatic RGB pixel; resolving the imported
-case requires preserving or otherwise supplying the document-mode distinction.
-
-**Why it is filed anyway.** The same trap is waiting for any future mode-scoped rule, and there is
-more than one: `Image > Mode` also governs what the Channels panel lists, what a Lab-document's
-`Image > Adjustments` behaves like, and how Photoshop's own Histogram reads a merged channel. An
-agent that finds one of those will read the Sponge's `appNotes` and conclude "no mode, so skip it",
-which is right here and would be wrong elsewhere — a greyscale document imported from a PSD is
-**already converted to RGB on import** (`psd-utils.ts`'s `loadPsd()`), so the pixels a mode-scoped rule
-would
-read as grey exist in the app today, as RGB pixels, and the mode-scoped rule would then be the
-Photoshop-correct answer for them. That inversion is the trap.
-
-**Fix.** Decide whether the app has document modes at all. If it does not, say so once in
-`docs/FEATURES.md` against the capability and treat mode-scoped Photoshop behaviour as unimplementable
-rather than absent — and change the Sponge's `appNotes` to say which way that reasoning runs, since it
-currently reads as "no mode, so nothing to do" when the imported-greyscale case is the opposite. If it
-should, `Image > Mode` is a document-level property with a PSD round trip attached, and the Sponge's
-grayscale branch is a small consumer of it rather than the reason to build it.
-
-**Files.** `src/tools/sponge.ts` — `SPONGE_MIDDLE_GREY`; `src/tools/colors.ts` — `ColorsToolArgs`
-and the `ctx.filter` assignment in `colors()`;
-`src/components/ToolbarsRight/Colors/Color.tsx` — its `Grayscale` slider;
-`src/contexts/psd-utils.ts` — `loadPsd()`
 
 ## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
 

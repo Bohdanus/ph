@@ -1012,16 +1012,18 @@ describe("maintained guidance's code claims resolve against the program", () => 
     const handoff = readFileSync(resolve(REPO_ROOT, 'HANDOFF.md'), 'utf8');
     const live = [...liveHandoffNumbers(handoff)];
     expect(live).not.toContain('127');
+    expect(live).toContain('140');
+    expect(live).toContain('146');
+    expect(live).toContain('148');
+    expect(live).not.toContain('147');
 
-    // A live section resolves and is not reported. `135` and `146` are live, with
-    // `136-145` retired between them — which is what makes the assertion worth
-    // having: a parser that stopped matching `## N.` headings would report them too.
-    expect(staleHandoffRefs('see §135 and §146', handoff)).toEqual([]);
+    // Live sections resolve, while §147 is now an explicit retired handoff entry.
+    expect(staleHandoffRefs('see §140, §146, and §148', handoff)).toEqual([]);
     // The retired one, and one that never existed, are both reported and named differently,
     // because only the second can be fixed by repointing.
-    const retired = staleHandoffRefs('see §127', handoff);
+    const retired = staleHandoffRefs('see §147', handoff);
     expect(retired).toHaveLength(1);
-    expect(retired[0]).toContain('§127');
+    expect(retired[0]).toContain('§147');
     expect(retired[0]).toContain('retired');
     const absent = staleHandoffRefs('see §9999', handoff);
     expect(absent).toHaveLength(1);

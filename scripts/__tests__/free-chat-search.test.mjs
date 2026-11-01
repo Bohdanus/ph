@@ -16,6 +16,8 @@ import {
   main,
   parseArgs,
   queryKiloDb,
+  parseSince,
+  redactSensitiveText,
   readPrompt,
   resolveCodexDbCandidates,
   resolveKiloDbCandidates,
@@ -76,6 +78,13 @@ describe('SQL escaping', () => {
     const sql = buildSearchQuery(["O'Brien"]) ?? '';
     expect(sql).toContain("O''Brien");
     expect(sql).not.toContain("O'Brien");
+  });
+
+  it('redacts sensitive text before sending the prompt to a model', async () => {
+    const completeImpl = vi.fn().mockResolvedValue({ content: 'brush' });
+    await expandSearchTerms('find brushes token=querySecret123', { completeImpl });
+    expect(completeImpl.mock.calls[0][0]).not.toContain('querySecret123');
+    expect(completeImpl.mock.calls[0][0]).toContain('[REDACTED]');
   });
 
   it('prevents SQL injection by doubling injected quotes', () => {
@@ -142,8 +151,31 @@ describe('buildSearchQuery', () => {
   it('uses a CTE to scope the search to recent sessions', () => {
     const sql = buildSearchQuery(['test'], { maxSessions: 50 }) ?? '';
     expect(sql).toContain('WITH recent AS (');
-    expect(sql).toContain('SELECT id FROM session ORDER BY time_updated DESC LIMIT 50');
+    expect(sql).toContain('SELECT id FROM session ORDER BY time_updated DESC, id DESC LIMIT 50 OFFSET 0');
     expect(sql).toContain('JOIN session AS s ON s.id = r.id');
+  });
+
+  it('applies date and workspace filters before paging the session window', () => {
+    const sinceMs = Date.parse('2026-10-21T00:00:00Z');
+    const sql = buildSearchQuery(['test'], {
+      maxSessions: 50,
+      offset: 100,
+      sinceMs,
+      directory: "/Users/test/ph's project",
+    });
+    expect(sql).toContain(`time_updated >= ${sinceMs}`);
+    expect(sql).toContain("replace(coalesce(directory, ''), char(92), '/') = '/Users/test/ph''s project'");
+    expect(sql.indexOf('WHERE time_updated')).toBeLessThan(sql.indexOf('ORDER BY time_updated'));
+    expect(sql).toContain('LIMIT 50 OFFSET 100');
+  });
+
+  it.each([
+    ['/', "'/'"],
+    ['C:\\', "'C:/'"],
+  ])('matches descendants when the workspace scope is the root path %s', (directory, normalized) => {
+    const sql = buildSearchQuery(['test'], { directory }) ?? '';
+    expect(sql).toContain(`length(${normalized})`);
+    expect(sql).toContain(`= ${normalized}`);
   });
 
   it('clamps maxSessions to the allowed range', () => {
@@ -169,7 +201,7 @@ describe('buildSearchQuery', () => {
     const sql = buildSearchQuery(['test'], { maxMatches: 99999 });
     const limitMatch = sql?.match(/LIMIT (\d+)/);
     expect(limitMatch).toBeTruthy();
-    expect(Number(limitMatch[1])).toBeLessThanOrEqual(200);
+    expect(Number(limitMatch[1])).toBeLessThanOrEqual(500);
   });
 
   it('uses a minimum limit of 1', () => {
@@ -195,9 +227,23 @@ describe('buildCodexSearchQuery', () => {
   it('uses a CTE to scope the search to recent sessions', () => {
     const sql = buildCodexSearchQuery(['test'], { maxSessions: 50 }) ?? '';
     expect(sql).toContain('WITH recent AS (');
-    expect(sql).toContain('SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 50');
+    expect(sql).toContain('SELECT id FROM sessions ORDER BY updated_at DESC, id DESC LIMIT 50 OFFSET 0');
     expect(sql).toContain('JOIN sessions AS s ON s.id = r.id');
     expect(sql).toContain('JOIN turns AS t ON t.session_id = s.id');
+  });
+
+  it('applies normalized date and directory-scope filters before paging', () => {
+    const sinceMs = Date.parse('2026-10-21T01:00:00.500Z');
+    const sql = buildCodexSearchQuery(['test'], {
+      maxSessions: 25,
+      offset: 50,
+      sinceMs,
+      directory: '/Users/test/ph',
+    });
+    expect(sql).toContain("julianday(updated_at) >= julianday('2026-10-21T01:00:00.500Z')");
+    expect(sql).toContain("replace(coalesce(cwd, ''), char(92), '/') = '/Users/test/ph'");
+    expect(sql.indexOf('WHERE julianday(updated_at)')).toBeLessThan(sql.indexOf('ORDER BY updated_at'));
+    expect(sql).toContain('LIMIT 25 OFFSET 50');
   });
 
   it('clamps maxSessions to the allowed range', () => {
@@ -205,6 +251,69 @@ describe('buildCodexSearchQuery', () => {
     expect(sqlLow).toContain('LIMIT 10');
     const sqlHigh = buildCodexSearchQuery(['test'], { maxSessions: 99999 }) ?? '';
     expect(sqlHigh).toContain('LIMIT 500');
+  });
+
+  describe('parseSince', () => {
+    it('accepts a calendar date as UTC midnight', () => {
+      expect(parseSince('2026-10-21')).toBe(Date.parse('2026-10-21T00:00:00.000Z'));
+    });
+
+    it('normalizes an ISO timestamp with an offset', () => {
+      expect(parseSince('2026-10-21T01:00:00+01:00')).toBe(Date.parse('2026-10-21T00:00:00.000Z'));
+    });
+
+    it.each(['not-a-date', '2026-02-30', '2026-02-30T01:00:00Z', '2026-10-21T01:00:00', '2026-10'])(
+      'rejects invalid or timezone-ambiguous dates: %s',
+      (value) => {
+        expect(() => parseSince(value)).toThrow('--since');
+      }
+    );
+
+    it('accepts ISO timestamps with minute precision', () => {
+      expect(parseSince('2026-10-21T01:30Z')).toBe(Date.parse('2026-10-21T01:30:00Z'));
+    });
+  });
+
+  describe('redactSensitiveText', () => {
+    it('redacts common credential assignments, bearer tokens, and recognizable key formats', () => {
+      const input =
+        'api_key=localSecret123 token: "secret value" Authorization: Bearer abc.def-123 ghp_12345678901234567890 AKIA1234567890ABCDEF';
+      const redacted = redactSensitiveText(input + ' ' + ['Be', 'arer x'].join(''));
+      expect(redacted).not.toContain('localSecret123');
+      expect(redacted).not.toContain('secret value');
+      expect(redacted).not.toContain(' x');
+      expect(redacted).not.toContain('ghp_12345678901234567890');
+      expect(redacted).not.toContain('AKIA1234567890ABCDEF');
+      expect(redacted).toContain('[REDACTED]');
+    });
+
+    it('redacts credential values when the key is quoted as JSON', () => {
+      const input = '{"api_key":"jsonSecret123","access_token":"jsonToken123","password":"jsonPass123"}';
+      const redacted = redactSensitiveText(input);
+      expect(redacted).not.toContain('jsonSecret123');
+      expect(redacted).not.toContain('jsonToken123');
+      expect(redacted).not.toContain('jsonPass123');
+      expect(redacted).toContain('"api_key":"[REDACTED]"');
+      expect(redacted).toContain('"access_token":"[REDACTED]"');
+      expect(redacted).toContain('"password":"[REDACTED]"');
+    });
+
+    it('redacts credentials in prefixed environment-variable names', () => {
+      const awsKey = ['AWS', 'SECRET', 'ACCESS', 'KEY'].join('_');
+      const openAiKey = ['OPENAI', 'API', 'KEY'].join('_');
+      const input = `${awsKey}=awsFixture123 ${openAiKey}="modelFixture123"`;
+      const redacted = redactSensitiveText(input);
+      expect(redacted).not.toContain('awsFixture123');
+      expect(redacted).not.toContain('modelFixture123');
+      expect(redacted).toContain(`${awsKey}=[REDACTED]`);
+      expect(redacted).toContain(`${openAiKey}="[REDACTED]"`);
+    });
+
+    it('uses the shared secret sanitizer for Kilo CLI credentials', () => {
+      const redacted = redactSensitiveText('KILO_CLI=fixtureSecretValue123');
+      expect(redacted).not.toContain('fixtureSecretValue123');
+      expect(redacted).toContain('KILO_CLI=***REDACTED***');
+    });
   });
 
   it('escapes single quotes in terms', () => {
@@ -222,7 +331,7 @@ describe('buildCodexSearchQuery', () => {
   it('uses user_message as title_source, summary as separate column, and ISO 8601 datetime', () => {
     const sql = buildCodexSearchQuery(['test']) ?? '';
     expect(sql).toContain("substr(coalesce(t.user_message, ''), 1, 80) AS title_source");
-    expect(sql).toContain('s.summary AS summary');
+    expect(sql).toContain("substr(coalesce(s.summary, ''), 1, 300) AS summary");
     expect(sql).toContain('s.cwd AS directory');
     expect(sql).not.toContain('s.summary AS title');
     expect(sql).not.toContain('s.title');
@@ -506,14 +615,14 @@ describe('deduplicateSessions', () => {
   });
 
   it('caps at MAX_RESULT_SESSIONS', () => {
-    const rows = Array.from({ length: 15 }, (_, i) => ({
+    const rows = Array.from({ length: 1005 }, (_, i) => ({
       session_id: `ses_${i}`,
       title: `Session ${i}`,
       directory: '/test',
       updated: '2026-10-30',
       snippet: `Snippet ${i}`,
     }));
-    expect(deduplicateSessions(rows)).toHaveLength(10);
+    expect(deduplicateSessions(rows)).toHaveLength(1000);
   });
 
   it('skips rows without a session_id', () => {
@@ -716,14 +825,25 @@ describe('queryKiloDb', () => {
     expect(result).toEqual(sampleDbRows);
   });
 
-  it('returns an empty array when stdout is empty (no results)', async () => {
+  it('returns an empty array when sqlite3 emits no output for a valid empty result', async () => {
     const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout: '', code: 0 }));
-    expect(await queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).toEqual([]);
+    await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).resolves.toEqual([]);
   });
 
-  it('returns an empty array when stdout is not valid JSON', async () => {
+  it.each([
+    ['missing session_id', JSON.stringify([{ title: 'unusable row' }])],
+    ['non-string session_id', JSON.stringify([{ session_id: 42 }])],
+    ['non-object row', JSON.stringify([null])],
+  ])('rejects malformed SQLite rows (%s)', async (_description, stdout) => {
+    const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout, code: 0 }));
+    await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).rejects.toThrow(
+      'SQLite output row 1 has no valid session_id'
+    );
+  });
+
+  it('rejects invalid JSON stdout', async () => {
     const spawnImpl = vi.fn().mockReturnValue(mockSpawnChild({ stdout: 'not json', code: 0 }));
-    expect(await queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).toEqual([]);
+    await expect(queryKiloDb('/fake.db', 'SELECT 1', { spawnImpl })).rejects.toThrow('SQLite output is not valid JSON');
   });
 
   it('rejects when sqlite3 exits with a non-zero code', async () => {
@@ -886,8 +1006,29 @@ describe('summarizeSearchResults', () => {
     const prefix = 'Results (JSON):\n';
     const idx = filled.indexOf(prefix);
     expect(idx).toBeGreaterThanOrEqual(0);
-    const snippets = filled.slice(idx + prefix.length);
-    expect(snippets.length).toBe(8000);
+    const snippets = JSON.parse(filled.slice(idx + prefix.length).trim());
+    expect(filled.slice(idx + prefix.length).trim().length).toBeLessThanOrEqual(8000);
+    expect(snippets.results.length).toBeLessThan(bigSessions.length);
+    expect(snippets.omitted).toBe(bigSessions.length - snippets.results.length);
+    expect(snippets.results.at(-1).session_id).toMatch(/^ses_/);
+  });
+
+  it('redacts the query and matched excerpts before model summarization', async () => {
+    const completeImpl = vi.fn().mockResolvedValue({ content: 'summary' });
+    const sessions = [
+      {
+        session_id: 'ses_secret',
+        title: 'api_key=titleSecret123',
+        updated: '2026-10-30',
+        snippet: 'Authorization: Bearer snippetSecret123',
+      },
+    ];
+    await summarizeSearchResults('token=querySecret123', sessions, { completeImpl });
+    const sentPrompt = completeImpl.mock.calls[0][0];
+    expect(sentPrompt).not.toContain('querySecret123');
+    expect(sentPrompt).not.toContain('titleSecret123');
+    expect(sentPrompt).not.toContain('snippetSecret123');
+    expect(sentPrompt).toContain('[REDACTED]');
   });
 });
 
@@ -924,6 +1065,31 @@ describe('parseArgs', () => {
     expect(result.promptFile).toBe('/tmp/prompt.txt');
     expect(result.outputFile).toBe('/tmp/out.txt');
     expect(result.maxSummaryTokens).toBe(200);
+  });
+
+  it('parses date, directory, offset, and local-only options', () => {
+    const parsed = parseArgs([
+      '--prompt',
+      'query',
+      '--since',
+      '2026-10-21',
+      '--directory',
+      '/Users/test/ph',
+      '--offset',
+      '500',
+      '--local-only',
+    ]);
+    expect(parsed.sinceMs).toBe(Date.parse('2026-10-21T00:00:00.000Z'));
+    expect(parsed.directory).toBe('/Users/test/ph');
+    expect(parsed.offset).toBe(500);
+    expect(parsed.localOnly).toBe(true);
+    expect(parsed.noSummarize).toBe(true);
+  });
+
+  it('rejects invalid since dates, blank directories, and invalid offsets', () => {
+    expect(parseArgs(['--prompt', 'q', '--since', 'yesterday']).error).toContain('--since');
+    expect(parseArgs(['--prompt', 'q', '--directory', '  ']).error).toContain('--directory');
+    expect(parseArgs(['--prompt', 'q', '--offset', '-1']).error).toContain('--offset');
   });
 
   it('parses the no-summarize flag', () => {
@@ -1124,7 +1290,7 @@ describe('CLI: full integration with mocked deps', async () => {
       return Promise.resolve({ content: '' });
     });
     try {
-      await writeFile(promptPath, 'How do I use the brush and color tools?');
+      await writeFile(promptPath, 'How do I use the brush and color tools? token=querySecret123');
       const code = await main(['--prompt-file', promptPath, '--max-summary-tokens', '200'], {
         queryDb,
         completeImpl,
@@ -1136,14 +1302,18 @@ describe('CLI: full integration with mocked deps', async () => {
       });
       expect(code).toBe(0);
       expect(completeImpl).toHaveBeenCalledTimes(2);
+      expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('matching excerpts will be sent'));
+      expect(stderr.write).not.toHaveBeenCalledWith(expect.stringContaining('querySecret123'));
 
       const expandCall = completeImpl.mock.calls[0][0];
       expect(expandCall).toContain('Extract 1-5');
       expect(expandCall).toContain('brush and color tools');
+      expect(expandCall).not.toContain('querySecret123');
 
       const summarizeCall = completeImpl.mock.calls[1][0];
       expect(summarizeCall).toContain('chat-history search assistant');
       expect(summarizeCall).toContain('brush and color tools');
+      expect(summarizeCall).not.toContain('querySecret123');
 
       const output = stdout.write.mock.calls.map((c) => c[0]).join('');
       expect(output).toContain('## Summary');
@@ -1200,10 +1370,74 @@ describe('CLI: full integration with mocked deps', async () => {
       stderr,
     });
     expect(code).toBe(0);
-    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('worktree inventory'));
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('query text is not logged'));
+    expect(stderr.write).not.toHaveBeenCalledWith(expect.stringContaining('worktree inventory'));
     const output = stdout.write.mock.calls.map((c) => c[0]).join('');
     expect(output).toContain('No matching chat history found.');
     expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('Found 0 matching session'));
+  });
+
+  it('keeps --local-only entirely offline and emits no model-sharing notice', async () => {
+    const stdout = { write: vi.fn() };
+    const stderr = { write: vi.fn() };
+    const completeImpl = vi.fn();
+    const code = await main(['--prompt', 'brush tool', '--local-only'], {
+      queryDb: vi.fn().mockResolvedValue([]),
+      completeImpl,
+      statFn: vi.fn().mockResolvedValue(undefined),
+      homeDir: '/home/user',
+      platform: 'linux',
+      stdout,
+      stderr,
+    });
+    expect(code).toBe(0);
+    expect(completeImpl).not.toHaveBeenCalled();
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('no model inference'));
+    expect(stderr.write).not.toHaveBeenCalledWith(expect.stringContaining('Privacy notice'));
+    expect(stdout.write).toHaveBeenCalledWith('[]\n');
+  });
+
+  it('does not advertise a next page beyond the maximum offset', async () => {
+    const stderr = { write: vi.fn() };
+    const code = await main(['--prompt', 'brush tool', '--local-only', '--offset', '1000000000'], {
+      queryDb: vi.fn().mockResolvedValue([]),
+      statFn: vi.fn().mockResolvedValue(undefined),
+      homeDir: '/home/user',
+      platform: 'linux',
+      stdout: { write: vi.fn() },
+      stderr,
+    });
+    expect(code).toBe(0);
+    expect(stderr.write).toHaveBeenCalledWith(expect.stringContaining('maximum search offset reached'));
+    expect(stderr.write).not.toHaveBeenCalledWith(expect.stringContaining('--offset 1000000050'));
+  });
+
+  describe('searchAllSources ordering', () => {
+    it('chooses the newest sessions globally before applying the output cap', async () => {
+      const kiloRows = Array.from({ length: 12 }, (_, index) => ({
+        session_id: `kilo_${index}`,
+        title: 'Older Kilo session',
+        updated: `2026-10-${String(10 + index).padStart(2, '0')} 12:00:00`,
+        snippet: 'kilo',
+      }));
+      const newestCodex = {
+        session_id: 'codex_newest',
+        title_source: 'Newest Copilot session',
+        summary: 'newest',
+        updated: '2026-10-31 13:00:00',
+        snippet: 'newest',
+      };
+      const queryDb = vi.fn().mockResolvedValueOnce(kiloRows).mockResolvedValueOnce([newestCodex]);
+      const result = await searchAllSources(['test'], {
+        queryDb,
+        statFn: vi.fn().mockResolvedValue(undefined),
+        homeDir: '/home/user',
+        platform: 'linux',
+      });
+      expect(result.results).toHaveLength(13);
+      expect(result.results[0].session_id).toBe('codex_newest');
+      expect(result.results.some((session) => session.session_id === 'kilo_11')).toBe(true);
+    });
   });
 
   it('handles empty search query', async () => {

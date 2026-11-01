@@ -83,7 +83,9 @@ file replaces the whole document and mints a new `documentId`
 **Gap:** One document at a time. No colour mode or bit depth. No Image Size or
 Canvas Size dialog. DPI is a one-shot conversion at New time and is never stored on
 the document (`NewImageDialog.tsx` — `NewImageDialogProps`, whose comment records why
-there is deliberately no `dpi` field).
+there is deliberately no `dpi` field). The source mode of a grayscale PSD is not
+retained when it is converted to RGB on import (see Import), so mode-scoped Photoshop
+behaviour cannot be reproduced after import.
 
 ### Unsaved changes
 
