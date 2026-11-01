@@ -43,9 +43,12 @@ node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
 The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Nemotron 3 Ultra
-first when it is present, and stops that provider for the run on HTTP 401, 402, or 429. Inference
-gets five minutes; catalog and quota requests keep a separate 15-second timeout. A quota snapshot
-is only current at the time it was read and can change when other tools use the account.
+first when it is present. HTTP 401/402 exhaust the provider for the run; an inference HTTP 429 does
+so only when rate-limit headers or the daily counter show no requests remaining. Otherwise, the
+runner rotates among verified-free models within its per-run cap. A 429 from the quota endpoint is
+treated as an unknown counter, not proof that inference is exhausted. Inference gets five minutes;
+catalog and quota requests keep a separate 15-second timeout. A quota snapshot is only current at
+the time it was read and can change when other tools use the account.
 OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning has room to finish; other
 models use the requested token limit.
 
