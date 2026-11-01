@@ -41,13 +41,13 @@ describe('free-model-sweep evidence classification', () => {
     const logPath = join(directory, 'opencode.log');
     const now = Date.parse('2026-10-29T12:00:00.000Z');
     const line = (minute, session, run) =>
-      `timestamp=2026-10-29T11:${String(minute).padStart(2, '0')}:00.000Z level=ERROR providerID=kilo modelID=poolside/laguna-s-2.1:free session.id=${session} run=${run} error.error="Rate limit exceeded"`;
+      `timestamp=2026-10-29T11:${String(minute).padStart(2, '0')}:00.000Z level=ERROR providerID=kilo modelID=nvidia/nemotron-3-ultra-550b-a55b:free session.id=${session} run=${run} error.error="Rate limit exceeded"`;
 
     try {
       await writeFile(
         logPath,
         [
-          'timestamp=2026-10-29T10:59:59.000Z level=INFO providerID=kilo modelID=poolside/laguna-s-2.1:free session.id=before-window run=old-run',
+          'timestamp=2026-10-29T10:59:59.000Z level=INFO providerID=kilo modelID=nvidia/nemotron-3-ultra-550b-a55b:free session.id=before-window run=old-run',
           line(1, 'self', 'own-run'),
           line(2, 'child-session', 'own-run'),
           line(3, 'session-a', 'run-a'),
@@ -66,7 +66,7 @@ describe('free-model-sweep evidence classification', () => {
       expect(result.complete).toBe(true);
       expect(result.events).toHaveLength(4);
       expect(result.ignored).toEqual({ selfSession: 1, selfRun: 1 });
-      expect(result.events.every((event) => event.model === 'poolside/laguna-s-2.1:free')).toBe(true);
+      expect(result.events.every((event) => event.model === 'nvidia/nemotron-3-ultra-550b-a55b:free')).toBe(true);
       expect(result.events.every((event) => !('raw' in event) && !('error' in event))).toBe(true);
       expect(classifyCandidates(result.events)[0]).toMatchObject({
         rateLimitEvents: 4,
@@ -129,7 +129,7 @@ describe('free-model-sweep evidence classification', () => {
     const now = Date.parse('2026-10-29T12:00:00.000Z');
     const entry = {
       source: 'kilo',
-      model: 'poolside/laguna-s-2.1:free',
+      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
       reason: 'rate_limit',
       quarantinedAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
       expiresAt: new Date(now - 60 * 60 * 1000).toISOString(),
@@ -138,20 +138,20 @@ describe('free-model-sweep evidence classification', () => {
     try {
       await writeFile(
         quarantinePath,
-        JSON.stringify({ schemaVersion: 1, entries: { 'kilo:poolside/laguna-s-2.1:free': entry } })
+        JSON.stringify({ schemaVersion: 1, entries: { 'kilo:nvidia/nemotron-3-ultra-550b-a55b:free': entry } })
       );
 
       expect(await readQuarantineSnapshot(quarantinePath, now)).toEqual([
         {
-          key: 'kilo:poolside/laguna-s-2.1:free',
+          key: 'kilo:nvidia/nemotron-3-ultra-550b-a55b:free',
           reason: 'rate_limit',
           expiresAt: entry.expiresAt,
           active: false,
         },
       ]);
-      expect(JSON.parse(await readFile(quarantinePath, 'utf8')).entries['kilo:poolside/laguna-s-2.1:free']).toEqual(
-        entry
-      );
+      expect(
+        JSON.parse(await readFile(quarantinePath, 'utf8')).entries['kilo:nvidia/nemotron-3-ultra-550b-a55b:free']
+      ).toEqual(entry);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -258,7 +258,7 @@ describe('free-model-sweep evidence classification', () => {
   });
 
   it('accepts explicit model rate limits but not a bare 429', () => {
-    expect(classifyFailure('[Poolside] Rate limit exceeded')).toBe('explicit_upstream_rate_limit');
+    expect(classifyFailure('[Kilo] Rate limit exceeded')).toBe('explicit_upstream_rate_limit');
     expect(classifyFailure('temporarily rate-limited upstream')).toBe('explicit_upstream_rate_limit');
     expect(classifyFailure('HTTP 429')).toBe('unclassified');
   });
@@ -274,24 +274,24 @@ describe('free-model-sweep evidence classification', () => {
         part_id: 'part-a',
         occurred_at: '2026-10-29 10:00:00Z',
         provider_id: 'kilo',
-        model_id: 'poolside/laguna-s-2.1:free',
-        error: '[Poolside] Rate limit exceeded',
+        model_id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        error: '[Kilo] Rate limit exceeded',
       },
       {
         session_id: 'session-a',
         part_id: 'part-a',
         occurred_at: '2026-10-29 10:00:00Z',
         provider_id: 'kilo',
-        model_id: 'poolside/laguna-s-2.1:free',
-        error: '[Poolside] Rate limit exceeded',
+        model_id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        error: '[Kilo] Rate limit exceeded',
       },
       {
         session_id: 'self',
         part_id: 'part-self',
         occurred_at: '2026-10-29 10:01:00Z',
         provider_id: 'kilo',
-        model_id: 'poolside/laguna-s-2.1:free',
-        error: '[Poolside] Rate limit exceeded',
+        model_id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        error: '[Kilo] Rate limit exceeded',
       },
       {
         session_id: 'session-paid',
@@ -299,7 +299,7 @@ describe('free-model-sweep evidence classification', () => {
         occurred_at: '2026-10-29 10:02:00Z',
         provider_id: 'openai',
         model_id: 'gpt-6-luna',
-        error: '[Poolside] Rate limit exceeded',
+        error: '[Kilo] Rate limit exceeded',
       },
       {
         session_id: 'session-paid-route',
@@ -315,7 +315,7 @@ describe('free-model-sweep evidence classification', () => {
     expect(summary.events).toHaveLength(1);
     expect(summary.events[0]).toMatchObject({
       source: 'kilo',
-      model: 'poolside/laguna-s-2.1:free',
+      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
       classification: 'explicit_upstream_rate_limit',
       sessionId: 'session-a',
       partId: 'part-a',
@@ -328,7 +328,7 @@ describe('free-model-sweep evidence classification', () => {
     const events = [
       {
         source: 'kilo',
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         classification: 'explicit_upstream_rate_limit',
         sessionId: 's1',
         runId: 'r1',
@@ -337,7 +337,7 @@ describe('free-model-sweep evidence classification', () => {
       },
       {
         source: 'kilo',
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         classification: 'explicit_upstream_rate_limit',
         sessionId: 's2',
         runId: 'r2',
@@ -365,7 +365,7 @@ describe('free-model-sweep evidence classification', () => {
     expect(classifyCandidates(events)).toEqual([
       expect.objectContaining({
         source: 'kilo',
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         rateLimitEvents: 2,
         sessionCount: 2,
         recommendation: 'manual_review_candidate',
@@ -384,7 +384,7 @@ describe('free-model-sweep evidence classification', () => {
     const candidate = classifyCandidates([
       {
         source: 'kilo',
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         classification: 'explicit_upstream_rate_limit',
         sessionId: 's1',
         runId: 'same-run',
@@ -393,7 +393,7 @@ describe('free-model-sweep evidence classification', () => {
       },
       {
         source: 'kilo',
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         classification: 'explicit_upstream_rate_limit',
         sessionId: 's2',
         runId: 'same-run',
@@ -402,7 +402,7 @@ describe('free-model-sweep evidence classification', () => {
       },
       {
         source: 'kilo',
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         classification: 'explicit_upstream_rate_limit',
         sessionId: 's3',
         runId: 'same-run',
@@ -427,7 +427,7 @@ describe('free-model-sweep evidence classification', () => {
         payload: {
           id: 'record-1',
           type: 'custom_tool_call_output',
-          output: '[Poolside] Rate limit exceeded for poolside/laguna-s-2.1:free',
+          output: '[Kilo] Rate limit exceeded for nvidia/nemotron-3-ultra-550b-a55b:free',
         },
       }),
       JSON.stringify({
@@ -436,12 +436,17 @@ describe('free-model-sweep evidence classification', () => {
         payload: {
           id: 'record-2',
           type: 'custom_tool_call_output',
-          output: 'Rate limit exceeded while comparing poolside/laguna-s-2.1:free and google/gemma-4-31b-it:free',
+          output:
+            'Rate limit exceeded while comparing nvidia/nemotron-3-ultra-550b-a55b:free and google/gemma-4-31b-it:free',
         },
       }),
       JSON.stringify({
         type: 'response_item',
-        payload: { id: 'record-3', type: 'message', content: 'Rate limit exceeded for poolside/laguna-s-2.1:free' },
+        payload: {
+          id: 'record-3',
+          type: 'message',
+          content: 'Rate limit exceeded for nvidia/nemotron-3-ultra-550b-a55b:free',
+        },
       }),
     ].join('\n');
 
@@ -449,7 +454,7 @@ describe('free-model-sweep evidence classification', () => {
       {
         threadId: 'thread-1',
         recordId: 'record-1',
-        model: 'poolside/laguna-s-2.1:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         source: 'unknown',
         classification: 'explicit_upstream_rate_limit',
         occurredAt: '2026-10-29T10:00:00.000Z',
@@ -465,7 +470,7 @@ describe('free-model-sweep evidence classification', () => {
         payload: {
           id: 'old-record',
           type: 'custom_tool_call_output',
-          output: 'Rate limit exceeded for poolside/laguna-s-2.1:free',
+          output: 'Rate limit exceeded for nvidia/nemotron-3-ultra-550b-a55b:free',
         },
       }),
       JSON.stringify({
@@ -474,7 +479,7 @@ describe('free-model-sweep evidence classification', () => {
         payload: {
           id: 'current-record',
           type: 'custom_tool_call_output',
-          output: 'Rate limit exceeded for poolside/laguna-s-2.1:free',
+          output: 'Rate limit exceeded for nvidia/nemotron-3-ultra-550b-a55b:free',
         },
       }),
     ].join('\n');

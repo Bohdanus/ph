@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
@@ -8,17 +11,24 @@ import {
   zeroPriced,
 } from '../free-model-pool.mjs';
 
-const completeWithFreeModel = (prompt, options = {}) =>
-  completeWithFreeModelImplementation(prompt, {
-    kiloCommand: '',
-    openRouterKey: '',
-    groqApiKey: '',
-    groqApiKeys: [],
-    groqFreePlan: false,
-    opencodeCommand: '',
-    ...options,
-    initializeLegacyQuarantine: false,
-  });
+const completeWithFreeModel = async (prompt, options = {}) => {
+  const temporaryDirectory = options.quarantineFile ? null : await mkdtemp(join(tmpdir(), 'free-model-pool-test-'));
+  try {
+    return await completeWithFreeModelImplementation(prompt, {
+      kiloCommand: '',
+      openRouterKey: '',
+      groqApiKey: '',
+      groqApiKeys: [],
+      groqFreePlan: false,
+      opencodeCommand: '',
+      quarantineFile: options.quarantineFile ?? join(temporaryDirectory, 'quarantine.json'),
+      ...options,
+      initializeLegacyQuarantine: false,
+    });
+  } finally {
+    if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+};
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -92,23 +102,25 @@ describe('unverifiable free routers', () => {
     expect(catalogCandidates('kilo', [row]).map(({ model }) => model)).toEqual(['reflection/beam-free']);
   });
 
-  it('tries Laguna first in the OpenRouter catalog and preserves the order of other free models', () => {
+  it('tries Nemotron 3 Ultra first in the OpenRouter catalog and preserves other free-model order', () => {
     const rows = [
       openRouterRow('recursive/flint-v1.0'),
-      openRouterRow('poolside/laguna-s-2.1'),
+      openRouterRow('nvidia/nemotron-3-ultra-550b-a55b'),
       openRouterRow('xingchen-agi/xing4.0-29b-a4b'),
     ];
     expect(catalogCandidates('openrouter', { data: rows }).map(({ model }) => model)).toEqual([
-      'poolside/laguna-s-2.1:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'recursive/flint-v1.0:free',
       'xingchen-agi/xing4.0-29b-a4b:free',
     ]);
   });
 
   it('excludes the dynamic OpenRouter router from Kilo and OpenRouter catalogs', () => {
-    const kiloRows = [kiloRow('poolside/laguna-s-2.1:free'), kiloRow('openrouter/free')];
+    const kiloRows = [kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'), kiloRow('openrouter/free')];
     const routerRows = [openRouterRow('openrouter/free')];
-    expect(catalogCandidates('kilo', kiloRows).map(({ model }) => model)).toEqual(['poolside/laguna-s-2.1:free']);
+    expect(catalogCandidates('kilo', kiloRows).map(({ model }) => model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+    ]);
     expect(catalogCandidates('openrouter', { data: routerRows })).toEqual([]);
   });
 });
@@ -284,6 +296,33 @@ describe('OpenRouter quota status command', () => {
 });
 
 describe('OpenRouter pre-routing quota check', () => {
+  it('does not probe quota unless the caller opts in', async () => {
+    const chat = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'o1:free',
+        choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+      }),
+    });
+    const fetchImpl = catalogFetch({
+      openrouter: [openRouterRow('o1')],
+      keyInfo: () => ({
+        ok: true,
+        json: async () => ({
+          data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } },
+        }),
+      }),
+      chat,
+    });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).resolves.toMatchObject({
+      source: 'openrouter',
+      model: 'o1:free',
+    });
+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('api/v1/key'))).toBe(false);
+  });
+
   it('skips OpenRouter when the daily quota is exhausted and never calls its chat endpoint', async () => {
     const chat = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
     const fetchImpl = catalogFetch({

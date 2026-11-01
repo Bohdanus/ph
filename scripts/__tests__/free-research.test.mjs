@@ -81,6 +81,12 @@ describe('validateResearchUrl', () => {
     expect(validateResearchUrl('https://example.com/docs')).toBe('https://example.com/docs');
   });
 
+  it('rejects internationalized hostnames explicitly', () => {
+    expect(() => validateResearchUrl('https://xn--e1afmkfd.xn--p1ai/')).toThrow(
+      'Internationalized hostnames are not supported'
+    );
+  });
+
   it.each([
     'http://example.com/',
     'file:///etc/passwd',
@@ -340,6 +346,17 @@ describe('fetchAll', () => {
     expect(results.map((result) => result.ok)).toEqual([true, true, true, true, true]);
     expect(results.map((result) => result.content)).toEqual(urls.map((url) => new URL(url).href));
     expect(fetchImpl).toHaveBeenCalledTimes(5);
+  });
+
+  it('returns invalid URLs as per-source failures without rejecting the whole batch', async () => {
+    const urls = ['https://valid.example.com', 'not a URL'];
+    const fetchImpl = vi.fn(async () => htmlResponse('<p>ok</p>'));
+
+    const results = await fetchAll(urls, { fetchImpl, maxConcurrency: 2 });
+
+    expect(results.map((result) => result.ok)).toEqual([true, false]);
+    expect(results[1].error).toMatch(/Invalid research URL/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('records failures without dropping other results', async () => {

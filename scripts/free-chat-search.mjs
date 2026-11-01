@@ -3,10 +3,12 @@ import { spawn } from 'node:child_process';
 import { open, stat, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { completeWithFreeModel } from './free-model-pool.mjs';
+import { sanitizeErrorMessage, sanitizeForLogging } from './lib/secrets.mjs';
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_PROMPT_FILE_BYTES = 4 * 1024;
 const MAX_SEARCH_TERMS = 5;
+const MAX_SEARCH_TERM_CHARS = 200;
 const MAX_RESULT_SESSIONS = 10;
 const MAX_MATCHES_PER_QUERY = 200;
 const DEFAULT_SEARCH_SESSIONS = 50;
@@ -96,15 +98,6 @@ function escapeSqlValue(value) {
   return String(value).replace(/'/g, "''");
 }
 
-export function resolveKiloDbPath({ kiloDbPath, homeDir, xdgDataHome, platform: plat } = {}) {
-  if (kiloDbPath) return kiloDbPath;
-  const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
-  const xdg = xdgDataHome ?? process.env.XDG_DATA_HOME;
-  if (xdg) return `${xdg}/kilo/kilo.db`;
-  if (home) return `${home}/.local/share/kilo/kilo.db`;
-  return '/tmp/kilo/kilo.db';
-}
-
 export function resolveKiloDbCandidates({ kiloDbPath, homeDir, xdgDataHome, platform: plat } = {}) {
   if (kiloDbPath) return [kiloDbPath];
   const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
@@ -112,6 +105,10 @@ export function resolveKiloDbCandidates({ kiloDbPath, homeDir, xdgDataHome, plat
   const candidates = [];
   if (xdg) candidates.push(`${xdg}/kilo/kilo.db`);
   if (home) {
+    const appData = process.env.APPDATA;
+    const localAppData = process.env.LOCALAPPDATA;
+    if (appData) candidates.push(`${appData}\\kilo\\kilo.db`);
+    if (localAppData) candidates.push(`${localAppData}\\kilo\\kilo.db`);
     candidates.push(`${home}/.local/share/kilo/kilo.db`);
     if (plat === 'darwin') {
       candidates.push(`${home}/Library/Application Support/kilo/kilo.db`);
@@ -133,16 +130,6 @@ export async function findExistingDbPath(options = {}, { statFn = stat } = {}) {
     }
   }
   return candidates[0];
-}
-
-export function resolveCodexDbPath({ codexDbPath, homeDir, platform: plat } = {}) {
-  if (codexDbPath) return codexDbPath;
-  const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
-  if (!home) return '/tmp/codex/session-store.db';
-  if (plat === 'darwin') {
-    return `${home}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/session-store.db`;
-  }
-  return `${home}/.config/Code/User/globalStorage/github.copilot-chat/session-store.db`;
 }
 
 export function resolveCodexDbCandidates({ codexDbPath, homeDir, platform: plat } = {}) {
@@ -240,9 +227,10 @@ WITH recent AS (
 )
 SELECT
   s.id AS session_id,
-  s.summary AS title,
+  substr(coalesce(t.user_message, ''), 1, 80) AS title_source,
+  s.summary AS summary,
   s.cwd AS directory,
-  datetime(s.updated_at / 1000, 'unixepoch') AS updated,
+  datetime(s.updated_at) AS updated,
   t.turn_index,
   substr(coalesce(t.user_message, '') || ' ' || coalesce(t.assistant_response, ''), 1, ${MAX_SNIPPET_CHARS}) AS snippet
 FROM recent r
@@ -263,7 +251,11 @@ export function deduplicateSessions(rows, { source = CHAT_STORE_KILO } = {}) {
     seen.add(key);
     results.push({
       session_id: key,
-      title: row.title || '',
+      title:
+        (row.title_source && row.title_source.trim()) ||
+        (row.summary && row.summary.trim()) ||
+        (row.title && row.title.trim()) ||
+        key.slice(0, 8),
       directory: row.directory || '',
       source,
       updated: row.updated || '',
@@ -279,7 +271,7 @@ export function shapeSessions(sessions, { verbose = false } = {}) {
     const fullSnippet = session.snippet || '';
     const shaped = {
       session_id: session.session_id,
-      title: session.title,
+      title: session.title || session.session_id?.slice(0, 8) || '',
       updated: session.updated,
       snippet: fullSnippet.slice(0, DEFAULT_SNIPPET_CHARS),
     };
@@ -308,15 +300,21 @@ export function defaultTerms(prompt) {
 
 export async function expandSearchTerms(
   prompt,
-  { completeImpl = completeWithFreeModel, maxTokens = 200, onError, ...completeOpts } = {}
+  { completeImpl = completeWithFreeModel, maxTokens = 200, onError, onCatalogError, ...completeOpts } = {}
 ) {
   const filled = EXPAND_TERMS_PROMPT.replace('{PROMPT}', prompt.slice(0, MAX_PROMPT_CHARS));
   try {
-    const result = await completeImpl(filled, { maxTokens, onCatalogError: onError, ...completeOpts });
+    const result = await completeImpl(filled, { maxTokens, onCatalogError, ...completeOpts });
     const terms = (result.content || '')
       .split(/\r?\n/)
       .map((line) => line.trim().toLowerCase())
-      .map((term) => term.replace(/[^\w\s-]/g, '').trim())
+      .map((term) =>
+        term
+          .replace(/[^\w\s-]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+      )
+      .map((term) => term.slice(0, MAX_SEARCH_TERM_CHARS))
       .filter((term) => term && term.length >= 2 && !STOP_WORDS.has(term));
     if (terms.length > 0) return terms.slice(0, MAX_SEARCH_TERMS);
   } catch (error) {
@@ -335,61 +333,104 @@ export async function queryKiloDb(
   { spawnImpl = spawn, sqlitePath = 'sqlite3', timeoutMs = SQLITE_TIMEOUT_MS } = {}
 ) {
   if (!sql || typeof sql !== 'string') throw new Error('SQL query must be a non-empty string');
-  return new Promise((resolveP, rejectP) => {
-    const child = spawnImpl(sqlitePath, ['-readonly', '-json', '-bail', dbPath, sql], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill('SIGTERM');
-      safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
-      rejectP(new Error(`sqlite3 query timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
-      if (stdout.length > MAX_SQLITE_OUTPUT_BYTES) {
+
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 100;
+
+  function isLockedError(code, stderr) {
+    if (code === 5) return true;
+    const s = (stderr || '').toLowerCase();
+    return s.includes('locked') || s.includes('busy');
+  }
+
+  async function attempt(attemptNumber) {
+    return new Promise((resolveP, rejectP) => {
+      const child = spawnImpl(sqlitePath, ['-readonly', '-json', '-bail', dbPath, sql], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill('SIGTERM');
+        safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
+        rejectP(new Error(`sqlite3 query timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString('utf8');
+        if (stdout.length > MAX_SQLITE_OUTPUT_BYTES) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          child.kill('SIGTERM');
+          safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
+          rejectP(new Error('SQLite response exceeded the output byte limit'));
+        }
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString('utf8');
+        if (stderr.length > 4096) stderr = stderr.slice(0, 4096);
+      });
+      child.once('error', (error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        child.kill('SIGTERM');
-        safeUnref(setTimeout(() => child.kill('SIGKILL'), 2000));
-        rejectP(new Error('SQLite response exceeded the output byte limit'));
-      }
+        if (error.code === 'ENOENT') {
+          rejectP(new Error(`SQLite CLI not found at "${sqlitePath}"; install sqlite3 and ensure it is on PATH`));
+        } else {
+          rejectP(error);
+        }
+      });
+      child.once('close', (code, signal) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (code !== 0) {
+          const error = new Error(
+            `sqlite3 exited with code ${code ?? signal}${stderr ? `: ${stderr.slice(0, 500)}` : ''}`
+          );
+          error.exitCode = code;
+          error.stderr = stderr;
+          rejectP(error);
+          return;
+        }
+        try {
+          const parsed = JSON.parse(stdout);
+          if (!Array.isArray(parsed)) {
+            rejectP(new Error('SQLite output is not an array'));
+            return;
+          }
+          const validRows = parsed.filter(
+            (row) => row && typeof row === 'object' && typeof row.session_id === 'string'
+          );
+          resolveP(validRows);
+        } catch {
+          resolveP([]);
+        }
+      });
     });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-      if (stderr.length > 4096) stderr = stderr.slice(0, 4096);
-    });
-    child.once('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error.code === 'ENOENT') {
-        rejectP(new Error(`SQLite CLI not found at "${sqlitePath}"; install sqlite3 and ensure it is on PATH`));
-      } else {
-        rejectP(error);
+  }
+
+  let lastError;
+  for (let attemptNumber = 1; attemptNumber <= MAX_RETRIES; attemptNumber++) {
+    try {
+      return await attempt(attemptNumber);
+    } catch (error) {
+      lastError = error;
+      const code = error.exitCode;
+      const stderr = error.stderr;
+      if (attemptNumber < MAX_RETRIES && isLockedError(code, stderr)) {
+        const delay = BASE_DELAY_MS * Math.pow(2, attemptNumber - 1);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
       }
-    });
-    child.once('close', (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code !== 0) {
-        rejectP(new Error(`sqlite3 exited with code ${code ?? signal}${stderr ? `: ${stderr.slice(0, 500)}` : ''}`));
-        return;
-      }
-      try {
-        resolveP(JSON.parse(stdout));
-      } catch {
-        resolveP([]);
-      }
-    });
-  });
+      throw error;
+    }
+  }
+  throw lastError;
 }
 
 export async function searchChatHistory(
@@ -413,33 +454,87 @@ export async function searchChatHistory(
 
 export async function searchAllSources(
   terms,
-  { queryDb = queryKiloDb, maxMatches = MAX_MATCHES_PER_QUERY, maxSessions = DEFAULT_SEARCH_SESSIONS } = {}
+  {
+    queryDb = queryKiloDb,
+    statFn = stat,
+    homeDir,
+    xdgDataHome,
+    platform: plat,
+    maxMatches = MAX_MATCHES_PER_QUERY,
+    maxSessions = DEFAULT_SEARCH_SESSIONS,
+    onInfo = () => {},
+    stderr = process.stderr,
+  } = {}
 ) {
   const allResults = [];
-  // Search Kilo DB
+  const dbPaths = [];
+  const queryErrors = [];
+  let successfulQueries = 0;
+
+  const kiloDbPath = await findExistingDbPath({ homeDir, xdgDataHome, platform: plat }, { statFn });
+  dbPaths.push(kiloDbPath);
+  let kiloDbExists = false;
   try {
-    const kiloDbPath = await findExistingDbPath({});
+    await statFn(kiloDbPath);
+    kiloDbExists = true;
+  } catch {
+    kiloDbExists = false;
+  }
+  if (kiloDbExists) {
     const sql = buildSearchQuery(terms, { maxMatches, maxSessions });
     if (sql) {
-      const rows = await queryDb(kiloDbPath, sql);
-      allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_KILO }));
+      try {
+        const rows = await queryDb(kiloDbPath, sql);
+        allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_KILO }));
+        successfulQueries += 1;
+      } catch (error) {
+        queryErrors.push(error);
+        stderr.write?.(`Kilo DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
+      }
     }
-  } catch (error) {
-    // Log but continue with other sources
+  } else {
+    onInfo(`Skipping Kilo source: DB not found at ${kiloDbPath}`);
   }
-  // Search Codex DB
+
+  const codexDbPath = await findExistingCodexDbPath({ homeDir, platform: plat }, { statFn });
+  dbPaths.push(codexDbPath);
+  let codexDbExists = false;
   try {
-    const codexDbPath = await findExistingCodexDbPath({});
+    await statFn(codexDbPath);
+    codexDbExists = true;
+  } catch {
+    codexDbExists = false;
+  }
+  if (codexDbExists) {
     const sql = buildCodexSearchQuery(terms, { maxMatches, maxSessions });
     if (sql) {
-      const rows = await queryDb(codexDbPath, sql);
-      allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_CODEX }));
+      try {
+        const rows = await queryDb(codexDbPath, sql);
+        allResults.push(...deduplicateSessions(rows, { source: CHAT_STORE_CODEX }));
+        successfulQueries += 1;
+      } catch (error) {
+        queryErrors.push(error);
+        stderr.write?.(`Codex DB query failed: ${sanitizeErrorMessage(error.message)}\n`);
+      }
     }
-  } catch (error) {
-    // Log but continue with other sources
+  } else {
+    onInfo(`Skipping Codex source: DB not found at ${codexDbPath}`);
   }
-  allResults.sort((a, b) => b.updated.localeCompare(a.updated));
-  return allResults.slice(0, MAX_RESULT_SESSIONS);
+
+  if (queryErrors.length > 0 && successfulQueries === 0) {
+    throw new AggregateError(queryErrors, 'All available chat-history queries failed');
+  }
+
+  const seenIds = new Set();
+  const deduped = [];
+  for (const row of allResults) {
+    if (!row.session_id || seenIds.has(row.session_id)) continue;
+    seenIds.add(row.session_id);
+    deduped.push(row);
+    if (deduped.length >= MAX_RESULT_SESSIONS) break;
+  }
+  deduped.sort((a, b) => b.updated.localeCompare(a.updated));
+  return { results: deduped, dbPaths };
 }
 
 export function fallbackSummary(sessions, terms) {
@@ -453,7 +548,14 @@ export function fallbackSummary(sessions, terms) {
 export async function summarizeSearchResults(
   prompt,
   sessions,
-  { completeImpl = completeWithFreeModel, maxTokens = DEFAULT_SUMMARY_TOKENS, onError, terms, ...completeOpts } = {}
+  {
+    completeImpl = completeWithFreeModel,
+    maxTokens = DEFAULT_SUMMARY_TOKENS,
+    onError,
+    onCatalogError,
+    terms,
+    ...completeOpts
+  } = {}
 ) {
   if (!sessions.length) return 'No matching chat history found.';
   const json = JSON.stringify(
@@ -472,8 +574,12 @@ export async function summarizeSearchResults(
     snippets
   );
   try {
-    const result = await completeImpl(filled, { maxTokens, onCatalogError: onError, ...completeOpts });
-    return (result.content || '').trim();
+    const result = await completeImpl(filled, { maxTokens, onCatalogError, ...completeOpts });
+    const content = (result.content || '').trim();
+    if (!content && onError) {
+      onError(new Error('Empty summary from model'));
+    }
+    return content || fallbackSummary(sessions, terms || []);
   } catch (error) {
     if (onError) onError(error);
     return fallbackSummary(sessions, terms || []);
@@ -602,7 +708,7 @@ function usage() {
   );
 }
 
-async function readPrompt(args, { openFn = open } = {}) {
+export async function readPrompt(args, { openFn = open } = {}) {
   if (args.rawPrompt) {
     const text = args.rawPrompt.trim();
     if (!text) throw new Error('Search query is empty');
@@ -672,17 +778,19 @@ export async function main(
   try {
     prompt = await readPrompt(parsed, { openFn });
   } catch (error) {
-    stderr.write(`${error.message}\n`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 2;
   }
 
-  const dbPath = parsed.dbPath
-    ? parsed.dbPath
-    : await findExistingDbPath({ homeDir, xdgDataHome, platform: plat }, { statFn });
-
   stderr.write(`Chat search: "${prompt.slice(0, 80)}"\n`);
 
-  const completeOpts = { fetchImpl, openRouterKey, groqApiKey, groqFreePlan };
+  const completeOpts = {
+    fetchImpl,
+    openRouterKey,
+    groqApiKey,
+    groqFreePlan,
+    checkOpenRouterQuota: parsed.probeOpenRouterQuota,
+  };
 
   let terms;
   if (parsed.noSummarize) {
@@ -693,11 +801,13 @@ export async function main(
       terms = await expandSearchTerms(prompt, {
         completeImpl,
         maxTokens: 200,
-        onError: (error) => stderr.write(`Term expansion via free model failed: ${error.message}\n`),
+        onCatalogError: (source, error) =>
+          stderr.write(`Term expansion via free model failed: ${source}: ${sanitizeErrorMessage(error.message)}\n`),
+        onError: (error) => stderr.write(`Term expansion failed: ${sanitizeErrorMessage(error.message)}\n`),
         ...completeOpts,
       });
     } catch (error) {
-      stderr.write(`Term expansion failed: ${error.message}\n`);
+      stderr.write(`Term expansion failed: ${sanitizeErrorMessage(error.message)}\n`);
       terms = defaultTerms(prompt);
     }
     stderr.write(`Search terms: ${terms.join(', ')}\n`);
@@ -707,11 +817,17 @@ export async function main(
   let usedDbPaths = [];
   try {
     if (parsed.source === SEARCH_ALL) {
-      sessions = await searchAllSources(terms, { queryDb, maxSessions: parsed.maxSessions });
-      usedDbPaths = [
-        resolveKiloDbCandidates({ homeDir, xdgDataHome, platform: plat })[0],
-        resolveCodexDbCandidates({ homeDir, platform: plat })[0],
-      ];
+      const searchResult = await searchAllSources(terms, {
+        queryDb,
+        statFn,
+        homeDir,
+        xdgDataHome,
+        platform: plat,
+        maxSessions: parsed.maxSessions,
+        onInfo: (msg) => stderr.write(`${msg}\n`),
+      });
+      sessions = searchResult.results;
+      usedDbPaths = searchResult.dbPaths;
     } else if (parsed.source === CHAT_STORE_CODEX) {
       const codexDbPath = parsed.dbPath
         ? parsed.dbPath
@@ -734,7 +850,7 @@ export async function main(
       usedDbPaths = [kiloDbPath];
     }
   } catch (error) {
-    stderr.write(`Database query failed: ${error.message}\n`);
+    stderr.write(`Database query failed: ${sanitizeErrorMessage(error.message)}\n`);
     return 4;
   }
 
@@ -749,7 +865,9 @@ export async function main(
       completeImpl,
       maxTokens: parsed.maxSummaryTokens,
       terms,
-      onError: (error) => stderr.write(`Summarization via free model failed: ${error.message}\n`),
+      onCatalogError: (source, error) =>
+        stderr.write(`Summarization via free model failed: ${source}: ${sanitizeErrorMessage(error.message)}\n`),
+      onError: (error) => stderr.write(`Summarization failed: ${sanitizeErrorMessage(error.message)}\n`),
       ...completeOpts,
     });
   }
@@ -778,7 +896,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }
