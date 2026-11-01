@@ -713,7 +713,6 @@ export async function completeWithFreeModel(
     runKilo = runKiloCompletion,
     opencodeCommand = process.env.OPENCODE_CLI ?? 'opencode',
     runOpenCode = runOpenCodeCompletion,
-    checkOpenRouterQuota = false,
     maxTokens = 1200,
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
@@ -761,7 +760,7 @@ export async function completeWithFreeModel(
     }
     return counts;
   };
-  if (checkOpenRouterQuota && openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
+  if (openRouterKey && available.some((entry) => entry.source === 'openrouter')) {
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
@@ -1036,6 +1035,7 @@ export async function completeWithFreeModel(
       throw new Error(message);
     }
     if (isContentPolicyError(payload)) {
+      await quarantineKey(candidate.source, candidate.model, 'content_policy');
       throw new Error(
         `${candidate.source}/${candidate.model}: provider content policy rejected or filtered this request (HTTP ${response.status}). Requests attempted: ${JSON.stringify(requestCounts())}`
       );
