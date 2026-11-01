@@ -89,15 +89,15 @@ account dashboard confirms Free tier; an API key alone is not evidence of free p
 This enables Groq in the automatic pool, but another eligible source may answer first; check the
 result's provider/model before treating a run as a Groq smoke test.
 
-**Groq GPT-OSS-120B is very fast** — use for bulk text sweeps (chat search, chat-history processing,
-large prompt batches). Not a reasoning model; do not use for deep reasoning or code review.
-Latency is typically sub-second for short prompts.
+**Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
+relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
 
 **No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) —
 ~32s for 4.1K tokens, truncated output, false claims. Unusable. Chat-history search reads the
-database locally, but model summarization sends the query and matched snippets to the selected
-provider. Do not summarize sensitive history with a cloud provider. Use `--no-summarize` to return
-raw local results without sending them for inference.
+database locally, but model mode sends the query for term extraction and matched snippets for
+summarization to the selected provider. Redaction is best-effort; do not summarize sensitive history
+with a cloud provider. Use `--local-only` or `--no-summarize` to return raw local results without
+model inference.
 
 ## Runner commands
 
@@ -122,6 +122,18 @@ elsewhere. `--list` refreshes public catalogs and does not send an inference req
 IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. The URL runner
 accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
 `npm run free:quarantine -- list|add|release|prune`.
+
+### Chat-history search
+
+Searches local Kilo and Codex databases. Model mode sends the query and excerpts to a free provider
+after best-effort redaction; `--local-only` and `--no-summarize` make no model calls. Local output
+may contain sensitive text. `--since DATE` and `--directory PATH` scope results; `--offset` pages
+candidate sessions per source before matching. Keep filters fixed between pages and use the printed
+next offset. Run `npm run free:chat-search -- --help` for options.
+
+```sh
+npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 --local-only
+```
 
 ### Reasoning-model token budgets
 

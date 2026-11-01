@@ -63,9 +63,11 @@ Provider rows are docs research unless an observed result is explicitly stated.
 | Hugging Face Inference Providers | No free monthly credits.                                               | Requires purchased credits or PRO. [Pricing](https://huggingface.co/docs/inference-providers/pricing)                                                                                                    |
 
 **Local Jan removed** — tested 2026-10-29: ~32s for 4.1K tokens, truncated, false claims. Unusable.
-Chat-history search is local, but model summarization sends the query and matched snippets to the
-selected provider. Do not summarize sensitive history with a cloud provider; use `--no-summarize`
-to keep the results local.
+Chat-history search reads local databases, but model mode sends the query for term extraction and
+matching excerpts for summarization to the selected provider. Redaction is best-effort; do not
+summarize sensitive history with a cloud provider. Use `--local-only` or `--no-summarize` to skip
+model inference and keep results local. See
+[chat-search details](FREE-COMPUTE-OPERATIONS.md#chat-history-search).
 
 ## Usage notes
 
