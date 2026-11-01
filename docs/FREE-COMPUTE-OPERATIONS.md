@@ -3,6 +3,14 @@
 Current operating instructions for the free-model runner. Historical measurements belong in
 [`FREE-COMPUTE.md`](FREE-COMPUTE.md).
 
+## Model preferences (operator experience)
+
+| Model                               | Rating      | Notes                                                                            |
+| ----------------------------------- | ----------- | -------------------------------------------------------------------------------- |
+| **NVIDIA Nemotron 3 Ultra (free)**  | **Best**    | Strong reasoning, reliable completions, preferred for all free inference tasks   |
+| **XingChen Xing4.0 29B A4B (free)** | Maybe       | Works for simple prompts but hits 429 under load; not reliable for large prompts |
+| **Poolside Laguna (free)**          | **Removed** | Rate-limited (429s), unreliable; do not use                                      |
+
 ## Find credentials safely
 
 If the operator says credentials were saved, search the relevant local chat before concluding they
@@ -43,7 +51,7 @@ node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
 The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Nemotron 3 Ultra
-first when it is present. HTTP 401/402 exhaust the provider for the run; an inference HTTP 429 does
+first when it is present, then XingChen Xing4.0 as alternative. HTTP 401/402 exhaust the provider for the run; an inference HTTP 429 does
 so only when rate-limit headers or the daily counter show no requests remaining. Otherwise, the
 runner rotates among verified-free models within its per-run cap. A 429 from the quota endpoint is
 treated as an unknown counter, not proof that inference is exhausted. Inference gets five minutes;
@@ -146,7 +154,7 @@ are also clamped to 1,024 tokens to account for hidden reasoning tokens.
 ### Catalog ordering
 
 Within each provider, candidate models are sorted by preference. Kilo and OpenRouter prefer
-`nvidia/nemotron-3-ultra-550b-a55b:free` when present. Without this
+`nvidia/nemotron-3-ultra-550b-a55b:free` first, then `xingchen-agi/xing4.0-29b-a4b:free` as alternative. Poolside Laguna models are excluded due to rate-limit unreliability. Without this
 preference sort, OpenRouter's catalog returns models in its default order (Flint, XingChen,
 etc.), which may not match the desired free model and can exhaust the three-per-provider
 attempt cap before reaching Nemotron 3 Ultra.

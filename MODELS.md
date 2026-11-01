@@ -2,14 +2,21 @@
 
 ## Current defaults
 
-| Model                          | Provider | Variant | Use                                       |
-| ------------------------------ | -------- | ------- | ----------------------------------------- |
-| Luna 6                         | `openai` | `xhigh` | Paid; keep context under 272k tokens      |
-| NVIDIA Nemotron 3 Ultra (free) | `kilo`   | `high`  | Preferred when exact-zero in live catalog |
+| Model                           | Provider | Variant | Use                                                                      |
+| ------------------------------- | -------- | ------- | ------------------------------------------------------------------------ |
+| Luna 6                          | `openai` | `xhigh` | Paid; keep context under 272k tokens                                     |
+| NVIDIA Nemotron 3 Ultra (free)  | `kilo`   | `high`  | **Best free model** — operator preferred when exact-zero in live catalog |
+| XingChen Xing4.0 29B A4B (free) | `kilo`   | —       | Maybe — alternative free model; observed 429s under load                 |
 
 Use live catalogs, not stale model lists. Prefer verified free models for bounded research,
 text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit
 operator authorization before using paid inference.
+
+## Model ratings (operator experience)
+
+- **Nemotron 3 Ultra (free)**: Best free model — strong reasoning, reliable completions, preferred for all free inference tasks
+- **XingChen Xing4.0 (free)**: Maybe — works for simple prompts but hits 429 under load; not reliable for large prompts
+- **Laguna (poolside/laguna-s-2.1:free)**: **Removed** — rate-limited (429s), unreliable; do not use
 
 ## Routing
 
