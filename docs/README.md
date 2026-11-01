@@ -136,11 +136,11 @@ Three homes for an open defect, split by what broke. A defect goes in one of the
 
 ## Not maintained here
 
-Six root-level files are point-in-time reports: an investigation of one tree on
+Eight root-level files are point-in-time reports: an investigation of one tree on
 one date, or a disposition record for documents that were stashed and recovered.
-The hardening harvest handoff is another dated report. Two more files recovered
-from a stash sit in this directory. These documents are **not current**, nothing
-in the live set depends on them, and they are not part of this hierarchy.
+The hardening harvest handoff is another dated report. These documents are **not
+current**, nothing in the live set depends on them, and they are not part of this
+hierarchy.
 
 | File                                     | What it is                                                                                                   |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -150,18 +150,13 @@ in the live set depends on them, and they are not part of this hierarchy.
 | `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
 | `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
-| `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                  |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
 | `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
-| `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                  |
-| `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it            |
 
-They are still where they are because `scripts/lib/worktree-inventory/curated.mjs`
-keys on four of the root paths as `ref:` values, and the two `docs/*.md` rows
-cross-reference each other and `../AUDIT-STASHED-DOCS.md` by name. Moving them is
-a change to that data file plus a sweep of every tracked markdown file that names
-them, which is why it belongs in its own worktree rather than inside a
-documentation change. See `HANDOFF.md` §139.
+`scripts/lib/worktree-inventory/curated.mjs` no longer carries `ref:` entries
+pointing to `TEST_ISSUES.md` (they were replaced with `AUDIT-STASHED-DOCS.md` refs
+in bea9ab29). `../AUDIT-STASHED-DOCS.md` cross-references the original
+`TEST_ISSUES.md` sections by name.
 
 Do not hand-maintain a count of how many files mention them here. That number was
 in this sentence once, was wrong within a day, and `git grep` is the answer when

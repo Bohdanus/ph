@@ -766,7 +766,7 @@ export async function completeWithFreeModel(
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
       if (quota.remaining <= 0) exhausted.add('openrouter');
-    } else if (/^http_(?:401|402|429)$/.test(quota.reason)) {
+    } else if (/^http_(?:401|402)$/.test(quota.reason)) {
       exhausted.add('openrouter');
       stderr.write(`OpenRouter quota endpoint returned ${quota.reason}; skipping OpenRouter for this run.\n`);
     } else if (quota.reason !== 'no_key') {
