@@ -16,4 +16,5 @@ The changes make the review scope reproducible and discourage redundant delegati
 ## Verification
 
 - Candidate diff reviewed against the synced `main`.
-- Documentation formatting and relevant documentation tests: pending final validation.
+- `agents-citations`, `docs-index`, `orchestration-command-references`, and `board-post-cap` tests: 41 passed.
+- Prettier and staged diff whitespace checks: passed.
