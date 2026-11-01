@@ -2,10 +2,11 @@
 
 ## Current defaults
 
-| Model                          | Provider | Variant | Use                                       |
-| ------------------------------ | -------- | ------- | ----------------------------------------- |
-| Luna 6                         | `openai` | `xhigh` | Paid; keep context under 272k tokens      |
-| NVIDIA Nemotron 3 Ultra (free) | `kilo`   | `high`  | Preferred when exact-zero in live catalog |
+| Model                           | Provider | Variant | Use                                                                      |
+| ------------------------------- | -------- | ------- | ------------------------------------------------------------------------ |
+| Luna 6                          | `openai` | `xhigh` | Paid; keep context under 272k tokens                                     |
+| NVIDIA Nemotron 3 Ultra (free)  | `kilo`   | `high`  | **Best free model** — operator preferred when exact-zero in live catalog |
+| XingChen Xing4.0 29B A4B (free) | `kilo`   | —       | Alternative free model; observed 429s under load                         |
 
 Use live catalogs, not stale model lists. Prefer verified free models for bounded research,
 text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit
