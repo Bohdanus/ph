@@ -1208,11 +1208,6 @@ const isDraftFrame: PixelPredicate = (red, green, blue, alpha) =>
   green >= STROKE_ANALYSIS.SELECTION_GREEN_MIN &&
   blue >= STROKE_ANALYSIS.SELECTION_BLUE_MIN;
 
-const hasDraftFramePixels = async (screenshot: Buffer): Promise<boolean> => {
-  const image = await loadImageData(screenshot);
-  return (await scanPixelsForBounds(image, isDraftFrame)).found;
-};
-
 /**
  * How far outside the box the frame's blue reaches, in DOCUMENT px, on every side.
  *
@@ -1295,13 +1290,25 @@ async function measureDraft(page: Page, testInfo: TestInfo, box: BoundingBox, na
   const captureBox = await canvasBox(page);
   expect(captureBox.width, `${name}: workspace width changed during the measurement`).toBe(box.width);
   expect(captureBox.height, `${name}: workspace height changed during the measurement`).toBe(box.height);
-  await waitForCanvasPixels(page, canvasBoxClip(captureBox), hasRedPixels, {
-    description: `the draft ink in ${name}`,
-  });
-  await waitForCanvasPixels(page, canvasBoxClip(captureBox), hasDraftFramePixels, {
-    description: `the draft frame in ${name}`,
-  });
-  const capture = await captureCanvasScreenshot(page, captureBox, testInfo, name);
+  let capture: Buffer | null = null;
+  await waitForCanvasPixels(
+    page,
+    canvasBoxClip(captureBox),
+    async (screenshot) => {
+      const candidateImage = await loadImageData(screenshot);
+      const ink = await scanPixelsForBounds(candidateImage, isRedInk);
+      const frame = await scanPixelsForBounds(candidateImage, isDraftFrame);
+      if (!ink.found || !frame.found) return false;
+
+      // Measure and attach the exact rendered frame that satisfied the poll; a later capture can
+      // observe a different paint and make the two measurements describe different states.
+      capture = screenshot;
+      return true;
+    },
+    { description: `the draft ink and frame in ${name}` }
+  );
+  if (!capture) throw new Error(`${name}: pixel polling accepted no screenshot to measure`);
+  await testInfo.attach(name, { body: capture, contentType: 'image/png' });
   const image = await loadImageData(capture);
   const ink = await scanPixelsForBounds(image, isRedInk);
   const frame = await scanPixelsForBounds(image, isDraftFrame);
@@ -3009,6 +3016,12 @@ test.describe('Text tool', () => {
     await waitForBoxAtDocumentEdge();
     const overflowedOverlay = await draftOverlay(page).boundingBox();
     expect(overflowedOverlay, 'the overflowing draft has no measurable box').not.toBeNull();
+    await expect
+      .poll(() => redBoundsIn(page, iconRegion), {
+        message: 'the overflow icon appearing in the corner of the box',
+        timeout: 10_000,
+      })
+      .not.toBeNull();
 
     const icon = await redBoundsIn(page, iconRegion);
     expect(icon, 'no overflow icon while the type outgrows its box').not.toBeNull();
