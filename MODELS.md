@@ -2,28 +2,26 @@
 
 ## Current defaults
 
-| Model                         | Provider | Variant    | Use                                        |
-| ----------------------------- | -------- | ---------- | ------------------------------------------ |
-| Luna 6                        | `openai` | `xhigh`    | Paid; keep context under 272k tokens       |
-| Poolside: Laguna S 2.1 (free) | `kilo`   | `thinking` | Preferred when present in the live catalog |
+| Model                          | Provider | Variant | Use                                     |
+| ------------------------------ | -------- | ------- | --------------------------------------- |
+| Luna 6                         | `openai` | `xhigh` | Paid; keep context under 272k tokens    |
+| NVIDIA Nemotron 3 Ultra (free) | `kilo`   | `high`  | Preferred — best free model, exact-zero |
+| XingChen Xing4.0 (free)        | `kilo`   | `high`  | Alternative — 429s under load           |
 
-Use live catalogs, not stale model lists. Prefer verified free models for bounded research,
-text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit
-operator authorization before using paid inference.
+Use live catalogs, not stale model lists. Prefer verified free models for bounded research, text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit operator authorization before using paid inference.
 
 ## Routing
 
-- Inference attempts providers in this order: Kilo, OpenRouter, Groq, then OpenCode. Catalog checks
-  can run in parallel; inference is sequential. A provider is skipped unless its route is configured
-  and its model is currently verified free.
+- Inference attempts providers in this order: Kilo, OpenRouter, Groq, then OpenCode. Catalog checks can run in parallel; inference is sequential. A provider is skipped unless its route is configured and its model is currently verified free.
 - Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
 - The runner sends Kilo inference through the installed Kilo Code CLI, so its saved Kilo Gateway OAuth is used. It searches `PATH` and common editor extension directories; set `KILO_CLI` only when discovery misses the executable. The child receives runtime paths but not other provider credentials or `KILO_CONFIG_CONTENT`; the tool-free `free-completion` agent and `--pure` mode block agent tools and external plugins.
 - The Kilo CLI has no `--max-tokens` option. The runner's `--max-tokens` value is a response-length instruction for Kilo; the CLI/model controls the actual generation budget. OpenRouter and Groq receive a provider-side token limit.
-- OpenRouter inference uses `OPENROUTER_API_KEY`. When Laguna S 2.1 appears in that live catalog, the runner tries it first, then preserves the catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
-- OpenRouter Laguna receives at least 1,024 completion tokens so reasoning does not consume a tiny caller budget before a visible answer. The other OpenRouter models receive the requested `--max-tokens` value.
-- Never silently fall back to paid inference. The runner tries up to three eligible models per source; a provider quota or rate-limit failure exhausts that source for the run.
+- OpenRouter inference uses `OPENROUTER_API_KEY`. When Nemotron 3 Ultra appears as an exact-zero model in that live catalog, the runner tries it first, then preserves the catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
+- OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning does not consume a tiny caller budget before a visible answer. The other OpenRouter models receive the requested `--max-tokens` value.
+- OpenRouter 401/402 exhausts the source. On HTTP 429, a zero platform `X-RateLimit-Remaining` header exhausts it for the run; otherwise the daily counter controls model rotation. Unknown counters stay within the three-model cap. Content-policy rejections — including successful HTTP responses with `finish_reason: content_filter` — stop routing across providers so the same request is not retried elsewhere.
 - Catalog and quota requests have a 15-second timeout. Model inference has a five-minute timeout so reasoning models are not cut off by a catalog-sized deadline.
-- In Kilo tasks, pass `model` and `provider` together; GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.
+- **MANDATORY: In Kilo tasks, pass `model` and `provider` together. GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.**
+- **MANDATORY: Before launching ANY subagent, call `validateFreeModel()` from `scripts/free-model-validator.mjs` to enforce free-only routing. Fail closed on ambiguity.**
 
 ## Provider-specific free quotas
 
@@ -36,14 +34,39 @@ A provider name alone does not establish that a route is free. Verify the exact 
 
 A 429 or exhausted counter applies to the provider that returned it. Stop using that source for the run, and switch only to another model/provider pair verified as free. See [Kilo's gateway rate limits](https://kilo.ai/docs/gateway/usage-and-billing) and [OpenRouter's pricing and rate limits](https://openrouter.ai/pricing) for current published limits.
 
+### Groq
+
+Groq serves only `openai/gpt-oss-120b` on the Free plan — no per-model pricing, so routing requires `GROQ_FREE_PLAN=1` (see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md)). The operator maintains multiple Free-plan keys rotated by account file under `~/.config/groq/`; never auto-rotate through account files. GPT-OSS reasoning is low but speed is very fast: use Groq only for bulk text sweeps (chat search, chat-history processing), never for deep reasoning or code review.
+
 ## Free-agent boundaries
 
 - Free Kilo children are read-only: use `read-only-research` for visible sessions and `explore` for internal tasks. Deny shell, edit, write, patch, and all connected file-mutation tools. If the host cannot verify this boundary, use the completion runner or do not launch the child.
-- The completion runner has no agent tools. Its Kilo CLI profile denies every tool name, pipes
-  prompts through stdin, and never uses `--file` or `--auto`; the coordinator owns file edits and
-  Git. Cap fan-out at 15.
+- The completion runner has no agent tools. Its Kilo CLI profile denies every tool name, pipes prompts through stdin, and never uses `--file` or `--auto`; the coordinator owns file edits and Git. Cap fan-out at 15.
 - Use concise evidence-backed results. For large outputs, use `--output-file`; use `free-research.mjs` only for bounded public HTTPS URL lists.
 
 ## Research and credentials
 
 Bulk web, code, or chat-history research must use a verified free read-only route and return a short result for root verification. If none is available, stop before paid research. For secure credential discovery, provider setup, and runner commands, see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md).
+
+## Subagent launch rules (ENFORCED)
+
+| Rule                                    | Enforcement                                   |
+| --------------------------------------- | --------------------------------------------- |
+| Model + provider required together      | `validateSubagentConfig()` throws if missing  |
+| Model must be in verified free catalog  | `validateFreeModel()` checks live catalog     |
+| Known paid patterns rejected            | `isKnownPaidModel()` blocks GPT, Claude, etc. |
+| OpenRouter quota checked before fan-out | `probeOpenRouterQuota()` called pre-launch    |
+| Max 15 concurrent free subagents        | Configurable cap, default 15                  |
+| Provider credentials verified           | Keys required for OpenRouter/Groq             |
+| No fallback to paid models              | Exhausted free sources = hard stop            |
+
+## Verified free model catalog (run `--list` to refresh)
+
+| Model ID                                 | Provider         | Status         | Notes                             |
+| ---------------------------------------- | ---------------- | -------------- | --------------------------------- |
+| `nvidia/nemotron-3-ultra-550b-a55b:free` | openrouter, kilo | **Best**       | Preferred; reasoning capable      |
+| `xingchen-agi/xing4.0-29b-a4b:free`      | kilo             | Alternative    | 429s under load; use sparingly    |
+| `openai/gpt-oss-120b`                    | groq             | Fast bulk      | Very fast; low reasoning          |
+| `poolside/laguna-s-2.1:free`             | kilo             | **Turned off** | Rate-limited; agents won't try it |
+
+Laguna is turned off — rate-limited, agents won't try it. No `--local-only` option exists; none needed (chat-history search data is already local, no secrets to hide).

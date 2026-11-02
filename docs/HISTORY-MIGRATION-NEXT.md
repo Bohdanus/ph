@@ -173,7 +173,7 @@ transform` passed in run `2026-10-26T18-52-14-027Z-4251` after adding the frame-
   decision. The relevant Kilo history confirms preview and refused-draw evidence is test coverage;
   it does not change logical authority. Keep the frame matrix and source-ownership gate independent.
 - Review coverage: Luna 6 read-only review and follow-up, plus three focused review passes using
-  `poolside/laguna-s-2.1:free` through Kilo's completion-only fallback. This Codex host has no
+  the then-preferred free model through Kilo's completion-only fallback. This Codex host has no
   verified free tool-using subagent route, so those three passes were not tool-using subagents.
 - A review found the parity checks could pass if both renderers dropped the affine transform. The
   fixture now compares each renderer against the untransformed baseline at the transform cursor and

@@ -1247,6 +1247,9 @@ export async function getSelectionBounds(
  * window used to select no pixels at all, which reads as "nothing at this point" — a
  * legitimate miss — rather than as the misconfigured constant it is. A clamped radius
  * still returns null when the centre pixel itself is transparent.
+ *
+ * A non-finite radius throws before image decoding or sampling. The sampling window is
+ * clipped to the image, so even a very large finite radius visits each pixel at most once.
  */
 export async function getColorAtPoint(
   screenshot: Buffer | ImageDataResult,
@@ -1255,6 +1258,10 @@ export async function getColorAtPoint(
   radius: number = STROKE_ANALYSIS.COLOR_SAMPLE_RADIUS,
   options?: { ignoreNearWhite?: boolean; nearWhiteThreshold?: number }
 ): Promise<{ red: number; green: number; blue: number } | null> {
+  if (!Number.isFinite(radius)) {
+    throw new RangeError(`getColorAtPoint: radius must be finite; received ${radius}`);
+  }
+
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
 
@@ -1276,10 +1283,13 @@ export async function getColorAtPoint(
 
   const colors = { red: 0, green: 0, blue: 0, count: 0 };
   const sampleRadius = Math.max(0, radius);
+  const minX = Math.max(0, Math.ceil(pointX - sampleRadius));
+  const maxX = Math.min(width - 1, Math.floor(pointX + sampleRadius));
+  const minY = Math.max(0, Math.ceil(pointY - sampleRadius));
+  const maxY = Math.min(height - 1, Math.floor(pointY + sampleRadius));
   const nearWhiteThreshold = options?.nearWhiteThreshold ?? STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD;
-  for (let y = pointY - sampleRadius; y <= pointY + sampleRadius; y++) {
-    for (let x = pointX - sampleRadius; x <= pointX + sampleRadius; x++) {
-      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
       const index = (y * width + x) * 4;
       const red = data[index];
       const green = data[index + 1];

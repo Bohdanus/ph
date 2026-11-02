@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockCtx } from '../../../__tests__/canvas-mock.ts';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
 import { TextToolArea } from '../TextToolArea.tsx';
-import { PLACEHOLDER_TEXT, drawOverflowIndicator, layoutText } from '../../../tools/text.ts';
+import { PLACEHOLDER_TEXT, drawOverflowIndicator, layoutText, renderText } from '../../../tools/text.ts';
 import { calculateNewRect } from '../../../util/rect.ts';
 import { documentFrameFromSize } from '../../../contexts/document-frame.ts';
 
@@ -14,6 +14,8 @@ type TextArgs = {
   fontFamily: string;
   fontSize: number;
   italic: boolean;
+  smallCaps?: boolean;
+  allCaps?: boolean;
   angle?: number;
   kind?: 'point' | 'paragraph';
   lineHeight: number;
@@ -140,14 +142,12 @@ vi.mock('../../../util/rect.ts', async () => {
 });
 
 /**
- * `layoutText` and `drawOverflowIndicator` are the whole of what the chrome repaint asks this module
- * for, and both are mocked so that the repaint is a CHOICE rather than a measurement: the overflow
- * answer is set per test, which is what makes both branches reachable and both falsifiable.
+ * `layoutText` and `drawOverflowIndicator` are the whole of what the ordinary-text chrome repaint
+ * asks this module for, and both are mocked so that the repaint is a CHOICE rather than a
+ * measurement: the overflow answer is set per test, which makes both branches falsifiable.
  *
- * `renderText` is deliberately NOT mocked. It is the function the component must stop calling, and a
- * stub would make any reintroduced call invisible — a stub draws nothing, so a `not.toHaveBeenCalled`
- * on `ctx.fillText` would pass against the very defect it exists to catch. Left real, a reintroduced
- * call paints.
+ * `renderText` is deliberately NOT mocked. Small Caps drafts use the exact Canvas renderer that
+ * creates the committed layer; leaving it real makes the test prove that path paints actual glyphs.
  */
 vi.mock('../../../tools/text.ts', async () => {
   const actual = await vi.importActual<typeof import('../../../tools/text.ts')>('../../../tools/text.ts');
@@ -155,6 +155,7 @@ vi.mock('../../../tools/text.ts', async () => {
     ...actual,
     layoutText: vi.fn(() => ({ lines: [], overflow: false })),
     drawOverflowIndicator: vi.fn(),
+    renderText: vi.fn(actual.renderText),
   };
 });
 
@@ -209,6 +210,7 @@ describe('TextToolArea', () => {
     vi.mocked(calculateNewRect).mockReset();
     vi.mocked(calculateNewRect).mockReturnValue(null);
     vi.mocked(layoutText).mockReset();
+    vi.mocked(renderText).mockClear();
     laysOutAsOverflowing(false);
     vi.mocked(drawOverflowIndicator).mockReset();
   });
@@ -688,8 +690,8 @@ describe('TextToolArea', () => {
   });
 
   /**
-   * The canvas side of a draft is CHROME now. The ink is a transparent DOM element over the same
-   * box, so anything painted here is visible underneath it.
+   * Ordinary drafts use the DOM for visible ink. Small Caps drafts use the Canvas renderer shared
+   * with commit so the browser's platform-specific DOM synthesis cannot change their preview.
    */
   describe('text preview', () => {
     it('repaints once the text becomes non-empty', () => {
@@ -722,6 +724,20 @@ describe('TextToolArea', () => {
       expect(h.redraw).toHaveBeenCalledTimes(1);
     });
 
+    it('repaints when Small Caps changes under unchanged text and bounds', () => {
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect });
+      const { rerender } = renderArea();
+      h.redraw.mockClear();
+
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true });
+      act(() => {
+        rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
+      });
+
+      expect(h.redraw).toHaveBeenCalledTimes(1);
+    });
+
     it('does not repaint while the text is still empty', () => {
       renderArea();
 
@@ -738,7 +754,7 @@ describe('TextToolArea', () => {
       expect(h.redraw).not.toHaveBeenCalled();
     });
 
-    it('draws no ink onto the overlay context, because the DOM overlay owns the draft', () => {
+    it('leaves ordinary text ink to the DOM preview', () => {
       const ctx = makeMockCtx();
       toolArgs = makeTextArgs({ text: 'hello', rect: { x1: 5, y1: 6, x2: 50, y2: 30 }, color: '#0000ff' });
       // OVERFLOWING on purpose. The overflow branch is the only one that reaches a drawing call, so
@@ -749,14 +765,27 @@ describe('TextToolArea', () => {
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!({ x1: 5, y1: 6, x2: 50, y2: 30 }));
 
-      // Two renderers of one string in one place either agree exactly or show doubled, offset
-      // type, and the overlay's background is transparent precisely so the ink below shows
-      // through — which is another way of saying the canvas ink would be visible under the DOM
-      // ink. Asserted on `fillText` and not on a call to `renderText`, because the defect is ink
-      // rather than one particular call: `renderText` is the REAL implementation here, so a
-      // reintroduced call actually paints and fails this.
+      // The DOM overlay owns ordinary-text ink. `renderText` is real here, so this assertion fails
+      // if a normal draft accidentally starts painting a second copy into the overlay canvas.
       expect(ctx.fillText).not.toHaveBeenCalled();
       expect(ctx.fill).not.toHaveBeenCalled();
+    });
+
+    it('paints Small Caps drafts with the committed Canvas renderer', () => {
+      const ctx = makeMockCtx();
+      const modelRect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      const previewRect = { x1: 10, y1: 12, x2: 60, y2: 42 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect: modelRect, color: '#0000ff', smallCaps: true });
+      vi.mocked(layoutText).mockReturnValue({ lines: ['Wave'], overflow: false });
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!({ ...previewRect }));
+
+      expect(vi.mocked(ctx.fillText).mock.calls.map(([text]) => text)).toEqual(['W', 'AVE']);
+      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+      expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ rect: previewRect, smallCaps: true }), {
+        overflowIndicator: true,
+      });
     });
 
     it('draws the overflow indicator in the tool colour when layoutText reports overflow', () => {

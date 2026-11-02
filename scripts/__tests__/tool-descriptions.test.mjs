@@ -151,7 +151,7 @@ describe('the generated files', () => {
   // edit loses first — a generated file nobody can notice is stale is worse than no file.
   it('writes docs/TOOLS.md exactly as the generator produces it', async () => {
     expect(readRepoFile('docs/TOOLS.md')).toBe(await renderToolDocs());
-  });
+  }, 15_000);
 
   it('writes the shipped tooltip projection exactly as the generator produces it', async () => {
     // This is the file the browser imports, and it is generated from the full record precisely

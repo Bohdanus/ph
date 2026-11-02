@@ -121,9 +121,13 @@ export interface ScrollOffset {
  *
  * The offset is a parameter rather than something read here, so the rule stays pure and
  * testable; it must be read at the call site, per capture, because the window can scroll
- * between one capture and the next.
+ * between one capture and the next. Non-finite offsets throw rather than returning a
+ * viewport rect that would be mistaken for a page rect.
  */
 export function viewportRectToPageRect(rect: CssBox, scroll: ScrollOffset): CssBox {
+  if (!Number.isFinite(scroll.x) || !Number.isFinite(scroll.y)) {
+    throw new RangeError(`viewportRectToPageRect: scroll offsets must be finite; received ${scroll.x}, ${scroll.y}`);
+  }
   return {
     x: rect.x + scroll.x,
     y: rect.y + scroll.y,

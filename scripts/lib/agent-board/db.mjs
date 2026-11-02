@@ -424,7 +424,9 @@ function isMissingPath(error) {
  * matches.
  */
 function isOutsideRepoPath(path) {
-  const p = String(path ?? '').split('\\').join('/');
+  const p = String(path ?? '')
+    .split('\\')
+    .join('/');
   return p.startsWith('/') || p === '..' || p.startsWith('../') || /^[a-z]:/i.test(p);
 }
 

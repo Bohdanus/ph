@@ -3,6 +3,14 @@
 Current operating instructions for the free-model runner. Historical measurements belong in
 [`FREE-COMPUTE.md`](FREE-COMPUTE.md).
 
+## Model preferences
+
+| Model                               | Rating      | Notes                                                                          |
+| ----------------------------------- | ----------- | ------------------------------------------------------------------------------ |
+| **NVIDIA Nemotron 3 Ultra (free)**  | **Best**    | Strong reasoning, reliable completions, preferred for all free inference tasks |
+| **XingChen Xing4.0 29B A4B (free)** | Alternative | Works for simple prompts; hits 429 under load                                  |
+| **Poolside Laguna (free)**          | Turned off  | Rate-limited (429s), unreliable                                                |
+
 ## Find credentials safely
 
 If the operator says credentials were saved, search the relevant local chat before concluding they
@@ -42,11 +50,14 @@ protected environment setup to provide it. Check the account's daily counter wit
 node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
-The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Laguna S 2.1
-first when it is present, and stops that provider for the run on HTTP 401, 402, or 429. Inference
-gets five minutes; catalog and quota requests keep a separate 15-second timeout. A quota snapshot
-is only current at the time it was read and can change when other tools use the account.
-OpenRouter Laguna receives at least 1,024 completion tokens so reasoning has room to finish; other
+The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Nemotron 3 Ultra
+first when it is present, then XingChen Xing4.0 as alternative. HTTP 401/402 exhaust the provider for the run; an inference HTTP 429 does
+so only when rate-limit headers or the daily counter show no requests remaining. Otherwise, the
+runner rotates among verified-free models within its per-run cap. A 429 from the quota endpoint is
+treated as an unknown counter, not proof that inference is exhausted. Inference gets five minutes;
+catalog and quota requests keep a separate 15-second timeout. A quota snapshot is only current at
+the time it was read and can change when other tools use the account.
+OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning has room to finish; other
 models use the requested token limit.
 
 ## OpenCode
@@ -86,9 +97,40 @@ account dashboard confirms Free tier; an API key alone is not evidence of free p
 This enables Groq in the automatic pool, but another eligible source may answer first; check the
 result's provider/model before treating a run as a Groq smoke test.
 
+**Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
+relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
+
+**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq provides equivalent privacy with far better speed/reliability. No `--local-only` option exists; none needed — chat-history search data is already local, no secrets to hide.
+
+## Free Subagent Launch Enforcement (NEW)
+
+Mandatory pre-launch checks for ALL subagents:
+
+```javascript
+import { validateSubagentConfig } from '../scripts/free-model-validator.mjs';
+await validateSubagentConfig({ model, provider, maxSubagents: 5 });
+```
+
+| Check                            | Module                     | Failure =        |
+| -------------------------------- | -------------------------- | ---------------- |
+| Model + provider together        | `free-model-validator.mjs` | Hard stop        |
+| Model in verified free catalog   | `validateFreeModel()`      | Hard stop        |
+| Known paid patterns rejected     | `isKnownPaidModel()`       | Hard stop        |
+| OpenRouter quota >= maxSubagents | `probeOpenRouterQuota()`   | Hard stop        |
+| Provider credentials present     | ENV check                  | Hard stop        |
+| Max 15 concurrent free subagents | Config                     | Hard stop        |
+| No fallback to paid              | `free-subagent-retry.mjs`  | Exhausted = stop |
+
+New modules:
+
+- `scripts/free-model-validator.mjs` — Programmatic free model validation
+- `scripts/free-subagent-launcher.mjs` — Wrapper enforcing free-only routing
+- `scripts/free-subagent-retry.mjs` — Rate-limit aware retry with exponential backoff
+
 ## Runner commands
 
 ```sh
+node scripts/free-model-pool.mjs --help
 node scripts/free-model-pool.mjs --list
 node scripts/free-model-pool.mjs --prompt-file ./prompt.txt --max-tokens 1200 --output-file ./result.txt
 node scripts/free-model-pool.mjs --openrouter-quota
@@ -97,11 +139,53 @@ node scripts/free-research.mjs --prompt-file ./prompt.txt --url-list ./urls.txt 
 
 The inference fallback order is Kilo, OpenRouter, Groq, then OpenCode; catalog checks can run in
 parallel, but completions are attempted in that order. The pool tries at most three eligible
-models per provider; HTTP 401, 402, or 429 exhausts that provider for the run. It never falls back
-to paid models. `--list` refreshes public catalogs and
-does not send an inference request. For Kilo, `configured: null` means the CLI was found but its
-saved login was not probed; for OpenRouter, `configured` reflects `OPENROUTER_API_KEY`. The
-OpenRouter quota command does not report Kilo's separate IP-based free-model limit. See
-[MODELS.md](../MODELS.md) for both providers' published limits. The URL runner accepts at most 20
-public HTTPS URLs and writes only its condensed result. Quarantine operations are
+models per provider and never falls back to paid models. Kilo tries other eligible models after request errors. Groq stops for the run on HTTP 401/402/429.
+OpenRouter 401/402 exhausts the source; on 429,
+the runner stops when the platform remaining-request header or daily counter is zero, and
+otherwise tries another verified-free model within the three-model cap. If the quota counter is
+unavailable, rotation stays bounded by that cap. Explicit content-policy rejections and
+`finish_reason: content_filter` stop routing across providers so the same request is not retried
+elsewhere. `--list` refreshes public catalogs and does not send an inference request.
+`--openrouter-quota` reads OpenRouter's daily counter only; it does not report Kilo's separate
+IP-based free-model limit. See [MODELS.md](../MODELS.md) for published limits. The URL runner
+accepts at most 20 public HTTPS URLs and writes only its condensed result. Quarantine operations are
 `npm run free:quarantine -- list|add|release|prune`.
+
+### Chat-history search
+
+Searches local Kilo and Codex databases. Model mode sends the query and excerpts to a free provider
+after best-effort redaction; `--local-only` and `--no-summarize` make no model calls. Local output
+may contain sensitive text. `--since DATE` and `--directory PATH` scope results; `--offset` pages
+candidate sessions per source before matching. Keep filters fixed between pages and use the printed
+next offset. Run `npm run free:chat-search -- --help` for options.
+
+```sh
+npm run free:chat-search -- --prompt-file ./query.txt --since 2026-10-21 --local-only
+```
+
+### Reasoning-model token budgets
+
+Kilo Nemotron 3 Ultra uses the Kilo CLI's `high` variant. The CLI has no provider-side
+`--max-tokens` option, so the runner uses the requested value only as a response-length instruction.
+For OpenRouter, the preferred Nemotron 3 Ultra model receives at least 1,024 completion tokens so
+reasoning has room to finish; other models use the requested token limit. GPT-OSS models on Groq
+are also clamped to 1,024 tokens to account for hidden reasoning tokens.
+
+### Catalog ordering
+
+Within each provider, candidate models are sorted by preference. Kilo and OpenRouter prefer
+`nvidia/nemotron-3-ultra-550b-a55b:free` first, then `xingchen-agi/xing4.0-29b-a4b:free` as alternative. Laguna models are excluded (turned off). Without this
+preference sort, OpenRouter's catalog returns models in its default order (Flint, XingChen,
+etc.), which may not match the desired free model and can exhaust the three-per-provider
+attempt cap before reaching Nemotron 3 Ultra.
+
+### Scheduled failure reports
+
+The hourly `free-model-sweep` cron job scans Kilo, Codex, and OpenRouter logs for quota/capacity
+errors (429s, empty completions, content-policy blocks) and writes a summary to
+`docs/handoffs/free-model-sweep-<date>.md`. It runs report-only: it does not modify quarantine
+state or rotate credentials. Start it with `npm run free:sweep`:
+
+```sh
+node scripts/cron/free-model-sweep.mjs --report-only
+```

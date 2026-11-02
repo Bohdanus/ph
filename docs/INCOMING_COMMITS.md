@@ -68,6 +68,11 @@ Entries are added per [ORCHESTRATION.md](../ORCHESTRATION.md#incoming-commits-re
 - d6968c47 (d6968c47e1ae5ba6a85bc4cd9bb2e0adad9b0176) "docs(history): finalize validated migration restart checkpoint" — Bohdan Kalynovskyi (Dan)
 - eeed3af4 (eeed3af4b613d7a14e2821016038e7ee05508769) "feat(history): stage durable raster and blank layer creates" — Bohdan Kalynovskyi (Dan)
 
+## 2026-10-30 — origin/main (fetch + merge)
+
+- 67e4ceb8 (67e4ceb8bf81a0ecdc5cfabba4f3412ddfea2eb6) "Merge docs/groq-routing-notes into main" — Bohdan Kalynovskyi (Dan)
+- f5210606 (f5210606dc0092eb8c356e48cdb6232e0a214529) "docs(modes): add Groq Free-plan routing and use-case guidance" — Kilo Agent
+
 ## 2026-10-29 — origin/main (fetch + merge)
 
 - db0c4f66 (db0c4f666b2d10e7de74b839ba81d6d40bef227c) "Merge task/free-provider-order-20261029 into main" — Bohdan Kalynovskyi (Dan)
@@ -81,3 +86,130 @@ Entries are added per [ORCHESTRATION.md](../ORCHESTRATION.md#incoming-commits-re
 - 7f3d3afe (7f3d3afef35c071ebdef3172ebc4e9b35641ba89) "docs: index free Kilo completion profile" — Bohdan Kalynovskyi (Dan)
 - 38511ab3 (38511ab31bd233b9fb2d7c1b342aee9c1fd5ad6d) "Merge current main into free-compute recovery" — Bohdan Kalynovskyi (Dan)
 - 25acbe94 (25acbe944d6771bf86163ff67900f56de3a96be2) "fix: route free completions through authenticated Kilo CLI" — Bohdan Kalynovskyi (Dan)
+
+## 2026-11-02 — origin/main (fetch + merge)
+
+- 43c16518c (43c16518c266cc5739279a2428c5a4744a8cc571) "merge: feat/merge-preparation-research skill" — Bohdan Kalynovskyi (Dan)
+- 9f78c7af5 (9f78c7af51fbac63b2b34f11290938524979b9d9) "docs: add merge-preparation-research skill to index" — Bohdan Kalynovskyi (Dan)
+- 24c58d376 (24c58d3768b65e9346a9f5a1e891e72d0dab6cc1) "feat: add merge-preparation-research skill" — Bohdan Kalynovskyi (Dan)
+- b8426757a (b8426757a4e4f0ef952fbad060c63e87b9ff24ad) "fix: prettier formatting after merge" — Bohdan Kalynovskyi (Dan)
+- d10d2fc3d (d10d2fc3dbe7f64d958f1166a03877c0853a4fc3) "Merge branch 'fix-free-subagent-traps-20261101'" — Bohdan Kalynovskyi (Dan)
+- 2302e1efb (2302e1efb50ea34a9023520650901a92f3e42d72) "Enforce free subagent launch constraints; add validator/retry modules" — Bohdan Kalynovskyi (Dan)
+- 74d6e9c8e (74d6e9c8e00730bbeb7b9c1cc64e8033067532ea) "Merge task/harvest-stale-worktrees-20261101 into main" — Bohdan Kalynovskyi (Dan)
+- 2faa0f957 (2faa0f957b238325b4809c0c11af66dcce00fe74) "merge: synchronize task branch with main" — Bohdan Kalynovskyi (Dan)
+- ea407f7ff (ea407f7ff99b5484f6082f9d6cb29a238565acc3) "Merge model-policy-update into main" — Bohdan Kalynovskyi (Dan)
+- ebde4ed07 (ebde4ed07a36ff9b5301dad6426124d862681e13) "docs: Add repo-state preflight to reclaim skill" — Bohdan Kalynovskyi (Dan)
+- 9abc75350 (9abc75350022b415a0b691cedf92acfb8e452499) "Update model policy: Nemotron 3 Ultra best, Xing alternative, Laguna turned off" — Bohdan Kalynovskyi (Dan)
+- 804254524 (8042545246e5b41a376e15a9bbbc2224c594bb28) "docs: Clarify host-specific history in reclaim skill" — Bohdan Kalynovskyi (Dan)
+- 12194fe2f (12194fe2f70fa05739a7bef1ad92293792d564de) "Update model policy: Nemotron 3 Ultra best, Xing maybe, Laguna removed" — Bohdan Kalynovskyi (Dan)
+- c3e7384d5 (c3e7384d594cba1771752919f3b6deb00bcd009e) "Merge task/fix-chat-empty-results-20261102 into main" — Bohdan Kalynovskyi (Dan)
+- a260293df (a260293df4ecab5c8aff425d672f7f96a774f4dc) "fix: accept empty SQLite result output" — Bohdan Kalynovskyi (Dan)
+- 9f829ed79 (9f829ed7964534e632a318cad9b93ea06de7a5b7) "Merge harvest-main-clean-merge into main" — Bohdan Kalynovskyi (Dan)
+- 82105a4fe (82105a4fec9d1b22df4f8550de1db0d15f1a6b81) "Merge fix-suite-budgets-2 into main" — Bohdan Kalynovskyi (Dan)
+- 1e1a49567 (1e1a49567dcba8b27c797bd6bdd34b65167c4fc5) "test: add free-chat-search-agent.test.mjs to suite budgets" — Bohdan Kalynovskyi (Dan)
+- 733ae1642 (733ae1642d56133c319d502e746dd3128b71bb76) "Merge task/recent-pitfall-scan-20261031 into main" — Bohdan Kalynovskyi (Dan)
+- eb812d9e3 (eb812d9e34b96bd4a6bf9f6924100778bc16f694) "Merge current main into recent-pitfall candidate" — Bohdan Kalynovskyi (Dan)
+- d30eabb03 (d30eabb035c3b378b2d9b28724372d1f95371d11) "Merge task/handoff-147-doc-no-color-mode-20261101 into main" — Bohdan Kalynovskyi (Dan)
+- 1d66d5a73 (1d66d5a7310e8cb5976f4a50c025ac51b6ff4b8e) "Sync current main into document-mode handoff branch" — Bohdan Kalynovskyi (Dan)
+- 09047ebef (09047ebef00871454709a9db86e8d461ebe17844) "Merge task/canvas-growth-handoff-20261101 into main" — Bohdan Kalynovskyi (Dan)
+- 9c53e2c75 (9c53e2c757bdfc922758c02668fc148bfd3b7ac7) "Assert published canvas fit geometry" — Bohdan Kalynovskyi (Dan)
+- 9bab6c7a0 (9bab6c7a0a0c038f4858921a1b4f6a6a3f667f4e) "Sync latest main into free-compute task" — Bohdan Kalynovskyi (Dan)
+- d94c0094b (d94c0094b14a462fa736848fb3a23aa4b3b493e7) "docs/README.md: update curated.mjs ref status" — Bohdan Kalynovskyi (Dan)
+- 7f7a4636d (7f7a4636d54108cdaf84b462448c7d9ca58e79a1) "Clarify OpenRouter quota failure handling" — Bohdan Kalynovskyi (Dan)
+- 864726bae (864726baee46b2cc3cae508d681f8169999d28d7) "Harden free-compute routing and history handling" — Bohdan Kalynovskyi (Dan)
+- 2675f2dd6 (2675f2dd6efe4a496d2ff74469e1872f706eaeb1) "docs/README.md: update curated.mjs ref status" — Bohdan Kalynovskyi (Dan)
+- bea9ab290 (bea9ab290de8204607f86a9752cafd97917cf3af) "curated.mjs: remove stale TEST_ISSUES.md refs, replace with AUDIT-STASHED-DOCS.md" — Bohdan Kalynovskyi (Dan)
+- 155fa6096 (155fa6096836445a3627065388a71c7d0a20757c) "curated.mjs: remove stale TEST_ISSUES.md refs, replace with AUDIT-STASHED-DOCS.md" — Bohdan Kalynovskyi (Dan)
+- 66519e2ac (66519e2ac1b7148da0c267c4311866533eda604e) "Merge latest main into canvas growth task" — Bohdan Kalynovskyi (Dan)
+- 563066019 (563066019292894afa006a8002795062cb3c8451) "Sync main and correct free-compute guidance" — Bohdan Kalynovskyi (Dan)
+- 472f3ddc2 (472f3ddc2d39ec1242104f459ccbd9e3eb6b7dc6) "docs/README.md: clarify curated.mjs TEST_ISSUES.md refs are stale" — Bohdan Kalynovskyi (Dan)
+- 0bf7745fd (0bf7745fd96b96c1573d53ce19336fad27fd6b50) "Sync reviewed main changes into canvas-growth candidate" — Bohdan Kalynovskyi (Dan)
+- 93042eff2 (93042eff2acd85ce56a79c580b50e6a9ef93e288) "Sync latest main into free chat-history search" — Bohdan Kalynovskyi (Dan)
+- 2b0b2fc38 (2b0b2fc3844b2cb31e1bb49efca38b8465e7255d) "docs/README.md: clarify curated.mjs TEST_ISSUES.md refs are stale" — Bohdan Kalynovskyi (Dan)
+- 34f99bbe6 (34f99bbe607f8b1a66b835bfd7ae8957e8697b1a) "Sync main into free chat-history search" — Bohdan Kalynovskyi (Dan)
+- e3291cf01 (e3291cf0194052cfd5cdb2ae606aa886e326a16d) "Compress Jan removal docs ~3x shorter; same signal" — Bohdan Kalynovskyi (Dan)
+- a5951e6b0 (a5951e6b0be480cb4bb35171a8e379613793f0d3) "Improve free chat-history search" — Bohdan Kalynovskyi (Dan)
+- 7bab82145 (7bab82145bf40bb07893b5145dfa8d0603cba342) "docs: compress README.md for token efficiency" — Bohdan Kalynovskyi (Dan)
+- 8008158a5 (8008158a56e8877e3d5755c913faf2ee1ba5df13) "Update docs/README.md: remove deleted obsolete docs from Not maintained table" — Bohdan Kalynovskyi (Dan)
+- c0e16286a (c0e16286aa86801ecb7626ee41867ed3b252b71b) "Update docs/README.md: remove deleted obsolete docs from Not maintained table" — Bohdan Kalynovskyi (Dan)
+- e8d9bdd46 (e8d9bdd4638f9aec72c9de66cadbaec1d7c3b462) "Add canvas-growth display regression coverage" — Bohdan Kalynovskyi (Dan)
+- e23f16945 (e23f16945734ad773f59937f5782e6f14c5b6f10) "Document Jan removal and Groq speed; argue against --local-only" — Bohdan Kalynovskyi (Dan)
+- 1522d0a5c (1522d0a5cc1a2caf13add366ff74d2b126859305) "Remove three superseded/obsolete docs from 2026-09-28 stash" — Bohdan Kalynovskyi (Dan)
+- a066936c7 (a066936c7f85c03856b32f03f0129b94bde951aa) "Retire resolved document-mode handoff item" — Bohdan Kalynovskyi (Dan)
+- f7f6073e5 (f7f6073e55b81302bc2fb4ab71728017ff3550ba) "Remove three superseded/obsolete docs from 2026-09-28 stash" — Bohdan Kalynovskyi (Dan)
+- cc4943480 (cc4943480158403d28c7573c034efd6e0d04137c) "Merge fix/secrets-stripping-20261031 into main" — Bohdan Kalynovskyi (Dan)
+- 4671c3b3f (4671c3b3fe37ea7975b552a5cae7d9e3ab8c7186) "feat: implement free-web-research.mjs hardening fixes from review" — Bohdan Kalynovskyi (Dan)
+- 7a7788b9d (7a7788b9da8f069ce7e0c66e5735c6bdb2215313) "Merge orchestration and review guidance" — Bohdan Kalynovskyi (Dan)
+- 0b03ed6dd (0b03ed6dd504e860f5fa4b28bab721f8f7cd7f63) "Sync orchestration docs with current main" — Bohdan Kalynovskyi (Dan)
+- d4e107430 (d4e107430c575e1675d53aa166ab5fe31060c9e6) "Merge fix for malformed chat-search limits" — Bohdan Kalynovskyi (Dan)
+- 4b73e3348 (4b73e33487335d5e128d8627e56f9ed17ace3d69) "fix: reject malformed chat search limits" — Bohdan Kalynovskyi (Dan)
+- 79783425e (79783425e81c1f3ddaa7780c39a4d958a46f398d) "feat: add secrets stripping layer for free model machinery" — Bohdan Kalynovskyi (Dan)
+- 1b52fe0b9 (1b52fe0b929149d3482746cb5015969714a4f0ea) "Rigorous code review fixes for agent-friendly chat search script" — Bohdan Kalynovskyi (Dan)
+- 47068e387 (47068e38704c6d1fa283379c5bf89d2fe6602563) "docs: harden orchestration and review guidance" — Bohdan Kalynovskyi (Dan)
+- a424592af (a424592af70e931465f84bae9a7031ddd713dc97) "Merge improve/chat-search-agent-friendly: agent-friendly chat search script" — Bohdan Kalynovskyi (Dan)
+- b0b3ac86b (b0b3ac86b997b56d32e8c544546d3895467c02e1) "Fix and improve agent-friendly chat search script" — Bohdan Kalynovskyi (Dan)
+- 6ef5614a9 (6ef5614a96a622d62362e85f5f04f17a8c55cc02) "Add agent-friendly chat search script (free-chat-search-agent.mjs)" — Bohdan Kalynovskyi (Dan)
+- 02a460a9b (02a460a9b3281e1b73291098b1ecf6562bf54030) "Merge review/recent-worktrees-20261031 into main" — Bohdan Kalynovskyi (Dan)
+- 71ffb912c (71ffb912c024290b5c04b2b60bb6e517e80af7e7) "Merge reviewed free-model hardening" — Bohdan Kalynovskyi (Dan)
+- 2d24dec1a (2d24dec1a33e23a4f8e89e361ea510f1d4be7d44) "Merge main into review/recent-worktrees-20261031" — Bohdan Kalynovskyi (Dan)
+- caf766571 (caf76657149ad727c8e65c26a6e9554f5f3c10a4) "chore: prefer free Nemotron 3 Ultra routes" — Bohdan Kalynovskyi (Dan)
+- 8cb1b1cb1 (8cb1b1cb15e923f8c52dbcce6ef55228193b56ca) "Merge fix/free-model-scripts-merge-20261031 into main" — Bohdan Kalynovskyi (Dan)
+- 641c1b77c (641c1b77ce6fd74521a29fbc5add4e5b57d6c84f) "fix: address model routing and research review findings" — Bohdan Kalynovskyi (Dan)
+- e155053c9 (e155053c96501269e293abe74752e1d5be5eb5c4) "Fix critical/high issues in chat search, free model pool, and research scripts" — Bohdan Kalynovskyi (Dan)
+- b79476a64 (b79476a64d06bf9733610e742679e2f0fafbbd5d) "feat: merge three free-model scripts with production hardening" — Bohdan Kalynovskyi (Dan)
+- 8ff2f8433 (8ff2f843321dd1f4e3f8058f8a3a69abb49ee659) "Salvage E2E coverage for pixel-substitution tools" — Bohdan Kalynovskyi (Dan)
+- 53a8996a6 (53a8996a679e61f7963fb1c273a6a43e00385785) "Safely recover preserved AUTO_MERGE worktrees" — Bohdan Kalynovskyi (Dan)
+- 3cb886497 (3cb886497ee14da62d8bdf47caad435cab36482f) "Merge task/undo-redo-gate-fallback-20261029 into main" — Bohdan Kalynovskyi (Dan)
+- dce82bdd8 (dce82bdd837494c5be7744d0b6c2e6040cc9dfcb) "test: assert exact canvas pixels across history fallback" — Bohdan Kalynovskyi (Dan)
+- 5c075dee8 (5c075dee88aa30b4596cd7271805d25d51812511) "test: diagnose cross-platform brush pixel parity" — Bohdan Kalynovskyi (Dan)
+- 7dbfd0eb8 (7dbfd0eb843af7f267b5cd221b50612ee1caa92c) "fix(crop-history): resolve conflict markers and apply materialization drawImage fix" — Bohdan Kalynovskyi (Dan)
+- 0ff2caae3 (0ff2caae3ed6b95c574a39d17cb449752c67e398) "fix(crop): prevent native drag from canceling gestures" — Bohdan Kalynovskyi (Dan)
+- 5bac2463f (5bac2463fbc8eb3da7badabb040128769918224d) "test(e2e): capture crop input cancellation provenance" — Bohdan Kalynovskyi (Dan)
+- b4a5141c8 (b4a5141c8e018106c5ac63ef6a0c7339f0238bf2) "test: capture crop pointer lifecycle on recrop" — Bohdan Kalynovskyi (Dan)
+- 1ded38326 (1ded38326009a76f13912842826e0cc2a1c3eabb) "test: harden crop history e2e across zoom" — Bohdan Kalynovskyi (Dan)
+- adb9d159d (adb9d159d1050bad524728345b164bc27b57bc3e) "Merge task/ci-pipeline-green-20261029 into main" — Bohdan Kalynovskyi (Dan)
+- 1138c67f1 (1138c67f12abf665fc7932e11800d46156696768) "Merge task/free-models-merge-clean-20261030 into main" — Bohdan Kalynovskyi (Dan)
+- e1d784ee9 (e1d784ee9b3622bfef9349c3af9811f34d3a7744) "feat: add free:sweep cron script, --help flag, and scheduled failure reports" — Bohdan Kalynovskyi (Dan)
+- 7d4462378 (7d4462378c1edb329df9b163eca77f18067739fe) "fix(free-compute): OpenRouter 429 rotates models, does not exhaust provider" — Bohdan Kalynovskyi (Dan)
+- 9cf59f663 (9cf59f663ac59c75911dd898fcf9dae1d70822a0) "Merge land/free-chat-search-improvements into main" — Bohdan Kalynovskyi (Dan)
+- 6ac5fa338 (6ac5fa3380054c8207a4a925f85b7261d5006dfc) "feat: add --source codex support and improve output verbosity controls" — Bohdan Kalynovskyi (Dan)
+- 5d0db05bb (5d0db05bb8c0c5383809e0de1de55099cd21c5b8) "fix(free-compute): exhaust Kilo provider on 429/402 for immediate OpenRouter rotation" — Bohdan Kalynovskyi (Dan)
+- 6bd9dcb55 (6bd9dcb55a9ce07cf4f9186d4fae3ef1a10b7050) "test: allow docs/handoffs/merge-sweep-20261029.md as unlisted" — Bohdan Kalynovskyi (Dan)
+- 900a9a936 (900a9a936d0dc57199d8c91872d9298f287dac78) "docs: remove OpenRouter 50/day base-tier noise, keep only 1,000/day" — Bohdan Kalynovskyi (Dan)
+- 589a60b24 (589a60b2448b27f6cdf83546459488a55ae35dae) "Merge audit/merge-sweep-20261029-2220 into main" — bohdan
+- 95207d48e (95207d48e7174332f7cf09ce405cdb73a8debd69) "Sync main into audit/merge-sweep-20261029-2220 for harvest" — bohdan
+- a17e4d332 (a17e4d3324af075cb0bedd840f6aa0f2af706bcd) "docs: record WSL and E2E sweep outcomes" — bohdan
+- 7c5585771 (7c5585771b342768a23c24c24e58d91d0e00199c) "Merge fix/e2e-input-guards into main" — bohdan
+- 7f1501bb0 (7f1501bb01cc4d830b04857e94dcbd4545b899e8) "Sync main into fix/e2e-input-guards for harvest" — bohdan
+- 2dddc8ef5 (2dddc8ef5e64a66f8c7d486b9e7a98b3c40a4229) "Merge prep/wsl into main" — bohdan
+- b794880ad (b794880adede10e52677ed163f0500b56d1d730b) "Sync main into prep/wsl for harvest" — bohdan
+- e36e053df (e36e053df142797a5318df3d591b2e78fa5e3164) "docs: warn about WSL dev server network exposure" — bohdan
+- 80bb5173a (80bb5173a9224158e6d0a49263fc9d56716e3ebb) "docs: record final sync cleanup threshold" — bohdan
+- 3a885e641 (3a885e641a571b432cfddfb34c81d10c58eab863) "docs: preserve e2e hardening plan payload" — bohdan
+- 527540b5c (527540b5c58070297989b8c4072b9ea837d4bd11) "docs: preserve test-scan audit artifacts" — bohdan
+- 35b7fe679 (35b7fe679b4ce127bb8d431dc588a11a742ef9d8) "docs: record completed stale worktree cleanup" — bohdan
+- b44373895 (b44373895654b097cb5693abecb85b47638e56df) "Merge fix/push-gate-text-toolbar-20261030 into main" — bohdan
+- 6cad1f8ba (6cad1f8bada2e65d30ef47c16b43b04fc225f24b) "Allow docs generation test under suite load" — bohdan
+- fd251c348 (fd251c348dbb637f26a4e8ccd3f2aa505fa9f77a) "Fix text toolbar test assertions" — bohdan
+- 56f62c0be (56f62c0be63c92173d57ee34fc4c48da31e12c0f) "docs: record merge sweep cleanup recheck" — bohdan
+- 80ec9e4f3 (80ec9e4f34ecacb339a287f597ceea53cc19c1f0) "test: wait for committed marquee geometry" — Bohdan Kalynovskyi (Dan)
+- 1f8a353fe (1f8a353fe7e0f09a9dca918b07a32d07c8dbd30f) "test: compare full materialized raster bounds" — Bohdan Kalynovskyi (Dan)
+- cd5e4053d (cd5e4053d2f1e11e18c5084ec8bade4436f5a25c) "docs: record subsequent sync landing status" — bohdan
+- 456204c08 (456204c085fdfc11162949bdd116c88f69e1a74c) "docs: record merge sweep cleanup gate" — bohdan
+- 4a72d30d9 (4a72d30d981965950bbad6a47ad70f98d6589f7d) "Merge chore/sync-origin-main-20261030 into main" — bohdan
+- b0e3e5a41 (b0e3e5a416e44210bb3bc5061a671c9040c7a161) "Sync origin/main into main" — bohdan
+- 20c91c8e7 (20c91c8e77c9f60ad6019b9463c23855146007d6) "fix: bound mirror push and clean up timed out trees" — Bohdan Kalynovskyi (Dan)
+- fd41abcf8 (fd41abcf83dccd9a6a460248cbb83cd990c39b0c) "test: close crop parity raster fixtures" — Bohdan Kalynovskyi (Dan)
+- a7d1d1d04 (a7d1d1d0483c57c026575e55104cde2df8a523bf) "fix: preserve exact pixels in affine materialization" — Bohdan Kalynovskyi (Dan)
+- 2ce7cdbd2 (2ce7cdbd2603cf52e4cf1414866e9c6d96c1831f) "fix: allow mirror push gates to complete" — Bohdan Kalynovskyi (Dan)
+- 664d0ec6d (664d0ec6d0c4a6f4778eefb368ab9d5c784de9e0) "test: mirror imported raster source semantics" — Bohdan Kalynovskyi (Dan)
+- ed8a83985 (ed8a8398519aace770b98f446f99e3bf3a88379a) "test: compare raster parity across canvas backends" — Bohdan Kalynovskyi (Dan)
+- 367614bf3 (367614bf326d188586d03135fbc298ea31753d31) "test: report raster parity cursor on failure" — Bohdan Kalynovskyi (Dan)
+- 67e4ceb8b (67e4ceb8bf81a0ecdc5cfabba4f3412ddfea2eb6) "Merge docs/groq-routing-notes into main" — Bohdan Kalynovskyi (Dan)
+- f5210606d (f5210606dc0092eb8c356e48cdb6232e0a214529) "docs(modes): add Groq Free-plan routing and use-case guidance" — Kilo Agent
+- eb422ff4c (eb422ff4c8fc93be3e1100e130af8df7cb079a0d) "fix: avoid cross-canvas raster edge drift" — Bohdan Kalynovskyi (Dan)
+- 9e96d1451 (9e96d14510e4ac67296af3a8165e6482867c9d6e) "docs: update worktree sweep handoff" — bohdan
+- 6f9aaf535 (6f9aaf535066b2bf7429084becbb3810d1b0c136) "fix: make crop and text E2E platform-stable" — Bohdan Kalynovskyi (Dan)
+- 1facb7178 (1facb7178005a06975c82363e695b5a2d8a8fe58) "docs: record blocked worktree harvest" — bohdan
+- cf4e188f9 (cf4e188f991369a5f7447808b60a675779568fe5) "Prepare project for WSL2" — Copilot
+- 3bda6a38b (3bda6a38b2b64297a3f64a849a59df1e7e62653f) "fix: reject invalid E2E capture inputs" — bohdan

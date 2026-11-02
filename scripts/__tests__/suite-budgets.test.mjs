@@ -85,6 +85,7 @@ const BUDGETED = [
   'docs-index.test.mjs',
   'dispose-worktree.test.mjs',
   'e2e-run.test.mjs',
+  'free-chat-search-agent.test.mjs',
   'main-worktree-guard.test.mjs',
   'mirror-e2e.test.mjs',
   'merge-release.test.mjs',
