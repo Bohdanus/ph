@@ -410,15 +410,24 @@ const PLACEHOLDER = 'Lorem ipsum';
 const commitButton = (page: Page) => page.getByRole('button', { name: 'Commit', exact: true });
 const cancelButton = (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true });
 
+async function revealToolbarAction(button: ReturnType<typeof commitButton>): Promise<void> {
+  await button.evaluate((element) => {
+    element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  });
+}
+
 /**
  * Commits without letting the focused toolbar button leave subsequent canvas measurements in
- * stale viewport coordinates. Some browsers scroll horizontally to reveal the far-right button.
+ * stale viewport coordinates. Reveal the button inside the options bar's own scroller first, so
+ * Playwright does not race its actionability auto-scroll against the live text editor.
  */
 async function commitDraft(page: Page): Promise<void> {
   await expect
     .poll(() => page.evaluate(() => window.scrollX), 'Text options must not scroll the document horizontally')
     .toBe(0);
-  await commitButton(page).click();
+  const button = commitButton(page);
+  await revealToolbarAction(button);
+  await button.click();
   await expect
     .poll(() => page.evaluate(() => window.scrollX), 'Committing Text must not scroll the document horizontally')
     .toBe(0);
@@ -1199,6 +1208,11 @@ const isDraftFrame: PixelPredicate = (red, green, blue, alpha) =>
   green >= STROKE_ANALYSIS.SELECTION_GREEN_MIN &&
   blue >= STROKE_ANALYSIS.SELECTION_BLUE_MIN;
 
+const hasDraftFramePixels = async (screenshot: Buffer): Promise<boolean> => {
+  const image = await loadImageData(screenshot);
+  return (await scanPixelsForBounds(image, isDraftFrame)).found;
+};
+
 /**
  * How far outside the box the frame's blue reaches, in DOCUMENT px, on every side.
  *
@@ -1281,6 +1295,12 @@ async function measureDraft(page: Page, testInfo: TestInfo, box: BoundingBox, na
   const captureBox = await canvasBox(page);
   expect(captureBox.width, `${name}: workspace width changed during the measurement`).toBe(box.width);
   expect(captureBox.height, `${name}: workspace height changed during the measurement`).toBe(box.height);
+  await waitForCanvasPixels(page, canvasBoxClip(captureBox), hasRedPixels, {
+    description: `the draft ink in ${name}`,
+  });
+  await waitForCanvasPixels(page, canvasBoxClip(captureBox), hasDraftFramePixels, {
+    description: `the draft frame in ${name}`,
+  });
   const capture = await captureCanvasScreenshot(page, captureBox, testInfo, name);
   const image = await loadImageData(capture);
   const ink = await scanPixelsForBounds(image, isRedInk);
@@ -1923,6 +1943,7 @@ test.describe('Text tool', () => {
     await expect(commit).toBeEnabled();
     await expect(cancel).toBeEnabled();
 
+    await revealToolbarAction(cancel);
     await cancel.click();
 
     // The draft is gone rather than emptied, which is the whole difference between this button and
