@@ -724,6 +724,59 @@ describe('useLayers text commit publishes the cleared draft', () => {
   });
 });
 
+describe('useLayers text autosave snapshot', () => {
+  beforeEach(() => {
+    vi.mocked(createLayerSource).mockClear();
+    mockLayerId.counter = 0;
+  });
+
+  it('includes a new text draft without mutating its editor state or history', () => {
+    const result = setupSharedDraft();
+    const draft = result.current.tool.getToolArgs('text');
+    const history = result.current.store.history;
+
+    const autosaveLayers = result.current.layers.getLayersForAutosave();
+
+    expect(autosaveLayers?.['mock-layer-1']?.source).toMatchObject({
+      kind: 'tool',
+      args: expect.objectContaining({ toolName: 'text', text: 'Hello' }),
+    });
+    expect(result.current.store.layers).toEqual({});
+    expect(result.current.store.history).toEqual(history);
+    expect(result.current.store.currentArgs.current).toBe(draft);
+    expect(result.current.tool.getToolArgs('text')).toBe(draft);
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes edited text in the autosave snapshot without replacing the live layer', () => {
+    const result = setupSharedDraft();
+    act(() => result.current.layers.commitDirtyTool());
+    const originalLayer = result.current.store.layers['mock-layer-1'];
+    if (!originalLayer) throw new Error('the committed text layer is missing');
+    act(() => result.current.layers.beginTextLayerEdit(originalLayer.id));
+    const preview = result.current.store.previewLayers.current[originalLayer.id];
+    if (!preview) throw new Error('the active text edit preview is missing');
+
+    const editedArgs = { ...editArgsForExistingLayer(originalLayer), text: 'Updated' };
+    act(() => result.current.tool.setToolArgs(editedArgs));
+    const history = result.current.store.history;
+
+    const autosaveLayers = result.current.layers.getLayersForAutosave();
+
+    expect(autosaveLayers?.[originalLayer.id]?.source).toMatchObject({
+      kind: 'tool',
+      args: expect.objectContaining({ toolName: 'text', text: 'Updated' }),
+    });
+    expect(result.current.store.layers[originalLayer.id]?.source).toMatchObject({
+      kind: 'tool',
+      args: expect.objectContaining({ toolName: 'text', text: 'Hello' }),
+    });
+    expect(result.current.store.history).toEqual(history);
+    expect(result.current.tool.getToolArgs('text')).toBe(editedArgs);
+    expect(result.current.store.previewLayers.current[originalLayer.id]).toBe(preview);
+  });
+});
+
 describe('useLayers text commit with a nonzero document frame', () => {
   /**
    * The frame shifts the document origin off the canvas top-left. These cases pin that text

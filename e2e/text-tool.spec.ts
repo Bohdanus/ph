@@ -410,6 +410,31 @@ const PLACEHOLDER = 'Lorem ipsum';
 const commitButton = (page: Page) => page.getByRole('button', { name: 'Commit', exact: true });
 const cancelButton = (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true });
 
+async function revealToolbarAction(button: ReturnType<typeof commitButton>): Promise<void> {
+  await button.evaluate((element) => {
+    element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  });
+}
+
+/**
+ * Commits without letting the focused toolbar button leave subsequent canvas measurements in
+ * stale viewport coordinates. Reveal the button inside the options bar's own scroller first, so
+ * Playwright does not race its actionability auto-scroll against the live text editor.
+ */
+async function commitDraft(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.evaluate(() => window.scrollX), 'Text options must not scroll the document horizontally')
+    .toBe(0);
+  const button = commitButton(page);
+  await revealToolbarAction(button);
+  await button.click();
+  await expect
+    .poll(() => page.evaluate(() => window.scrollX), 'Committing Text must not scroll the document horizontally')
+    .toBe(0);
+  await page.evaluate(() => window.scrollTo({ left: 0, top: 0, behavior: 'instant' }));
+  await expect.poll(() => page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 0, y: 0 });
+}
+
 /**
  * Replaces what the open draft holds, so a keystroke is a whole string rather than an append.
  *
@@ -475,9 +500,37 @@ async function replaceDraftLines(page: Page, context: BrowserContext, text: stri
  * it with two arguments and drag exactly the rectangle their assertions were written about.
  */
 async function dragDraftRect(page: Page, box: BoundingBox, rect: DraftRect = DRAFT_RECT): Promise<void> {
-  await drawLine(page, box, rect.x1, rect.y1, rect.x2, rect.y2, {
+  const liveBox = await canvasBox(page);
+  expect(liveBox.width, 'the workspace width changed before the text drag').toBe(box.width);
+  expect(liveBox.height, 'the workspace height changed before the text drag').toBe(box.height);
+  await drawLine(page, liveBox, rect.x1, rect.y1, rect.x2, rect.y2, {
     steps: DRAFT_DRAG_STEPS,
   });
+}
+
+async function rotateDraftByNinetyDegrees(page: Page, overlay: BoundingBox): Promise<number> {
+  const surface = page.locator('.cursor-text');
+  const centerX = overlay.x + overlay.width / 2;
+  const centerY = overlay.y + overlay.height / 2;
+  const rotationGrip = { x: centerX, y: overlay.y - 12 };
+
+  await page.mouse.move(rotationGrip.x, rotationGrip.y);
+  await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+
+  await page.mouse.down();
+  const rotationRadius = centerY - rotationGrip.y;
+  await page.mouse.move(centerX + rotationRadius, centerY, { steps: 12 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => Number(await surface.getAttribute('data-rotation')), {
+      message: 'the text draft did not retain its rotated angle',
+      timeout: 5_000,
+    })
+    .toBeGreaterThanOrEqual(85);
+  const rotation = Number(await surface.getAttribute('data-rotation'));
+  expect(rotation, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
+  return rotation;
 }
 
 /**
@@ -761,13 +814,12 @@ function bandLean(rows: RowInk[]): number {
 }
 
 /**
- * One commit's ink, measured: where it is in page CSS, how big it is, and what its rows carry.
- *
- * `css` comes from `imageBoundsToCss` against the WHOLE canvas box, not against the crop, so
- * the numbers are page coordinates that can be compared with `draftRectCss` and with the other
- * commit's — the crop only decides which pixels were eligible to be found.
+ * One commit's ink, measured relative to the live workspace canvas: where it is, how big it is,
+ * and what its rows carry. Canvas-local coordinates stay valid when focusing a toolbar control
+ * scrolls the page horizontally, and are independent of device-pixel capture scale.
  */
 interface InkMeasurement {
+  /** Bounds relative to the live workspace canvas, not page coordinates. */
   css: CssBounds;
   width: number;
   height: number;
@@ -814,13 +866,17 @@ async function measureInk(
   rect: DraftRect,
   name: string
 ): Promise<InkMeasurement> {
-  await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN, rect)), hasRedPixels, {
+  const waitBox = await canvasBox(page);
+  await waitForCanvasPixels(page, toClip(draftRectCss(waitBox, POLL_MARGIN, rect)), hasRedPixels, {
     description: `red text pixels in the ${name} rectangle`,
   });
 
-  const capture = await captureCanvasScreenshot(page, box, testInfo, name);
+  const captureBox = await canvasBox(page);
+  expect(captureBox.width, `${name}: workspace width changed during the measurement`).toBe(box.width);
+  expect(captureBox.height, `${name}: workspace height changed during the measurement`).toBe(box.height);
+  const capture = await captureCanvasScreenshot(page, captureBox, testInfo, name);
   const image = await loadImageData(capture);
-  const window = cropWindow(image, box, rect);
+  const window = cropWindow(image, captureBox, rect);
   const crop = cropImage(image, window);
   const ink = await scanPixelsForBounds(crop, isRedInk);
   expect(ink.found, `no red pixels in the ${name} rectangle after Commit`).toBe(true);
@@ -831,22 +887,28 @@ async function measureInk(
   // straight from the crop, every number below would be scaled by the crop's share of the
   // canvas — a 480x200 window out of 974x583 is 1.9x on the rows — and the four containment
   // comparisons would be checking a rectangle that is nowhere near the one that was dragged.
-  const css = imageBoundsToCss({ width: image.width, height: image.height }, box, {
+  const pageCss = imageBoundsToCss({ width: image.width, height: image.height }, captureBox, {
     left: window.left + ink.left,
     top: window.top + ink.top,
     right: window.left + ink.right,
     bottom: window.top + ink.bottom,
   });
+  const css = {
+    left: pageCss.left - captureBox.x,
+    top: pageCss.top - captureBox.y,
+    right: pageCss.right - captureBox.x,
+    bottom: pageCss.bottom - captureBox.y,
+  };
   const rows = rowInkProfile(crop, isRedInk);
   return {
     css,
     width: css.right - css.left,
     height: css.bottom - css.top,
     inset: {
-      left: css.left - (box.x + rect.x1),
-      top: css.top - (box.y + rect.y1),
-      right: box.x + rect.x2 - css.right,
-      bottom: box.y + rect.y2 - css.bottom,
+      left: css.left - rect.x1,
+      top: css.top - rect.y1,
+      right: rect.x2 - css.right,
+      bottom: rect.y2 - css.bottom,
     },
     pixelCount: rows.reduce((total, row) => total + row.count, 0),
     mask: inkMask(crop, isRedInk),
@@ -854,7 +916,7 @@ async function measureInk(
     ends: bandEnds(rows),
     lean: bandLean(rows),
     window,
-    scale: { x: image.width / box.width, y: image.height / box.height },
+    scale: { x: image.width / captureBox.width, y: image.height / captureBox.height },
   };
 }
 
@@ -874,22 +936,23 @@ async function measureInk(
  * the assertion allows 6, so the two are 34px apart on every side; if this ever goes off, widen
  * the capture rather than narrow the margin.
  */
-function expectInkInsideRect(measurement: InkMeasurement, box: BoundingBox, rect: DraftRect, label: string) {
-  const allowed = draftRectCss(box, INK_MARGIN, rect);
-  const { css } = measurement;
-  // Both figures in CSS px, the crop's by dividing out the capture's own scale rather than by
-  // `devicePixelRatio` — the reason `imageBoundsToCss` documents, and the reason the
-  // committed-ink test pins the capture's scale separately.
+function expectInkInsideRect(measurement: InkMeasurement, rect: DraftRect, label: string) {
   expect(
     measurement.window.width / measurement.scale.x,
     `${label}: the capture is not larger than the rectangle it is checked against`
-  ).toBeGreaterThan(allowed.right - allowed.left);
-  expect.soft(css.left, `${label}: ink escaped the left of the dragged rectangle`).toBeGreaterThanOrEqual(allowed.left);
-  expect.soft(css.top, `${label}: ink escaped the top of the dragged rectangle`).toBeGreaterThanOrEqual(allowed.top);
-  expect.soft(css.right, `${label}: ink escaped the right of the dragged rectangle`).toBeLessThanOrEqual(allowed.right);
+  ).toBeGreaterThan(rect.x2 - rect.x1 + 2 * INK_MARGIN);
   expect
-    .soft(css.bottom, `${label}: ink escaped the bottom of the dragged rectangle`)
-    .toBeLessThanOrEqual(allowed.bottom);
+    .soft(measurement.inset.left, `${label}: ink escaped the left of the dragged rectangle`)
+    .toBeGreaterThanOrEqual(-INK_MARGIN);
+  expect
+    .soft(measurement.inset.top, `${label}: ink escaped the top of the dragged rectangle`)
+    .toBeGreaterThanOrEqual(-INK_MARGIN);
+  expect
+    .soft(measurement.inset.right, `${label}: ink escaped the right of the dragged rectangle`)
+    .toBeGreaterThanOrEqual(-INK_MARGIN);
+  expect
+    .soft(measurement.inset.bottom, `${label}: ink escaped the bottom of the dragged rectangle`)
+    .toBeGreaterThanOrEqual(-INK_MARGIN);
 }
 
 async function expectSmallCapsPreviewAndCommitMatch(page: Page, testInfo: TestInfo, label: string): Promise<void> {
@@ -900,10 +963,10 @@ async function expectSmallCapsPreviewAndCommitMatch(page: Page, testInfo: TestIn
   await styleToggle(page, 'Small Caps').click();
   await replaceDraftText(page, 'Wave');
   await expect(draftOverlay(page)).toHaveCSS('font-variant-caps', 'small-caps');
-  await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+  await hideDraftCaret(page);
 
   const preview = await measureInk(page, testInfo, box, rect, `${label} preview`);
-  await commitButton(page).click();
+  await commitDraft(page);
   const committed = await measureInk(page, testInfo, box, rect, `${label} commit`);
   const agreement = inkMaskAgreement(preview.mask, committed.mask);
   expect(
@@ -912,8 +975,8 @@ async function expectSmallCapsPreviewAndCommitMatch(page: Page, testInfo: TestIn
   ).toBeGreaterThanOrEqual(0.95);
   expect(Math.abs(preview.width - committed.width), 'preview and commit advances differ').toBeLessThanOrEqual(2);
   expect(Math.abs(preview.height - committed.height), 'preview and commit glyph heights differ').toBeLessThanOrEqual(2);
-  expectInkInsideRect(preview, box, rect, 'the small-caps preview');
-  expectInkInsideRect(committed, box, rect, 'the small-caps commit');
+  expectInkInsideRect(preview, rect, 'the small-caps preview');
+  expectInkInsideRect(committed, rect, 'the small-caps commit');
 }
 
 /**
@@ -965,15 +1028,13 @@ async function commitStyledSeries(
   text: string,
   variants: { name: string; rect: DraftRect; apply: () => Promise<void>; text?: string }[]
 ): Promise<InkMeasurement[]> {
-  const commit = commitButton(page);
-
   await setTextToolColor(page, TEXT_COLOR);
   const measured: InkMeasurement[] = [];
   for (const [index, variant] of variants.entries()) {
     await dragDraftRect(page, box, variant.rect);
     if (index > 0) await variant.apply();
     await replaceDraftText(page, variant.text ?? text);
-    await commit.click();
+    await commitDraft(page);
     measured.push(await measureInk(page, testInfo, box, variant.rect, variant.name));
   }
   return measured;
@@ -1181,14 +1242,15 @@ const OVERFLOW_INDICATOR_DOC_PX = 8;
  * A clip over the box rather than over a rectangle is what makes the two scans below
  * unconditional: a crop can only report the ink inside itself, so `measureDraft` photographs the
  * whole canvas and maps the bounds back onto the box, the same argument the committed-ink test
- * makes at length (`:891-901`).
+ * makes at length (`:891-901`). Returning canvas-local coordinates keeps those bounds valid
+ * when a focused control scrolls the page.
  */
 function canvasBoxClip(box: BoundingBox): Required<{ x: number; y: number; width: number; height: number }> {
   return { x: box.x, y: box.y, width: box.width, height: box.height };
 }
 
 /**
- * What one draft reads: the type's ink and the box it is laid out in, both in page CSS px.
+ * What one draft reads: the type's ink and the box it is laid out in, both in canvas-local CSS px.
  *
  * The capture is the whole canvas box, so every figure below is a bound over everything on it
  * rather than over a crop, and both scans are run on the same decoded image — the two colours are
@@ -1212,18 +1274,41 @@ interface DraftMeasurement {
  * line. That is ink this file would then measure as if it were type: `expectInkInsideFrame` would
  * report the draft's ink escaping the bottom of a box that is perfectly correct.
  *
- * Focus is the whole mechanism, and the draft survives it because `TextEditOverlay` deliberately
- * does NOT commit on blur — Adobe lets a user reach for the Size field mid-edit, and this takes
- * that one step further onto the button the next click goes to anyway.
+ * Hide the caret without moving focus. This keeps the editor state stable across browser/OS
+ * combinations while pixel measurements capture only the rendered glyphs.
  */
-async function dismissDraftCaret(page: Page): Promise<void> {
-  await commitButton(page).focus();
+async function hideDraftCaret(page: Page): Promise<void> {
+  await draftOverlay(page).evaluate((element) => {
+    if (!(element instanceof HTMLElement)) throw new Error('The text draft overlay must be an HTMLElement');
+    element.style.caretColor = 'transparent';
+  });
 }
 
 /** Waits for the draft's ink anywhere on the canvas, then measures the ink and the box. */
 async function measureDraft(page: Page, testInfo: TestInfo, box: BoundingBox, name: string): Promise<DraftMeasurement> {
-  await dismissDraftCaret(page);
-  const capture = await captureCanvasScreenshot(page, box, testInfo, name);
+  await hideDraftCaret(page);
+  const captureBox = await canvasBox(page);
+  expect(captureBox.width, `${name}: workspace width changed during the measurement`).toBe(box.width);
+  expect(captureBox.height, `${name}: workspace height changed during the measurement`).toBe(box.height);
+  let capture: Buffer | null = null;
+  await waitForCanvasPixels(
+    page,
+    canvasBoxClip(captureBox),
+    async (screenshot) => {
+      const candidateImage = await loadImageData(screenshot);
+      const ink = await scanPixelsForBounds(candidateImage, isRedInk);
+      const frame = await scanPixelsForBounds(candidateImage, isDraftFrame);
+      if (!ink.found || !frame.found) return false;
+
+      // Measure and attach the exact rendered frame that satisfied the poll; a later capture can
+      // observe a different paint and make the two measurements describe different states.
+      capture = screenshot;
+      return true;
+    },
+    { description: `the draft ink and frame in ${name}` }
+  );
+  if (!capture) throw new Error(`${name}: pixel polling accepted no screenshot to measure`);
+  await testInfo.attach(name, { body: capture, contentType: 'image/png' });
   const image = await loadImageData(capture);
   const ink = await scanPixelsForBounds(image, isRedInk);
   const frame = await scanPixelsForBounds(image, isDraftFrame);
@@ -1231,10 +1316,19 @@ async function measureDraft(page: Page, testInfo: TestInfo, box: BoundingBox, na
   expect(frame.found, `no draft frame on the canvas in ${name}`).toBe(true);
 
   const extent = { width: image.width, height: image.height };
+  const toCanvasBounds = (bounds: { left: number; top: number; right: number; bottom: number }) => {
+    const pageBounds = imageBoundsToCss(extent, captureBox, bounds);
+    return {
+      left: pageBounds.left - captureBox.x,
+      top: pageBounds.top - captureBox.y,
+      right: pageBounds.right - captureBox.x,
+      bottom: pageBounds.bottom - captureBox.y,
+    };
+  };
   return {
-    ink: imageBoundsToCss(extent, box, ink),
-    frame: imageBoundsToCss(extent, box, frame),
-    scale: { x: image.width / box.width, y: image.height / box.height },
+    ink: toCanvasBounds(ink),
+    frame: toCanvasBounds(frame),
+    scale: { x: image.width / captureBox.width, y: image.height / captureBox.height },
   };
 }
 
@@ -1255,11 +1349,14 @@ async function measureCommittedInkWidth(
   box: BoundingBox,
   name: string
 ): Promise<number> {
-  const capture = await captureCanvasScreenshot(page, box, testInfo, name);
+  const captureBox = await canvasBox(page);
+  expect(captureBox.width, `${name}: workspace width changed during the measurement`).toBe(box.width);
+  expect(captureBox.height, `${name}: workspace height changed during the measurement`).toBe(box.height);
+  const capture = await captureCanvasScreenshot(page, captureBox, testInfo, name);
   const image = await loadImageData(capture);
   const ink = await scanPixelsForBounds(image, isRedInk);
   expect(ink.found, `no red pixels anywhere on the canvas in ${name}`).toBe(true);
-  const css = imageBoundsToCss({ width: image.width, height: image.height }, box, ink);
+  const css = imageBoundsToCss({ width: image.width, height: image.height }, captureBox, ink);
   return css.right - css.left;
 }
 
@@ -1338,11 +1435,6 @@ async function colourBoundsIn(page: Page, region: Rect, predicate: PixelPredicat
 
 async function redBoundsIn(page: Page, region: Rect): Promise<CssBounds | null> {
   return colourBoundsIn(page, region, isRedInk);
-}
-
-/** The same read for the box: where `#007bff` is inside a region. */
-async function blueBoundsIn(page: Page, region: Rect): Promise<CssBounds | null> {
-  return colourBoundsIn(page, region, isDraftFrame);
 }
 
 /**
@@ -1437,6 +1529,17 @@ test.describe('Text tool', () => {
     const commit = commitButton(page);
     const cancel = cancelButton(page);
 
+    const pageBounds = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollX: window.scrollX,
+    }));
+    expect(pageBounds.scrollX, 'selecting the Text tool must not scroll the document').toBe(0);
+    expect(
+      pageBounds.scrollWidth,
+      'the Text options must not expand the document beyond the viewport'
+    ).toBeLessThanOrEqual(pageBounds.clientWidth);
+
     // The bar is the Text tool's own, and the tool is selected by `beforeEach`, so what follows is
     // about a bar that is fully mounted rather than one that failed to render.
     await expect(page.locator('#text-color'), 'the Text toolbar should be mounted').toBeVisible();
@@ -1506,21 +1609,20 @@ test.describe('Text tool', () => {
 
     // And no keystroke is needed to reach a commit: one click on the button is the whole of it,
     // which is what the `Apply`-after-`fill` arrangement could not say.
-    await commit.click();
+    await commitDraft(page);
     await expect(draftOverlay(page), 'the draft outlived its commit').toHaveCount(0);
     await expect(page.getByTitle('Drag to reorder'), 'a committed draft created nothing').toHaveCount(2);
   });
 
   test('committing a draft adds a text layer to the layers panel', async ({ page }) => {
     const layerRows = page.getByTitle('Drag to reorder');
-    const commit = commitButton(page);
     const box = await canvasBox(page);
 
     await expect(layerRows).toHaveText([STARTING_LAYER_NAME]);
 
     await dragDraftRect(page, box);
     await replaceDraftText(page, 'Hello');
-    await commit.click();
+    await commitDraft(page);
 
     // A second row, topmost first, and it is a text layer. This is the one test whose
     // subject is the layer itself, so it is the one that asserts the generated name; the
@@ -1543,7 +1645,7 @@ test.describe('Text tool', () => {
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box);
     await replaceDraftText(page, 'Hi');
-    await commit.click();
+    await commitDraft(page);
 
     // The commit empties the draft, and with it the editor. That is what makes the pixel read
     // below a statement about the document rather than about the live preview: while the draft is
@@ -1557,7 +1659,8 @@ test.describe('Text tool', () => {
     await expect(commit).toHaveCount(0);
     await expect(layerRows).toHaveCount(2);
 
-    await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN)), hasRedPixels, {
+    const waitBox = await canvasBox(page);
+    await waitForCanvasPixels(page, toClip(draftRectCss(waitBox, POLL_MARGIN)), hasRedPixels, {
       description: 'red text pixels',
     });
 
@@ -1572,7 +1675,8 @@ test.describe('Text tool', () => {
     //
     // `box` is `captureCanvasScreenshot`'s fallback for when no clip is passed
     // (`cdp-helpers.ts:67-72`); no clip is passed here, so the fallback IS the capture.
-    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-committed');
+    const captureBox = await canvasBox(page);
+    const capture = await captureCanvasScreenshot(page, captureBox, testInfo, 'text-committed');
     const image = await loadImageData(capture);
     const ink = await scanPixelsForBounds(image, isRedInk);
     expect(ink.found, 'no red pixels anywhere on the canvas after Commit').toBe(true);
@@ -1592,9 +1696,9 @@ test.describe('Text tool', () => {
     // correct, which is what `getDevicePixelRatio` was deleted for. See
     // `cdp-helpers.spec.ts` for the same measurement and `playwright.config.ts` for the
     // headed/headless split.
-    const captureScaleX = image.width / box.width;
+    const captureScaleX = image.width / captureBox.width;
     expect(
-      Math.abs(image.height / box.height - captureScaleX),
+      Math.abs(image.height / captureBox.height - captureScaleX),
       'the capture is not the canvas box at one scale on both axes'
     ).toBeLessThanOrEqual(0.01);
     expect(Number.isInteger(captureScaleX), 'the capture scale is not integral').toBe(true);
@@ -1602,8 +1706,10 @@ test.describe('Text tool', () => {
     // A capture no larger than the box cannot be the box, so this is also what rules
     // out a fragment: a 120x80 clip of a 240x160 canvas shares its scale with the
     // whole-canvas capture, and only the extent tells them apart.
-    expect(image.width, 'the capture is not the full width of the canvas box').toBeGreaterThan(box.width * 0.9);
-    expect(image.height, 'the capture is not the full height of the canvas box').toBeGreaterThan(box.height * 0.9);
+    expect(image.width, 'the capture is not the full width of the canvas box').toBeGreaterThan(captureBox.width * 0.9);
+    expect(image.height, 'the capture is not the full height of the canvas box').toBeGreaterThan(
+      captureBox.height * 0.9
+    );
 
     // Presence of ink, not its shape: glyph rasterisation is antialiased and
     // font-dependent, so the assertion is that the ink is confined to the rectangle the
@@ -1612,16 +1718,28 @@ test.describe('Text tool', () => {
     // `imageBoundsToCss` divides by the box extent rather than by devicePixelRatio, which
     // is what keeps this correct at any capture resolution - but only if the box it is
     // given is the box that was captured.
-    const inkCss = imageBoundsToCss({ width: image.width, height: image.height }, box, ink);
+    const pageInkCss = imageBoundsToCss({ width: image.width, height: image.height }, captureBox, ink);
+    const inkCss = {
+      left: pageInkCss.left - captureBox.x,
+      top: pageInkCss.top - captureBox.y,
+      right: pageInkCss.right - captureBox.x,
+      bottom: pageInkCss.bottom - captureBox.y,
+    };
 
     // Tripwire against the mistake this test just stopped making. A capture no larger than
     // the rectangle it is checked against cannot fail, because the pixels outside it are
     // never in the image. If this ever goes off, widen the capture - do not narrow the
     // margin.
-    const rect = draftRectCss(box, INK_MARGIN);
-    expect(box.width * box.height, 'the capture must cover strictly more than the asserted rectangle').toBeGreaterThan(
-      (rect.right - rect.left) * (rect.bottom - rect.top)
-    );
+    const rect = {
+      left: DRAFT_RECT.x1 - INK_MARGIN,
+      top: DRAFT_RECT.y1 - INK_MARGIN,
+      right: DRAFT_RECT.x2 + INK_MARGIN,
+      bottom: DRAFT_RECT.y2 + INK_MARGIN,
+    };
+    expect(
+      captureBox.width * captureBox.height,
+      'the capture must cover strictly more than the asserted rectangle'
+    ).toBeGreaterThan((rect.right - rect.left) * (rect.bottom - rect.top));
 
     expect.soft(inkCss.left, 'ink escaped the left of the dragged rectangle').toBeGreaterThanOrEqual(rect.left);
     expect.soft(inkCss.top, 'ink escaped the top of the dragged rectangle').toBeGreaterThanOrEqual(rect.top);
@@ -1632,50 +1750,55 @@ test.describe('Text tool', () => {
   test('resizing a committed text layer rerenders glyphs from its retained text source', async ({ page }, testInfo) => {
     test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
     const box = await canvasBox(page);
-    const canvasClip = toClip({
-      left: box.x,
-      top: box.y,
-      right: box.x + box.width,
-      bottom: box.y + box.height,
-    });
 
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box);
     await replaceDraftText(page, 'MMMM');
-    await commitButton(page).click();
+    await commitDraft(page);
     await expect(draftOverlay(page)).toHaveCount(0);
     await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN)), hasRedPixels, {
       description: 'committed text before resize',
     });
 
-    const beforeCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-before-layer-resize');
+    await clickToolButton(page, 'reposition');
+    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
+    const resizeBox = await canvasBox(page);
+    const resizeClip = toClip({
+      left: resizeBox.x,
+      top: resizeBox.y,
+      right: resizeBox.x + resizeBox.width,
+      bottom: resizeBox.y + resizeBox.height,
+    });
+    const beforeCapture = await captureCanvasScreenshot(page, resizeBox, testInfo, 'text-before-layer-resize');
     const beforeInk = await scanPixelsForBounds(await loadImageData(beforeCapture), isRedInk);
     expect(beforeInk.found, 'committed text was not visible before resizing').toBe(true);
 
-    await clickToolButton(page, 'reposition');
-    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
-    await page.mouse.move(box.x + 300, box.y + 250);
+    await page.mouse.move(resizeBox.x + 300, resizeBox.y + 250);
     await page.mouse.down();
-    await page.mouse.move(box.x + 302, box.y + 252, { steps: 2 });
+    await page.mouse.move(resizeBox.x + 302, resizeBox.y + 252, { steps: 2 });
     await page.mouse.up();
-    await waitForCanvasPixels(page, canvasClip, async (png) => (await getSelectionBounds(png)) !== null, {
+    await waitForCanvasPixels(page, resizeClip, async (png) => (await getSelectionBounds(png)) !== null, {
       description: 'the text layer transform frame',
     });
 
-    const selectedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-selected-for-resize');
+    const selectedCapture = await captureCanvasScreenshot(page, resizeBox, testInfo, 'text-layer-selected-for-resize');
     const selectedFrame = await getSelectionBounds(selectedCapture);
     expect(selectedFrame, 'the committed text layer has no transform handles').toBeTruthy();
-    const handle = imagePointToCss({ width: selectedFrame!.imageWidth, height: selectedFrame!.imageHeight }, box, {
-      x: selectedFrame!.right - TEXT_RESIZE_HANDLE_OFFSET,
-      y: selectedFrame!.bottom - TEXT_RESIZE_HANDLE_OFFSET,
-    });
+    const handle = imagePointToCss(
+      { width: selectedFrame!.imageWidth, height: selectedFrame!.imageHeight },
+      resizeBox,
+      {
+        x: selectedFrame!.right - TEXT_RESIZE_HANDLE_OFFSET,
+        y: selectedFrame!.bottom - TEXT_RESIZE_HANDLE_OFFSET,
+      }
+    );
     await page.mouse.move(handle.x, handle.y);
     await page.mouse.down();
     await page.mouse.move(handle.x + 100, handle.y + 60, { steps: 8 });
     await page.mouse.up();
     await waitForCanvasPixels(
       page,
-      canvasClip,
+      resizeClip,
       async (png) => {
         const current = await getSelectionBounds(png);
         return (
@@ -1687,7 +1810,7 @@ test.describe('Text tool', () => {
       { description: 'the expanded text layer transform frame' }
     );
 
-    const resizedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-resized');
+    const resizedCapture = await captureCanvasScreenshot(page, resizeBox, testInfo, 'text-layer-resized');
     const resizedImage = await loadImageData(resizedCapture);
     const resizedInk = await scanPixelsForBounds(resizedImage, isRedInk);
     expect(resizedInk.found, 'committed text disappeared while its layer was resized').toBe(true);
@@ -1704,12 +1827,12 @@ test.describe('Text tool', () => {
   }, testInfo) => {
     test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
     const box = await canvasBox(page);
-    const canvasClip = toClip({ left: box.x, top: box.y, right: box.x + box.width, bottom: box.y + box.height });
+    const canvasClip = canvasBoxClip(box);
 
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box);
     await replaceDraftText(page, 'MMMM');
-    await commitButton(page).click();
+    await commitDraft(page);
     await expect(draftOverlay(page)).toHaveCount(0);
     await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'committed Type before Free Transform' });
     const layerRows = page.getByTitle('Drag to reorder');
@@ -1772,13 +1895,12 @@ test.describe('Text tool', () => {
       }
     }
     if (!redPixel) throw new Error('text-tool: rotated Type has no opaque red pixel to select');
+    await clickToolButton(page, 'text');
     const clickPoint = imagePointToCss(
       { width: transformedImage.width, height: transformedImage.height },
       box,
       redPixel
     );
-
-    await clickToolButton(page, 'text');
     const documentViewStyle = await page.locator('.zoom-container').evaluate((element) => {
       const computed = getComputedStyle(element);
       return { transform: computed.transform, transformOrigin: computed.transformOrigin };
@@ -1802,7 +1924,7 @@ test.describe('Text tool', () => {
 
     await replaceDraftText(page, 'I');
     await expect(commitButton(page)).toBeEnabled();
-    await commitButton(page).click();
+    await commitDraft(page);
     await expect(draftOverlay(page), 'the committed re-entry left a second draft overlay').toHaveCount(0);
     await expect(layerRows, 'editing transformed Type created a duplicate layer').toHaveCount(layerCountBeforeEdit);
     await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'edited Type after affine re-entry' });
@@ -1828,6 +1950,7 @@ test.describe('Text tool', () => {
     await expect(commit).toBeEnabled();
     await expect(cancel).toBeEnabled();
 
+    await revealToolbarAction(cancel);
     await cancel.click();
 
     // The draft is gone rather than emptied, which is the whole difference between this button and
@@ -1845,7 +1968,7 @@ test.describe('Text tool', () => {
     await dragDraftRect(page, box);
     await replaceDraftText(page, 'Kept');
     await expect(commit).toBeEnabled();
-    await commit.click();
+    await commitDraft(page);
 
     await expect(layerRows).toHaveCount(2);
   });
@@ -1958,8 +2081,8 @@ test.describe('Text tool', () => {
     // width, ink mass and stem-density assertions above still prove the weight change.
     expect(Math.abs(bold.height - plain.height), 'the band changed height').toBeLessThanOrEqual(2);
 
-    expectInkInsideRect(plain, box, DRAFT_RECT, 'the unweighted commit');
-    expectInkInsideRect(bold, box, SECOND_DRAFT_RECT, 'the bold commit');
+    expectInkInsideRect(plain, DRAFT_RECT, 'the unweighted commit');
+    expectInkInsideRect(bold, SECOND_DRAFT_RECT, 'the bold commit');
   });
 
   test('Italic leans the band instead of swapping the typeface', async ({ page }, testInfo) => {
@@ -1994,8 +2117,8 @@ test.describe('Text tool', () => {
       'the leaning band did not overhang to the right'
     ).toBeGreaterThanOrEqual(5);
 
-    expectInkInsideRect(plain, box, DRAFT_RECT, 'the upright commit');
-    expectInkInsideRect(italic, box, SECOND_DRAFT_RECT, 'the italic commit');
+    expectInkInsideRect(plain, DRAFT_RECT, 'the upright commit');
+    expectInkInsideRect(italic, SECOND_DRAFT_RECT, 'the italic commit');
   });
 
   /**
@@ -2043,8 +2166,8 @@ test.describe('Text tool', () => {
     // TEXT_PADDING is still under the 402px that was dragged. A tracking value far enough
     // right would push the text past the rectangle's right edge, and these four comparisons are
     // what would report it.
-    expectInkInsideRect(plain, box, DRAFT_RECT, 'the untracked commit');
-    expectInkInsideRect(tracked, box, SECOND_DRAFT_RECT, 'the tracked commit');
+    expectInkInsideRect(plain, DRAFT_RECT, 'the untracked commit');
+    expectInkInsideRect(tracked, SECOND_DRAFT_RECT, 'the tracked commit');
   });
 
   test('Underline adds a solid run of ink below the glyph band', async ({ page }, testInfo) => {
@@ -2113,8 +2236,8 @@ test.describe('Text tool', () => {
     // The rule is 4 CSS px thick at 64px (`decorationThickness` is `fontSize / 16`, rounded) and
     // sits 0.1em below the baseline, which is 6.4px — so the deepest ink is inside the
     // rectangle the user dragged rather than below it.
-    expectInkInsideRect(plain, box, DRAFT_RECT, 'the undecorated commit');
-    expectInkInsideRect(underlined, box, SECOND_DRAFT_RECT, 'the underlined commit');
+    expectInkInsideRect(plain, DRAFT_RECT, 'the undecorated commit');
+    expectInkInsideRect(underlined, SECOND_DRAFT_RECT, 'the underlined commit');
   });
 
   test('Strikethrough adds a solid run through the glyph band', async ({ page }, testInfo) => {
@@ -2156,8 +2279,8 @@ test.describe('Text tool', () => {
     // fraction of the rule's own area and far more than a rasterisation wobble.
     expect(struck.pixelCount - plain.pixelCount, 'the rule added no ink').toBeGreaterThan(200);
 
-    expectInkInsideRect(plain, box, DRAFT_RECT, 'the undecorated commit');
-    expectInkInsideRect(struck, box, SECOND_DRAFT_RECT, 'the struck commit');
+    expectInkInsideRect(plain, DRAFT_RECT, 'the undecorated commit');
+    expectInkInsideRect(struck, SECOND_DRAFT_RECT, 'the struck commit');
   });
 
   /**
@@ -2210,10 +2333,10 @@ test.describe('Text tool', () => {
       'Small Caps scaled the existing uppercase character beyond the two-pixel row-rasterization allowance'
     ).toBeLessThanOrEqual(2);
 
-    expectInkInsideRect(plainMixedCase, box, CAPS_RECTS.plainMixedCase, 'the plain mixed-case commit');
-    expectInkInsideRect(plainUppercase, box, CAPS_RECTS.plainUppercase, 'the plain uppercase commit');
-    expectInkInsideRect(allCaps, box, CAPS_RECTS.allCaps, 'the all-caps commit');
-    expectInkInsideRect(smallCaps, box, CAPS_RECTS.smallCaps, 'the small-caps commit');
+    expectInkInsideRect(plainMixedCase, CAPS_RECTS.plainMixedCase, 'the plain mixed-case commit');
+    expectInkInsideRect(plainUppercase, CAPS_RECTS.plainUppercase, 'the plain uppercase commit');
+    expectInkInsideRect(allCaps, CAPS_RECTS.allCaps, 'the all-caps commit');
+    expectInkInsideRect(smallCaps, CAPS_RECTS.smallCaps, 'the small-caps commit');
   });
 
   test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps and accepts shorthand', async ({
@@ -2235,10 +2358,10 @@ test.describe('Text tool', () => {
     await styleToggle(page, 'Small Caps').click();
     await replaceDraftText(page, 'Wave');
     await expect(draftOverlay(page)).toHaveCSS('font-variant-caps', 'small-caps');
-    await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+    await hideDraftCaret(page);
 
     const preview = await measureInk(page, testInfo, box, rect, 'small-caps preview without Canvas fontVariantCaps');
-    await commitButton(page).click();
+    await commitDraft(page);
     const committed = await measureInk(page, testInfo, box, rect, 'small-caps commit without Canvas fontVariantCaps');
 
     const agreement = inkMaskAgreement(preview.mask, committed.mask);
@@ -2254,8 +2377,8 @@ test.describe('Text tool', () => {
       Math.abs(preview.height - committed.height),
       'preview and committed small caps have different glyph heights'
     ).toBeLessThanOrEqual(2);
-    expectInkInsideRect(preview, box, rect, 'the small-caps preview');
-    expectInkInsideRect(committed, box, rect, 'the small-caps commit');
+    expectInkInsideRect(preview, rect, 'the small-caps preview');
+    expectInkInsideRect(committed, rect, 'the small-caps commit');
   });
 
   test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps and rejects shorthand', async ({
@@ -2277,10 +2400,10 @@ test.describe('Text tool', () => {
     await styleToggle(page, 'Small Caps').click();
     await replaceDraftText(page, 'Wave');
     await expect(draftOverlay(page)).toHaveCSS('font-variant-caps', 'small-caps');
-    await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+    await hideDraftCaret(page);
 
     const preview = await measureInk(page, testInfo, box, rect, 'small-caps fallback preview');
-    await commitButton(page).click();
+    await commitDraft(page);
     const committed = await measureInk(page, testInfo, box, rect, 'small-caps fallback commit');
 
     const agreement = inkMaskAgreement(preview.mask, committed.mask);
@@ -2421,15 +2544,14 @@ test.describe('Text tool', () => {
     // the one the user dragged, so asserting the dragged one here would be asserting that the
     // tool refuses to lay type out larger than the box it was drawn in — which is the app
     // growing the box to fit the text, as it is supposed to.
-    expectInkInsideRect(small, box, DRAFT_RECT, 'the 32px commit');
-    expectInkInsideRect(large, box, SECOND_DRAFT_RECT, 'the 64px commit');
+    expectInkInsideRect(small, DRAFT_RECT, 'the 32px commit');
+    expectInkInsideRect(large, SECOND_DRAFT_RECT, 'the 64px commit');
   });
 
   test('a size at the Adobe maximum commits ink that reaches the bottom of the document', async ({
     page,
   }, testInfo) => {
     const size = page.locator('#font-size-input');
-    const commit = commitButton(page);
     const box = await canvasBox(page);
 
     // The same commit the clamp test makes, and for the same reason: the commit is what puts 1296 in
@@ -2440,7 +2562,7 @@ test.describe('Text tool', () => {
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box, DRAFT_RECT);
     await replaceDraftText(page, 'X');
-    await commit.click();
+    await commitDraft(page);
 
     // THE WHOLE CANVAS, not a crop of the rectangle, and that is the whole difference between
     // this measurement and a real one. At 1296 the band's top sits 243 box rows BELOW the top of
@@ -2449,13 +2571,11 @@ test.describe('Text tool', () => {
     // test widened the crop to 200 rows instead and read a height of 76, which was the band
     // clipped at box row 520 rather than measured. The wait clip widens to the canvas for the
     // same reason: a poll watching the dragged rectangle times out on ink it is looking past.
-    await waitForCanvasPixels(
-      page,
-      toClip({ left: box.x, top: box.y, right: box.x + box.width, bottom: box.y + box.height }),
-      hasRedPixels,
-      { description: 'the red band a maximum-size commit paints' }
-    );
-    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-size-max');
+    const captureBox = await canvasBox(page);
+    await waitForCanvasPixels(page, canvasBoxClip(captureBox), hasRedPixels, {
+      description: 'the red band a maximum-size commit paints',
+    });
+    const capture = await captureCanvasScreenshot(page, captureBox, testInfo, 'text-size-max');
     const image = await loadImageData(capture);
     const ink = await scanPixelsForBounds(image, isRedInk);
 
@@ -2469,17 +2589,17 @@ test.describe('Text tool', () => {
     // bottom edge at 600 — 144 of its 600 rows, and the band's bottom IS the document's bottom,
     // which is what the second comparison below says.
     expect(ink.found, 'a commit at the Adobe maximum put no ink on the canvas at all').toBe(true);
-    const css = imageBoundsToCss({ width: image.width, height: image.height }, box, ink);
+    const css = imageBoundsToCss({ width: image.width, height: image.height }, captureBox, ink);
     expect(css.bottom - css.top, 'the clamped maximum did not lay out large type').toBeGreaterThan(100);
     // Reaching the bottom edge is what the test's name claims, and the canvas box IS the
     // document's height here — the contain fit is height-limited, 583 box rows for 600 document
     // rows, with no letterbox on that axis — so the band's bottom row is the box's bottom row,
     // to within a pixel of capture rounding.
     expect(css.bottom, 'the band stopped short of the bottom of the document').toBeGreaterThanOrEqual(
-      box.y + box.height - 2
+      captureBox.y + captureBox.height - 2
     );
-    expect(css.right, 'ink ran off the right of the canvas').toBeLessThanOrEqual(box.x + box.width);
-    expect(css.left, 'ink ran off the left of the canvas').toBeGreaterThanOrEqual(box.x);
+    expect(css.right, 'ink ran off the right of the canvas').toBeLessThanOrEqual(captureBox.x + captureBox.width);
+    expect(css.left, 'ink ran off the left of the canvas').toBeGreaterThanOrEqual(captureBox.x);
   });
 
   /**
@@ -2517,6 +2637,10 @@ test.describe('Text tool', () => {
 
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box, DRAFT_RECT);
+    await expect(draftOverlay(page), 'a drag must create paragraph text').toHaveAttribute(
+      'data-text-kind',
+      'paragraph'
+    );
     await replaceDraftText(page, PARAGRAPH_TEXT);
 
     // The wait is for the draft's own repaint and nothing else: nothing red is on the canvas
@@ -2525,7 +2649,9 @@ test.describe('Text tool', () => {
     // LIVE DRAFT — `TextEditOverlay` republishes through `calculateNewRect` on every keystroke, so
     // the box is re-measured and re-painted as the string grows — which is why the measurement
     // below is about the draft's box and not about a committed layer.
-    await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, { description: 'the draft type on the overlay' });
+    await waitForCanvasPixels(page, canvasBoxClip(await canvasBox(page)), hasRedPixels, {
+      description: 'the draft type on the overlay',
+    });
 
     const draft = await measureDraft(page, testInfo, box, 'text-paragraph-draft');
     const draggedWidth = DRAFT_RECT.x2 - DRAFT_RECT.x1;
@@ -2543,7 +2669,12 @@ test.describe('Text tool', () => {
     // most `boxWidth - 2 * TEXT_PADDING` wide, so no line may reach the right edge. The bottom
     // edge is deliberately NOT compared against the dragged rectangle — a paragraph box grows
     // downward to hold its lines, so the bottom boundary is the box, which is the next assertion.
-    const allowed = draftRectCss(box, INK_MARGIN, DRAFT_RECT);
+    const allowed = {
+      left: DRAFT_RECT.x1 - INK_MARGIN,
+      top: DRAFT_RECT.y1 - INK_MARGIN,
+      right: DRAFT_RECT.x2 + INK_MARGIN,
+      bottom: DRAFT_RECT.y2 + INK_MARGIN,
+    };
     expect
       .soft(draft.ink.left, 'the wrapped type escaped the left of the dragged width')
       .toBeGreaterThanOrEqual(allowed.left);
@@ -2560,7 +2691,7 @@ test.describe('Text tool', () => {
     // leaves the next word on the next line, and the widest line therefore stops short by that
     // word's width as well as by the padding.
     expect(
-      box.x + DRAFT_RECT.x2 - draft.ink.right,
+      DRAFT_RECT.x2 - draft.ink.right,
       'the widest wrapped line ran to the edge of the box rather than stopping inside it'
     ).toBeGreaterThanOrEqual(2);
 
@@ -2661,19 +2792,22 @@ test.describe('Text tool', () => {
     // editable draft holding the placeholder, so the type below is typed onto the canvas rather
     // than into a field the gesture never touched.
     await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    const liveBox = await canvasBox(page);
     const placed = await draftOverlay(page).boundingBox();
     expect(placed, 'the click did not create a measurable point-text box').not.toBeNull();
     expect(
-      Math.abs(placed!.x + placed!.width / 2 - (box.x + CLICK_POINT.x)),
+      Math.abs(placed!.x + placed!.width / 2 - (liveBox.x + CLICK_POINT.x)),
       'the placeholder box is not centred on the click'
     ).toBeLessThanOrEqual(3);
     expect(
-      Math.abs(placed!.y + placed!.height / 2 - (box.y + CLICK_POINT.y)),
+      Math.abs(placed!.y + placed!.height / 2 - (liveBox.y + CLICK_POINT.y)),
       'the placeholder box is not vertically centred on the click'
     ).toBeLessThanOrEqual(3);
     await replaceDraftText(page, POINT_TEXT);
 
-    await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, { description: 'the point draft type' });
+    await waitForCanvasPixels(page, canvasBoxClip(await canvasBox(page)), hasRedPixels, {
+      description: 'the point draft type',
+    });
 
     const draft = await measureDraft(page, testInfo, box, 'text-point-draft');
     const boxWidth = spanWidth(draft.frame);
@@ -2689,18 +2823,18 @@ test.describe('Text tool', () => {
 
     // The box grows equally around the click, so its centre remains at the placement coordinate.
     expect(
-      Math.abs((draft.frame.left + draft.frame.right) / 2 - (box.x + CLICK_POINT.x)),
+      Math.abs((draft.frame.left + draft.frame.right) / 2 - CLICK_POINT.x),
       'the point box is not centred on the click'
     ).toBeLessThanOrEqual(3);
     expect(
-      Math.abs((draft.frame.top + draft.frame.bottom) / 2 - (box.y + CLICK_POINT.y)),
+      Math.abs((draft.frame.top + draft.frame.bottom) / 2 - CLICK_POINT.y),
       'the point box is not vertically centred on the click'
     ).toBeLessThanOrEqual(3);
 
     // 2. THE BOX GREW TO FIT, on the committed line. The frame measured above IS the frame of the
     // box this commit writes, and the line below is that box's own rendering of the string, so the
     // two figures are the canvas's arithmetic and the canvas's arithmetic.
-    await commitButton(page).click();
+    await commitDraft(page);
     const inkWidth = await measureCommittedInkWidth(page, testInfo, box, 'text-point-commit');
     // The derived figure is what the arithmetic says it must be: the point box is `TEXT_PADDING`
     // wider than the ink on each side (`rect.ts`, the point arm), and the frame is
@@ -2735,19 +2869,7 @@ test.describe('Text tool', () => {
     expect(overlay, 'the point-text draft did not appear').not.toBeNull();
 
     const surface = page.locator('.cursor-text');
-    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
-    await page.mouse.move(corner.x, corner.y);
-    await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
-
-    await page.mouse.down();
-    const centerX = overlay!.x + overlay!.width / 2;
-    const centerY = overlay!.y + overlay!.height / 2;
-    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
-    await page.mouse.up();
-
-    const rotation = Number(await surface.getAttribute('data-rotation'));
-    expect(rotation, 'the text draft did not retain its rotated angle').toBeGreaterThanOrEqual(85);
-    expect(rotation, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
+    await rotateDraftByNinetyDegrees(page, overlay!);
 
     // Match the reported flow: placing elsewhere implicitly commits the first text and starts a
     // second draft. The second point is remote from the rotated source so this must be a placement,
@@ -2771,22 +2893,13 @@ test.describe('Text tool', () => {
 
     const overlay = await draftOverlay(page).boundingBox();
     expect(overlay, 'the point-text draft did not appear').not.toBeNull();
-    const surface = page.locator('.cursor-text');
-    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
-    await page.mouse.move(corner.x, corner.y);
-    await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
-
-    await page.mouse.down();
     const centerX = overlay!.x + overlay!.width / 2;
     const centerY = overlay!.y + overlay!.height / 2;
-    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
-    await page.mouse.up();
-    const rotatedAngle = (await surface.getAttribute('data-rotation')) ?? '';
-    const rotatedAngleDegrees = Number(rotatedAngle);
-    expect(rotatedAngleDegrees, 'the text draft did not retain its rotated angle').toBeGreaterThanOrEqual(85);
-    expect(rotatedAngleDegrees, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
+    const rotatedAngleDegrees = await rotateDraftByNinetyDegrees(page, overlay!);
+    const rotatedAngle = String(rotatedAngleDegrees);
+    const surface = page.locator('.cursor-text');
 
-    await commitButton(page).click();
+    await commitDraft(page);
     await expect(draftOverlay(page), 'Apply did not commit the rotated text layer').toHaveCount(0);
     await expect(layerRows, 'Apply did not create the rotated text layer').toHaveCount(initialLayerCount + 1);
 
@@ -2802,7 +2915,7 @@ test.describe('Text tool', () => {
     );
 
     await replaceDraftText(page, 'Applied rotation source');
-    await commitButton(page).click();
+    await commitDraft(page);
     await expect(draftOverlay(page), 'Apply left the committed text editor open').toHaveCount(0);
     await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.8);
     await expect(draftOverlay(page), 'the next placement did not create a fresh placeholder').toHaveText('Lorem ipsum');
@@ -2839,7 +2952,6 @@ test.describe('Text tool', () => {
    * carries one at all.
    */
   test('the overflow icon is on the draft overlay only while the type outgrows the box', async ({ page, context }) => {
-    const commit = commitButton(page);
     const box = await canvasBox(page);
     const fit = containFit(box);
 
@@ -2852,20 +2964,20 @@ test.describe('Text tool', () => {
       'the contain fit letterboxes the document vertically, so its bottom edge is not the canvas bottom'
     ).toBeLessThanOrEqual(1);
 
-    // A strip of canvas BELOW the rectangle that was dragged and inside the document: the box's
-    // bottom edge is inside it while the type outgrows the box, and above it while it does not.
-    // That is the wait between the two states, and it is a wait rather than a timeout because the
-    // frame is what moves.
-    const documentEdgeStrip: Rect = {
-      left: box.x + OVERFLOW_RECT.x1 - 20,
-      top: box.y + OVERFLOW_RECT.y2 + 12,
-      right: box.x + OVERFLOW_RECT.x2 + 20,
-      bottom: box.y + box.height,
-    };
+    const documentBottom = box.y + box.height;
     const waitForBoxAtDocumentEdge = () =>
-      waitForCanvasPixels(page, toClip(documentEdgeStrip), async (png) => (await getSelectionBounds(png)) !== null, {
-        description: 'the paragraph box reaching the bottom edge of the document',
-      });
+      expect
+        .poll(
+          async () => {
+            const overlay = await draftOverlay(page).boundingBox();
+            return overlay !== null && Math.abs(overlay.y + overlay.height - documentBottom) <= 1;
+          },
+          {
+            message: 'the paragraph box reaching the bottom edge of the document',
+            timeout: 10_000,
+          }
+        )
+        .toBe(true);
 
     // Where the icon has to be, derived from the code that draws it rather than measured off a
     // previous run: `x2 - TEXT_PADDING - OVERFLOW_INDICATOR_PX` from the box's right edge, and
@@ -2902,6 +3014,14 @@ test.describe('Text tool', () => {
     // edge and the icon appears in its bottom-right corner.
     await replaceDraftLines(page, context, OVERFLOW_TEXT);
     await waitForBoxAtDocumentEdge();
+    const overflowedOverlay = await draftOverlay(page).boundingBox();
+    expect(overflowedOverlay, 'the overflowing draft has no measurable box').not.toBeNull();
+    await expect
+      .poll(() => redBoundsIn(page, iconRegion), {
+        message: 'the overflow icon appearing in the corner of the box',
+        timeout: 10_000,
+      })
+      .not.toBeNull();
 
     const icon = await redBoundsIn(page, iconRegion);
     expect(icon, 'no overflow icon while the type outgrows its box').not.toBeNull();
@@ -2932,10 +3052,8 @@ test.describe('Text tool', () => {
     ).toBeLessThanOrEqual(3);
 
     // STATE C — back to the one line that fits, so nothing outgrows the box any more and the icon
-    // goes with it. THE WAIT IS ON THE ICON, and that is not a convenience: a box never shrinks
-    // (`calculateNewRect` only ever grows, `rect.ts:159-161`), so the frame the overflow grew is
-    // still there after the text shrinks and a wait on the frame would wait for a repaint that
-    // never comes. The next two assertions say so, rather than leaving it as an assumption.
+    // goes with it. The DOM box measures geometry directly; rasterizing its outline at the canvas
+    // edge can clip the very pixels the frame assertion would need to sample.
     await replaceDraftText(page, FITS_TEXT);
     await expect
       .poll(() => redBoundsIn(page, iconRegion), {
@@ -2947,17 +3065,17 @@ test.describe('Text tool', () => {
       await redBoundsIn(page, iconRegion),
       'the overflow icon survived the type going back inside its box'
     ).toBeNull();
-    // The box really is still where the overflow left it, which is the rule the wait above had to
-    // be written around: the frame is on the document's bottom edge and stays there.
+    const retainedOverlay = await draftOverlay(page).boundingBox();
+    expect(retainedOverlay, 'the draft disappeared when its text returned inside the box').not.toBeNull();
     expect(
-      await blueBoundsIn(page, documentEdgeStrip),
+      Math.abs(retainedOverlay!.height - overflowedOverlay!.height),
       'the box shrank back instead of keeping the height the overflow grew it to'
-    ).not.toBeNull();
+    ).toBeLessThanOrEqual(1);
 
     // STATE D — and it is never IN the image. The overflowing type is committed, so the layer's
     // own canvas is what is on the screen, and the same region that held the icon must hold no
-    // ink at all: `renderText` is called without `overflowIndicator` from the creator
-    // (`src/tools/text.ts:611`), and baking the icon into the layer would paint a box-and-plus
+    // ink at all: the creator does not pass `overflowIndicator` to `renderText`, and baking the icon
+    // into the layer would paint a box-and-plus
     // into the user's photograph.
     await replaceDraftLines(page, context, OVERFLOW_TEXT);
     await expect
@@ -2966,11 +3084,17 @@ test.describe('Text tool', () => {
         timeout: 10_000,
       })
       .not.toBeNull();
-    await commit.click();
+    await commitDraft(page);
     await expect(draftOverlay(page), 'the draft outlived its commit').toHaveCount(0);
     await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, {
       description: 'the committed text layer',
     });
+    await expect
+      .poll(() => redBoundsIn(page, iconRegion), {
+        message: 'the overflow icon disappearing from the committed layer',
+        timeout: 10_000,
+      })
+      .toBeNull();
     expect(await redBoundsIn(page, iconRegion), 'the overflow icon was baked into the committed layer').toBeNull();
   });
 
@@ -3016,8 +3140,8 @@ test.describe('Text tool', () => {
       'center alignment did not move the ink away from the left edge'
     ).toBeGreaterThan(20);
 
-    expectInkInsideRect(left, box, DRAFT_RECT, 'the left-aligned commit');
-    expectInkInsideRect(center, box, SECOND_DRAFT_RECT, 'the center-aligned commit');
+    expectInkInsideRect(left, DRAFT_RECT, 'the left-aligned commit');
+    expectInkInsideRect(center, SECOND_DRAFT_RECT, 'the center-aligned commit');
   });
 
   /**
@@ -3044,7 +3168,7 @@ test.describe('Text tool', () => {
    */
   test('zero line height stacks all lines on one baseline', async ({ page, context }, testInfo) => {
     const box = await canvasBox(page);
-    const lineHeightReadout = page.locator('label[for="line-height-slider"] span[aria-hidden="true"]');
+    const lineHeightReadout = page.getByTestId('line-height-readout');
 
     await setTextToolColor(page, TEXT_COLOR);
 
@@ -3068,17 +3192,18 @@ test.describe('Text tool', () => {
 
     // 'I\nI\nI' — three hard breaks, always three lines regardless of wrap width.
     await replaceDraftLines(page, context, 'I\nI\nI');
-    await commitButton(page).click();
+    await commitDraft(page);
 
     // Wait for the committed ink, then measure the band height over the whole canvas.
-    await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN)), hasRedPixels, {
+    const captureBox = await canvasBox(page);
+    await waitForCanvasPixels(page, toClip(draftRectCss(captureBox, POLL_MARGIN)), hasRedPixels, {
       description: 'red text pixels from the zero line-height commit',
     });
-    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-zero-line-height');
+    const capture = await captureCanvasScreenshot(page, captureBox, testInfo, 'text-zero-line-height');
     const image = await loadImageData(capture);
     const ink = await scanPixelsForBounds(image, isRedInk);
     expect(ink.found, 'no red pixels found for the zero line-height commit').toBe(true);
-    const css = imageBoundsToCss({ width: image.width, height: image.height }, box, ink);
+    const css = imageBoundsToCss({ width: image.width, height: image.height }, captureBox, ink);
 
     // At 64px Arial, a single glyph row is about 44 CSS px tall. With three lines
     // stacked on one baseline (zero leading), the band cannot exceed a single line.
@@ -3100,7 +3225,6 @@ test.describe('Text tool', () => {
     page,
   }, testInfo) => {
     const size = page.locator('#font-size-input');
-    const commit = commitButton(page);
     const layerRows = page.getByTitle('Drag to reorder');
     const box = await canvasBox(page);
 
@@ -3112,7 +3236,7 @@ test.describe('Text tool', () => {
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box, DRAFT_RECT);
     await replaceDraftText(page, 'X');
-    await commit.click();
+    await commitDraft(page);
 
     // A layer IS created — 0.01 is a valid size, not a refusal.
     await expect(layerRows, 'the minimum font size created no layer').toHaveCount(2);
@@ -3121,7 +3245,8 @@ test.describe('Text tool', () => {
     );
 
     // But the ink is too small to clear the red pixel threshold.
-    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-size-min');
+    const captureBox = await canvasBox(page);
+    const capture = await captureCanvasScreenshot(page, captureBox, testInfo, 'text-size-min');
     const image = await loadImageData(capture);
     const ink = await scanPixelsForBounds(image, isRedInk);
     expect(ink.found, 'a 0.01px font rendered red ink above the isRedInk threshold').toBe(false);

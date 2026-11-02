@@ -175,9 +175,9 @@ function App() {
               replace the document — the desktop header, the mobile drawer, `Main`'s drop
               handler — and below nothing that needs it. */}
           <UnsavedChangesProvider>
-            <AutoSaveProvider>
-              <KeyboardEventsProvider>
-                <CurrentToolProvider>
+            <KeyboardEventsProvider>
+              <CurrentToolProvider>
+                <AutoSaveProvider>
                   {/* Above `RightPanelVisibilityProvider` and beside it: both are shell state, and
                        neither reads the store. Order between them does not matter. */}
                   <PanelLayoutProvider>
@@ -187,9 +187,9 @@ function App() {
                       </FirstUseProvider>
                     </RightPanelVisibilityProvider>
                   </PanelLayoutProvider>
-                </CurrentToolProvider>
-              </KeyboardEventsProvider>
-            </AutoSaveProvider>
+                </AutoSaveProvider>
+              </CurrentToolProvider>
+            </KeyboardEventsProvider>
           </UnsavedChangesProvider>
         </StoreProvider>
       </ThemeProvider>
