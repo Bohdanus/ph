@@ -21,7 +21,6 @@ Use live catalogs, not stale model lists. Prefer verified free models for bounde
 - OpenRouter 401/402 exhausts the source. On HTTP 429, a zero platform `X-RateLimit-Remaining` header exhausts it for the run; otherwise the daily counter controls model rotation. Unknown counters stay within the three-model cap. Content-policy rejections — including successful HTTP responses with `finish_reason: content_filter` — stop routing across providers so the same request is not retried elsewhere.
 - Catalog and quota requests have a 15-second timeout. Model inference has a five-minute timeout so reasoning models are not cut off by a catalog-sized deadline.
 - **MANDATORY: In Kilo tasks, pass `model` and `provider` together. GPT models use `openai`. Free sessions must not launch GPT children or perform Git operations.**
-- **MANDATORY: Before launching ANY subagent, call `validateFreeModel()` from `scripts/free-model-validator.mjs` to enforce free-only routing. Fail closed on ambiguity.**
 
 ## Provider-specific free quotas
 
@@ -48,25 +47,17 @@ Groq serves only `openai/gpt-oss-120b` on the Free plan — no per-model pricing
 
 Bulk web, code, or chat-history research must use a verified free read-only route and return a short result for root verification. If none is available, stop before paid research. For secure credential discovery, provider setup, and runner commands, see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md).
 
-## Subagent launch rules (ENFORCED)
+## Free subagent helper
 
-| Rule                                    | Enforcement                                   |
-| --------------------------------------- | --------------------------------------------- |
-| Model + provider required together      | `validateSubagentConfig()` throws if missing  |
-| Model must be in verified free catalog  | `validateFreeModel()` checks live catalog     |
-| Known paid patterns rejected            | `isKnownPaidModel()` blocks GPT, Claude, etc. |
-| OpenRouter quota checked before fan-out | `probeOpenRouterQuota()` called pre-launch    |
-| Max 15 concurrent free subagents        | Configurable cap, default 15                  |
-| Provider credentials verified           | Keys required for OpenRouter/Groq             |
-| No fallback to paid models              | Exhausted free sources = hard stop            |
+`scripts/free-subagent-launcher.mjs` is an opt-in wrapper for host-supplied
+`agent_manager` calls. It validates every task against the live provider catalog,
+requires a known OpenRouter quota when that provider is selected, and caps a
+batch at 15. It launches only the repository's read-only `read-only-research`
+profile and does not retry or rotate credentials.
 
-## Verified free model catalog (run `--list` to refresh)
-
-| Model ID                                 | Provider         | Status         | Notes                             |
-| ---------------------------------------- | ---------------- | -------------- | --------------------------------- |
-| `nvidia/nemotron-3-ultra-550b-a55b:free` | openrouter, kilo | **Best**       | Preferred; reasoning capable      |
-| `xingchen-agi/xing4.0-29b-a4b:free`      | kilo             | Alternative    | 429s under load; use sparingly    |
-| `openai/gpt-oss-120b`                    | groq             | Fast bulk      | Very fast; low reasoning          |
-| `poolside/laguna-s-2.1:free`             | kilo             | **Turned off** | Rate-limited; agents won't try it |
-
-Laguna is turned off — rate-limited, agents won't try it. No `--local-only` option exists; none needed (chat-history search data is already local, no secrets to hide).
+The helper is not a global host hook: direct Kilo, Copilot, or other task-tool
+calls do not invoke it automatically. Use the host's read-only permission
+profile for every free child; if the host cannot verify that boundary, do not
+launch the child. Never treat a static model list, a provider name, or this
+optional wrapper as proof that an unrelated host call is free or read-only.
+Refresh exact model/provider pricing with `node scripts/free-model-pool.mjs --list`.
