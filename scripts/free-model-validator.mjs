@@ -158,12 +158,8 @@ export async function validateSubagentConfig({
   groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
   fetchImpl = fetch,
 } = {}) {
-  if (!Number.isSafeInteger(maxSubagents) || maxSubagents < 1 || maxSubagents > 20) {
-    throw new Error('maxSubagents must be 1-20');
-  }
-
-  if (maxSubagents > 10) {
-    console.warn(`Warning: Launching ${maxSubagents} subagents may exceed rate limits`);
+  if (!Number.isSafeInteger(maxSubagents) || maxSubagents < 1 || maxSubagents > 15) {
+    throw new Error('maxSubagents must be 1-15');
   }
 
   const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });

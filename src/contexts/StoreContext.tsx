@@ -1534,9 +1534,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before
-  // it, so a per-document scope would dispose a bitmap the new document
-  // legitimately owns. The document boundary is the canvas identity token, and
-  // document exit releases that document's published caches explicitly.
+  // it, and imports can reuse a raster identity across documents. Promotion
+  // admission uses the canvas identity token; resource release tracks all
+  // document owners and closes only after the final owner exits.
   const presentationScope = useMemo(() => new DocumentPresentationScope(), []);
   useEffect(() => () => presentationScope.dispose(), [presentationScope]);
   useEffect(() => {
@@ -2283,6 +2283,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         type: 'REPLACE_DOCUMENT',
         payload: committedPayload,
       });
+      // A replacement normally changes document id, whose effect cleanup releases
+      // the departing document. A same-id reset does not trigger that cleanup, so
+      // retire assets against the replacement record explicitly.
+      if (currentState.documentId === nextState.documentId) {
+        retireDepartedPresentationBitmaps(presentationScope, nextState.documentId, nextState);
+      }
       return;
     }
     // Unreachable at runtime: the chain above returns for every intercepted
