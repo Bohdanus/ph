@@ -2111,8 +2111,10 @@ for the source scanner to validate.
 Human-written source/configuration/markup comments follow the same ban. Structured `implementationRefs` in tool-description
 data are separate machine-readable metadata and require a separate migration decision.
 
-The read-only resolver sweep returned 85 unresolved citations across five documents and 23 target
-files; this is an audit worklist, not proof that every reference is stale. Direct source checks also
+The current resolver run returns 77 unresolved citations across three documents excluded from the
+maintained-document scan and 18 target files; this is an audit worklist, not proof that every
+reference is stale. The generated `docs/TOOLS.md` citation is clean after normalizing its
+magnetic-lasso range citation in `src/tools/descriptions/selection.ts`. Direct source checks also
 found seven View `appRef`s all pointing to the import line, a Blur default-setting/processor/fallback
 reference mismatch, six Pen placeholder references pointing at a blank line instead of the dummy
 fallback, and rectangular-selection prose whose line references had shifted. Those high-confidence
