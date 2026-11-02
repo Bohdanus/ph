@@ -415,7 +415,13 @@ const cancelButton = (page: Page) => page.getByRole('button', { name: 'Cancel', 
  * stale viewport coordinates. Some browsers scroll horizontally to reveal the far-right button.
  */
 async function commitDraft(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.evaluate(() => window.scrollX), 'Text options must not scroll the document horizontally')
+    .toBe(0);
   await commitButton(page).click();
+  await expect
+    .poll(() => page.evaluate(() => window.scrollX), 'Committing Text must not scroll the document horizontally')
+    .toBe(0);
   await page.evaluate(() => window.scrollTo({ left: 0, top: 0, behavior: 'instant' }));
   await expect.poll(() => page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 0, y: 0 });
 }
@@ -1475,6 +1481,17 @@ test.describe('Text tool', () => {
   test('with no draft open there is no text field, and Commit and Cancel are absent', async ({ page }) => {
     const commit = commitButton(page);
     const cancel = cancelButton(page);
+
+    const pageBounds = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollX: window.scrollX,
+    }));
+    expect(pageBounds.scrollX, 'selecting the Text tool must not scroll the document').toBe(0);
+    expect(
+      pageBounds.scrollWidth,
+      'the Text options must not expand the document beyond the viewport'
+    ).toBeLessThanOrEqual(pageBounds.clientWidth);
 
     // The bar is the Text tool's own, and the tool is selected by `beforeEach`, so what follows is
     // about a bar that is fully mounted rather than one that failed to render.
