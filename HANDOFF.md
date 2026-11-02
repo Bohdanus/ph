@@ -1167,43 +1167,6 @@ validate ref paths. No archive/delete operation is performed by this audit.
 `e2e/OPEN_PROBLEMS.md`
 ---
 
-## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
-
-`index.html`'s two Google Tag Manager `<script>` tags load the container `GTM-WBWSB9XS` (the id is
-declared in `index.html`'s container-id constant) from `googletagmanager.com`. Nothing in `e2e/`
-stubs, blocks or
-asserts on it.
-
-Three consequences, in increasing order of how much they matter:
-
-1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` — its module note headed "WHAT IS
-   REPORTED BUT NOT FAILED" — is where this is now
-   recorded — the container "beacons to
-   `region1.google-analytics.com` on every page — including every e2e run, which makes the suite
-   non-hermetic and would otherwise fail ~36 times over a network call no test controls". That is
-   the accurate figure; the "1-8 per test" this entry used to quote is not stated anywhere in the
-   tree and should not be re-derived by guess.
-2. **Every CI run contacts a third party.** A build gate that depends on Google's reachability
-   to stay green is a build gate with an extra failure mode it does not own.
-3. **Local development leaks to a production analytics property.** A developer's stroke, tool
-   switch and undo are reported to that container with no opt-in. (The measurement id this entry
-   used to name, `G-7F5V72YQ4K`, is **gone** — `grep -rn 'G-7F5V72YQ4K' index.html e2e/ src/`
-   returns nothing, so only the container remains.)
-
-Whether analytics belongs in a local editor at all is an operator decision and is not made here.
-
-**Fix.** Decide the policy first — absent, or opt-in behind an env flag that `e2e/` sets to
-nothing. Then either drop the two script tags from `index.html` or make them conditional on that
-flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googletagmanager.com`
-to `abort()` so the suite stops depending on them. The third point is the one worth resolving
-regardless of which policy is chosen.
-
-**Files.** `index.html` — the two Google Tag Manager `<script>` tags and the `GTM-WBWSB9XS` container
-id; `e2e/global-setup.ts` — `refuseVisibleBrowser()`;
-`e2e/helpers/console-police.ts` — its "WHAT IS REPORTED BUT NOT FAILED" note
-
----
-
 ## 143. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
 
 **Problem.** Two audits of this sweep disagreed about the same thing, and the second one was wrong.
