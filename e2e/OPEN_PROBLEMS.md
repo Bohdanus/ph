@@ -359,54 +359,6 @@ when the oracle names a logical document coordinate.
 exactly the failure this campaign already made once: the seven export baselines were re-derived from
 a moving letterbox before `e8f17ba` specified the line in document space.
 
-## P2 — a collapsed tool's selection assertion is GROUP-level, so it passes for any member of the collapsed set
-
-**Found 2026-09-30 while fixing the 17 `aria-pressed` failures, and it survives that fix.** The
-helper is `expectToolSelected` (`e2e/helpers/toolbar-helpers.ts`). For a tool the rail still shows a
-tile of its own it asserts `aria-pressed`, which is per-tool. For a tool folded into the three-dots
-tile it asserts the tile's lit class instead — because `renderToolGroup()` in `SidebarLeft.tsx`
-deliberately renders no `aria-pressed` there (`aria-pressed={identity === undefined ? … : undefined}`)
-— and that class is painted from `group.some((tool) => tool.name === toolName)`
-over the WHOLE collapsed set, on that same tile's `className`. So `expectToolSelected(page, 'eraser')`
-is answered by "is SOME collapsed tool selected", not by "is the eraser selected".
-
-**Measured at 1280x720, where it bites.** The tiles on the rail are `reposition`,
-`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper`, `crop` and `color` — the
-first seven of the sixteen groups, the rail filling its slot with whole rows. The tool the app
-opens with (`draw`, from `DEFAULT_TOOL` in `src/util/constants.ts`) is not among them, so it is in
-the collapsed set:
-the three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
-collapsed tool therefore passes before anything is selected.
-
-**This is not a regression from the `aria-pressed` conversion, and that distinction is the whole
-point.** A tile's `aria-pressed` and its lit `className` are the same `group.some(...)` call on the
-same tile, so the removed attribute carried identical information to the class that replaced it. The
-limitation predates the conversion and the conversion neither added nor hid it.
-
-**How a test proves the specific tool.** The overflow tile remains group-level, so it cannot be
-the only state oracle for a tool-specific claim. `layers-panel.spec.ts`, `view-tools.spec.ts`, and
-the layer-name input guard in `keyboard-shortcuts.spec.ts` read the accessible `ToolbarHorizontal`
-region named from the active tool; this distinguishes Draw from Text and Hand from Zoom even while
-the rail tile is shared. The `${KEY} selects ${tool}` cases in `describe('tool shortcuts')`
-(`keyboard-shortcuts.spec.ts`) assert the tool's own options-bar control (`bar`).
-`erase-fill-eyedropper`, `color.spec.ts`, and `paint-tool-pixels.spec.ts` drive pixels whose result
-requires the named tool. Keep the helper's group-level contract explicit and pair every future
-collapsed-tool assertion with a per-tool state or behavior oracle.
-
-**What would actually close it.** A per-tool channel on the overflow tile — `data-active-tool={toolName}`
-on the three-dots `<button>` that `renderToolGroup()` in `SidebarLeft.tsx` already gives
-`data-toolbar-tile` for the fit measurement — lets the helper assert the tool by name at any window,
-with no second assertion needed.
-That is a PRODUCT change, deliberately not made here: `aria-pressed` was removed from that tile on
-purpose (`1dcc25cb`), and the same reasoning that removed it is why nothing should be added back in a
-shape that announces the wrong thing. Decide it deliberately, with the accessibility intent in view.
-
-**Do not "fix" it by restoring `aria-pressed` on the three-dots tile.** That would announce a
-pressed toggle for whichever hidden tool happens to be selected, on a control whose only job is to
-open a menu — the exact defect `1dcc25cb` corrected.
-
----
-
 ## P2 — the AVIF export waits on a wasm encoder inside a 30s download timeout, and only AVIF exceeds it
 
 **The two export failures in one run are the same wait, and the format is the discriminator.**
@@ -538,26 +490,29 @@ DPI-blind. Two point-sampling specs that were in exactly that class (`levels.spe
 here.
 
 **The suite as a whole is still not 2x-clean, and an earlier version of this entry
-claimed it was.** Measured by running the whole suite with `projects[].use.deviceScaleFactor`
-forced to 2 (the project-level `use` overrides the top-level one, so setting it at the top
-does nothing — verified by printing `window.devicePixelRatio`): **256 pass, 6 fail, 2
-skipped.** The failures are
+claimed it was.** A prior run with `projects[].use.deviceScaleFactor` forced to 2 (the
+project-level `use` overrides the top-level one, so setting it at the top does nothing)
+measured 256 pass, 6 fail, 2 skipped. Its reported failures were
 
 - `e2e/helpers/cdp-helpers.spec.ts` — the
   `describe('captureCanvasScreenshot at an emulated deviceScaleFactor of 2')` block, which
   exercises capture behavior under an emulated 2x device scale factor.
-- `e2e/helpers/color-helpers.spec.ts` — `verifies swatch color when verifySwatch is true`; the
-  swatch `toHaveCSS` is compared against a literal CSS colour on a 2x surface.
 - `e2e/erase-fill-eyedropper.spec.ts` — `the eyedropper sample size averages the clicked block`;
   an eyedropper block average over a fixed-size sample, in image pixels.
 - `e2e/keyboard-shortcuts.spec.ts` and `e2e/responsive-shell.spec.ts` — one test each, which this
   entry does not name.
 
-So the honest statement is: the classifier and the specs this change touched are now
-resolution-independent, and four other specs are not. Some test-scoped touch/mobile cases exist,
-but there is no dedicated project and coverage remains sparse across controls and gestures. Adding a
-project multiplies every run's cost and is a coverage decision, not a one-line change to
-`playwright.config.ts`.
+The reported `color-helpers.spec.ts` failure was not reproduced in a focused run. That spec now
+sets `deviceScaleFactor: 2` and the swatch test asserts that `window.devicePixelRatio` is actually 2;
+`npm run test:e2e:verbose -- e2e/helpers/color-helpers.spec.ts` passed all seven tests in run
+`2026-11-02T08-51-16-969Z-95889` against code commit
+`6a1cbe6cf9a1f6e6fccc94eb9f8a148cef0b73e7`. This focused result removes that test from the
+unresolved list; it does not revalidate the other failures or the old whole-suite totals.
+
+The full suite has not been remeasured at 2x since that run, so the current failure count is
+unknown. Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage
+remains sparse across controls and gestures. Adding a project multiplies every run's cost and is a
+coverage decision, not a one-line change to `playwright.config.ts`.
 
 `e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
 width and height equal the document dimensions multiplied by the expected device scale

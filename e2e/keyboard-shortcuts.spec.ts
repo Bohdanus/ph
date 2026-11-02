@@ -226,6 +226,9 @@ test.describe('Keyboard shortcuts', () => {
     }
 
     test('E selects the eraser tile', async ({ page }) => {
+      await expectToolSelected(page, 'draw');
+      await expectToolSelected(page, 'eraser', false);
+
       await page.keyboard.press('v');
       await expectToolSelected(page, 'eraser', false);
 

@@ -168,6 +168,17 @@ drop.
   it never reads `vitest.config.ts`, so it fails when a pool or environment change
   takes the binding away, and passes silently through one that keeps it. Scope the
   claim to the binding, not to the pool.
+- **Script-test resource patterns are inventoried, not sandboxed.**
+  `scripts/__tests__/test-write-boundaries.test.mjs` derives the test-file scan
+  under `scripts/__tests__/` and requires review when it finds a new recognized
+  filesystem write API, subprocess call, SQLite open, or `process.env` mutation.
+  The classification is a source heuristic: it does not prove dynamic write
+  destinations, reflective writes, effects hidden behind local aliases or
+  imported helpers, writes through `FileHandle` methods returned by `open()`,
+  native-module effects, child-process writes, or complete runtime containment.
+  Keep intentional shared reads, including `node_modules`
+  resolution and a `DatabaseSync` opened with `readOnly: true`, explicitly
+  classified; never describe this audit as a per-test filesystem sandbox.
 
 ## Gates
 
