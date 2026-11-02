@@ -1498,35 +1498,6 @@ operator's hand — an agent records the finding and stops, which is what this e
 `e2e/OPEN_PROBLEMS.md` (the GROUP-level collapsed-tool assertion entry), `AGENTS.md` (model policy,
 overrides)
 
-## 160. Dark-theme accessibility scans are in place; axe incomplete candidates still need review
-
-The shared e2e fixture pins light because the pixel-analysis helpers rely on the light workspace
-backdrop. `e2e/accessibility.spec.ts` releases that pin, reloads, and audits the shell, New Image
-dialog, unsaved-changes prompt, Draw options bar, and tablet flyout in both themes. The current ten
-scans report zero confirmed axe violations.
-
-**Manual-review boundary.** Axe's `incomplete` bucket contains cases it could not decide; it is not
-evidence of a violation. `expectNoViolations()` attaches the full result, including target selectors,
-and logs candidate rule counts; only confirmed `violations` fail the suite. The shell and tablet-flyout
-runs include incomplete `color-contrast` and `label-content-name-mismatch` candidates. Do not assert
-the whole bucket empty or attribute a candidate to a particular target without reviewing the attached
-result.
-
-The collapsed dock glyph's measured foreground/background ratios are 6.10:1 in light and 7.00:1
-in dark, above WCAG AA's 4.5:1 requirement for normal text. Its `incomplete` target and reason have
-not been revalidated after the color fix; do not assume a generic incomplete result belongs to this
-glyph.
-
-**Next work.** Review the attached candidates individually, then add deterministic assertions or
-fixes for confirmed issues. Preserve the distinction between confirmed violations and axe's
-human-review bucket. Other overlays and responsive states remain outside the current audit.
-
-**Files.** `e2e/accessibility.spec.ts` — the scoped scans and `expectNoViolations()`;
-`e2e/fixtures/extended-test.ts` — `pinnedTheme` and `useAppDefaultTheme()`;
-`src/components/SidebarRight/PanelGroup.tsx` — the collapsed dock glyph.
-
----
-
 ## 164. Centered 1px strokes can antialias across rows; Photoshop pixel-grid parity is unproven
 
 `src/tools/shape.ts` — `setShapeCtx()`, `src/tools/draw.ts` — `setupDrawCtx()`, `src/util/draw.ts` —
