@@ -2,6 +2,8 @@ import { test, expect } from '../fixtures/extended-test';
 import { setForegroundColor } from './color-helpers';
 
 test.describe('Color Helpers', () => {
+  test.use({ deviceScaleFactor: 2 });
+
   test.describe('setForegroundColor', () => {
     test('sets color input value and dispatches events', async ({ page }) => {
       await page.setContent(`
@@ -16,6 +18,8 @@ test.describe('Color Helpers', () => {
     });
 
     test('verifies swatch color when verifySwatch is true', async ({ page }) => {
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
+
       // Two things have to be true for this test to mean anything, and the previous
       // version had neither.
       //
