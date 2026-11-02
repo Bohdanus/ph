@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from './fixtures/extended-test';
-import { type BoundingBox, getWorkspaceCanvas, type ImageDataResult, loadImageData } from './helpers/canvas-helpers';
+import { getWorkspaceCanvas, type ImageDataResult, loadImageData } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import {
   clickToolButton,
@@ -41,17 +41,12 @@ import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * ## Why the geometry is solved rather than assumed
  *
  * The 800x600 document is CONTAINED in the workspace box, so it is scaled by the smaller axis
- * ratio and centred, and `getLocalCoords` (`src/hooks/usePointerPosition.ts:167-182`) reads
- * every sample through that. Solving it from the live box is what lets one DOCUMENT coordinate
- * drive both a pointer target and a pixel sample without either drifting, and it is why an
- * options bar reflowing the workspace is harmless: every helper here re-solves. This file never
- * divides by `devicePixelRatio` — `screenshot-scale.ts` owns that conversion, and this file
- * does not need one, because every clip is requested in CSS pixels and read at face value.
+ * ratio and centred. The workspace publishes that fit geometry alongside the current zoom and
+ * pan, so one DOCUMENT coordinate drives both a pointer target and a pixel sample without
+ * drifting. Every helper re-solves after an options bar or view transform changes. This file
+ * never divides by `devicePixelRatio` — `screenshot-scale.ts` owns that conversion, and every
+ * screenshot clip here is requested in CSS pixels.
  */
-
-/** `DEFAULT_BLANK_IMAGE.size` (`src/App.tsx:19`): the space every document coordinate lives in. */
-const DOCUMENT_WIDTH = 800;
-const DOCUMENT_HEIGHT = 600;
 
 /** The Draw tool's `Size`, i.e. `lineWidth`. Wide enough that one drag is a solid field. */
 const BAND_LINE_WIDTH = 60;
@@ -191,26 +186,47 @@ const BURN_ITEM = FLYOUT_ITEM('burn', 'Burn Tool');
 /** A document-space point. */
 type DocPoint = { x: number; y: number };
 
-/** The solved contain transform: the one rule that turns document coordinates into pointer ones. */
+/** The solved document-to-screen transform used by both paint gestures and pixel samples. */
 type Geometry = {
-  box: BoundingBox;
-  /** Document pixels -> capture pixels, from `usePointerPosition`. */
+  /** Document pixels -> CSS pixels after the current view zoom. */
   scale: number;
   toCss: (point: DocPoint) => { x: number; y: number };
 };
 
 async function workspaceGeometry(page: Page): Promise<Geometry> {
-  const box = await getWorkspaceCanvas(page).boundingBox();
-  if (!box) throw new Error('Canvas not found');
-  // `usePointerPosition.calculateDimensions` (`src/hooks/usePointerPosition.ts:61-93`): the
-  // image is contained, so ONE scale for both axes, and the slack is split evenly.
-  const scale = Math.min(box.width / DOCUMENT_WIDTH, box.height / DOCUMENT_HEIGHT);
-  const offsetX = (box.width - DOCUMENT_WIDTH * scale) / 2;
-  const offsetY = (box.height - DOCUMENT_HEIGHT * scale) / 2;
+  const workspace = page.getByTestId('workspace-container');
+  const view = await workspace.evaluate((node) => {
+    const read = (name: string): number => {
+      const raw = node.getAttribute(name);
+      if (raw === null) throw new Error(`the app published no ${name}`);
+      const value = Number(raw);
+      if (!Number.isFinite(value)) throw new Error(`${name} is not a number: ${raw}`);
+      return value;
+    };
+    return {
+      fitScale: read('data-fit-scale'),
+      offsetX: read('data-fit-offset-x'),
+      offsetY: read('data-fit-offset-y'),
+      rectX: read('data-fit-rect-x'),
+      rectY: read('data-fit-rect-y'),
+      rectWidth: read('data-fit-outer-width'),
+      rectHeight: read('data-fit-outer-height'),
+      scrollLeft: node.scrollLeft,
+      scrollTop: node.scrollTop,
+      zoom: read('data-view-effective-zoom'),
+      panX: read('data-view-pan-x'),
+      panY: read('data-view-pan-y'),
+    };
+  });
+  const scale = view.fitScale * view.zoom;
+  const centerX = view.rectWidth / 2;
+  const centerY = view.rectHeight / 2;
   return {
-    box,
     scale,
-    toCss: ({ x, y }) => ({ x: box.x + offsetX + x * scale, y: box.y + offsetY + y * scale }),
+    toCss: ({ x, y }) => ({
+      x: view.rectX + centerX + view.panX + view.zoom * (view.offsetX + x * view.fitScale - centerX) - view.scrollLeft,
+      y: view.rectY + centerY + view.panY + view.zoom * (view.offsetY + y * view.fitScale - centerY) - view.scrollTop,
+    }),
   };
 }
 
@@ -1221,6 +1237,278 @@ test.describe('Paint tools', () => {
 
       const after = await readLevel(page, armed, DRAG_FROM);
       await assertUndoRestoresPixels(page, armed, DRAG_FROM, before, after, 'clone stamp');
+    });
+  });
+
+  test.describe('Blur', () => {
+    /**
+     * The Blur tool applies a Gaussian blur kernel to the active layer. Unlike Sharpen
+     * (which is an unsharp mask), Blur is a pure smoothing filter. The test verifies
+     * that a non-zero radius moves pixels at contrast edges and that Radius 0 is an
+     * exact no-op.
+     */
+    const COLUMN_X = BAND_MID_X;
+    const COLUMN_FROM_Y = BAND_Y - BAND_LINE_WIDTH / 2 - 20;
+    const COLUMN_TO_Y = BAND_Y + BAND_LINE_WIDTH / 2 + 20;
+
+    async function bandEdgeProfile(page: Page): Promise<number[]> {
+      return readColumnProfile(page, await workspaceGeometry(page), COLUMN_X, COLUMN_FROM_Y, COLUMN_TO_Y);
+    }
+
+    async function selectBlur(page: Page): Promise<Geometry> {
+      await selectGroupedTool(page, FOCUS_GROUP, FLYOUT_ITEM('blur', 'Blur Tool'));
+      return workspaceGeometry(page);
+    }
+
+    const BLUR_MOVE_THRESHOLD = 4;
+
+    test('a non-zero Radius moves the pixels along the band edge', async ({ page }) => {
+      await paintBand(page);
+      const before = await bandEdgeProfile(page);
+
+      await selectBlur(page);
+      await setSlider(page, /^Blur Radius/, '10');
+      const after = await bandEdgeProfile(page);
+
+      expect
+        .soft(
+          movedCount(after, before, BLUR_MOVE_THRESHOLD),
+          'a Gaussian blur must move the pixels within its radius of a contrast edge'
+        )
+        .toBeGreaterThan(0);
+    });
+
+    test('Radius back at zero is an exact no-op', async ({ page }) => {
+      await paintBand(page);
+      await selectBlur(page);
+      await setSlider(page, /^Blur Radius/, '0');
+      const atZero = await bandEdgeProfile(page);
+
+      await setSlider(page, /^Blur Radius/, '10');
+      const moved = await bandEdgeProfile(page);
+      expect
+        .soft(
+          movedCount(moved, atZero, BLUR_MOVE_THRESHOLD),
+          'the trip through a non-zero Radius has to change something, or the exactness below is vacuous'
+        )
+        .toBeGreaterThan(0);
+
+      await setSlider(page, /^Blur Radius/, '0');
+      const backAtZero = await bandEdgeProfile(page);
+      // Exact, not approximate: blur returns before the kernel runs when radius is zero
+      expect.soft(backAtZero, 'Radius 0 must restore the raster exactly').toEqual(atZero);
+    });
+
+    test('undo restores the pixels that blurring changed', async ({ page }) => {
+      await paintBand(page);
+      const pristine = await bandEdgeProfile(page);
+
+      await selectBlur(page);
+      await setSlider(page, /^Blur Radius/, '10');
+      const blurredProfile = await bandEdgeProfile(page);
+      expect
+        .soft(
+          movedCount(blurredProfile, pristine, BLUR_MOVE_THRESHOLD),
+          'blurring has to change pixels for the undo to mean anything'
+        )
+        .toBeGreaterThan(0);
+
+      // Blur is a one-shot FILTER, not a gesture. Nothing is in history until
+      // `commitDirtyTool` promotes the preview, and a tool switch is what calls it.
+      await clickToolButton(page, 'reposition');
+      await expect(page.getByRole('slider', { name: /^Blur Radius/ })).toHaveCount(0);
+      const baked = await bandEdgeProfile(page);
+      expect
+        .soft(movedCount(baked, pristine, BLUR_MOVE_THRESHOLD), 'the tool switch must bake the blur into the layer')
+        .toBeGreaterThan(0);
+
+      await undo(page);
+      const undone = await bandEdgeProfile(page);
+      expect
+        .soft(movedCount(undone, pristine, BLUR_MOVE_THRESHOLD), 'undo must take the blurring off the layer')
+        .toBe(0);
+      expect
+        .soft(movedCount(undone, baked, BLUR_MOVE_THRESHOLD), 'undo must have undone the blurring rather than the draw')
+        .toBeGreaterThan(0);
+
+      await redo(page);
+      const redone = await bandEdgeProfile(page);
+      expect.soft(movedCount(redone, baked, BLUR_MOVE_THRESHOLD), 'redo must re-apply the blurring exactly').toBe(0);
+    });
+  });
+
+  test.describe('High-DPI / Retina rendering', () => {
+    /**
+     * At deviceScaleFactor > 1, the canvas is rendered at a higher resolution.
+     * The test verifies that paint tool strokes maintain correct visual appearance
+     * and coordinate mapping at 2x device scale factor.
+     */
+    test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 });
+
+    const COLUMN_X = BAND_MID_X;
+    const COLUMN_FROM_Y = BAND_Y - BAND_LINE_WIDTH / 2 - 20;
+    const COLUMN_TO_Y = BAND_Y + BAND_LINE_WIDTH / 2 + 20;
+
+    async function bandEdgeProfile(page: Page): Promise<number[]> {
+      return readColumnProfile(page, await workspaceGeometry(page), COLUMN_X, COLUMN_FROM_Y, COLUMN_TO_Y);
+    }
+
+    test('a draw stroke at 2x device scale factor renders at correct document coordinates', async ({ page }) => {
+      await page.goto('/');
+      await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+      const geometry = await workspaceGeometry(page);
+      // At 2x scale, the document is still 800x600 CSS px but rendered at 1600x1200 device px
+      const scale = geometry.scale;
+      expect(scale).toBeGreaterThan(0);
+
+      await clickToolButton(page, 'draw');
+      await setSlider(page, /^Size/, String(BAND_LINE_WIDTH));
+      await setSlider(page, /^Opacity/, '1');
+      await setForegroundColor(page, BAND_GREY, true);
+
+      // Stroke at document coordinates
+      await strokeDocument(page, geometry, { x: BAND_START_X, y: BAND_Y }, { x: BAND_END_X, y: BAND_Y }, 20);
+      await expectLevel(
+        page,
+        geometry,
+        { x: BAND_MID_X, y: BAND_Y },
+        BAND_LEVEL,
+        'the grey band was drawn at 2x scale'
+      );
+
+      // Verify the stroke is at the correct document position by checking
+      // a point outside the stroke (should be white background)
+      await expectLevel(
+        page,
+        geometry,
+        { x: 100, y: BAND_Y },
+        BACKGROUND_LEVEL,
+        'area outside stroke remains white at 2x scale'
+      );
+    });
+
+    test('a sharpen stroke at 2x device scale factor produces correct halo', async ({ page }) => {
+      await page.goto('/');
+      await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+      await paintBand(page);
+      const before = await bandEdgeProfile(page);
+
+      await selectGroupedTool(page, FOCUS_GROUP, SHARPEN_ITEM);
+      await setSlider(page, 'Amount', SHARPEN_AMOUNT);
+      await setSlider(page, 'Radius', SHARPEN_RADIUS);
+      const after = await bandEdgeProfile(page);
+
+      expect
+        .soft(
+          movedCount(after, before, SHARPEN_MOVE_THRESHOLD),
+          'sharpening at 2x scale must move pixels at contrast edges'
+        )
+        .toBeGreaterThan(0);
+
+      // Undo should work at 2x scale too
+      await clickToolButton(page, 'reposition');
+      await undo(page);
+      const undone = await bandEdgeProfile(page);
+      expect.soft(movedCount(undone, before, SHARPEN_MOVE_THRESHOLD), 'undo at 2x scale must restore original').toBe(0);
+    });
+  });
+
+  test.describe('Document zoom/pan coordinate mapping', () => {
+    /**
+     * Paint gestures must still map to document space after the Zoom and Hand tools
+     * change the workspace view.
+     */
+
+    async function selectSmudge(page: Page): Promise<Geometry> {
+      await selectGroupedTool(page, FOCUS_GROUP, SMUDGE_ITEM);
+      await setSlider(page, 'Size', TONAL_SIZE);
+      await setSlider(page, 'Hardness', '100');
+      await setSlider(page, 'Strength', '100');
+      return workspaceGeometry(page);
+    }
+
+    test('a draw stroke maps to correct document coordinates after zoom', async ({ page }) => {
+      await page.goto('/');
+      await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+      const geometry = await paintBand(page);
+      const referenceLevel = await readLevel(page, geometry, { x: BAND_MID_X, y: BAND_Y });
+      expect(referenceLevel).toBe(BAND_LEVEL);
+
+      await clickToolButton(page, 'zoom');
+      await page.getByRole('button', { name: '100%', exact: true }).click();
+      const zoomSlider = page.locator('#view-zoom-slider');
+      await zoomSlider.focus();
+      await zoomSlider.press('ArrowRight');
+      const workspace = page.getByTestId('workspace-container');
+      await expect
+        .poll(async () => Number(await workspace.getAttribute('data-view-effective-zoom')))
+        .toBeGreaterThan(1);
+
+      await clickToolButton(page, 'draw');
+      await setSlider(page, /^Size/, '15');
+      await setForegroundColor(page, BAND_GREY, true);
+      const zoomedGeometry = await workspaceGeometry(page);
+      await expectLevel(
+        page,
+        zoomedGeometry,
+        { x: BAND_MID_X, y: BAND_Y },
+        BAND_LEVEL,
+        'the reference band remains aligned after zoom'
+      );
+
+      await strokeDocument(page, zoomedGeometry, { x: 350, y: 400 }, { x: 450, y: 400 }, 15);
+      await expectLevel(
+        page,
+        zoomedGeometry,
+        { x: 400, y: 400 },
+        BAND_LEVEL,
+        'the paint stroke lands at its document coordinate after zoom'
+      );
+    });
+
+    test('a smudge stroke maps to correct document coordinates after pan', async ({ page }) => {
+      await page.goto('/');
+      await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+      const geometry = await paintRampBand(page, RAMP_AXIS_END_X);
+      const onPathBefore = await readLevel(page, geometry, { x: 180, y: BAND_Y });
+
+      await clickToolButton(page, 'hand');
+      const workspace = page.getByTestId('workspace-container');
+      const workspaceBox = await workspace.boundingBox();
+      if (!workspaceBox) throw new Error('workspace-container has no bounding box');
+      const center = {
+        x: workspaceBox.x + workspaceBox.width / 2,
+        y: workspaceBox.y + workspaceBox.height / 2,
+      };
+      await page.mouse.move(center.x - 18, center.y - 12);
+      await page.mouse.down();
+      await page.mouse.move(center.x + 22, center.y + 16, { steps: 8 });
+      await page.mouse.up();
+      await expect.poll(async () => Number(await workspace.getAttribute('data-view-pan-x'))).not.toBe(0);
+
+      const pannedGeometry = await workspaceGeometry(page);
+      const onPathAfterPan = await readLevel(page, pannedGeometry, { x: 180, y: BAND_Y });
+      expect(onPathAfterPan).toBe(onPathBefore);
+
+      await selectSmudge(page);
+      const smudgeGeometry = await workspaceGeometry(page);
+      const onPathBefore2 = await readLevel(page, smudgeGeometry, { x: 180, y: BAND_Y });
+      expect(onPathBefore2).toBe(onPathBefore);
+
+      await strokeDocument(page, smudgeGeometry, { x: 180, y: BAND_Y }, { x: 300, y: BAND_Y }, 30);
+
+      // Verify the smudge moved the ramp at the correct document position after pan.
+      await expectLevelBelow(
+        page,
+        smudgeGeometry,
+        { x: 180, y: BAND_Y },
+        onPathBefore2,
+        'smudge maps to document coordinates after pan'
+      );
     });
   });
 });

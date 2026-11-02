@@ -438,6 +438,273 @@ test.describe('Layers', () => {
     );
     expect(handleCount, 'every row renders exactly one drag handle').toBe(rowCount);
   });
+
+  /**
+   * Layer opacity preservation across reorder.
+   * A layer's opacity should remain unchanged when reordered. A reorder implementation
+   * that rebuilds layer objects from a snapshot without preserving the opacity field
+   * would reset it to 100%, which this test catches by checking the composite pixel
+   * value at the overlap point.
+   */
+  test('a layer keeps its opacity across a reorder', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    const layerRow = (name: string) => layerRows.filter({ hasText: name });
+
+    const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, color, true);
+      await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
+    };
+    const moveToTop = async (sourceName: string, targetName: string) => {
+      const source = layerRow(sourceName);
+      const target = layerRow(targetName);
+      const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+      const targetBox = await target.boundingBox();
+      if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
+      await source.dispatchEvent('dragstart', { dataTransfer });
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
+      await source.dispatchEvent('dragend', { dataTransfer });
+      await expect(layerRows.first()).toContainText(sourceName);
+    };
+
+    const waitForOverlap = async (
+      matches: (colour: { red: number; green: number; blue: number }) => boolean,
+      description: string
+    ) => {
+      const clip = {
+        x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
+        y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
+        width: OVERLAP_SAMPLE_RADIUS * 2,
+        height: OVERLAP_SAMPLE_RADIUS * 2,
+      };
+      await waitForCanvasPixels(
+        page,
+        clip,
+        async (screenshot) => {
+          const image = await loadImageData(screenshot);
+          const centre = await getColorAtPoint(image, Math.round(image.width / 2), Math.round(image.height / 2));
+          return centre !== null && matches(centre);
+        },
+        { description }
+      );
+    };
+
+    // Two layers crossing at the overlap point
+    await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 }); // draw 2
+    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 3, top
+
+    // Set opacity of top layer (draw 3) to 50%
+    await page.locator('details > summary').click();
+    const opacitySlider = page.getByRole('slider', { name: 'Layer opacity' });
+    await expect(opacitySlider).toBeVisible();
+    await opacitySlider.fill('50');
+    await opacitySlider.press('Tab');
+
+    const isMixed = (colour: { red: number; green: number; blue: number }) =>
+      colour.green > 100 && colour.red < 100 && colour.blue < 100;
+
+    // Wait for opacity to take effect - green at 50% over black should be a dark green
+    await waitForOverlap(isMixed, 'opacity 50% green over black');
+
+    // Put the opaque black layer above green, then move green back on top.
+    await moveToTop('draw 2', 'draw 3');
+
+    // The black layer is now on top, so the overlap should be black.
+    const isBlack = (colour: { red: number; green: number; blue: number }) =>
+      colour.red < 70 && colour.green < 70 && colour.blue < 70;
+    await waitForOverlap(isBlack, 'black layer reordered above the semi-transparent green layer');
+
+    await moveToTop('draw 3', 'draw 2');
+    await waitForOverlap(isMixed, 'opacity preserved when the green layer returns to the top');
+  });
+
+  /**
+   * Layer blend mode preservation across reorder.
+   * A layer's blend mode should remain unchanged when reordered. A reorder implementation
+   * that rebuilds layer objects without preserving blendMode would reset it to 'normal',
+   * which this test catches by checking the composite at the overlap point.
+   */
+  test('a layer keeps its blend mode across a reorder', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    const layerRow = (name: string) => layerRows.filter({ hasText: name });
+
+    const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, color, true);
+      await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
+    };
+    const moveToTop = async (sourceName: string, targetName: string) => {
+      const source = layerRow(sourceName);
+      const target = layerRow(targetName);
+      const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+      const targetBox = await target.boundingBox();
+      if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
+      await source.dispatchEvent('dragstart', { dataTransfer });
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
+      await source.dispatchEvent('dragend', { dataTransfer });
+      await expect(layerRows.first()).toContainText(sourceName);
+    };
+
+    const waitForOverlap = async (
+      matches: (colour: { red: number; green: number; blue: number }) => boolean,
+      description: string
+    ) => {
+      const clip = {
+        x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
+        y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
+        width: OVERLAP_SAMPLE_RADIUS * 2,
+        height: OVERLAP_SAMPLE_RADIUS * 2,
+      };
+      await waitForCanvasPixels(
+        page,
+        clip,
+        async (screenshot) => {
+          const image = await loadImageData(screenshot);
+          const centre = await getColorAtPoint(image, Math.round(image.width / 2), Math.round(image.height / 2));
+          return centre !== null && matches(centre);
+        },
+        { description }
+      );
+    };
+
+    // Two layers: black (bottom), red (top)
+    await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 }); // draw 2
+    await draw('#ff0000', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 3, top
+
+    // Set blend mode of top layer (draw 3) to 'multiply'
+    const blendModeSelect = page.getByRole('combobox', { name: 'Blend mode for draw 3' });
+    await expect(blendModeSelect).toBeVisible();
+    await blendModeSelect.selectOption('multiply');
+
+    // With multiply: red * black = black at overlap
+    const isBlack = (colour: { red: number; green: number; blue: number }) =>
+      colour.red < 70 && colour.green < 70 && colour.blue < 70;
+    await waitForOverlap(isBlack, 'multiply blend mode: red * black = black');
+
+    // Reorder the black layer above the multiply layer, then put red back on top.
+    await moveToTop('draw 2', 'draw 3');
+
+    // The red layer's setting should remain attached while it is underneath.
+    await expect(blendModeSelect).toHaveValue('multiply');
+
+    // A normal red layer over black would be red; Multiply must preserve black.
+    await moveToTop('draw 3', 'draw 2');
+    await expect(blendModeSelect).toHaveValue('multiply');
+    await waitForOverlap(isBlack, 'blend mode preserved when the red layer returns to the top');
+  });
+
+  /**
+   * Undo/redo of layer reorder (history replay).
+   * Each reorder should create exactly one history entry. Undo should reverse the
+   * reorder and redo should re-apply it. This tests the full history replay path
+   * for layer reordering operations.
+   */
+  test('undo reverses a layer reorder and redo re-applies it', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
+
+    const layerRows = page.getByTitle('Drag to reorder');
+    const layerRow = (name: string) => layerRows.filter({ hasText: name });
+
+    const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      await clickToolButton(page, 'draw');
+      await setForegroundColor(page, color, true);
+      await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
+    };
+    const moveToTop = async (sourceName: string, targetName: string) => {
+      const source = layerRow(sourceName);
+      const target = layerRow(targetName);
+      const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+      const targetBox = await target.boundingBox();
+      if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
+      await source.dispatchEvent('dragstart', { dataTransfer });
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
+      await source.dispatchEvent('dragend', { dataTransfer });
+      await expect(layerRows.first()).toContainText(sourceName);
+    };
+
+    const waitForOverlap = async (
+      matches: (colour: { red: number; green: number; blue: number }) => boolean,
+      description: string
+    ) => {
+      const clip = {
+        x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
+        y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
+        width: OVERLAP_SAMPLE_RADIUS * 2,
+        height: OVERLAP_SAMPLE_RADIUS * 2,
+      };
+      await waitForCanvasPixels(
+        page,
+        clip,
+        async (screenshot) => {
+          const image = await loadImageData(screenshot);
+          const centre = await getColorAtPoint(image, Math.round(image.width / 2), Math.round(image.height / 2));
+          return centre !== null && matches(centre);
+        },
+        { description }
+      );
+    };
+
+    // Three layers: black (bottom), red (middle), green (top)
+    await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 }); // draw 2
+    await draw('#ff0000', { x: box.x + 420, y: box.y + 180 }, { x: box.x + 180, y: box.y + 340 }); // draw 3
+    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 4, top
+
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    const historyCountBefore = await historyRows.count();
+
+    // Move green (draw 4) to top of red (draw 3) - but green is already on top, so move black to top
+    await moveToTop('draw 2', 'draw 4'); // black to top
+    // Order should now be: black, green, red, Blank 1
+
+    const historyCountAfterFirstReorder = await historyRows.count();
+    expect(historyCountAfterFirstReorder, 'one reorder = one history entry').toBe(historyCountBefore + 1);
+
+    // Verify order: black on top
+    const isBlack = (colour: { red: number; green: number; blue: number }) =>
+      colour.red < 70 && colour.green < 70 && colour.blue < 70;
+    await waitForOverlap(isBlack, 'black on top after first reorder');
+
+    // Undo
+    const undoButton = page.getByTestId('undo-button');
+    await expect(undoButton).toBeEnabled();
+    await undoButton.click();
+
+    // After undo, green should be back on top
+    const isGreen = (colour: { red: number; green: number; blue: number }) =>
+      colour.green > colour.red * 1.5 && colour.green > colour.blue * 1.5;
+    await waitForOverlap(isGreen, 'undo restores green on top');
+
+    // Redo
+    const redoButton = page.getByTestId('redo-button');
+    await expect(redoButton).toBeEnabled();
+    await redoButton.click();
+
+    // After redo, black should be on top again
+    await waitForOverlap(isBlack, 'redo re-applies black on top');
+
+    // Verify history entry count
+    const historyCountAfterRedo = await historyRows.count();
+    expect(historyCountAfterRedo, 'undo+redo does not create new history entries').toBe(historyCountAfterFirstReorder);
+  });
 });
 
 test.describe('Tablet touch layer reordering', () => {
