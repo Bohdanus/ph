@@ -1385,11 +1385,6 @@ async function redBoundsIn(page: Page, region: Rect): Promise<CssBounds | null> 
   return colourBoundsIn(page, region, isRedInk);
 }
 
-/** The same read for the box: where `#007bff` is inside a region. */
-async function blueBoundsIn(page: Page, region: Rect): Promise<CssBounds | null> {
-  return colourBoundsIn(page, region, isDraftFrame);
-}
-
 /**
  * The string the paragraph tests lay out, chosen off the geometry rather than off taste.
  *
@@ -2983,6 +2978,8 @@ test.describe('Text tool', () => {
     // edge and the icon appears in its bottom-right corner.
     await replaceDraftLines(page, context, OVERFLOW_TEXT);
     await waitForBoxAtDocumentEdge();
+    const overflowedOverlay = await draftOverlay(page).boundingBox();
+    expect(overflowedOverlay, 'the overflowing draft has no measurable box').not.toBeNull();
 
     const icon = await redBoundsIn(page, iconRegion);
     expect(icon, 'no overflow icon while the type outgrows its box').not.toBeNull();
@@ -3013,10 +3010,8 @@ test.describe('Text tool', () => {
     ).toBeLessThanOrEqual(3);
 
     // STATE C — back to the one line that fits, so nothing outgrows the box any more and the icon
-    // goes with it. THE WAIT IS ON THE ICON, and that is not a convenience: a box never shrinks
-    // (`calculateNewRect` only ever grows, `rect.ts:159-161`), so the frame the overflow grew is
-    // still there after the text shrinks and a wait on the frame would wait for a repaint that
-    // never comes. The next two assertions say so, rather than leaving it as an assumption.
+    // goes with it. The DOM box measures geometry directly; rasterizing its outline at the canvas
+    // edge can clip the very pixels the frame assertion would need to sample.
     await replaceDraftText(page, FITS_TEXT);
     await expect
       .poll(() => redBoundsIn(page, iconRegion), {
@@ -3028,12 +3023,12 @@ test.describe('Text tool', () => {
       await redBoundsIn(page, iconRegion),
       'the overflow icon survived the type going back inside its box'
     ).toBeNull();
-    // The box really is still where the overflow left it, which is the rule the wait above had to
-    // be written around: the frame is on the document's bottom edge and stays there.
+    const retainedOverlay = await draftOverlay(page).boundingBox();
+    expect(retainedOverlay, 'the draft disappeared when its text returned inside the box').not.toBeNull();
     expect(
-      await blueBoundsIn(page, documentEdgeStrip),
+      Math.abs(retainedOverlay!.height - overflowedOverlay!.height),
       'the box shrank back instead of keeping the height the overflow grew it to'
-    ).not.toBeNull();
+    ).toBeLessThanOrEqual(1);
 
     // STATE D — and it is never IN the image. The overflowing type is committed, so the layer's
     // own canvas is what is on the screen, and the same region that held the icon must hold no
