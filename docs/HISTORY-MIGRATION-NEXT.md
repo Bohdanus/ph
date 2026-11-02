@@ -168,6 +168,16 @@ priority or dependency. They may be pursued in either order or in parallel.
   describes rebuilding module state by replaying history through its cursor. These examples support
   keeping timeline state, command execution, and preview presentation explicit, but do not define
   this app's gates.
+  Other primary-source implementations differ on redo-tail and failure ordering:
+  [miniPaint's action state](https://github.com/viliusle/miniPaint/blob/master/src/js/core/base-state.js)
+  executes a new action before pruning redo, while
+  [Pinta's document history](https://github.com/PintaProject/Pinta/blob/master/Pinta.Core/Classes/DocumentHistory.cs)
+  prunes before appending; [LazPaint's image history](https://github.com/bgrabitmap/lazpaint/blob/master/lazpaint/image/uimage.pas)
+  clears its history when replay fails, whereas
+  [Pikado's snapshot history](https://github.com/koneb71/pikado/blob/main/src/core/history.js)
+  advances its cursor before restoring a snapshot. These differences are implementation analogies,
+  not Photoshop requirements or a contract for this migration. Keep the repository's branch,
+  replay-failure, rollback, and ownership tests as the authority for local behavior.
 
 ## Validation Evidence
 
