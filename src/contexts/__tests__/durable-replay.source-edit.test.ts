@@ -377,4 +377,303 @@ describe('appendDurableEntry replace-layer-source round trip', () => {
     expect(baselineSnapshot.source.args).toMatchObject({ text: 'First draft' });
     expect(baselineSnapshot.pos).toStrictEqual(firstBox);
   });
+
+  it('appendDurableEntry + replace-layer-source creates valid history entry', () => {
+    const base = document([]);
+    const newRetype = entry('retype-2', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource({ toolName: 'text', text: 'Third draft', fontSize: 24 }, secondBox),
+      pos: { ...secondBox },
+    });
+    const appended = appendDurableEntry(base, newRetype);
+
+    expect(appended.history).toHaveLength(1);
+    expect(appended.history[0]?.id).toBe('retype-2');
+    expect(appended.cursor).toBe(0);
+    expect(appended.history[0]?.operation.kind).toBe('replace-layer-source');
+    if (appended.history[0]?.operation.kind === 'replace-layer-source') {
+      expect(appended.history[0].operation.source.kind).toBe('text');
+      expect(appended.history[0].operation.source.args.text).toBe('Third draft');
+    }
+  });
+
+  it('passes through malformed text args - missing fontSize (replay does not validate)', () => {
+    const badSource = textSource({ toolName: 'text', text: 'No fontSize' });
+    // Remove fontSize by creating a new object without it
+    const { fontSize: _fontSize, ...argsWithoutFontSize } = badSource.args;
+    const badSourceNoFontSize = { ...badSource, args: argsWithoutFontSize };
+    const badEntry = entry('bad', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: badSourceNoFontSize,
+      pos: { ...secondBox },
+    });
+
+    const base = document([]);
+    const appended = appendDurableEntry(base, badEntry);
+
+    expect(appended.history).toHaveLength(1);
+    const replay = replayDurableDocument(appended);
+    const snapshot = replay.layers[layerId]?.snapshot;
+    if (!snapshot || snapshot.source.kind !== 'text') throw new Error('the replayed layer is missing');
+    // Replay passes through args as-is, including missing fontSize
+    expect(snapshot.source.args.text).toBe('No fontSize');
+    expect(snapshot.source.args).not.toHaveProperty('fontSize');
+    expect(snapshot.pos).toStrictEqual(secondBox);
+  });
+
+  it('rejects malformed text args - invalid color', () => {
+    const badSource = textSource({ toolName: 'text', text: 'Bad color', fontSize: 24, color: 'not-a-color' });
+    const badEntry = entry('bad-color', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: badSource,
+      pos: { ...secondBox },
+    });
+
+    const base = document([]);
+    const appended = appendDurableEntry(base, badEntry);
+
+    const replay = replayDurableDocument(appended);
+    const snapshot = replay.layers[layerId]?.snapshot;
+    if (!snapshot || snapshot.source.kind !== 'text') throw new Error('the replayed layer is missing');
+    // Color is passed through but not validated at replay level
+    expect(snapshot.source.args.color).toBe('not-a-color');
+  });
+
+  it('rejects source edit for missing layer', () => {
+    const ghost = entry('ghost', {
+      kind: 'replace-layer-source',
+      layerId: 'layer-that-never-existed',
+      source: textSource({ toolName: 'text', text: 'Nobody' }),
+      pos: { ...secondBox },
+    });
+
+    const base = document([]);
+    const appended = appendDurableEntry(base, ghost);
+
+    expect(appended.history).toHaveLength(1);
+    const replay = replayDurableDocument(appended);
+    expect(replay.layers['layer-that-never-existed']).toBeUndefined();
+    expect(Object.keys(replay.layers)).toEqual([layerId]);
+  });
+
+  it('undo + redo: retained operations reapply to new source bitmap', () => {
+    const blur = entry('blur', {
+      kind: 'apply-filter',
+      layerId,
+      filter: { toolName: 'blur', version: 1, args: { toolName: 'blur', amount: 4 } as PlainObject },
+    });
+    const firstRetype = entry('first-retype', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource({ toolName: 'text', text: 'First retype', fontSize: 24 }, secondBox),
+      pos: { ...secondBox },
+    });
+    const secondRetype = entry('second-retype', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource(
+        { toolName: 'text', text: 'Second retype', fontSize: 24 },
+        { x: 20, y: 30, width: 320, height: 40 }
+      ),
+      pos: { x: 20, y: 30, width: 320, height: 40 },
+    });
+
+    const doc = document([blur, firstRetype, secondRetype]);
+
+    // At tip (cursor 2): both retypes applied, blur retained
+    const atTip = replayDurableDocument(doc, 2);
+    expect(atTip.layers[layerId]?.operations.map((op) => op.kind)).toEqual(['apply-filter']);
+    if (atTip.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('tip source not text');
+    expect(atTip.layers[layerId]?.snapshot.source.args.text).toBe('Second retype');
+
+    // Undo to before first retype (cursor 0): only blur
+    const beforeFirst = replayDurableDocument(doc, 0);
+    if (beforeFirst.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('beforeFirst source not text');
+    expect(beforeFirst.layers[layerId]?.snapshot.source.args.text).toBe('First draft');
+    expect(beforeFirst.layers[layerId]?.operations.map((op) => op.kind)).toEqual(['apply-filter']);
+
+    // Redo to first retype (cursor 1): blur + first retype
+    const afterFirst = replayDurableDocument(doc, 1);
+    if (afterFirst.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('afterFirst source not text');
+    expect(afterFirst.layers[layerId]?.snapshot.source.args.text).toBe('First retype');
+    expect(afterFirst.layers[layerId]?.operations.map((op) => op.kind)).toEqual(['apply-filter']);
+  });
+
+  it('three consecutive retypes at cursors 0, 1, 2 replay correctly', () => {
+    const firstRetype = entry('retype-1', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource({ toolName: 'text', text: 'First retype', fontSize: 24 }, secondBox),
+      pos: { ...secondBox },
+    });
+    const secondRetype = entry('retype-2', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource(
+        { toolName: 'text', text: 'Second retype', fontSize: 24 },
+        { x: 20, y: 30, width: 320, height: 40 }
+      ),
+      pos: { x: 20, y: 30, width: 320, height: 40 },
+    });
+    const thirdRetype = entry('retype-3', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource(
+        { toolName: 'text', text: 'Third retype', fontSize: 24 },
+        { x: 20, y: 30, width: 420, height: 40 }
+      ),
+      pos: { x: 20, y: 30, width: 420, height: 40 },
+    });
+
+    const doc = document([firstRetype, secondRetype, thirdRetype]);
+
+    // Cursor 0: first retype
+    const at0 = replayDurableDocument(doc, 0);
+    if (at0.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('at0 source not text');
+    expect(at0.layers[layerId]?.snapshot.source.args.text).toBe('First retype');
+    expect(at0.layers[layerId]?.snapshot.pos).toStrictEqual(secondBox);
+
+    // Cursor 1: second retype
+    const at1 = replayDurableDocument(doc, 1);
+    if (at1.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('at1 source not text');
+    expect(at1.layers[layerId]?.snapshot.source.args.text).toBe('Second retype');
+
+    // Cursor 2: third retype
+    const at2 = replayDurableDocument(doc, 2);
+    if (at2.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('at2 source not text');
+    expect(at2.layers[layerId]?.snapshot.source.args.text).toBe('Third retype');
+  });
+
+  it('disabled source-edit between two enabled ones - both enabled replay, disabled skipped', () => {
+    const firstRetype = entry('retype-1', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource({ toolName: 'text', text: 'First retype', fontSize: 24 }, secondBox),
+      pos: { ...secondBox },
+    });
+    const disabledRetype = entry(
+      'retype-disabled',
+      {
+        kind: 'replace-layer-source',
+        layerId,
+        source: textSource(
+          { toolName: 'text', text: 'Disabled retype', fontSize: 24 },
+          { x: 20, y: 30, width: 320, height: 40 }
+        ),
+        pos: { x: 20, y: 30, width: 320, height: 40 },
+      },
+      false
+    );
+    const secondRetype = entry('retype-2', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource(
+        { toolName: 'text', text: 'Second retype', fontSize: 24 },
+        { x: 20, y: 30, width: 420, height: 40 }
+      ),
+      pos: { x: 20, y: 30, width: 420, height: 40 },
+    });
+
+    const doc = document([firstRetype, disabledRetype, secondRetype]);
+
+    // At tip (cursor 2): first and second retypes applied, disabled skipped
+    const atTip = replayDurableDocument(doc, 2);
+    if (atTip.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('tip source not text');
+    expect(atTip.layers[layerId]?.snapshot.source.args.text).toBe('Second retype');
+
+    // Cursor 1 (disabled): should show first retype
+    const atDisabled = replayDurableDocument(doc, 1);
+    if (atDisabled.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('disabled cursor source not text');
+    expect(atDisabled.layers[layerId]?.snapshot.source.args.text).toBe('First retype');
+
+    // Cursor 0: first retype
+    const at0 = replayDurableDocument(doc, 0);
+    if (at0.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('at0 source not text');
+    expect(at0.layers[layerId]?.snapshot.source.args.text).toBe('First retype');
+  });
+
+  it('operations retained across multiple source edits', () => {
+    const blur = entry('blur', {
+      kind: 'apply-filter',
+      layerId,
+      filter: { toolName: 'blur', version: 1, args: { toolName: 'blur', amount: 4 } as PlainObject },
+    });
+    const firstRetype = entry('retype-1', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource({ toolName: 'text', text: 'First retype', fontSize: 24 }, secondBox),
+      pos: { ...secondBox },
+    });
+    const secondRetype = entry('retype-2', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource(
+        { toolName: 'text', text: 'Second retype', fontSize: 24 },
+        { x: 20, y: 30, width: 320, height: 40 }
+      ),
+      pos: { x: 20, y: 30, width: 320, height: 40 },
+    });
+
+    const doc = document([blur, firstRetype, secondRetype]);
+
+    const replay = replayDurableDocument(doc);
+    expect(replay.layers[layerId]?.operations.map((op) => op.kind)).toEqual(['apply-filter']);
+    if (replay.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('tip source not text');
+    expect(replay.layers[layerId]?.snapshot.source.args.text).toBe('Second retype');
+  });
+
+  it('source edit combined with layer property changes in same history', () => {
+    const rename = entry('rename', {
+      kind: 'set-layer-properties',
+      layerId,
+      patch: { name: 'Renamed Layer' },
+    });
+    const firstRetype = entry('retype-1', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: textSource({ toolName: 'text', text: 'First retype', fontSize: 24 }, secondBox),
+      pos: { ...secondBox },
+    });
+
+    const doc = document([rename, firstRetype]);
+
+    const replay = replayDurableDocument(doc);
+    expect(replay.layers[layerId]?.snapshot.name).toBe('Renamed Layer');
+    if (replay.layers[layerId]?.snapshot.source.kind !== 'text') throw new Error('tip source not text');
+    expect(replay.layers[layerId]?.snapshot.source.args.text).toBe('First retype');
+  });
+
+  it('replace-layer-source when baseline source is raster', () => {
+    const rasterBaseline = layer({
+      source: {
+        kind: 'raster',
+        assetId: 'baseline-asset' as never,
+        width: firstBox.width,
+        height: firstBox.height,
+        isBedrock: false,
+      },
+    });
+    const vectorRetype = entry('vector-retype', {
+      kind: 'replace-layer-source',
+      layerId,
+      source: {
+        kind: 'vector',
+        toolName: 'rectangle',
+        args: { toolName: 'rectangle', figure: 'rectangle', color: '#ff0000' } as PlainObject,
+        size: { width: secondBox.width, height: secondBox.height },
+        sourcePos: { ...secondBox },
+        isBedrock: false,
+      },
+      pos: { ...secondBox },
+    });
+
+    const replay = replayDurableDocument(document([vectorRetype], rasterBaseline));
+    const snapshot = replay.layers[layerId]?.snapshot;
+    if (!snapshot || snapshot.source.kind !== 'vector') throw new Error('vector source not installed');
+    expect(snapshot.source.toolName).toBe('rectangle');
+    expect(snapshot.source.args.color).toBe('#ff0000');
+  });
 });
