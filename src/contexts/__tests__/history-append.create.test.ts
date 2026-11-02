@@ -193,6 +193,10 @@ describe('history append source-backed create planning', () => {
       if (entry.operation.layer.source.kind !== 'vector') throw new Error('Expected a vector create source');
       expect(entry.operation.layer.source.args).not.toBe(args);
       expect(Object.isFrozen(entry.operation.layer.source.args)).toBe(true);
+      expect(entry.operation.layer.source.args.start).not.toBe(args.start);
+      expect(entry.operation.layer.source.args.end).not.toBe(args.end);
+      expect(Object.isFrozen(entry.operation.layer.source.args.start)).toBe(true);
+      expect(Object.isFrozen(entry.operation.layer.source.args.end)).toBe(true);
       expect([...collectDurableAssetIds(durableDocument(entry))]).toEqual([]);
     } finally {
       registry.shutdown();
