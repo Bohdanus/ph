@@ -38,8 +38,10 @@ is for this review closeout.
   the already-visible legacy selector active while composition runs so transient previews are not
   blocked. Image/blank layer creates can request that presentation after asset finalization only if
   the preceding active cursor prefix passes the existing ownership and frame gates; their own
-  navigation cursor remains on the legacy fallback. Tool-source creates, later source-backed edits,
-  source replacements, merge and frame-changing commits retain their gates.
+  navigation cursor remains on the legacy fallback. Shape Tool creates convert to typed vector
+  entries but remain unpublished behind the `NEW_LAYER_ACTION` ownership gate. Other tool-source
+  creates, later source-backed edits, source replacements, merge and frame-changing commits retain
+  their gates.
 
 The default active UI prefix remains gated: `App.tsx` boots a blank document through
 `setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a `NEW_LAYER_ACTION` that the
@@ -52,6 +54,13 @@ legacy fallback while the root stays disabled. This proves only the user-disable
 default active prefix, imported-raster starts, later source-backed edits, and frame-changing commits
 remain gated. Do not broaden the exception to bypass the active-prefix gate.
 
+A Shape Tool create is also characterized on that disabled-root route. Its durable conversion is
+current, but the append presentation remains unpublished and the canvas uses legacy paint because
+its typed vector source is outside the image/blank exception. The headless test compares the
+transparent baseline, visible rectangle, PNG, and PSD composite/layer pixels against an independent
+pixel oracle, then checks exact undo/redo; redo reports `ownership-unproven`. This pins the gate,
+not vector eligibility.
+
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
@@ -59,7 +68,8 @@ remain gated. Do not broaden the exception to bypass the active-prefix gate.
    the background. A new image/blank layer create may request composition after asset finalization
    only if the prior active prefix passes the ownership and frame gates; its own navigation cursor
    and later appends still use the complete legacy fallback. Other source-backed commits and
-   frame-changing commits remain on the complete legacy path.
+   frame-changing commits remain on the complete legacy path. A typed vector Shape Tool create is
+   characterized but remains unpublished; it does not widen the image/blank exception.
    The image/blank exception is reachable only after disabling the default blank History row, as
    the raster-paste and tablet blank-layer tests now prove. The default active new-document prefix
    and imported-raster starts remain gated; keep those paths unproven until their baseline ownership
