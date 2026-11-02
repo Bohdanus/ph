@@ -18,10 +18,7 @@
       - Nothing in the application reads it. `grep -rIn -iE 'datalayer|gtag|googletag|GTM-'
         src/` returns nothing. There is no tag, no trigger and no `dataLayer.push` outside
         the snippet's own bootstrap, so the container collected page views that nothing
-        consumed. The only other hits on the whole tree are this paragraph, `HANDOFF.md`
-        §140 (the open entry filed about exactly this container), and two comments that
-        DESCRIBE the beacon rather than consume it —
-        `e2e/global-setup.ts:366` and `e2e/helpers/console-police.ts:37`.
+        consumed.
       - Every page load beaconed to a Google Analytics property. Measured on one navigation here:
         7 third-party requests, two of them POSTs to `region1.google-analytics.com/g/collect`
         carrying `en=gtm.js` and `en=page_view`, under measurement id `G-7F5V72YQ4K` — an id that
@@ -95,12 +92,6 @@
       so this is the difference between a navigation that can only be as slow as the local dev
       server this run started, and one that can be as slow as Google.
 
-      RESIDUE, deliberately left for the operator rather than silently rewritten here:
-      `HANDOFF.md` §140 is the open entry filed about this container, and it names
-      `e2e/helpers/console-police.ts:34-40` as where the beacon is recorded. Removing the tags
-      is the fix that entry asks for; deleting the entry, and rewriting the two comments above
-      that describe a beacon which no longer happens, are edits to files this change does not
-      own.
     -->
   </head>
   <body>
