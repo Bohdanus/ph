@@ -1242,7 +1242,7 @@ const OVERFLOW_INDICATOR_DOC_PX = 8;
  * A clip over the box rather than over a rectangle is what makes the two scans below
  * unconditional: a crop can only report the ink inside itself, so `measureDraft` photographs the
  * whole canvas and maps the bounds back onto the box, the same argument the committed-ink test
- * makes at length (`:891-901`). Returning canvas-local coordinates keeps those bounds valid
+ * makes at length. Returning canvas-local coordinates keeps those bounds valid
  * when a focused control scrolls the page.
  */
 function canvasBoxClip(box: BoundingBox): Required<{ x: number; y: number; width: number; height: number }> {
