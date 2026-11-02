@@ -135,6 +135,38 @@ const REVIEWED = {
     scope: 'Writable databases are test fixtures; the machine session database is explicitly opened read-only.',
     patterns: `filesystem-write:mkdtempSync=13 subprocess:execFileSync=79 filesystem-write:writeFileSync=19 filesystem-write:rmSync=53 database-open:DatabaseSync:write-capable=9 database-open:DatabaseSync:readOnly=3 filesystem-write:chmodSync=2`,
   },
+  'board-post-cap.test.mjs': {
+    scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'free-model-validator.test.mjs': {
+    scope: 'Unit tests with mocked fetch; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'free-subagent-launcher.test.mjs': {
+    scope: 'Unit tests with mocked fetch and agentManager; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'handoff-import.test.mjs': {
+    scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'orchestration-command-references.test.mjs': {
+    scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'suite-budgets.test.mjs': {
+    scope: 'Unit tests with mocked data; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'test-write-boundaries.test.mjs': {
+    scope: 'Self-test of the boundary scanner; test fixtures are inline strings, no external side effects.',
+    patterns: '',
+  },
+  'tool-descriptions.test.mjs': {
+    scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
 };
 
 const SHARED_READS = [
@@ -254,6 +286,54 @@ describe('script-test resource boundary audit', () => {
     ]);
   });
 
+  it('detects file descriptor and other filesystem write APIs', () => {
+    const source = `
+      import { open, openSync, write, writeSync, writev, writevSync, ftruncate, ftruncateSync, fchmod, fchmodSync, fchown, fchownSync, futimes, futimesSync } from 'node:fs';
+      import { cp, cpSync, mkdtempDisposableSync } from 'node:fs';
+      import { cp as copyTree, mkdtempDisposable, open as openPromises } from 'node:fs/promises';
+      const fd = openSync('file', 'w');
+      open('file', 'a', (err, fd) => { write(fd, Buffer.from('x')); });
+      openPromises('file', 'w+').then(fd => { writev(fd, [Buffer.from('x')]); });
+      cpSync('source', 'destination');
+      cp('source', 'destination');
+      mkdtempDisposableSync('/tmp/fixture-');
+      copyTree('source', 'destination');
+      mkdtempDisposable('/tmp/fixture-');
+      write(fd, Buffer.from('x'));
+      writeSync(fd, Buffer.from('x'));
+      writev(fd, [Buffer.from('x')]);
+      writevSync(fd, [Buffer.from('x')]);
+      ftruncate(fd, 10);
+      ftruncateSync(fd, 10);
+      fchmod(fd, 0o644);
+      fchmodSync(fd, 0o644);
+      fchown(fd, 1000, 1000);
+      fchownSync(fd, 1000, 1000);
+      futimes(fd, new Date(), new Date());
+      futimesSync(fd, new Date(), new Date());
+    `;
+
+    const findings = scanTestSource(source, 'fd-apis.test.mjs').map(({ kind, api }) => `${kind}:${api}`);
+    expect(findings).toContain('filesystem-write:openSync');
+    expect(findings).toContain('filesystem-write:open');
+    expect(findings).toContain('filesystem-write:cp');
+    expect(findings).toContain('filesystem-write:cpSync');
+    expect(findings).toContain('filesystem-write:mkdtempDisposable');
+    expect(findings).toContain('filesystem-write:mkdtempDisposableSync');
+    expect(findings).toContain('filesystem-write:write');
+    expect(findings).toContain('filesystem-write:writeSync');
+    expect(findings).toContain('filesystem-write:writev');
+    expect(findings).toContain('filesystem-write:writevSync');
+    expect(findings).toContain('filesystem-write:ftruncate');
+    expect(findings).toContain('filesystem-write:ftruncateSync');
+    expect(findings).toContain('filesystem-write:fchmod');
+    expect(findings).toContain('filesystem-write:fchmodSync');
+    expect(findings).toContain('filesystem-write:fchown');
+    expect(findings).toContain('filesystem-write:fchownSync');
+    expect(findings).toContain('filesystem-write:futimes');
+    expect(findings).toContain('filesystem-write:futimesSync');
+  });
+
   it('fails closed when a source file cannot be parsed', () => {
     expect(() => scanTestSource('const broken = ;', 'broken.test.mjs')).toThrow('Could not parse broken.test.mjs');
   });
@@ -274,7 +354,7 @@ describe('script-test resource boundary audit', () => {
 
       expect(expected.scope, `${name} needs a reviewed resource scope`).toBeTruthy();
       const actualPatterns = summarize(findings);
-      const expectedPatterns = expected.patterns.trim().split(/\s+/).sort();
+      const expectedPatterns = expected.patterns.trim() ? expected.patterns.trim().split(/\s+/).sort() : [];
       if (JSON.stringify(actualPatterns) !== JSON.stringify(expectedPatterns)) {
         stale.push(`${name}: expected [${expectedPatterns.join(', ')}], found [${findingsWithLines(findings)}]`);
       }
@@ -284,6 +364,17 @@ describe('script-test resource boundary audit', () => {
     expect(unclassified, 'new write-shaped patterns need explicit classification').toEqual([]);
     expect(stale, 'changed resource patterns need review and an updated classification').toEqual([]);
     expect(missingFiles, 'classifications must refer to discovered script tests').toEqual([]);
+  });
+
+  it('requires explicit classification for tests with zero detected side effects', () => {
+    const tests = deriveScriptTests(TEST_DIRECTORY);
+    const unclassifiedZeroFindings = [];
+    for (const { name, findings } of tests) {
+      if (findings.length === 0 && !REVIEWED[name]) {
+        unclassifiedZeroFindings.push(name);
+      }
+    }
+    expect(unclassifiedZeroFindings, 'tests with zero findings must be explicitly classified in REVIEWED').toEqual([]);
   });
 
   it('keeps intentional shared reads and their boundaries explicit', () => {
