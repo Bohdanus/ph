@@ -50,7 +50,7 @@ export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: numbe
 export function pointsBoundingPosOutward({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
   if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
 
-  const width = clampLineWidth(lineWidth, 0);
+  const width = clampLineWidth(lineWidth);
   const { minX, minY, maxX, maxY } = getPointExtents(points, true);
   const x = Math.floor(minX - width);
   const y = Math.floor(minY - width);

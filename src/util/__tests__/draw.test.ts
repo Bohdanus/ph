@@ -74,6 +74,12 @@ describe('pointsBoundingPos', () => {
     expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
   });
 
+  it('pads zero-width raster bounds for renderers that clamp to the minimum dab size', () => {
+    const result = pointsBoundingPosOutward({ points: [{ x: 5, y: 5 }], lineWidth: 0 });
+
+    expect(result).toEqual({ x: 4, y: 4, width: 2, height: 2 });
+  });
+
   it('rounds outward for every fractional drag, never inward', () => {
     for (const lineWidth of [0.5, 1, 2, 3, 3.5, 7]) {
       for (const points of [
