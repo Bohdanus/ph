@@ -9,7 +9,6 @@ Current operating instructions for the free-model runner. Historical measurement
 | ----------------------------------- | ----------- | ------------------------------------------------------------------------------ |
 | **NVIDIA Nemotron 3 Ultra (free)**  | **Best**    | Strong reasoning, reliable completions, preferred for all free inference tasks |
 | **XingChen Xing4.0 29B A4B (free)** | Alternative | Works for simple prompts; hits 429 under load                                  |
-| **Poolside Laguna (free)**          | Turned off  | Rate-limited (429s), unreliable                                                |
 
 ## Find credentials safely
 
@@ -102,30 +101,33 @@ relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/
 
 **No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq provides equivalent privacy with far better speed/reliability. No `--local-only` option exists; none needed — chat-history search data is already local, no secrets to hide.
 
-## Free Subagent Launch Enforcement (NEW)
+## Optional free-subagent wrapper
 
-Mandatory pre-launch checks for ALL subagents:
+The host-specific `scripts/free-subagent-launcher.mjs` wrapper can validate a batch
+before calling a supplied `agent_manager` function:
 
-```javascript
-import { validateSubagentConfig } from '../scripts/free-model-validator.mjs';
-await validateSubagentConfig({ model, provider, maxSubagents: 5 });
+```js
+import { launchFreeResearchSubagents } from '../scripts/free-subagent-launcher.mjs';
+
+await launchFreeResearchSubagents({
+  prompts,
+  maxSubagents: prompts.length,
+  agentManager,
+});
 ```
 
-| Check                            | Module                     | Failure =        |
-| -------------------------------- | -------------------------- | ---------------- |
-| Model + provider together        | `free-model-validator.mjs` | Hard stop        |
-| Model in verified free catalog   | `validateFreeModel()`      | Hard stop        |
-| Known paid patterns rejected     | `isKnownPaidModel()`       | Hard stop        |
-| OpenRouter quota >= maxSubagents | `probeOpenRouterQuota()`   | Hard stop        |
-| Provider credentials present     | ENV check                  | Hard stop        |
-| Max 15 concurrent free subagents | Config                     | Hard stop        |
-| No fallback to paid              | `free-subagent-retry.mjs`  | Exhausted = stop |
+The wrapper checks each task's exact model/provider pair against the live free
+catalog, requires an available OpenRouter quota when OpenRouter is selected,
+requires explicit Free-plan opt-in and a selected key for Groq, and refuses
+batches larger than 15. It uses only the `read-only-research` profile and does
+not retry launches or rotate keys.
 
-New modules:
-
-- `scripts/free-model-validator.mjs` — Programmatic free model validation
-- `scripts/free-subagent-launcher.mjs` — Wrapper enforcing free-only routing
-- `scripts/free-subagent-retry.mjs` — Rate-limit aware retry with exponential backoff
+This is an opt-in helper, not a global hook: direct Kilo, Copilot, or other
+host task calls do not pass through it automatically. Continue to enforce the
+host's read-only tool permissions for every free child; do not launch free
+subagents when that boundary cannot be verified. The helper does not establish
+provider authentication for Kilo or OpenCode, and a live catalog alone is not
+proof that a host task is configured to use that provider.
 
 ## Runner commands
 
@@ -174,7 +176,7 @@ are also clamped to 1,024 tokens to account for hidden reasoning tokens.
 ### Catalog ordering
 
 Within each provider, candidate models are sorted by preference. Kilo and OpenRouter prefer
-`nvidia/nemotron-3-ultra-550b-a55b:free` first, then `xingchen-agi/xing4.0-29b-a4b:free` as alternative. Laguna models are excluded (turned off). Without this
+`nvidia/nemotron-3-ultra-550b-a55b:free` first, then `xingchen-agi/xing4.0-29b-a4b:free` as alternative. Disabled model families are filtered before ordering. Without this
 preference sort, OpenRouter's catalog returns models in its default order (Flint, XingChen,
 etc.), which may not match the desired free model and can exhaust the three-per-provider
 attempt cap before reaching Nemotron 3 Ultra.

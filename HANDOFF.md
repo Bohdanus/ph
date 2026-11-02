@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 141-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 141-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2103,38 +2103,6 @@ citations with stable identifiers where the document remains maintained; leave o
 migrate to symbol anchors or remain line-based with a stronger semantic review policy. Keep generated
 `docs/TOOLS.md` under its generator and rerun the description/citation tests after source metadata
 changes.
-
-## 219. Test resource isolation has no repository-wide write-boundary guard
-
-**Problem.** The e2e-run suite now has checks for its own resource boundaries: it exercises
-`reservePort`, gives the runner a temporary board with `AGENT_BOARD_DIR`, sends each run record to
-a temporary path, and reads the live worktree record only as a tripwire. Those checks are local to
-that suite. No repository-wide rule prevents another test from writing a path owned by a concurrent
-process, and no derived inventory of tests that write shared paths exists.
-
-`node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e queue sentinel, and the board database
-can all be shared across tests or worktrees. The suite-budgets inventory derives process-spawning
-tests only; it does not discover file writes or establish an allowlist for them.
-
-A read-only audit found concrete cases with different risk shapes: the tsc-guard installer tests
-write `.bin/tsc` only when their real-path ownership check passes, while a wrapper hides the child
-process's repository `cwd`; `dispose-worktree.test.mjs` creates a module-level fixed temp-directory
-name with no cleanup, which can collide across concurrent runs; and the merge-takeover guard test
-changes `PATH`/`REAL_GIT_PATH`, which is shared process state rather than a filesystem write.
-Intentional machine-shared reads, including the session DB with `readOnly: true`, must remain allowed.
-
-**Affected.** `scripts/__tests__/e2e-run.test.mjs`; `scripts/lib/**` for the shared-path helpers;
-the wider `scripts/__tests__` tree; `node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e
-queue sentinel, `board.db`.
-
-**What would close it.** A bounded, derived static audit over script tests that flags recognized
-filesystem write APIs and write-capable subprocess/shell patterns, with explicit narrow
-classification for temporary fixtures and intentional shared reads. Fail or require review for
-unclassified write-shaped patterns, and derive the scan set from the test tree. Such an audit is a
-heuristic, not runtime containment: it cannot prove destinations of dynamic paths, imported helper
-writes, native modules, or child processes, and it must not claim to enforce that every actual write
-is inside a per-test temp directory. Keep shared-read and `PATH`-mutation classification explicit;
-they are different boundary types.
 
 ## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
 
