@@ -157,6 +157,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
 
   const clearStoredAutosave = useCallback(() => {
     autosaveGenerationRef.current += 1;
+    storedVersionRef.current = null;
     return enqueueStorageOperation(async () => {
       await clearAutosave();
       storedVersionRef.current = null;
@@ -377,7 +378,9 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
             return;
           }
           await saveAutosave({ metadata, buffer });
-          storedVersionRef.current = currentDirtyKey;
+          if (generation === autosaveGenerationRef.current) {
+            storedVersionRef.current = currentDirtyKey;
+          }
           writeSucceeded = true;
         });
         if (
