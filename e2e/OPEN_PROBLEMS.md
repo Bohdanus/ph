@@ -553,9 +553,9 @@ measured 256 pass, 6 fail, 2 skipped. Its reported failures were
 The reported `color-helpers.spec.ts` failure was not reproduced in a focused run. That spec now
 sets `deviceScaleFactor: 2` and the swatch test asserts that `window.devicePixelRatio` is actually 2;
 `npm run test:e2e:verbose -- e2e/helpers/color-helpers.spec.ts` passed all seven tests in run
-`2026-11-02T08-38-46-733Z-3797` on base `26ee621d50467f41c35715301bf10a93665af324`. This
-focused result removes that test from the unresolved list; it does not revalidate the other failures
-or the old whole-suite totals.
+`2026-11-02T08-51-16-969Z-95889` against code commit
+`6a1cbe6cf9a1f6e6fccc94eb9f8a148cef0b73e7`. This focused result removes that test from the
+unresolved list; it does not revalidate the other failures or the old whole-suite totals.
 
 The full suite has not been remeasured at 2x since that run, so the current failure count is
 unknown. Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage
