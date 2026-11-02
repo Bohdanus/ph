@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -125,12 +126,29 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
   const lastSavedVersionRef = useRef<string | null>(null);
   const lastSaveTimeRef = useRef(0);
   const savingRef = useRef(false);
+  const saveAgainRef = useRef(false);
   const recoveringRef = useRef(false);
   const prevHadUnsavedWorkRef = useRef(hasUnsavedWork);
   const prevDocumentIdRef = useRef(documentId);
   const performAutosaveRef = useRef<(() => void) | null>(null);
+  const storageOperationsRef = useRef<Promise<void>>(Promise.resolve());
+  const autosaveGenerationRef = useRef(0);
 
-  useEffect(() => {
+  const enqueueStorageOperation = useCallback((operation: () => Promise<void>) => {
+    const queuedOperation = storageOperationsRef.current.then(operation, operation);
+    storageOperationsRef.current = queuedOperation.then(
+      () => undefined,
+      () => undefined
+    );
+    return queuedOperation;
+  }, []);
+
+  const clearStoredAutosave = useCallback(() => {
+    autosaveGenerationRef.current += 1;
+    return enqueueStorageOperation(() => clearAutosave());
+  }, [enqueueStorageOperation]);
+
+  useLayoutEffect(() => {
     storeRef.current = {
       hasImage,
       hasUnsavedChanges,
@@ -193,6 +211,12 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
     historyIndex,
     textDraftKey
   );
+  const dirtyKeyRef = useRef(dirtyKey);
+  const hasUnsavedWorkRef = useRef(hasUnsavedWork);
+  useLayoutEffect(() => {
+    dirtyKeyRef.current = dirtyKey;
+    hasUnsavedWorkRef.current = hasUnsavedWork;
+  }, [dirtyKey, hasUnsavedWork]);
 
   useEffect(() => {
     if (!hasImage) {
@@ -219,7 +243,9 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
         const wasDirty = prevHadUnsavedWorkRef.current;
         const documentChanged = prevDocumentIdRef.current !== documentId;
         if (wasDirty || documentChanged) {
-          clearAutosave().catch(() => {});
+          void clearStoredAutosave().catch((error) => {
+            console.error('AutoSave: Failed to clear stored autosave', error);
+          });
           setAutosaveMetadata(null);
         }
       }
@@ -266,13 +292,23 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
     } else {
       schedule(AUTOSAVE_DEBOUNCE_MS);
     }
-  }, [dirtyKey, hasImage, hasUnsavedWork, textDraftKey, autosaveMetadata, documentId]);
+  }, [dirtyKey, hasImage, hasUnsavedWork, textDraftKey, autosaveMetadata, documentId, clearStoredAutosave]);
 
   const performAutosave = useCallback(() => {
-    if (savingRef.current || recoveringRef.current) return;
+    if (recoveringRef.current) return;
+    if (!hasUnsavedWorkRef.current) {
+      setPendingAutosave(false);
+      return;
+    }
+    if (savingRef.current) {
+      saveAgainRef.current = true;
+      return;
+    }
     savingRef.current = true;
     setPendingAutosave(true);
 
+    const currentDirtyKey = dirtyKeyRef.current;
+    const generation = autosaveGenerationRef.current;
     const currentStore = storeRef.current;
     let autosaveLayers: ReturnType<typeof getLayersForAutosave>;
     try {
@@ -289,8 +325,16 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
       return;
     }
 
-    savePsd(autosaveLayers, currentStore.totalSize, currentStore.documentFrame)
-      .then((buffer) => {
+    void Promise.resolve()
+      .then(() => savePsd(autosaveLayers, currentStore.totalSize, currentStore.documentFrame))
+      .then(async (buffer) => {
+        if (
+          generation !== autosaveGenerationRef.current ||
+          currentDirtyKey !== dirtyKeyRef.current ||
+          !hasUnsavedWorkRef.current
+        ) {
+          return;
+        }
         const metadata: AutosaveMetadata = {
           fileName: currentStore.fileName,
           documentId: currentStore.documentId,
@@ -304,11 +348,24 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
           documentFrame: currentStore.documentFrame,
           savedAt: Date.now(),
         };
-        return saveAutosave({ metadata, buffer });
-      })
-      .then(() => {
-        lastSaveTimeRef.current = Date.now();
-        lastSavedVersionRef.current = dirtyKey;
+        await enqueueStorageOperation(async () => {
+          if (
+            generation !== autosaveGenerationRef.current ||
+            currentDirtyKey !== dirtyKeyRef.current ||
+            !hasUnsavedWorkRef.current
+          ) {
+            return;
+          }
+          await saveAutosave({ metadata, buffer });
+        });
+        if (
+          generation === autosaveGenerationRef.current &&
+          currentDirtyKey === dirtyKeyRef.current &&
+          hasUnsavedWorkRef.current
+        ) {
+          lastSaveTimeRef.current = Date.now();
+          lastSavedVersionRef.current = currentDirtyKey;
+        }
       })
       .catch((error) => {
         console.error('AutoSave: Failed to serialize or store document', error);
@@ -316,8 +373,13 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
       .finally(() => {
         savingRef.current = false;
         setPendingAutosave(false);
+        const shouldSaveAgain = saveAgainRef.current;
+        saveAgainRef.current = false;
+        if (shouldSaveAgain && hasUnsavedWorkRef.current && dirtyKeyRef.current !== lastSavedVersionRef.current) {
+          performAutosaveRef.current?.();
+        }
       });
-  }, [dirtyKey]);
+  }, [enqueueStorageOperation]);
 
   useEffect(() => {
     performAutosaveRef.current = performAutosave;
@@ -337,7 +399,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
         fileName: record.metadata.fileName,
         document: { size, layers: psdLayers, warnings },
       });
-      await clearAutosave();
+      await clearStoredAutosave();
       setAutosaveMetadata(null);
     } catch (error) {
       console.error('AutoSave: Failed to recover document', error);
@@ -345,12 +407,12 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
       recoveringRef.current = false;
       setRecovering(false);
     }
-  }, [autosaveMetadata, recovering]);
+  }, [autosaveMetadata, recovering, clearStoredAutosave]);
 
   const dismissAutosave = useCallback(async () => {
-    await clearAutosave();
+    await clearStoredAutosave();
     setAutosaveMetadata(null);
-  }, []);
+  }, [clearStoredAutosave]);
 
   const value = useMemo<AutoSaveContextType>(
     () => ({

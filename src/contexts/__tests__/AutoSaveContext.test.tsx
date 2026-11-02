@@ -369,6 +369,89 @@ describe('AutoSaveProvider: save trigger', () => {
     expect(clearAutosaveMock).toHaveBeenCalledTimes(1);
   });
 
+  it('does not persist a text draft when it is cancelled during serialization', async () => {
+    let finishSerialization: (buffer: ArrayBuffer) => void = () => {
+      throw new Error('Serialization did not start');
+    };
+    savePsdMock.mockImplementation(
+      () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          finishSerialization = resolve;
+        })
+    );
+    const { rerender } = mount(() => {
+      storeState.toolName = 'text';
+      currentToolState.toolArgs = {
+        toolName: 'text',
+        text: 'draft',
+        rect: { x1: 0, y1: 0, x2: 100, y2: 40 },
+      };
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    expect(savePsdMock).toHaveBeenCalledTimes(1);
+
+    currentToolState.toolArgs = { toolName: 'text', text: '', rect: null };
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    expect(clearAutosaveMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishSerialization(new ArrayBuffer(8));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(saveAutosaveMock).not.toHaveBeenCalled();
+  });
+
+  it('clears autosave after a storage write already in progress', async () => {
+    let finishStorageWrite: () => void = () => {
+      throw new Error('Storage write did not start');
+    };
+    saveAutosaveMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStorageWrite = resolve;
+        })
+    );
+    const { rerender } = mount(() => {
+      storeState.toolName = 'text';
+      currentToolState.toolArgs = {
+        toolName: 'text',
+        text: 'draft',
+        rect: { x1: 0, y1: 0, x2: 100, y2: 40 },
+      };
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(1);
+
+    currentToolState.toolArgs = { toolName: 'text', text: '', rect: null };
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    expect(clearAutosaveMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishStorageWrite();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(clearAutosaveMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does not save when hasImage is false', () => {
     mount(() => {
       storeState.hasImage = false;
