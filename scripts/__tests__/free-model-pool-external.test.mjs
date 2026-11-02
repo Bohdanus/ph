@@ -545,6 +545,123 @@ describe('provider rate-limit diagnostics', () => {
     expect(JSON.parse(completionCalls[1][1].body).model).toBe('r2:free');
   });
 
+  it('rechecks daily capacity after a model 429 before rotating', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: 'upstream model quota' } }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'recovered' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo: () => ({
+        ok: true,
+        json: async () => ({
+          data: { free_model_daily_requests: { used: 999, limit: 1000, remaining: 1 } },
+        }),
+      }),
+      chat,
+    });
+    const onOpenRouterQuota = vi.fn();
+    const result = await completeWithFreeModel('prompt', {
+      fetchImpl,
+      openRouterKey: 'rk',
+      onOpenRouterQuota,
+    });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
+    expect(result.requestCounts.openrouter).toBe(2);
+    expect(onOpenRouterQuota).toHaveBeenCalledWith({ used: 999, limit: 1000, remaining: 1, reason: 'ok' });
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+  });
+
+  it('stops rotating OpenRouter models when a model 429 exhausts the daily quota', async () => {
+    const chat = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'daily quota exhausted' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo: () => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 1000, limit: 1000, remaining: 0 } } }),
+      }),
+      chat,
+    });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
+      /No free model completed/
+    );
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(1);
+  });
+
+  it('rotates after a model 429 when the daily quota probe returns an unknown result', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: 'upstream model quota' } }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: 'r2:free',
+            choices: [{ message: { content: 'recovered' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo: () => ({ ok: false, status: 429 }),
+      chat,
+    });
+    const result = await completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' });
+
+    expect(result).toMatchObject({ source: 'openrouter', model: 'r2:free', content: 'recovered' });
+    expect(result.requestCounts.openrouter).toBe(2);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
+  });
+
+  it('caps model rotation at three attempts when the daily quota remains unknown', async () => {
+    const chat = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'upstream unavailable' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2'), openRouterRow('r3'), openRouterRow('r4')],
+      keyInfo: () => ({ ok: false, status: 500 }),
+      chat,
+    });
+
+    await expect(completeWithFreeModel('prompt', { fetchImpl, openRouterKey: 'rk' })).rejects.toThrow(
+      /Requests attempted: \{"kilo":0,"openrouter":3\}/
+    );
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(3);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
+  });
+
   it('preserves Retry-After when a rate-limit response body is malformed', async () => {
     const fetchImpl = catalogFetch({
       kilo: [],
