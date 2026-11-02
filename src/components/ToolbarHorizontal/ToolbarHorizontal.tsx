@@ -50,7 +50,7 @@ const ToolbarHorizontal = () => {
       aria-label={`${toolName} tool options`}
       className={`${TOOLBAR_BASE_CLASS} flex items-center px-4 overflow-visible max-lg:overflow-x-auto`}
     >
-      <div className="flex-1 min-w-fit flex items-center max-lg:min-w-max">
+      <div className={`flex-1 flex items-center ${toolName === 'text' ? 'min-w-0' : 'min-w-fit'} max-lg:min-w-max`}>
         <ToolComponent key={toolName} />
       </div>
     </div>
