@@ -499,6 +499,31 @@ async function dragDraftRect(page: Page, box: BoundingBox, rect: DraftRect = DRA
   });
 }
 
+async function rotateDraftByNinetyDegrees(page: Page, overlay: BoundingBox): Promise<number> {
+  const surface = page.locator('.cursor-text');
+  const centerX = overlay.x + overlay.width / 2;
+  const centerY = overlay.y + overlay.height / 2;
+  const rotationGrip = { x: centerX, y: overlay.y - 12 };
+
+  await page.mouse.move(rotationGrip.x, rotationGrip.y);
+  await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+
+  await page.mouse.down();
+  const rotationRadius = centerY - rotationGrip.y;
+  await page.mouse.move(centerX + rotationRadius, centerY, { steps: 12 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => Number(await surface.getAttribute('data-rotation')), {
+      message: 'the text draft did not retain its rotated angle',
+      timeout: 5_000,
+    })
+    .toBeGreaterThanOrEqual(85);
+  const rotation = Number(await surface.getAttribute('data-rotation'));
+  expect(rotation, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
+  return rotation;
+}
+
 /**
  * Writes the colour through the control that owns it: the Text bar's own swatch,
  * `<input id="text-color" type="color">`, whose `onChange` is `handleColorChange` and which writes
@@ -929,7 +954,7 @@ async function expectSmallCapsPreviewAndCommitMatch(page: Page, testInfo: TestIn
   await styleToggle(page, 'Small Caps').click();
   await replaceDraftText(page, 'Wave');
   await expect(draftOverlay(page)).toHaveCSS('font-variant-caps', 'small-caps');
-  await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+  await hideDraftCaret(page);
 
   const preview = await measureInk(page, testInfo, box, rect, `${label} preview`);
   await commitDraft(page);
@@ -1240,19 +1265,19 @@ interface DraftMeasurement {
  * line. That is ink this file would then measure as if it were type: `expectInkInsideFrame` would
  * report the draft's ink escaping the bottom of a box that is perfectly correct.
  *
- * Blur the editor directly: moving focus to the far-right Commit button can scroll the page
- * horizontally on some browser/OS combinations. That invalidates the canvas box measured before
- * the interaction and makes a later screenshot compare pixels against stale coordinates.
- * `TextEditOverlay` deliberately does NOT commit on blur, so this removes the caret without
- * closing the draft.
+ * Hide the caret without moving focus. This keeps the editor state stable across browser/OS
+ * combinations while pixel measurements capture only the rendered glyphs.
  */
-async function dismissDraftCaret(page: Page): Promise<void> {
-  await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+async function hideDraftCaret(page: Page): Promise<void> {
+  await draftOverlay(page).evaluate((element) => {
+    if (!(element instanceof HTMLElement)) throw new Error('The text draft overlay must be an HTMLElement');
+    element.style.caretColor = 'transparent';
+  });
 }
 
 /** Waits for the draft's ink anywhere on the canvas, then measures the ink and the box. */
 async function measureDraft(page: Page, testInfo: TestInfo, box: BoundingBox, name: string): Promise<DraftMeasurement> {
-  await dismissDraftCaret(page);
+  await hideDraftCaret(page);
   const captureBox = await canvasBox(page);
   expect(captureBox.width, `${name}: workspace width changed during the measurement`).toBe(box.width);
   expect(captureBox.height, `${name}: workspace height changed during the measurement`).toBe(box.height);
@@ -2305,7 +2330,7 @@ test.describe('Text tool', () => {
     await styleToggle(page, 'Small Caps').click();
     await replaceDraftText(page, 'Wave');
     await expect(draftOverlay(page)).toHaveCSS('font-variant-caps', 'small-caps');
-    await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+    await hideDraftCaret(page);
 
     const preview = await measureInk(page, testInfo, box, rect, 'small-caps preview without Canvas fontVariantCaps');
     await commitDraft(page);
@@ -2347,7 +2372,7 @@ test.describe('Text tool', () => {
     await styleToggle(page, 'Small Caps').click();
     await replaceDraftText(page, 'Wave');
     await expect(draftOverlay(page)).toHaveCSS('font-variant-caps', 'small-caps');
-    await draftOverlay(page).evaluate((element) => (element as HTMLElement).blur());
+    await hideDraftCaret(page);
 
     const preview = await measureInk(page, testInfo, box, rect, 'small-caps fallback preview');
     await commitDraft(page);
@@ -2584,6 +2609,10 @@ test.describe('Text tool', () => {
 
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box, DRAFT_RECT);
+    await expect(draftOverlay(page), 'a drag must create paragraph text').toHaveAttribute(
+      'data-text-kind',
+      'paragraph'
+    );
     await replaceDraftText(page, PARAGRAPH_TEXT);
 
     // The wait is for the draft's own repaint and nothing else: nothing red is on the canvas
@@ -2812,19 +2841,7 @@ test.describe('Text tool', () => {
     expect(overlay, 'the point-text draft did not appear').not.toBeNull();
 
     const surface = page.locator('.cursor-text');
-    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
-    await page.mouse.move(corner.x, corner.y);
-    await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
-
-    await page.mouse.down();
-    const centerX = overlay!.x + overlay!.width / 2;
-    const centerY = overlay!.y + overlay!.height / 2;
-    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
-    await page.mouse.up();
-
-    const rotation = Number(await surface.getAttribute('data-rotation'));
-    expect(rotation, 'the text draft did not retain its rotated angle').toBeGreaterThanOrEqual(85);
-    expect(rotation, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
+    await rotateDraftByNinetyDegrees(page, overlay!);
 
     // Match the reported flow: placing elsewhere implicitly commits the first text and starts a
     // second draft. The second point is remote from the rotated source so this must be a placement,
@@ -2848,20 +2865,11 @@ test.describe('Text tool', () => {
 
     const overlay = await draftOverlay(page).boundingBox();
     expect(overlay, 'the point-text draft did not appear').not.toBeNull();
-    const surface = page.locator('.cursor-text');
-    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
-    await page.mouse.move(corner.x, corner.y);
-    await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
-
-    await page.mouse.down();
     const centerX = overlay!.x + overlay!.width / 2;
     const centerY = overlay!.y + overlay!.height / 2;
-    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
-    await page.mouse.up();
-    const rotatedAngle = (await surface.getAttribute('data-rotation')) ?? '';
-    const rotatedAngleDegrees = Number(rotatedAngle);
-    expect(rotatedAngleDegrees, 'the text draft did not retain its rotated angle').toBeGreaterThanOrEqual(85);
-    expect(rotatedAngleDegrees, 'the text draft did not retain its rotated angle').toBeLessThanOrEqual(95);
+    const rotatedAngleDegrees = await rotateDraftByNinetyDegrees(page, overlay!);
+    const rotatedAngle = String(rotatedAngleDegrees);
+    const surface = page.locator('.cursor-text');
 
     await commitDraft(page);
     await expect(draftOverlay(page), 'Apply did not commit the rotated text layer').toHaveCount(0);
@@ -2928,20 +2936,20 @@ test.describe('Text tool', () => {
       'the contain fit letterboxes the document vertically, so its bottom edge is not the canvas bottom'
     ).toBeLessThanOrEqual(1);
 
-    // A strip of canvas BELOW the rectangle that was dragged and inside the document: the box's
-    // bottom edge is inside it while the type outgrows the box, and above it while it does not.
-    // That is the wait between the two states, and it is a wait rather than a timeout because the
-    // frame is what moves.
-    const documentEdgeStrip: Rect = {
-      left: box.x + OVERFLOW_RECT.x1 - 20,
-      top: box.y + OVERFLOW_RECT.y2 + 12,
-      right: box.x + OVERFLOW_RECT.x2 + 20,
-      bottom: box.y + box.height,
-    };
+    const documentBottom = box.y + box.height;
     const waitForBoxAtDocumentEdge = () =>
-      waitForCanvasPixels(page, toClip(documentEdgeStrip), async (png) => (await getSelectionBounds(png)) !== null, {
-        description: 'the paragraph box reaching the bottom edge of the document',
-      });
+      expect
+        .poll(
+          async () => {
+            const overlay = await draftOverlay(page).boundingBox();
+            return overlay !== null && Math.abs(overlay.y + overlay.height - documentBottom) <= 1;
+          },
+          {
+            message: 'the paragraph box reaching the bottom edge of the document',
+            timeout: 10_000,
+          }
+        )
+        .toBe(true);
 
     // Where the icon has to be, derived from the code that draws it rather than measured off a
     // previous run: `x2 - TEXT_PADDING - OVERFLOW_INDICATOR_PX` from the box's right edge, and
