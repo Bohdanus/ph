@@ -107,6 +107,12 @@ function layerWithCanvas(id = layerId, staged: BitmapSource | null = canvas()): 
   return { ...createMockLayer({ id, pos: { x: 0, y: 0, width: 100, height: 80 } }), tmpCanvas: staged };
 }
 
+function layerWithRaster(id: string, bitmap: BitmapSource): Layer {
+  const pos = { x: 0, y: 0, width: 100, height: 80 };
+  const source: ImageLayerSource = { kind: 'image', bitmap, isBedrock: false, pos };
+  return { ...createMockLayer({ id, pos }), bitmap, source, tmpCanvas: null };
+}
+
 function baselineItem(layers: LayersRecord, id = 'baseline'): HistoryItem {
   return {
     id,
@@ -380,6 +386,51 @@ describe('ADOPT_LAYER_BITMAPS is a deliberate no-op transition', () => {
 
     expect(closeOf(adopted)).toHaveBeenCalledTimes(1);
     expect(closeOf(opened)).not.toHaveBeenCalled();
+  });
+});
+
+describe('source bitmap ownership across document replacement', () => {
+  it('keeps an adopted raster shared by the replacement document open', () => {
+    const shared = createMockImageBitmap(100, 80);
+    const { store, dispatch } = renderWithProbe();
+    const oldLayers = { [layerId]: layerWithRaster(layerId, shared) };
+    replaceDocument(dispatch(), oldLayers, 'doc-old');
+    act(() => store().adoptLayerBitmaps([shared]));
+
+    const newLayers = { [layerId]: layerWithRaster(layerId, shared) };
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-new',
+          history: [baselineItem(newLayers)],
+          historyIndex: 0,
+          updates: { layers: newLayers, totalSize: initialSize, documentFrame: defaultFrame },
+        },
+      });
+      store().adoptLayerBitmaps([shared]);
+    });
+
+    expect(closeOf(shared)).not.toHaveBeenCalled();
+
+    replaceDocument(dispatch(), {}, 'doc-next');
+
+    expect(closeOf(shared)).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires the outgoing raster when a replacement keeps the same document id', () => {
+    const shared = createMockImageBitmap(100, 80);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithRaster(layerId, shared) }, 'doc-stable');
+    act(() => store().adoptLayerBitmaps([shared]));
+
+    replaceDocument(dispatch(), { [layerId]: layerWithRaster(layerId, shared) }, 'doc-stable');
+
+    expect(closeOf(shared)).not.toHaveBeenCalled();
+
+    replaceDocument(dispatch(), {}, 'doc-stable');
+
+    expect(closeOf(shared)).toHaveBeenCalledTimes(1);
   });
 });
 

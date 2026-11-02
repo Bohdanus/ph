@@ -116,9 +116,13 @@ priority or dependency. They may be pursued in either order or in parallel.
 4. Keep the image/blank create exception scoped to the current append. It may request background
    composition after asset finalization only when the preceding active cursor prefix passes the
    ownership and frame gates. The create's own navigation cursor and later appends remain on the
-   current legacy fallback until the broader source-ownership proof is explicit. Continue source-backed
-   import/replacement ownership and parity as the other independent gate; keep unsupported-source
-   refusal explicit and do not use either gate's differential to promote broader surfaces.
+   current legacy fallback until the broader source-ownership proof is explicit. Preserve the shared
+   bitmap lifetime proofs in `src/contexts/__tests__/layer-presentation.test.ts` and
+   `src/contexts/__tests__/StoreContext.retirement.test.tsx`: a cross-document bitmap remains live
+   until its last owner releases it, and same-id replacement retires against the replacement record.
+   Continue source-backed import/replacement ownership and parity as the other independent gate; keep
+   unsupported-source refusal explicit and do not use either gate's differential to promote broader
+   surfaces.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
