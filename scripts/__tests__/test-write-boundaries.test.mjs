@@ -209,8 +209,14 @@ describe('script-test resource boundary audit', () => {
       delete process.env['REAL_GIT_PATH'];
       process.env[dynamicKey] = 'value';
       Object.assign(process.env, { CI: 'true' });
+      process.env.RETRY_COUNT++;
+      --process.env.RETRY_COUNT;
       new DatabaseSync(':memory:');
       new DatabaseSync('/shared/read-only.db', { readOnly: true });
+      new DatabaseSync('/shared/overridden.db', { readOnly: true, readOnly: false });
+      new DatabaseSync('/shared/spread-after.db', { readOnly: true, ...options });
+      new DatabaseSync('/shared/explicit-after-spread.db', { ...options, readOnly: true });
+      new DatabaseSync('/shared/computed-after.db', { readOnly: true, [optionName]: false });
     `;
 
     expect(scanTestSource(source, 'fixture.test.mjs').map(({ kind, api }) => `${kind}:${api}`)).toEqual([
@@ -225,8 +231,14 @@ describe('script-test resource boundary audit', () => {
       'process-env-write:delete:REAL_GIT_PATH',
       'process-env-write:assignment:<computed>',
       'process-env-write:Object.assign:<object>',
+      'process-env-write:update:RETRY_COUNT',
+      'process-env-write:update:RETRY_COUNT',
       'database-open:DatabaseSync:write-capable',
       'database-open:DatabaseSync:readOnly',
+      'database-open:DatabaseSync:write-capable',
+      'database-open:DatabaseSync:write-capable',
+      'database-open:DatabaseSync:readOnly',
+      'database-open:DatabaseSync:write-capable',
     ]);
   });
 

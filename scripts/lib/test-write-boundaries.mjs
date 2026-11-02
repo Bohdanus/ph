@@ -175,12 +175,13 @@ function processEnvPath(expression) {
 
 function hasReadOnlyOption(options) {
   if (!options || !ts.isObjectLiteralExpression(options)) return false;
-  return options.properties.some(
-    (property) =>
-      ts.isPropertyAssignment(property) &&
-      importName(property.name) === 'readOnly' &&
-      property.initializer.kind === ts.SyntaxKind.TrueKeyword
-  );
+  for (let index = options.properties.length - 1; index >= 0; index -= 1) {
+    const property = options.properties[index];
+    if (ts.isSpreadAssignment(property) || ts.isComputedPropertyName(property.name)) return false;
+    if (importName(property.name) !== 'readOnly') continue;
+    return ts.isPropertyAssignment(property) && property.initializer.kind === ts.SyntaxKind.TrueKeyword;
+  }
+  return false;
 }
 
 function lineAt(sourceFile, node) {
@@ -234,6 +235,14 @@ export function scanTestSource(source, fileName) {
     ) {
       const envTarget = processEnvPath(node.left);
       if (envTarget !== null) addFinding('process-env-write', `assignment:${envTarget}`, node);
+    }
+
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      const envTarget = processEnvPath(node.operand);
+      if (envTarget !== null) addFinding('process-env-write', `update:${envTarget}`, node);
     }
 
     if (ts.isDeleteExpression(node)) {
