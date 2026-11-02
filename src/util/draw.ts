@@ -10,6 +10,10 @@ function clampLineWidth(lineWidth: number, minimum = MIN_LINE_WIDTH): number {
   return Number.isFinite(lineWidth) && lineWidth >= minimum ? lineWidth : MIN_LINE_WIDTH;
 }
 
+function positiveLineWidth(lineWidth: number): number {
+  return Number.isFinite(lineWidth) && lineWidth > 0 ? lineWidth : MIN_LINE_WIDTH;
+}
+
 function getPointExtents(points: Point[], sanitizeNonFiniteCoordinates = false) {
   const normalize = (coordinate: number) =>
     sanitizeNonFiniteCoordinates && !Number.isFinite(coordinate) ? 0 : coordinate;
@@ -50,7 +54,7 @@ export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: numbe
 export function pointsBoundingPosOutward({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
   if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
 
-  const width = clampLineWidth(lineWidth);
+  const width = positiveLineWidth(lineWidth);
   const { minX, minY, maxX, maxY } = getPointExtents(points, true);
   const x = Math.floor(minX - width);
   const y = Math.floor(minY - width);
@@ -234,7 +238,7 @@ export const drawSpray = ({ args, ctx }: DrawStrokeParams) => {
   const peak = args.alpha * SPRAY_PEAK_ALPHA;
   const flowPercent = Number.isFinite(args.flow) ? (args.flow ?? PAINT_FLOW_DEFAULT) : PAINT_FLOW_DEFAULT;
   const flow = Math.min(PAINT_FLOW_MAX, Math.max(PAINT_FLOW_MIN, flowPercent)) / 100;
-  const radius = clampLineWidth(args.lineWidth) * SPRAY_RADIUS_SCALE;
+  const radius = positiveLineWidth(args.lineWidth) * SPRAY_RADIUS_SCALE;
 
   for (let i = 0; i < points.length; i++) {
     let dabPeak = peak;

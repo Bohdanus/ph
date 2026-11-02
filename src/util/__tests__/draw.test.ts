@@ -80,6 +80,12 @@ describe('pointsBoundingPos', () => {
     expect(result).toEqual({ x: 4, y: 4, width: 2, height: 2 });
   });
 
+  it('preserves subpixel widths in raster bounds', () => {
+    const result = pointsBoundingPosOutward({ points: [{ x: 5.25, y: 5.25 }], lineWidth: 0.5 });
+
+    expect(result).toEqual({ x: 4, y: 4, width: 2, height: 2 });
+  });
+
   it('rounds outward for every fractional drag, never inward', () => {
     for (const lineWidth of [0.5, 1, 2, 3, 3.5, 7]) {
       for (const points of [
@@ -647,5 +653,22 @@ describe('non-finite lineWidth in renderers', () => {
 
     const radius = vi.mocked(ctx.arc).mock.calls[0][2];
     expect(Number.isFinite(radius)).toBe(true);
+  });
+
+  it('preserves supported subpixel spray widths', () => {
+    const ctx = makeMockCtx();
+    drawSpray({
+      args: {
+        points: [{ x: 5, y: 5 }],
+        alpha: 0.8,
+        color: '#ff0000',
+        penType: 'spray',
+        lineWidth: 0.5,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    expect(vi.mocked(ctx.arc).mock.calls[0][2]).toBe(0.25);
   });
 });
