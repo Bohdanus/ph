@@ -135,6 +135,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedVersionRef = useRef<string | null>(null);
+  const storedVersionRef = useRef<string | null>(null);
   const lastSaveTimeRef = useRef(0);
   const savingRef = useRef(false);
   const saveAgainRef = useRef(false);
@@ -156,7 +157,10 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
 
   const clearStoredAutosave = useCallback(() => {
     autosaveGenerationRef.current += 1;
-    return enqueueStorageOperation(() => clearAutosave());
+    return enqueueStorageOperation(async () => {
+      await clearAutosave();
+      storedVersionRef.current = null;
+    });
   }, [enqueueStorageOperation]);
 
   useLayoutEffect(() => {
@@ -311,6 +315,10 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
       setPendingAutosave(false);
       return;
     }
+    if (dirtyKeyRef.current === storedVersionRef.current) {
+      setPendingAutosave(false);
+      return;
+    }
     if (savingRef.current) {
       saveAgainRef.current = true;
       return;
@@ -321,6 +329,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
     const currentDirtyKey = dirtyKeyRef.current;
     const generation = autosaveGenerationRef.current;
     const currentStore = storeRef.current;
+    let writeSucceeded = false;
     let autosaveLayers: ReturnType<typeof getLayersForAutosave>;
     try {
       autosaveLayers = getLayersForAutosaveRef.current();
@@ -368,6 +377,8 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
             return;
           }
           await saveAutosave({ metadata, buffer });
+          storedVersionRef.current = currentDirtyKey;
+          writeSucceeded = true;
         });
         if (
           generation === autosaveGenerationRef.current &&
@@ -386,7 +397,11 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
         setPendingAutosave(false);
         const shouldSaveAgain = saveAgainRef.current;
         saveAgainRef.current = false;
-        if (shouldSaveAgain && hasUnsavedWorkRef.current && dirtyKeyRef.current !== lastSavedVersionRef.current) {
+        if (
+          hasUnsavedWorkRef.current &&
+          dirtyKeyRef.current !== storedVersionRef.current &&
+          (shouldSaveAgain || writeSucceeded)
+        ) {
           performAutosaveRef.current?.();
         }
       });
