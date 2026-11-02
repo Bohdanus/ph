@@ -626,6 +626,38 @@ describe('useLayers commitDirtyTool history boundary', () => {
   });
 });
 
+describe('useLayers non-text autosave snapshot', () => {
+  it('includes staged raster previews without consuming them or publishing history', async () => {
+    const raster = new OffscreenCanvas(40, 20);
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const originalLayer = result.current.store.layers.edited;
+    const preview = result.current.store.previewLayers.current.edited;
+    const history = result.current.store.history;
+    let autosaveLayers: LayersRecord | null | undefined;
+    act(() => {
+      autosaveLayers = result.current.layers.getLayersForAutosave();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(autosaveLayers?.edited?.tmpCanvas).toBe(raster);
+    expect(result.current.store.layers.edited).toBe(originalLayer);
+    expect(result.current.store.previewLayers.current.edited).toBe(preview);
+    expect(result.current.store.history).toEqual(history);
+    processor.mockRestore();
+  });
+});
+
 describe('useLayers deferred commit ownership', () => {
   /**
    * Two previews at once: one the committing caller owns, one staged by a different consumer —

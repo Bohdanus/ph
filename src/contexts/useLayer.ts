@@ -840,7 +840,11 @@ export const useLayers = () => {
    * change to the layer whose pixels were published. So a scoped call leaves every preview and
    * every dirty cache it does not own exactly where it found them.
    */
-  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId): LayersRecord | null => {
+  const commitDirtyTool = (
+    deferDispatch = false,
+    ownedLayerId?: LayerId,
+    { preservePreviewState = false }: { preservePreviewState?: boolean } = {}
+  ): LayersRecord | null => {
     // can be run safely if no dirty layer
 
     // special case
@@ -1004,10 +1008,11 @@ export const useLayers = () => {
       }
       if (layer.tmpCanvas) pendingPresentations.set(id, layer);
     }
-    // Only the previews this call consumed leave the map. A scoped commit must not discard a
-    // draft it declined to publish, or the pixels are gone from both the record and the map.
-    if (ownedLayerId) delete previewLayersRef.current[ownedLayerId];
-    else previewLayersRef.current = {};
+    // Autosave snapshots preserve previews because they return layers without publishing history.
+    if (!preservePreviewState) {
+      if (ownedLayerId) delete previewLayersRef.current[ownedLayerId];
+      else previewLayersRef.current = {};
+    }
 
     // Find every remaining dirty layer and save detached copies. A document-scoped
     // commit can carry more than one staged cache; stopping at the first one leaves
@@ -1060,12 +1065,14 @@ export const useLayers = () => {
     // Promotion is requested after publication. A deferred caller publishes the
     // same records in this tick, and the store re-checks the canvas identity
     // before a promotion can reach a layer.
-    requestPresentations(pendingPresentations.values());
+    if (!preservePreviewState) {
+      requestPresentations(pendingPresentations.values());
+    }
     return committedLayers;
   };
 
   const getLayersForAutosave = (): LayersRecord | null => {
-    if (toolName !== 'text') return commitDirtyTool(true);
+    if (toolName !== 'text') return commitDirtyTool(true, undefined, { preservePreviewState: true });
 
     // Serialize the live text editor as a layer snapshot without committing or closing it.
     const args = currentArgsRef.current;
