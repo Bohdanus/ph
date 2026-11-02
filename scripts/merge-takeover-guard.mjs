@@ -1062,9 +1062,10 @@ export function assertExpectedLandingHeads(
 }
 
 /**
- * Main merges in this project occur in the checkout rooted beside the shared `.git`, with
- * `AGENTS.md` and `.kilo` present. Temporary repositories used by the test suite lack those
- * policy markers and retain the ordinary merge guard behavior.
+ * The designated main checkout carries `AGENTS.md` and `.kilo`. Locate that checkout root
+ * through Git rather than deriving it from the shared directory, which can live outside the
+ * project when a clone uses `--separate-git-dir`. Temporary repositories lack those markers
+ * and retain the ordinary merge guard behavior.
  *
  * @param {string} cwd
  * @returns {boolean}
@@ -1072,7 +1073,8 @@ export function assertExpectedLandingHeads(
 export function isProjectMainWorktree(cwd) {
   const worktree = resolveWorktree(cwd);
   if (!worktree?.isDesignatedMainWorktree) return false;
-  const projectRoot = dirname(resolve(worktree.commonDir));
+  const projectRoot = tryGit(['rev-parse', '--show-toplevel'], { cwd });
+  if (!projectRoot) return false;
   return existsSync(join(projectRoot, 'AGENTS.md')) && existsSync(join(projectRoot, '.kilo'));
 }
 
