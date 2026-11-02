@@ -28,6 +28,25 @@ const baseMetadata: AutosaveMetadata = {
   savedAt: Date.now(),
 };
 
+function createTextLayer(args: TextToolArgs, pos: Layer['pos']): Layer {
+  return {
+    id: 'text-layer-1',
+    name: 'Text',
+    isBedrock: false,
+    tmpCanvas: null,
+    bitmap: null,
+    visible: true,
+    opacity: 1,
+    locked: false,
+    blendMode: 'source-over',
+    order: 0,
+    pos,
+    presentationBounds: null,
+    source: { kind: 'tool', args, pos },
+    operations: [],
+  };
+}
+
 const {
   storeState,
   savePsdMock,
@@ -310,23 +329,8 @@ describe('AutoSaveProvider: save trigger', () => {
       italic: false,
       lineHeight: 1,
     };
-    const pos = { x: 0, y: 0, width: 100, height: 40 };
-    const layer: Layer = {
-      id: 'text-layer-1',
-      name: 'Text',
-      isBedrock: false,
-      tmpCanvas: null,
-      bitmap: null,
-      visible: true,
-      opacity: 1,
-      locked: false,
-      blendMode: 'source-over',
-      order: 0,
-      pos,
-      presentationBounds: null,
-      source: { kind: 'tool', args: sourceArgs, pos },
-      operations: [],
-    };
+    const pos = { x: 120, y: 75, width: 100, height: 40 };
+    const layer = createTextLayer(sourceArgs, pos);
 
     mount(() => {
       storeState.toolName = 'text';
@@ -334,6 +338,7 @@ describe('AutoSaveProvider: save trigger', () => {
       currentToolState.toolArgs = {
         ...sourceArgs,
         editingLayerId: layer.id,
+        rect: { x1: 120, y1: 75, x2: 220, y2: 115 },
       };
     });
 
@@ -343,6 +348,42 @@ describe('AutoSaveProvider: save trigger', () => {
     expect(getLayersForAutosaveMock).not.toHaveBeenCalled();
     expect(saveAutosaveMock).not.toHaveBeenCalled();
     expect(clearAutosaveMock).not.toHaveBeenCalled();
+  });
+
+  it('autosaves geometry-only edits to an existing text layer', async () => {
+    const sourceArgs: TextToolArgs = {
+      toolName: 'text',
+      text: 'Original',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 40 },
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 32,
+      italic: false,
+      lineHeight: 1,
+    };
+    const pos = { x: 120, y: 75, width: 100, height: 40 };
+    const layer = createTextLayer(sourceArgs, pos);
+
+    mount(() => {
+      storeState.toolName = 'text';
+      storeState.layers = { [layer.id]: layer };
+      currentToolState.toolArgs = {
+        ...sourceArgs,
+        editingLayerId: layer.id,
+        rect: { x1: 130, y1: 85, x2: 230, y2: 125 },
+      };
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    expect(getLayersForAutosaveMock).toHaveBeenCalledTimes(1);
+    expect(savePsdMock).toHaveBeenCalledTimes(1);
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(1);
   });
 
   it('clears an autosave when an uncommitted text draft is cancelled', async () => {

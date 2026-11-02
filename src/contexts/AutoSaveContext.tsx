@@ -16,6 +16,7 @@ import { useApp } from '../hooks/useApp.ts';
 import { savePsd, loadPsd } from './psd-utils.ts';
 import { loadAutosave, saveAutosave, clearAutosave, isAutosaveAvailable } from './autosave-storage.ts';
 import type { AutosaveMetadata } from './autosave-storage.ts';
+import { textLayerEditTarget } from './text-layer-edit.ts';
 import AutoSaveRecoveryBanner from '../components/AutoSaveRecoveryBanner/AutoSaveRecoveryBanner.tsx';
 import { isTextToolArgs } from '../util/typeGuards.ts';
 import type { TextToolArgs } from '../tools/text.ts';
@@ -33,6 +34,11 @@ function textDraftContentKey(args: TextToolArgs): string {
   return JSON.stringify(
     Object.fromEntries(Object.entries(content).sort(([left], [right]) => left.localeCompare(right)))
   );
+}
+
+function sameTextRect(left: TextToolArgs['rect'], right: TextToolArgs['rect']): boolean {
+  if (!left || !right) return left === right;
+  return left.x1 === right.x1 && left.y1 === right.y1 && left.x2 === right.x2 && left.y2 === right.y2;
 }
 
 export interface AutoSaveContextType {
@@ -89,7 +95,12 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
         activeLayer?.source?.kind === 'tool' && isTextToolArgs(activeLayer.source.args)
           ? activeLayer.source.args
           : null;
-      if (originalArgs && textDraftContentKey(toolArgs) !== textDraftContentKey(originalArgs)) {
+      const originalEditorRect = activeLayer ? textLayerEditTarget(activeLayer, documentFrame)?.args.rect : undefined;
+      if (
+        originalArgs &&
+        (textDraftContentKey(toolArgs) !== textDraftContentKey(originalArgs) ||
+          (originalEditorRect && !sameTextRect(toolArgs.rect, originalEditorRect)))
+      ) {
         textDraftKey = JSON.stringify(toolArgs);
       }
     }
