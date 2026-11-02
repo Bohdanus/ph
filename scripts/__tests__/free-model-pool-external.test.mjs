@@ -116,6 +116,19 @@ describe('unverifiable free routers', () => {
     ]);
   });
 
+  it('tries Nemotron 3 Ultra first and XingChen second in the Kilo catalog', () => {
+    const rows = [
+      kiloRow('recursive/flint-v1.0:free'),
+      kiloRow('xingchen-agi/xing4.0-29b-a4b:free'),
+      kiloRow('nvidia/nemotron-3-ultra-550b-a55b:free'),
+    ];
+    expect(catalogCandidates('kilo', rows).map(({ model }) => model)).toEqual([
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
+      'recursive/flint-v1.0:free',
+    ]);
+  });
+
   it('excludes disabled model families from Kilo and OpenRouter catalogs', () => {
     const nemotron = 'nvidia/nemotron-3-ultra-550b-a55b:free';
     const xingchen = 'xingchen-agi/xing4.0-29b-a4b:free';
