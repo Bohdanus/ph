@@ -3009,6 +3009,12 @@ test.describe('Text tool', () => {
     await waitForBoxAtDocumentEdge();
     const overflowedOverlay = await draftOverlay(page).boundingBox();
     expect(overflowedOverlay, 'the overflowing draft has no measurable box').not.toBeNull();
+    await expect
+      .poll(() => redBoundsIn(page, iconRegion), {
+        message: 'the overflow icon appearing in the corner of the box',
+        timeout: 10_000,
+      })
+      .not.toBeNull();
 
     const icon = await redBoundsIn(page, iconRegion);
     expect(icon, 'no overflow icon while the type outgrows its box').not.toBeNull();
