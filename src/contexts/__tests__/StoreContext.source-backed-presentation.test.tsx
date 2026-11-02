@@ -7,6 +7,7 @@ import { getAssetRegistry } from '../asset-registry.ts';
 import * as compositor from '../durable-compositor.ts';
 import type { DurableComposite } from '../durable-compositor.ts';
 import type { MaterializedLayer } from '../materialization.ts';
+import type { ToolArgsFor } from '../tool-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -31,6 +32,29 @@ function added(kind: 'image' | 'blank', id = 'added', order = 1): Layer {
     source: bitmap
       ? { kind: 'image', bitmap, pos, isBedrock: false }
       : { kind: 'blank', pos, color: '#ff0000', opacity: 1, isBedrock: false },
+  };
+}
+
+function shapeAdded(): Layer {
+  const pos = { x: 22, y: 28, width: 24, height: 18 };
+  return {
+    ...createMockLayer({ id: 'shape-added', pos, order: 1 }),
+    bitmap: null,
+    source: {
+      kind: 'tool',
+      args: {
+        toolName: 'shape',
+        figure: 'rectangle',
+        alpha: 1,
+        color: '#000000',
+        backgroundColor: null,
+        lineWidth: 4,
+        start: { x: 3, y: 3 },
+        end: { x: 21, y: 15 },
+      } satisfies ToolArgsFor<'shape'>,
+      isBedrock: false,
+      pos,
+    },
   };
 }
 
@@ -142,6 +166,31 @@ afterEach(() => {
 });
 
 describe('source-backed create presentation', () => {
+  it('keeps a typed vector create unpublished until its ownership gate is proven', () => {
+    const compose = vi.spyOn(compositor, 'composeDurableDocument');
+    const probe = mount();
+    const layer = shapeAdded();
+
+    probe.create(layer);
+
+    expect(probe.store().durableStatus).toBe('current');
+    expect(probe.store().durableDiagnostics).toEqual([]);
+    const entry = probe.store().durableDocument!.history[0];
+    expect(entry?.operation.kind).toBe('create-layer');
+    if (entry?.operation.kind !== 'create-layer') throw new Error('Expected a durable vector create entry');
+    expect(entry.operation.layer.source).toMatchObject({
+      kind: 'vector',
+      toolName: 'shape',
+      args: layer.source?.kind === 'tool' ? layer.source.args : undefined,
+      sourcePos: layer.pos,
+    });
+    expect(compose).not.toHaveBeenCalled();
+    expect(probe.store().durablePresentation.status).toBe('unpublished');
+    expect(probe.store().renderSelector.source).toBe('legacy');
+    expect(probe.store().history).toHaveLength(2);
+    probe.unmount();
+  });
+
   it.each(['image', 'blank'] as const)('publishes a complete %s create after ownership is committed', async (kind) => {
     const pending = deferred<DurableComposite>();
     const compose = vi.spyOn(compositor, 'composeDurableDocument').mockReturnValue(pending.promise);
