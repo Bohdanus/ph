@@ -615,10 +615,7 @@ export const useLayers = () => {
     adoptLayerBitmaps([source.bitmap]);
     return true;
   };
-  const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
-    // commented out because causes infinite recursion
-    // commitDirtyTool();
-
+  const buildLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
     const { args, pos } = sourceArgs;
 
     let source: ToolLayerSource;
@@ -652,6 +649,11 @@ export const useLayers = () => {
     }
 
     const newLayer = createLayerSource({ layers, source });
+    return { newLayer, source };
+  };
+
+  const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
+    const { newLayer, source } = buildLayerFromTool(sourceArgs);
 
     // `_addLayer` publishes the layer and requests its presentation cache.
     _addLayer(newLayer, {
@@ -664,7 +666,7 @@ export const useLayers = () => {
     return newLayer;
   };
 
-  const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
+  const buildReplacementLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
     if (isLayerLocked(layer)) return null;
@@ -678,12 +680,9 @@ export const useLayers = () => {
       layer.pos.x === nextSource.pos.x &&
       layer.pos.y === nextSource.pos.y
     ) {
-      delete previewLayersRef.current[id];
-      drawAllLayers();
       return layer;
     }
-    // Render the replacement before recording it so the live layer's source and raster advance
-    // together; otherwise the canvas, export, or merge could retain the previous text pixels.
+    // Render the replacement before returning it so export uses the same source and raster.
     let rebuilt: Layer;
     try {
       rebuilt = createLayerSource({ layerId: id, layers, source: nextSource });
@@ -691,8 +690,7 @@ export const useLayers = () => {
       console.error('Unable to render a replacement layer source', error);
       return null;
     }
-    delete previewLayersRef.current[id];
-    const nextLayer: Layer = {
+    return {
       ...layer,
       name: rebuilt.name,
       source: rebuilt.source,
@@ -701,6 +699,19 @@ export const useLayers = () => {
       tmpCanvas: rebuilt.tmpCanvas,
       presentationBounds: null,
     };
+  };
+
+  const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
+    const layer = layers[id];
+    const nextLayer = buildReplacementLayerSource(id, source);
+    if (!layer || !nextLayer) return null;
+    if (nextLayer === layer) {
+      delete previewLayersRef.current[id];
+      drawAllLayers();
+      return layer;
+    }
+
+    delete previewLayersRef.current[id];
     const item = {
       layerId: id,
       actionName: REPLACE_LAYER_SOURCE_ACTION,
@@ -1051,6 +1062,74 @@ export const useLayers = () => {
     // before a promotion can reach a layer.
     requestPresentations(pendingPresentations.values());
     return committedLayers;
+  };
+
+  const getLayersForAutosave = (): LayersRecord | null => {
+    if (toolName !== 'text') return commitDirtyTool(true);
+
+    // Serialize the live text editor as a layer snapshot without committing or closing it.
+    const args = currentArgsRef.current;
+    if (!isTextToolArgs(args) || !args.rect) return layers;
+
+    if (!args.text && args.editingLayerId) {
+      const activeLayer = layers[args.editingLayerId];
+      const activeTextArgs =
+        activeLayer?.source?.kind === 'tool' && isTextToolArgs(activeLayer.source.args)
+          ? activeLayer.source.args
+          : null;
+      const originalRect = activeTextArgs?.rect;
+      const originalPos = activeLayer?.pos;
+      if (!activeLayer || !activeTextArgs || !originalPos || !isValidTextLayerGeometry(originalRect, originalPos)) {
+        return null;
+      }
+
+      const replacementArgs = { ...args, text: '', rect: originalRect, placeholderUntouched: false };
+      delete replacementArgs.editingLayerId;
+      const replaced = buildReplacementLayerSource(activeLayer.id, {
+        kind: 'tool',
+        args: replacementArgs,
+        pos: { ...originalPos },
+      });
+      return replaced ? { ...layers, [activeLayer.id]: replaced } : null;
+    }
+
+    if (!args.text || args.placeholderUntouched === true) return layers;
+
+    const requestedLayerId = args.editingLayerId;
+    const activeLayer = requestedLayerId ? layers[requestedLayerId] : activeLayerId ? layers[activeLayerId] : undefined;
+    if (
+      requestedLayerId &&
+      (!activeLayer || activeLayer.source?.kind !== 'tool' || activeLayer.source.args.toolName !== 'text')
+    ) {
+      return layers;
+    }
+
+    if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
+      const measuredRect = calculateNewRect(args, canvasRef, totalSize) ?? args.rect;
+      const pos = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
+      if (requestedLayerId || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y)) {
+        const replacementArgs = { ...args };
+        delete replacementArgs.editingLayerId;
+        const source: EditableToolLayerSource = {
+          kind: 'tool',
+          args: {
+            ...replacementArgs,
+            rect: canvasRectToLocal(measuredRect, pos, documentFrame),
+            placeholderUntouched: false,
+          },
+          pos,
+        };
+        const replaced = buildReplacementLayerSource(activeLayer.id, source);
+        return replaced ? { ...layers, [activeLayer.id]: replaced } : null;
+      }
+    }
+    if (requestedLayerId) return null;
+
+    const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+    const { newLayer } = buildLayerFromTool({
+      args: { ...persistedArgs, placeholderUntouched: false },
+    });
+    return { ...layers, [newLayer.id]: newLayer };
   };
 
   const activeTextEditArgs = () => {
@@ -1713,6 +1792,7 @@ export const useLayers = () => {
     tempUpdateLayer,
     updateLayerByTool,
     commitDirtyTool,
+    getLayersForAutosave,
     cancelLayerPreview,
     beginTextLayerEdit,
 

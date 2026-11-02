@@ -8,6 +8,7 @@ import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { Size } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import type { ToolName } from '../tool-types.ts';
+import type { TextToolArgs } from '../../tools/text.ts';
 
 const TOTAL_SIZE: Size = { width: 800, height: 600 };
 const DOCUMENT_FRAME: DocumentFrame = { x: 0, y: 0, width: 800, height: 600 };
@@ -36,6 +37,8 @@ const {
   clearAutosaveMock,
   isAutosaveAvailableMock,
   commitDirtyToolMock,
+  getLayersForAutosaveMock,
+  currentToolState,
   setImageFromUploadMock,
 } = vi.hoisted(() => ({
   storeState: {
@@ -60,6 +63,8 @@ const {
   clearAutosaveMock: vi.fn(),
   isAutosaveAvailableMock: vi.fn(),
   commitDirtyToolMock: vi.fn(),
+  getLayersForAutosaveMock: vi.fn(),
+  currentToolState: { toolArgs: { toolName: 'reposition' } as Record<string, unknown> },
   setImageFromUploadMock: vi.fn(),
 }));
 
@@ -85,7 +90,11 @@ vi.mock('../StoreContext.tsx', () => ({
 }));
 
 vi.mock('../useLayer.ts', () => ({
-  useLayers: () => ({ commitDirtyTool: commitDirtyToolMock }),
+  useLayers: () => ({ commitDirtyTool: commitDirtyToolMock, getLayersForAutosave: getLayersForAutosaveMock }),
+}));
+
+vi.mock('../useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
 }));
 
 vi.mock('../../hooks/useApp.ts', () => ({
@@ -131,11 +140,13 @@ function resetState() {
   storeState.color = '#000000';
   storeState.backgroundColor = '#ffffff';
   storeState.layers = {};
+  currentToolState.toolArgs = { toolName: 'reposition' };
 }
 
 function setupCommonMocks() {
   isAutosaveAvailableMock.mockReturnValue(true);
   commitDirtyToolMock.mockReturnValue({});
+  getLayersForAutosaveMock.mockReturnValue({});
   savePsdMock.mockResolvedValue(new ArrayBuffer(8));
   saveAutosaveMock.mockResolvedValue(undefined);
   clearAutosaveMock.mockResolvedValue(undefined);
@@ -228,6 +239,134 @@ describe('AutoSaveProvider: save trigger', () => {
       vi.advanceTimersByTime(500);
     });
     expect(saveAutosaveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('debounces and saves active text drafts without a committed document change', async () => {
+    const { rerender } = mount(() => {
+      storeState.toolName = 'text';
+      currentToolState.toolArgs = {
+        toolName: 'text',
+        text: 'first',
+        rect: { x1: 0, y1: 0, x2: 100, y2: 40 },
+      };
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(getLayersForAutosaveMock).not.toHaveBeenCalled();
+
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      text: 'latest',
+      rect: { x1: 0, y1: 0, x2: 120, y2: 40 },
+    };
+    await act(async () => {
+      rerender();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(999);
+    });
+    expect(getLayersForAutosaveMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+    expect(getLayersForAutosaveMock).toHaveBeenCalledTimes(1);
+    expect(savePsdMock).toHaveBeenCalledTimes(1);
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not autosave an untouched text placeholder', async () => {
+    mount(() => {
+      storeState.toolName = 'text';
+      currentToolState.toolArgs = {
+        toolName: 'text',
+        text: 'Lorem ipsum',
+        placeholderUntouched: true,
+        rect: { x1: 0, y1: 0, x2: 100, y2: 40 },
+      };
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(getLayersForAutosaveMock).not.toHaveBeenCalled();
+    expect(saveAutosaveMock).not.toHaveBeenCalled();
+    expect(clearAutosaveMock).not.toHaveBeenCalled();
+  });
+
+  it('does not autosave an unchanged existing text edit', async () => {
+    const sourceArgs: TextToolArgs = {
+      toolName: 'text',
+      text: 'Original',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 40 },
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 32,
+      italic: false,
+      lineHeight: 1,
+    };
+    const pos = { x: 0, y: 0, width: 100, height: 40 };
+    const layer: Layer = {
+      id: 'text-layer-1',
+      name: 'Text',
+      isBedrock: false,
+      tmpCanvas: null,
+      bitmap: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos,
+      presentationBounds: null,
+      source: { kind: 'tool', args: sourceArgs, pos },
+      operations: [],
+    };
+
+    mount(() => {
+      storeState.toolName = 'text';
+      storeState.layers = { [layer.id]: layer };
+      currentToolState.toolArgs = {
+        ...sourceArgs,
+        editingLayerId: layer.id,
+      };
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(getLayersForAutosaveMock).not.toHaveBeenCalled();
+    expect(saveAutosaveMock).not.toHaveBeenCalled();
+    expect(clearAutosaveMock).not.toHaveBeenCalled();
+  });
+
+  it('clears an autosave when an uncommitted text draft is cancelled', async () => {
+    const { rerender } = mount(() => {
+      storeState.toolName = 'text';
+      currentToolState.toolArgs = {
+        toolName: 'text',
+        text: 'draft',
+        rect: { x1: 0, y1: 0, x2: 100, y2: 40 },
+      };
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(1);
+
+    currentToolState.toolArgs = { toolName: 'text', text: '', rect: null };
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    expect(clearAutosaveMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not save when hasImage is false', () => {
