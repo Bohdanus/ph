@@ -538,26 +538,29 @@ DPI-blind. Two point-sampling specs that were in exactly that class (`levels.spe
 here.
 
 **The suite as a whole is still not 2x-clean, and an earlier version of this entry
-claimed it was.** Measured by running the whole suite with `projects[].use.deviceScaleFactor`
-forced to 2 (the project-level `use` overrides the top-level one, so setting it at the top
-does nothing — verified by printing `window.devicePixelRatio`): **256 pass, 6 fail, 2
-skipped.** The failures are
+claimed it was.** A prior run with `projects[].use.deviceScaleFactor` forced to 2 (the
+project-level `use` overrides the top-level one, so setting it at the top does nothing)
+measured 256 pass, 6 fail, 2 skipped. Its reported failures were
 
 - `e2e/helpers/cdp-helpers.spec.ts` — the
   `describe('captureCanvasScreenshot at an emulated deviceScaleFactor of 2')` block, which
   exercises capture behavior under an emulated 2x device scale factor.
-- `e2e/helpers/color-helpers.spec.ts` — `verifies swatch color when verifySwatch is true`; the
-  swatch `toHaveCSS` is compared against a literal CSS colour on a 2x surface.
 - `e2e/erase-fill-eyedropper.spec.ts` — `the eyedropper sample size averages the clicked block`;
   an eyedropper block average over a fixed-size sample, in image pixels.
 - `e2e/keyboard-shortcuts.spec.ts` and `e2e/responsive-shell.spec.ts` — one test each, which this
   entry does not name.
 
-So the honest statement is: the classifier and the specs this change touched are now
-resolution-independent, and four other specs are not. Some test-scoped touch/mobile cases exist,
-but there is no dedicated project and coverage remains sparse across controls and gestures. Adding a
-project multiplies every run's cost and is a coverage decision, not a one-line change to
-`playwright.config.ts`.
+The reported `color-helpers.spec.ts` failure was not reproduced in a focused run. That spec now
+sets `deviceScaleFactor: 2` and the swatch test asserts that `window.devicePixelRatio` is actually 2;
+`npm run test:e2e:verbose -- e2e/helpers/color-helpers.spec.ts` passed all seven tests in run
+`2026-11-02T08-51-16-969Z-95889` against code commit
+`6a1cbe6cf9a1f6e6fccc94eb9f8a148cef0b73e7`. This focused result removes that test from the
+unresolved list; it does not revalidate the other failures or the old whole-suite totals.
+
+The full suite has not been remeasured at 2x since that run, so the current failure count is
+unknown. Some test-scoped touch/mobile cases exist, but there is no dedicated project and coverage
+remains sparse across controls and gestures. Adding a project multiplies every run's cost and is a
+coverage decision, not a one-line change to `playwright.config.ts`.
 
 `e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
 width and height equal the document dimensions multiplied by the expected device scale
