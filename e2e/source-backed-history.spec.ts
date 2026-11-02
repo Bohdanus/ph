@@ -9,66 +9,44 @@ import { fillSaveDialog, openSaveDialog, submitSaveDialogForDownload } from './e
 
 const SHAPE_TEST_STROKE_WIDTH = 4;
 const SHAPE_TEST_RECTANGLE = { left: 140, top: 120, width: 160, height: 130 };
+type RasterPalette = 'red-blue' | 'green-yellow';
+const RASTER_PALETTES: Record<
+  RasterPalette,
+  { leftCss: string; rightCss: string; leftRgb: [number, number, number]; rightRgb: [number, number, number] }
+> = {
+  'red-blue': { leftCss: '#ff0000', rightCss: '#0000ff', leftRgb: [255, 0, 0], rightRgb: [0, 0, 255] },
+  'green-yellow': { leftCss: '#00ff00', rightCss: '#ffff00', leftRgb: [0, 255, 0], rightRgb: [255, 255, 0] },
+};
 
-function expectedPixels(background: 'white' | 'transparent' = 'white') {
+function expectedPixels(background: 'white' | 'transparent' = 'white', palette: RasterPalette = 'red-blue') {
   const expected = Buffer.alloc(800 * 600 * 4, background === 'white' ? 255 : 0);
+  const colors = RASTER_PALETTES[palette];
   for (let y = 288; y < 312; y += 1) {
     for (let x = 384; x < 416; x += 1) {
       const offset = (y * 800 + x) * 4;
-      expected[offset] = x < 400 ? 255 : 0;
-      expected[offset + 1] = 0;
-      expected[offset + 2] = x < 400 ? 0 : 255;
+      const color = x < 400 ? colors.leftRgb : colors.rightRgb;
+      expected[offset] = color[0];
+      expected[offset + 1] = color[1];
+      expected[offset + 2] = color[2];
       expected[offset + 3] = 255;
     }
   }
   return expected;
 }
 
-function expectedLayerPixels() {
+function expectedLayerPixels(palette: RasterPalette = 'red-blue') {
   const expected = Buffer.alloc(32 * 24 * 4, 255);
+  const colors = RASTER_PALETTES[palette];
   for (let y = 0; y < 24; y += 1) {
     for (let x = 0; x < 32; x += 1) {
       const offset = (y * 32 + x) * 4;
-      expected[offset] = x < 16 ? 255 : 0;
-      expected[offset + 1] = 0;
-      expected[offset + 2] = x < 16 ? 0 : 255;
+      const color = x < 16 ? colors.leftRgb : colors.rightRgb;
+      expected[offset] = color[0];
+      expected[offset + 1] = color[1];
+      expected[offset + 2] = color[2];
     }
   }
   return expected;
-}
-
-async function pasteDeterministicRaster(page: Page) {
-  // Supply a deterministic system clipboard without changing the host clipboard.
-  await page.evaluate(async () => {
-    const source = document.createElement('canvas');
-    source.width = 32;
-    source.height = 24;
-    const context = source.getContext('2d');
-    if (!context) throw new Error('Missing source context');
-    context.fillStyle = '#ff0000';
-    context.fillRect(0, 0, 16, 24);
-    context.fillStyle = '#0000ff';
-    context.fillRect(16, 0, 16, 24);
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      source.toBlob((value) => {
-        if (value) resolve(value);
-        else reject(new Error('Missing clipboard PNG'));
-      }, 'image/png');
-    });
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { read: async () => [{ types: ['image/png'], getType: async () => blob }] },
-    });
-  });
-  await page.keyboard.press('ControlOrMeta+v');
-}
-
-async function readWorkspacePixels(page: Page) {
-  const dataUrl = await getWorkspaceCanvas(page).evaluate((node) => (node as HTMLCanvasElement).toDataURL());
-  return await sharp(Buffer.from(dataUrl.split(',')[1]!, 'base64'))
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
 }
 
 async function expectedShapePixels(page: Page) {
@@ -130,6 +108,50 @@ function describePixelDifferences(expected: Buffer, actual: Buffer, width: numbe
   return `differing pixels=${count}, bounds=${JSON.stringify({ minX, minY, maxX, maxY })}, first=${first.join('; ')}`;
 }
 
+async function pasteDeterministicRaster(page: Page, palette: RasterPalette = 'red-blue') {
+  // Supply a deterministic system clipboard without changing the host clipboard.
+  const colors = RASTER_PALETTES[palette];
+  await page.evaluate(
+    async ({ leftColor, rightColor }) => {
+      const source = document.createElement('canvas');
+      source.width = 32;
+      source.height = 24;
+      const context = source.getContext('2d');
+      if (!context) throw new Error('Missing source context');
+      context.fillStyle = leftColor;
+      context.fillRect(0, 0, 16, 24);
+      context.fillStyle = rightColor;
+      context.fillRect(16, 0, 16, 24);
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        source.toBlob((value) => {
+          if (value) resolve(value);
+          else reject(new Error('Missing clipboard PNG'));
+        }, 'image/png');
+      });
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { read: async () => [{ types: ['image/png'], getType: async () => blob }] },
+      });
+    },
+    { leftColor: colors.leftCss, rightColor: colors.rightCss }
+  );
+  await page.keyboard.press('ControlOrMeta+v');
+}
+
+async function readWorkspacePixels(page: Page) {
+  const dataUrl = await getWorkspaceCanvas(page).evaluate((node) => (node as HTMLCanvasElement).toDataURL());
+  return await sharp(Buffer.from(dataUrl.split(',')[1]!, 'base64'))
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+}
+
+async function openTabletSaveDialog(page: Page) {
+  await page.getByTestId('mobile-menu-button').tap();
+  await page.getByTestId('mobile-menu-save-button').tap();
+  await expect(page.getByTestId('save-dialog')).toBeVisible();
+}
+
 async function drawRectangle(page: Page) {
   await openToolFlyout(page, 'shape');
   await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
@@ -147,12 +169,6 @@ async function drawRectangle(page: Page) {
     SHAPE_TEST_RECTANGLE.top + SHAPE_TEST_RECTANGLE.height
   );
   await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
-}
-
-async function openTabletSaveDialog(page: Page) {
-  await page.getByTestId('mobile-menu-button').tap();
-  await page.getByTestId('mobile-menu-save-button').tap();
-  await expect(page.getByTestId('save-dialog')).toBeVisible();
 }
 
 test('a pasted raster preserves exact pixels behind the source-backed cursor gate', async ({ page }) => {
@@ -375,6 +391,28 @@ test('disabling the default blank history row allows one durable create at its a
   await expect(canvas).toHaveAttribute('data-presentation-paint-source', 'legacy');
   await expect(canvas).toHaveAttribute('data-presentation-paint-cursor', '1');
   await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(pastedDataUrl);
+
+  await getUndoButton(page).click();
+  await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(emptyStateDataUrl);
+  await expect(getRedoButton(page)).toBeEnabled();
+  await pasteDeterministicRaster(page, 'green-yellow');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first().getByTitle('Current state')).toBeVisible();
+  await expect(getRedoButton(page)).toBeDisabled();
+  await expect(strip).toHaveAttribute('data-presentation-status', 'durable');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-source', 'durable');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-cursor', '1');
+  await expect
+    .poll(async () => {
+      const { data } = await readWorkspacePixels(page);
+      return data.equals(expectedPixels('transparent', 'green-yellow'));
+    })
+    .toBe(true);
+  const branchedPixels = await readWorkspacePixels(page);
+  expect(
+    branchedPixels.data.equals(pastedPixels.data),
+    'the new branch raster must differ from the redo-only raster'
+  ).toBe(false);
 });
 
 test('a Shape Tool create remains ownership-gated with exact pixels and exports', async ({ page }) => {
