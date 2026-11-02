@@ -4,46 +4,62 @@ import { AIRBRUSH_INTERVAL_MS, PAINT_FLOW_DEFAULT, PAINT_FLOW_MAX, PAINT_FLOW_MI
 import { smoothStrokePoints } from '../tools/brush.ts';
 import { hexToRgb } from './rect.ts';
 
-function getPointExtents(points: Point[]) {
-  const pp = points!;
-  let minX = pp[0].x;
-  let minY = pp[0].y;
-  let maxX = pp[0].x;
-  let maxY = pp[0].y;
+const MIN_LINE_WIDTH = 1;
 
-  for (let i = 1; i < pp.length; i++) {
-    const p = pp[i];
-    if (p.x < minX) minX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y > maxY) maxY = p.y;
+function clampLineWidth(lineWidth: number, minimum = MIN_LINE_WIDTH): number {
+  return Number.isFinite(lineWidth) && lineWidth >= minimum ? lineWidth : MIN_LINE_WIDTH;
+}
+
+function getPointExtents(points: Point[], sanitizeNonFiniteCoordinates = false) {
+  const normalize = (coordinate: number) =>
+    sanitizeNonFiniteCoordinates && !Number.isFinite(coordinate) ? 0 : coordinate;
+  const firstPoint = points[0];
+  let minX = normalize(firstPoint.x);
+  let minY = normalize(firstPoint.y);
+  let maxX = minX;
+  let maxY = minY;
+
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i];
+    const x = normalize(p.x);
+    const y = normalize(p.y);
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
   }
 
   return { minX, minY, maxX, maxY };
 }
 
 export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
+  if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+
+  const width = clampLineWidth(lineWidth, 0);
   const { minX, minY, maxX, maxY } = getPointExtents(points);
 
   return {
-    x: minX - lineWidth,
-    y: minY - lineWidth,
-    width: maxX - minX + 2 * lineWidth,
-    height: maxY - minY + 2 * lineWidth,
+    x: minX - width,
+    y: minY - width,
+    width: maxX - minX + 2 * width,
+    height: maxY - minY + 2 * width,
   };
 }
 
 /** Aligns padded stroke bounds to whole-pixel raster dimensions without narrowing them. */
 export function pointsBoundingPosOutward({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
-  const { minX, minY, maxX, maxY } = getPointExtents(points);
-  const x = Math.floor(minX - lineWidth);
-  const y = Math.floor(minY - lineWidth);
+  if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+
+  const width = clampLineWidth(lineWidth, 0);
+  const { minX, minY, maxX, maxY } = getPointExtents(points, true);
+  const x = Math.floor(minX - width);
+  const y = Math.floor(minY - width);
 
   return {
     x,
     y,
-    width: Math.ceil(maxX + lineWidth) - x,
-    height: Math.ceil(maxY + lineWidth) - y,
+    width: Math.ceil(maxX + width) - x,
+    height: Math.ceil(maxY + width) - y,
   };
 }
 
@@ -135,7 +151,7 @@ const drawBlockStamps = ({ args, ctx }: DrawStrokeParams) => {
   const points = args.points ?? [];
   if (points.length === 0) return;
 
-  const size = Math.max(1, args.lineWidth);
+  const size = clampLineWidth(args.lineWidth);
   const half = size / 2;
 
   ctx.save();
@@ -218,7 +234,7 @@ export const drawSpray = ({ args, ctx }: DrawStrokeParams) => {
   const peak = args.alpha * SPRAY_PEAK_ALPHA;
   const flowPercent = Number.isFinite(args.flow) ? (args.flow ?? PAINT_FLOW_DEFAULT) : PAINT_FLOW_DEFAULT;
   const flow = Math.min(PAINT_FLOW_MAX, Math.max(PAINT_FLOW_MIN, flowPercent)) / 100;
-  const radius = args.lineWidth * SPRAY_RADIUS_SCALE;
+  const radius = clampLineWidth(args.lineWidth) * SPRAY_RADIUS_SCALE;
 
   for (let i = 0; i < points.length; i++) {
     let dabPeak = peak;
