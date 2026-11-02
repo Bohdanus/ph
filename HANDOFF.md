@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 141-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 140-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1167,43 +1167,6 @@ validate ref paths. No archive/delete operation is performed by this audit.
 `e2e/OPEN_PROBLEMS.md`
 ---
 
-## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
-
-`index.html`'s two Google Tag Manager `<script>` tags load the container `GTM-WBWSB9XS` (the id is
-declared in `index.html`'s container-id constant) from `googletagmanager.com`. Nothing in `e2e/`
-stubs, blocks or
-asserts on it.
-
-Three consequences, in increasing order of how much they matter:
-
-1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` — its module note headed "WHAT IS
-   REPORTED BUT NOT FAILED" — is where this is now
-   recorded — the container "beacons to
-   `region1.google-analytics.com` on every page — including every e2e run, which makes the suite
-   non-hermetic and would otherwise fail ~36 times over a network call no test controls". That is
-   the accurate figure; the "1-8 per test" this entry used to quote is not stated anywhere in the
-   tree and should not be re-derived by guess.
-2. **Every CI run contacts a third party.** A build gate that depends on Google's reachability
-   to stay green is a build gate with an extra failure mode it does not own.
-3. **Local development leaks to a production analytics property.** A developer's stroke, tool
-   switch and undo are reported to that container with no opt-in. (The measurement id this entry
-   used to name, `G-7F5V72YQ4K`, is **gone** — `grep -rn 'G-7F5V72YQ4K' index.html e2e/ src/`
-   returns nothing, so only the container remains.)
-
-Whether analytics belongs in a local editor at all is an operator decision and is not made here.
-
-**Fix.** Decide the policy first — absent, or opt-in behind an env flag that `e2e/` sets to
-nothing. Then either drop the two script tags from `index.html` or make them conditional on that
-flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googletagmanager.com`
-to `abort()` so the suite stops depending on them. The third point is the one worth resolving
-regardless of which policy is chosen.
-
-**Files.** `index.html` — the two Google Tag Manager `<script>` tags and the `GTM-WBWSB9XS` container
-id; `e2e/global-setup.ts` — `refuseVisibleBrowser()`;
-`e2e/helpers/console-police.ts` — its "WHAT IS REPORTED BUT NOT FAILED" note
-
----
-
 ## 143. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
 
 **Problem.** Two audits of this sweep disagreed about the same thing, and the second one was wrong.
@@ -1497,35 +1460,6 @@ operator's hand — an agent records the finding and stops, which is what this e
 `scripts/__tests__/worktree-inventory.test.mjs` (`describe('the curated table')`),
 `e2e/OPEN_PROBLEMS.md` (the GROUP-level collapsed-tool assertion entry), `AGENTS.md` (model policy,
 overrides)
-
-## 160. Dark-theme accessibility scans are in place; axe incomplete candidates still need review
-
-The shared e2e fixture pins light because the pixel-analysis helpers rely on the light workspace
-backdrop. `e2e/accessibility.spec.ts` releases that pin, reloads, and audits the shell, New Image
-dialog, unsaved-changes prompt, Draw options bar, and tablet flyout in both themes. The current ten
-scans report zero confirmed axe violations.
-
-**Manual-review boundary.** Axe's `incomplete` bucket contains cases it could not decide; it is not
-evidence of a violation. `expectNoViolations()` attaches the full result, including target selectors,
-and logs candidate rule counts; only confirmed `violations` fail the suite. The shell and tablet-flyout
-runs include incomplete `color-contrast` and `label-content-name-mismatch` candidates. Do not assert
-the whole bucket empty or attribute a candidate to a particular target without reviewing the attached
-result.
-
-The collapsed dock glyph's measured foreground/background ratios are 6.10:1 in light and 7.00:1
-in dark, above WCAG AA's 4.5:1 requirement for normal text. Its `incomplete` target and reason have
-not been revalidated after the color fix; do not assume a generic incomplete result belongs to this
-glyph.
-
-**Next work.** Review the attached candidates individually, then add deterministic assertions or
-fixes for confirmed issues. Preserve the distinction between confirmed violations and axe's
-human-review bucket. Other overlays and responsive states remain outside the current audit.
-
-**Files.** `e2e/accessibility.spec.ts` — the scoped scans and `expectNoViolations()`;
-`e2e/fixtures/extended-test.ts` — `pinnedTheme` and `useAppDefaultTheme()`;
-`src/components/SidebarRight/PanelGroup.tsx` — the collapsed dock glyph.
-
----
 
 ## 164. Centered 1px strokes can antialias across rows; Photoshop pixel-grid parity is unproven
 

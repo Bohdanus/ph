@@ -1073,7 +1073,7 @@ const SidebarLeft = () => {
                           aria-hidden="true"
                         />
                       )}
-                      {tool.shortcut && <kbd className="text-[9px] opacity-65">{tool.shortcut}</kbd>}
+                      {tool.shortcut && <kbd className="text-[9px]">{tool.shortcut}</kbd>}
                     </button>
                   </li>
                 );
@@ -1210,7 +1210,7 @@ const SidebarLeft = () => {
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
               aria-pressed={isSingleColumn}
-              className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              className="rounded p-1 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-100"
               onClick={() => {
                 setIsSingleColumn((current) => !current);
                 closeFlyout();

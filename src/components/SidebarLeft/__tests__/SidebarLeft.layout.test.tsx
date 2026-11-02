@@ -45,6 +45,7 @@ describe('SidebarLeft layout toggle', () => {
     const toggle = screen.getByTestId('toolbar-layout-toggle');
     const toolbar = screen.getByTestId('left-toolbar-tools');
     const sidebar = screen.getByTestId('left-sidebar');
+    expect(toggle).toHaveClass('text-gray-600', 'dark:text-gray-300');
     const oneColumnWidth = declaredRailWidthRem(sidebar);
     const getPrimaryNames = () =>
       [...toolbar.querySelectorAll<HTMLButtonElement>(':scope > ul > li > button')].map((button) =>

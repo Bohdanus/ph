@@ -142,8 +142,7 @@ describe('planWarmup', () => {
   });
 
   it('skips a non-module script that happens to come first', () => {
-    // `index.html` itself has an inline GTM <script> with neither attribute, and a
-    // page may have a plain external one ahead of the module.
+    // A page may have an inline or plain external classic script ahead of the module.
     const html =
       '<html><body><script>gtm()</script>' +
       '<script src="https://example.test/analytics.js"></script>' +

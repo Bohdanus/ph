@@ -263,7 +263,7 @@ async function expectNoViolations(
     `[axe] ${label}: incomplete not asserted = [${results.incomplete.map((item) => `${item.id} x${item.nodes.length}`).join(', ')}]`
   );
 
-  testInfo.attach(`axe-${label}.json`, {
+  await testInfo.attach(`axe-${label}.json`, {
     body: JSON.stringify(
       {
         label,
@@ -275,17 +275,15 @@ async function expectNoViolations(
           occurrences: violation.nodes.length,
           targets: violation.nodes.map((node) => node.target),
         })),
-        // Attached so a reader can see it was considered and not silently dropped. `targets` is
-        // recorded for the same reason the violations bucket records it at `:300`: without the
-        // element selector a rule id and a count say that axe stopped, and not WHERE. An
-        // `aria-allowed-role` that cannot be located without re-running the scan is not a
-        // hand-off, it is a to-do nobody can start.
+        // Include selectors and full axe nodes so reviewers can see both where each candidate was
+        // found and why axe could not decide.
         incompleteNotAsserted: results.incomplete.map((item) => ({
           id: item.id,
           impact: item.impact,
           help: item.help,
           occurrences: item.nodes.length,
           targets: item.nodes.map((node) => node.target),
+          nodes: item.nodes,
         })),
         inapplicable: results.inapplicable.length,
         passes: results.passes.length,

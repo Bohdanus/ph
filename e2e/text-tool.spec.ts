@@ -3074,8 +3074,8 @@ test.describe('Text tool', () => {
 
     // STATE D — and it is never IN the image. The overflowing type is committed, so the layer's
     // own canvas is what is on the screen, and the same region that held the icon must hold no
-    // ink at all: `renderText` is called without `overflowIndicator` from the creator
-    // (`src/tools/text.ts:611`), and baking the icon into the layer would paint a box-and-plus
+    // ink at all: the creator does not pass `overflowIndicator` to `renderText`, and baking the icon
+    // into the layer would paint a box-and-plus
     // into the user's photograph.
     await replaceDraftLines(page, context, OVERFLOW_TEXT);
     await expect
@@ -3089,6 +3089,12 @@ test.describe('Text tool', () => {
     await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, {
       description: 'the committed text layer',
     });
+    await expect
+      .poll(() => redBoundsIn(page, iconRegion), {
+        message: 'the overflow icon disappearing from the committed layer',
+        timeout: 10_000,
+      })
+      .toBeNull();
     expect(await redBoundsIn(page, iconRegion), 'the overflow icon was baked into the committed layer').toBeNull();
   });
 
