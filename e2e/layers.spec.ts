@@ -541,6 +541,7 @@ test.describe('Layers', () => {
     if (!box) throw new Error('Canvas not found');
 
     const layerRows = page.getByTitle('Drag to reorder');
+    const layerNames = layerRows.getByTestId('layer-name');
     const layerRow = (name: string) => layerRows.filter({ hasText: name });
 
     const draw = async (color: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
@@ -549,6 +550,11 @@ test.describe('Layers', () => {
       await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 15 });
     };
     const moveToTop = async (sourceName: string, targetName: string) => {
+      const previousOrder = await layerNames.allTextContents();
+      const sourceIndex = previousOrder.indexOf(sourceName);
+      expect(previousOrder[0], `Expected ${targetName} to start at the top`).toBe(targetName);
+      expect(sourceIndex, `Expected ${sourceName} to be below ${targetName}`).toBeGreaterThan(0);
+      const expectedOrder = [sourceName, ...previousOrder.filter((name) => name !== sourceName)];
       const source = layerRow(sourceName);
       const target = layerRow(targetName);
       const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
@@ -558,7 +564,7 @@ test.describe('Layers', () => {
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
-      await expect(layerRows.first()).toContainText(sourceName);
+      await expect.poll(() => layerNames.allTextContents()).toEqual(expectedOrder);
     };
 
     const waitForOverlap = async (
