@@ -1268,6 +1268,9 @@ test.describe('Paint tools', () => {
 
       await selectBlur(page);
       await setSlider(page, /^Blur Radius/, '10');
+      await expect
+        .poll(async () => movedCount(await bandEdgeProfile(page), before, BLUR_MOVE_THRESHOLD))
+        .toBeGreaterThan(0);
       const after = await bandEdgeProfile(page);
 
       expect
@@ -1285,6 +1288,9 @@ test.describe('Paint tools', () => {
       const atZero = await bandEdgeProfile(page);
 
       await setSlider(page, /^Blur Radius/, '10');
+      await expect
+        .poll(async () => movedCount(await bandEdgeProfile(page), atZero, BLUR_MOVE_THRESHOLD))
+        .toBeGreaterThan(0);
       const moved = await bandEdgeProfile(page);
       expect
         .soft(
@@ -1294,6 +1300,7 @@ test.describe('Paint tools', () => {
         .toBeGreaterThan(0);
 
       await setSlider(page, /^Blur Radius/, '0');
+      await expect.poll(() => bandEdgeProfile(page)).toEqual(atZero);
       const backAtZero = await bandEdgeProfile(page);
       // Exact, not approximate: blur returns before the kernel runs when radius is zero
       expect.soft(backAtZero, 'Radius 0 must restore the raster exactly').toEqual(atZero);
@@ -1305,6 +1312,9 @@ test.describe('Paint tools', () => {
 
       await selectBlur(page);
       await setSlider(page, /^Blur Radius/, '10');
+      await expect
+        .poll(async () => movedCount(await bandEdgeProfile(page), pristine, BLUR_MOVE_THRESHOLD))
+        .toBeGreaterThan(0);
       const blurredProfile = await bandEdgeProfile(page);
       expect
         .soft(
@@ -1317,12 +1327,16 @@ test.describe('Paint tools', () => {
       // `commitDirtyTool` promotes the preview, and a tool switch is what calls it.
       await clickToolButton(page, 'reposition');
       await expect(page.getByRole('slider', { name: /^Blur Radius/ })).toHaveCount(0);
+      await expect
+        .poll(async () => movedCount(await bandEdgeProfile(page), pristine, BLUR_MOVE_THRESHOLD))
+        .toBeGreaterThan(0);
       const baked = await bandEdgeProfile(page);
       expect
         .soft(movedCount(baked, pristine, BLUR_MOVE_THRESHOLD), 'the tool switch must bake the blur into the layer')
         .toBeGreaterThan(0);
 
       await undo(page);
+      await expect.poll(async () => movedCount(await bandEdgeProfile(page), pristine, BLUR_MOVE_THRESHOLD)).toBe(0);
       const undone = await bandEdgeProfile(page);
       expect
         .soft(movedCount(undone, pristine, BLUR_MOVE_THRESHOLD), 'undo must take the blurring off the layer')
@@ -1332,6 +1346,7 @@ test.describe('Paint tools', () => {
         .toBeGreaterThan(0);
 
       await redo(page);
+      await expect.poll(async () => movedCount(await bandEdgeProfile(page), baked, BLUR_MOVE_THRESHOLD)).toBe(0);
       const redone = await bandEdgeProfile(page);
       expect.soft(movedCount(redone, baked, BLUR_MOVE_THRESHOLD), 'redo must re-apply the blurring exactly').toBe(0);
     });
