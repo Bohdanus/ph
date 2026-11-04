@@ -493,6 +493,139 @@ describe('AutoSaveProvider: save trigger', () => {
     expect(clearAutosaveMock).toHaveBeenCalledTimes(1);
   });
 
+  it('saves the dirty version again when an invalidated write finishes before a queued clear', async () => {
+    let finishStorageWrite: () => void = () => {
+      throw new Error('Storage write did not start');
+    };
+    let finishClear: () => void = () => {
+      throw new Error('Autosave clear did not start');
+    };
+    let storedHistoryIndex: number | null = null;
+    saveAutosaveMock
+      .mockImplementationOnce(
+        ({ metadata }: AutosaveRecord) =>
+          new Promise<void>((resolve) => {
+            finishStorageWrite = () => {
+              storedHistoryIndex = metadata.historyIndex;
+              resolve();
+            };
+          })
+      )
+      .mockImplementationOnce(async ({ metadata }: AutosaveRecord) => {
+        storedHistoryIndex = metadata.historyIndex;
+      });
+    clearAutosaveMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClear = resolve;
+        })
+    );
+
+    const { rerender } = mount(() => {
+      storeState.hasUnsavedChanges = true;
+      storeState.historyIndex = 0;
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(1);
+
+    storeState.hasUnsavedChanges = false;
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    expect(clearAutosaveMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishStorageWrite();
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    expect(storedHistoryIndex).toBe(0);
+    expect(clearAutosaveMock).toHaveBeenCalledTimes(1);
+
+    storeState.hasUnsavedChanges = true;
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishClear();
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(2);
+    expect(storedHistoryIndex).toBe(0);
+  });
+
+  it('restores the current snapshot when a stale write finishes after reverting to a saved version', async () => {
+    let storedHistoryIndex: number | null = null;
+    let finishStorageWrite: () => void = () => {
+      throw new Error('Storage write did not start');
+    };
+    saveAutosaveMock
+      .mockImplementationOnce(async ({ metadata }: AutosaveRecord) => {
+        storedHistoryIndex = metadata.historyIndex;
+      })
+      .mockImplementationOnce(
+        ({ metadata }: AutosaveRecord) =>
+          new Promise<void>((resolve) => {
+            finishStorageWrite = () => {
+              storedHistoryIndex = metadata.historyIndex;
+              resolve();
+            };
+          })
+      )
+      .mockImplementationOnce(async ({ metadata }: AutosaveRecord) => {
+        storedHistoryIndex = metadata.historyIndex;
+      });
+
+    const { rerender } = mount(() => {
+      storeState.hasUnsavedChanges = true;
+      storeState.historyIndex = 0;
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+    expect(storedHistoryIndex).toBe(0);
+
+    storeState.historyIndex = 1;
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(11_000);
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(2);
+
+    storeState.historyIndex = 0;
+    await act(async () => {
+      rerender();
+      await Promise.resolve();
+    });
+    expect(storedHistoryIndex).toBe(0);
+
+    await act(async () => {
+      finishStorageWrite();
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+
+    expect(saveAutosaveMock).toHaveBeenCalledTimes(3);
+    expect(storedHistoryIndex).toBe(0);
+  });
+
   it('does not save when hasImage is false', () => {
     mount(() => {
       storeState.hasImage = false;
