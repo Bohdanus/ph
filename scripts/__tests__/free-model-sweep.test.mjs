@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   classifyCandidates,
   classifyFailure,
@@ -159,10 +159,14 @@ describe('free-model-sweep evidence classification', () => {
 
   it('marks escaped Codex rollout paths incomplete without reading them', async () => {
     const commands = [];
+    const codexHome = resolve('codex-home-fixture');
+    const databasePath = join(codexHome, 'state_1.sqlite');
+    const escapedPath = join(codexHome, 'sessions', 'escape.jsonl');
+    const outsidePath = resolve('outside-private');
     const result = await scanCodexFailures(0, 1, {
-      codexHome: '/codex',
-      resolveDatabase: async () => '/codex/state_1.sqlite',
-      realpathPath: async (path) => (path === '/codex/sessions/escape.jsonl' ? '/outside/private' : path),
+      codexHome,
+      resolveDatabase: async () => databasePath,
+      realpathPath: async (path) => (path === escapedPath ? outsidePath : path),
       run: async (_command, args) => {
         commands.push(args);
         const sql = args.at(-1);
@@ -172,7 +176,7 @@ describe('free-model-sweep evidence classification', () => {
         if (sql === 'SELECT status FROM backfill_state WHERE id = 1;') {
           return JSON.stringify([{ status: 'complete' }]);
         }
-        return JSON.stringify([{ thread_id: 'thread', rollout_path: '/codex/sessions/escape.jsonl' }]);
+        return JSON.stringify([{ thread_id: 'thread', rollout_path: escapedPath }]);
       },
       statPath: async () => {
         throw new Error('must not stat escaped path');

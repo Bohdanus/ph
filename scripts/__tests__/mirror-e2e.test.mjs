@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import {
   assertMirrorBranchPushSafe,
@@ -35,7 +35,8 @@ const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml
 const focusedWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'), 'utf8');
 
 function runGit(cwd, args, input) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', input });
+  const commandArgs = basename(cwd) === 'mirror.git' ? ['-c', 'safe.bareRepository=all', ...args] : args;
+  const result = spawnSync('git', commandArgs, { cwd, encoding: 'utf8', input });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
   return result.stdout.trim();
 }
@@ -541,7 +542,9 @@ describe('mirror remote and dispatch selection', () => {
         '-m',
         'source-only update',
       ]);
-      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source, (_binary, args, cwd) =>
+        runGit(cwd, ['-c', 'safe.bareRepository=all', ...args])
+      );
       expect(() =>
         assertMirrorBranchPushSafe({
           sourceSha: localOnlySha,
@@ -692,7 +695,7 @@ describe('mirror remote and dispatch selection', () => {
         'Chat: ses_rootBaselineFixture',
       ]);
       const rootSha = runGit(rootRepo, ['rev-parse', 'HEAD']);
-      runGit(fixture.mirror, ['fetch', '--quiet', rootRepo, 'refs/heads/main']);
+      runGit(fixture.mirror, ['-c', 'safe.bareRepository=all', 'fetch', '--quiet', rootRepo, 'refs/heads/main']);
       runGit(fixture.mirror, ['update-ref', `refs/heads/${fixture.branch}`, rootSha]);
 
       const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
@@ -762,9 +765,11 @@ describe('mirror remote and dispatch selection', () => {
     }
   });
 
+  // Windows cannot materialize a filename with a trailing space; the other
+  // malformed path forms remain covered on every platform.
   it.each([
     ['leading-space path', { pathPrefix: ' ' }, /allowlist/],
-    ['trailing-space path', { fileSuffix: ' ' }, /allowlist/],
+    ...(process.platform === 'win32' ? [] : [['trailing-space path', { fileSuffix: ' ' }, /allowlist/]]),
     ['trailing-space subject', { subjectSuffix: ' ' }, /unrecognized subject/],
     ['trailing-space Chat trailer', { chatSuffix: ' ' }, /exactly the requested native Chat trailer/],
   ])('rejects a baseline promotion with %s', (_, mutation, error) => {

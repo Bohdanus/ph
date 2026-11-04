@@ -94,6 +94,7 @@ describe('createSessionDbSnapshot', () => {
         updated: NOW - 1 * DAY,
       }
     );
+    source.exec('BEGIN');
     for (let i = 0; i < 1_500; i += 1) {
       addSession(source, `old-${i}`, { at: NOW - 30 * DAY });
       addPart(
@@ -111,6 +112,7 @@ describe('createSessionDbSnapshot', () => {
       addSession(source, `recent-${i}`);
       addPart(source, `recent-part-${i}`, `recent-${i}`, { type: 'tool' });
     }
+    source.exec('COMMIT');
     source.close();
 
     const snapshot = await createSessionDbSnapshot(sourcePath, { sinceMs: NOW - 3 * DAY, nowMs: NOW });
@@ -130,10 +132,12 @@ describe('createSessionDbSnapshot', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-snapshot-writer-test-'));
     const sourcePath = join(dir, 'source.db');
     const source = createSource(sourcePath);
+    source.exec('BEGIN');
     for (let i = 0; i < 600; i += 1) {
       addSession(source, `session-${i}`);
       addPart(source, `part-${i}`, `session-${i}`, { type: 'tool' });
     }
+    source.exec('COMMIT');
     source.close();
 
     const writer = new DatabaseSync(sourcePath);

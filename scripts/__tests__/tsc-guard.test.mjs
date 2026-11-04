@@ -78,7 +78,7 @@ function resolveBinDir() {
   let dir = REPO_ROOT;
   for (;;) {
     const candidate = join(dir, 'node_modules', '.bin');
-    if (existsSync(join(candidate, 'tsc'))) return candidate;
+    if (existsSync(join(candidate, process.platform === 'win32' ? 'tsc.cmd' : 'tsc'))) return candidate;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -86,7 +86,9 @@ function resolveBinDir() {
 }
 
 const BIN_DIR = resolveBinDir();
-const TSC_BIN = BIN_DIR ? join(BIN_DIR, 'tsc') : null;
+const TSC_BIN = BIN_DIR ? join(BIN_DIR, process.platform === 'win32' ? 'tsc.cmd' : 'tsc') : null;
+const TSC_POWERSHELL_BIN = BIN_DIR ? join(BIN_DIR, 'tsc.ps1') : null;
+const TSC_NODE_BIN = BIN_DIR ? join(BIN_DIR, 'tsc') : null;
 
 /**
  * The checkout that OWNS the resolved bin directory.
@@ -130,7 +132,14 @@ function checkoutOwnsBinDir(repoRoot, binDir) {
 const OWNS_BIN_DIR = checkoutOwnsBinDir(REPO_ROOT, BIN_DIR);
 
 function runBin(args) {
+  if (process.platform === 'win32') {
+    return spawnSync(TSC_BIN, args, { encoding: 'utf8', cwd: REPO_ROOT, shell: true });
+  }
   return spawnSync(process.execPath, [TSC_BIN, ...args], { encoding: 'utf8', cwd: REPO_ROOT });
+}
+
+function runNodeBin(args) {
+  return spawnSync(process.execPath, [TSC_NODE_BIN, ...args], { encoding: 'utf8', cwd: REPO_ROOT });
 }
 
 describe('the tsc guard: which invocations it refuses', () => {
@@ -241,8 +250,17 @@ describe('the tsc guard: it is actually installed', () => {
     // Compared against the OWNER's guard, not this checkout's: in a worktree
     // with no `node_modules` those are two different, both-correct files, and
     // comparing them made this red in 36 of 59 worktrees.
-    expect(lstatSync(TSC_BIN).isSymbolicLink(), 'the guard is a link into scripts/, not a generated copy').toBe(true);
-    expect(realpathSync(TSC_BIN), 'and it points at the reviewed guard, byte for byte').toBe(realpathSync(OWNER_GUARD));
+    if (process.platform === 'win32') {
+      expect(readFileSync(TSC_BIN, 'utf8')).toContain('..\\..\\scripts\\tsc-guard.mjs');
+      expect(readFileSync(TSC_POWERSHELL_BIN, 'utf8')).toContain('..\\..\\scripts\\tsc-guard.mjs');
+      expect(readFileSync(TSC_NODE_BIN, 'utf8')).toContain('tsc-guard.mjs');
+      expect(runNodeBin(['--noEmit']).status).not.toBe(0);
+    } else {
+      expect(lstatSync(TSC_BIN).isSymbolicLink(), 'the guard is a link into scripts/, not a generated copy').toBe(true);
+      expect(realpathSync(TSC_BIN), 'and it points at the reviewed guard, byte for byte').toBe(
+        realpathSync(OWNER_GUARD)
+      );
+    }
   });
 
   it('exits non-zero and says why, so a zero-file check cannot read as a pass', () => {
@@ -374,7 +392,11 @@ describe('the tsc guard installer', () => {
       expect(checkoutOwnsBinDir(repoRoot, ownedBinDir)).toBe(true);
 
       mkdirSync(join(sharedModules, '.bin'));
-      symlinkSync(sharedModules, join(sharedRepoRoot, 'node_modules'), 'dir');
+      symlinkSync(
+        sharedModules,
+        join(sharedRepoRoot, 'node_modules'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      );
 
       expect(checkoutOwnsBinDir(sharedRepoRoot, join(sharedRepoRoot, 'node_modules', '.bin'))).toBe(false);
     } finally {
@@ -409,19 +431,41 @@ describe('the tsc guard installer', () => {
     const { install } = await import(INSTALLER);
     try {
       rmSync(TSC_BIN, { force: true });
-      symlinkSync('../typescript/bin/tsc', TSC_BIN);
-
-      expect(realpathSync(TSC_BIN), 'the planted link is a real, working, plain npm symlink').toBe(
-        realpathSync(REAL_COMPILER)
-      );
+      if (process.platform === 'win32') {
+        rmSync(TSC_POWERSHELL_BIN, { force: true });
+        writeFileSync(
+          TSC_NODE_BIN,
+          "const { spawnSync } = require('node:child_process');\n" +
+            "const result = spawnSync(process.execPath, [require('node:path').resolve(__dirname, '..', 'typescript', 'bin', 'tsc'), ...process.argv.slice(2)], { stdio: 'inherit' });\n" +
+            'process.exit(result.status ?? 1);\n'
+        );
+        writeFileSync(TSC_BIN, '@ECHO off\r\nnode "%~dp0\\..\\typescript\\bin\\tsc" %*\r\n');
+        writeFileSync(
+          TSC_POWERSHELL_BIN,
+          '$basedir = Split-Path $MyInvocation.MyCommand.Definition -Parent\r\n' +
+            "& node (Join-Path $basedir '..\\typescript\\bin\\tsc') @args\r\nexit $LASTEXITCODE\r\n"
+        );
+        expect(readFileSync(TSC_BIN, 'utf8')).toContain('..\\typescript\\bin\\tsc');
+      } else {
+        symlinkSync('../typescript/bin/tsc', TSC_BIN);
+        expect(realpathSync(TSC_BIN), 'the planted link is a real, working, plain npm symlink').toBe(
+          realpathSync(REAL_COMPILER)
+        );
+      }
       expect(install(), 'so the installer must not report nothing to do').toEqual({ installed: true, changed: true });
-      expect(realpathSync(TSC_BIN), 'and it must actually put the guard back').toBe(realpathSync(OWNER_GUARD));
+      if (process.platform === 'win32') {
+        expect(readFileSync(TSC_NODE_BIN, 'utf8')).toContain('tsc-guard.mjs');
+        expect(readFileSync(TSC_BIN, 'utf8')).toContain('..\\..\\scripts\\tsc-guard.mjs');
+        expect(readFileSync(TSC_POWERSHELL_BIN, 'utf8')).toContain('..\\..\\scripts\\tsc-guard.mjs');
+      } else {
+        expect(realpathSync(TSC_BIN), 'and it must actually put the guard back').toBe(realpathSync(OWNER_GUARD));
+      }
     } finally {
       install();
     }
   });
 
-  it('replaces a dangling link rather than leaving one npm would skip', async () => {
+  it('replaces a broken launcher rather than leaving one npm would skip', async () => {
     // Planted for real. An earlier version of this test called `install()` on a
     // healthy link, so it never reached the branch it was named for and
     // survived a mutant that deleted that branch outright.
@@ -438,18 +482,39 @@ describe('the tsc guard installer', () => {
     const { install } = await import(INSTALLER);
     try {
       rmSync(TSC_BIN, { force: true });
-      symlinkSync('../scripts/tsc-guard.mjs', TSC_BIN);
-
-      expect(
-        existsSync(TSC_BIN),
-        "the planted link does not resolve, and existsSync follows symlinks, so this is npm's own answer"
-      ).toBe(false);
+      if (process.platform === 'win32') {
+        rmSync(TSC_POWERSHELL_BIN, { force: true });
+        writeFileSync(
+          TSC_NODE_BIN,
+          "const target = require('node:path').resolve(__dirname, '..', 'scripts', 'missing-guard.mjs');\n" +
+            "require('node:child_process').spawnSync(process.execPath, [target, ...process.argv.slice(2)], { stdio: 'inherit' });\n"
+        );
+        writeFileSync(TSC_BIN, '@ECHO off\r\nnode "%~dp0\\..\\scripts\\missing-guard.mjs" %*\r\n');
+        writeFileSync(
+          TSC_POWERSHELL_BIN,
+          '$basedir = Split-Path $MyInvocation.MyCommand.Definition -Parent\r\n' +
+            "& node (Join-Path $basedir '..\\scripts\\missing-guard.mjs') @args\r\nexit $LASTEXITCODE\r\n"
+        );
+      } else {
+        symlinkSync('../scripts/tsc-guard.mjs', TSC_BIN);
+        expect(
+          existsSync(TSC_BIN),
+          "the planted link does not resolve, and existsSync follows symlinks, so this is npm's own answer"
+        ).toBe(false);
+      }
 
       install();
 
-      expect(realpathSync(TSC_BIN), 'and the installer leaves a link that resolves, to the guard').toBe(
-        realpathSync(OWNER_GUARD)
-      );
+      if (process.platform === 'win32') {
+        expect(readFileSync(TSC_NODE_BIN, 'utf8')).toContain('tsc-guard.mjs');
+        expect(readFileSync(TSC_BIN, 'utf8')).toContain('..\\..\\scripts\\tsc-guard.mjs');
+        expect(readFileSync(TSC_POWERSHELL_BIN, 'utf8')).toContain('..\\..\\scripts\\tsc-guard.mjs');
+        expect(runBin(['--noEmit']).status).not.toBe(0);
+      } else {
+        expect(realpathSync(TSC_BIN), 'and the installer leaves a link that resolves, to the guard').toBe(
+          realpathSync(OWNER_GUARD)
+        );
+      }
     } finally {
       // Repaired even when the assertions above fail. Without this a red run
       // leaves the checkout's own `tsc` dangling and the next run fails in five
