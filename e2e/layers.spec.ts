@@ -478,7 +478,8 @@ test.describe('Layers', () => {
     const waitForOverlap = async (
       matches: (colour: { red: number; green: number; blue: number }) => boolean,
       description: string
-    ) => {
+    ): Promise<{ red: number; green: number; blue: number }> => {
+      const matchedColour: { value: { red: number; green: number; blue: number } | null } = { value: null };
       const clip = {
         x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
         y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
@@ -491,10 +492,18 @@ test.describe('Layers', () => {
         async (screenshot) => {
           const image = await loadImageData(screenshot);
           const centre = await getColorAtPoint(image, Math.round(image.width / 2), Math.round(image.height / 2));
-          return centre !== null && matches(centre);
+          if (centre !== null && matches(centre)) {
+            matchedColour.value = centre;
+            return true;
+          }
+          return false;
         },
         { description }
       );
+      if (matchedColour.value === null) {
+        throw new Error(`Canvas pixel poll completed without a matching colour for ${description}`);
+      }
+      return matchedColour.value;
     };
 
     // Two layers crossing at the overlap point
@@ -507,13 +516,14 @@ test.describe('Layers', () => {
     await expect(opacitySlider).toBeVisible();
     await opacitySlider.fill('50');
     await opacitySlider.press('Tab');
+    await expect(opacitySlider).toHaveValue('50');
 
-    // Accept either encoded-space or linear-light 50% blending, but reject black and full opacity.
+    // Accept antialiased output from either encoded-space or linear-light 50% blending.
     const isMixed = (colour: { red: number; green: number; blue: number }) =>
       colour.green > 70 && colour.green < 150 && colour.red < 100 && colour.blue < 100;
 
     // Wait for opacity to take effect - green at 50% over black should be a dark green
-    await waitForOverlap(isMixed, 'opacity 50% green over black');
+    const initialMixed = await waitForOverlap(isMixed, 'opacity 50% green over black');
 
     // Put the opaque black layer above green, then move green back on top.
     await moveToTop('draw 2', 'draw 3');
@@ -524,7 +534,9 @@ test.describe('Layers', () => {
     await waitForOverlap(isBlack, 'black layer reordered above the semi-transparent green layer');
 
     await moveToTop('draw 3', 'draw 2');
-    await waitForOverlap(isMixed, 'opacity preserved when the green layer returns to the top');
+    await expect(opacitySlider).toHaveValue('50');
+    const restoredMixed = await waitForOverlap(isMixed, 'opacity preserved when the green layer returns to the top');
+    expect(restoredMixed).toEqual(initialMixed);
   });
 
   /**
