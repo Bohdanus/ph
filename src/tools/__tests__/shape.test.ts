@@ -370,9 +370,9 @@ describe('shapeGeometryBounds', () => {
     expect(bounds).toEqual({ x: 8, y: 18, width: 44, height: 44 });
   });
 
-  it('includes the maximum miter overhang for sharp closed figures', () => {
+  it.each(['triangle', 'polygon', 'star'] as const)('includes the maximum miter overhang for %s', (figure) => {
     const bounds = shapeGeometryBounds({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } }, 2, {
-      figure: 'triangle',
+      figure,
     });
     expect(bounds).toEqual({ x: -1, y: 9, width: 62, height: 62 });
   });
@@ -406,6 +406,14 @@ describe('shapeGeometryBounds', () => {
       lineCap: 'square',
     });
     expect(bounds).toEqual({ x: -16, y: -16, width: 132, height: 132 });
+  });
+
+  it('uses projected square-cap overhang for lines below 45 degrees', () => {
+    const bounds = shapeGeometryBounds({ start: { x: 0, y: 0 }, end: { x: 100, y: 50 } }, 20, {
+      figure: 'line',
+      lineCap: 'square',
+    });
+    expect(bounds).toEqual({ x: -15, y: -15, width: 130, height: 80 });
   });
 
   it('handles a negative drag direction', () => {
