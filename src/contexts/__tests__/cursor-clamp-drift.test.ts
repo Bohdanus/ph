@@ -90,6 +90,10 @@ describe('durable cursor clamp drift', () => {
         expect(result.history).toBe(document.history);
         expect(result.baseline).toBe(document.baseline);
       }
+
+      const unchanged = setDurableCursor(result, cursor);
+      expect(unchanged).toBe(result);
+      expect(unchanged.durableRevision).toBe(result.durableRevision);
     }
   });
 

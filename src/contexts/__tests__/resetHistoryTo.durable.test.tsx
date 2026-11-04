@@ -5,7 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import * as layerRenderer from '../layer-renderer.ts';
 import { StoreProvider, useStore, type StoreData, type StoreDispatch } from '../StoreContext.tsx';
 import { useHistory } from '../useHistory.ts';
-import { OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  OPEN_DOCUMENT_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
+import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
 
@@ -101,27 +107,49 @@ describe('resetHistoryTo durable authority', () => {
     expect(ref.current!.store.durablePresentation.status).toBe('unpublished');
   });
 
-  it('restores the full StoreProvider state when the final replay draw is refused', async () => {
+  it('restores prior replay state when the final replay draw is refused', async () => {
     const ref = { current: null as ProbeValue | null };
     const initialLayer = layer();
     const renamedLayer = layer('Renamed');
+    const initialFrame = { x: 0, y: 0, width: 100, height: 80 };
+    const currentFrame = { x: 10, y: 15, width: 90, height: 70 };
+    const deletedLayer = { ...layer('Deleted'), id: 'deleted-layer' };
+    const deletedLayers = { 'deleted-layer': deletedLayer };
+    const selection: Selection = {
+      id: 'selection-1',
+      points: [
+        [
+          { x: 2, y: 3 },
+          { x: 10, y: 3 },
+          { x: 10, y: 10 },
+        ],
+      ],
+      isActive: true,
+      pos: { x: 2, y: 3, width: 8, height: 7 },
+    };
     const baseline: HistoryItem = {
       id: 'baseline',
       actionName: OPEN_DOCUMENT_ACTION,
       layerId: 'layer-1',
       documentSource: {
         layers: { 'layer-1': initialLayer },
-        size: { width: 100, height: 80 },
-        frame: { x: 0, y: 0, width: 100, height: 80 },
+        size: { width: initialFrame.width, height: initialFrame.height },
+        frame: initialFrame,
       },
     } as HistoryItem;
+    const frameChange: HistoryItem = {
+      id: 'frame',
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      layerId: 'layer-1',
+      args: { previousFrame: initialFrame, nextFrame: currentFrame },
+    };
     const rename: HistoryItem = {
       id: 'rename',
       actionName: RENAME_LAYER_ACTION,
       layerId: 'layer-1',
       args: { name: 'Renamed' },
     };
-    const history = [baseline, rename];
+    const history = [baseline, frameChange, rename];
     const Probe = createProbe(ref, true);
 
     render(
@@ -137,11 +165,15 @@ describe('resetHistoryTo durable authority', () => {
         payload: {
           documentId: 'durable-draw-rollback',
           history,
-          historyIndex: 1,
+          historyIndex: 2,
           updates: {
             layers: { 'layer-1': renamedLayer },
-            totalSize: { width: 100, height: 80 },
-            documentFrame: { x: 0, y: 0, width: 100, height: 80 },
+            deletedLayers,
+            activeLayerId: null,
+            totalSize: { width: currentFrame.width, height: currentFrame.height },
+            documentFrame: currentFrame,
+            selections: [selection],
+            activeSelectionId: selection.id,
             hasUnsavedChanges: true,
           },
         },
@@ -151,7 +183,13 @@ describe('resetHistoryTo durable authority', () => {
     const before = ref.current!.store;
     expect(before.durableStatus).toBe('current');
     expect(before.durableDocument).not.toBeNull();
-    expect(before.historyIndex).toBe(1);
+    expect(before.historyIndex).toBe(2);
+    expect(before.activeLayerId).toBeNull();
+    expect(before.deletedLayers).toEqual(deletedLayers);
+    expect(before.totalSize).toEqual({ width: currentFrame.width, height: currentFrame.height });
+    expect(before.documentFrame).toEqual(currentFrame);
+    expect(before.selections).toEqual([selection]);
+    expect(before.activeSelectionId).toBe(selection.id);
     expect(before.hasUnsavedChanges).toBe(true);
     const visibleCanvas = before.canvasRef.current;
     expect(visibleCanvas).not.toBeNull();
@@ -175,8 +213,15 @@ describe('resetHistoryTo durable authority', () => {
       const after = ref.current!.store;
       expect(after.history).toEqual(before.history);
       expect(after.historyIndex).toBe(before.historyIndex);
+      expect(after.branchRevision).toBe(before.branchRevision);
       expect(after.layers).toEqual(before.layers);
       expect(after.layers['layer-1']).toMatchObject({ name: 'Renamed' });
+      expect(after.deletedLayers).toEqual(before.deletedLayers);
+      expect(after.activeLayerId).toBe(before.activeLayerId);
+      expect(after.totalSize).toEqual(before.totalSize);
+      expect(after.documentFrame).toEqual(before.documentFrame);
+      expect(after.selections).toEqual(before.selections);
+      expect(after.activeSelectionId).toBe(before.activeSelectionId);
       expect(after.hasUnsavedChanges).toBe(true);
       expect(after.durableStatus).toBe('unavailable');
       expect(after.durableDocument).toBeNull();
