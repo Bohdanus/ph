@@ -23,10 +23,10 @@ function createProbe(ref: { current: ProbeValue | null }, attachCanvas = false) 
   return Probe;
 }
 
-function layer(): Layer {
+function layer(name = 'Layer 1'): Layer {
   return {
     id: 'layer-1',
-    name: 'Layer 1',
+    name,
     isBedrock: true,
     bitmap: null,
     tmpCanvas: null,
@@ -94,12 +94,17 @@ describe('resetHistoryTo durable authority', () => {
 
     expect(ref.current!.store.historyIndex).toBe(1);
     expect(ref.current!.store.durableStatus).toBe('partial');
+    expect(ref.current!.store.durableDocument).toBeNull();
+    expect(ref.current!.store.durableDiagnostics).toContainEqual(
+      expect.objectContaining({ historyId: 'unsupported', code: 'unsupported-history-feature' })
+    );
     expect(ref.current!.store.durablePresentation.status).toBe('unpublished');
   });
 
-  it('restores the real StoreProvider timeline when a durable final draw is refused', async () => {
+  it('restores the full StoreProvider state when the final replay draw is refused', async () => {
     const ref = { current: null as ProbeValue | null };
     const initialLayer = layer();
+    const renamedLayer = layer('Renamed');
     const baseline: HistoryItem = {
       id: 'baseline',
       actionName: OPEN_DOCUMENT_ACTION,
@@ -134,9 +139,10 @@ describe('resetHistoryTo durable authority', () => {
           history,
           historyIndex: 1,
           updates: {
-            layers: { 'layer-1': { ...initialLayer, name: 'Renamed' } },
+            layers: { 'layer-1': renamedLayer },
             totalSize: { width: 100, height: 80 },
             documentFrame: { x: 0, y: 0, width: 100, height: 80 },
+            hasUnsavedChanges: true,
           },
         },
       });
@@ -144,7 +150,9 @@ describe('resetHistoryTo durable authority', () => {
 
     const before = ref.current!.store;
     expect(before.durableStatus).toBe('current');
+    expect(before.durableDocument).not.toBeNull();
     expect(before.historyIndex).toBe(1);
+    expect(before.hasUnsavedChanges).toBe(true);
     const visibleCanvas = before.canvasRef.current;
     expect(visibleCanvas).not.toBeNull();
 
@@ -169,6 +177,7 @@ describe('resetHistoryTo durable authority', () => {
       expect(after.historyIndex).toBe(before.historyIndex);
       expect(after.layers).toEqual(before.layers);
       expect(after.layers['layer-1']).toMatchObject({ name: 'Renamed' });
+      expect(after.hasUnsavedChanges).toBe(true);
       expect(after.durableStatus).toBe('unavailable');
       expect(after.durableDocument).toBeNull();
       expect(after.durableDiagnostics).toEqual([
