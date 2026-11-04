@@ -18,9 +18,11 @@ eligible committed append/reorder presentation, and export consume its materiali
 projection. Image/blank layer creates can request background presentation after their asset
 transaction commits and reconciles only when the prior active cursor prefix passes the existing
 ownership and frame gates. The create's own navigation cursor and later appends remain on the
-legacy fallback until source ownership is proven across that cursor. Other source-backed commits,
-frame-changing commits, logical timeline updates, previews and unsupported documents retain the
-legacy compatibility path until their independent gates are explicit. Canvas navigation selects a complete durable
+legacy fallback until source ownership is proven across that cursor. Shape Tool creates convert to
+typed vector sources but remain unpublished behind their `NEW_LAYER_ACTION` ownership gate; unit
+and headless tests pin that boundary. Other source-backed commits, frame-changing commits, logical
+timeline updates, previews and unsupported documents retain the legacy compatibility path until
+their independent gates are explicit. Canvas navigation selects a complete durable
 render projection only after its identity and frame match; pending navigation
 preserves the previously painted canvas. Append/reorder composition runs in the
 background while the already-visible legacy selector remains active, so a preview

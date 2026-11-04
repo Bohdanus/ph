@@ -515,14 +515,12 @@ describe('known limitations (it.fails tripwires)', () => {
     expect(Number.isFinite(ctx.globalAlpha)).toBe(true);
   });
 
-  it.fails('floors a non-finite Size in Block mode to a finite stamp, as Brush mode does', () => {
+  it('clamps a non-finite Size in Block mode to a 1px stamp', () => {
     erasedAlpha(eraserArgs({ mode: 'block', alpha: 1, lineWidth: Number.NaN }));
     const ctx = RecordingOffscreenCanvas.instances.at(-1)!.ctx as unknown as { fillRect: ReturnType<typeof vi.fn> };
 
-    // `drawBlockStamps` floors size with `Math.max(1, args.lineWidth)`, but `Math.max(1, NaN)` is NaN,
-    // so a non-finite size stamps nothing. It should floor to a finite, 1px-safe value.
     const [, , width, height] = ctx.fillRect.mock.calls[0] as [number, number, number, number];
-    expect(Number.isFinite(width)).toBe(true);
-    expect(Number.isFinite(height)).toBe(true);
+    expect(width).toBe(1);
+    expect(height).toBe(1);
   });
 });
