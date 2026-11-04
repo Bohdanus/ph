@@ -121,16 +121,19 @@ describe('selectHistoryPanelProjection', () => {
   });
 
   it('falls back when historyIndex is out of bounds (negative)', () => {
-    expect(project(history, documentFor(), -1).source).toBe('legacy');
+    const historyIndex = -1;
+    expect(project(history, documentFor(history.map(entry), historyIndex), historyIndex).source).toBe('legacy');
   });
 
   it('falls back when historyIndex is out of bounds (past end)', () => {
-    expect(project(history, documentFor(), history.length).source).toBe('legacy');
+    const historyIndex = history.length;
+    expect(project(history, documentFor(history.map(entry), historyIndex), historyIndex).source).toBe('legacy');
   });
 
   it('falls back when history is empty and historyIndex is not -1', () => {
-    expect(project([], documentFor([], -1), 0).source).toBe('legacy');
-    expect(project([], documentFor([], -1), 5).source).toBe('legacy');
+    for (const historyIndex of [0, 5]) {
+      expect(project([], documentFor([], historyIndex), historyIndex).source).toBe('legacy');
+    }
   });
 
   it('falls back when legacyTitle does not match durableTitle', () => {
