@@ -413,6 +413,16 @@ test('disabling the default blank history row allows one durable create at its a
     branchedPixels.data.equals(pastedPixels.data),
     'the new branch raster must differ from the redo-only raster'
   ).toBe(false);
+
+  await getUndoButton(page).click();
+  await expect.poll(() => canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(emptyStateDataUrl);
+  await expect(getRedoButton(page)).toBeEnabled();
+  await getRedoButton(page).click();
+  await expect.poll(async () => (await readWorkspacePixels(page)).data.equals(branchedPixels.data)).toBe(true);
+  await expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+  await expect(strip).toHaveAttribute('data-durable-fallback-reason', 'ownership-unproven');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-source', 'legacy');
+  await expect(canvas).toHaveAttribute('data-presentation-paint-cursor', '1');
 });
 
 test('a Shape Tool create remains ownership-gated with exact pixels and exports', async ({ page }) => {
