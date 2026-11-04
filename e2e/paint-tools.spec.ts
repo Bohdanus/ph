@@ -195,6 +195,7 @@ type Geometry = {
 
 async function workspaceGeometry(page: Page): Promise<Geometry> {
   const workspace = page.getByTestId('workspace-container');
+  await expect(workspace).toHaveAttribute('data-fit-scale', /.+/);
   const view = await workspace.evaluate((node) => {
     const read = (name: string): number => {
       const raw = node.getAttribute(name);
