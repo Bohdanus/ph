@@ -47,37 +47,62 @@ function documentForClamp(): DurableDocument {
   return legacyHistoryToDurable(history, { documentId: 'cursor-clamp' }).document;
 }
 
-function expectSameCursor(left: number, right: number): void {
-  if (Number.isNaN(left) || Number.isNaN(right)) {
-    expect(Number.isNaN(left)).toBe(true);
-    expect(Number.isNaN(right)).toBe(true);
-    return;
-  }
-  expect(Object.is(left, right)).toBe(true);
-}
-
 describe('durable cursor clamp drift', () => {
-  it('keeps freeze and replay totalized over every invalid cursor class', () => {
+  it('keeps freeze and replay totalized over invalid cursor classes', () => {
     const document = documentForClamp();
-    const inputs = [-Infinity, -5, -1.5, -0.5, 0.5, 1.5, 99, Infinity, Number.NaN];
+    const invalidCursors = [-Infinity, -5, -1.5, -0.5, 0.5, 1.5, 99, Infinity, Number.NaN];
+    const tip = document.history.length - 1;
 
-    for (const input of inputs) {
-      const frozen = freezeDurableDocument({ ...document, cursor: input });
-      const replayed = replayDurableDocument(document, input);
-      expectSameCursor(frozen.cursor, replayed.cursor);
-      if (!Number.isInteger(input)) expect(replayed.cursor).toBe(-1);
-      if (input === -Infinity || input < -1) expect(replayed.cursor).toBe(-1);
-      if (Number.isInteger(input) && input > document.history.length - 1) {
-        expect(replayed.cursor).toBe(document.history.length - 1);
-      }
+    for (const cursor of invalidCursors) {
+      const expected = Number.isInteger(cursor) ? Math.max(-1, Math.min(cursor, tip)) : -1;
+      const frozen = freezeDurableDocument({ ...document, cursor });
+      const replayed = replayDurableDocument(document, cursor);
+
+      expect(frozen.cursor).toBe(expected);
+      expect(replayed.cursor).toBe(expected);
     }
   });
 
   it('keeps the refusal API distinct from the replay/freeze clamp', () => {
     const document = documentForClamp();
-    expect(setDurableCursor(document, Number.NaN)).toBe(document);
-    expect(setDurableCursor(document, 0.5)).toBe(document);
-    expect(setDurableCursor(document, -2)).toBe(document);
-    expect(setDurableCursor(document, document.history.length)).toBe(document);
+
+    for (const cursor of [Number.NaN, 0.5, -2, document.history.length]) {
+      expect(setDurableCursor(document, cursor)).toBe(document);
+    }
+  });
+
+  it('accepts every valid cursor and increments durableRevision only when it changes', () => {
+    const original = documentForClamp();
+    const document = setDurableCursor(original, -1);
+
+    expect(document).not.toBe(original);
+    for (let cursor = -1; cursor < document.history.length; cursor += 1) {
+      const result = setDurableCursor(document, cursor);
+
+      if (cursor === -1) {
+        expect(result).toBe(document);
+        expect(result.durableRevision).toBe(document.durableRevision);
+      } else {
+        expect(result).not.toBe(document);
+        expect(result.cursor).toBe(cursor);
+        expect(result.durableRevision).toBe(document.durableRevision + 1);
+        expect(result.branchRevision).toBe(document.branchRevision);
+        expect(result.history).toBe(document.history);
+        expect(result.baseline).toBe(document.baseline);
+      }
+
+      const unchanged = setDurableCursor(result, cursor);
+      expect(unchanged).toBe(result);
+      expect(unchanged.durableRevision).toBe(result.durableRevision);
+    }
+  });
+
+  it('keeps freeze and replay aligned for every valid cursor', () => {
+    const document = documentForClamp();
+
+    for (let cursor = -1; cursor < document.history.length; cursor += 1) {
+      expect(freezeDurableDocument({ ...document, cursor }).cursor).toBe(cursor);
+      expect(replayDurableDocument(document, cursor).cursor).toBe(cursor);
+    }
   });
 });
