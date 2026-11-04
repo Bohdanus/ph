@@ -253,6 +253,7 @@ test.describe('Layers', () => {
     const moveToTop = async (sourceName: string, targetName: string) => {
       const source = layerRow(sourceName);
       const target = layerRow(targetName);
+      const previousOrder = await layerRows.allTextContents();
       const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
@@ -260,6 +261,7 @@ test.describe('Layers', () => {
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
+      await expect.poll(() => layerRows.allTextContents()).not.toEqual(previousOrder);
       await expect(layerRows.first()).toContainText(sourceName);
     };
     /** Toggles a layer's visibility and waits for the row's button to name the next action. */
@@ -271,13 +273,12 @@ test.describe('Layers', () => {
       ).toHaveAccessibleName(hidden ? 'Show layer' : 'Hide layer');
     };
 
-    // Two layers crossing at the overlap point, so hiding the top one has an unambiguous answer:
-    // the stroke BENEATH it takes over. White would also have been a valid answer here, but it
-    // would be a weaker one - the bedrock layer is still in the document, so "white" would also
-    // be what a bug that erased every layer would produce. Black can only mean "the layer under
-    // the hidden one is still composited", which is what is actually being claimed.
+    // The green and black strokes cross at the sample point; the blue stroke stays away from it
+    // and gives the hidden green row a real reorder target above it. Black can only mean the
+    // layer under the hidden one is still composited.
     await draw('#000000', { x: box.x + 180, y: box.y + 180 }, { x: box.x + 420, y: box.y + 340 }); // draw 2
-    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 3, top
+    await draw('#00aa00', { x: box.x + 160, y: box.y + 260 }, { x: box.x + 440, y: box.y + 260 }); // draw 3
+    await draw('#0000ff', { x: box.x + 80, y: box.y + 100 }, { x: box.x + 200, y: box.y + 100 }); // draw 4, top
 
     const isBlack = (colour: { red: number; green: number; blue: number }) =>
       colour.red < 70 && colour.green < 70 && colour.blue < 70;
@@ -291,9 +292,9 @@ test.describe('Layers', () => {
     await setHidden('draw 3', true);
     await waitForOverlap(isBlack, 'hiding the green layer to leave the black one composited at the overlap point');
 
-    // The reorder itself: the hidden green layer is the topmost row, and it is dropped onto the
-    // black one beneath it, so a successful reorder changes which row owns the top slot.
-    await moveToTop('draw 3', 'draw 2');
+    // The hidden green layer starts below the blue top row. Dropping it above that row is an
+    // actual order change, and the helper verifies the row order changed before pixels are read.
+    await moveToTop('draw 3', 'draw 4');
 
     // Both halves again, and both are needed: the NAME proves the row moved, and the composite
     // proves the move did not resurrect the layer.
