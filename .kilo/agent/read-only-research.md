@@ -1,7 +1,7 @@
 ---
-description: Free Laguna read-only research; no file edits, deletion, shell, or delegation.
+description: Free Nemotron 3 Ultra read-only research; no file edits, deletion, shell, or delegation.
 mode: all
-model: kilo/poolside/laguna-s-2.1:free
+model: kilo/nvidia/nemotron-3-ultra-550b-a55b:free
 permission:
   read: allow
   glob: allow

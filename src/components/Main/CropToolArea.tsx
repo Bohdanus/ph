@@ -38,6 +38,7 @@ const OUTLINE_DASH = 5;
 /** Keep a tiny color snapshot so changing the crop does not read pixels from the full canvas. */
 const GUIDE_SAMPLE_MAX_SIDE = 96;
 const ROTATE_HANDLE_RADIUS = 4;
+const ROTATE_HANDLE_STROKE_WIDTH = 1.5;
 
 type OverhangPiece = Pos;
 
@@ -715,7 +716,12 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     : [];
 
   return (
-    <div className={`${className} cursor-crop`} data-rotation={angle} {...pointerHandlers}>
+    <div
+      className={`${className} cursor-crop`}
+      data-rotation={angle}
+      {...pointerHandlers}
+      onDragStart={(event) => event.preventDefault()}
+    >
       {painted && angle === 0 && (
         /**
          * `pointer-events: none` is inherited, so this one declaration takes the whole subtree out
@@ -891,7 +897,12 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
                         overflow: 'visible',
                       }}
                     >
-                      <path d="M 7.236 6.351 A 4 4 0 1 1 7.236 1.649" fill="none" stroke={OUTLINE} strokeWidth={1} />
+                      <path
+                        d="M 7.236 6.351 A 4 4 0 1 1 7.236 1.649"
+                        fill="none"
+                        stroke={OUTLINE}
+                        strokeWidth={ROTATE_HANDLE_STROKE_WIDTH}
+                      />
                     </svg>
                   )}
                 </>

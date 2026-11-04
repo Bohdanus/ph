@@ -49,6 +49,17 @@ durable text.
 - **Brief it like a fresh context.** Worktree path, branch, the files in play, the
   diff range against `main` (`git diff main...HEAD`), and what the final message
   must contain. Do not paste the diff; the reviewer opens it.
+- **Review the exact candidate that will land.** Record the base SHA, reviewed
+  candidate SHA and tree, and whether the worktree has staged or unstaged changes.
+  `main...HEAD` does not include uncommitted changes. Commit the candidate before
+  review, or explicitly include and inspect both `git diff` and
+  `git diff --cached`; do not treat an omitted working-tree diff as reviewed.
+  If `main` changes or the branch is rebased after review, review the final
+  synchronized diff again before landing.
+- **A commit's ancestry does not prove its behavior survived.** For salvage,
+  cherry-pick, or merge-resolution work, verify the relevant implementation and
+  its callers in the current candidate tree. A commit can be an ancestor while
+  a later commit or resolution has reverted its behavior.
 - **Ask for `file:line` per finding**, each with the concrete failure it causes.
   "Consider extracting this helper" is not a finding.
 - **Split by concern and fan out** — one reviewer per file group. Two reviewers on

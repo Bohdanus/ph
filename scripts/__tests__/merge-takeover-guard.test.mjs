@@ -20,9 +20,11 @@ import {
   MAX_BLOB_BYTES,
   batchBlobs,
   findTakeovers,
+  isProjectMainWorktree,
   main,
   resolveIncomingRef,
 } from '../merge-takeover-guard.mjs';
+import { registerMainWorktree } from '../main-worktree-guard.mjs';
 
 /**
  * Real repositories in a temp directory, not mocks. The defect being guarded is a property
@@ -287,6 +289,32 @@ beforeEach(() => {
 
 afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('project main worktree detection', () => {
+  it('recognizes a designated main checkout with an external common Git directory', () => {
+    const source = join(dir, 'source');
+    const checkout = join(dir, 'project');
+    const commonGitDir = join(dir, 'project.git');
+    mkdirSync(source);
+    gitAt(source, ['init', '-q', '-b', 'main']);
+    gitAt(source, ['config', 'user.email', 'test@example.com']);
+    gitAt(source, ['config', 'user.name', 'test']);
+    gitAt(source, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(source, 'AGENTS.md'), '# project policy\n');
+    mkdirSync(join(source, '.kilo'));
+    writeFileSync(join(source, '.kilo', 'marker'), 'project marker\n');
+    writeFileSync(join(source, 'tracked.txt'), 'tracked\n');
+    gitAt(source, ['add', '-A']);
+    gitAt(source, ['commit', '-qm', 'base']);
+    gitAt(source, ['clone', '--separate-git-dir', commonGitDir, source, checkout]);
+
+    expect(realpathSync(resolve(checkout, gitAt(checkout, ['rev-parse', '--git-common-dir'])))).toBe(
+      realpathSync(commonGitDir)
+    );
+    expect(registerMainWorktree(checkout, { required: true })).toBe(true);
+    expect(isProjectMainWorktree(checkout)).toBe(true);
+  });
 });
 
 describe('the shape a whole-file resolution loses silently', () => {

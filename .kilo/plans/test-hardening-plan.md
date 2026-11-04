@@ -136,11 +136,11 @@ The history migration is **already implemented and merged to `main`** with four 
 
 Three isolated worktrees, each with focused task:
 
-| Agent      | Worktree                    | Focus                                           | Target Test Files                            |
-| ---------- | --------------------------- | ----------------------------------------------- | -------------------------------------------- |
-| Nemotron 1 | `laguna-options-hydration`  | Options hydration / preview protection          | New: `options-hydration.test.tsx`            |
-| Nemotron 2 | `laguna-history-provenance` | History provenance parity                       | New: `history-provenance.test.ts`            |
-| Nemotron 3 | `laguna-text-source-edit`   | Text source-edit append/replay, malformed, redo | Extend: `durable-replay.source-edit.test.ts` |
+| Agent      | Worktree                      | Focus                                           | Target Test Files                            |
+| ---------- | ----------------------------- | ----------------------------------------------- | -------------------------------------------- |
+| Nemotron 1 | `nemotron-options-hydration`  | Options hydration / preview protection          | New: `options-hydration.test.tsx`            |
+| Nemotron 2 | `nemotron-history-provenance` | History provenance parity                       | New: `history-provenance.test.ts`            |
+| Nemotron 3 | `nemotron-text-source-edit`   | Text source-edit append/replay, malformed, redo | Extend: `durable-replay.source-edit.test.ts` |
 
 **Constraints**:
 

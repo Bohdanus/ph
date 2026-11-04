@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -38,6 +38,17 @@ function makeMarker(root) {
   return { head, marker };
 }
 
+function makeMatchingWorktree(root) {
+  const { head, marker } = makeMarker(root);
+  writeFileSync(join(root, 'tracked.txt'), 'preserved tracked work\n');
+  git(root, 'add', 'tracked.txt');
+  const autoMergeTree = git(root, 'write-tree');
+  git(root, 'reset', '--mixed', head);
+  writeFileSync(marker, `${autoMergeTree}\n`);
+  writeFileSync(join(root, 'untracked.txt'), 'preserved untracked work\n');
+  return { head, marker, autoMergeTree };
+}
+
 function invoke(root, args = []) {
   return spawnSync(process.execPath, [SCRIPT, ...args], { cwd: root, env, encoding: 'utf8' });
 }
@@ -65,6 +76,111 @@ describe('recover-stale-auto-merge', () => {
     expect(applied.stdout).toContain('HEAD and index were unchanged');
     expect(existsSync(marker)).toBe(false);
     expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+  });
+
+  it('removes only the marker when tracked WIP matches AUTO_MERGE and pins the dirty worktree', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    const trackedPath = join(root, 'tracked.txt');
+    const untrackedPath = join(root, 'untracked.txt');
+    const statusBefore = git(root, 'status', '--short');
+    const indexBefore = git(root, 'write-tree');
+
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+    expect(preflight.status).toBe(0);
+    expect(preflight.stdout).toContain('PRESERVING-WIP PREFLIGHT');
+    expect(preflight.stdout).toContain(`AUTO_MERGE tree=${autoMergeTree}`);
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    expect(statusPin).toBeTruthy();
+    expect(existsSync(marker)).toBe(true);
+
+    const missingPins = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-matching-worktree',
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(missingPins.status).toBe(1);
+    expect(missingPins.stdout).toContain('requires both worktree pins');
+    expect(existsSync(marker)).toBe(true);
+
+    const applied = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-matching-worktree',
+      '--expected-auto-merge-tree',
+      autoMergeTree,
+      '--expected-worktree-status-sha256',
+      statusPin,
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain('tracked work matched the marker');
+    expect(existsSync(marker)).toBe(false);
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(root, 'write-tree')).toBe(indexBefore);
+    expect(git(root, 'status', '--short')).toBe(statusBefore);
+    expect(readFileSync(trackedPath, 'utf8')).toBe('preserved tracked work\n');
+    expect(readFileSync(untrackedPath, 'utf8')).toBe('preserved untracked work\n');
+  });
+
+  it('refuses preserved WIP if the status pin changes after preflight', () => {
+    const root = repo();
+    const { head, marker, autoMergeTree } = makeMatchingWorktree(root);
+    const preflight = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+    const statusPin = preflight.stdout.match(/worktree-status-sha256=([a-f\d]{64})/i)?.[1];
+    expect(preflight.status).toBe(0);
+    expect(statusPin).toBeTruthy();
+
+    writeFileSync(join(root, 'later.txt'), 'new work after preflight\n');
+    const result = invoke(root, [
+      '--expected-head',
+      head,
+      '--preserve-matching-worktree',
+      '--expected-auto-merge-tree',
+      autoMergeTree,
+      '--expected-worktree-status-sha256',
+      statusPin,
+      '--apply',
+      '--confirm-owner-stopped',
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Worktree status changed');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('preserved tracked work\n');
+    expect(readFileSync(join(root, 'untracked.txt'), 'utf8')).toBe('preserved untracked work\n');
+    expect(readFileSync(join(root, 'later.txt'), 'utf8')).toBe('new work after preflight\n');
+  });
+
+  it('refuses preserve mode when staged or hidden index state could obscure tracked files', () => {
+    const stagedRoot = repo();
+    const staged = makeMatchingWorktree(stagedRoot);
+    git(stagedRoot, 'add', 'tracked.txt');
+    const stagedResult = invoke(stagedRoot, ['--expected-head', staged.head, '--preserve-matching-worktree']);
+    expect(stagedResult.status).toBe(1);
+    expect(stagedResult.stdout).toContain('index to match HEAD');
+    expect(existsSync(staged.marker)).toBe(true);
+
+    const flaggedRoot = repo();
+    const flagged = makeMatchingWorktree(flaggedRoot);
+    git(flaggedRoot, 'update-index', '--assume-unchanged', 'tracked.txt');
+    const flaggedResult = invoke(flaggedRoot, ['--expected-head', flagged.head, '--preserve-matching-worktree']);
+    expect(flaggedResult.status).toBe(1);
+    expect(flaggedResult.stdout).toContain('assume-unchanged or skip-worktree');
+    expect(existsSync(flagged.marker)).toBe(true);
+  });
+
+  it('refuses preserved work when tracked files no longer match the marker tree', () => {
+    const root = repo();
+    const { head, marker } = makeMatchingWorktree(root);
+    writeFileSync(join(root, 'tracked.txt'), 'changed after AUTO_MERGE\n');
+    const result = invoke(root, ['--expected-head', head, '--preserve-matching-worktree']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Tracked worktree differs from AUTO_MERGE tree');
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('changed after AUTO_MERGE\n');
   });
 
   it.each([

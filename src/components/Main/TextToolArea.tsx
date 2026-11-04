@@ -6,6 +6,7 @@ import {
   POINT_TYPE_MAX_DRAG_PX,
   drawOverflowIndicator,
   layoutText,
+  renderText,
   resolveTextKind,
   resolveTextStyle,
   textWrapWidth,
@@ -265,26 +266,16 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
    */
   useEffect(() => {
     if (args.text && args.rect) redrawRect();
-  }, [args.rect, args.text, redrawRect]);
+  }, [args, redrawRect]);
 
   /**
-   * Repaint the draft's BOX, and nothing else.
+   * Repaint the draft's box chrome and Small Caps preview.
    *
-   * `useRect`'s `drawMask` has already cleared the overlay and stroked the boundary by the time it
-   * calls `onRepaint`, so this used to add the type on top of it — and it must not any more. The
-   * ink now belongs to `TextEditOverlay`, a transparent DOM element over the same box, and two
-   * renderers of one string in one place is either exact or visibly doubled; the overlay's
-   * background is transparent precisely so the ink below shows through, which is another way of
-   * saying the canvas ink would be visible under the DOM ink.
-   *
-   * The overflow indicator is the exception and stays: it is box CHROME, not type. Adobe draws "a
-   * small box or circle containing a plus symbol (+) appears in place of a handle in the corner of
-   * the boundary" (https://helpx.adobe.com/photoshop/using/creating-type.html), and it belongs to
-   * the boundary, which is the one thing on this canvas.
-   *
-   * `layoutText` is asked the overflow question rather than `renderText`, because `renderText` now
-   * draws ink this method must not draw — and asking it would draw that ink on the way to the
-   * answer.
+   * The editor remains the DOM contenteditable for typing, selection and caret behavior. Small
+   * Caps ink is painted with the same Canvas renderer used at commit time so a platform's DOM
+   * small-caps synthesis cannot change the draft's glyphs or advances. `renderText` also paints the
+   * paragraph overflow indicator when requested; other styles keep their DOM preview and ask
+   * `layoutText` only for the overflow state.
    */
   function redrawDraftChrome(rect: RectXY) {
     const currentArgs = argsRef.current;
@@ -293,6 +284,11 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
 
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
+
+    if (currentArgs.smallCaps && !currentArgs.allCaps) {
+      renderText(ctx as Ctx2D, { ...currentArgs, rect: rect as RectXYSorted }, { overflowIndicator: true });
+      return;
+    }
 
     const style = resolveTextStyle(currentArgs);
     const wrapWidth = resolveTextKind(currentArgs) === 'paragraph' ? textWrapWidth(rect as RectXYSorted) : Infinity;
