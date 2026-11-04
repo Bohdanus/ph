@@ -1357,6 +1357,8 @@ test.describe('Paint tools', () => {
       await page.goto('/');
       await expect(getWorkspaceCanvas(page)).toBeVisible();
 
+      const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
+      expect(devicePixelRatio).toBe(2);
       const geometry = await workspaceGeometry(page);
       // At 2x scale, the document is still 800x600 CSS px but rendered at 1600x1200 device px
       const scale = geometry.scale;
