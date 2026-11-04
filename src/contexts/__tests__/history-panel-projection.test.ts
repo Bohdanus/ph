@@ -4,7 +4,7 @@ import { DURABLE_SCHEMA_VERSION, type DurableDocument, type DurableHistoryEntry 
 import { durableEntryProvenance } from '../history-provenance.ts';
 import { selectHistoryPanelProjection } from '../useHistory.ts';
 import type { HistoryItem } from '../history-types.ts';
-import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 
 const history: HistoryItem[] = [
   { id: 'rename', actionName: RENAME_LAYER_ACTION, layerId: 'layer-1', args: { name: 'Renamed' } },
@@ -92,9 +92,68 @@ describe('selectHistoryPanelProjection', () => {
   });
 
   it('falls back when the opening baseline row has no durable counterpart', () => {
-    const openingRow: HistoryItem = { id: 'opening', actionName: 'open document', layerId: 'layer-1' };
+    const openingRow: HistoryItem = { id: 'opening', actionName: OPEN_DOCUMENT_ACTION, layerId: 'layer-1' };
     const legacyHistory = [openingRow, ...history];
 
     expect(project(legacyHistory, documentFor(history.map(entry))).source).toBe('legacy');
+  });
+
+  it('falls back when durableDocument is null', () => {
+    expect(project(history, null).source).toBe('legacy');
+  });
+
+  it('falls back when documentId mismatches', () => {
+    const doc = documentFor();
+    const mismatchedDoc = { ...doc, documentId: 'document-2' };
+    expect(project(history, mismatchedDoc).source).toBe('legacy');
+  });
+
+  it('falls back when documentRevision mismatches', () => {
+    const doc = documentFor();
+    const mismatchedDoc = { ...doc, documentRevision: 99 };
+    expect(project(history, mismatchedDoc).source).toBe('legacy');
+  });
+
+  it('falls back when branchRevision mismatches', () => {
+    const doc = documentFor();
+    const mismatchedDoc = { ...doc, branchRevision: 99 };
+    expect(project(history, mismatchedDoc).source).toBe('legacy');
+  });
+
+  it('falls back when historyIndex is out of bounds (negative)', () => {
+    expect(project(history, documentFor(), -1).source).toBe('legacy');
+  });
+
+  it('falls back when historyIndex is out of bounds (past end)', () => {
+    expect(project(history, documentFor(), history.length).source).toBe('legacy');
+  });
+
+  it('falls back when history is empty and historyIndex is not -1', () => {
+    expect(project([], documentFor([], -1), 0).source).toBe('legacy');
+    expect(project([], documentFor([], -1), 5).source).toBe('legacy');
+  });
+
+  it('falls back when legacyTitle does not match durableTitle', () => {
+    const entries = history.map(entry);
+    const mismatchedProvenance: DurableHistoryEntry = {
+      ...entries[0],
+      provenance: {
+        ...entries[0]!.provenance!,
+        actionName: SET_LAYER_OPACITY_ACTION,
+      },
+    };
+    expect(project(history, documentFor([mismatchedProvenance, entries[1]])).source).toBe('legacy');
+  });
+
+  it('admits disabled legacy rows when the durable enabled state matches', () => {
+    const disabledHistory: HistoryItem[] = [{ ...history[0]!, disabled: true }, history[1]!];
+    const entries = disabledHistory.map(entry);
+    expect(project(disabledHistory, documentFor(entries)).source).toBe('durable');
+  });
+
+  it('falls back when item is enabled but entry.enabled is false', () => {
+    const entries = history.map(entry);
+    const entryWithWrongEnabled = { ...entries[0]!, enabled: false };
+    expect(project(history, documentFor([entryWithWrongEnabled, entries[1]])).source).toBe('legacy');
   });
 });
