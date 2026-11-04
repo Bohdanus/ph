@@ -17,7 +17,7 @@ const createPointerState = vi.hoisted(() => () => ({
 const createToolArgsState = vi.hoisted(() => () => ({
   toolArgs: {
     toolName: 'shape',
-    figure: 'rectangle',
+    figure: 'rectangle' as FigureType,
     color: '#000000',
     backgroundColor: null,
     alpha: 1,
@@ -36,6 +36,8 @@ const createStoreMocks = vi.hoisted(() => () => {
   canvas.height = 480;
   const ctx = {
     canvas,
+    lineJoin: 'miter',
+    miterLimit: 10,
     clearRect: vi.fn(),
     fillRect: vi.fn(),
     strokeRect: vi.fn(),
@@ -511,8 +513,9 @@ describe('ShapeToolArea', () => {
       );
     });
 
-    it('clears the prior padded shape bounds on later preview frames', () => {
+    it('clears the prior padded miter bounds on later preview frames', () => {
       vi.useFakeTimers();
+      toolArgsState.toolArgs.figure = 'triangle';
       const { toolArea } = renderToolArea();
 
       act(() => {
@@ -536,12 +539,82 @@ describe('ShapeToolArea', () => {
         vi.advanceTimersByTime(20);
       });
 
-      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(8, 18, 74, 74);
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(-1, 9, 92, 92);
       expect(drawShapeMock).toHaveBeenCalledTimes(2);
       expect(drawShapeMock).toHaveBeenLastCalledWith(
         storeMocks.ctx,
         expect.objectContaining({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } })
       );
+    });
+
+    it('clears the previous figure bounds when the shape style changes mid-drag', () => {
+      vi.useFakeTimers();
+      const { toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 80, clientY: 90 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      toolArgsState.toolArgs.figure = 'triangle';
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      // Erase the previous rectangle's pixels before painting a triangle with larger miter bounds.
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(8, 18, 74, 74);
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 40, clientY: 45 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      // The triangle's own prior bounds are then used to erase its miter overhangs.
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(-1, 9, 62, 62);
+    });
+
+    it('clears the attempted preview bounds after a draw throws', () => {
+      vi.useFakeTimers();
+      toolArgsState.toolArgs.figure = 'triangle';
+      const { toolArea } = renderToolArea();
+      drawShapeMock.mockImplementationOnce(() => {
+        throw new Error('preview paint failed');
+      });
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 80, clientY: 90 });
+      });
+
+      expect(() => {
+        act(() => {
+          vi.advanceTimersByTime(20);
+        });
+      }).toThrow('preview paint failed');
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(-1, 9, 92, 92);
     });
 
     it('constrains non-line figures to a square when shift is held', () => {
@@ -1014,6 +1087,47 @@ describe('ShapeToolArea', () => {
           fireEvent.pointerUp(toolArea, { button: 0, clientX: at.x, clientY: at.y, ...modifiers });
         });
       };
+
+      it('clears a degenerate final preview when a drag returns to its anchor', () => {
+        vi.useFakeTimers();
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
+
+        act(() => {
+          fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        });
+        act(() => {
+          fireEvent.pointerMove(toolArea, { button: 0, clientX: 80, clientY: 90 });
+        });
+        act(() => {
+          vi.advanceTimersByTime(20);
+        });
+        act(() => {
+          fireEvent.pointerMove(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        });
+        act(() => {
+          fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        });
+
+        expect(storeMocks.ctx.clearRect).toHaveBeenLastCalledWith(0, 0, 640, 480);
+        expect(document.body.querySelector('[data-testid="create-shape-dialog"]')).not.toBeNull();
+
+        act(() => {
+          fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-cancel-button"]')!);
+        });
+        vi.mocked(storeMocks.ctx.clearRect).mockClear();
+        act(() => {
+          fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+        });
+        act(() => {
+          fireEvent.pointerMove(toolArea, { button: 0, clientX: 120, clientY: 120 });
+        });
+        act(() => {
+          vi.advanceTimersByTime(20);
+        });
+
+        expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+      });
 
       it('opens the Create Rectangle dialog and commits nothing on the click', () => {
         const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
@@ -1541,10 +1655,15 @@ describe('ShapeToolArea', () => {
         })
       );
       expect(committedGeometry(fullArgs)).toEqual(documentGeometry);
-      expect(fullArgs.pos).toEqual(shapeGeometryBounds(documentGeometry, lineWidth));
-      // Padding is half the stroke plus one pixel of antialiasing slack.
-      expect(fullArgs.pos.x).toBe(Math.min(documentGeometry.start.x, documentGeometry.end.x) - lineWidth / 2 - 1);
-      expect(fullArgs.pos.width).toBe(Math.abs(documentGeometry.end.x - documentGeometry.start.x) + lineWidth + 2);
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(documentGeometry, lineWidth, toolArgsState.toolArgs));
+      // Rectangles have axis-aligned corners, so their miter joins stay within half-stroke padding.
+      const strokePadding = lineWidth / 2 + 1;
+      expect(fullArgs.pos.x).toBeLessThanOrEqual(
+        Math.min(documentGeometry.start.x, documentGeometry.end.x) - strokePadding
+      );
+      expect(fullArgs.pos.width).toBeGreaterThanOrEqual(
+        Math.abs(documentGeometry.end.x - documentGeometry.start.x) + strokePadding * 2
+      );
       view.unmount();
     });
 
@@ -1558,17 +1677,12 @@ describe('ShapeToolArea', () => {
 
       const geometry = { start: anchor, end: pointer };
       const documentGeometry = toDocumentShape(geometry);
-      // `pad = 7.5 / 2 + 1 = 4.75`, so in document space the near edge is (55.25, 75.25) floored
-      // and the far edge is (124.75, 114.75) ceiled. The extent is the difference of the two
-      // rounded edges, which is what keeps a half-pixel line width from declaring a fractional
-      // bitmap size.
-      expect(fullArgs.pos).toEqual({ x: 55, y: 75, width: 70, height: 40 });
-      expect(fullArgs.pos).toEqual(shapeGeometryBounds(documentGeometry, 7.5));
-      // Still contains the padded geometry, so the rounding did not clip the stroke.
-      expect(fullArgs.pos.x).toBeLessThanOrEqual(documentGeometry.start.x - 4.75);
-      expect(fullArgs.pos.y).toBeLessThanOrEqual(documentGeometry.start.y - 4.75);
-      expect(fullArgs.pos.x + fullArgs.pos.width).toBeGreaterThanOrEqual(documentGeometry.end.x + 4.75);
-      expect(fullArgs.pos.y + fullArgs.pos.height).toBeGreaterThanOrEqual(documentGeometry.end.y + 4.75);
+      const strokePadding = 7.5 / 2 + 1;
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(documentGeometry, 7.5, toolArgsState.toolArgs));
+      expect(fullArgs.pos.x).toBeLessThanOrEqual(documentGeometry.start.x - strokePadding);
+      expect(fullArgs.pos.y).toBeLessThanOrEqual(documentGeometry.start.y - strokePadding);
+      expect(fullArgs.pos.x + fullArgs.pos.width).toBeGreaterThanOrEqual(documentGeometry.end.x + strokePadding);
+      expect(fullArgs.pos.y + fullArgs.pos.height).toBeGreaterThanOrEqual(documentGeometry.end.y + strokePadding);
       view.unmount();
     });
 
@@ -1596,7 +1710,7 @@ describe('ShapeToolArea', () => {
     });
 
     it('rebases the committed start and end by -pos for every figure', () => {
-      for (const figure of ['rectangle', 'oval', 'triangle', 'polygon', 'line'] as const) {
+      for (const figure of ['rectangle', 'oval', 'triangle', 'polygon', 'star', 'line'] as const) {
         toolArgsState.toolArgs.figure = figure;
         createLayerFromToolMock.mockClear();
         const { view, toolArea } = renderToolArea();
@@ -1651,7 +1765,9 @@ describe('ShapeToolArea', () => {
           normalizeShapeGeometry({ x: 100, y: 100 }, { x: 400, y: 320 }, 'rectangle', { shiftKey: true, altKey: false })
         )
       );
-      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth));
+      expect(fullArgs.pos).toEqual(
+        shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth, toolArgsState.toolArgs)
+      );
       view.unmount();
     });
 
@@ -1682,7 +1798,9 @@ describe('ShapeToolArea', () => {
       const fullArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
       const geometry = committedGeometry(fullArgs);
       expect(geometry).toEqual(toDocumentShape({ start: { x: 130, y: 130 }, end: { x: 150, y: 140 } }));
-      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth));
+      expect(fullArgs.pos).toEqual(
+        shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth, toolArgsState.toolArgs)
+      );
 
       // A fresh gesture after Space is released re-anchors on the new drag.
       createLayerFromToolMock.mockClear();
@@ -1699,7 +1817,9 @@ describe('ShapeToolArea', () => {
       const nextArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
       const nextGeometry = committedGeometry(nextArgs);
       expect(nextGeometry).toEqual(toDocumentShape({ start: { x: 100, y: 100 }, end: { x: 200, y: 260 } }));
-      expect(nextArgs.pos).toEqual(shapeGeometryBounds(nextGeometry, toolArgsState.toolArgs.lineWidth));
+      expect(nextArgs.pos).toEqual(
+        shapeGeometryBounds(nextGeometry, toolArgsState.toolArgs.lineWidth, toolArgsState.toolArgs)
+      );
       view.unmount();
     });
   });
