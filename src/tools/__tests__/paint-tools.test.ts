@@ -1033,12 +1033,12 @@ describe('paint tool input hardening', () => {
         },
         ctx: ctx as unknown as Ctx2D,
       });
-      // radius = NaN * 0.5 = NaN; the mock records it verbatim rather than coercing.
+      // The spray renderer clamps a non-finite line width to 1 before applying its radius scale.
       expect(ctx.createRadialGradient).toHaveBeenCalledTimes(1);
       expect(ctx.arc).toHaveBeenCalledTimes(1);
       expect(ctx.fill).toHaveBeenCalledTimes(1);
       const arcArgs = vi.mocked(ctx.arc).mock.calls[0] as [number, number, number, number, number];
-      expect(arcArgs[2]).toBe(Number.NaN);
+      expect(arcArgs[2]).toBe(0.5);
     });
   });
 });
