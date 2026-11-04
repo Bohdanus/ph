@@ -508,8 +508,9 @@ test.describe('Layers', () => {
     await opacitySlider.fill('50');
     await opacitySlider.press('Tab');
 
+    // Accept either encoded-space or linear-light 50% blending, but reject black and full opacity.
     const isMixed = (colour: { red: number; green: number; blue: number }) =>
-      colour.green > 100 && colour.red < 100 && colour.blue < 100;
+      colour.green > 70 && colour.green < 150 && colour.red < 100 && colour.blue < 100;
 
     // Wait for opacity to take effect - green at 50% over black should be a dark green
     await waitForOverlap(isMixed, 'opacity 50% green over black');
