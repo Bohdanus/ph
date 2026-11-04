@@ -26,7 +26,7 @@ type ShapeHandlerProps = {
 };
 
 export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize, documentFrame: currentFrame, activeLayerId, layers }] = useStore();
+  const [{ containerRef, totalSize, documentFrame: currentFrame, activeLayerId, layers }] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { createLayerFromTool, replaceLayerSource } = useLayers();
   const { toolArgs } = useCurrentTool();
@@ -35,6 +35,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   const startRef = useRef<Point | null>(null);
   const endRef = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
+  const previewBoundsRef = useRef<ReturnType<typeof shapeGeometryBounds> | null>(null);
   const spacePressedRef = useRef(false);
   const lastPointRef = useRef<Point | null>(null);
   const originalShapeRef = useRef<{ start: Point; end: Point } | null>(null);
@@ -88,9 +89,17 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     frameRequested.current = null;
 
     const ctx = overlayCtxRef.current!;
-    ctx.clearRect(0, 0, toolOverlayRef.current!.width, toolOverlayRef.current!.height); // todo you can clear smaller shape
-
     const shape = { start: startRef.current!, end: endRef.current! };
+    const bounds = shapeGeometryBounds(shape, args.lineWidth);
+    const previousBounds = previewBoundsRef.current;
+    if (previousBounds) {
+      ctx.clearRect(previousBounds.x, previousBounds.y, previousBounds.width, previousBounds.height);
+    } else {
+      // The overlay is shared. Clear it once when a gesture first paints, then clear only the
+      // padded bounds occupied by the last preview on later frames.
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+
     const newArgs = { ...args, ...shape };
     // `setShapeCtx` writes stroke, fill, alpha and the dash onto the SHARED overlay context and
     // leaves them, so the bracket is what stops this tool from dictating the alpha every later tool
@@ -103,6 +112,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     } finally {
       ctx.restore();
     }
+    previewBoundsRef.current = bounds;
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -211,13 +221,6 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     }
 
     commitShape(start, end);
-
-    // The committed layer will be rendered by the document surface. Clear the shared preview
-    // backing store after a successful commit so the same shape is not composited twice.
-    const ctx = overlayCtxRef.current;
-    if (ctx) {
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    }
   };
 
   /**
@@ -255,7 +258,9 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     }
 
     // The committed layer is now the source of truth; remove the preview so it is not painted twice.
-    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
+    const ctx = overlayCtxRef.current;
+    if (ctx) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    previewBoundsRef.current = null;
   };
 
   const handleDialogCreate = ({ width, height, fromCenter, cornerRadius }: CreateShapeParams) => {
@@ -291,7 +296,9 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     fromCenterRef.current = false;
     lastPointRef.current = null;
     originalShapeRef.current = null;
-    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
+    const ctx = overlayCtxRef.current;
+    if (ctx) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    previewBoundsRef.current = null;
   };
 
   useEffect(() => {
@@ -318,6 +325,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       if (ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }
+      previewBoundsRef.current = null;
     };
   }, [overlayCtxRef]);
 

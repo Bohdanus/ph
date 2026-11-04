@@ -511,6 +511,39 @@ describe('ShapeToolArea', () => {
       );
     });
 
+    it('clears the prior padded shape bounds on later preview frames', () => {
+      vi.useFakeTimers();
+      const { toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 80, clientY: 90 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+
+      // Shrinking the shape must erase its old outer edge before drawing the smaller preview.
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(8, 18, 74, 74);
+      expect(drawShapeMock).toHaveBeenCalledTimes(2);
+      expect(drawShapeMock).toHaveBeenLastCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } })
+      );
+    });
+
     it('constrains non-line figures to a square when shift is held', () => {
       vi.useFakeTimers();
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
@@ -1325,6 +1358,7 @@ describe('ShapeToolArea', () => {
       act(() => {
         vi.advanceTimersByTime(20);
       });
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
       act(() => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
@@ -1345,7 +1379,7 @@ describe('ShapeToolArea', () => {
         })
       );
 
-      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
       vi.mocked(storeMocks.ctx.clearRect).mockClear();
       view.unmount();
 
