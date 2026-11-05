@@ -59,6 +59,12 @@ const ALLOWED_UNLISTED = new Map([
       'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
   ],
   [
+    'docs/handoffs/e2e-hardening-next-20261105-tablet-touch.md',
+    'covered by the docs/handoffs/ directory row, which states the ' +
+      '<branch>-<topic>.md naming convention. One direct index row per task handoff would ' +
+      'make the index unbounded.',
+  ],
+  [
     '.kilo/plans/test-hardening-plan.md',
     'archived history-migration test plan; it records task-specific work already merged ' +
       'to main. The maintained repository-wide workflow is .skills/parallel-test-hardening.md, ' +
