@@ -205,8 +205,9 @@ variant or an equivalent atomic history action.
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
    pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
    mixed-source fixture pin exact materialized bounds. Their per-layer raster checks require exact
-   pixels away from fractional-alpha boundaries and allow at most two differing pixels at those
-   boundaries; composites remain byte-identical. The latter also checks bitmap dimensions and
+   pixels away from internal alpha gradients and allow at most two differing pixels at pixels whose
+   alpha lies between neighbors with lower and higher alpha values; composites remain byte-identical. The
+   latter also checks bitmap dimensions and
    pixels for its blank, vector, paint, and point-text layers at each affine cursor and after each
    transition. It applies two sequential retained affines to an opaque blank, one affine to a 45%-
    opacity blank, and one each to the other layers, checking per-layer bounds and dimensions at all

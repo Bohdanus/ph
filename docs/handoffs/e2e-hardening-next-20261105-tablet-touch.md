@@ -10,7 +10,10 @@ The previous full mirror run used the pre-merge candidate and failed on Linux an
 
 Branch: `task/e2e-hardening-next-20261105`
 
-The E2E changes add tablet touch reachability coverage at 744×1133, tighten the crop-history per-layer alpha-edge classifier while preserving exact bounds and byte-identical composite checks, and keep the documented parity rule aligned with the test.
+The E2E changes add tablet touch reachability coverage at 744×1133 and tighten the
+crop-history per-layer alpha-edge classifier. Its two-pixel exception now applies
+only when the changed pixel has fractional alpha and neighbors with both lower and
+higher alpha values; exact bounds and byte-identical composite checks remain required.
 
 ## Current validation
 

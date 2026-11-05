@@ -1447,7 +1447,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             if (durableTightSurfaces.offscreenContext !== durableTightSurfaces.htmlContext) {
               durableTightSurfaces.offscreenContext.drawImage(materializedLayer.bitmap as CanvasImageSource, 0, 0);
             }
-            const touchesInternalAlphaBoundary = (
+            const isInternalAlphaGradientPixel = (
               pixels: Uint8ClampedArray,
               pixel: number,
               width: number,
@@ -1459,16 +1459,20 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               const alphaAt = (sampleX: number, sampleY: number) => pixels[(sampleY * width + sampleX) * 4 + 3] ?? 0;
               const alpha = alphaAt(x, y);
               if (alpha === 0 || alpha === 255) return false;
+              let hasLowerAlphaNeighbor = false;
+              let hasHigherAlphaNeighbor = false;
               for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
                 for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
                   if (offsetX === 0 && offsetY === 0) continue;
                   const neighborX = x + offsetX;
                   const neighborY = y + offsetY;
                   if (neighborX < 0 || neighborY < 0 || neighborX >= width || neighborY >= height) continue;
-                  if (alpha !== alphaAt(neighborX, neighborY)) return true;
+                  const neighborAlpha = alphaAt(neighborX, neighborY);
+                  if (neighborAlpha < alpha) hasLowerAlphaNeighbor = true;
+                  if (neighborAlpha > alpha) hasHigherAlphaNeighbor = true;
                 }
               }
-              return false;
+              return hasLowerAlphaNeighbor && hasHigherAlphaNeighbor;
             };
             const isAntialiasEdgeDifference = (
               expected: Uint8ClampedArray,
@@ -1477,8 +1481,8 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               width: number,
               height: number
             ) =>
-              touchesInternalAlphaBoundary(expected, pixel, width, height) ||
-              touchesInternalAlphaBoundary(materialized, pixel, width, height);
+              isInternalAlphaGradientPixel(expected, pixel, width, height) ||
+              isInternalAlphaGradientPixel(materialized, pixel, width, height);
             const compareTightPixels = (expectedBytes: Uint8ClampedArray, materializedBytes: Uint8ClampedArray) => {
               let diffCount = 0;
               let tightDifferingPixels = 0;

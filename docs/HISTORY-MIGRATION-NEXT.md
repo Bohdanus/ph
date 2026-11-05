@@ -80,8 +80,9 @@ not vector eligibility.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
    covers two retained affine layer transforms across two successive non-quarter frame transforms
    with fractional origins and extents. It keeps exact per-layer bounds and pixel equality away from
-   fractional-alpha boundaries, allows at most two differing pixels per raster surface at pixels
-   whose alpha is fractional in one raster and changes across a neighbor, and requires byte-identical
+   internal alpha gradients, allows at most two differing pixels per raster surface at pixels
+   whose alpha is fractional and has neighbors with both lower and higher alpha values in one
+   raster, and requires byte-identical
    composites at each tested cursor. A frame-only control also remains byte-identical. A styled,
    bold-italic serif paragraph passes through a retained affine and a two-frame sequence under the
    same per-layer raster rule. A three-transition mixed-source frame sequence applies two sequential
@@ -113,14 +114,15 @@ priority or dependency. They may be pursued in either order or in parallel.
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
 3. Continue parity-only frame work. The raster fixture in `e2e/crop-history.spec.ts` covers two
    retained affine layer transforms and two successive non-quarter frame transforms with fractional
-   origins and extents. It asserts exact per-layer bounds, exact pixels away from fractional-alpha
-   boundaries, at most two differing pixels on those boundaries per raster surface, and byte-identical
+   origins and extents. It asserts exact per-layer bounds, exact pixels away from internal alpha
+   gradients, at most two differing pixels at those gradients per raster surface, and byte-identical
    composites at each cursor and frame-only control. A styled paragraph-text fixture covers its
    retained affine cursor plus a two-frame sequence under the same per-layer raster rule. The
    mixed-source three-transition fixture applies two sequential retained affines to an opaque blank,
    one retained affine to a 45%-opacity blank, and one each to vector, paint, and point text, then
    checks per-layer bounds and bitmap dimensions at all six affine cursors and after each frame
-   transition, with exact non-edge pixels and the same two-pixel edge cap. A fractional-frame probe
+   transition, with exact pixels outside internal alpha gradients and the same two-pixel edge cap.
+   A fractional-frame probe
    of this mix preserved per-layer parity but found a one-pixel
    composite mismatch at the first transition; investigate it before broadening fractional coverage.
    These fixtures close only their listed combinations. Next cover the
