@@ -1194,6 +1194,20 @@ describe('CropToolArea', () => {
       );
     });
 
+    it('lets Escape reach the screen-mode shortcut when no crop draft is drawn', () => {
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+      const onDocumentKeyDown = vi.fn();
+      document.addEventListener('keydown', onDocumentKeyDown);
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+      document.body.dispatchEvent(event);
+
+      document.removeEventListener('keydown', onDocumentKeyDown);
+      expect(event.defaultPrevented).toBe(false);
+      expect(onDocumentKeyDown).toHaveBeenCalledExactlyOnceWith(event);
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+    });
+
     it('does nothing on Enter with no crop drawn', () => {
       render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
 

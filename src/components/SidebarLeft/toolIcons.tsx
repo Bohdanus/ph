@@ -23,6 +23,7 @@ import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
 import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
 import { GradientIcon } from './icons/GradientIcon';
+import { InvertIcon } from './icons/InvertIcon';
 import { LevelsIcon } from './icons/LevelsIcon';
 import { LineShapeIcon } from './icons/LineShapeIcon';
 import { MagicEraserIcon } from './icons/MagicEraserIcon';
@@ -55,6 +56,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-sta
   color: ColorIcon,
   blur: BlurIcon,
   levels: LevelsIcon,
+  invert: InvertIcon,
   transform: TransformIcon,
   crop: CropIcon,
   draw: DrawIcon,

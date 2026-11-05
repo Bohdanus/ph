@@ -43,6 +43,7 @@ export type ToolIconName =
   | 'color'
   | 'blur'
   | 'levels'
+  | 'invert'
   | 'transform'
   | 'brush'
   | 'pencil'
