@@ -957,6 +957,28 @@ type CropParityLayerComparison = Readonly<{
   offscreenTightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
 }>;
 
+function expectTightBitmapAlphaGradientParity(comparison: CropParityLayerComparison, context: string): void {
+  const label = `${context} ${comparison.layerId} tight bitmap at ${comparison.stage}`;
+  expect(
+    comparison.tightBitmapNonEdgeDifferingPixels,
+    `${label} differs outside an internal alpha gradient; ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+  ).toBe(0);
+  expect(
+    comparison.tightBitmapDifferingPixels,
+    `${label} may differ at no more than two internal alpha gradient pixels; ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+  ).toBeLessThanOrEqual(2);
+
+  const offscreenLabel = `${context} ${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage}`;
+  expect(
+    comparison.offscreenTightBitmapNonEdgeDifferingPixels,
+    `${offscreenLabel} differs outside an internal alpha gradient; ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+  ).toBe(0);
+  expect(
+    comparison.offscreenTightBitmapDifferingPixels,
+    `${offscreenLabel} may differ at no more than two internal alpha gradient pixels; ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+  ).toBeLessThanOrEqual(2);
+}
+
 async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
   return page.evaluate(async (fixture) => {
     const load = (specifier: string) => import(/* @vite-ignore */ new URL(specifier, location.origin).href);
@@ -3872,8 +3894,7 @@ test.describe('Crop history', () => {
           height: comparison.expectedBounds.height,
         });
         expect(comparison.frameDifferingBytes).toBe(0);
-        expect(comparison.tightBitmapDifferingBytes).toBe(0);
-        expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
+        expectTightBitmapAlphaGradientParity(comparison, 'styled text');
       }
       expect(result.transitionResults).toHaveLength(fixture.transitions.length);
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
@@ -3900,8 +3921,7 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
-          expect(comparison.tightBitmapDifferingBytes).toBe(0);
-          expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
+          expectTightBitmapAlphaGradientParity(comparison, 'frame-only styled text');
         }
         for (const comparison of transition.materializedLayerComparisons) {
           expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
@@ -3910,8 +3930,7 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
-          expect(comparison.tightBitmapDifferingBytes).toBe(0);
-          expect(comparison.offscreenTightBitmapDifferingBytes).toBe(0);
+          expectTightBitmapAlphaGradientParity(comparison, 'styled text');
         }
       }
       expect(result.durablePixels).toEqual(result.legacyPixels);

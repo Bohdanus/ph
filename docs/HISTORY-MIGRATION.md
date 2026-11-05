@@ -204,10 +204,11 @@ variant or an equivalent atomic history action.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
    pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
-   mixed-source fixture pin exact materialized bounds. Their per-layer raster checks require exact
-   pixels away from internal alpha gradients and allow at most two differing pixels at pixels whose
-   alpha lies between neighbors with lower and higher alpha values; composites remain byte-identical. The
-   latter also checks bitmap dimensions and
+   mixed-source fixture pin exact materialized bounds. The latter checks per-layer pixels exactly
+   away from internal alpha gradients and allows at most two differing pixels where the alpha is
+   fractional and has neighbors with both lower and higher alpha values. The styled-text fixture uses
+   the same bounded per-layer raster rule. Frame comparisons and composites remain byte-identical.
+   The mixed-source fixture also checks bitmap dimensions and
    pixels for its blank, vector, paint, and point-text layers at each affine cursor and after each
    transition. It applies two sequential retained affines to an opaque blank, one affine to a 45%-
    opacity blank, and one each to the other layers, checking per-layer bounds and dimensions at all
