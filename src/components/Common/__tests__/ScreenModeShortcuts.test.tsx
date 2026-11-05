@@ -40,12 +40,13 @@ function renderShortcuts() {
 function mountWorkspace() {
   const workspace = document.createElement('main');
   workspace.dataset.testid = 'workspace-container';
-  const surface = document.createElement('div');
-  surface.tabIndex = 0;
+  const surface = document.createElement('canvas');
+  const viewSurface = document.createElement('div');
+  viewSurface.tabIndex = 0;
   const control = document.createElement('button');
-  workspace.append(surface, control);
+  workspace.append(surface, viewSurface, control);
   document.body.append(workspace);
-  return { workspace, surface, control };
+  return { workspace, surface, viewSurface, control };
 }
 
 beforeEach(() => {
@@ -66,6 +67,12 @@ describe('isPanelToggleTarget', () => {
     expect(isPanelToggleTarget(null)).toBe(true);
     expect(isPanelToggleTarget(document.body)).toBe(true);
     expect(isPanelToggleTarget(surface)).toBe(true);
+  });
+
+  it('declines a focusable view surface, which Tab could otherwise never leave', () => {
+    const { viewSurface } = mountWorkspace();
+
+    expect(isPanelToggleTarget(viewSurface)).toBe(false);
   });
 
   it('declines a control, inside the workspace or out', () => {

@@ -67,19 +67,36 @@ test.describe('Selection, Invert and screen-mode shortcuts', () => {
     page,
   }) => {
     const toolbar = page.getByTestId('left-sidebar');
+    const options = page.locator('[data-chrome="options"]');
     const panels = page.locator('#right-panel');
     const header = page.locator('[data-chrome="header"]');
     const footer = page.locator('[data-chrome="footer"]');
 
     await page.keyboard.press('Tab');
     await expect(toolbar).toBeHidden();
+    await expect(options).toBeHidden();
     await expect(panels).toBeHidden();
     await expect(header).toBeVisible();
     await expect(footer).toBeVisible();
 
     await page.keyboard.press('Tab');
     await expect(toolbar).toBeVisible();
+    await expect(options).toBeVisible();
     await expect(panels).toBeVisible();
+  });
+
+  test('F twice reaches Full Screen, which hides every region, and a third F restores them', async ({ page }) => {
+    const regions = ['header', 'options', 'tools', 'panels', 'footer'].map((name) =>
+      page.locator(`[data-chrome="${name}"]`)
+    );
+
+    await page.keyboard.press('f');
+    await page.keyboard.press('f');
+    for (const region of regions) await expect(region).toBeHidden();
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+    await page.keyboard.press('f');
+    for (const region of regions) await expect(region).toBeVisible();
   });
 
   test('F enters Full Screen Mode With Menu Bar, which hides only the status bar, and Shift+F returns', async ({

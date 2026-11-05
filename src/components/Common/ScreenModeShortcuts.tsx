@@ -7,15 +7,17 @@ const INTERACTIVE_CONTROL = 'button, a[href], input, select, textarea, summary, 
 
 /**
  * `Tab` belongs to keyboard navigation everywhere except where there is nothing to navigate: no
- * focus at all, or focus on the canvas surface itself. A focused control keeps its `Tab`, so focus
- * traps (`useDialogFocusContainment`, the rail flyouts, the first-use tour) and plain tabbing
- * through the shell are untouched.
+ * focus at all, or an unfocusable part of the canvas. Anything focusable keeps its `Tab` — a
+ * control, and also the view tools' `tabIndex={0}` surface, which would otherwise be a keyboard
+ * trap: Tab could reach it and never leave. Focus traps (`useDialogFocusContainment`, the rail
+ * flyouts, the first-use tour) and plain tabbing through the shell are untouched.
  */
 export function isPanelToggleTarget(target: EventTarget | null): boolean {
   if (target === null || target === document.body || target === document.documentElement) return true;
   if (!(target instanceof Element)) return false;
 
-  return target.closest('[data-testid="workspace-container"]') !== null && !target.matches(INTERACTIVE_CONTROL);
+  if (target.matches(INTERACTIVE_CONTROL) || target.hasAttribute('tabindex')) return false;
+  return target.closest('[data-testid="workspace-container"]') !== null;
 }
 
 /**
@@ -56,7 +58,10 @@ export const ScreenModeShortcuts = () => {
   });
 
   // The browser takes `Esc` itself while it is fullscreen and reports it as `fullscreenchange`,
-  // which the provider handles. This registration is the exit for the in-window fallback.
+  // which the provider handles. This registration is the exit for the in-window fallback. A tool
+  // area's own `Escape` registers later and wins, as Photoshop cancels the operation before the
+  // screen mode; the lasso areas and Crop claim `Esc` even with no draft, so with those tools the
+  // fallback is left with `F`.
   useKeyDownShortcut({
     key: 'Escape',
     mod: false,
