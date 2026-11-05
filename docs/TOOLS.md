@@ -3019,7 +3019,7 @@ Sources:
 
 Rotates the canvas presentation around the viewport without transforming the image.
 
-The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag horizontally to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.
+The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag around the workspace centre to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.
 
 **Options bar**
 
@@ -3028,12 +3028,17 @@ The Rotate View tool turns the displayed canvas so a retoucher can work at a com
 | Rotation Angle | Sets the displayed angle from -180 to 180 degrees.              | `present` — `src/components/ToolbarsRight/View/View.tsx:51` |
 | Reset View     | Returns the displayed rotation to zero without changing pixels. | `present` — `src/components/ToolbarsRight/View/View.tsx:59` |
 
+**Modifiers**
+
+- **Shift** — Snaps a rotate drag to 15° increments.
+
 **Shortcuts**
 
 - `R` — Selects the Rotate View tool.
+- `Shift+H` — Cycles between the Hand and Rotate View tools.
 - `Esc` — Resets the view angle to zero while Rotate View is active.
 
-**In this app:** `implemented` — Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, compass overlay, Shift snapping, and Rotate All Windows are not implemented.
+**In this app:** `implemented` — Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, a compass overlay, and Rotate All Windows are not implemented.
 
 Implementation:
 

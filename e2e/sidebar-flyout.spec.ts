@@ -27,8 +27,8 @@ import {
  * Crop and **Brush** — the seventh was the Colour group and is now the Brush, which is the same
  * depth for a different reason and is why no test below may name the seventh row by position.
  * The other eight — Clone Stamp down to Shape — move into a three-dots tile, so the Brush, Pen,
- * Type and Shape tiles are not on the rail at all, and it takes a window of 1037 for the rail to
- * show all fifteen. That is the product contract and not a defect: a tool is always reachable
+ * Type and Shape tiles are not on the rail at all, and it takes a window of 1087 for the rail to
+ * show all sixteen. That is the product contract and not a defect: a tool is always reachable
  * from exactly one of a tile of its own or the three-dots flyout (`e2e/toolbar-overflow.spec.ts`
  * pins that reachability, `e2e/toolbar-fit.spec.ts` the arithmetic behind how many rows fit).
  * What it means for THIS file is that two questions must not be confused:
@@ -145,7 +145,7 @@ const flyoutItem = (page: Page, toolName: string, label: string) =>
  * six of them. The tablet band is MORE generous rather than less — its header row renders empty,
  * which takes its chrome to 109 — so the same 720px window shows EIGHT tool tiles there, and a
  * 900px window is in that band rather than in the desktop one. What no width does is change the
- * rule: all fifteen groups are on the rail from 1037 tall, and a window under 680 shows fewer
+ * rule: all sixteen groups are on the rail from 1087 tall, and a window under 680 shows fewer
  * than seven. At 720 the three-dots tile therefore lists the BRUSH group down where the 80% budget
  * listed the Colors/Levels group down — one row deeper, so the first group to fold is no longer
  * reachable by accident of how deep it sits in the map.
@@ -631,7 +631,7 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     // Leaving the section separators out of that can only help the menu: a boundary costs 7 more,
     // which pushes a tile DOWN but is charged to the fit as well, so it cannot change the sign.
     // The one window tighter than the 67 is the one where nothing collapses, because there the
-    // reserved row is not reserved: the full fifteen-row grid is 765 and needs a 1037px window,
+    // reserved row is not reserved: the full sixteen-row grid is 815 and needs a 1087px window,
     // and at 1094 the Shape tile is the deepest row of the whole map at y=916, its six-item menu
     // ends at 1069, and the padded window ends at 1086. Measured on the real map, and 17px is the
     // closest this rail has come to clamping one of its own menus — which is why the fit should

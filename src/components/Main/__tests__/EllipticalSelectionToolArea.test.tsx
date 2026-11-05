@@ -6,6 +6,8 @@ import {
   type EllipticalSelectionToolArgs,
 } from '../../../tools/ellipticalSelection.ts';
 import { clearSelectionDragPreview, readSelectionDragPreview } from '../../../hooks/selection-drag-preview.ts';
+import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import { setTemporaryHandActive } from '../../../hooks/temporary-hand.ts';
 import { getSelectionAbsolutePoints, hasSameSelectionGeometry, moveSelectionByDelta } from '../../../util/selection.ts';
 import type { Point, Selection } from '../../../contexts/general-types.ts';
 
@@ -213,6 +215,8 @@ describe('EllipticalSelectionToolArea', () => {
     storeState.selections = [];
     storeState.activeSelectionId = null;
     storeState.documentFrame = null;
+    resetDocumentGestures();
+    setTemporaryHandActive(false);
     // The drag channel is a module-level slot that outlives any one mount, so an entry a case
     // leaves behind is read by the ants loop of the NEXT one — which is the same reason
     // `document-gesture.ts` needs its own reset. Cleared on both sides of every case so neither a
@@ -222,6 +226,8 @@ describe('EllipticalSelectionToolArea', () => {
 
   afterEach(() => {
     clearSelectionDragPreview();
+    resetDocumentGestures();
+    setTemporaryHandActive(false);
   });
 
   it('starts no selection draft for a press inside the active selection, because that press moves it', () => {
@@ -323,6 +329,48 @@ describe('EllipticalSelectionToolArea', () => {
     // The tessellated polygon's leftmost vertex stops short of the rect's left edge by the chord
     // sagitta, so this one is a bound rather than a literal.
     expect(Math.min(...absolute.map((point) => point.x))).toBeGreaterThanOrEqual(50);
+  });
+
+  it('uses the pointer-up coordinate for the final Space-repositioned ellipse and releases ownership', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 80 });
+    expect(isDocumentGestureOpen()).toBe(true);
+    expect(readDocumentGesture()).toEqual({ kind: 'elliptical-selection', pointerId: 1 });
+
+    setTemporaryHandActive(true);
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 112, clientY: 89 });
+
+    const selection = singleSelectionEdit().payload.updates.selections[0];
+    const absolute = getSelectionAbsolutePoints(selection);
+    const left = Math.min(...absolute.map((point) => point.x));
+    const top = Math.min(...absolute.map((point) => point.y));
+    const right = Math.max(...absolute.map((point) => point.x));
+    const bottom = Math.max(...absolute.map((point) => point.y));
+    expect(left).toBeGreaterThanOrEqual(32);
+    expect(left).toBeLessThan(32.25);
+    expect(top).toBeGreaterThanOrEqual(19);
+    expect(top).toBeLessThan(19.25);
+    expect(right).toBe(112);
+    expect(bottom).toBeGreaterThan(88.75);
+    expect(bottom).toBeLessThanOrEqual(89);
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it('cancels an unfinished create draft and releases ownership when the area unmounts', () => {
+    const { container, unmount } = render(
+      <EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: null }} />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    unmount();
+
+    expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('commits nothing for a marquee drag that never moved, and cancels the draft instead', () => {

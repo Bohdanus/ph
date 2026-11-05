@@ -83,6 +83,7 @@ describe('createSessionDbSnapshot', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-snapshot-update-test-'));
     const sourcePath = join(dir, 'source.db');
     const source = createSource(sourcePath);
+    source.exec('BEGIN');
     addSession(source, 'session', { at: NOW - 30 * DAY });
     addPart(
       source,
@@ -111,6 +112,7 @@ describe('createSessionDbSnapshot', () => {
       addSession(source, `recent-${i}`);
       addPart(source, `recent-part-${i}`, `recent-${i}`, { type: 'tool' });
     }
+    source.exec('COMMIT');
     source.close();
 
     const snapshot = await createSessionDbSnapshot(sourcePath, { sinceMs: NOW - 3 * DAY, nowMs: NOW });

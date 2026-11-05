@@ -315,6 +315,53 @@ describe('project main worktree detection', () => {
     expect(registerMainWorktree(checkout, { required: true })).toBe(true);
     expect(isProjectMainWorktree(checkout)).toBe(true);
   });
+
+  it('preserves trailing whitespace in the designated project root path', () => {
+    const source = join(dir, 'source');
+    const checkout = join(dir, 'project-with-trailing-space ');
+    const commonGitDir = join(dir, 'project-with-trailing-space.git');
+    mkdirSync(source);
+    gitAt(source, ['init', '-q', '-b', 'main']);
+    gitAt(source, ['config', 'user.email', 'test@example.com']);
+    gitAt(source, ['config', 'user.name', 'test']);
+    gitAt(source, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(source, 'AGENTS.md'), '# project policy\n');
+    mkdirSync(join(source, '.kilo'));
+    writeFileSync(join(source, '.kilo', 'marker'), 'project marker\n');
+    writeFileSync(join(source, 'tracked.txt'), 'tracked\n');
+    gitAt(source, ['add', '-A']);
+    gitAt(source, ['commit', '-qm', 'base']);
+    gitAt(source, ['clone', '--separate-git-dir', commonGitDir, source, checkout]);
+
+    expect(realpathSync(checkout).endsWith(' ')).toBe(true);
+    expect(registerMainWorktree(checkout, { required: true })).toBe(true);
+    expect(isProjectMainWorktree(checkout)).toBe(true);
+  });
+
+  (process.platform === 'win32' ? it.skip : it)(
+    'preserves a trailing carriage return in the designated project root path',
+    () => {
+      const source = join(dir, 'source');
+      const checkout = join(dir, 'project-with-trailing-carriage-return\r');
+      const commonGitDir = join(dir, 'project-with-trailing-carriage-return.git');
+      mkdirSync(source);
+      gitAt(source, ['init', '-q', '-b', 'main']);
+      gitAt(source, ['config', 'user.email', 'test@example.com']);
+      gitAt(source, ['config', 'user.name', 'test']);
+      gitAt(source, ['config', 'commit.gpgsign', 'false']);
+      writeFileSync(join(source, 'AGENTS.md'), '# project policy\n');
+      mkdirSync(join(source, '.kilo'));
+      writeFileSync(join(source, '.kilo', 'marker'), 'project marker\n');
+      writeFileSync(join(source, 'tracked.txt'), 'tracked\n');
+      gitAt(source, ['add', '-A']);
+      gitAt(source, ['commit', '-qm', 'base']);
+      gitAt(source, ['clone', '--separate-git-dir', commonGitDir, source, checkout]);
+
+      expect(realpathSync(checkout).endsWith('\r')).toBe(true);
+      expect(registerMainWorktree(checkout, { required: true })).toBe(true);
+      expect(isProjectMainWorktree(checkout)).toBe(true);
+    }
+  );
 });
 
 describe('the shape a whole-file resolution loses silently', () => {

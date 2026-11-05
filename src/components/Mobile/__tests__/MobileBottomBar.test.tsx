@@ -181,8 +181,8 @@ describe('MobileBottomBar', () => {
 
     await user.click(screen.getByRole('button', { name: 'Swap foreground and background colors' }));
 
-    expect(dispatchMock).toHaveBeenNthCalledWith(1, { type: 'SET_COLOR', payload: '#abcdef' });
-    expect(dispatchMock).toHaveBeenNthCalledWith(2, { type: 'SET_BACKGROUND_COLOR', payload: '#123456' });
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(dispatchMock).toHaveBeenCalledWith({ type: 'SWAP_COLORS' });
   });
 
   it('keeps every tile at least 44px on both axes', () => {

@@ -14,11 +14,23 @@ import {
 import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
 import { useWorkspaceFitScale } from '../../../hooks/useWorkspaceFitScale.ts';
 
-function ViewButtons({ fitScale, devicePixelRatio }: { fitScale: number; devicePixelRatio: number }) {
+function ViewButtons({
+  fitScale,
+  devicePixelRatio,
+  testIdPrefix,
+}: {
+  fitScale: number;
+  devicePixelRatio: number;
+  testIdPrefix?: string;
+}) {
   const [{ setViewState }] = useStore();
   return (
     <div className="flex items-center gap-1">
-      <button type="button" onClick={() => setViewState(DEFAULT_VIEW_STATE)}>
+      <button
+        data-testid={testIdPrefix ? `${testIdPrefix}-fit-on-screen` : undefined}
+        type="button"
+        onClick={() => setViewState(DEFAULT_VIEW_STATE)}
+      >
         Fit On Screen
       </button>
       <button
@@ -41,9 +53,37 @@ function ViewButtons({ fitScale, devicePixelRatio }: { fitScale: number; deviceP
 }
 
 export function Hand() {
+  const [{ viewState, setViewState, documentFrame }] = useStore();
   const fitScale = useWorkspaceFitScale();
   const devicePixelRatio = useDevicePixelRatio();
-  return <ViewButtons devicePixelRatio={devicePixelRatio} fitScale={fitScale} />;
+  const state = viewState ?? DEFAULT_VIEW_STATE;
+  const magnification = absoluteViewZoom(state, fitScale, devicePixelRatio);
+  const minimumZoom = minimumSliderZoomForCurrentView(documentFrame, magnification, state.minimumZoomOverride);
+  const step = (factor: number) => {
+    const next = Math.min(32, Math.max(minimumZoom, magnification * factor));
+    setViewState({
+      zoom: relativeViewZoomForMagnification(next, fitScale, state.fitScaleCompensation, devicePixelRatio),
+      minimumZoomOverride: minimumZoomOverrideForMagnification(
+        documentFrame,
+        next,
+        minimumZoom,
+        state.minimumZoomOverride
+      ),
+    });
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span data-testid="hand-zoom-level">{formatViewZoomPercent(magnification)}</span>
+      <button data-testid="hand-zoom-out" type="button" onClick={() => step(0.8)}>
+        −
+      </button>
+      <button data-testid="hand-zoom-in" type="button" onClick={() => step(1.25)}>
+        +
+      </button>
+      <ViewButtons devicePixelRatio={devicePixelRatio} fitScale={fitScale} testIdPrefix="hand" />
+    </div>
+  );
 }
 
 export function Zoom() {
@@ -134,18 +174,25 @@ export function Zoom() {
 export function RotateView() {
   const [{ viewState, setViewState }] = useStore();
   const rotation = (viewState ?? DEFAULT_VIEW_STATE).rotation;
+  const normalizeRotation = (degrees: number) => {
+    if (!Number.isFinite(degrees)) return 0;
+    const wrapped = ((((degrees + 180) % 360) + 360) % 360) - 180;
+    return wrapped === -180 ? 180 : wrapped;
+  };
   return (
     <div className="flex items-center gap-1">
       <label htmlFor="view-rotation-slider">Rotation {Math.round(rotation)}°</label>
       <input
+        data-testid="rotate-view-angle"
         id="view-rotation-slider"
-        type="range"
+        type="number"
         min={-180}
         max={180}
+        step="any"
         value={rotation}
-        onChange={(event) => setViewState({ rotation: Number(event.target.value) })}
+        onChange={(event) => setViewState({ rotation: normalizeRotation(Number(event.target.value)) })}
       />
-      <button type="button" onClick={() => setViewState({ rotation: 0 })}>
+      <button data-testid="rotate-view-reset" type="button" onClick={() => setViewState({ rotation: 0 })}>
         Reset View
       </button>
     </div>
