@@ -123,7 +123,7 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ fileName, totalSize, documentFrame, hasImage, toolName, viewState, setViewState }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, toolName, viewState, setViewState }, dispatch] = useStore();
   const fitScale = useWorkspaceFitScale();
   const devicePixelRatio = useDevicePixelRatio();
   const { canUndo, undo, canRedo, redo } = useHistory();
@@ -901,6 +901,38 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage && opacityTool(toolName) !== null,
     onKeyDown: () => setOpacity(OPACITY_TEN_PERCENT),
+  });
+
+  /**
+   * `X` and `D`: Switch Foreground and Background Colors, and Default Foreground and Background
+   * Colors — the two controls Adobe names beside the swatches in "Set colors with the toolbar"
+   * (`helpx.adobe.com/photoshop/using/choosing-colors.html`), the default being black over white.
+   *
+   * Every modifier is declared `false` so neither key depends on registration order: the Sponge's
+   * `Shift+Alt+D` below never reaches the reset, and the unbound `mod+D`/`mod+X` chords are left
+   * unclaimed. `repeat` is left off so a held `X` is one swap rather than a flicker.
+   *
+   * `mutatesDocument` stays at its default even though a colour is not document state: the Paint
+   * options bar mirrors the store colour into the active tool's args (`PaintToolbar`'s store-colour
+   * effect in `Paint.tsx`), so a swap mid-stroke would reach the stroke in flight. The cost is that
+   * both keys are also refused while a lasso or polygon draft holds the gesture.
+   */
+  useKeyDownShortcut({
+    key: 'x',
+    mod: false,
+    shift: false,
+    alt: false,
+    enabled: hasImage,
+    onKeyDown: () => dispatch({ type: 'SWAP_COLORS' }),
+  });
+
+  useKeyDownShortcut({
+    key: 'd',
+    mod: false,
+    shift: false,
+    alt: false,
+    enabled: hasImage,
+    onKeyDown: () => dispatch({ type: 'RESET_COLORS' }),
   });
 
   /**

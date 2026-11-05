@@ -83,10 +83,7 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
         />
         <button
           type="button"
-          onClick={() => {
-            dispatch({ type: 'SET_COLOR', payload: backgroundColor });
-            dispatch({ type: 'SET_BACKGROUND_COLOR', payload: color });
-          }}
+          onClick={() => dispatch({ type: 'SWAP_COLORS' })}
           aria-label="Swap foreground and background colors"
           title="Swap Colors"
           data-testid="mobile-swap-colors-button"
