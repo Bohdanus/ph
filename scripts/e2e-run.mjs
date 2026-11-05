@@ -768,6 +768,8 @@ export async function run(argv, options = {}) {
   const log = options.log ?? ((line) => console.log(line));
   const ci = Boolean(env.CI);
   const spawnSuite = options.runPlaywright ?? runPlaywright;
+  // Keep the production allocator as the default; tests can inject a deterministic one.
+  const allocateRunPort = options.reservePort ?? reservePort;
   // `?? ` and not `||`: an explicitly empty string is a caller that wants nowhere,
   // and it must not silently resolve to the shared path.
   const runRecordPath = options.runRecordPath ?? RUN_RECORD;
@@ -804,12 +806,11 @@ export async function run(argv, options = {}) {
   if (!ci) {
     const { port, reason } = resolvePort(env, ci);
     if (port === 'allocate') {
-      const reserved = await reservePort();
+      const reserved = await allocateRunPort();
       childEnv.PLAYWRIGHT_PORT = String(reserved.port);
-      log(
-        `${PREFIX} port ${reserved.port} (${reason}` +
-          `${reserved.attempt > 1 ? `, re-picked ${reserved.attempt} times` : ''})`
-      );
+      const retryCount = reserved.attempt - 1;
+      const retrySummary = retryCount > 0 ? `, ${retryCount} retr${retryCount === 1 ? 'y' : 'ies'}` : '';
+      log(`${PREFIX} port ${reserved.port} (${reason}` + `${retrySummary})`);
     } else {
       log(`${PREFIX} port: unchanged, ${reason}`);
     }
