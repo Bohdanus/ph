@@ -524,8 +524,9 @@ mask drift.
 `playwright.config.ts` declares one project, with no project-level mobile emulation or touch
 profile. Some specs do opt into touch per test: `layers.spec.ts` covers tablet layer reorder,
 `text-edit.spec.ts` uses touchscreen taps for tablet re-entry, and `canvas-growth.spec.ts` runs a
-tablet touch case. `mobile-shell.spec.ts` still only resizes a viewport and drives its bar with the
-mouse; this particular flow has no touch reachability assertion. Separately, `check-dpr.spec.ts`
+tablet touch case. The original phone-width flow in `mobile-shell.spec.ts` drives its bar with the
+mouse; a separate tablet-scoped case now checks horizontal touch reachability at 744×1133.
+Separately, `check-dpr.spec.ts`
 has test-scoped coverage at device scale factors 1 and 2, but the full suite is not 2x-clean as
 described below.
 
@@ -620,47 +621,36 @@ can say which, so this entry stays open rather than being deleted on a green run
 
 ---
 
-## P2 — the mobile bottom bar scrolls 615px with no affordance, and nothing tests it
+## P2 — most bottom-bar tool groups start off-screen, without a visible cue for pointer users
 
-`src/components/Mobile/MobileBottomBar.tsx`, `e2e/no-document-overflow.spec.ts`
+`src/components/Mobile/MobileBottomBar.tsx`, `e2e/mobile-shell.spec.ts`, `e2e/no-document-overflow.spec.ts`
 
-`nav[data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
-`mobileToolGroups` entry in one row — 18 focusable tiles, 16 groups plus Options and
-Layers, separated by 5 dividers. Measured, it overflows its own width by **615px** at a
-744×1133 viewport and by **969px** at 390×844, which is the reference phone size the rest
-of the mobile suite already uses. It now carries `scrollbar-none`, so the only cue that
-most of those tiles are off-screen is gone. A user with a mouse and no trackpad has
-nothing left to drag: the bar is `position: fixed`, so the document behind it does not
-scroll either.
+`div[role="toolbar"][data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
+`mobileToolGroups` entry in one row. It has `scrollbar-none`, so the visible tool tiles
+give no cue that more are off-screen. A user with a mouse and no trackpad has nothing
+left to drag: the bar is `position: fixed`, so the document behind it does not scroll
+either. Keep the measurements tied to the supported tablet viewport; phone-size behavior
+is outside the product boundary.
 
-This is the same trade the left tool rail makes, and the rail's version was deliberate and
-pinned — the rail scrolls and stays reachable by wheel, arrows and touch. The difference
-is magnitude, and it is now starker than it was: **the rail no longer overflows at either
-size at all** — 0px at iPad 10.2" portrait (810×1080), whose slot is 834px against a 16-row
-grid of 822px, and 0px at iPad mini landscape (1133×744) — where it used to overflow by 71px
-and 5px respectively, before the fit stopped reserving a fifth of the slot it measures.
-This bar overflows by 615px at the same width and by 969px on a phone. A 5px overflow hides a
-cue for something already within reach of a scroll; a 969px one hides most of the tool list.
+Unlike the left tool rail, which has documented wheel, arrow and touch navigation, this
+bar has no visible scroll cue for pointer users. The tablet test checks that content
+extends beyond the bar's client width without pinning the amount to a historical pixel
+count or a phone-sized layout.
 
-**The CSS is pinned; the overflow is not.** `no-document-overflow.spec.ts` asserts this
-bar is a scroll container with `scrollbar-width: none`, which is a statement about the
-stylesheet and would still pass if the group list grew or shrank by a factor of ten. No
-test reads the bar's `scrollWidth` against its `clientWidth`.
+**Tablet touch reachability is exercised by** `mobile-shell.spec.ts` — `horizontal touch
+swipes reach the Layers tile`. It checks that the bar overflows before sending Chromium
+touch events at the 744×1133 iPad mini portrait size, requires each swipe to advance
+`scrollLeft`, and checks that the Layers tile ends fully inside the visible bar bounds.
+A CSS-only overflow assertion would not prove the touch gesture reaches the last tool group.
 
-The open question is a product one, not a defect report: a tool bar with 969px of hidden
-overflow needs either a visible scroll affordance or a different layout — the tool sheet
-already exists as `MobileToolSheet`, and wrapping is the other obvious answer. What keeps
-it undecided is coverage, recorded in the `P3 — no dedicated mobile/HiDPI project` entry below:
-touch is enabled in a few test-scoped cases, but this toolbar flow has no touchscreen reachability
-test.
-`mobile-shell.spec.ts` does run at a device width (it sets `test.use({ viewport: { width:
-390, height: 844 } })`) and it drives the bar with `page.mouse`, so what is missing is
-touch emulation and a reachability assertion — not a device width, which it already has.
+The product question remains open: a user with a mouse and no trackpad has nothing to drag,
+and the fixed bar prevents the page behind it from scrolling. The touch test establishes
+tablet reachability; it does not decide whether to add a visible scroll cue, pointer-drag
+support, or a different layout.
 
-**Exact remaining verification:** decide the affordance, implement it, and add a
-reachability test that scrolls the bar to its last tile and asserts that tile is inside
-the viewport — the same shape as the rail's swatch test in
-`e2e/no-document-overflow.spec.ts`.
+**Exact remaining verification:** decide the non-touch affordance, implement the selected
+behavior, and add an input-level test for that path. Keep the tablet touch test as the
+reachability control while that product decision is open.
 
 ## Checked here and rejected
 
