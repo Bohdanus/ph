@@ -119,7 +119,7 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ fileName, totalSize, documentFrame, hasImage, toolName, setViewState }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, toolName, setViewState }, dispatch] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
@@ -817,6 +817,34 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage && opacityTool(toolName) !== null,
     onKeyDown: () => setOpacity(OPACITY_TEN_PERCENT),
+  });
+
+  /**
+   * `X` and `D`: Switch Foreground and Background Colors, and Default Foreground and Background
+   * Colors — the two controls Adobe names beside the swatches in "Set colors with the toolbar"
+   * (`helpx.adobe.com/photoshop/using/choosing-colors.html`), the default being black over white.
+   *
+   * Every modifier is declared `false` so neither key depends on registration order: the Sponge's
+   * `Shift+Alt+D` below never reaches the reset, and `mod+D`/`mod+X` stay free for Deselect and Cut.
+   * `repeat` is left off so a held `X` is one swap rather than a flicker, and `mutatesDocument` is
+   * left at its default so a stroke in progress keeps the colour it started with.
+   */
+  useKeyDownShortcut({
+    key: 'x',
+    mod: false,
+    shift: false,
+    alt: false,
+    enabled: hasImage,
+    onKeyDown: () => dispatch({ type: 'SWAP_COLORS' }),
+  });
+
+  useKeyDownShortcut({
+    key: 'd',
+    mod: false,
+    shift: false,
+    alt: false,
+    enabled: hasImage,
+    onKeyDown: () => dispatch({ type: 'RESET_COLORS' }),
   });
 
   /**

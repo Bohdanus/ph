@@ -1331,9 +1331,10 @@ Neither entry changes a claim in `type-crop.ts`, and neither is a live crop defe
 **`C` from the shared table, plus `Enter` and `Esc` from a raw window listener inside the tool
 area.** The second clause is new on this pass and it reverses what this file previously said.
 The `useKeyDownShortcut` table is the one given for the type tool above —
-`AppKeyboardShortcuts.tsx` (letters only: `b c d e g i j l m o p s t u v w y z`, plus shift and mod
+`AppKeyboardShortcuts.tsx` (letters only: `b c d e g i j l m o p s t u v w x y z`, plus shift and mod
 variants), the two lasso tool areas and the font popup, and those are every call site of that
-hook in `src/`. The `d` entry is bound only as `Shift+Alt+D`; a bare `d` selects nothing.
+hook in `src/`. Neither `d` nor `x` selects a tool: a bare `d` restores the default colours, a bare
+`x` swaps them, and `Shift+Alt+D` is the Sponge's Desaturate.
 **It is not the whole of the app's key handling**, and for the crop specifically
 it is the wrong place to look: `CropToolArea`'s own raw `window` `keydown`
 effect attaches its listener and handles `Enter` and `Escape` there, with the reason written out

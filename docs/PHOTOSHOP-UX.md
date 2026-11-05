@@ -175,8 +175,8 @@ would think to look for it. A test pins the cluster, both swatches, both native
 can produce — the one-tile rail:
 the `it('leaves the colour pickers in the rail when the fit has collapsed to this
 tile alone')` case in `src/components/SidebarLeft/__tests__/SidebarLeft.overflow.test.tsx`
-collapses the fit to zero visible tools and asserts all six of those nodes are still
-in the document.
+collapses the fit to zero visible tools and asserts all six of those nodes, and the
+Default Foreground and Background Colors button beside them, are still in the document.
 
 Being "not a tool" is not the same as "not in the rail" — and the swatch pair is
 in the rail. Adobe's page on it
@@ -189,8 +189,9 @@ that toolbar. Verified by fetching the page: all five phrases are in the body
 one is how to read it.
 
 This app has no Color, Swatches or HSB panel, so a request to remove the pair is
-a real fidelity loss, not a correction. The pair is one of only **two** writers of
-the store colour — the other is the Eyedropper
+a real fidelity loss, not a correction. The pair is one of only **two** ways to
+choose an arbitrary store colour (the `X` and `D` keys only exchange the pair or
+restore black over white) — the other is the Eyedropper
 (the `SET_COLOR` dispatch in `handlePointerDown()` in
 `src/components/Main/EyedropperToolArea.tsx`, the only dispatch of
 `SET_COLOR` outside the rail) — so deleting the pair leaves the Eyedropper as the

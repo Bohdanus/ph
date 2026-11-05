@@ -457,8 +457,11 @@ const SidebarLeft = () => {
   };
 
   const handleSwapColors = () => {
-    dispatch({ type: 'SET_COLOR', payload: backgroundColor });
-    dispatch({ type: 'SET_BACKGROUND_COLOR', payload: color });
+    dispatch({ type: 'SWAP_COLORS' });
+  };
+
+  const handleResetColors = () => {
+    dispatch({ type: 'RESET_COLORS' });
   };
 
   const clearLongPressFlyout = () => {
@@ -1329,6 +1332,25 @@ const SidebarLeft = () => {
               data-testid="foreground-color-swatch"
             />
 
+            {/* Photoshop's own placement: the mini black-over-white pair sits below the
+                foreground swatch, in the corner the diagonal swatch pair leaves empty. Its
+                squares are literal black and white because they depict the defaults, not
+                the current colours. */}
+            <button
+              type="button"
+              onClick={handleResetColors}
+              className="absolute bottom-0 left-0 w-4 h-4 cursor-pointer"
+              title="Default Foreground and Background Colors (D)"
+              aria-label="Default Foreground and Background Colors"
+              data-testid="default-colors-button"
+            >
+              <span
+                aria-hidden="true"
+                className="absolute bottom-0 right-0 w-2.5 h-2.5 border border-gray-500 bg-white"
+              />
+              <span aria-hidden="true" className="absolute top-0 left-0 w-2.5 h-2.5 border border-gray-500 bg-black" />
+            </button>
+
             {/*
               `opacity-0` hides PIXELS, not the accessibility tree and not the tab
               order: `element.focus()` still lands on these, so without a name they
@@ -1361,7 +1383,7 @@ const SidebarLeft = () => {
           <button
             onClick={handleSwapColors}
             className="mt-1 text-[8px] text-gray-600 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-200 uppercase font-bold"
-            title="Swap Colors"
+            title="Switch Foreground and Background Colors (X)"
             data-testid="swap-colors-button"
           >
             ⇅ Swap

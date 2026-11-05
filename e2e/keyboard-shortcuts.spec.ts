@@ -450,4 +450,27 @@ test.describe('Keyboard shortcuts', () => {
       await expectToolSelected(page, 'reposition', false);
     });
   });
+
+  test.describe('colour swatch keys', () => {
+    test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
+
+    test('X swaps the swatch pair and D restores black over white', async ({ page }) => {
+      const foreground = page.getByTestId('foreground-color-swatch');
+      const background = page.getByTestId('background-color-swatch');
+
+      await setForegroundColor(page, '#ff0000', true);
+      await expect(background).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+
+      await page.keyboard.press('x');
+      await expect(foreground, 'X moves the background colour to the front').toHaveCSS(
+        'background-color',
+        'rgb(255, 255, 255)'
+      );
+      await expect(background, 'and the foreground colour to the back').toHaveCSS('background-color', 'rgb(255, 0, 0)');
+
+      await page.keyboard.press('d');
+      await expect(foreground, 'D restores the default foreground').toHaveCSS('background-color', 'rgb(0, 0, 0)');
+      await expect(background, 'and the default background').toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    });
+  });
 });
