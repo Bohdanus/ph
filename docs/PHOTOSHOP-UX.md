@@ -194,7 +194,7 @@ choose an arbitrary store colour (the `X` and `D` keys only exchange the pair or
 restore black over white) — the other is the Eyedropper
 (the `SET_COLOR` dispatch in `handlePointerDown()` in
 `src/components/Main/EyedropperToolArea.tsx`, the only dispatch of
-`SET_COLOR` outside the rail) — so deleting the pair leaves the Eyedropper as the
+`SET_COLOR` outside the rail and its `MobileBottomBar` counterpart) — so deleting the pair leaves the Eyedropper as the
 sole writer and the Paint options bar, which mirrors that colour into its own args
 (the store-colour `useEffect` in `createPaintToolbar()`'s `PaintToolbar` in
 `src/components/ToolbarsRight/Paint/Paint.tsx`) and tints its swatch from it

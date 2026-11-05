@@ -1335,20 +1335,20 @@ const SidebarLeft = () => {
             {/* Photoshop's own placement: the mini black-over-white pair sits below the
                 foreground swatch, in the corner the diagonal swatch pair leaves empty. Its
                 squares are literal black and white because they depict the defaults, not
-                the current colours. */}
+                the current colours. The hit area is that whole corner, 16x24, so a touch
+                target grows without reaching either swatch's click area. */}
             <button
               type="button"
               onClick={handleResetColors}
-              className="absolute bottom-0 left-0 w-4 h-4 cursor-pointer"
+              className="absolute bottom-0 left-0 w-4 h-6 cursor-pointer rounded-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               title="Default Foreground and Background Colors (D)"
               aria-label="Default Foreground and Background Colors"
               data-testid="default-colors-button"
             >
-              <span
-                aria-hidden="true"
-                className="absolute bottom-0 right-0 w-2.5 h-2.5 border border-gray-500 bg-white"
-              />
-              <span aria-hidden="true" className="absolute top-0 left-0 w-2.5 h-2.5 border border-gray-500 bg-black" />
+              <span aria-hidden="true" className="absolute bottom-0 left-0 w-4 h-4">
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 border border-gray-500 bg-white" />
+                <span className="absolute top-0 left-0 w-2.5 h-2.5 border border-gray-500 bg-black" />
+              </span>
             </button>
 
             {/*

@@ -1366,6 +1366,22 @@ describe('AppKeyboardShortcuts colour swatch keys', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it('types into a contenteditable, which is how the Type tool draft is edited', () => {
+    renderShortcuts();
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', 'true');
+    document.body.appendChild(editor);
+
+    try {
+      press('x', {}, editor);
+      press('d', {}, editor);
+    } finally {
+      editor.remove();
+    }
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('swaps once per press, not once per auto-repeat', () => {
     renderShortcuts();
 

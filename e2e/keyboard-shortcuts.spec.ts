@@ -472,5 +472,16 @@ test.describe('Keyboard shortcuts', () => {
       await expect(foreground, 'D restores the default foreground').toHaveCSS('background-color', 'rgb(0, 0, 0)');
       await expect(background, 'and the default background').toHaveCSS('background-color', 'rgb(255, 255, 255)');
     });
+
+    test('the rail button beside the swatches restores black over white', async ({ page }) => {
+      const foreground = page.getByTestId('foreground-color-swatch');
+
+      await setForegroundColor(page, '#ff0000', true);
+      // A real click, so Playwright's actionability check fails if a swatch ever covers the button.
+      await page.getByRole('button', { name: 'Default Foreground and Background Colors' }).click();
+
+      await expect(foreground).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+      await expect(page.getByTestId('background-color-swatch')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    });
   });
 });

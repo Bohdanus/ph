@@ -825,9 +825,13 @@ export const AppKeyboardShortcuts = () => {
    * (`helpx.adobe.com/photoshop/using/choosing-colors.html`), the default being black over white.
    *
    * Every modifier is declared `false` so neither key depends on registration order: the Sponge's
-   * `Shift+Alt+D` below never reaches the reset, and `mod+D`/`mod+X` stay free for Deselect and Cut.
-   * `repeat` is left off so a held `X` is one swap rather than a flicker, and `mutatesDocument` is
-   * left at its default so a stroke in progress keeps the colour it started with.
+   * `Shift+Alt+D` below never reaches the reset, and the unbound `mod+D`/`mod+X` chords are left
+   * unclaimed. `repeat` is left off so a held `X` is one swap rather than a flicker.
+   *
+   * `mutatesDocument` stays at its default even though a colour is not document state: the Paint
+   * options bar mirrors the store colour into the active tool's args (`PaintToolbar`'s store-colour
+   * effect in `Paint.tsx`), so a swap mid-stroke would reach the stroke in flight. The cost is that
+   * both keys are also refused while a lasso or polygon draft holds the gesture.
    */
   useKeyDownShortcut({
     key: 'x',

@@ -240,11 +240,18 @@ describe('StoreContext scalar and tool actions', () => {
       dispatch()({ type: 'SET_BACKGROUND_COLOR', payload: '#abcdef' });
     });
 
+    const beforeSwap = store();
     act(() => {
       dispatch()({ type: 'SWAP_COLORS' });
     });
     expect(store().color).toBe('#abcdef');
     expect(store().backgroundColor).toBe('#123456');
+    // The provider re-creates its callbacks on every render, so only data fields are compared.
+    const afterSwap = store() as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(beforeSwap)) {
+      if (key === 'color' || key === 'backgroundColor' || typeof value === 'function') continue;
+      expect(afterSwap[key], key).toBe(value);
+    }
 
     act(() => {
       dispatch()({ type: 'SWAP_COLORS' });
@@ -277,6 +284,24 @@ describe('StoreContext scalar and tool actions', () => {
     expect(store().backgroundColor).toBe(DEFAULT_BACKGROUND_COLOR);
     expect(store().history).toHaveLength(0);
     expect(store().hasUnsavedChanges).toBe(false);
+  });
+
+  it.each([
+    ['only the foreground', { color: '#123456', backgroundColor: DEFAULT_BACKGROUND_COLOR }],
+    ['only the background', { color: DEFAULT_FOREGROUND_COLOR, backgroundColor: '#abcdef' }],
+  ])('RESET_COLORS restores the pair when %s differs', (_label, { color, backgroundColor }) => {
+    const { store, dispatch } = renderWithProbe();
+
+    act(() => {
+      dispatch()({ type: 'SET_COLOR', payload: color });
+      dispatch()({ type: 'SET_BACKGROUND_COLOR', payload: backgroundColor });
+    });
+    act(() => {
+      dispatch()({ type: 'RESET_COLORS' });
+    });
+
+    expect(store().color).toBe(DEFAULT_FOREGROUND_COLOR);
+    expect(store().backgroundColor).toBe(DEFAULT_BACKGROUND_COLOR);
   });
 });
 
