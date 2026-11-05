@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -15,6 +15,8 @@ import {
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { resetOverlayAlpha } from '../../util/canvas.ts';
+import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
+import { isTemporaryHandActive } from '../../hooks/temporary-hand.ts';
 import {
   ELLIPTICAL_SELECTION_SOURCE_TOOL,
   ellipsePointsFromDrag,
@@ -38,6 +40,7 @@ type EllipseDrag =
       pointerId: number | null;
       start: Point;
       end: Point;
+      lastPoint: Point;
       constrainToCircle: boolean;
       fromCentre: boolean;
       /** The last computed path, so the commit is the preview rather than a second guess. */
@@ -83,6 +86,10 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
   const args = getToolArgs('elliptical-selection');
 
   const dragRef = useRef<EllipseDrag | null>(null);
+  const dispatchRef = useRef(dispatch);
+  useLayoutEffect(() => {
+    dispatchRef.current = dispatch;
+  }, [dispatch]);
   const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid } = usePointerPosition({
     ref: containerRef,
     imageSize: totalSize,
@@ -118,6 +125,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
   function takeDrag(): EllipseDrag | null {
     const drag = dragRef.current;
     dragRef.current = null;
+    if (drag) releaseDocumentGesture('elliptical-selection', drag.pointerId);
 
     return drag;
   }
@@ -137,13 +145,32 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     };
   }
 
+  function updateCreateDrag(drag: Extract<EllipseDrag, { mode: 'create' }>, event: PointerEvent<HTMLDivElement>) {
+    const point = getLocalCoords(event);
+    if (isTemporaryHandActive()) {
+      const dx = point.x - drag.lastPoint.x;
+      const dy = point.y - drag.lastPoint.y;
+      drag.start = { x: drag.start.x + dx, y: drag.start.y + dy };
+    }
+    drag.lastPoint = point;
+    drag.end = point;
+    drag.constrainToCircle = event.shiftKey;
+    drag.fromCentre = event.altKey;
+    const params = dragParams(drag);
+    drag.previewPoints = params ? ellipsePointsFromDrag(params) : null;
+  }
+
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !args) return;
-    if (!isPointerDownValid(event)) return;
+    const pointerId = typeof event.pointerId === 'number' ? event.pointerId : null;
+    if (!claimDocumentGesture('elliptical-selection', pointerId)) return;
+    if (!isPointerDownValid(event)) {
+      releaseDocumentGesture('elliptical-selection', pointerId);
+      return;
+    }
 
     event.preventDefault();
 
-    const pointerId = typeof event.pointerId === 'number' ? event.pointerId : null;
     const start = getLocalCoords(event);
     const documentStart = canvasToDocumentPoint(start, documentFrame);
     const activeSelection = getActiveSelection(selections, activeSelectionId);
@@ -168,6 +195,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
       pointerId,
       start,
       end: start,
+      lastPoint: start,
       constrainToCircle: event.shiftKey,
       fromCentre: event.altKey,
       previewPoints: null,
@@ -180,16 +208,10 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     if (!drag || drag.pointerId !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
 
     if (drag.mode === 'create') {
-      // The modifier state is read per move, not once at press time, so pressing Shift
-      // halfway through a drag snaps the preview to a circle exactly as it snaps the
-      // commit — the two are the same call with the same arguments.
-      drag.end = getLocalCoords(event);
-      drag.constrainToCircle = event.shiftKey;
-      drag.fromCentre = event.altKey;
       if (!isPointerMoveValid(event)) return;
 
-      const params = dragParams(drag);
-      drag.previewPoints = params ? ellipsePointsFromDrag(params) : null;
+      // Read modifiers at each input event so preview and commit use the same live value.
+      updateCreateDrag(drag, event);
       // Nothing published, and that is the whole difference between this arm and the move arm
       // below: a NEW ellipse is being drawn rather than a committed one moved, so the committed
       // border behind it is still true and keeps marching under the marquee. That is what
@@ -220,6 +242,10 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     if (!drag || drag.pointerId !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
     if (!isPointerUpValid(event)) return;
 
+    // Pointer-up can carry the final coordinate even when no pointer-move was delivered there.
+    // Recompute before taking the drag so the committed geometry and a final Space translation
+    // both include that last position.
+    if (drag.mode === 'create') updateCreateDrag(drag, event);
     takeDrag();
     // Unconditional, and here before either arm can return: the create arm never publishes, so
     // the slot may already be empty, and clearing it anyway is what lets the route that did
@@ -235,16 +261,6 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
         commitSelection(drag.preview, 'move');
       }
       return;
-    }
-
-    // A drag that never moved commits from the press point, which is what makes
-    // `fixed-size` a complete gesture on a click and `normal` / `fixed-ratio` a no-op.
-    if (!drag.previewPoints) {
-      drag.end = getLocalCoords(event);
-      drag.constrainToCircle = event.shiftKey;
-      drag.fromCentre = event.altKey;
-      const params = dragParams(drag);
-      drag.previewPoints = params ? ellipsePointsFromDrag(params) : null;
     }
 
     const points = drag.previewPoints;
@@ -295,7 +311,8 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     return () => {
       // An unmount mid-drag is an abort like any other: the running drag is dropped
       // through the same primitive, so a gesture that ends here can never commit.
-      takeDrag();
+      const drag = takeDrag();
+      if (drag?.mode === 'create') dispatchRef.current({ type: 'CANCEL_SELECTION_DRAFT' });
       // The route easiest to miss, because nothing about an unmount looks like a gesture. The
       // preview slot is a module-level variable that outlives this mount, so an entry left
       // behind would freeze the ants on a selection that no longer exists for every later tool

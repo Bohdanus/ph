@@ -12,6 +12,9 @@ import type { TonalRange } from '../../tools/dodgeBurn.ts';
 import type { SpongeMode } from '../../tools/sponge.ts';
 import type { FigureType } from '../../tools/shape.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
+import { absoluteViewZoom, DEFAULT_VIEW_STATE, relativeViewZoomForMagnification } from '../../contexts/view-state.ts';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
+import { useWorkspaceFitScale } from '../../hooks/useWorkspaceFitScale.ts';
 
 /**
  * Flyout groups, each cycled by Shift+<key>, exactly as `toolbar-mapping.ts` groups the
@@ -56,6 +59,7 @@ const fillGroup = ['paint-bucket', 'gradient'] as const satisfies readonly ToolN
 /** `O`: the whole toning flyout — the Dodge, the Burn and the Sponge, in Adobe's order. */
 const tonalGroup = ['dodge', 'burn', 'sponge'] as const satisfies readonly ToolName[];
 const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies readonly ToolName[];
+const viewGroup = ['hand', 'rotate-view'] as const satisfies readonly ToolName[];
 /**
  * `I`: the measurement-and-sampling tile.
  *
@@ -119,7 +123,9 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ fileName, totalSize, documentFrame, hasImage, toolName, setViewState }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, toolName, viewState, setViewState }] = useStore();
+  const fitScale = useWorkspaceFitScale();
+  const devicePixelRatio = useDevicePixelRatio();
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
@@ -485,7 +491,14 @@ export const AppKeyboardShortcuts = () => {
     key: 'h',
     mod: false,
     enabled: hasImage,
-    onKeyDown: () => goToTool('hand'),
+    onKeyDown: (event) => {
+      if (event.shiftKey) {
+        const current = viewGroup.includes(toolName as (typeof viewGroup)[number]) ? toolName : 'hand';
+        goToTool(cycleToolGroup(current as ToolName, viewGroup as readonly ToolName[]));
+        return;
+      }
+      goToTool('hand');
+    },
   });
 
   useKeyDownShortcut({
@@ -509,6 +522,77 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     mutatesDocument: false,
     onKeyDown: () => setViewState({ rotation: 0 }),
+  });
+
+  useKeyDownShortcut({
+    key: '0',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    mutatesDocument: false,
+    onKeyDown: () => setViewState(DEFAULT_VIEW_STATE),
+  });
+
+  useKeyDownShortcut({
+    key: '1',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    mutatesDocument: false,
+    onKeyDown: () =>
+      setViewState({
+        panX: 0,
+        panY: 0,
+        zoom: relativeViewZoomForMagnification(1, fitScale, 1, devicePixelRatio),
+        fitScaleCompensation: 1,
+        rotation: 0,
+        minimumZoomOverride: undefined,
+      }),
+  });
+
+  const stepViewZoom = (factor: number) => {
+    const current = viewState ?? DEFAULT_VIEW_STATE;
+    const magnification = absoluteViewZoom(current, fitScale, devicePixelRatio);
+    const next = Math.min(32, Math.max(1e-12, magnification * factor));
+    setViewState({
+      zoom: relativeViewZoomForMagnification(next, fitScale, current.fitScaleCompensation, devicePixelRatio),
+    });
+  };
+
+  useKeyDownShortcut({
+    key: '+',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    mutatesDocument: false,
+    onKeyDown: () => stepViewZoom(1.25),
+  });
+
+  useKeyDownShortcut({
+    key: '=',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    mutatesDocument: false,
+    onKeyDown: () => stepViewZoom(1.25),
+  });
+
+  useKeyDownShortcut({
+    key: '-',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    mutatesDocument: false,
+    onKeyDown: () => stepViewZoom(0.8),
+  });
+
+  useKeyDownShortcut({
+    key: '_',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    mutatesDocument: false,
+    onKeyDown: () => stepViewZoom(0.8),
   });
 
   useKeyDownShortcut({

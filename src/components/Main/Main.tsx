@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { CropToolArea } from './CropToolArea.tsx';
 import { DrawToolArea } from './DrawToolArea.tsx';
 import { TextToolArea } from './TextToolArea.tsx';
@@ -45,6 +45,8 @@ import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
 import { DEFAULT_VIEW_STATE, effectiveViewZoom } from '../../contexts/view-state.ts';
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
+import { isDocumentGestureOpen, subscribeDocumentGesture } from '../../hooks/document-gesture.ts';
+import { setTemporaryHandActive } from '../../hooks/temporary-hand.ts';
 
 /**
  * The interaction modes whose tool owns a selection, which is every mode that can have a
@@ -93,6 +95,7 @@ const Main = () => {
   const { openLoadImageDialog, openNewImageDialog } = useFile();
   const { confirmDiscard } = useUnsavedChanges();
   const { drawAllLayers } = useLayers();
+  const documentGestureOpen = useSyncExternalStore(subscribeDocumentGesture, isDocumentGestureOpen, () => false);
 
   const [isDragging, setIsDragging] = useState(false);
   const [spacePressed, setSpacePressed] = useState(false);
@@ -101,16 +104,24 @@ const Main = () => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.code !== 'Space' || !hasImage || toolName === 'text') return;
       event.preventDefault();
+      setTemporaryHandActive(true);
       setSpacePressed(true);
     };
     const handleKeyUp = (event: KeyboardEvent) => {
-      if (event.code === 'Space') setSpacePressed(false);
+      if (event.code === 'Space') {
+        setTemporaryHandActive(false);
+        setSpacePressed(false);
+      }
     };
-    const handleBlur = () => setSpacePressed(false);
+    const handleBlur = () => {
+      setTemporaryHandActive(false);
+      setSpacePressed(false);
+    };
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleBlur);
     return () => {
+      setTemporaryHandActive(false);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
@@ -223,7 +234,9 @@ const Main = () => {
     interactionMode = 'gradient';
   }
 
-  if (spacePressed && toolName !== 'text' && hasImage) interactionMode = 'hand';
+  // A temporary Hand press must not unmount a tool while its pointer owns a document gesture.
+  // Marquee tools read the same key state and reposition the live marquee while the drag is open.
+  if (spacePressed && toolName !== 'text' && hasImage && !documentGestureOpen) interactionMode = 'hand';
 
   // One read, because the canvas's `display` and the loop's `enabled` gate the same question and
   // have to answer it identically: the canvas is the ants' only output, so a `display: none`
@@ -293,7 +306,10 @@ const Main = () => {
   const renderContent = () => {
     const view = viewState ?? DEFAULT_VIEW_STATE;
     const viewZoom = effectiveViewZoom(view);
-    const viewTransform = `translate(${view.panX}px, ${view.panY}px) scale(${viewZoom}) rotate(${view.rotation}deg)`;
+    const viewTransform =
+      view.panX === 0 && view.panY === 0 && viewZoom === 1 && view.rotation === 0
+        ? ''
+        : `translate(${view.panX}px, ${view.panY}px) scale(${viewZoom}) rotate(${view.rotation}deg)`;
     type ToolAreaComponent =
       | typeof DummyToolArea
       | typeof MoveToolArea

@@ -21,6 +21,7 @@ import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 import { useFirstUse } from '../../hooks/useFirstUse.ts';
 import { useFirstUseContext } from '../../contexts/FirstUseContext.tsx';
+import { DEFAULT_VIEW_STATE } from '../../contexts/view-state.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -244,7 +245,7 @@ type ToolGroupIdentity = {
 type ToolbarEntry = { kind: 'group'; group: ToolbarToolGroup; key: string } | { kind: 'overflow' };
 
 const SidebarLeft = () => {
-  const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
+  const [{ hasImage, toolName, color, backgroundColor, setViewState }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { isToolNew, markToolAsSeen } = useFirstUse();
@@ -739,6 +740,9 @@ const SidebarLeft = () => {
               }
 
               selectTool(primaryTool);
+            }}
+            onDoubleClick={() => {
+              if (primaryTool.name === 'hand') setViewState(DEFAULT_VIEW_STATE);
             }}
             onContextMenu={(event) => {
               if (!hasFlyout) return;

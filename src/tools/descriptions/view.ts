@@ -85,7 +85,7 @@ export const viewDescriptions: Record<ViewToolName, ToolDescription> = {
     photoshopName: 'Rotate View Tool',
     summary: 'Rotates the canvas presentation around the viewport without transforming the image.',
     purpose:
-      'The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag horizontally to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.',
+      'The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag around the workspace centre to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.',
     options: [
       {
         control: 'Rotation Angle',
@@ -100,9 +100,10 @@ export const viewDescriptions: Record<ViewToolName, ToolDescription> = {
         appRef: 'src/components/ToolbarsRight/View/View.tsx:59',
       },
     ],
-    modifiers: [],
+    modifiers: [{ keys: 'Shift', action: 'Snaps a rotate drag to 15° increments.' }],
     shortcuts: [
       { keys: 'R', action: 'Selects the Rotate View tool.' },
+      { keys: 'Shift+H', action: 'Cycles between the Hand and Rotate View tools.' },
       { keys: 'Esc', action: 'Resets the view angle to zero while Rotate View is active.' },
     ],
     implementation: 'implemented',
@@ -112,7 +113,7 @@ export const viewDescriptions: Record<ViewToolName, ToolDescription> = {
       'src/components/Common/AppKeyboardShortcuts.tsx:502',
     ],
     appNotes:
-      'Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, compass overlay, Shift snapping, and Rotate All Windows are not implemented.',
+      'Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, a compass overlay, and Rotate All Windows are not implemented.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html',
       'https://helpx.adobe.com/photoshop/using/viewing-images.html',
