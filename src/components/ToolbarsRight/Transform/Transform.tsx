@@ -31,7 +31,6 @@ const Transform: React.FC<{}> = () => {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      // Already claimed by a keyboard-layer shortcut (leaving Full Screen), so one press is one action.
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       event.preventDefault();
       cancel();

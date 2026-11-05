@@ -833,7 +833,11 @@ export const useLayers = () => {
     // can be run safely if no dirty layer
 
     // special case
-    if (toolName === 'text' /* || toolName === 'crop'*/) {
+    // A scoped commit of another tool's preview (Invert runs without becoming the current tool) is
+    // not a text commit, and taking this branch would return before that preview is consumed.
+    const ownedToolName = ownedLayerId ? previewLayersRef.current[ownedLayerId]?.toolArgs?.toolName : undefined;
+    const isForeignScopedCommit = ownedToolName !== undefined && ownedToolName !== 'text';
+    if (toolName === 'text' && !isForeignScopedCommit /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
       // Successful sources capture angle before their clear path. Angle is per-layer geometry;
       // character formatting remains reusable for the next text draft.

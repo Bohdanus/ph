@@ -85,6 +85,17 @@ test.describe('Selection, Invert and screen-mode shortcuts', () => {
     await expect(panels).toBeVisible();
   });
 
+  test('Tab still toggles the panels after a click on the Hand tool surface', async ({ page }) => {
+    await page.keyboard.press('h');
+    const surface = page.getByTestId('hand-tool-area');
+    const box = await surface.boundingBox();
+    if (!box) throw new Error('the Hand tool surface has no box');
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    await page.keyboard.press('Tab');
+    await expect(page.getByTestId('left-sidebar')).toBeHidden();
+  });
+
   test('F twice reaches Full Screen, which hides every region, and a third F restores them', async ({ page }) => {
     const regions = ['header', 'options', 'tools', 'panels', 'footer'].map((name) =>
       page.locator(`[data-chrome="${name}"]`)

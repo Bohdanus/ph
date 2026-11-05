@@ -9,10 +9,15 @@ import type { ScreenMode } from '../../../contexts/ScreenMode.tsx';
 const togglePanels = vi.hoisted(() => vi.fn());
 const cycleScreenMode = vi.hoisted(() => vi.fn());
 const exitFullScreen = vi.hoisted(() => vi.fn());
-const state = vi.hoisted(() => ({ hasImage: true, isMobile: false, screenMode: 'standard' as ScreenMode }));
+const state = vi.hoisted(() => ({
+  hasImage: true,
+  isMobile: false,
+  screenMode: 'standard' as ScreenMode,
+  previewLayers: { current: {} as Record<string, unknown> },
+}));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [{ hasImage: state.hasImage }, vi.fn()],
+  useStore: () => [{ hasImage: state.hasImage, previewLayers: state.previewLayers }, vi.fn()],
 }));
 
 vi.mock('../../../hooks/useMediaQuery.ts', () => ({
@@ -54,6 +59,7 @@ beforeEach(() => {
   state.hasImage = true;
   state.isMobile = false;
   state.screenMode = 'standard';
+  state.previewLayers.current = {};
 });
 
 afterEach(() => {
@@ -64,15 +70,21 @@ describe('isPanelToggleTarget', () => {
   it('accepts no focus, the body, and the canvas surface', () => {
     const { surface } = mountWorkspace();
 
-    expect(isPanelToggleTarget(null)).toBe(true);
-    expect(isPanelToggleTarget(document.body)).toBe(true);
-    expect(isPanelToggleTarget(surface)).toBe(true);
+    expect(isPanelToggleTarget(null, false)).toBe(true);
+    expect(isPanelToggleTarget(document.body, false)).toBe(true);
+    expect(isPanelToggleTarget(surface, false)).toBe(true);
   });
 
-  it('declines a focusable view surface, which Tab could otherwise never leave', () => {
+  it('declines the view surface when the keyboard put focus there, which Tab could otherwise never leave', () => {
     const { viewSurface } = mountWorkspace();
 
-    expect(isPanelToggleTarget(viewSurface)).toBe(false);
+    expect(isPanelToggleTarget(viewSurface, false)).toBe(false);
+  });
+
+  it('accepts the view surface when a click put focus there', () => {
+    const { viewSurface } = mountWorkspace();
+
+    expect(isPanelToggleTarget(viewSurface, true)).toBe(true);
   });
 
   it('declines a control, inside the workspace or out', () => {
@@ -80,8 +92,8 @@ describe('isPanelToggleTarget', () => {
     const shellButton = document.createElement('button');
     document.body.append(shellButton);
 
-    expect(isPanelToggleTarget(control)).toBe(false);
-    expect(isPanelToggleTarget(shellButton)).toBe(false);
+    expect(isPanelToggleTarget(control, true)).toBe(false);
+    expect(isPanelToggleTarget(shellButton, true)).toBe(false);
   });
 });
 
@@ -98,6 +110,20 @@ describe('ScreenModeShortcuts', () => {
     const { surface } = mountWorkspace();
 
     expect(press('Tab', {}, surface)).toBe(true);
+    expect(togglePanels).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves focus off a view surface the keyboard reached, and toggles from one a click focused', () => {
+    renderShortcuts();
+    const { viewSurface } = mountWorkspace();
+
+    fireEvent.focusIn(viewSurface);
+    expect(press('Tab', {}, viewSurface)).toBe(false);
+
+    fireEvent.pointerDown(viewSurface);
+    fireEvent.focusIn(viewSurface);
+    fireEvent.pointerUp(window);
+    expect(press('Tab', {}, viewSurface)).toBe(true);
     expect(togglePanels).toHaveBeenCalledTimes(1);
   });
 
@@ -167,6 +193,15 @@ describe('ScreenModeShortcuts', () => {
 
     expect(press('Escape')).toBe(true);
     expect(exitFullScreen).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves Escape to a pending preview in Full Screen Mode, so Free Transform cancels first', () => {
+    state.screenMode = 'full';
+    state.previewLayers.current = { 'layer-1': { toolArgs: { toolName: 'transform' } } };
+    renderShortcuts();
+
+    expect(press('Escape')).toBe(false);
+    expect(exitFullScreen).not.toHaveBeenCalled();
   });
 
   it('leaves Escape alone outside Full Screen Mode', () => {
