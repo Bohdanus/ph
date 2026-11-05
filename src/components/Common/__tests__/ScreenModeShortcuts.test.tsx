@@ -127,6 +127,17 @@ describe('ScreenModeShortcuts', () => {
     expect(togglePanels).toHaveBeenCalledTimes(1);
   });
 
+  it('toggles from a keyboard-focused view surface once it is clicked, though focus does not move', () => {
+    renderShortcuts();
+    const { viewSurface } = mountWorkspace();
+
+    fireEvent.focusIn(viewSurface);
+    fireEvent.pointerDown(viewSurface);
+    fireEvent.pointerUp(window);
+
+    expect(press('Tab', {}, viewSurface)).toBe(true);
+  });
+
   it('leaves Tab on a focused control to move focus', () => {
     renderShortcuts();
     const { control } = mountWorkspace();

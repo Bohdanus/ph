@@ -25,15 +25,19 @@ export function isPanelToggleTarget(target: EventTarget | null, focusedByPointer
 }
 
 /**
- * Whether focus last arrived while a pointer was pressed — a click, or a `focus()` from a
- * pointer-down handler — rather than from the keyboard.
+ * Whether the user last reached the focused element with a pointer — a click, or a `focus()` from a
+ * pointer-down handler — rather than with the keyboard. A press counts even when focus does not
+ * move, since clicking the element that already has focus fires no `focusin`.
  */
 function useFocusedByPointer() {
   const focusedByPointerRef = useRef(false);
 
   useEffect(() => {
     let pointerDown = false;
-    const press = () => (pointerDown = true);
+    const press = () => {
+      pointerDown = true;
+      focusedByPointerRef.current = true;
+    };
     const release = () => (pointerDown = false);
     const focusIn = () => (focusedByPointerRef.current = pointerDown);
 
