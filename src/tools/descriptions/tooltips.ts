@@ -239,6 +239,11 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       "Photoshop's Levels remaps an image's tonal range through a histogram, a gamma pivot and per-channel black, white and output points.",
     implementation: 'partial',
   },
+  invert: {
+    summary:
+      "Photoshop's Invert replaces every channel value with its inverse on the 256-step scale, turning the layer into its negative.",
+    implementation: 'implemented',
+  },
   color: {
     summary:
       "Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.",

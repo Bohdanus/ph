@@ -474,6 +474,17 @@ describe('Transform toolbar', () => {
       expect(mockSetToolArgs).not.toHaveBeenCalled();
     });
 
+    it('leaves the preview alone when an earlier handler already claimed Escape', () => {
+      render(<Transform />);
+      const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+      event.preventDefault();
+
+      fireEvent(window, event);
+
+      expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+    });
+
     it('ignores every other key', () => {
       render(<Transform />);
 

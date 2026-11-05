@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { setViewportWidth } from './test/setup.ts';
 import { TOUR_SEEN_KEY } from './components/Common/FirstUseTour.tsx';
+import type { useScreenMode } from './contexts/ScreenMode.tsx';
 
 const setBlankImage = vi.hoisted(() => vi.fn());
 const dispatch = vi.hoisted(() => vi.fn());
@@ -22,6 +23,7 @@ const storeState = vi.hoisted(() => ({
 }));
 
 const useStoreMock = vi.hoisted(() => vi.fn());
+const screenModeHandle = vi.hoisted(() => ({ current: null as null | ReturnType<typeof useScreenMode> }));
 
 vi.mock('./components/Menu/Menu', () => ({ default: () => <div>Menu</div> }));
 vi.mock('./components/Footer/Footer', () => ({ default: () => <div>Footer</div> }));
@@ -58,6 +60,19 @@ vi.mock('./components/Mobile/MobileShell.tsx', () => ({
   ),
 }));
 vi.mock('./components/Common/AppKeyboardShortcuts.tsx', () => ({ AppKeyboardShortcuts: () => <div>Shortcuts</div> }));
+vi.mock('./components/Common/SelectionShortcuts.tsx', () => ({ SelectionShortcuts: () => null }));
+vi.mock('./components/Common/AdjustmentShortcuts.tsx', () => ({ AdjustmentShortcuts: () => null }));
+// Renders nothing, so the region order below is unchanged, and hands the test the real
+// `ScreenModeProvider`'s value so a mode change can be driven without the keyboard layer.
+vi.mock('./components/Common/ScreenModeShortcuts.tsx', async () => {
+  const { useScreenMode } = await import('./contexts/ScreenMode.tsx');
+  return {
+    ScreenModeShortcuts: () => {
+      screenModeHandle.current = useScreenMode();
+      return null;
+    },
+  };
+});
 vi.mock('./contexts/ThemeContext', () => ({
   ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useTheme: () => ({ theme: 'light', toggleTheme: vi.fn() }),
@@ -206,6 +221,23 @@ describe('App shell layout', () => {
     const regions = Array.from(grid.children).map((child) => child.firstChild?.textContent);
 
     expect(regions).toEqual(['Shortcuts', 'Menu', 'SidebarLeft', 'Main', 'SidebarRight', 'Footer', 'MobileShell']);
+  });
+
+  it('hides a region from the grid container by its data-chrome name, without unmounting it', () => {
+    const { container } = render(<App />);
+    const grid = container.firstElementChild as HTMLElement;
+
+    expect(grid.className).not.toContain('[data-chrome=');
+
+    act(() => screenModeHandle.current!.cycleScreenMode(1));
+    expect(grid.className).toContain('[&>[data-chrome=footer]]:hidden');
+    expect(grid.className).not.toContain('[&>[data-chrome=header]]:hidden');
+
+    act(() => screenModeHandle.current!.togglePanels());
+    for (const region of ['options', 'tools', 'panels']) {
+      expect(grid.className).toContain(`[&>[data-chrome=${region}]]:hidden`);
+    }
+    expect(screen.getByText('Footer')).toBeInTheDocument();
   });
 
   it('preserves the desktop grid template and adds the tablet column rule', () => {

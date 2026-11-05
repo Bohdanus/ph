@@ -142,7 +142,8 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'add-anchor-point' ||
     toolName === 'delete-anchor-point' ||
     toolName === 'convert-point' ||
-    toolName === 'custom-shape'
+    toolName === 'custom-shape' ||
+    toolName === 'invert'
   ) {
     (lastSavedSettings as Record<string, { toolName: string }>)[toolName] = cloneDeep({ toolName });
   } else if (toolName === 'rectangle' || toolName === 'ellipse' || toolName === 'line') {
