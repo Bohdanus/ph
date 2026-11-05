@@ -636,6 +636,8 @@ test.describe('Zoom tool', () => {
       'typing must preserve the point-text click anchor vertically'
     ).toBeLessThanOrEqual(3);
     await page.getByRole('button', { name: 'Commit', exact: true }).click();
+    await page.evaluate(() => window.scrollTo({ left: 0, top: 0, behavior: 'instant' }));
+    await expect.poll(() => page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 0, y: 0 });
     await expect(textOverlay).toHaveCount(0);
     await expect(layerRows).toHaveCount(initialLayerCount + 1);
     await expect(page.getByTestId('undo-button')).toBeEnabled();

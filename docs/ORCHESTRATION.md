@@ -57,8 +57,12 @@ research note or handoff. Resolve source conflicts by version; local code descri
 Photoshop. See [`docs/TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md).
 
 Every brief names **Goal, Owner, Worktree, Paths, Dependencies, Proof,** and **Handoff**. Reviewers
-receive the contract and diff, not the writer’s rationale; they never edit. Two independent
-reviewers are required for cross-module, persistence, migration, or high-risk changes.
+receive the contract and diff, not the writer’s rationale; they never edit. Keep a
+user-requested review, audit, or summary in the root when its evidence fits one
+direct read or follows a single continuous trace; do not split it by labels or
+subsystems just to fan out. For implementation reviews, use independent reviewers
+as needed and parallelize only independent scopes. Two independent reviewers are
+required for cross-module, persistence, migration, or high-risk changes.
 
 ### Autonomous and overnight runs
 

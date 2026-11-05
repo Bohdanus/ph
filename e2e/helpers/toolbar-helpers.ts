@@ -475,35 +475,24 @@ export async function resolveToolTile(page: Page, toolName: string): Promise<Loc
  *
  * This is the assertion for a question about a TOOL. It replaces reading `aria-pressed` off
  * whatever tile {@link resolveToolTile} hands back, which was correct once and is now wrong
- * for every collapsed tool: the three-dots tile deliberately renders NO `aria-pressed`
- * (SidebarLeft.tsx:635 — a control that opens a menu must not also claim to be a pressed
- * toggle for a tool the user cannot see), so that read reports `Received: ""` on a tile that
- * is in fact correctly lit.
+ * for every collapsed tool: the three-dots tile deliberately renders no `aria-pressed`, since
+ * a menu-opening control must not claim to be a pressed toggle for a hidden tool. Reading that
+ * attribute therefore reports `Received: ""` on a tile that is in fact correctly lit.
  *
  * The two branches assert DIFFERENT surfaces because the two tiles are different kinds of
  * control, and collapsing them into one selector is what made the old form misleading:
  *
  * - A tool with a tile of its own is a toggle button, and `aria-pressed` is exactly the right
  *   question to ask it. Unchanged from before.
- * - A collapsed tool is represented by the three-dots tile, which paints its lit state as
- *   `TOOL_BUTTON_ACTIVE_CLASS` off the same `group.some(tool => tool.name === toolName)`
- *   predicate the attribute used to expose (SidebarLeft.tsx:636). So the class is read
- *   instead — the same predicate, on the same tile, through the channel the component still
- *   renders. This is a re-reading of the identical claim, not a weaker one: it still fails if
- *   the group stops lighting for a selected member, and it still passes when it should.
+ * - A collapsed tool is represented by the three-dots tile, whose lit class means that SOME
+ *   tool in the collapsed group is active. That class is necessary but not sufficient for a
+ *   tool-specific assertion, so this branch also checks the active tool's uniquely named
+ *   options region.
  *
- * A caller needing to know WHICH of the two it got asks {@link hasOwnToolTile}; this function
- * makes the same choice internally so no caller has to.
- *
- * IT IS GROUP-LEVEL FOR A COLLAPSED TOOL, and a caller that needs to name the tool cannot rely on
- * it alone. The class is `group.some(...)` over the whole collapsed set (SidebarLeft.tsx:636), so
- * `expectToolSelected(page, 'eraser')` is answered by "is SOME collapsed tool selected". At 1280x720
- * that is true from page load, because the tool the app opens with is itself folded at that height
- * — the rail keeps its first seven groups there, and the tool it opens with is not one of them. The
- * `aria-pressed` this replaced was the same predicate on the same tile, so this is not a weakening —
- * but a test that must prove a SPECIFIC tool is up needs a second, per-tool assertion: that tool's
- * own options-bar control (`keyboard-shortcuts.spec.ts:173`) or an effect only that tool produces.
- * See the P2 entry in e2e/OPEN_PROBLEMS.md.
+ * For collapsed tools, the overflow tile's class remains group-level. The named options region
+ * supplies the per-tool identity: when selected, it must exist exactly once; when not selected,
+ * it must not exist. This also lets a different collapsed tool remain active without making a
+ * negative assertion fail merely because their shared overflow tile is lit.
  */
 export async function expectToolSelected(page: Page, toolName: string, selected = true): Promise<void> {
   const ownTile = getToolButton(page, toolName);
@@ -519,14 +508,19 @@ export async function expectToolSelected(page: Page, toolName: string, selected 
   // does not perturb the rail the caller is about to measure.
   const overflow = page.getByTestId(OVERFLOW_TILE_TESTID);
   await expect(overflow, `the three-dots tile representing ${toolName} is not on the rail`).toHaveCount(1);
-  // `\b` anchors: an unanchored `/bg-blue-100/` is a substring match that can be satisfied by a
-  // neighbouring utility, and the whole point of reading a class is to read THIS one.
-  const lit = selected
-    ? expect(overflow, `${toolName} is selected but the tile standing for it is not lit`).toHaveClass(/\bbg-blue-100\b/)
-    : expect(overflow, `${toolName} is not selected yet the tile standing for it is lit`).not.toHaveClass(
-        /\bbg-blue-100\b/
-      );
-  await lit;
+  const activeToolOptions = page.getByRole('region', {
+    name: `${resolveToolName(toolName)} tool options`,
+    exact: true,
+    includeHidden: true,
+  });
+  await expect(activeToolOptions, `${toolName} ${selected ? 'must be' : 'must not be'} the active tool`).toHaveCount(
+    selected ? 1 : 0
+  );
+
+  if (selected) {
+    // `\b` anchors: an unanchored `/bg-blue-100/` could match a neighbouring utility.
+    await expect(overflow, `${toolName} is selected but the overflow tile is not lit`).toHaveClass(/\bbg-blue-100\b/);
+  }
 }
 
 /**

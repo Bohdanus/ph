@@ -457,6 +457,8 @@ export type Action =
     }
   | { type: 'SET_COLOR'; payload: string }
   | { type: 'SET_BACKGROUND_COLOR'; payload: string }
+  | { type: 'SWAP_COLORS' }
+  | { type: 'RESET_COLORS' }
   | { type: 'SET_SELECTIONS'; payload: Selection[] }
   | { type: 'ADD_SELECTION'; payload: Selection }
   | { type: 'COMMIT_SELECTION'; payload: Selection }
@@ -512,6 +514,10 @@ export const INTERCEPTED_STORE_ACTION_TYPES = [
 const INTERCEPTED_STORE_ACTIONS: ReadonlySet<StoreAction['type']> = new Set(INTERCEPTED_STORE_ACTION_TYPES);
 
 type UninterceptedActionType = Exclude<StoreAction['type'], (typeof INTERCEPTED_STORE_ACTION_TYPES)[number]>;
+
+/** Photoshop's Default Foreground and Background Colors: black over white. */
+export const DEFAULT_FOREGROUND_COLOR = '#000000';
+export const DEFAULT_BACKGROUND_COLOR = '#ffffff';
 
 const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 
@@ -574,8 +580,8 @@ const initialState: StoreData = {
     frame: { x: 0, y: 0, width: 0, height: 0 },
   },
 
-  color: '#000000',
-  backgroundColor: '#ffffff',
+  color: DEFAULT_FOREGROUND_COLOR,
+  backgroundColor: DEFAULT_BACKGROUND_COLOR,
 };
 
 function normalizeDurableProjection(projection: DurableProjection): DurableProjection {
@@ -1121,6 +1127,13 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return { ...state, color: action.payload };
     case 'SET_BACKGROUND_COLOR':
       return { ...state, backgroundColor: action.payload };
+    // Both colour transitions read the pair from `state`, not from a caller's render: two
+    // presses inside one render must compose, and one dispatch is one render.
+    case 'SWAP_COLORS':
+      return { ...state, color: state.backgroundColor, backgroundColor: state.color };
+    case 'RESET_COLORS':
+      if (state.color === DEFAULT_FOREGROUND_COLOR && state.backgroundColor === DEFAULT_BACKGROUND_COLOR) return state;
+      return { ...state, color: DEFAULT_FOREGROUND_COLOR, backgroundColor: DEFAULT_BACKGROUND_COLOR };
     case 'SET_DURABLE_STATUS':
       return {
         ...state,
@@ -1534,9 +1547,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   // Presentation ownership is provider-scoped, not document-scoped. A document
   // replacement commits in the same turn as a promotion requested just before
-  // it, so a per-document scope would dispose a bitmap the new document
-  // legitimately owns. The document boundary is the canvas identity token, and
-  // document exit releases that document's published caches explicitly.
+  // it, and imports can reuse a raster identity across documents. Promotion
+  // admission uses the canvas identity token; resource release tracks all
+  // document owners and closes only after the final owner exits.
   const presentationScope = useMemo(() => new DocumentPresentationScope(), []);
   useEffect(() => () => presentationScope.dispose(), [presentationScope]);
   useEffect(() => {
@@ -2283,6 +2296,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         type: 'REPLACE_DOCUMENT',
         payload: committedPayload,
       });
+      // A replacement normally changes document id, whose effect cleanup releases
+      // the departing document. A same-id reset does not trigger that cleanup, so
+      // retire assets against the replacement record explicitly.
+      if (currentState.documentId === nextState.documentId) {
+        retireDepartedPresentationBitmaps(presentationScope, nextState.documentId, nextState);
+      }
       return;
     }
     // Unreachable at runtime: the chain above returns for every intercepted

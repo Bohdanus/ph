@@ -1,204 +1,195 @@
 #!/usr/bin/env node
-/**
- * free-model-validator.mjs — Programmatic enforcement of free model constraints.
- *
- * This module MUST be called before launching any subagent to prevent paid model fallback.
- * It validates:
- * 1. Model + provider pair exists in verified free catalog
- * 2. No ambiguous/unknown pricing
- * 3. OpenRouter quota available
- * 4. Provider credentials present
- *
- * Usage:
- *   import { validateFreeModel, validateSubagentConfig } from './scripts/free-model-validator.mjs';
- *   await validateFreeModel({ model: 'nvidia/nemotron-3-ultra-550b-a55b:free', provider: 'openrouter' });
- *   await validateSubagentConfig({ model, provider, maxSubagents: 5 });
- */
 
-import { loadCatalogs } from './free-model-pool.mjs';
-import { probeOpenRouterQuota } from './free-model-pool.mjs';
+import { loadCatalogs, normalizeGroqKeys, probeOpenRouterQuota } from './free-model-pool.mjs';
+import { DEFAULT_QUARANTINE_FILE } from './lib/free-model-quarantine.mjs';
 
-const KNOWN_PAID_PATTERNS = [
-  /gpt-?/i,
-  /claude/i,
-  /o1/i,
-  /o3/i,
-  /opus/i,
-  /sonnet/i,
-  /haiku/i,
-  /gemini-?pro/i,
-  /llama-?3\.1-?405b/i,
-  /mistral-?large/i,
-  /cohere-?command/i,
-  /command-?r/i,
-  /jamba/i,
-  /qwen-?max/i,
-  /deepseek-?v3/i,
-  /deepseek-?r1/i,
-];
-
-const VERIFIED_FREE_MODELS = new Set([
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
-  'xingchen-agi/xing4.0-29b-a4b:free',
-  'openai/gpt-oss-120b',
-  'poolside/laguna-s-2.1:free',
-]);
-
+const MAX_SUBAGENTS = 15;
 const ALLOWED_PROVIDERS = new Set(['openrouter', 'kilo', 'groq', 'opencode']);
 
-export function isKnownPaidModel(model) {
-  if (!model || typeof model !== 'string') return false;
-  return KNOWN_PAID_PATTERNS.some((pattern) => pattern.test(model));
-}
-
-export function isVerifiedFreeModel(model) {
-  return VERIFIED_FREE_MODELS.has(model);
+function configuredGroqKeys(groqApiKey, groqApiKeys) {
+  return normalizeGroqKeys(groqApiKey, groqApiKeys)
+    .filter((key) => typeof key === 'string')
+    .map((key) => key.trim())
+    .filter(Boolean);
 }
 
 export function isAllowedProvider(provider) {
-  return provider && ALLOWED_PROVIDERS.has(provider.toLowerCase());
+  return typeof provider === 'string' && ALLOWED_PROVIDERS.has(provider.trim().toLowerCase());
+}
+
+function normalizeConfig(config, index) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error(`Subagent config ${index + 1} must be an object`);
+  }
+  if (typeof config.model !== 'string' || config.model.trim() === '') {
+    throw new Error(`Subagent config ${index + 1} requires a model`);
+  }
+  if (!isAllowedProvider(config.provider)) {
+    throw new Error(`Subagent config ${index + 1} has an unsupported provider`);
+  }
+  return { model: config.model.trim(), provider: config.provider.trim().toLowerCase() };
+}
+
+export async function validateSubagentConfigs(
+  configs,
+  {
+    maxSubagents = Array.isArray(configs) ? configs.length : 0,
+    openRouterKey = process.env.OPENROUTER_API_KEY,
+    groqApiKey = process.env.GROQ_API_KEY,
+    groqApiKeys = process.env.GROQ_API_KEYS
+      ? process.env.GROQ_API_KEYS.split(',')
+          .map((key) => key.trim())
+          .filter(Boolean)
+      : [],
+    groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
+    fetchImpl = fetch,
+    quarantineFile = DEFAULT_QUARANTINE_FILE,
+  } = {}
+) {
+  if (!Array.isArray(configs) || configs.length === 0) {
+    throw new Error('configs must be a non-empty array');
+  }
+  if (!Number.isSafeInteger(maxSubagents) || maxSubagents < 1 || maxSubagents > MAX_SUBAGENTS) {
+    throw new Error(`maxSubagents must be 1-${MAX_SUBAGENTS}`);
+  }
+  if (configs.length > maxSubagents) {
+    throw new Error(`Subagent count (${configs.length}) exceeds maxSubagents (${maxSubagents})`);
+  }
+
+  const normalized = configs.map(normalizeConfig);
+  const needsOpenRouter = normalized.some(({ provider }) => provider === 'openrouter');
+  const openRouterTaskCount = normalized.filter(({ provider }) => provider === 'openrouter').length;
+  const needsGroq = normalized.some(({ provider }) => provider === 'groq');
+  const groqKeys = configuredGroqKeys(groqApiKey, groqApiKeys);
+  const effectiveOpenRouterKey = needsOpenRouter && typeof openRouterKey === 'string' ? openRouterKey.trim() : '';
+  const effectiveGroqKey = needsGroq ? (groqKeys[0] ?? '') : '';
+
+  if (needsOpenRouter && !effectiveOpenRouterKey) {
+    throw new Error('OpenRouter provider requires OPENROUTER_API_KEY');
+  }
+  if (needsGroq && groqFreePlan !== true) {
+    throw new Error('Groq provider requires GROQ_FREE_PLAN=1');
+  }
+  if (needsGroq && groqKeys.length === 0) {
+    throw new Error('Groq provider requires GROQ_API_KEY or GROQ_API_KEYS');
+  }
+
+  const unavailableSources = new Set();
+  const catalog = await loadCatalogs({
+    fetchImpl,
+    openRouterKey: effectiveOpenRouterKey,
+    groqApiKey: effectiveGroqKey,
+    groqApiKeys: needsGroq && groqFreePlan === true ? [effectiveGroqKey] : [],
+    includeOpenRouterCatalog: needsOpenRouter,
+    includeGroq: needsGroq && groqFreePlan === true,
+    quarantineFile,
+    initializeLegacyQuarantine: false,
+    onCatalogError: (source) => unavailableSources.add(source),
+  });
+
+  for (const { model, provider } of normalized) {
+    if (catalog.some((candidate) => candidate.source === provider && candidate.model === model)) {
+      continue;
+    }
+    if (unavailableSources.has(provider)) {
+      throw new Error(`Live ${provider} catalog is unavailable; refusing to validate a free model`);
+    }
+    throw new Error(`Model "${model}" is not currently verified free for provider "${provider}"`);
+  }
+
+  if (needsOpenRouter) {
+    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey: effectiveOpenRouterKey });
+    if (quota.reason !== 'ok' || !Number.isSafeInteger(quota.remaining)) {
+      throw new Error(`OpenRouter quota is unavailable (${quota.reason}); refusing to launch subagents`);
+    }
+    if (quota.remaining < openRouterTaskCount) {
+      throw new Error(
+        `OpenRouter quota insufficient for ${openRouterTaskCount} OpenRouter subagents (${quota.remaining} remaining)`
+      );
+    }
+  }
+
+  return normalized.map((config) => ({ ...config, validated: true }));
 }
 
 export async function validateFreeModel({
   model,
   provider,
-  openRouterKey = process.env.OPENROUTER_API_KEY,
-  groqKeys = process.env.GROQ_API_KEYS
-    ? process.env.GROQ_API_KEYS.split(',')
-        .map((k) => k.trim())
-        .filter(Boolean)
-    : [],
-  groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
-  fetchImpl = fetch,
+  maxSubagents = 1,
+  openRouterKey,
+  groqApiKey,
+  groqApiKeys,
+  groqFreePlan,
+  fetchImpl,
+  quarantineFile,
 } = {}) {
-  const errors = [];
-
-  if (!model || typeof model !== 'string') {
-    errors.push('Model is required');
-  }
-
-  if (!provider || typeof provider !== 'string') {
-    errors.push('Provider is required');
-  }
-
-  if (errors.length > 0) {
-    throw new Error(`Validation failed: ${errors.join(', ')}`);
-  }
-
-  const normalizedProvider = provider.toLowerCase();
-
-  if (!isAllowedProvider(normalizedProvider)) {
-    throw new Error(`Provider "${provider}" not in allowed free providers: ${[...ALLOWED_PROVIDERS].join(', ')}`);
-  }
-
-  if (isKnownPaidModel(model)) {
-    throw new Error(`Model "${model}" matches known paid model pattern — reject`);
-  }
-
-  if (!isVerifiedFreeModel(model)) {
-    const catalog = await loadCatalogs({
-      fetchImpl,
-      openRouterKey,
-      groqApiKey: groqKeys[0],
-      groqApiKeys: groqFreePlan ? groqKeys : [],
-      includeOpenRouterCatalog: normalizedProvider === 'openrouter',
-      includeGroq: normalizedProvider === 'groq' && groqFreePlan,
-    });
-
-    const found = catalog.find((c) => c.source === normalizedProvider && c.model === model);
-
-    if (!found) {
-      throw new Error(
-        `Model "${model}" not found in verified free catalog for provider "${normalizedProvider}". ` +
-          `Known free: ${[...VERIFIED_FREE_MODELS].join(', ')}`
-      );
-    }
-  }
-
-  if (normalizedProvider === 'openrouter') {
-    if (!openRouterKey) {
-      throw new Error('OpenRouter provider requires OPENROUTER_API_KEY');
-    }
-    const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-    if (quota.reason === 'ok' && quota.remaining <= 0) {
-      throw new Error(`OpenRouter daily free quota exhausted (${quota.used}/${quota.limit})`);
-    }
-  }
-
-  if (normalizedProvider === 'groq') {
-    if (!groqFreePlan) {
-      throw new Error('Groq provider requires GROQ_FREE_PLAN=1');
-    }
-    if (groqKeys.length === 0) {
-      throw new Error('Groq provider requires GROQ_API_KEY or GROQ_API_KEYS');
-    }
-  }
-
-  if (normalizedProvider === 'kilo') {
-    // Kilo CLI availability checked at runtime
-  }
-
-  if (normalizedProvider === 'opencode') {
-    // OpenCode CLI availability checked at runtime
-  }
-
-  return { model, provider: normalizedProvider, validated: true };
+  const [validated] = await validateSubagentConfigs([{ model, provider }], {
+    maxSubagents,
+    openRouterKey,
+    groqApiKey,
+    groqApiKeys,
+    groqFreePlan,
+    fetchImpl,
+    quarantineFile,
+  });
+  return validated;
 }
 
 export async function validateSubagentConfig({
   model,
   provider,
   maxSubagents = 1,
+  openRouterKey,
+  groqApiKey,
+  groqApiKeys,
+  groqFreePlan,
+  fetchImpl,
+  quarantineFile,
+} = {}) {
+  return validateFreeModel({
+    model,
+    provider,
+    maxSubagents,
+    openRouterKey,
+    groqApiKey,
+    groqApiKeys,
+    groqFreePlan,
+    fetchImpl,
+    quarantineFile,
+  });
+}
+
+export async function getFreeModelOptions({
   openRouterKey = process.env.OPENROUTER_API_KEY,
-  groqKeys = process.env.GROQ_API_KEYS
+  groqApiKey = process.env.GROQ_API_KEY,
+  groqApiKeys = process.env.GROQ_API_KEYS
     ? process.env.GROQ_API_KEYS.split(',')
-        .map((k) => k.trim())
+        .map((key) => key.trim())
         .filter(Boolean)
     : [],
   groqFreePlan = process.env.GROQ_FREE_PLAN === '1',
   fetchImpl = fetch,
+  quarantineFile = DEFAULT_QUARANTINE_FILE,
 } = {}) {
-  if (!Number.isSafeInteger(maxSubagents) || maxSubagents < 1 || maxSubagents > 20) {
-    throw new Error('maxSubagents must be 1-20');
-  }
-
-  if (maxSubagents > 10) {
-    console.warn(`Warning: Launching ${maxSubagents} subagents may exceed rate limits`);
-  }
-
-  const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
-  if (quota.reason === 'ok' && maxSubagents > quota.remaining) {
-    throw new Error(`OpenRouter quota insufficient for ${maxSubagents} subagents (${quota.remaining} remaining)`);
-  }
-
-  return validateFreeModel({ model, provider, openRouterKey, groqKeys, groqFreePlan, fetchImpl });
-}
-
-export async function getFreeModelOptions() {
+  const groqKeys = configuredGroqKeys(groqApiKey, groqApiKeys);
+  const effectiveOpenRouterKey = typeof openRouterKey === 'string' ? openRouterKey.trim() : '';
   const catalog = await loadCatalogs({
-    fetchImpl: fetch,
-    openRouterKey: process.env.OPENROUTER_API_KEY,
-    groqApiKey: process.env.GROQ_API_KEY,
-    groqApiKeys: process.env.GROQ_API_KEYS
-      ? process.env.GROQ_API_KEYS.split(',')
-          .map((k) => k.trim())
-          .filter(Boolean)
-      : [],
+    fetchImpl,
+    openRouterKey: effectiveOpenRouterKey,
+    groqApiKey: groqFreePlan === true ? (groqKeys[0] ?? '') : '',
+    groqApiKeys: groqFreePlan === true ? groqKeys.slice(0, 1) : [],
     includeOpenRouterCatalog: true,
-    includeGroq: process.env.GROQ_FREE_PLAN === '1',
+    includeGroq: groqFreePlan === true && groqKeys.length > 0,
+    quarantineFile,
+    initializeLegacyQuarantine: false,
   });
-
   return catalog
-    .filter((c) => ALLOWED_PROVIDERS.has(c.source))
-    .map((c) => ({ model: c.model, provider: c.source, name: c.name }));
-}
-
-export function getVerifiedFreeModels() {
-  return [...VERIFIED_FREE_MODELS];
+    .filter((candidate) => ALLOWED_PROVIDERS.has(candidate.source))
+    .map(({ model, source: provider, name }) => ({ model, provider, name }));
 }
 
 export function getAllowedProviders() {
   return [...ALLOWED_PROVIDERS];
 }
 
-export { loadCatalogs, probeOpenRouterQuota } from './free-model-pool.mjs';
+export { loadCatalogs, probeOpenRouterQuota };

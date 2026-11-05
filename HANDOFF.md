@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 141-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 220, 222, 224-227, 229-232 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-66, 67-73, 75, 77, 81-82, 84-85, 87-93, 95, 96-97, 100-102, 104-106, 108, 111-112, 114, 115, 117-118, 122, 124-138, 140-142, 144-145, 147, 149-150, 154-155, 157-159, 161, 165-166, 168, 170, 175-177, 180, 185-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-214, 219-220, 222, 224-227, 229-232 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1167,43 +1167,6 @@ validate ref paths. No archive/delete operation is performed by this audit.
 `e2e/OPEN_PROBLEMS.md`
 ---
 
-## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
-
-`index.html`'s two Google Tag Manager `<script>` tags load the container `GTM-WBWSB9XS` (the id is
-declared in `index.html`'s container-id constant) from `googletagmanager.com`. Nothing in `e2e/`
-stubs, blocks or
-asserts on it.
-
-Three consequences, in increasing order of how much they matter:
-
-1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` — its module note headed "WHAT IS
-   REPORTED BUT NOT FAILED" — is where this is now
-   recorded — the container "beacons to
-   `region1.google-analytics.com` on every page — including every e2e run, which makes the suite
-   non-hermetic and would otherwise fail ~36 times over a network call no test controls". That is
-   the accurate figure; the "1-8 per test" this entry used to quote is not stated anywhere in the
-   tree and should not be re-derived by guess.
-2. **Every CI run contacts a third party.** A build gate that depends on Google's reachability
-   to stay green is a build gate with an extra failure mode it does not own.
-3. **Local development leaks to a production analytics property.** A developer's stroke, tool
-   switch and undo are reported to that container with no opt-in. (The measurement id this entry
-   used to name, `G-7F5V72YQ4K`, is **gone** — `grep -rn 'G-7F5V72YQ4K' index.html e2e/ src/`
-   returns nothing, so only the container remains.)
-
-Whether analytics belongs in a local editor at all is an operator decision and is not made here.
-
-**Fix.** Decide the policy first — absent, or opt-in behind an env flag that `e2e/` sets to
-nothing. Then either drop the two script tags from `index.html` or make them conditional on that
-flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googletagmanager.com`
-to `abort()` so the suite stops depending on them. The third point is the one worth resolving
-regardless of which policy is chosen.
-
-**Files.** `index.html` — the two Google Tag Manager `<script>` tags and the `GTM-WBWSB9XS` container
-id; `e2e/global-setup.ts` — `refuseVisibleBrowser()`;
-`e2e/helpers/console-police.ts` — its "WHAT IS REPORTED BUT NOT FAILED" note
-
----
-
 ## 143. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
 
 **Problem.** Two audits of this sweep disagreed about the same thing, and the second one was wrong.
@@ -1497,35 +1460,6 @@ operator's hand — an agent records the finding and stops, which is what this e
 `scripts/__tests__/worktree-inventory.test.mjs` (`describe('the curated table')`),
 `e2e/OPEN_PROBLEMS.md` (the GROUP-level collapsed-tool assertion entry), `AGENTS.md` (model policy,
 overrides)
-
-## 160. Dark-theme accessibility scans are in place; axe incomplete candidates still need review
-
-The shared e2e fixture pins light because the pixel-analysis helpers rely on the light workspace
-backdrop. `e2e/accessibility.spec.ts` releases that pin, reloads, and audits the shell, New Image
-dialog, unsaved-changes prompt, Draw options bar, and tablet flyout in both themes. The current ten
-scans report zero confirmed axe violations.
-
-**Manual-review boundary.** Axe's `incomplete` bucket contains cases it could not decide; it is not
-evidence of a violation. `expectNoViolations()` attaches the full result, including target selectors,
-and logs candidate rule counts; only confirmed `violations` fail the suite. The shell and tablet-flyout
-runs include incomplete `color-contrast` and `label-content-name-mismatch` candidates. Do not assert
-the whole bucket empty or attribute a candidate to a particular target without reviewing the attached
-result.
-
-The collapsed dock glyph's measured foreground/background ratios are 6.10:1 in light and 7.00:1
-in dark, above WCAG AA's 4.5:1 requirement for normal text. Its `incomplete` target and reason have
-not been revalidated after the color fix; do not assume a generic incomplete result belongs to this
-glyph.
-
-**Next work.** Review the attached candidates individually, then add deterministic assertions or
-fixes for confirmed issues. Preserve the distinction between confirmed violations and axe's
-human-review bucket. Other overlays and responsive states remain outside the current audit.
-
-**Files.** `e2e/accessibility.spec.ts` — the scoped scans and `expectNoViolations()`;
-`e2e/fixtures/extended-test.ts` — `pinnedTheme` and `useAppDefaultTheme()`;
-`src/components/SidebarRight/PanelGroup.tsx` — the collapsed dock glyph.
-
----
 
 ## 164. Centered 1px strokes can antialias across rows; Photoshop pixel-grid parity is unproven
 
@@ -1943,45 +1877,50 @@ already-landed patch-equivalence logic.
 `scripts/lib/worktree-inventory/classify.mjs`; `scripts/dispose-worktree.mjs`;
 `scripts/__tests__/worktree-inventory.test.mjs`; `scripts/__tests__/dispose-worktree.test.mjs`.
 
-## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
+## 193. Paragraph overflow at the document edge has no verified raster contract
 
-**Problem.** `calculateNewRect`'s paragraph arm returns `trimRect2(newRect, imageSize)`, so every
-edge of a paragraph box is clamped into the document. That clamp is what makes Adobe's overflow icon
-reachable — the icon reports the lines against the box's height, and a box that could grow past the
-document's bottom edge could never outgrow its own height — and `e2e/text-tool.spec.ts` pins it.
+**Confirmed app behavior.** `calculateNewRect` in `src/util/rect.ts` measures all wrapped
+paragraph lines with `layoutText`, grows `y2` to the required height, and then clamps the rectangle
+with `trimRect2`. In `src/tools/text.ts`, `layoutText` returns every wrapped or hard-broken line; its
+optional `boxHeight` contributes to the returned `overflow` boolean, but all lines remain in the
+result. `renderTextInto` draws every returned line. `createLayerFromTool` sets the committed `pos`
+from the rect, and `createLayerSource`
+passes that `pos` as the creator size (`src/contexts/useLayer.ts`, `src/contexts/layer-utils.ts`). The
+text creator allocates an `OffscreenCanvas` at that size (`src/tools/text.ts`); pixels drawn beyond it
+are clipped by its raster bounds. `TextEditOverlay` requests CSS `overflow: visible` for the editable
+content; that property alone does not establish how the draft overlay is clipped or composited at the
+document edge.
 
-The consequence is that a paragraph box whose content needs more height than remains in the document is
-clamped at the document edge, and lines beyond the clamped `y2` are cropped rather than retained past
-the edge. The layer canvas is sized from the resulting `pos` (`createLayerFromTool` and
-`createLayerSource`), and `renderTextInto` lays out against that bounded height; drawing beyond the
-OffscreenCanvas is clipped. A point box follows a different path: it clamps its origin and lets its
-extent grow with the content, so ink beyond the document edge remains in the layer raster.
+The current tool-layer source retains the text and paragraph rectangle in `source.args`
+(`src/contexts/useLayer.ts`); `textLayerEditTarget` hydrates those values for editing
+(`src/contexts/text-layer-edit.ts`). This confirms that the editor's source-backed re-edit path retains
+the text and rect; it does not establish how much text is rendered or how Photoshop exports or
+serializes it. The unresolved question is whether Photoshop clips committed overflow to the paragraph
+boundary or renders any of it beyond that boundary, and whether canvas expansion reveals it.
 
-**Coverage gap.** `e2e/text-tool.spec.ts` tests the draft overflow icon, but its fixture leaves 40px of
-document space below the paragraph box, so the document-edge clamp is not exercised. It checks that the
-icon is not baked into the layer, not that overflow text is retained. The inspected `rect.test.ts`
-paragraph cases also keep their boxes away from the document edge; there is no unit or E2E assertion for
-the clamped-commit case.
+**Current Adobe documentation.** Adobe's current desktop guide describes paragraph type as text that wraps automatically inside a bounding box and says the box can be resized; it does not describe an overflow indicator or specify what happens to text beyond the box at commit. The current UXP `TextItem` reference exposes `contents` and `isParagraphText`; it does not specify overflow rasterization or serialization. The current Canvas Size guide describes adding workspace while preserving image pixels, but does not say whether canvas expansion reveals paragraph text outside the former canvas. The previously cited `/in/photoshop/using/creating-type.html` URL now returns 404; the nonregional `/photoshop/using/creating-type.html` redirects to the current [Type layers in Photoshop guide](https://helpx.adobe.com/photoshop/desktop/text-typography/type-layers-creation/type-layers-in-photoshop.html), which also omits overflow. The currently accessible sources therefore do not confirm the overflow and conversion claims from the older guide.
 
-**What would close it.** This is a product/serialization decision, not a local renderer tweak:
+Sources: [Adobe, type layers in Photoshop](https://helpx.adobe.com/photoshop/desktop/text-typography/type-layers-creation/type-layers-in-photoshop.html); [Adobe UXP, `TextItem`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem); [Adobe, change canvas size](https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/resize-adjust-resolution/change-the-canvas-size.html).
 
-- Let the paragraph box grow past the document's bottom edge. Closes the crop, and makes the
-  overflow icon unreachable — a box that always grows to fit cannot overflow — which deletes a
-  shipped Photoshop feature and its e2e.
-- Keep the clamp and disable Apply while the draft overflows. Keeps the icon, costs the user a
-  control they cannot use until they make room, and invents a gate Adobe does not document.
-- Report the overflow against the box the user DRAGGED rather than the grown one, so the icon
-  survives a growing box. `renderText` is handed only the final rect and has no knowledge of the
-  drag, so `calculateNewRect`'s return type would have to carry it.
-- Separate the text layout/drawing extent from the boundary used for the overflow indicator, and
-  preserve both through the committed layer representation. This may retain content while keeping the
-  icon, but requires tracing serialization and later edit behavior; it is not established as a safe
-  fix by the current audit.
+**Decision and blocker.** The app's content-driven height growth is not described in the current Adobe sources, but those sources do not explicitly say whether Photoshop grows the box as text is entered. Treating the authored rectangle as the layout boundary remains an inference. The app's live draft can show an overflow indicator at the document edge while the committed raster is bounded by `pos`; current Adobe documentation does not establish whether that mismatch matches Photoshop or how off-canvas text should behave after commit. Do not change code or tests until this is checked in Photoshop.
 
-**Provenance.** Found by review of the Type tool against its own requirements document, not by a
-failing test. An independent code-path audit confirms the clamp reaches the commit canvas, while the
-existing E2E fixture does not reach that boundary. Adobe's exact document-edge/overflow behavior was
-not independently verified in this pass; see the cited Adobe type documentation in the tool notes.
+**Coverage.** The E2E `the overflow icon is on the draft overlay only while the type outgrows the box`
+in `e2e/text-tool.spec.ts` starts from `OVERFLOW_RECT`, whose bottom is row 560 of the default
+800x600 document (`src/App.tsx`). The initial drag is 40px from the edge; replacing its text with three hard-broken
+lines makes `calculateNewRect` grow and clamp the box to the document bottom. The test waits for that
+box position and measures the icon at the bottom-right edge. The earlier note was right about the
+initial rectangle but wrong to infer that the fixture never exercises the clamp. After commit, the
+test waits for some in-frame text ink and confirms the icon is absent; it does not establish whether
+the overflow line survives, re-editing restores it, or canvas expansion reveals it.
+
+**Next step.** Verify in Photoshop before implementing: create paragraph text with known overflow
+inside the document and at its bottom edge; record whether overflow ink is visible outside the box
+while editing and after commit; expand the canvas without resizing the box and check whether any ink
+appears; then re-enter the layer, resize the box, and confirm all text remains. Use that observation to
+choose between a single fixed layout/raster extent and separate retained layout/raster extents. Until
+then, do not change committed pixel/raster behavior or add tests that assume unverified Photoshop
+behavior. Keep the existing test for this editor's draft overlay; add Photoshop parity assertions only
+after observing the corresponding behavior.
 
 ## 197. Multi-layer bedrock conversion remains intentionally unavailable
 
@@ -2111,8 +2050,10 @@ for the source scanner to validate.
 Human-written source/configuration/markup comments follow the same ban. Structured `implementationRefs` in tool-description
 data are separate machine-readable metadata and require a separate migration decision.
 
-The read-only resolver sweep returned 85 unresolved citations across five documents and 23 target
-files; this is an audit worklist, not proof that every reference is stale. Direct source checks also
+The current resolver run returns 77 unresolved citations across three documents excluded from the
+maintained-document scan and 18 target files; this is an audit worklist, not proof that every
+reference is stale. The generated `docs/TOOLS.md` citation is clean after normalizing its
+magnetic-lasso range citation in `src/tools/descriptions/selection.ts`. Direct source checks also
 found seven View `appRef`s all pointing to the import line, a Blur default-setting/processor/fallback
 reference mismatch, six Pen placeholder references pointing at a blank line instead of the dummy
 fallback, and rectangular-selection prose whose line references had shifted. Those high-confidence
@@ -2132,38 +2073,6 @@ citations with stable identifiers where the document remains maintained; leave o
 migrate to symbol anchors or remain line-based with a stronger semantic review policy. Keep generated
 `docs/TOOLS.md` under its generator and rerun the description/citation tests after source metadata
 changes.
-
-## 219. Test resource isolation has no repository-wide write-boundary guard
-
-**Problem.** The e2e-run suite now has checks for its own resource boundaries: it exercises
-`reservePort`, gives the runner a temporary board with `AGENT_BOARD_DIR`, sends each run record to
-a temporary path, and reads the live worktree record only as a tripwire. Those checks are local to
-that suite. No repository-wide rule prevents another test from writing a path owned by a concurrent
-process, and no derived inventory of tests that write shared paths exists.
-
-`node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e queue sentinel, and the board database
-can all be shared across tests or worktrees. The suite-budgets inventory derives process-spawning
-tests only; it does not discover file writes or establish an allowlist for them.
-
-A read-only audit found concrete cases with different risk shapes: the tsc-guard installer tests
-write `.bin/tsc` only when their real-path ownership check passes, while a wrapper hides the child
-process's repository `cwd`; `dispose-worktree.test.mjs` creates a module-level fixed temp-directory
-name with no cleanup, which can collide across concurrent runs; and the merge-takeover guard test
-changes `PATH`/`REAL_GIT_PATH`, which is shared process state rather than a filesystem write.
-Intentional machine-shared reads, including the session DB with `readOnly: true`, must remain allowed.
-
-**Affected.** `scripts/__tests__/e2e-run.test.mjs`; `scripts/lib/**` for the shared-path helpers;
-the wider `scripts/__tests__` tree; `node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e
-queue sentinel, `board.db`.
-
-**What would close it.** A bounded, derived static audit over script tests that flags recognized
-filesystem write APIs and write-capable subprocess/shell patterns, with explicit narrow
-classification for temporary fixtures and intentional shared reads. Fail or require review for
-unclassified write-shaped patterns, and derive the scan set from the test tree. Such an audit is a
-heuristic, not runtime containment: it cannot prove destinations of dynamic paths, imported helper
-writes, native modules, or child processes, and it must not claim to enforce that every actual write
-is inside a per-test temp directory. Keep shared-read and `PATH`-mutation classification explicit;
-they are different boundary types.
 
 ## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
 

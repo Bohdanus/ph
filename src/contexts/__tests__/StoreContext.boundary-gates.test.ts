@@ -254,6 +254,8 @@ const ALL_PUBLIC_ACTIONS: Record<PublicAction['type'], true> = {
   SET_DURABLE_STATUS: true,
   SET_COLOR: true,
   SET_BACKGROUND_COLOR: true,
+  SWAP_COLORS: true,
+  RESET_COLORS: true,
   SET_SELECTIONS: true,
   ADD_SELECTION: true,
   COMMIT_SELECTION: true,
@@ -272,7 +274,7 @@ type Equal<Left, Right> =
 
 /**
  * The two `InternalAction` types. They are not exported, so the record above
- * cannot reach them, and a census that stopped at the public 29 would pass over
+ * cannot reach them, and a census that stopped at the public 31 would pass over
  * exactly the arms nothing in production dispatches.
  */
 const INTERNAL_ACTION_TYPES = [
@@ -422,7 +424,7 @@ describe('StoreContext boundary gates', () => {
 
   it('keeps the public action union exhaustive and rejects internal actions', () => {
     const actionTypes = Object.keys(ALL_PUBLIC_ACTIONS) as PublicAction['type'][];
-    expect(actionTypes).toHaveLength(29);
+    expect(actionTypes).toHaveLength(31);
     expect(new Set(actionTypes).size).toBe(actionTypes.length);
     expect(ALL_PUBLIC_ACTIONS as Record<Action['type'], true>).toEqual(ALL_PUBLIC_ACTIONS);
 

@@ -21,6 +21,7 @@ import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 import { useFirstUse } from '../../hooks/useFirstUse.ts';
 import { useFirstUseContext } from '../../contexts/FirstUseContext.tsx';
+import { DEFAULT_VIEW_STATE } from '../../contexts/view-state.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -244,7 +245,7 @@ type ToolGroupIdentity = {
 type ToolbarEntry = { kind: 'group'; group: ToolbarToolGroup; key: string } | { kind: 'overflow' };
 
 const SidebarLeft = () => {
-  const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
+  const [{ hasImage, toolName, color, backgroundColor, setViewState }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { isToolNew, markToolAsSeen } = useFirstUse();
@@ -457,8 +458,11 @@ const SidebarLeft = () => {
   };
 
   const handleSwapColors = () => {
-    dispatch({ type: 'SET_COLOR', payload: backgroundColor });
-    dispatch({ type: 'SET_BACKGROUND_COLOR', payload: color });
+    dispatch({ type: 'SWAP_COLORS' });
+  };
+
+  const handleResetColors = () => {
+    dispatch({ type: 'RESET_COLORS' });
   };
 
   const clearLongPressFlyout = () => {
@@ -739,6 +743,9 @@ const SidebarLeft = () => {
               }
 
               selectTool(primaryTool);
+            }}
+            onDoubleClick={() => {
+              if (primaryTool.name === 'hand') setViewState(DEFAULT_VIEW_STATE);
             }}
             onContextMenu={(event) => {
               if (!hasFlyout) return;
@@ -1073,7 +1080,7 @@ const SidebarLeft = () => {
                           aria-hidden="true"
                         />
                       )}
-                      {tool.shortcut && <kbd className="text-[9px] opacity-65">{tool.shortcut}</kbd>}
+                      {tool.shortcut && <kbd className="text-[9px]">{tool.shortcut}</kbd>}
                     </button>
                   </li>
                 );
@@ -1210,7 +1217,7 @@ const SidebarLeft = () => {
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
               aria-pressed={isSingleColumn}
-              className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              className="rounded p-1 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-100"
               onClick={() => {
                 setIsSingleColumn((current) => !current);
                 closeFlyout();
@@ -1329,6 +1336,25 @@ const SidebarLeft = () => {
               data-testid="foreground-color-swatch"
             />
 
+            {/* Photoshop's own placement: the mini black-over-white pair sits below the
+                foreground swatch, in the corner the diagonal swatch pair leaves empty. Its
+                squares are literal black and white because they depict the defaults, not
+                the current colours. The 24x24 hit area extends left into the rail margin and
+                ends at the background swatch edge, leaving both swatch click areas clear. */}
+            <button
+              type="button"
+              onClick={handleResetColors}
+              className="absolute bottom-0 -left-2 w-6 h-6 cursor-pointer rounded-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              title="Default Foreground and Background Colors (D)"
+              aria-label="Default Foreground and Background Colors"
+              data-testid="default-colors-button"
+            >
+              <span aria-hidden="true" className="absolute bottom-0 left-2 w-4 h-4">
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 border border-gray-500 bg-white" />
+                <span className="absolute top-0 left-0 w-2.5 h-2.5 border border-gray-500 bg-black" />
+              </span>
+            </button>
+
             {/*
               `opacity-0` hides PIXELS, not the accessibility tree and not the tab
               order: `element.focus()` still lands on these, so without a name they
@@ -1361,7 +1387,7 @@ const SidebarLeft = () => {
           <button
             onClick={handleSwapColors}
             className="mt-1 text-[8px] text-gray-600 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-200 uppercase font-bold"
-            title="Swap Colors"
+            title="Switch Foreground and Background Colors (X)"
             data-testid="swap-colors-button"
           >
             ⇅ Swap

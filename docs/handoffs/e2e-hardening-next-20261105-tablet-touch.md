@@ -1,28 +1,27 @@
-# Tablet bottom-bar touch E2E hardening — landing pending
+# Tablet touch and E2E hardening — landing pending
 
 ## Status
 
-The reviewed candidate is pushed to the source branch and CI mirror. `repo:state` is clear, but landing is still unsafe: the designated local `main` contains 134 commits not present on source `origin/main`. Keep the candidate isolated until the main owner provides a safe landing base that preserves those commits without importing them into the core repository.
+The candidate contains the tablet touch and runner hardening plus all 134 commits present on the designated local `main`. The combined tree passes the full unit suite, E2E unit suite, typecheck, lint and format checks, and production build. A fresh full Linux, Windows, and macOS mirror run on this exact tree remains the cross-platform landing gate.
+
+The previous full mirror run used the pre-merge candidate and failed on Linux and Windows. Its results do not describe this combined tree. Do not land based on that stale run.
 
 ## Candidate
 
 Branch: `task/e2e-hardening-next-20261105`
 
-Reviewed code commit: `20fb8e557829c5f53c54d175063654f4ca6df271`, based on source `origin/main` `332eb0fc5cf91efcf110dae1c0b349246cb3959b`.
+The E2E changes add tablet touch reachability coverage at 744×1133, tighten the crop-history per-layer alpha-edge classifier while preserving exact bounds and byte-identical composite checks, and keep the documented parity rule aligned with the test.
 
-The branch adds tablet touch reachability coverage at the supported 744×1133 viewport, corrects the related open-problem note, and makes `e2e-run` wrapper tests use a deterministic injected allocator. The real production allocator remains covered by a socket-binding test. Retry logging now reports retries rather than total attempts.
+## Current validation
 
-## Evidence
+- Full unit suite: 413 files passed; 12,086 passed and 207 expected failures.
+- E2E unit suite: 22 files passed; 1,563 passed and 12 expected failures.
+- `npm run tsc` and `npm run build`: passed.
+- `npm run lint:check`: passed with 73 warnings and no errors; formatting passed.
+- Focused documentation and test-write-boundary guards: 42 tests passed.
 
-- Focused runner tests: 57 passed.
-- Full unit suite: 409 files passed; 11,887 passed and 215 expected failures.
-- `npm run lint:check`: passed with 65 existing warnings and no errors; formatting passed.
-- `npm run tsc`: passed.
-- Source branch push passed its full pre-push suite.
-- Linux mirror run [42118840674](https://github.com/Bohdanus/ph/actions/runs/42118840674) completed successfully for exact source SHA `20fb8e557829c5f53c54d175063654f4ca6df271`; 12 Playwright tests passed. The report artifact marks `horizontal touch swipes reach the Layers tile` passed on retry 0 with no errors.
+The designated local `main` is `3a2975be3271cb977e0d208e272b30ab7bb7ccae`; it contains 134 commits beyond source `origin/main` `332eb0fc5cf91efcf110dae1c0b349246cb3959b`. The user authorized including all 134 commits.
 
 ## Landing gate
 
-`npm run repo:state` reports no active worktree operations. The designated local `main` is `3a2975be3271cb977e0d208e272b30ab7bb7ccae`; source `origin/main` is `332eb0fc5cf91efcf110dae1c0b349246cb3959b`; `origin/main...main` is `0 134`. Do not push or merge from this local `main`, because it would include 134 commits outside this candidate.
-
-Resume when the owner establishes a designated landing base that excludes those 134 commits from the source main update. Refresh the candidate against the latest source main, rerun required gates, and use the pinned two-parent landing with `Branch: task/e2e-hardening-next-20261105` and the native `Chat:` trailer.
+Run `npm run test:e2e:mirror -- --full` after the candidate merge commit is pushed, then inspect the exact run SHA and all platform artifacts. Before merging into the designated `main`, require `repo:state` to be clear, confirm the main worktree is clean, refresh the worktree inventory and orphan report, and use the pinned reviewed-landing procedure with `Branch: task/e2e-hardening-next-20261105` and the native `Chat:` trailer.

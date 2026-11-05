@@ -15,6 +15,7 @@ const storeState = vi.hoisted(() => ({
   hasImage: false,
   hasUnsavedChanges: false,
   currentArgs: { current: {} },
+  toolArgs: { toolName: 'reposition' },
   layers: {},
   toolName: 'reposition',
   totalSize: { width: 800, height: 600 },
@@ -67,6 +68,7 @@ vi.mock('./contexts/StoreContext.tsx', () => ({
 }));
 vi.mock('./contexts/useCurrentTool.tsx', () => ({
   CurrentToolProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useCurrentTool: () => ({ toolArgs: storeState.toolArgs }),
 }));
 vi.mock('./contexts/useFile.tsx', () => ({
   FileProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,

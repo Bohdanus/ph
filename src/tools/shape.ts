@@ -72,6 +72,16 @@ export type ShapeToolArgs = {
   toolName: 'shape';
 };
 
+export type ShapeGeometryBoundsOptions = {
+  figure?: FigureType;
+  lineCap?: ShapeLineCap;
+  lineJoin?: CanvasLineJoin;
+  miterLimit?: number;
+};
+
+export const DEFAULT_SHAPE_LINE_JOIN: CanvasLineJoin = 'miter';
+export const DEFAULT_SHAPE_MITER_LIMIT = 10;
+
 export type ShapeToolSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end'>;
 
 export type ShapeGeometryConstraints = {
@@ -177,7 +187,8 @@ export const normalizeShapeGeometry = (
  * Layer bounds for an already-normalized geometry. Derived from the same
  * start/end the preview draws, so the committed layer can never disagree with
  * the live preview. Padding covers half the stroke on each side plus one
- * pixel of antialiasing slack.
+ * pixel of antialiasing slack, with extra space for miter joins and projecting
+ * square caps when the geometry and stroke style require it.
  *
  * The box is rounded OUTWARD — the origin down, the far edge up — so all four fields are
  * integers and the box is a valid `OffscreenCanvas` size. That is the whole point: the layer's
@@ -199,9 +210,30 @@ export const normalizeShapeGeometry = (
  */
 export const shapeGeometryBounds = (
   { start, end }: ShapeGeometry,
-  lineWidth: number
+  lineWidth: number,
+  options: ShapeGeometryBoundsOptions = {}
 ): { x: number; y: number; width: number; height: number } => {
-  const pad = lineWidth / 2 + 1;
+  const halfStroke = lineWidth / 2;
+  let extra = 0;
+
+  if (options.figure === 'line' && options.lineCap === 'square') {
+    const dx = Math.abs(end.x - start.x);
+    const dy = Math.abs(end.y - start.y);
+    const length = Math.hypot(dx, dy);
+    const axisProjection = length > 0 ? (dx + dy) / length : Math.SQRT2;
+    extra = halfStroke * Math.max(0, axisProjection - 1);
+  } else {
+    const hasSharpJoin = options.figure === 'triangle' || options.figure === 'polygon' || options.figure === 'star';
+
+    if (hasSharpJoin && (options.lineJoin ?? DEFAULT_SHAPE_LINE_JOIN) === 'miter') {
+      const requestedLimit = options.miterLimit ?? DEFAULT_SHAPE_MITER_LIMIT;
+      const miterLimit =
+        Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.max(1, requestedLimit) : DEFAULT_SHAPE_MITER_LIMIT;
+      extra = halfStroke * (miterLimit - 1);
+    }
+  }
+
+  const pad = halfStroke + extra + 1;
   const x = Math.floor(Math.min(start.x, end.x) - pad);
   const y = Math.floor(Math.min(start.y, end.y) - pad);
   return {
@@ -221,6 +253,8 @@ export const setShapeCtx = (ctx: Ctx2D, args: ShapeToolArgs) => {
   }
   ctx.lineWidth = lineWidth;
   ctx.lineCap = lineCap ?? 'butt';
+  ctx.lineJoin = DEFAULT_SHAPE_LINE_JOIN;
+  ctx.miterLimit = DEFAULT_SHAPE_MITER_LIMIT;
   ctx.globalAlpha = alpha;
   ctx.setLineDash(lineDash ?? []);
 };

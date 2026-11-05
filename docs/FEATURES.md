@@ -371,20 +371,19 @@ same registration path.
 
 **Status:** `partial`
 
-**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
+**Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O, H, Z, R; `Ctrl+Z`, `Shift+Ctrl+Z`,
 `Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `[` and `]` for brush size; `0` and `1`
-for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
-Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
-and the Burn, so the Sponge must be the active tool.
+for opacity; `X` and `D` for Switch Foreground and Background Colors and Default
+Foreground and Background Colors; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's
+Desaturate and Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows
+on the Dodge and the Burn, so the Sponge must be the active tool.
 
 Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
 only save is Save As, which is what `File > Save` opens
 (`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
 `Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two.
 
-**Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
-Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
-the Sponge is active. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
+**Gap:** `A` is unbound — Automatic Select. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
 `Ctrl+Shift+I` — Select All, Deselect, Invert — are unbound, which follows from the
 selection model above rather than from the keyboard layer. `Tab`, `F`,
 `Ctrl++`, `Ctrl+-` and `Ctrl+0` are unbound, and Space does not pan.

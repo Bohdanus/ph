@@ -26,7 +26,7 @@ type ShapeHandlerProps = {
 };
 
 export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize, documentFrame: currentFrame, activeLayerId, layers }] = useStore();
+  const [{ containerRef, totalSize, documentFrame: currentFrame, activeLayerId, layers }] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { createLayerFromTool, replaceLayerSource } = useLayers();
   const { toolArgs } = useCurrentTool();
@@ -35,6 +35,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   const startRef = useRef<Point | null>(null);
   const endRef = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
+  const previewBoundsRef = useRef<ReturnType<typeof shapeGeometryBounds> | null>(null);
   const spacePressedRef = useRef(false);
   const lastPointRef = useRef<Point | null>(null);
   const originalShapeRef = useRef<{ start: Point; end: Point } | null>(null);
@@ -88,9 +89,20 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     frameRequested.current = null;
 
     const ctx = overlayCtxRef.current!;
-    ctx.clearRect(0, 0, toolOverlayRef.current!.width, toolOverlayRef.current!.height); // todo you can clear smaller shape
-
     const shape = { start: startRef.current!, end: endRef.current! };
+    const bounds = shapeGeometryBounds(shape, args.lineWidth, args);
+    const previousBounds = previewBoundsRef.current;
+    if (previousBounds) {
+      ctx.clearRect(previousBounds.x, previousBounds.y, previousBounds.width, previousBounds.height);
+    } else {
+      // The overlay is shared. Clear it once when a gesture first paints, then clear only the
+      // padded bounds occupied by the last preview on later frames.
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+
+    // A canvas draw can throw after painting part of the shape. Record the attempted bounds first
+    // so the next frame still clears every pixel this preview could have added.
+    previewBoundsRef.current = bounds;
     const newArgs = { ...args, ...shape };
     // `setShapeCtx` writes stroke, fill, alpha and the dash onto the SHARED overlay context and
     // leaves them, so the bracket is what stops this tool from dictating the alpha every later tool
@@ -103,6 +115,12 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     } finally {
       ctx.restore();
     }
+  };
+
+  const clearPreview = () => {
+    const ctx = overlayCtxRef.current;
+    if (ctx) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    previewBoundsRef.current = null;
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -205,19 +223,16 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     // (https://helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html), so a click
     // with the Line tool still refuses rather than inventing a dialog Adobe has not got.
     if (start.x === end.x && start.y === end.y) {
+      // A drag can return to its anchor after previewing a non-zero shape. The pending final frame
+      // has cleared the prior pixels, but may still have painted a degenerate cap or path and left
+      // its bounds cached. Remove that attempted preview before the Create dialog takes over.
+      if (previewBoundsRef.current !== null) clearPreview();
       if (args.figure !== 'line') setPendingShape({ anchor: start, fromCenter: fromCenterRef.current });
       else console.error('The Line tool needs a drag: a click with no movement has no length to draw');
       return;
     }
 
     commitShape(start, end);
-
-    // The committed layer will be rendered by the document surface. Clear the shared preview
-    // backing store after a successful commit so the same shape is not composited twice.
-    const ctx = overlayCtxRef.current;
-    if (ctx) {
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    }
   };
 
   /**
@@ -230,13 +245,14 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
    * `args` would silently rewrite the bar's Radius slider behind the user's back.
    */
   const commitShape = (start: Point, end: Point, cornerRadius?: number) => {
-    const pos = shapeGeometryBounds({ start, end }, args.lineWidth);
+    const renderArgs = { ...args, ...(cornerRadius === undefined ? {} : { cornerRadius }) };
+    const pos = shapeGeometryBounds({ start, end }, args.lineWidth, renderArgs);
 
     start.x -= pos.x;
     start.y -= pos.y;
     end.x -= pos.x;
     end.y -= pos.y;
-    const newArgs = { ...args, ...(cornerRadius === undefined ? {} : { cornerRadius }), start, end };
+    const newArgs = { ...renderArgs, start, end };
 
     const fullArgs: FullArgs = {
       args: newArgs,
@@ -255,7 +271,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     }
 
     // The committed layer is now the source of truth; remove the preview so it is not painted twice.
-    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
+    clearPreview();
   };
 
   const handleDialogCreate = ({ width, height, fromCenter, cornerRadius }: CreateShapeParams) => {
@@ -291,7 +307,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     fromCenterRef.current = false;
     lastPointRef.current = null;
     originalShapeRef.current = null;
-    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
+    clearPreview();
   };
 
   useEffect(() => {
@@ -318,6 +334,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       if (ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }
+      previewBoundsRef.current = null;
     };
   }, [overlayCtxRef]);
 
