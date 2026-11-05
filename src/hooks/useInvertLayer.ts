@@ -15,16 +15,20 @@ import type { InvertToolArgs } from '../tools/invert.ts';
  * raster tool area gives: the bedrock is the document's backing image and no raster edit
  * targets it.
  *
+ * A layer holding another tool's uncommitted preview (Levels, Color, Free Transform) is refused
+ * too: the inversion would be computed from the stored pixels and overwrite that preview, so the
+ * adjustment would vanish from the canvas and never reach history. Switching tools commits it.
+ *
  * The active selection is snapshotted into the staged raster's local space, as `FillToolArea`
  * does, so the stored args replay without reading live store state.
  */
 export const useInvertLayer = () => {
-  const [{ layers, activeLayerId, selections, activeSelectionId }] = useStore();
+  const [{ layers, activeLayerId, selections, activeSelectionId, previewLayers }] = useStore();
   const { updateLayerByTool } = useLayers();
 
   const invertActiveLayer = useCallback(async (): Promise<void> => {
     const layer = activeLayerId ? layers[activeLayerId] : undefined;
-    if (!layer || layer.isBedrock) return;
+    if (!layer || layer.isBedrock || previewLayers.current[layer.id]) return;
 
     const bitmap = layer.tmpCanvas ?? layer.bitmap;
     if (!bitmap) return;
@@ -48,7 +52,7 @@ export const useInvertLayer = () => {
 
     const toolArgs: InvertToolArgs = { toolName: 'invert', ...(selection ? { selection } : {}) };
     await updateLayerByTool({ id: layer.id, toolArgs });
-  }, [activeLayerId, activeSelectionId, layers, selections, updateLayerByTool]);
+  }, [activeLayerId, activeSelectionId, layers, previewLayers, selections, updateLayerByTool]);
 
   return { invertActiveLayer };
 };

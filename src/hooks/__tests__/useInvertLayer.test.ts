@@ -10,6 +10,7 @@ const storeState = vi.hoisted(() => ({
   activeLayerId: null as string | null,
   selections: [] as unknown[],
   activeSelectionId: null as string | null,
+  previewLayers: { current: {} as Record<string, unknown> },
 }));
 
 vi.mock('../../contexts/StoreContext.tsx', () => ({
@@ -46,6 +47,7 @@ beforeEach(() => {
   storeState.activeLayerId = 'layer-1';
   storeState.selections = [];
   storeState.activeSelectionId = null;
+  storeState.previewLayers.current = {};
 });
 
 describe('useInvertLayer', () => {
@@ -75,6 +77,14 @@ describe('useInvertLayer', () => {
 
   it('refuses the bedrock layer, as every raster tool does', async () => {
     storeState.layers = { 'layer-1': { id: 'layer-1', bitmap, isBedrock: true } };
+
+    await run();
+
+    expect(updateLayerByTool).not.toHaveBeenCalled();
+  });
+
+  it("leaves another tool's uncommitted preview on the layer alone", async () => {
+    storeState.previewLayers.current = { 'layer-1': { layer: {}, toolArgs: { toolName: 'levels' } } };
 
     await run();
 

@@ -451,13 +451,13 @@ export const transformDescriptions: Record<
       'src/tools/invert.ts:34',
       'src/tools/invert.ts:46',
       'src/tools/toolProcessors.ts:286',
-      'src/hooks/useInvertLayer.ts:25',
+      'src/hooks/useInvertLayer.ts:29',
       'src/components/Common/AdjustmentShortcuts.tsx:20',
       'src/components/DesktopHeader/DesktopHeader.tsx:258',
       'toolbar-mapping.ts:247',
     ],
     appNotes:
-      "Invert is a one-shot command here as in Photoshop: Image > Adjustments > Invert and Cmd+I both call the same command, which commits one raster history state and never becomes the current tool, so it has no options bar and no rail tile. Alpha is left as it is; only the colour channels are inverted. An active selection clips the inversion, and a feathered or anti-aliased edge blends each pixel toward its inverse by its selection coverage rather than stepping. Two differences from Photoshop are deliberate. First, the command refuses the bedrock layer, which is the document's backing image and which no raster edit in this app targets; Photoshop inverts its Background layer. Second, there are no adjustment layers and no layer masks, so the Invert adjustment layer and inverting a selected mask have nothing to act on.",
+      "Invert is a one-shot command here as in Photoshop: Image > Adjustments > Invert and Cmd+I both call the same command, which commits one raster history state and never becomes the current tool, so it has no options bar and no rail tile. Alpha is left as it is; only the colour channels are inverted. An active selection clips the inversion, and a feathered or anti-aliased edge blends each pixel toward its inverse by its selection coverage rather than stepping. Two differences from Photoshop are deliberate. First, the command refuses the bedrock layer, which is the document's backing image and which no raster edit in this app targets; Photoshop inverts its Background layer. Second, there are no adjustment layers and no layer masks, so the Invert adjustment layer and inverting a selected mask have nothing to act on. While another tool's live preview (Levels, Color, Free Transform) is still uncommitted on the layer, Invert does nothing rather than discard that preview; switching tools commits it.",
     sources: [
       'https://helpx.adobe.com/ca/photoshop/using/applying-special-color-effects-images.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
