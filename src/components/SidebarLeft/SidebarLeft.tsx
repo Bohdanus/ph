@@ -1154,6 +1154,7 @@ const SidebarLeft = () => {
       // canvas — and the grid area follows from the same fact.
       className="scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
       data-testid="left-sidebar"
+      data-chrome="tools"
       ref={setRailElement}
       style={{ width: toolbarWidth }}
     >

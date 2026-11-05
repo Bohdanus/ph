@@ -197,6 +197,7 @@ export const availableTools: readonly ToolName[] = [
   'color',
   'blur',
   'levels',
+  'invert',
   'transform',
   'rectangular-selection',
   'elliptical-selection',
@@ -226,8 +227,9 @@ export const availableTools: readonly ToolName[] = [
 /**
  * Tool ids with no Tools-rail entry, because Photoshop's Tools panel has none.
  *
- * `color`, `levels` and `transform` are `Image ▸ Adjustments` and `Edit ▸ Free Transform`
- * COMMANDS, and a command is not a tool. They were the sole members of a three-wide flyout
+ * `color`, `levels`, `invert` and `transform` are `Image ▸ Adjustments` and `Edit ▸ Free Transform`
+ * COMMANDS, and a command is not a tool. `invert` never had a tile: it applies on click from
+ * `Image ▸ Adjustments ▸ Invert` and on `mod+I`, and is never the current tool. They were the sole members of a three-wide flyout
  * here until they were extracted; what hosts them now is
  * `src/components/DesktopHeader/DesktopHeader.tsx` — `Image ▸ Adjustments` carries the
  * first two and `Edit ▸ Free Transform` the third.
@@ -242,4 +244,4 @@ export const availableTools: readonly ToolName[] = [
  * values of the `shape` tile's `figure`. The test carves those five out by name, so adding
  * a sixth alias means adding it to that exemption too.
  */
-export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];
+export const extraTools = ['color', 'levels', 'invert', 'transform'] as const satisfies readonly ToolName[];

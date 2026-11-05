@@ -8,14 +8,14 @@ const ToolbarHorizontal = () => {
   const [{ hasImage, toolName }] = useStore();
 
   if (!toolName || !hasImage) {
-    return <div className={TOOLBAR_BASE_CLASS}></div>;
+    return <div data-chrome="options" className={TOOLBAR_BASE_CLASS}></div>;
   }
 
   const ToolComponent = toolsMap[toolName]?.toolboxComponent;
 
   if (!ToolComponent) {
     return (
-      <div className={`${TOOLBAR_BASE_CLASS} flex items-center px-4 overflow-visible`}>
+      <div data-chrome="options" className={`${TOOLBAR_BASE_CLASS} flex items-center px-4 overflow-visible`}>
         <span className="text-xs text-amber-700 dark:text-amber-300">TODO: unregistered tool placeholder</span>
       </div>
     );
@@ -48,6 +48,7 @@ const ToolbarHorizontal = () => {
     <div
       role="region"
       aria-label={`${toolName} tool options`}
+      data-chrome="options"
       className={`${TOOLBAR_BASE_CLASS} flex items-center px-4 overflow-visible max-lg:overflow-x-auto`}
     >
       <div className="flex-1 min-w-fit flex items-center max-lg:min-w-max">

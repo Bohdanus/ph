@@ -8,6 +8,7 @@ import type { CropToolArgs } from './crop.ts';
 import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
+import type { InvertToolArgs } from './invert.ts';
 import type { BlurToolArgs } from './blur.ts';
 import { DEFAULT_POLYGON_SIDES, DEFAULT_STAR_RATIO } from './shape.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
@@ -86,6 +87,7 @@ export const defaultSettings = {
   blur: { radius: 0, toolName: 'blur' } satisfies BlurToolArgs,
   color: { grayscale: 0, sepia: 0, saturation: 0, toolName: 'color' } satisfies ColorsToolArgs,
   levels: { brightness: 0, contrast: 0, toolName: 'levels' } satisfies LevelsToolArgs,
+  invert: { toolName: 'invert' } satisfies InvertToolArgs,
   transform: {
     rotate: 0,
     mirrorH: false,

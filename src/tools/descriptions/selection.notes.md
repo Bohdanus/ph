@@ -1024,6 +1024,25 @@ reader than one that says "this used to lie here".
 - `https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html` (Adobe) — the shortcut table: bare letter selects, `Shift+<letter>` cycles
 - `https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html` — Adobe presenter: the cycling rule in words, naming `Shift+L` across the three lasso tools
 
+## Select All and Deselect — `Ctrl+A`, `Ctrl+D`
+
+Two commands rather than tools, recorded here because every tool in this family produces what
+they replace or clear.
+
+- **`sourced`** — `Ctrl+A` / `Cmd+A` is Select All and `Ctrl+D` / `Cmd+D` is Deselect. Adobe's web
+  shortcut table lists both rows verbatim
+  (`https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`,
+  2025-10-29), and the desktop table repeats Deselect under "Popular shortcuts"
+  (`https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html`, 2024-10-29).
+- **`inferred`** — Select All replaces the current selection with one rectangle covering the canvas
+  rather than adding to it; Adobe documents no additive form. The app records it as one
+  `SELECTION_ACTION` entry in `useSelectionHistory`'s `'replace'` mode, so undo restores whatever
+  selection set preceded it.
+- **App** — Deselect with no selection is a no-op that appends no history entry, the same guard
+  `clearSelections` already applies to the options-bar Deselect button. Reselect (`Shift+Ctrl+D`)
+  and Inverse (`Shift+Ctrl+I`) remain unbound: the app has no Select menu and no inverse of a
+  compound selection.
+
 ## Unverified
 
 Claims this pass could not establish from a source that was actually opened. Each is either

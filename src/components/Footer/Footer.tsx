@@ -6,7 +6,10 @@ const Footer = () => {
   const { width, height } = totalSize;
 
   return (
-    <footer className="mt-auto border-t border-gray-200 bg-gray-100 py-2 dark:border-gray-700 dark:bg-gray-800 max-md:hidden [grid-area:footer]">
+    <footer
+      data-chrome="footer"
+      className="mt-auto border-t border-gray-200 bg-gray-100 py-2 dark:border-gray-700 dark:bg-gray-800 max-md:hidden [grid-area:footer]"
+    >
       <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-4">
           {hasImage && width > 0 && height > 0 && (

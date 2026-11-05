@@ -29,6 +29,7 @@ import type { RedEyeToolArgs } from '../tools/redEye.ts';
 import type { SpotHealingToolArgs } from '../tools/spotHealing.ts';
 import type { HealingBrushToolArgs } from '../tools/healingBrush.ts';
 import type { PatchToolArgs } from '../tools/patch.ts';
+import type { InvertToolArgs } from '../tools/invert.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -37,6 +38,8 @@ export type ToolArgsByName = {
   blur: BlurToolArgs;
   color: ColorsToolArgs;
   levels: LevelsToolArgs;
+  /** `Image ▸ Adjustments ▸ Invert`: a one-shot command with no options bar, never the current tool. */
+  invert: InvertToolArgs;
   transform: TransformToolArgs;
   crop: CropToolArgs;
   draw: DrawToolArgs;
