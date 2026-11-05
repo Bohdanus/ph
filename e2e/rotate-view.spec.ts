@@ -72,7 +72,13 @@ async function ensureOwnRailTile(page: Page, toolName: string): Promise<void> {
 }
 
 /** Press, move around the canvas centre, release. Used to tilt and to pan in one gesture shape. */
-async function dragAboutCentre(page: Page, fromAngle: number, toAngle: number, radius = 160) {
+async function dragAboutCentre(
+  page: Page,
+  fromAngle: number,
+  toAngle: number,
+  radius = 160,
+  direction: 'shortest' | 'literal' = 'shortest'
+) {
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (box === null) throw new Error('workspace canvas has no box');
 
@@ -84,11 +90,15 @@ async function dragAboutCentre(page: Page, fromAngle: number, toAngle: number, r
   };
 
   const start = at(fromAngle);
-  const end = at(toAngle);
-
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
-  await page.mouse.move(end.x, end.y, { steps: 12 });
+  let delta = toAngle - fromAngle;
+  if (direction === 'shortest') delta = ((((delta + 180) % 360) + 360) % 360) - 180;
+  const steps = Math.max(12, Math.ceil(Math.abs(delta) / 6));
+  for (let index = 1; index <= steps; index += 1) {
+    const point = at(fromAngle + (delta * index) / steps);
+    await page.mouse.move(point.x, point.y);
+  }
   await page.mouse.up();
 }
 
@@ -161,6 +171,64 @@ test.describe('Rotate View', () => {
     // An absolute implementation would snap back to the second drag's own angle and lose the
     // first, which is the jump-at-the-start-of-the-drag this behaviour exists to avoid.
     expect(await displayedAngle(page)).toBeGreaterThan(afterFirst + 50);
+  });
+
+  test('a drag across the angle boundary follows the shorter rotation', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await openDocument(page);
+    await page.keyboard.press('r');
+
+    await dragAboutCentre(page, 179, -179);
+
+    const rotation = await displayedAngle(page);
+    expect(rotation).toBeGreaterThan(0);
+    expect(rotation).toBeLessThan(5);
+  });
+
+  test('rotation keeps its direction after the drag passes 180 degrees', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await openDocument(page);
+    await page.keyboard.press('r');
+
+    await dragAboutCentre(page, 10, 250, 160, 'literal');
+
+    const rotation = await displayedAngle(page);
+    expect(rotation).toBeGreaterThan(230);
+    expect(rotation).toBeLessThan(250);
+  });
+
+  test('the final pointer-up coordinate is included when no pointer-move arrives there', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await openDocument(page);
+    await page.keyboard.press('r');
+
+    const area = page.getByTestId('rotate-view-tool-area');
+    const box = await area.boundingBox();
+    if (box === null) throw new Error('Rotate View surface has no box');
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const radius = Math.min(box.width, box.height) * 0.28;
+
+    await page.mouse.move(cx + radius, cy);
+    await page.mouse.down();
+    // Chromium's mouse pointer uses id 1. Dispatching the final sample directly exercises
+    // pointer-up input that is absent from the move stream.
+    await area.dispatchEvent('pointerup', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 0,
+      clientX: cx,
+      clientY: cy + radius,
+    });
+    await page.mouse.up();
+
+    expect(await displayedAngle(page)).toBeGreaterThan(80);
+    expect(await displayedAngle(page)).toBeLessThan(100);
   });
 
   test('Shift snaps a drag to 15°', async ({ page }) => {

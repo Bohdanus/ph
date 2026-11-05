@@ -17,12 +17,20 @@ import { readClientViewportRect } from '../../util/client-viewport.ts';
 
 export type ViewToolMode = 'hand' | 'zoom' | 'rotate-view';
 
+function shortestAngleDelta(fromDegrees: number, toDegrees: number): number {
+  const delta = toDegrees - fromDegrees;
+  if (delta > 180) return delta - 360;
+  if (delta < -180) return delta + 360;
+  return delta;
+}
+
 type ViewGesture = {
   pointerId: number;
   startX: number;
   startY: number;
   startState: ViewState;
-  startAngle: number;
+  lastAngle: number;
+  rotationDelta: number;
   startMagnification: number;
   minimumZoom: number;
   alternate: boolean;
@@ -69,7 +77,8 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
       startX: event.clientX,
       startY: event.clientY,
       startState,
-      startAngle: angleAboutCenter(event.clientX, event.clientY, rect),
+      lastAngle: angleAboutCenter(event.clientX, event.clientY, rect),
+      rotationDelta: 0,
       startMagnification: clampAbsoluteViewZoom(absoluteViewZoom(startState, fitScale, devicePixelRatio), minimumZoom),
       minimumZoom,
       alternate: event.altKey,
@@ -89,8 +98,10 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
     }
     if (mode === 'rotate-view') {
       const rect = event.currentTarget.getBoundingClientRect();
-      const delta = angleAboutCenter(event.clientX, event.clientY, rect) - gesture.startAngle;
-      const rotation = gesture.startState.rotation + delta;
+      const angle = angleAboutCenter(event.clientX, event.clientY, rect);
+      gesture.rotationDelta += shortestAngleDelta(gesture.lastAngle, angle);
+      gesture.lastAngle = angle;
+      const rotation = gesture.startState.rotation + gesture.rotationDelta;
       setViewState({ rotation: event.shiftKey ? Math.round(rotation / 15) * 15 : rotation });
       return;
     }
@@ -129,6 +140,11 @@ export function ViewToolArea({ className, mode }: { className?: string; mode: Vi
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+    // Pointer-up can be the final sampled position for hand, rotate, and drag-zoom input.
+    // A click-to-zoom is handled separately below so it remains one fixed-step zoom.
+    if (mode !== 'zoom' || Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) >= 4) {
+      onPointerMove(event);
+    }
     if (mode === 'zoom' && Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) < 4) {
       const rect = containerRef.current ? readClientViewportRect(containerRef.current) : null;
       if (rect) {

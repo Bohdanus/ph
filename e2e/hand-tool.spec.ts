@@ -269,7 +269,7 @@ test.describe('panning the canvas', () => {
     const canvas = getWorkspaceCanvas(page);
     const widthBefore = await canvas.getAttribute('width');
     const heightBefore = await canvas.getAttribute('height');
-    const before = await canvas.screenshot();
+    const pixelsBefore = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
 
     const box = await canvas.boundingBox();
     if (box === null) throw new Error('workspace canvas has no box');
@@ -284,13 +284,10 @@ test.describe('panning the canvas', () => {
     const layerRows = await page.getByTestId('layer-row').count();
     expect(layerRows).toBe(1);
 
-    // A screenshot of the canvas ELEMENT is NOT comparable across a pan — the element is inside
-    // `.zoom-container`, so the pixels travel with the transform and the bytes differ for a view
-    // change alone. What must not change is the backing store: the pan writes a CSS transform on
-    // the wrapper and never touches the raster.
-    const after = await canvas.screenshot();
-    expect(before.byteLength).toBeGreaterThan(0);
-    expect(after.byteLength).toBeGreaterThan(0);
+    // Compare the backing-store pixels rather than a screenshot of the transformed element.
+    // Panning changes CSS presentation but must leave the actual raster byte-for-byte intact.
+    const pixelsAfter = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL());
+    expect(pixelsAfter).toBe(pixelsBefore);
     expect(await canvas.getAttribute('width')).toBe(widthBefore);
     expect(await canvas.getAttribute('height')).toBe(heightBefore);
   });
@@ -332,11 +329,12 @@ test.describe('the spring-loaded Hand', () => {
     await expectToolSelected(page, 'hand', false);
   });
 
-  test('a drag that started before Space is held does not pan', async ({ page }) => {
+  test('Space held during a paint gesture preserves the stroke', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await openTallDocument(page);
     await clickToolButton(page, 'draw');
+    const layerRowsBefore = await page.getByTestId('layer-row').count();
 
     const box = await getWorkspaceCanvas(page).boundingBox();
     if (box === null) throw new Error('workspace canvas has no box');
@@ -350,10 +348,10 @@ test.describe('the spring-loaded Hand', () => {
     await page.mouse.up();
     await page.keyboard.up('Space');
 
-    // The press is refused while a committing drag is open, because arming would swap the
-    // mounted tool area and abort the gesture in flight. Photoshop moves an in-progress marquee
-    // here instead; that divergence is recorded for the operator in `docs/OVERRIDES.md`.
+    // The temporary Hand cannot replace a tool while its document gesture owns the pointer.
+    // The stroke must finish on its original surface instead of being lost during a tool swap.
     expect(await viewTransform(page)).toBe('');
+    await expect(page.getByTestId('layer-row')).toHaveCount(layerRowsBefore + 1);
   });
 
   test('a Space keyup with no matching keydown leaves nothing stuck', async ({ page }) => {
