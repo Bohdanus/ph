@@ -57,10 +57,12 @@ class BlendingCanvas {
         state.smoothing = previous.smoothing;
       },
       clearRect: () => undefined,
+      getImageData: () => ({ data: new Uint8ClampedArray(), width: 0, height: 0 }),
       fillRect: () => undefined,
       setTransform: () => undefined,
       translate: () => undefined,
       transform: () => undefined,
+      putImageData: () => undefined,
       // Sampled through the accessors below, so what lands in `draws` is the state in force for
       // THIS draw rather than the sequence of writes that preceded it.
       drawImage: () => {

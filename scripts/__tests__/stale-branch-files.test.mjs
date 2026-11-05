@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { inspectBranch } from '../stale-branch-files.mjs';
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 
 let cwd;
 

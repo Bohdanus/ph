@@ -20,15 +20,18 @@ import {
   MAX_BLOB_BYTES,
   batchBlobs,
   findTakeovers,
+  isProjectMainWorktree,
   main,
   resolveIncomingRef,
 } from '../merge-takeover-guard.mjs';
+import { registerMainWorktree } from '../main-worktree-guard.mjs';
 
 /**
  * Real repositories in a temp directory, not mocks. The defect being guarded is a property
  * of which blob git ends up with in the result tree, and a mock of that property would
  * agree with a broken guard. Every expectation below is an observed result, reproduced with
- * raw git before the detector was written.
+ * raw git before the detector was written. Windows full-suite runs can make
+ * these multi-process fixtures take over 45s, so allow up to a minute.
  *
  * The fixture uses `realpathSync(mkdtempSync(...))` because on macOS the temp path is a
  * symlink, and `scripts/main-worktree-guard.mjs` documents that the same trap makes two
@@ -38,9 +41,10 @@ import {
  * derives every spawning suite in this directory and asserts the derived set equals a
  * hard-coded allowlist, which names this file.
  */
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: 60_000 });
 
 let dir;
+const WHERE_GIT = process.platform === 'win32' ? 'where.exe' : 'which';
 const GUARD_PATH = realpathSync(join(import.meta.dirname, '../merge-takeover-guard.mjs'));
 const MAIN_GUARD_PATH = realpathSync(join(import.meta.dirname, '../main-worktree-guard.mjs'));
 const LANDING_COMMIT_PATH = realpathSync(join(import.meta.dirname, '../commit-reviewed-landing.mjs'));
@@ -287,6 +291,32 @@ beforeEach(() => {
 
 afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('project main worktree detection', () => {
+  it('recognizes a designated main checkout with an external common Git directory', () => {
+    const source = join(dir, 'source');
+    const checkout = join(dir, 'project');
+    const commonGitDir = join(dir, 'project.git');
+    mkdirSync(source);
+    gitAt(source, ['init', '-q', '-b', 'main']);
+    gitAt(source, ['config', 'user.email', 'test@example.com']);
+    gitAt(source, ['config', 'user.name', 'test']);
+    gitAt(source, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(source, 'AGENTS.md'), '# project policy\n');
+    mkdirSync(join(source, '.kilo'));
+    writeFileSync(join(source, '.kilo', 'marker'), 'project marker\n');
+    writeFileSync(join(source, 'tracked.txt'), 'tracked\n');
+    gitAt(source, ['add', '-A']);
+    gitAt(source, ['commit', '-qm', 'base']);
+    gitAt(source, ['clone', '--separate-git-dir', commonGitDir, source, checkout]);
+
+    expect(realpathSync(resolve(checkout, gitAt(checkout, ['rev-parse', '--git-common-dir'])))).toBe(
+      realpathSync(commonGitDir)
+    );
+    expect(registerMainWorktree(checkout, { required: true })).toBe(true);
+    expect(isProjectMainWorktree(checkout)).toBe(true);
+  });
 });
 
 describe('the shape a whole-file resolution loses silently', () => {
@@ -790,26 +820,30 @@ describe('the shape the original scan set could not reach', () => {
     expect(seen.takeovers).toEqual([]);
   });
 
-  it('escapes newlines and terminal controls in paths printed by the refusal', () => {
-    const unsafePath = 'bad\n\u001b[31mforged.txt';
-    write('other.txt', 'base\n');
-    commit('base');
-    git(['checkout', '-qb', 'feat']);
-    write(unsafePath, 'incoming\n');
-    commit('branch adds a control-character path');
-    git(['checkout', '-q', 'main']);
-    write('other.txt', 'main changed elsewhere\n');
-    commit('main advances');
+  // Windows filesystems reject control characters in filenames; POSIX CI covers this case.
+  it.skipIf(process.platform === 'win32')(
+    'escapes newlines and terminal controls in paths printed by the refusal',
+    () => {
+      const unsafePath = 'bad\n\u001b[31mforged.txt';
+      write('other.txt', 'base\n');
+      commit('base');
+      git(['checkout', '-qb', 'feat']);
+      write(unsafePath, 'incoming\n');
+      commit('branch adds a control-character path');
+      git(['checkout', '-q', 'main']);
+      write('other.txt', 'main changed elsewhere\n');
+      commit('main advances');
 
-    const seen = mergeAndInspect('feat', { args: ['--no-commit', '-s', 'ours'] });
-    expect(seen.takeovers.map((takeover) => takeover.path)).toEqual([unsafePath]);
+      const seen = mergeAndInspect('feat', { args: ['--no-commit', '-s', 'ours'] });
+      expect(seen.takeovers.map((takeover) => takeover.path)).toEqual([unsafePath]);
 
-    const stderr = captureStderr(() => {
-      expect(main([], { cwd: dir })).toBe(1);
-    });
-    expect(stderr).toContain(JSON.stringify(unsafePath));
-    expect(stderr).not.toContain(unsafePath);
-  });
+      const stderr = captureStderr(() => {
+        expect(main([], { cwd: dir })).toBe(1);
+      });
+      expect(stderr).toContain(JSON.stringify(unsafePath));
+      expect(stderr).not.toContain(unsafePath);
+    }
+  );
 
   it('stays silent on `-X ours` where this side is already a strict SUPERSET', () => {
     // The mirror of the superset case the existing suite already pins for `--theirs`, and
@@ -1991,6 +2025,7 @@ describe('pinned main landing', () => {
     removePreMergeGuard();
   });
 
+  // This case runs several guarded Git commits and merges; the Windows full gate measured it at 85s.
   it('binds optional feature-worktree merge pins to the final message and prepared MERGE_HEAD', () => {
     const refs = prepareDisjointMerge();
     const featureWorktree = join(dir, 'feature-worktree');
@@ -2080,7 +2115,7 @@ describe('pinned main landing', () => {
       () => gitAt(featureWorktree, messageArgs)
     );
     expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}'])).toBe(resultTree);
-  });
+  }, 120_000);
 
   it('refuses an unpinned feature merge whose prepared tree changes after pre-commit', () => {
     const refs = prepareDisjointMerge();
@@ -2580,6 +2615,8 @@ describe('pinned main landing', () => {
   });
 });
 
+// The malformed-output fixtures below replace Git with POSIX shell scripts, so Windows CI
+// runs the platform-independent batch-read checks and Linux CI exercises the injected failures.
 describe('refusing rather than passing when the content cannot be read', () => {
   // The one hole whose failure mode is invisible: an unread blob measures as NO lines lost,
   // so the guard answers `clean` and exits 0 having compared nothing. Reached on a merge
@@ -2623,12 +2660,12 @@ describe('refusing rather than passing when the content cannot be read', () => {
     expect(() => batchBlobs([missing], dir)).toThrow(/could not read requested blob/);
   });
 
-  it('refuses when Git cannot return a complete changed-path list', () => {
+  it.skipIf(process.platform === 'win32')('refuses when Git cannot return a complete changed-path list', () => {
     write('f.txt', 'present\n');
     commit('base');
     const bin = join(dir, 'fake-bin');
     mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
     const wrapper = join(bin, 'git');
     writeFileSync(
       wrapper,
@@ -2652,39 +2689,44 @@ describe('refusing rather than passing when the content cannot be read', () => {
     }
   });
 
-  it('refuses invalid UTF-8 path bytes instead of collapsing distinct path identities', () => {
-    write('f.txt', 'present\n');
-    commit('base');
-    const bin = join(dir, 'invalid-path-bin');
-    mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-    const wrapper = join(bin, 'git');
-    writeFileSync(
-      wrapper,
-      `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf '100644 blob 0000000000000000000000000000000000000000\\t\\377bad\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
-    );
-    chmodSync(wrapper, 0o755);
+  it.skipIf(process.platform === 'win32')(
+    'refuses invalid UTF-8 path bytes instead of collapsing distinct path identities',
+    () => {
+      write('f.txt', 'present\n');
+      commit('base');
+      const bin = join(dir, 'invalid-path-bin');
+      mkdirSync(bin);
+      const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
+      const wrapper = join(bin, 'git');
+      writeFileSync(
+        wrapper,
+        `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf '100644 blob 0000000000000000000000000000000000000000\\t\\377bad\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+      );
+      chmodSync(wrapper, 0o755);
 
-    const previousPath = process.env.PATH;
-    const previousRealGit = process.env.REAL_GIT_PATH;
-    try {
-      process.env.PATH = `${bin}:${previousPath ?? ''}`;
-      process.env.REAL_GIT_PATH = realGit;
-      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/path that is not valid UTF-8/);
-    } finally {
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
-      else process.env.REAL_GIT_PATH = previousRealGit;
+      const previousPath = process.env.PATH;
+      const previousRealGit = process.env.REAL_GIT_PATH;
+      try {
+        process.env.PATH = `${bin}:${previousPath ?? ''}`;
+        process.env.REAL_GIT_PATH = realGit;
+        expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(
+          /path that is not valid UTF-8/
+        );
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+        else process.env.REAL_GIT_PATH = previousRealGit;
+      }
     }
-  });
+  );
 
-  it('refuses successful but malformed ls-tree metadata', () => {
+  it.skipIf(process.platform === 'win32')('refuses successful but malformed ls-tree metadata', () => {
     write('f.txt', 'present\n');
     commit('base');
     const bin = join(dir, 'malformed-tree-bin');
     mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
     const wrapper = join(bin, 'git');
     writeFileSync(
       wrapper,
@@ -2706,12 +2748,12 @@ describe('refusing rather than passing when the content cannot be read', () => {
     }
   });
 
-  it('refuses successful but malformed resolve-undo metadata', () => {
+  it.skipIf(process.platform === 'win32')('refuses successful but malformed resolve-undo metadata', () => {
     write('f.txt', 'present\n');
     commit('base');
     const bin = join(dir, 'malformed-undo-bin');
     mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
     const wrapper = join(bin, 'git');
     writeFileSync(
       wrapper,
@@ -2733,40 +2775,45 @@ describe('refusing rather than passing when the content cannot be read', () => {
     }
   });
 
-  it('refuses duplicate resolve-undo stages instead of treating them as one explicit resolution', () => {
-    write('f.txt', 'present\n');
-    commit('base');
-    const bin = join(dir, 'duplicate-undo-bin');
-    mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-    const wrapper = join(bin, 'git');
-    const oid = '0000000000000000000000000000000000000000';
-    writeFileSync(
-      wrapper,
-      `#!/bin/sh\nif [ "$1" = "ls-files" ] && [ "$2" = "--resolve-undo" ]; then printf '100644 ${oid} 1\\tf.txt\\000100644 ${oid} 1\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
-    );
-    chmodSync(wrapper, 0o755);
+  it.skipIf(process.platform === 'win32')(
+    'refuses duplicate resolve-undo stages instead of treating them as one explicit resolution',
+    () => {
+      write('f.txt', 'present\n');
+      commit('base');
+      const bin = join(dir, 'duplicate-undo-bin');
+      mkdirSync(bin);
+      const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
+      const wrapper = join(bin, 'git');
+      const oid = '0000000000000000000000000000000000000000';
+      writeFileSync(
+        wrapper,
+        `#!/bin/sh\nif [ "$1" = "ls-files" ] && [ "$2" = "--resolve-undo" ]; then printf '100644 ${oid} 1\\tf.txt\\000100644 ${oid} 1\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+      );
+      chmodSync(wrapper, 0o755);
 
-    const previousPath = process.env.PATH;
-    const previousRealGit = process.env.REAL_GIT_PATH;
-    try {
-      process.env.PATH = `${bin}:${previousPath ?? ''}`;
-      process.env.REAL_GIT_PATH = realGit;
-      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/duplicate path\/stage record/);
-    } finally {
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
-      else process.env.REAL_GIT_PATH = previousRealGit;
+      const previousPath = process.env.PATH;
+      const previousRealGit = process.env.REAL_GIT_PATH;
+      try {
+        process.env.PATH = `${bin}:${previousPath ?? ''}`;
+        process.env.REAL_GIT_PATH = realGit;
+        expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(
+          /duplicate path\/stage record/
+        );
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+        else process.env.REAL_GIT_PATH = previousRealGit;
+      }
     }
-  });
+  );
 
-  it('refuses resolve-undo metadata that does not match the merge trees', () => {
+  it.skipIf(process.platform === 'win32')('refuses resolve-undo metadata that does not match the merge trees', () => {
     write('f.txt', 'present\n');
     commit('base');
     const bin = join(dir, 'inconsistent-undo-bin');
     mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
     const wrapper = join(bin, 'git');
     const oid = '0000000000000000000000000000000000000000';
     writeFileSync(
@@ -2791,39 +2838,42 @@ describe('refusing rather than passing when the content cannot be read', () => {
     }
   });
 
-  it('refuses non-ASCII bytes in tree metadata before ASCII decoding can normalize them', () => {
-    write('f.txt', 'present\n');
-    commit('base');
-    const bin = join(dir, 'non-ascii-tree-bin');
-    mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-    const wrapper = join(bin, 'git');
-    writeFileSync(
-      wrapper,
-      `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf '\\26100644 blob 0000000000000000000000000000000000000000\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
-    );
-    chmodSync(wrapper, 0o755);
+  it.skipIf(process.platform === 'win32')(
+    'refuses non-ASCII bytes in tree metadata before ASCII decoding can normalize them',
+    () => {
+      write('f.txt', 'present\n');
+      commit('base');
+      const bin = join(dir, 'non-ascii-tree-bin');
+      mkdirSync(bin);
+      const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
+      const wrapper = join(bin, 'git');
+      writeFileSync(
+        wrapper,
+        `#!/bin/sh\nif [ "$1" = "ls-tree" ]; then printf '\\26100644 blob 0000000000000000000000000000000000000000\\tf.txt\\000'; exit 0; fi\nexec "$REAL_GIT_PATH" "$@"\n`
+      );
+      chmodSync(wrapper, 0o755);
 
-    const previousPath = process.env.PATH;
-    const previousRealGit = process.env.REAL_GIT_PATH;
-    try {
-      process.env.PATH = `${bin}:${previousPath ?? ''}`;
-      process.env.REAL_GIT_PATH = realGit;
-      expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/non-ASCII metadata/);
-    } finally {
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-      if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
-      else process.env.REAL_GIT_PATH = previousRealGit;
+      const previousPath = process.env.PATH;
+      const previousRealGit = process.env.REAL_GIT_PATH;
+      try {
+        process.env.PATH = `${bin}:${previousPath ?? ''}`;
+        process.env.REAL_GIT_PATH = realGit;
+        expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).toThrow(/non-ASCII metadata/);
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        if (previousRealGit === undefined) delete process.env.REAL_GIT_PATH;
+        else process.env.REAL_GIT_PATH = previousRealGit;
+      }
     }
-  });
+  );
 
-  it('rejects empty NUL records instead of accepting a partial path list', () => {
+  it.skipIf(process.platform === 'win32')('rejects empty NUL records instead of accepting a partial path list', () => {
     write('f.txt', 'present\n');
     commit('base');
     const bin = join(dir, 'empty-record-bin');
     mkdirSync(bin);
-    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const realGit = execFileSync(WHERE_GIT, ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
     const wrapper = join(bin, 'git');
     writeFileSync(
       wrapper,

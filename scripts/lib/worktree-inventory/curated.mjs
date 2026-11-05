@@ -323,7 +323,6 @@ export const CURATED = {
       'LayersTab unit-test hardening as one wip(preservation) commit: four new LayersTab suites, a shared fixture, a vitest config and scratch iterations.',
     issues: [
       { ref: 'AUDIT-STASHED-DOCS.md#22', title: 'LayersTab.test.tsx asserted mock payloads over a frozen store' },
-      { ref: 'TEST_ISSUES.md#2.2', title: 'LayersTab.test.tsx asserts mock payloads over a frozen store' },
     ],
     note: 'Read four of the seven captured files as scratch iterations, not finished suites.',
   },
@@ -336,7 +335,10 @@ export const CURATED = {
     summary:
       'useApp PSD-import unit-test hardening, snapshotted as one wip(preservation) commit capturing a single test file.',
     issues: [
-      { ref: 'TEST_ISSUES.md#3.6', title: 'useApp.psd.test.ts — the PSD bitmap-immutabilization path never runs' },
+      {
+        ref: 'AUDIT-STASHED-DOCS.md#3',
+        title: 'useApp.psd.test.ts — the PSD bitmap-immutabilization path never runs (TEST_ISSUES.md §3.6, fixed)',
+      },
       {
         ref: 'AUDIT-STASHED-DOCS.md#3',
         title: 'records §3.6 as fixed, so this capture may duplicate work already on main',
@@ -347,7 +349,10 @@ export const CURATED = {
     summary:
       'useRect hook unit-test hardening, snapshotted as one wip(preservation) commit: the useRect suite, shared harness files and a fixture directory.',
     issues: [
-      { ref: 'TEST_ISSUES.md#3.1', title: 'useRect — an inverted initialRect breaks the aspect lock' },
+      {
+        ref: 'AUDIT-STASHED-DOCS.md#3',
+        title: 'useRect — an inverted initialRect breaks the aspect lock (TEST_ISSUES.md §3.1, fixed)',
+      },
       {
         ref: 'AUDIT-STASHED-DOCS.md#3',
         title: 'records §3.1 as fixed, so this capture may duplicate work already on main',

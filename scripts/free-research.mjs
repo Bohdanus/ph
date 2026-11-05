@@ -5,14 +5,17 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { completeWithFreeModel } from './free-model-pool.mjs';
+import { toUnicode as punycodeToUnicode } from 'node:punycode';
+import { sanitizeErrorMessage, sanitizeForLogging } from './lib/secrets.mjs';
 
 const MAX_CONCURRENCY = 4;
 const MAX_ALLOWED_CONCURRENCY = 8;
 const MAX_URLS = 20;
-const FETCH_TIMEOUT_MS = 20_000;
-const MAX_ALLOWED_TIMEOUT_MS = 60_000;
-const MAX_CONTENT_CHARS = 10_000;
+export const FETCH_TIMEOUT_MS = 20_000;
+export const MAX_ALLOWED_TIMEOUT_MS = 60_000;
+export const MAX_CONTENT_CHARS = 10_000;
 const MAX_TOTAL_CONTENT_CHARS = 40_000;
 const MAX_RESEARCH_PROMPT_CHARS = 120_000;
 const MAX_RESPONSE_BYTES = 512 * 1024;
@@ -53,6 +56,12 @@ const NON_PUBLIC_IPV6_CIDRS = [
   '3fff::/20',
   '64:ff9b::/96',
   '64:ff9b:1::/48',
+  'fc00::/7',
+  'fe80::/10',
+  '::ffff:0:0/96',
+  '2001:10::/28',
+  '2001:20::/28',
+  'ff00::/8',
 ];
 
 const VALUE_FLAGS = new Set([
@@ -151,28 +160,48 @@ export function validateResearchUrl(value) {
   if (parsed.protocol !== 'https:') throw new Error('Research URLs must use HTTPS');
   if (parsed.username || parsed.password) throw new Error('Research URLs must not contain credentials');
   if (parsed.port && parsed.port !== '443') throw new Error('Research URLs must use the standard HTTPS port');
-  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
-  const hostnameLabels = hostname.split('.');
+  let hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+
+  // Decode punycode (xn-- prefixed labels) before applying hostname checks.
+  const labels = hostname.split('.');
+  const decodedLabels = labels.map((label) => {
+    if (label.startsWith('xn--')) {
+      try {
+        return punycodeToUnicode(label);
+      } catch {
+        return label;
+      }
+    }
+    return label;
+  });
+  const normalizedHostname = decodedLabels.join('.');
+
+  // Reject internationalized hostnames rather than attempt mixed-script validation.
+  if (normalizedHostname !== hostname && /[\u0080-\uFFFF]/.test(normalizedHostname)) {
+    throw new Error('Internationalized hostnames are not supported');
+  }
+
+  const hostnameLabels = normalizedHostname.split('.');
   if (
-    hostname.length > 253 ||
+    normalizedHostname.length > 253 ||
     hostnameLabels.some((label) => label.length === 0 || label.length > 63) ||
-    !hostname.includes('.') ||
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.internal') ||
-    hostname.endsWith('.lan') ||
-    hostname.endsWith('.localdomain') ||
-    hostname.endsWith('.test') ||
-    hostname.endsWith('.example') ||
-    hostname.endsWith('.invalid') ||
-    hostname.endsWith('.arpa') ||
-    hostname.endsWith('.onion') ||
-    isIP(hostname.replace(/^\[|\]$/g, '')) !== 0
+    !normalizedHostname.includes('.') ||
+    normalizedHostname === 'localhost' ||
+    normalizedHostname.endsWith('.localhost') ||
+    normalizedHostname.endsWith('.local') ||
+    normalizedHostname.endsWith('.internal') ||
+    normalizedHostname.endsWith('.lan') ||
+    normalizedHostname.endsWith('.localdomain') ||
+    normalizedHostname.endsWith('.test') ||
+    normalizedHostname.endsWith('.example') ||
+    normalizedHostname.endsWith('.invalid') ||
+    normalizedHostname.endsWith('.arpa') ||
+    normalizedHostname.endsWith('.onion') ||
+    isIP(normalizedHostname.replace(/^\[|\]$/g, '')) !== 0
   ) {
     throw new Error('Research URLs must use a public hostname, not a local host or IP literal');
   }
-  parsed.hostname = hostname;
+  parsed.hostname = normalizedHostname;
   parsed.hash = '';
   if (parsed.href.length > MAX_URL_CHARS) throw new Error(`Research URLs must be at most ${MAX_URL_CHARS} characters`);
   if ([...parsed.searchParams.keys()].some(isCredentialQueryParameter)) {
@@ -226,6 +255,12 @@ export function isPublicResearchAddress(address, family = isIP(address)) {
   if (isIP(address) !== family) return false;
   if (family === 4) return NON_PUBLIC_IPV4_CIDRS.every((cidr) => !addressInCidr(address, cidr));
   if (family !== 6 || !addressInCidr(address, '2000::/3')) return false;
+  if (address.startsWith('::ffff:')) {
+    const embeddedV4 = address.slice(7);
+    if (isIP(embeddedV4) === 4) {
+      return isPublicResearchAddress(embeddedV4, 4);
+    }
+  }
   return NON_PUBLIC_IPV6_CIDRS.every((cidr) => !addressInCidr(address, cidr));
 }
 
@@ -385,6 +420,93 @@ export async function readBoundedUtf8File(path, maxBytes, label) {
   }
 }
 
+const HTML_NAMED_ENTITIES = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  copy: '\u00A9',
+  reg: '\u00AE',
+  trade: '\u2122',
+  euro: '\u20AC',
+  mdash: '\u2014',
+  ndash: '\u2013',
+  hellip: '\u2026',
+  laquo: '\u00AB',
+  raquo: '\u00BB',
+  lsquo: '\u2018',
+  rsquo: '\u2019',
+  sbquo: '\u201A',
+  ldquo: '\u201C',
+  rdquo: '\u201D',
+  bdquo: '\u201E',
+  dagger: '\u2020',
+  Dagger: '\u2021',
+  bull: '\u2022',
+  permil: '\u2030',
+  prime: '\u2032',
+  Prime: '\u2033',
+  lsaquo: '\u2039',
+  rsaquo: '\u203A',
+  oline: '\u203E',
+  frasl: '\u2044',
+  cent: '\u00A2',
+  pound: '\u00A3',
+  yen: '\u00A5',
+  sect: '\u00A7',
+  para: '\u00B6',
+  middot: '\u00B7',
+  deg: '\u00B0',
+  plusmn: '\u00B1',
+  frac12: '\u00BD',
+  frac14: '\u00BC',
+  frac34: '\u00BE',
+  sup1: '\u00B9',
+  sup2: '\u00B2',
+  sup3: '\u00B3',
+  times: '\u00D7',
+  divide: '\u00F7',
+  acute: '\u00B4',
+  micro: '\u00B5',
+  cedil: '\u00B8',
+  ordf: '\u00AA',
+  ordm: '\u00BA',
+  iexcl: '\u00A1',
+  iquest: '\u00BF',
+  fnof: '\u0192',
+  shy: '\u00AD',
+  asymp: '\u2248',
+  ne: '\u2260',
+  le: '\u2264',
+  ge: '\u2265',
+  minus: '\u2212',
+  emsp: '\u2003',
+  thinsp: '\u2009',
+  zwnj: '\u200C',
+  zwj: '\u200D',
+  lrm: '\u200E',
+  rlm: '\u200F',
+};
+
+function decodeEntity(entity) {
+  if (entity.startsWith('&#x')) {
+    const code = parseInt(entity.slice(3, -1), 16);
+    return isValidCodePoint(code) ? String.fromCodePoint(code) : entity;
+  }
+  if (entity.startsWith('&#')) {
+    const code = parseInt(entity.slice(2, -1), 10);
+    return isValidCodePoint(code) ? String.fromCodePoint(code) : entity;
+  }
+  const name = entity.slice(1, -1);
+  return Object.prototype.hasOwnProperty.call(HTML_NAMED_ENTITIES, name) ? HTML_NAMED_ENTITIES[name] : entity;
+}
+
+function isValidCodePoint(code) {
+  return Number.isInteger(code) && code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+}
+
 export function stripHtml(html) {
   return html
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -392,13 +514,7 @@ export function stripHtml(html) {
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(/&#\d+;|&#x[0-9a-fA-F]+;|&[a-zA-Z][a-zA-Z0-9]*;/g, (entity) => decodeEntity(entity))
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -548,17 +664,38 @@ export async function fetchAll(
   }
   const results = new Array(urls.length);
   let nextIndex = 0;
+  const hostConcurrency = new Map();
+  const MAX_PER_HOST = 2;
+
   const worker = async () => {
     while (true) {
       const index = nextIndex;
       nextIndex += 1;
       if (index >= urls.length) return;
       const url = urls[index];
+      let host;
+      try {
+        host = new URL(validateResearchUrl(url)).hostname;
+      } catch (error) {
+        results[index] = { url, ok: false, error: error.message };
+        continue;
+      }
+
+      // Wait for per-host slot
+      let hostCount = hostConcurrency.get(host) || 0;
+      while (hostCount >= MAX_PER_HOST) {
+        await new Promise((r) => setTimeout(r, 50));
+        hostCount = hostConcurrency.get(host) || 0;
+      }
+      hostConcurrency.set(host, hostCount + 1);
+
       try {
         const content = await fetchUrl(url, { fetchImpl, maxContent, timeout });
         results[index] = { url, ok: true, content };
       } catch (error) {
         results[index] = { url, ok: false, error: error.message };
+      } finally {
+        hostConcurrency.set(host, hostConcurrency.get(host) - 1);
       }
     }
   };
@@ -626,7 +763,7 @@ export async function main(
   try {
     parsed = parseArgs(args);
   } catch (error) {
-    stderr.write(`${error.message}\n${USAGE}`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 2;
   }
   if (parsed.help) {
@@ -696,7 +833,7 @@ export async function main(
   try {
     urls = [...new Set(listedUrls.map(validateResearchUrl))];
   } catch (error) {
-    stderr.write(`${error.message}\n`);
+    stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
     return 3;
   }
 
@@ -714,7 +851,8 @@ export async function main(
   const result = await completeImpl(researchPrompt, {
     maxTokens,
     checkOpenRouterQuota: probeOpenRouterQuota,
-    onCatalogError: (source, error) => stderr.write(`${source} free-model catalog unavailable: ${error.message}\n`),
+    onCatalogError: (source, error) =>
+      stderr.write(`${source} free-model catalog unavailable: ${sanitizeErrorMessage(error.message)}\n`),
     onOpenRouterQuota: ({ used, limit, remaining }) =>
       stderr.write(
         `OpenRouter free requests: ${used}/${limit} used, ${remaining} remaining at ${new Date().toISOString()} (server snapshot).\n`
@@ -726,7 +864,22 @@ export async function main(
     `Source: ${result.source}/${result.model}\nFinish reason: ${result.finishReason}\nUsage: ${JSON.stringify(result.usage)}\nRequests attempted (this run): ${JSON.stringify(result.requestCounts)}\n\n${result.content}\n`,
     'utf8'
   );
+
+  // Write audit log with correlation IDs
+  const auditRecord = {
+    timestamp: new Date().toISOString(),
+    questionHash: createHash('sha256').update(question).digest('hex').slice(0, 16),
+    urls: urls.map((u) => createHash('sha256').update(u).digest('hex').slice(0, 12)),
+    model: result.model,
+    source: result.source,
+    usage: result.usage,
+    requestCounts: result.requestCounts,
+    promptChars: researchPrompt.length,
+    fetchedCount: okCount,
+  };
+  await writeFile(`${outputFile}.audit.json`, JSON.stringify(auditRecord, null, 2), 'utf8');
   stderr.write(`Summary written to ${outputFile}; research prompt capped at ${researchPrompt.length} chars\n`);
+  stderr.write(`Audit log written to ${outputFile}.audit.json\n`);
   return 0;
 }
 
@@ -736,7 +889,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = code;
     })
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${sanitizeErrorMessage(error.message)}\n`);
       process.exitCode = 1;
     });
 }

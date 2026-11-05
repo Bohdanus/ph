@@ -337,8 +337,8 @@ Verified evidence so far:
   `node scripts/install-tsc-guard.mjs`, and import identity tests must allow independent
   render output allocation. No compiler guard, pixel tolerance, expected-failure list,
   console gate or theme gate was weakened.
-- Two independent read-only completion reviews through verified-free
-  `kilo/poolside/laguna-s-2.1:free` completed with `finish_reason=stop`, zero reported
+- Two independent read-only completion reviews through the then-preferred verified-free Kilo route
+  completed with `finish_reason=stop`, zero reported
   cost and `NO_BLOCKING_FINDINGS`: ownership/publication and eligibility/browser proof.
   A follow-up of the lifecycle assertion also found no blocking issue; its speculative
   suggestion to copy an editable raster is contrary to the existing immutable-input contract.
@@ -375,8 +375,8 @@ Sync-tree evidence after the main merge: the four focused StoreContext/presentat
 aligned with main's ownership fallback; the full unit suite passes 399 files, 11,489 tests, and
 215 established expected failures. `npm run tsc`, `npm run build`, and `npm run lint:check`
 pass. The targeted headless `e2e/source-backed-history.spec.ts` passes its two fallback and
-pixel/export cases. A focused paid Sol audit and two separately prompted read-only reviews via
-`kilo/poolside/laguna-s-2.1:free` report no blocking code defect; the second review explicitly
+pixel/export cases. A focused paid Sol audit and two separately prompted read-only reviews via the then-preferred
+verified-free Kilo route report no blocking code defect; the second review explicitly
 confirms that `REPLACE_DOCUMENT` never calls the durable append publisher and the gate-free unit
 fixture does not prove normal UI reachability. Both Kilo calls completed with `finish_reason=stop`,
 `cost=0`, and no OpenRouter requests. No further model review is planned; broader authority and
@@ -417,7 +417,7 @@ The frame task owns `materialization.ts` and its affine
 E2E file; this slice does not edit them or `e2e/OPEN_PROBLEMS.md`.
 
 Provider state refreshed 2026-10-28: two required current-candidate reviews resolved to
-`kilo/poolside/laguna-s-2.1:free`, each with zero reported cost; the last live OpenRouter
+the then-preferred verified-free Kilo route, each with zero reported cost; the last live OpenRouter
 snapshot was `817/1000` used with `183` remaining at 18:16:48Z, and no OpenRouter call was made.
 No Groq key or Free-plan opt-in is present. The operator has since instructed: do not use free
 models for further reviews; use Luna or stronger. The completed free calls predate that instruction.

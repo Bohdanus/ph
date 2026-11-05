@@ -30,6 +30,13 @@ export type MaterializationRequest = Readonly<{
 
 type MaterializationCanvas = OffscreenCanvas | HTMLCanvasElement;
 
+export type ResolvedLayerSourceBitmap = Readonly<{
+  bitmap: BitmapSource;
+  release: () => void;
+  size: Size;
+  borrowed: boolean;
+}>;
+
 export type MaterializedLayer = Readonly<{
   layerId: string;
   bitmap: BitmapSource;
@@ -182,10 +189,10 @@ function preflightFirstRasterProcessor(layer: DurableReplayLayer): void {
  * behind a borrowed baseline — owns and may close. Every other source is created
  * here, so nothing outside this call can reach it.
  */
-async function sourceBitmap(
+export async function resolveLayerSourceBitmap(
   layer: DurableReplayLayer,
   request: MaterializationRequest
-): Promise<{ bitmap: BitmapSource; release: () => void; size: Size; borrowed: boolean }> {
+): Promise<ResolvedLayerSourceBitmap> {
   const { source } = layer.snapshot;
   if (source.kind === 'raster') {
     const lease = await request.assetRegistry.resolve(source.assetId, request.signal);
@@ -291,7 +298,7 @@ export async function materializeLayer(
       // The first processor's presented extent can be computed from the immutable record alone.
       // Check it before sourceBitmap creates a blank/creator raster or resolves a borrowed asset.
       preflightFirstRasterProcessor(layer);
-      const source = await sourceBitmap(layer, request);
+      const source = await resolveLayerSourceBitmap(layer, request);
       let bitmap = source.bitmap;
       // Layer.pos is the current logical presentation size. The source size
       // remains intrinsic, while processors and final placement use the
@@ -521,17 +528,35 @@ export async function materializeLayer(
         try {
           const frameRenderSurface = createCanvas(request.frame.width, request.frame.height);
           const frameContext = context2d(frameRenderSurface);
-          const frameEvaluation = evaluatePresentation({
-            position: bounds,
-            sourceSize: { width: bounds.width, height: bounds.height },
-            operations: [],
-            frame: request.frame,
-            mode: 'frame-bounds',
-          });
-          drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
-            kind: 'document',
-            frame: request.frame,
-          });
+          const pixelGridFrame = request.pixelGridFrame;
+          const frameAlreadyRasterized = Boolean(
+            hasRetainedAffine &&
+            pixelGridFrame &&
+            pixelGridFrame.x === request.frame.x &&
+            pixelGridFrame.y === request.frame.y &&
+            pixelGridFrame.width === request.frame.width &&
+            pixelGridFrame.height === request.frame.height &&
+            frameSurface
+          );
+          if (frameAlreadyRasterized && frameSurface) {
+            // renderRetainedSegment already drew the affine presentation in this
+            // exact frame's pixel grid. Copy those pixels without shifting them
+            // through a second fractional frame transform.
+            frameContext.imageSmoothingEnabled = false;
+            frameContext.drawImage(frameSurface as CanvasImageSource, 0, 0);
+          } else {
+            const frameEvaluation = evaluatePresentation({
+              position: bounds,
+              sourceSize: { width: bounds.width, height: bounds.height },
+              operations: [],
+              frame: request.frame,
+              mode: 'frame-bounds',
+            });
+            drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
+              kind: 'document',
+              frame: request.frame,
+            });
+          }
           return {
             bitmap: await toOwnedBitmap(frameRenderSurface),
             metadata: {

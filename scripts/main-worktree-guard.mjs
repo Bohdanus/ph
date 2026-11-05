@@ -81,6 +81,10 @@ const MAIN_WORKTREE_ID_FILENAME = 'kilo-main-worktree-identity';
 
 export { OVERRIDE_VAR };
 
+function gitConfigPath(value) {
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
+
 function readMainWorktreeIdentity(gitDir) {
   try {
     return readFileSync(join(gitDir, MAIN_WORKTREE_ID_FILENAME), 'utf8').trim() || null;
@@ -108,17 +112,21 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false, al
     } catch {
       // Detached HEAD is eligible only after the installer validates its saved identity.
     }
-    const gitDir = realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir'])));
-    const worktreePath = realpathSync(cwd);
+    const gitDir = gitConfigPath(realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir']))));
+    const worktreePath = gitConfigPath(realpathSync(cwd));
     let registeredGitDir = null;
     let registeredPath = null;
+    let registeredGitDirRaw = null;
+    let registeredPathRaw = null;
     try {
-      registeredGitDir = git(['config', '--local', '--get', MAIN_WORKTREE_GIT_DIR_KEY]);
+      registeredGitDirRaw = git(['config', '--local', '--get', MAIN_WORKTREE_GIT_DIR_KEY]);
+      registeredGitDir = gitConfigPath(registeredGitDirRaw);
     } catch {
       // The first main-worktree registration has no config value yet.
     }
     try {
-      registeredPath = git(['config', '--local', '--get', MAIN_WORKTREE_PATH_KEY]);
+      registeredPathRaw = git(['config', '--local', '--get', MAIN_WORKTREE_PATH_KEY]);
+      registeredPath = gitConfigPath(registeredPathRaw);
     } catch {
       // The first main-worktree registration has no config value yet.
     }
@@ -148,8 +156,8 @@ export function registerMainWorktree(cwd = process.cwd(), { required = false, al
       writeFileSync(join(gitDir, MAIN_WORKTREE_ID_FILENAME), `${registeredIdentity}\n`, { mode: 0o600 });
       git(['config', '--local', MAIN_WORKTREE_ID_KEY, registeredIdentity]);
     }
-    if (registeredGitDir !== gitDir) git(['config', '--local', MAIN_WORKTREE_GIT_DIR_KEY, gitDir]);
-    if (registeredPath !== worktreePath) git(['config', '--local', MAIN_WORKTREE_PATH_KEY, worktreePath]);
+    if (registeredGitDirRaw !== gitDir) git(['config', '--local', MAIN_WORKTREE_GIT_DIR_KEY, gitDir]);
+    if (registeredPathRaw !== worktreePath) git(['config', '--local', MAIN_WORKTREE_PATH_KEY, worktreePath]);
     return true;
   } catch (error) {
     if (required) {
@@ -233,8 +241,8 @@ An operator hotfix the operator asked for in the designated main worktree by nam
 export function resolveWorktree(cwd = process.cwd()) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   try {
-    const gitDir = realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir'])));
-    const commonDir = realpathSync(resolve(cwd, git(['rev-parse', '--git-common-dir'])));
+    const gitDir = gitConfigPath(realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir']))));
+    const commonDir = gitConfigPath(realpathSync(resolve(cwd, git(['rev-parse', '--git-common-dir']))));
     let branchRef = null;
     try {
       branchRef = git(['symbolic-ref', '--quiet', 'HEAD']);
@@ -245,13 +253,13 @@ export function resolveWorktree(cwd = process.cwd()) {
     const isMainWorktree = branchRef === 'refs/heads/main';
     let registeredMainGitDir = null;
     try {
-      registeredMainGitDir = git(['config', '--local', '--get', MAIN_WORKTREE_GIT_DIR_KEY]);
+      registeredMainGitDir = gitConfigPath(git(['config', '--local', '--get', MAIN_WORKTREE_GIT_DIR_KEY]));
     } catch {
       // A repository that has not run the hook installer has no registered path yet.
     }
     let registeredMainPath = null;
     try {
-      registeredMainPath = git(['config', '--local', '--get', MAIN_WORKTREE_PATH_KEY]);
+      registeredMainPath = gitConfigPath(git(['config', '--local', '--get', MAIN_WORKTREE_PATH_KEY]));
     } catch {
       // A repository that has not run the hook installer has no registered path yet.
     }
@@ -261,7 +269,7 @@ export function resolveWorktree(cwd = process.cwd()) {
     } catch {
       // A repository that has not registered main has no saved identity token yet.
     }
-    const worktreePath = realpathSync(cwd);
+    const worktreePath = gitConfigPath(realpathSync(cwd));
     if (
       isMainWorktree &&
       (registeredMainGitDir !== gitDir ||

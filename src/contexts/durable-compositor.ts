@@ -3,6 +3,7 @@ import type { DocumentFrame } from './document-frame.ts';
 import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.ts';
 import {
   materializeDocument,
+  resolveLayerSourceBitmap,
   type MaterializationRequest,
   type MaterializedDocument,
   type MaterializedLayer,
@@ -94,20 +95,26 @@ function assertCompositionCurrent(request: MaterializationRequest): void {
 }
 
 /**
- * Draws pure-affine raster layers into the final document composite. Rasterizing
- * each layer to tight bounds first adds an antialiasing pass at transformed edges.
- * The materialized layer remains available to StoreContext and export consumers.
+ * Draws pure-affine raster and vector-source layers into the final document
+ * composite. Rasterizing each layer to tight bounds first adds an antialiasing
+ * pass at transformed edges. The materialized layer remains available to
+ * StoreContext and export consumers.
  */
-async function drawAffineRasterLayer(
+async function drawDirectAffineSourceLayer(
   context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   layer: DurableReplayLayer,
   frame: DocumentFrame,
   request: MaterializationRequest
 ): Promise<boolean> {
-  if (layer.snapshot.source.kind !== 'raster' || !hasOnlyAffineOperations(layer)) return false;
+  if (
+    (layer.snapshot.source.kind !== 'raster' && layer.snapshot.source.kind !== 'vector') ||
+    !hasOnlyAffineOperations(layer)
+  ) {
+    return false;
+  }
 
   assertCompositionCurrent(request);
-  const source = await request.assetRegistry.resolve(layer.snapshot.source.assetId, request.signal);
+  const source = await resolveLayerSourceBitmap(layer, request);
   try {
     assertCompositionCurrent(request);
     const operations = layer.operations.map((operation) => {
@@ -137,6 +144,7 @@ async function drawAffineRasterLayer(
     }
   } finally {
     source.release();
+    if (!source.borrowed) closeOwnedBitmap(source.bitmap);
   }
 
   return true;
@@ -212,7 +220,7 @@ export async function composeDurableDocument(
       }
       if (!layer.visible) continue;
 
-      if (await drawAffineRasterLayer(context, replayLayer, frame, materializationRequest)) continue;
+      if (await drawDirectAffineSourceLayer(context, replayLayer, frame, materializationRequest)) continue;
 
       context.save();
       try {

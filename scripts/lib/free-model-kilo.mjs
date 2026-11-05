@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { resolveCommandShim } from './windows-command-shim.mjs';
 
 export const COMPLETION_TIMEOUT_MS = 300_000;
 export const MAX_KILO_OUTPUT_BYTES = 1024 * 1024;
@@ -182,7 +183,9 @@ export async function runKiloCompletion({
   if (source !== 'kilo') return { error: 'Unsupported Kilo CLI provider' };
   if (typeof command !== 'string' || !command.trim())
     return { error: 'Kilo CLI is not configured', exhaustSource: true };
-  if (typeof model !== 'string' || !model || /\s/.test(model)) return { error: 'Invalid model ID' };
+  if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/.test(model)) {
+    return { error: 'Invalid model ID' };
+  }
   if (typeof prompt !== 'string' || !prompt) return { error: 'Prompt is empty' };
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) return { error: 'Invalid token limit' };
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return { error: 'Invalid completion timeout' };
@@ -190,19 +193,21 @@ export async function runKiloCompletion({
   const message = `Answer the provided request directly, in plain text, using at most ${maxTokens} output tokens.\n\n${prompt}`;
   try {
     const args = ['run', '--pure', '--format', 'json', '--model', `kilo/${model}`, '--agent', 'free-completion'];
-    if (model === 'poolside/laguna-s-2.1:free') {
-      args.push('--variant', 'thinking');
+    if (model === 'nvidia/nemotron-3-ultra-550b-a55b:free') {
+      args.push('--variant', 'high');
     }
+    const commandShim = resolveCommandShim(command, args);
 
     const { events, stderrText, code, signal, timedOut, outputOverflow, malformed, inputError } = await new Promise(
       (resolve, reject) => {
         let child;
         try {
-          child = spawnImpl(command, args, {
+          child = spawnImpl(commandShim.command, commandShim.args, {
             cwd: projectRoot,
             env: kiloRuntimeEnvironment(env),
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
+            ...commandShim.spawnOptions,
           });
         } catch {
           reject(Object.assign(new Error('Kilo CLI could not be started'), { code: 'KILO_SPAWN' }));

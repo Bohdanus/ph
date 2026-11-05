@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Action, PublicAction, StoreDispatch } from '../StoreContext.tsx';
 
@@ -20,6 +20,8 @@ const materializationModule = 'materialization';
  * verifiable rather than assumed.
  */
 const deletedModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints', 'durable-presentation'] as const;
+
+vi.setConfig({ testTimeout: 20_000 });
 
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import {
   assertMirrorBranchPushSafe,
@@ -17,6 +17,7 @@ import {
   fastForwardBaselineCommit,
   githubRepositoryFromRemote,
   isRetryableCommandError,
+  MIRROR_PUSH_TIMEOUT_MS,
   parseArgs,
   parseMirrorBranchSha,
   readMirrorBranchSha,
@@ -24,6 +25,8 @@ import {
   LINUX_BASELINE_FILES,
   LINUX_BASELINE_PATH,
   verifyBaselinePromotion,
+  pushMirrorBranch,
+  runCommandWithTimeout,
 } from '../mirror-e2e.mjs';
 import { validateE2ESpec } from '../validate-e2e-spec.mjs';
 
@@ -32,7 +35,8 @@ const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml
 const focusedWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/focused-e2e.yml'), 'utf8');
 
 function runGit(cwd, args, input) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', input });
+  const commandArgs = basename(cwd) === 'mirror.git' ? ['-c', 'safe.bareRepository=all', ...args] : args;
+  const result = spawnSync('git', commandArgs, { cwd, encoding: 'utf8', input });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
   return result.stdout.trim();
 }
@@ -53,6 +57,15 @@ function createMirrorPushFixture() {
   runGit(source, ['remote', 'add', 'mirror', mirror]);
 
   return { root, source, mirror, branch, sourceSha: runGit(source, ['rev-parse', 'HEAD']) };
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
 }
 
 function createBaselinePromotion(fixture, chatId, subject = 'test: refresh Linux export baselines') {
@@ -223,6 +236,48 @@ describe('mirror E2E command parsing', () => {
     ].map((args) => [args])
   )('rejects invalid invocation %j', (args) => {
     expect(() => parseArgs(args)).toThrow();
+  });
+});
+
+describe('mirror E2E push timeout', () => {
+  it('passes the full pre-push gate budget to Git when pushing a tested branch', () => {
+    const sourceSha = 'c'.repeat(40);
+    const runCommand = vi.fn();
+    pushMirrorBranch(sourceSha, 'feat/e2e-runner', { cwd: '/repo', runCommand });
+
+    expect(runCommand).toHaveBeenCalledWith(
+      'git',
+      ['push', 'mirror', `${sourceSha}:refs/heads/feat/e2e-runner`],
+      '/repo',
+      MIRROR_PUSH_TIMEOUT_MS
+    );
+    expect(MIRROR_PUSH_TIMEOUT_MS).toBe(15 * 60_000);
+  });
+
+  it('kills the command process tree when the timeout expires', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mirror-e2e-timeout-'));
+    const childPidFile = join(root, 'child-pid');
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      'writeFileSync(process.argv[1], String(child.pid));',
+      'setInterval(() => {}, 1000);',
+    ].join('\n');
+
+    try {
+      await expect(
+        runCommandWithTimeout(process.execPath, ['-e', script, childPidFile], root, 750)
+      ).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+      const childPid = Number(readFileSync(childPidFile, 'utf8'));
+      const deadline = Date.now() + 5_000;
+      while (isProcessAlive(childPid) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(isProcessAlive(childPid)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -487,7 +542,9 @@ describe('mirror remote and dispatch selection', () => {
         '-m',
         'source-only update',
       ]);
-      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
+      const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source, (_binary, args, cwd) =>
+        runGit(cwd, ['-c', 'safe.bareRepository=all', ...args])
+      );
       expect(() =>
         assertMirrorBranchPushSafe({
           sourceSha: localOnlySha,
@@ -638,7 +695,7 @@ describe('mirror remote and dispatch selection', () => {
         'Chat: ses_rootBaselineFixture',
       ]);
       const rootSha = runGit(rootRepo, ['rev-parse', 'HEAD']);
-      runGit(fixture.mirror, ['fetch', '--quiet', rootRepo, 'refs/heads/main']);
+      runGit(fixture.mirror, ['-c', 'safe.bareRepository=all', 'fetch', '--quiet', rootRepo, 'refs/heads/main']);
       runGit(fixture.mirror, ['update-ref', `refs/heads/${fixture.branch}`, rootSha]);
 
       const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
@@ -708,9 +765,11 @@ describe('mirror remote and dispatch selection', () => {
     }
   });
 
+  // Windows cannot materialize a filename with a trailing space; the other
+  // malformed path forms remain covered on every platform.
   it.each([
     ['leading-space path', { pathPrefix: ' ' }, /allowlist/],
-    ['trailing-space path', { fileSuffix: ' ' }, /allowlist/],
+    ...(process.platform === 'win32' ? [] : [['trailing-space path', { fileSuffix: ' ' }, /allowlist/]]),
     ['trailing-space subject', { subjectSuffix: ' ' }, /unrecognized subject/],
     ['trailing-space Chat trailer', { chatSuffix: ' ' }, /exactly the requested native Chat trailer/],
   ])('rejects a baseline promotion with %s', (_, mutation, error) => {

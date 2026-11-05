@@ -802,8 +802,8 @@ describe('e2e-run: the queue holder is a run, not a branch', () => {
     const boardDir = tempBoard();
     try {
       const env = { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' };
-      const first = new SwarmLock({ env, identity: 'e2e-run/branch/1', log: recorder().log });
-      const second = new SwarmLock({ env, identity: 'e2e-run/branch/2', log: recorder().log });
+      const first = new SwarmLock({ env, identity: 'e2e-run/branch/test-run-one', log: recorder().log });
+      const second = new SwarmLock({ env, identity: 'e2e-run/branch/test-run-two', log: recorder().log });
 
       expect(await first.acquire(), 'the first run takes it').toMatchObject({ acquired: true });
       expect(await second.acquire(), 'the second is told the queue is busy').toMatchObject({
@@ -1195,7 +1195,7 @@ describe('e2e-run: runPlaywright quiet capture', () => {
     });
     try {
       const code = await runPlaywright([], { cli: script.file, quiet: true, env: { ...process.env } });
-      expect(code, 'SIGTERM maps to the shell status').toBe(128 + 15);
+      expect(code, 'SIGTERM maps to the platform exit status').toBe(process.platform === 'win32' ? 1 : 128 + 15);
       expect(stderrWrites.join(''), 'captured diagnostics are replayed on signal exit').toContain('SIGNALED OUTPUT');
     } finally {
       stderrSpy.mockRestore();
