@@ -1073,8 +1073,9 @@ export function assertExpectedLandingHeads(
 export function isProjectMainWorktree(cwd) {
   const worktree = resolveWorktree(cwd);
   if (!worktree?.isDesignatedMainWorktree) return false;
-  const projectRoot = tryGit(['rev-parse', '--show-toplevel'], { cwd });
-  if (!projectRoot) return false;
+  const projectRootOutput = tryGitRaw(['rev-parse', '--show-toplevel'], { cwd });
+  if (!projectRootOutput) return false;
+  const projectRoot = projectRootOutput.toString('utf8').replace(/\r?\n$/, '');
   return existsSync(join(projectRoot, 'AGENTS.md')) && existsSync(join(projectRoot, '.kilo'));
 }
 

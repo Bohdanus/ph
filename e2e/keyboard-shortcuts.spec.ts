@@ -37,6 +37,15 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
   return box;
 }
 
+function boxesOverlap(first: BoundingBox, second: BoundingBox): boolean {
+  return (
+    first.x < second.x + second.width &&
+    second.x < first.x + first.width &&
+    first.y < second.y + second.height &&
+    second.y < first.y + first.height
+  );
+}
+
 /** The standard test line, black, with the wait that proves it reached the backing store. */
 async function drawBlackStroke(page: Page, box: BoundingBox): Promise<void> {
   await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
@@ -475,13 +484,25 @@ test.describe('Keyboard shortcuts', () => {
 
     test('the rail button beside the swatches restores black over white', async ({ page }) => {
       const foreground = page.getByTestId('foreground-color-swatch');
+      const background = page.getByTestId('background-color-swatch');
+      const reset = page.getByRole('button', { name: 'Default Foreground and Background Colors' });
 
       await setForegroundColor(page, '#ff0000', true);
+      const hitArea = await reset.boundingBox();
+      const foregroundArea = await foreground.boundingBox();
+      const backgroundArea = await background.boundingBox();
+      if (!hitArea || !foregroundArea || !backgroundArea) {
+        throw new Error('The color controls need measurable hit areas');
+      }
+      expect(hitArea.width).toBeGreaterThanOrEqual(24);
+      expect(hitArea.height).toBeGreaterThanOrEqual(24);
+      expect(boxesOverlap(hitArea, foregroundArea)).toBe(false);
+      expect(boxesOverlap(hitArea, backgroundArea)).toBe(false);
       // A real click, so Playwright's actionability check fails if a swatch ever covers the button.
-      await page.getByRole('button', { name: 'Default Foreground and Background Colors' }).click();
+      await reset.click();
 
       await expect(foreground).toHaveCSS('background-color', 'rgb(0, 0, 0)');
-      await expect(page.getByTestId('background-color-swatch')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+      await expect(background).toHaveCSS('background-color', 'rgb(255, 255, 255)');
     });
   });
 });
