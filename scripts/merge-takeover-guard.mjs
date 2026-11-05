@@ -1075,7 +1075,7 @@ export function isProjectMainWorktree(cwd) {
   if (!worktree?.isDesignatedMainWorktree) return false;
   const projectRootOutput = tryGitRaw(['rev-parse', '--show-toplevel'], { cwd });
   if (!projectRootOutput) return false;
-  const projectRoot = projectRootOutput.toString('utf8').replace(/\r?\n$/, '');
+  const projectRoot = projectRootOutput.toString('utf8').replace(/\n$/, '');
   return existsSync(join(projectRoot, 'AGENTS.md')) && existsSync(join(projectRoot, '.kilo'));
 }
 

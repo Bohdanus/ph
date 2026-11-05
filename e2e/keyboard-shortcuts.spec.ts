@@ -463,6 +463,13 @@ test.describe('Keyboard shortcuts', () => {
   test.describe('colour swatch keys', () => {
     test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
 
+    test('the tablet layout keeps the default-colors control in the rail', async ({ page }) => {
+      await page.setViewportSize({ width: 768, height: 1024 });
+
+      await expect(page.getByTestId('default-colors-button')).toBeVisible();
+      await expect(page.getByTestId('mobile-bottom-bar')).toBeHidden();
+    });
+
     test('X swaps the swatch pair and D restores black over white', async ({ page }) => {
       const foreground = page.getByTestId('foreground-color-swatch');
       const background = page.getByTestId('background-color-swatch');
