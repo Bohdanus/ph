@@ -22,6 +22,7 @@ import { formatReport, releaseBlocker, releaseMerged, releaseWorktree } from '..
  * warm machine, so this is 5x the real cost rather than a number tuned to today's load.
  */
 vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ hookTimeout: 30_000 });
 
 let dir;
 let repo;

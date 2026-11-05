@@ -2025,6 +2025,7 @@ describe('pinned main landing', () => {
     removePreMergeGuard();
   });
 
+  // This case runs several guarded Git commits and merges; the Windows full gate measured it at 85s.
   it('binds optional feature-worktree merge pins to the final message and prepared MERGE_HEAD', () => {
     const refs = prepareDisjointMerge();
     const featureWorktree = join(dir, 'feature-worktree');
@@ -2114,7 +2115,7 @@ describe('pinned main landing', () => {
       () => gitAt(featureWorktree, messageArgs)
     );
     expect(gitAt(featureWorktree, ['rev-parse', 'HEAD^{tree}'])).toBe(resultTree);
-  });
+  }, 120_000);
 
   it('refuses an unpinned feature merge whose prepared tree changes after pre-commit', () => {
     const refs = prepareDisjointMerge();

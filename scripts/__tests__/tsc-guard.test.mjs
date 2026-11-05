@@ -24,12 +24,10 @@ import { dirname, join, resolve, sep } from 'node:path';
  * still reaches a real compiler — cannot be faked, because a fake compiler exiting 0 is
  * exactly what they exist to catch.
  *
- * Measured, the slowest span in this file is 2.2s (`still type-checks a real project in
- * build mode`), against a 5s default: a budget at 44% of the value of the work it is
- * timing. Unlike the sibling suites, that number also GROWS — the slow test runs
- * `tsc -b` over this repository, so every file added to the project makes it slower, and a
- * budget set today is a budget that erodes. 20s is roughly nine times today's worst case,
- * chosen for a cost that rises with the repository rather than a fixed one.
+ * A Windows full-gate run took 23s for a real-bin `--noCheck` probe. 30s leaves
+ * headroom for that measured cost. Unlike the sibling suites, this work also GROWS —
+ * the slow test runs `tsc -b` over this repository, so every file added to the project
+ * makes it slower, and a budget set today is a budget that erodes.
  *
  * What is deliberately NOT claimed: any contention factor. A full 266-file run was
  * measured against the sibling suites and came out FASTER per test than the small-file
@@ -37,13 +35,13 @@ import { dirname, join, resolve, sep } from 'node:path';
  *
  * A BUDGET, not a threshold: it cannot turn a failing assertion green, it only decides
  * how long a test may run before the harness reports it, and no assertion below changed.
- * Its cost is that a genuinely hung compiler takes 20s to be reported.
+ * Its cost is that a genuinely hung compiler takes 30s to be reported.
  *
  * `scripts/__tests__/suite-budgets.test.mjs` is the tripwire for this line, and it
  * DERIVES which suites in that directory need a budget rather than being told — which is
  * how this file came to be included after being missed once.
  */
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * The guard is only as good as its own installation, so these tests check two

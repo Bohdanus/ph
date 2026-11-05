@@ -10,13 +10,13 @@ import { decide, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-gua
  * This file's budget, and the reason it is not Vitest's default 5s.
  *
  * The spawns here are `git init` and `git worktree add` into a temp directory.
- * Windows full-suite runs can take over 35s for the installation and relocation
- * cases, so the budget leaves headroom without changing their assertions.
+ * A Windows full-gate run took 73s for the path-reuse case, so the budget leaves
+ * headroom without changing its assertions.
  * `scripts/__tests__/suite-budgets.test.mjs` derives which suites in this
  * directory need one — a file that spawns and declares none fails that guard,
  * which is how this file came to be included after being missed once.
  */
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 120_000 });
 
 /**
  * Two things are under test, and the second is the one that cannot be read off
