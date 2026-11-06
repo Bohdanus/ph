@@ -38,7 +38,7 @@ const railWidth = async (page: Page) =>
  */
 const tileToolNames = async (page: Page): Promise<string[]> =>
   await toolsBox(page)
-    .locator('[data-testid^="tool-button-"]')
+    .locator('[data-testid^="tool-button-"]:visible')
     .evaluateAll((tiles) =>
       tiles.map((tile) => (tile as HTMLElement).dataset.testid?.replace('tool-button-', '') ?? '')
     );
@@ -50,7 +50,7 @@ const tileToolNames = async (page: Page): Promise<string[]> =>
  */
 const tileColumns = async (page: Page): Promise<number[]> => {
   const lefts = await toolsBox(page)
-    .locator('[data-toolbar-tile]')
+    .locator('[data-toolbar-tile]:visible')
     .evaluateAll((tiles) => tiles.map((tile) => Math.round(tile.getBoundingClientRect().x)));
   return [...new Set(lefts)];
 };
@@ -64,7 +64,8 @@ const tileColumns = async (page: Page): Promise<number[]> => {
  * can stand in for, and it is readable in the tablet band too, where the toggle that would
  * otherwise report the state is not rendered at all.
  */
-const sectionListCount = async (page: Page) => await page.locator('[data-testid="left-toolbar-tools"] > ul').count();
+const sectionListCount = async (page: Page) =>
+  await page.locator('[data-testid="left-toolbar-tools"] > ul:not([data-toolbar-fit-overflow-list])').count();
 
 /**
  * The tile order `toolbarMap` defines, walked out of the map rather than copied.
