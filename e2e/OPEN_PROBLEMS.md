@@ -265,25 +265,6 @@ Two specs are `test.skip` by declaration:
   `vite build` output renders byte-identically, so a future switch to serving
   `dist/` should be treated as a possible baseline-affecting change.
 
-## P2 — an explicit redraw clip is in page coordinates, and a canvas-relative one passes for the wrong reason
-
-`e2e/helpers/canvas-helpers.ts`, `buildClip`
-
-`buildClip` returns an explicit `clip` exactly as given; only its own default,
-`canvasRedrawClip`, adds the canvas box origin. A caller that passes canvas-relative
-offsets therefore polls the wrong region of the page.
-
-The failure mode is the dangerous shape rather than an obvious one: the wrong region is
-still a region, and `hasDarkPixels` may be satisfied by something that was already dark —
-the app's `#212529` header, for one. The wait returns, the stroke is not what was observed,
-and the test continues on a false positive. A clip that lands on empty canvas instead fails
-loudly, which is the better of the two outcomes and is not guaranteed.
-
-`setupExportTest` hit this while being decoupled and passed anyway, which is why
-`e2e/export/__tests__/helpers.unit.test.ts` pins the clip in page coordinates with literal
-values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
-differ by the box origin and nothing in the types distinguishes them.
-
 ## P2 — document-space gesture audits must be specific to the oracle
 
 `e2e/helpers/canvas-helpers.ts` — `LINE_START_X`, `LINE_START_Y`, `LINE_END_X`, `LINE_END_Y`
