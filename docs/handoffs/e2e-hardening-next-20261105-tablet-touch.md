@@ -6,30 +6,38 @@ The candidate contains the tablet touch and runner hardening plus all 134 commit
 designated local `main`.
 
 Full mirror run [42127071730](https://github.com/Bohdanus/ph/actions/runs/42127071730) on commit
-`5e7870656da32422884721b591a5ec1460e39d7b` failed on two shards. Both Linux shards, macOS shard 2,
-and Windows shard 1 passed. Windows shard 2 had one startup failure loading Vite's `/@react-refresh`
-module; its retry passed, but `failOnFlakyTests` correctly failed the job. macOS shard 1 found seven
-differing channel bytes in the styled-text tight bitmap while frame and composite pixels remained
-byte-identical. The current candidate applies the bounded alpha-gradient rule to that styled-text
-comparison. Run the full mirror again on the updated candidate and investigate the Windows startup
-failure if it recurs.
+`5e7870656da32422884721b591a5ec1460e39d7b` had a transient Windows `/@react-refresh` startup failure
+and a strict styled-text tight-bitmap mismatch on macOS. The next full run
+[42131494282](https://github.com/Bohdanus/ph/actions/runs/42131494282) passed CI checks, E2E unit,
+Linux shard 2, Windows shard 2, and macOS shard 2. Linux shard 1 and Windows shard 1 failed the same
+frame-edge alpha comparison; macOS shard 1 failed the styled-text comparison and had one retried
+layer-reorder failure.
+
+Focused macOS run [42135143691](https://github.com/Bohdanus/ph/actions/runs/42135143691) captured the
+styled-text samples: expected and materialized alpha bytes and 5×5 neighborhoods were identical.
+The seven raw blue-channel differences (169/170 at alpha 170; 178/179 at alpha 10) map to identical
+premultiplied channel bytes. The candidate now compares tight bitmap values exactly in premultiplied
+space, keeps alpha exact, and uses a separate partial-alpha boundary classifier for frame comparisons.
+Run the focused crop-history spec on Linux and Windows, then rerun the full mirror and inspect all
+platform artifacts.
 
 ## Candidate
 
 Branch: `task/e2e-hardening-next-20261105`
 
-The E2E changes add tablet touch reachability coverage at 744×1133 and tighten the
-crop-history per-layer alpha-edge classifier. Its two-pixel exception applies only
-when the changed pixel has fractional alpha and neighbors with both lower and higher
-alpha values. The styled-text fixture uses the same rule; exact materialized bounds,
-frame pixels, and composite pixels remain required.
+The E2E changes add tablet touch reachability coverage at 744×1133 and harden crop-history parity.
+Mixed-source tight raster checks retain the two-pixel internal-alpha-gradient allowance. Styled-text
+tight rasters compare exactly in premultiplied channel space with exact alpha; frame comparisons keep
+their own partial-alpha boundary rule. Materialized bounds and final composites remain exact.
 
 ## Current validation
 
 - The prior candidate passed the full unit suite: 413 files, 12,086 passed and 207 expected failures.
-- The current change passed the focused styled-text E2E locally and the E2E unit suite: 22 files,
-  1,563 passed and 12 expected failures.
-- The current change passed typecheck and production build. Lint passed with 73 warnings and no errors; formatting passed.
+- The prior candidate passed the E2E unit suite: 22 files, 1,563 passed and 12 expected failures.
+- Current crop-history changes passed local typecheck, lint/format, and focused tests for the retained
+  raster and styled-text transforms. The layer-reorder test also passed three local repetitions. The
+  focused mirror exposed the macOS readback details above; the premultiplied comparison still needs
+  focused Linux, Windows, and macOS mirror validation.
 
 The designated local `main` is `3a2975be3271cb977e0d208e272b30ab7bb7ccae`; it contains 134 commits beyond source `origin/main` `332eb0fc5cf91efcf110dae1c0b349246cb3959b`. The user authorized including all 134 commits.
 

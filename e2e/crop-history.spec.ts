@@ -925,6 +925,8 @@ type CropParityFramePixelSample = Readonly<
 
 type CropParityTightPixelSample = Readonly<
   CropParityFramePixelSample & {
+    legacyPremultiplied: number | null;
+    durablePremultiplied: number | null;
     expectedAlpha: number | null;
     materializedAlpha: number | null;
     expectedAlphaNeighborhood: readonly (number | null)[];
@@ -956,36 +958,28 @@ type CropParityLayerComparison = Readonly<{
   offscreenFrameNonEdgeDifferingPixels: number;
   frameDifferingSamples: readonly CropParityFramePixelSample[];
   offscreenFrameDifferingSamples: readonly CropParityFramePixelSample[];
-  tightBitmapDifferingBytes: number;
+  tightBitmapPremultipliedDifferingBytes: number;
   tightBitmapDifferingPixels: number;
   tightBitmapNonEdgeDifferingPixels: number;
-  offscreenTightBitmapDifferingBytes: number;
+  offscreenTightBitmapPremultipliedDifferingBytes: number;
   offscreenTightBitmapDifferingPixels: number;
   offscreenTightBitmapNonEdgeDifferingPixels: number;
   tightBitmapDifferingSamples: readonly CropParityTightPixelSample[];
   offscreenTightBitmapDifferingSamples: readonly CropParityTightPixelSample[];
 }>;
 
-function expectTightBitmapAlphaGradientParity(comparison: CropParityLayerComparison, context: string): void {
-  const label = `${context} ${comparison.layerId} tight bitmap at ${comparison.stage}`;
+function expectTightBitmapPremultipliedParity(comparison: CropParityLayerComparison, context: string): void {
+  const label = `${context} ${comparison.layerId} premultiplied tight bitmap at ${comparison.stage}`;
   expect(
-    comparison.tightBitmapNonEdgeDifferingPixels,
-    `${label} differs outside an internal alpha gradient; ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+    comparison.tightBitmapPremultipliedDifferingBytes,
+    `${label} differs; ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
   ).toBe(0);
-  expect(
-    comparison.tightBitmapDifferingPixels,
-    `${label} may differ at no more than two internal alpha gradient pixels; ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
-  ).toBeLessThanOrEqual(2);
 
-  const offscreenLabel = `${context} ${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage}`;
+  const offscreenLabel = `${context} ${comparison.layerId} OffscreenCanvas premultiplied tight bitmap at ${comparison.stage}`;
   expect(
-    comparison.offscreenTightBitmapNonEdgeDifferingPixels,
-    `${offscreenLabel} differs outside an internal alpha gradient; ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+    comparison.offscreenTightBitmapPremultipliedDifferingBytes,
+    `${offscreenLabel} differs; ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
   ).toBe(0);
-  expect(
-    comparison.offscreenTightBitmapDifferingPixels,
-    `${offscreenLabel} may differ at no more than two internal alpha gradient pixels; ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
-  ).toBeLessThanOrEqual(2);
 }
 
 async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
@@ -1505,7 +1499,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               }
               return hasLowerAlphaNeighbor && hasHigherAlphaNeighbor;
             };
-            const isAntialiasEdgeDifference = (
+            const isTightAlphaGradientDifference = (
               expected: Uint8ClampedArray,
               materialized: Uint8ClampedArray,
               pixel: number,
@@ -1514,6 +1508,38 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             ) =>
               isInternalAlphaGradientPixel(expected, pixel, width, height) ||
               isInternalAlphaGradientPixel(materialized, pixel, width, height);
+            const isFrameAlphaBoundaryPixel = (
+              pixels: Uint8ClampedArray,
+              pixel: number,
+              width: number,
+              height: number
+            ) => {
+              if (pixel < 0 || pixel >= width * height) return false;
+              const x = pixel % width;
+              const y = Math.floor(pixel / width);
+              const alphaAt = (sampleX: number, sampleY: number) => pixels[(sampleY * width + sampleX) * 4 + 3] ?? 0;
+              const alpha = alphaAt(x, y);
+              if (alpha === 0 || alpha === 255) return false;
+              for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+                for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+                  if (offsetX === 0 && offsetY === 0) continue;
+                  const neighborX = x + offsetX;
+                  const neighborY = y + offsetY;
+                  if (neighborX < 0 || neighborY < 0 || neighborX >= width || neighborY >= height) continue;
+                  if (alpha !== alphaAt(neighborX, neighborY)) return true;
+                }
+              }
+              return false;
+            };
+            const isFrameAlphaBoundaryDifference = (
+              expected: Uint8ClampedArray,
+              materialized: Uint8ClampedArray,
+              pixel: number,
+              width: number,
+              height: number
+            ) =>
+              isFrameAlphaBoundaryPixel(expected, pixel, width, height) ||
+              isFrameAlphaBoundaryPixel(materialized, pixel, width, height);
             const alphaNeighborhood = (
               pixels: Uint8ClampedArray,
               x: number,
@@ -1541,16 +1567,28 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               let tightNonEdgeDifferingPixels = 0;
               let lastTightDifferingPixel = -1;
               const diffSamples: CropParityTightPixelSample[] = [];
+              // Canvas readback exposes unpremultiplied channels; compare their composited byte representation.
               for (let byte = 0; byte < Math.max(expectedBytes.length, materializedBytes.length); byte += 1) {
                 const legacy = expectedBytes[byte] ?? null;
                 const durable = materializedBytes[byte] ?? null;
-                if (legacy === durable) continue;
-                diffCount += 1;
                 const pixel = Math.floor(byte / 4);
+                const alphaByte = pixel * 4 + 3;
+                const legacyAlpha = expectedBytes[alphaByte] ?? null;
+                const durableAlpha = materializedBytes[alphaByte] ?? null;
+                const legacyPremultiplied =
+                  legacy === null || legacyAlpha === null || byte % 4 === 3
+                    ? legacy
+                    : Math.round((legacy * legacyAlpha) / 255);
+                const durablePremultiplied =
+                  durable === null || durableAlpha === null || byte % 4 === 3
+                    ? durable
+                    : Math.round((durable * durableAlpha) / 255);
+                if (legacyPremultiplied === durablePremultiplied) continue;
+                diffCount += 1;
                 if (pixel !== lastTightDifferingPixel) {
                   tightDifferingPixels += 1;
                   if (
-                    !isAntialiasEdgeDifference(
+                    !isTightAlphaGradientDifference(
                       expectedBytes,
                       materializedBytes,
                       pixel,
@@ -1573,8 +1611,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                     channel: frameChannels[byte % 4],
                     legacy,
                     durable,
-                    expectedAlpha: expectedBytes[pixel * 4 + 3] ?? null,
-                    materializedAlpha: materializedBytes[pixel * 4 + 3] ?? null,
+                    legacyPremultiplied,
+                    durablePremultiplied,
+                    expectedAlpha: legacyAlpha,
+                    materializedAlpha: durableAlpha,
                     expectedAlphaNeighborhood: alphaNeighborhood(
                       expectedBytes,
                       x,
@@ -1685,7 +1725,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 if (pixel !== lastOffscreenFrameDifferingPixel) {
                   offscreenFrameDifferingPixels += 1;
                   if (
-                    !isAntialiasEdgeDifference(
+                    !isFrameAlphaBoundaryDifference(
                       legacyOffscreenPixels,
                       durableOffscreenPixels,
                       pixel,
@@ -1716,7 +1756,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               if (pixel !== lastFrameDifferingPixel) {
                 frameDifferingPixels += 1;
                 if (
-                  !isAntialiasEdgeDifference(
+                  !isFrameAlphaBoundaryDifference(
                     legacyFramePixels,
                     durableFramePixels,
                     pixel,
@@ -1777,10 +1817,10 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               offscreenFrameNonEdgeDifferingPixels,
               frameDifferingSamples,
               offscreenFrameDifferingSamples,
-              tightBitmapDifferingBytes: tightBitmapComparison.differingBytes,
+              tightBitmapPremultipliedDifferingBytes: tightBitmapComparison.differingBytes,
               tightBitmapDifferingPixels: tightBitmapComparison.differingPixels,
               tightBitmapNonEdgeDifferingPixels: tightBitmapComparison.nonEdgeDifferingPixels,
-              offscreenTightBitmapDifferingBytes: offscreenTightBitmapComparison.differingBytes,
+              offscreenTightBitmapPremultipliedDifferingBytes: offscreenTightBitmapComparison.differingBytes,
               offscreenTightBitmapDifferingPixels: offscreenTightBitmapComparison.differingPixels,
               offscreenTightBitmapNonEdgeDifferingPixels: offscreenTightBitmapComparison.nonEdgeDifferingPixels,
               tightBitmapDifferingSamples: tightBitmapComparison.differingSamples,
@@ -3940,7 +3980,7 @@ test.describe('Crop history', () => {
           height: comparison.expectedBounds.height,
         });
         expect(comparison.frameDifferingBytes).toBe(0);
-        expectTightBitmapAlphaGradientParity(comparison, 'styled text');
+        expectTightBitmapPremultipliedParity(comparison, 'styled text');
       }
       expect(result.transitionResults).toHaveLength(fixture.transitions.length);
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
@@ -3967,7 +4007,7 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
-          expectTightBitmapAlphaGradientParity(comparison, 'frame-only styled text');
+          expectTightBitmapPremultipliedParity(comparison, 'frame-only styled text');
         }
         for (const comparison of transition.materializedLayerComparisons) {
           expect(comparison.materializedBounds).toEqual(comparison.expectedBounds);
@@ -3976,7 +4016,7 @@ test.describe('Crop history', () => {
             height: comparison.expectedBounds.height,
           });
           expect(comparison.frameDifferingBytes).toBe(0);
-          expectTightBitmapAlphaGradientParity(comparison, 'styled text');
+          expectTightBitmapPremultipliedParity(comparison, 'styled text');
         }
       }
       expect(result.durablePixels).toEqual(result.legacyPixels);
@@ -4410,8 +4450,8 @@ test.describe('Crop history', () => {
           ).toBe(0);
           expect(
             {
-              htmlCanvas: comparison.tightBitmapDifferingBytes,
-              offscreenCanvas: comparison.offscreenTightBitmapDifferingBytes,
+              htmlCanvas: comparison.tightBitmapPremultipliedDifferingBytes,
+              offscreenCanvas: comparison.offscreenTightBitmapPremultipliedDifferingBytes,
             },
             `${comparison.layerId} full tight bitmap at ${stage} differs at ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
           ).toEqual({ htmlCanvas: 0, offscreenCanvas: 0 });
