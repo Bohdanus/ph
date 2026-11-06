@@ -45,7 +45,7 @@ export function getRedoButton(page: Page): Locator {
 export interface CanvasBand {
   /** Zero-based position of this band within its stack, top to bottom. */
   readonly index: number;
-  /** The band in page coordinates, ready for `page.screenshot({ clip })`. */
+  /** The band in viewport coordinates, ready for `page.screenshot({ clip })`. */
   readonly clip: ViewportClip;
 }
 
@@ -53,7 +53,7 @@ export interface CanvasBand {
  * The part of a canvas box a clipped screenshot can actually read.
  *
  * WHY THE INTERSECTION. `page.screenshot({ clip })` intersects the clip with the
- * VISIBLE page rect and hands back that intersection without mentioning it, in
+ * VISIBLE viewport rect and hands back that intersection without mentioning it, in
  * BOTH axes. Measured on this Playwright build at a 1280x720 window:
  *
  * | clip requested                       | image returned |
@@ -75,8 +75,8 @@ export interface CanvasBand {
  * the workspace canvas overflows the page and therefore needed a taller window —
  * stopped being true. It is now a GUARD rather than a correction. `min-h-0
  * overflow-y-auto` on the left sidebar's `<aside>`
- * (`src/components/SidebarLeft/SidebarLeft.tsx:459`) is what bounds the grid row,
- * `e2e/sidebar-layout.spec.ts:21` pins that the default page does not scroll, and
+ * (`src/components/SidebarLeft/SidebarLeft.tsx`) is what bounds the grid row,
+ * `e2e/sidebar-layout.spec.ts` pins that the default page does not scroll, and
  * the measured canvas box and page heights for both toolbar layouts live in P1 of
  * `e2e/OPEN_PROBLEMS.md` — deliberately not restated here, because a number
  * written next to the code is the number that goes stale.
@@ -101,7 +101,7 @@ export interface CanvasBand {
  * before a single screenshot is taken.
  *
  * The viewport is taken at the page origin because screenshot clips are
- * page-relative and this suite never scrolls the document: at scroll 0 the
+ * viewport-relative and this suite never scrolls the document: at scroll 0 the
  * intersection above is with the window, and Playwright does not scroll to reach a
  * clip, which is why the last table row is a refusal rather than a capture.
  */
@@ -119,7 +119,7 @@ export function visibleCanvasBox(box: BoundingBox, viewport: { width: number; he
 }
 
 /**
- * The horizontal edge between two bands, in page coordinates.
+ * The horizontal edge between two bands, in viewport coordinates.
  *
  * Every band boundary is derived from this one expression, so consecutive bands
  * share an edge exactly rather than to within a rounding step, and the stack
@@ -146,9 +146,9 @@ function assertBandGeometry(bandCount: number, band: number): void {
 }
 
 /**
- * Page-coordinate clip of one horizontal band of `box`.
+ * Viewport-coordinate clip of one horizontal band of `box`.
  *
- * `box` is a workspace-canvas bounding box; the result is a PAGE clip, the space
+ * `box` is a workspace-canvas bounding box; the result is a viewport clip, the space
  * `page.screenshot({ clip })` and `waitForCanvasPixels` both take. The whole box
  * width is used, so a band is "this horizontal strip of the canvas" and nothing
  * else — a band that also cropped X could be read as clean simply because the

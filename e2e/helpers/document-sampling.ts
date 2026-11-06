@@ -21,7 +21,7 @@ import { type ImageSize, type Point, cssPointToImage } from './screenshot-scale'
  * - DOCUMENT pixels. Where the artwork is. Every sample point in a spec is named here,
  *   because a box-relative offset is specified relative to the window and names a
  *   different document pixel after any reflow.
- * - CSS page pixels. What `page.screenshot({ clip })` takes and what `page.mouse` takes.
+ * - CSS viewport pixels. What `page.screenshot({ clip })` and `page.mouse` take.
  * - IMAGE pixels, or DEVICE pixels. What `getColorAtPoint` reads, and what the DECODED
  *   screenshot is measured in. At `deviceScaleFactor: 2` these are twice the CSS numbers
  *   and at 1x they are identical to them.
@@ -56,7 +56,7 @@ export const SAMPLE_RADIUS = 3;
  * margin on every side of a `2r + 1` window.
  *
  * It is the tightest size that holds the window at BOTH capture scales, and its
- * half-extent matters for more than the arithmetic: the clip is a rectangle in CSS page
+ * half-extent matters for more than the arithmetic: the clip is a rectangle in CSS viewport
  * pixels, so `windowCss / 2 / scale` is the window's radius in DOCUMENT units, and every
  * sample point derived by offsetting a stroke by that radius has to clear the stroke it
  * is measuring. A capture that is four times wider than it needs to be silently widens
@@ -71,7 +71,7 @@ export function sampleWindowCss(radius: number = SAMPLE_RADIUS): number {
 }
 
 export interface DocumentSampleRegion {
-  /** Page-relative CSS rect, ready for `page.screenshot({ clip })`. */
+  /** Viewport-relative CSS rect, ready for `page.screenshot({ clip })`. */
   clip: ViewportClip;
   /** The rect's CSS size — the denominator the capture's own scale comes from. */
   size: ImageSize;
@@ -90,7 +90,7 @@ export interface DocumentSampleOptions {
 }
 
 /**
- * The page-relative CSS rect that photographs a window centred on a DOCUMENT point.
+ * The viewport-relative CSS rect that photographs a window centred on a DOCUMENT point.
  *
  * `box` is the app's CONTAINER rect, the same one `documentToCanvasOffset` takes, and the
  * contain fit is the app's own: the letterboxed document is centred in the box, so a
@@ -141,7 +141,7 @@ export function sampleCentreInImage(image: ImageSize, cssSize: { width: number; 
 }
 
 /**
- * The whole-document rect inside the canvas box, in page-relative CSS pixels.
+ * The whole-document rect inside the canvas box, in viewport-relative CSS pixels.
  *
  * THIS IS NOT `canvasRedrawClip`. That one is a fixed 300x100 box-relative rect chosen to
  * contain the standard test line, and it is not derived from the fit: at the suite's
@@ -188,7 +188,7 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
  *
  * PRECONDITION: the named point must be at least `windowCss / 2 / scale` DOCUMENT units inside
  * the document's own edge — with the default window that is `4 / scale`, which is 4.12 document
- * units at the suite's 0.9717 fit. The capture is a rectangle in CSS page pixels centred on the
+ * units at the suite's 0.9717 fit. The capture is a rectangle in CSS viewport pixels centred on the
  * point, so a point nearer than that to an edge photographs the LETTERBOX beside the document as
  * well as the document, and the reading is then a mixture of paper and surround.
  *
