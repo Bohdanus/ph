@@ -12,6 +12,8 @@ import {
   loadImageData,
   scanPixelsForBounds,
   STROKE_ANALYSIS,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
@@ -315,8 +317,8 @@ function draftRectCss(box: BoundingBox, margin: number, rect: DraftRect = DRAFT_
   };
 }
 
-function toClip(rect: Rect): { x: number; y: number; width: number; height: number } {
-  return { x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top };
+function toClip(rect: Rect): ViewportClip {
+  return viewportClip({ x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top });
 }
 
 /**
@@ -1245,8 +1247,8 @@ const OVERFLOW_INDICATOR_DOC_PX = 8;
  * makes at length. Returning canvas-local coordinates keeps those bounds valid
  * when a focused control scrolls the page.
  */
-function canvasBoxClip(box: BoundingBox): Required<{ x: number; y: number; width: number; height: number }> {
-  return { x: box.x, y: box.y, width: box.width, height: box.height };
+function canvasBoxClip(box: BoundingBox): ViewportClip {
+  return viewportClip({ x: box.x, y: box.y, width: box.width, height: box.height });
 }
 
 /**

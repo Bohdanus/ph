@@ -1,12 +1,13 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
-  type ClipOptions,
   drawLine,
   drawLineFromDocument,
   getColorAtPoint,
   getWorkspaceCanvas,
   loadImageData,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
@@ -61,12 +62,13 @@ const SLAB_SAMPLE_POINT_IN_CLIP = {
 } as const;
 
 /** The same region as a PAGE-relative clip, which is what `screenshot` and `waitForCanvasPixels` take. */
-const pageClip = (box: BoundingBox): Required<ClipOptions> => ({
-  x: box.x + SLAB_BOUNDS.x,
-  y: box.y + SLAB_BOUNDS.y,
-  width: SLAB_BOUNDS.width,
-  height: SLAB_BOUNDS.height,
-});
+const pageClip = (box: BoundingBox): ViewportClip =>
+  viewportClip({
+    x: box.x + SLAB_BOUNDS.x,
+    y: box.y + SLAB_BOUNDS.y,
+    width: SLAB_BOUNDS.width,
+    height: SLAB_BOUNDS.height,
+  });
 
 /** Is the capture showing the red slab? Used as the redraw predicate, so it must be total. */
 const showsRedSlab = async (capture: Buffer | import('./helpers/canvas-helpers').ImageDataResult) => {
