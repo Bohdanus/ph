@@ -1082,40 +1082,33 @@ alone; `transform.notes.md` records those as separate divergences/product questi
 
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 
-**Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress. The
-Draw pen path, Draw block-stamp, Eraser brush mode, Dodge, Burn and Sponge paths now use
-processor-specific incremental helpers. Draw block-stamp appends only when both previews use the
-same color, width, composite mode and unsmoothed path; ordinary pen paths and spray replay in full.
-Spray, Eraser pencil/block modes, Brush, Pencil, Smudge, Clone Stamp, Gradient, and other raster
-processors still lack incremental accumulation:
+**Problem.** The normal Draw, Brush and Pencil gesture does not pass through `tempUpdateLayer`.
+`Main.tsx` dispatches those tools to `DrawToolArea`, which stores the full point list, clears the
+overlay, and calls `drawLine` with the whole path on each animation frame. Pointer-up commits that
+path once with `createLayerFromTool`. The processor path therefore has no incremental Draw behavior. A `DrawToolArea` test verifies that a
+coalesced repaint receives all points accumulated for that frame, but it does not characterize the repeated work over a long stroke.
 
-`src/contexts/useLayer.ts` calls incremental helpers only when their tool-specific settings remain
-compatible and the new points extend the previous path. Draw spray is excluded; eraser incremental
-work is brush-mode only; Dodge/Burn and Sponge compare their relevant settings before reusing the
-previous preview.
+`tempUpdateLayer` does reuse prior previews for Eraser brush mode, Dodge, Burn and Sponge when their
+tool-specific settings remain compatible and the new points extend the previous path. Other
+accumulating raster previews still reprocess their covered bounds. A long Draw gesture also repeats
+work over the full path as it grows; Gradient repeats full-layer rasterization per pointer move.
+Sharpen and Red Eye are discrete actions, not accumulating pointer strokes.
 
-For non-incremental stroke paths, `previewLayersRef.current[id]` is written but not read back as the
-next invocation's input, so each move redoes the work for the entire region the stroke has touched so
-far. A short stroke is cheap; a long drag over a large canvas is quadratic in the distance travelled.
-Gradient also performs a full-layer rasterization per pointer move; Sharpen and Red Eye are discrete
-actions, not accumulating pointer strokes.
+**Reproduce.** Drag a long Draw stroke and profile `DrawToolArea.flushDrawingFrame`. Compare the
+number of points sent to `drawLine` over successive frames; it grows with the entire path.
 
-**Reproduce.** Drag one continuous stroke across a large canvas and profile `tempUpdateLayer`. Cost
-per event grows with the bounding box covered SO FAR, not with the delta.
+**Coverage.** `DrawToolArea.test.tsx` drives eight pointer moves and verifies that the next coalesced repaint sends
+all nine accumulated points to `drawLine`. That proves full-path input for that frame; it does not
+quantify cost over a long stroke or assert per-frame work across many successive frames. Existing Draw
+tests pin raster output and block-stamp spacing. E2E pixel checks establish visible output, not
+per-frame cost. The removed incremental-helper tests did not exercise the actual gesture lifecycle.
 
-**Coverage.** `useLayer.incremental.test.ts` covers the Draw block-stamp, eraser, Dodge/Burn, and
-Sponge helper contracts. Paint-tool tests compare the appended block-stamp rectangle sequence with
-a full replay. Existing Smudge and Gradient tests document their full-source/full-layer behavior
-rather than pinning the cost shape.
+**Fix.** If profiling justifies incremental Draw rendering, accumulate segments in transient
+gesture-owned state in `DrawToolArea`, preserving shared-endpoint spacing and reset behavior on
+cancel, release, and setting changes. Keep canvas state out of durable tool args.
 
-**Fix.** Extend the remaining gesture processors with safe per-tool accumulation, or document the
-cost as a known limit. A persistent canvas handle must NOT go in durable `args`: conversion
-whitelists the tool-argument shape, and a canvas there would void the document or require migration.
-Keep transient accumulation state outside `args`, and test reset conditions when settings or the
-point prefix changes.
-
-**Files.** `src/contexts/useLayer.ts` — `tempUpdateLayer()` and the processor-specific incremental
-guards; the remaining processor modules still need the same contract.
+**Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/Main.tsx`, and focused
+pointer-lifecycle tests.
 
 ## 139. The superseded point-in-time reports cannot be moved without editing a data file
 
