@@ -325,15 +325,25 @@ describe('buildCodexSearchQuery', () => {
     it('redacts SigV4 signature values in URLs and standalone text assignments', () => {
       const signature = 'fixtureSignature0123456789abcdef';
       const sigv4 = 'fixtureSigV40123456789abcdef';
+      const securityToken = 'fixtureSecurityToken0123456789abcdef';
       const redactedUrl = redactSensitiveText(
-        `https://example.invalid/?X-Amz-Signature=${signature}&X-Amz-Date=fixtureDate`
+        `https://example.invalid/?note=price$&X-Amz-Signature=${signature}&X-Amz-Date=fixtureDate&X-Amz-Security-Token=${securityToken}&X-Amz-Expires=3600&custom=${securityToken}`
       );
       const redactedSigv4 = redactSensitiveText(`sigv4=${sigv4}`);
+      const redactedUnquotedAssignment = redactSensitiveText('password=fixturePassword&tail=fixtureTail');
 
       expect(redactedUrl).not.toContain(signature);
+      expect(redactedUrl).not.toContain(securityToken);
+      expect(redactedUrl).toContain('note=price$&X-Amz-Signature=[REDACTED]');
       expect(redactedUrl).toContain('X-Amz-Signature=[REDACTED]');
+      expect(redactedUrl).toContain('X-Amz-Date=fixtureDate');
+      expect(redactedUrl).toContain('X-Amz-Security-Token=[REDACTED]');
+      expect(redactedUrl).toContain('X-Amz-Expires=3600');
+      expect(redactedUrl).toContain('custom=[REDACTED]');
       expect(redactedSigv4).not.toContain(sigv4);
       expect(redactedSigv4).toContain('sigv4=[REDACTED]');
+      expect(redactedUnquotedAssignment).not.toContain('fixturePassword');
+      expect(redactedUnquotedAssignment).not.toContain('fixtureTail');
     });
 
     it('uses the shared secret sanitizer for Kilo CLI credentials', () => {
