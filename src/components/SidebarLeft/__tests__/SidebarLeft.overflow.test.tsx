@@ -571,6 +571,7 @@ describe('SidebarLeft the three-dots tile', () => {
     expect(screen.getByTestId('foreground-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('background-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('swap-colors-button')).toBeInTheDocument();
+    expect(screen.getByTestId('default-colors-button')).toBeInTheDocument();
   });
 
   it('closes the overflow flyout when the whole rail fits and does not reopen it when it returns', () => {

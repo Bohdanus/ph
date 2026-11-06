@@ -59,13 +59,17 @@ const toolState = vi.hoisted(() => ({ toolArgs: { toolName: 'brush' } as ToolArg
  */
 const clipboardState = vi.hoisted(() => ({ hasActiveSelection: true }));
 
+const dispatch = vi.hoisted(() => vi.fn());
+
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeState, vi.fn()],
+  useStore: () => [storeState, dispatch],
 }));
 
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => ({ canUndo, undo, canRedo, redo }) }));
 
 vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool, handleImageSave }) }));
+vi.mock('../../../hooks/useWorkspaceFitScale.ts', () => ({ useWorkspaceFitScale: () => 1 }));
+vi.mock('../../../hooks/useDevicePixelRatio.ts', () => ({ useDevicePixelRatio: () => 1 }));
 
 vi.mock('../../../contexts/useFile.tsx', () => ({
   useFile: () => ({ openSaveImageDialog }),
@@ -1290,6 +1294,118 @@ describe('AppKeyboardShortcuts group fallbacks', () => {
     press(key, { shiftKey: true });
 
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
+describe('AppKeyboardShortcuts colour swatch keys', () => {
+  it.each([
+    ['x', 'SWAP_COLORS'],
+    ['d', 'RESET_COLORS'],
+    // Caps Lock reports the capital without `shiftKey`, and it is still the bare key.
+    ['X', 'SWAP_COLORS'],
+    ['D', 'RESET_COLORS'],
+  ] as const)('%s dispatches %s and nothing else', (key, type) => {
+    renderShortcuts();
+
+    press(key);
+
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type });
+    expect(goToTool).not.toHaveBeenCalled();
+    expect(patchToolArgs).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['x', { metaKey: true }],
+    ['x', { ctrlKey: true }],
+    ['x', { shiftKey: true }],
+    ['x', { altKey: true }],
+    ['d', { metaKey: true }],
+    ['d', { ctrlKey: true }],
+    ['d', { shiftKey: true }],
+    ['d', { altKey: true }],
+  ] as const)('%s with %o leaves the colours alone', (key, init) => {
+    renderShortcuts();
+
+    press(key, init);
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps Shift+Alt+D on the Sponge's Desaturate instead of resetting the colours", () => {
+    storeState.toolName = 'sponge';
+    toolState.toolArgs = { toolName: 'sponge' } as ToolArgs;
+    renderShortcuts();
+
+    press('d', { shiftKey: true, altKey: true });
+
+    expect(patchToolArgs).toHaveBeenCalledExactlyOnceWith('sponge', { mode: 'desaturate' });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('is inert with no document open', () => {
+    storeState.hasImage = false;
+    renderShortcuts();
+
+    press('x');
+    press('d');
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('types into a focused text field rather than swapping or resetting', () => {
+    renderShortcuts();
+    const input = document.createElement('input');
+    input.type = 'text';
+    document.body.appendChild(input);
+
+    try {
+      press('x', {}, input);
+      press('d', {}, input);
+    } finally {
+      input.remove();
+    }
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('types into a contenteditable, which is how the Type tool draft is edited', () => {
+    renderShortcuts();
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', 'true');
+    document.body.appendChild(editor);
+
+    try {
+      press('x', {}, editor);
+      press('d', {}, editor);
+    } finally {
+      editor.remove();
+    }
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('swaps once per press, not once per auto-repeat', () => {
+    renderShortcuts();
+
+    press('x');
+    press('x', { repeat: true });
+    press('x', { repeat: true });
+
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SWAP_COLORS' });
+  });
+
+  it('refuses both keys while a document gesture is open', () => {
+    renderShortcuts();
+    claimDocumentGesture('brush-stroke', 1);
+
+    try {
+      press('x');
+      press('d');
+    } finally {
+      releaseDocumentGesture('brush-stroke', 1);
+    }
+
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });
 

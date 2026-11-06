@@ -54,6 +54,8 @@ const currentTool = vi.hoisted(() => ({
   patchToolArgs: vi.fn(),
 }));
 
+const invertActiveLayer = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+
 const themeState = vi.hoisted(() => ({ theme: 'light' as 'light' | 'dark', toggleTheme: vi.fn() }));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({ useStore: () => [storeState, dispatch] }));
@@ -62,6 +64,7 @@ vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => file }));
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => layers }));
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
+vi.mock('../../../hooks/useInvertLayer.ts', () => ({ useInvertLayer: () => ({ invertActiveLayer }) }));
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
   useTheme: () => themeState,
 }));
@@ -214,7 +217,7 @@ describe('DesktopHeader', () => {
    * the other half: a tool that is absent for no stated reason is skipped by `MENUS_EXCLUDE`
    * just as silently as one that is absent on purpose. This is the half that names them.
    *
-   * The Tools menu lists TOOLS. `color`, `levels` and `transform` are `Image ▸ Adjustments`
+   * The Tools menu lists TOOLS. `color`, `levels`, `invert` and `transform` are `Image ▸ Adjustments`
    * and `Edit ▸ Free Transform` commands, so a Tools-menu entry for any of them would be the
    * same falsehood the rail carried — in the other direction, and in the surface whose own
    * header comment calls a missing tool "a visible inconsistency". `toolbar-mapping.ts`'s
@@ -222,31 +225,33 @@ describe('DesktopHeader', () => {
    * ids with no menu row. This is the pin that keeps the two in step, and it is the only
    * thing standing between "excluded on purpose" and "excluded by accident".
    */
-  it('keeps the three non-tool commands out of the Tools menu, and says why', () => {
+  it('keeps the four non-tool commands out of the Tools menu, and says why', () => {
     renderHeader();
 
     openMenu('Tools');
 
     expect(screen.queryByTestId('tools-menu-color-button')).toBeNull();
     expect(screen.queryByTestId('tools-menu-levels-button')).toBeNull();
+    expect(screen.queryByTestId('tools-menu-invert-button')).toBeNull();
     expect(screen.queryByTestId('tools-menu-transform-button')).toBeNull();
-    expect(MENUS_EXCLUDE).toEqual(expect.arrayContaining(['color', 'levels', 'transform']));
+    expect(MENUS_EXCLUDE).toEqual(expect.arrayContaining(['color', 'levels', 'invert', 'transform']));
   });
 
   /**
    * `MENUS_EXCLUDE` is the ONLY sanctioned way for a registered tool to have no Tools-menu
    * row, so it is the list that decides which omissions are deliberate. Left open, it grows
    * without anyone reading it and the registry-derived test above keeps passing — which is
-   * precisely the failure mode it was written to end. Pinned at six, for the six stated
-   * reasons in `DesktopHeader.tsx`: three pen point-tools that modify a path, and three
-   * adjustment commands that are not tools at all.
+   * precisely the failure mode it was written to end. Pinned at seven, for the stated
+   * reasons in `DesktopHeader.tsx`: three pen point-tools that modify a path, and four
+   * commands that are not tools at all.
    */
-  it('holds MENUS_EXCLUDE to exactly the six tools with a stated reason', () => {
+  it('holds MENUS_EXCLUDE to exactly the seven tools with a stated reason', () => {
     expect([...MENUS_EXCLUDE].sort()).toEqual([
       'add-anchor-point',
       'color',
       'convert-point',
       'delete-anchor-point',
+      'invert',
       'levels',
       'transform',
     ]);
@@ -290,6 +295,17 @@ describe('DesktopHeader', () => {
     expect(app.goToTool).toHaveBeenCalledWith('levels');
   });
 
+  it('applies Invert on click without selecting a tool, and closes the menu', () => {
+    renderHeader();
+
+    openAdjustments();
+    fireEvent.click(screen.getByTestId('image-menu-adjustments-invert-button'));
+
+    expect(invertActiveLayer).toHaveBeenCalledTimes(1);
+    expect(app.goToTool).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('image-menu-adjustments')).toBeNull();
+  });
+
   it('toggles the Adjustments submenu open and closed on its own button', () => {
     renderHeader();
 
@@ -313,7 +329,7 @@ describe('DesktopHeader', () => {
    * the gap stops being visible; if one is wrongly enabled the app does something it
    * cannot do.
    */
-  it("carries Adobe's Adjustments list with only the two implemented commands enabled", () => {
+  it("carries Adobe's Adjustments list with only the three implemented commands enabled", () => {
     renderHeader();
 
     openAdjustments();
@@ -322,7 +338,7 @@ describe('DesktopHeader', () => {
       .getAllByRole('button')
       .filter((button) => !(button as HTMLButtonElement).disabled)
       .map((button) => button.textContent);
-    expect(enabled).toEqual(['Brightness/Contrast', 'Desaturate']);
+    expect(enabled).toEqual(['Brightness/Contrast', 'Desaturate', 'Invert']);
 
     for (const label of [
       'Levels',
@@ -331,7 +347,6 @@ describe('DesktopHeader', () => {
       'Black and White',
       'Hue/Saturation',
       'Photo Filter',
-      'Invert',
       'Color Balance',
       'Channel Mixer',
       'Selective Color',
@@ -350,7 +365,7 @@ describe('DesktopHeader', () => {
    * computes, so an enabled `Photo Filter` opened a bar its own label did not describe, and
    * Adobe's real command is unbuilt — which is what a `disabled` item records. Two
    * assertions above are what hold that, and this one only holds that the row does not act:
-   * `expect(enabled).toEqual(['Brightness/Contrast', 'Desaturate'])`, which fails if
+   * `expect(enabled).toEqual(['Brightness/Contrast', 'Desaturate', 'Invert'])`, which fails if
    * `Photo Filter` is enabled again, and the disabled-label loop, which asserts
    * `Photo Filter` carries `disabled`.
    */

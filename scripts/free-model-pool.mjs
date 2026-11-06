@@ -34,9 +34,11 @@ const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
 export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+const XINGCHEN_XING4_MODEL = 'xingchen-agi/xing4.0-29b-a4b:free';
+const DISABLED_MODEL_PREFIXES = ['poolside/laguna'];
 const MIN_REASONING_COMPLETION_TOKENS = 1024;
-const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_MODEL];
-const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_MODEL];
+const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
+const PREFERRED_OPENROUTER_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
 const GROQ_FREE_MODEL = 'openai/gpt-oss-120b';
 // These router IDs choose a concrete model only after the request may already be billed.
 const UNPINNABLE_ROUTER_MODELS = new Set(['openrouter/free', 'openrouter/free:free']);
@@ -250,6 +252,7 @@ export function catalogCandidates(source, data, quarantinedKeys = new Set()) {
   const candidates = rows
     .filter((row) => {
       if (typeof row?.id !== 'string' || row.id.length === 0) return false;
+      if (DISABLED_MODEL_PREFIXES.some((prefix) => row.id.toLowerCase().startsWith(prefix))) return false;
       if (quarantinedKeys.has(quarantineKey(source, row.id))) return false;
       if (UNPINNABLE_ROUTER_MODELS.has(row.id)) return false;
       // OpenCode's public inference catalog has no price fields. Its documented

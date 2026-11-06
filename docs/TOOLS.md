@@ -371,7 +371,7 @@ The Magnetic Lasso tool is an edge detector you drive by hand. You click once to
 - `Return` — Closes the border, or moves focus to the Feather field when no border is open.
 - `Delete` — Removes the most recent fastening point.
 
-**In this app:** `partial` — The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Three things diverge, and one load-bearing finding of the previous version of this record no longer holds. (1) Frequency was inverted and is no longer. That record said the app stored it as a maximum path length in pixels, so that lower values added more anchors — the exact opposite of Photoshop. The finding was correctly sourced and has been fixed: it is Adobe’s own 0–100 range with a plain-number readout (`MAGNETIC_LASSO_FREQUENCY_MIN`/`_MAX`, `src/tools/featherMagneticLasso.ts:20`-`:21`), and `magneticLassoAnchorSpan` (`:43`-`:54`) is the single place the direction is decided, mapping Frequency 0 to the longest 120px anchor span and Frequency 100 to the shortest 8px one, so a higher value anchors sooner. The gate is `pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:476`), and the row is `present` because range, direction and the bar’s own readout now agree with Adobe. (2) Contrast allows 0% where Photoshop’s documented range starts at 1%. (3) Feather and Anti-alias are not properties of the selection at all: `args.featherRadius` and `args.antiAlias` are written into the selection’s metadata at commit (`src/components/Main/FeatherMagneticLassoToolArea.tsx:394`-`:396`) and read back in exactly one place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas` (`src/util/selection.ts:836`-`:837`), so both reach only the COPIED alpha mask — un-ticking Anti-alias softens the copy and changes nothing else on the canvas, and the Feather radius is likewise never a feather of the selection the ants are drawn from. Adobe caps its own options-bar box at 0 to 100 pixels, which is the same ceiling the app uses, so that cap was never a divergence; what is missing behind both controls is `Select > Modify > Feather`, which the app has no route to. Width is `partial` for a narrower reason than the others: the app renders a 1–64px slider (`FeatherMagneticLasso.tsx:288`-`:289`) and Adobe states the field only as “a pixel value” with no maximum, so the ceiling is the app’s own. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. Alt is the one modifier this tool actually reads, and only as `magneticEnabled: !event.altKey` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:458`), so the freehand-segment row above is real while the Alt-double-click straight close, the Shift/Alt/Shift+Alt combination modes and the Caps Lock, bracket, comma and period keys are all absent.
+**In this app:** `partial` — The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Three things diverge, and one load-bearing finding of the previous version of this record no longer holds. (1) Frequency was inverted and is no longer. That record said the app stored it as a maximum path length in pixels, so that lower values added more anchors — the exact opposite of Photoshop. The finding was correctly sourced and has been fixed: it is Adobe’s own 0–100 range with a plain-number readout (`MAGNETIC_LASSO_FREQUENCY_MIN`/`_MAX`, `src/tools/featherMagneticLasso.ts:20-21`), and `magneticLassoAnchorSpan` (`src/tools/featherMagneticLasso.ts:43-54`) is the single place the direction is decided, mapping Frequency 0 to the longest 120px anchor span and Frequency 100 to the shortest 8px one, so a higher value anchors sooner. The gate is `pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:486`), and the row is `present` because range, direction and the bar’s own readout now agree with Adobe. (2) Contrast allows 0% where Photoshop’s documented range starts at 1%. (3) Feather and Anti-alias are not properties of the selection at all: `args.featherRadius` and `args.antiAlias` are written into the selection’s metadata at commit (`src/components/Main/FeatherMagneticLassoToolArea.tsx:401-406`) and read back in exactly one place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas` (`src/util/selection.ts:1171-1174`), so both reach only the COPIED alpha mask — un-ticking Anti-alias softens the copy and changes nothing else on the canvas, and the Feather radius is likewise never a feather of the selection the ants are drawn from. Adobe caps its own options-bar box at 0 to 100 pixels, which is the same ceiling the app uses, so that cap was never a divergence; what is missing behind both controls is `Select > Modify > Feather`, which the app has no route to. Width is `partial` for a narrower reason than the others: the app renders a 1–64px slider (`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:289-290`) and Adobe states the field only as “a pixel value” with no maximum, so the ceiling is the app’s own. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. Alt is the one modifier this tool actually reads, and only as `magneticEnabled: !event.altKey` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:468`), so the freehand-segment row above is real while the Alt-double-click straight close, the Shift/Alt/Shift+Alt combination modes and the Caps Lock, bracket, comma and period keys are all absent.
 
 Implementation:
 
@@ -2684,6 +2684,41 @@ Sources:
 
 ---
 
+### Invert — the Image > Adjustments command, not a Tools panel Tool
+
+`invert`
+
+Photoshop's Invert replaces every channel value with its inverse on the 256-step scale, turning the layer into its negative.
+
+Invert turns an image into its negative: each pixel's brightness in every channel is replaced by its inverse on the 256-step scale, so 255 becomes 0 and 5 becomes 250. It has no dialog and no settings, which is why it is bound to a single chord, Cmd+I. It is used as a creative effect and as a step in building masks, and it is the command that swaps the hidden and revealed areas of a selected layer mask. Chosen from Image > Adjustments it changes the layer's pixels directly; the non-destructive route is an Invert adjustment layer. With an active selection it inverts only the selected pixels.
+
+_Photoshop gives this tool no options bar of its own._
+
+**Shortcuts**
+
+- `Cmd+I` — Apply Invert to the active layer, or to the selected pixels when a selection is active.
+
+**In this app:** `implemented` — Invert is a one-shot command here as in Photoshop: Image > Adjustments > Invert and Cmd+I both call the same command, which commits one raster history state and never becomes the current tool, so it has no options bar and no rail tile. Alpha is left as it is; only the colour channels are inverted. An active selection clips the inversion, and a feathered or anti-aliased edge blends each pixel toward its inverse by its selection coverage rather than stepping. Two differences from Photoshop are deliberate. First, the command refuses the bedrock layer, which is the document's backing image and which no raster edit in this app targets; Photoshop inverts its Background layer. Second, there are no adjustment layers and no layer masks, so the Invert adjustment layer and inverting a selected mask have nothing to act on. While another tool's live preview (Levels, Color, Free Transform) is still uncommitted on the layer, Invert does nothing rather than discard that preview; switching tools commits it.
+
+Implementation:
+
+- `src/tools/invert.ts:34`
+- `src/tools/invert.ts:46`
+- `src/tools/toolProcessors.ts:286`
+- `src/hooks/useInvertLayer.ts:29`
+- `src/components/Common/AdjustmentShortcuts.tsx:20`
+- `src/components/DesktopHeader/DesktopHeader.tsx:258`
+- `toolbar-mapping.ts:247`
+
+Sources:
+
+- <https://helpx.adobe.com/ca/photoshop/using/applying-special-color-effects-images.html>
+- <https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html>
+- <https://community.adobe.com/questions-712/where-is-the-invert-command-1172919>
+- <https://www.adobe.com/products/photoshop/invert-mask.html>
+
+---
+
 ### Black & White — the Image > Adjustments command, not a Tools panel Tool
 
 `color`
@@ -3019,7 +3054,7 @@ Sources:
 
 Rotates the canvas presentation around the viewport without transforming the image.
 
-The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag horizontally to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.
+The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag around the workspace centre to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.
 
 **Options bar**
 
@@ -3028,12 +3063,17 @@ The Rotate View tool turns the displayed canvas so a retoucher can work at a com
 | Rotation Angle | Sets the displayed angle from -180 to 180 degrees.              | `present` — `src/components/ToolbarsRight/View/View.tsx:51` |
 | Reset View     | Returns the displayed rotation to zero without changing pixels. | `present` — `src/components/ToolbarsRight/View/View.tsx:59` |
 
+**Modifiers**
+
+- **Shift** — Snaps a rotate drag to 15° increments.
+
 **Shortcuts**
 
 - `R` — Selects the Rotate View tool.
+- `Shift+H` — Cycles between the Hand and Rotate View tools.
 - `Esc` — Resets the view angle to zero while Rotate View is active.
 
-**In this app:** `implemented` — Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, compass overlay, Shift snapping, and Rotate All Windows are not implemented.
+**In this app:** `implemented` — Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, a compass overlay, and Rotate All Windows are not implemented.
 
 Implementation:
 

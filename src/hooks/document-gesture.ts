@@ -39,6 +39,7 @@ export type DocumentGestureKind =
   | 'polygon-selection'
   | 'freehand-lasso'
   | 'rectangular-selection'
+  | 'elliptical-selection'
   | 'single-row-marquee'
   | 'single-column-marquee'
   | 'layer-transform'
@@ -66,6 +67,23 @@ export type DocumentGesture = {
  * double-claim behind a success return nobody checks.
  */
 let openGesture: DocumentGesture | null = null;
+const documentGestureListeners = new Set<() => void>();
+let notificationQueued = false;
+
+function notifyDocumentGestureListeners(): void {
+  if (notificationQueued) return;
+  notificationQueued = true;
+  queueMicrotask(() => {
+    notificationQueued = false;
+    documentGestureListeners.forEach((listener) => listener());
+  });
+}
+
+/** Subscribe to gesture ownership changes for UI that must refresh after a no-op pointer release. */
+export function subscribeDocumentGesture(listener: () => void): () => void {
+  documentGestureListeners.add(listener);
+  return () => documentGestureListeners.delete(listener);
+}
 
 /**
  * Claim the document for a gesture. First claim wins.
@@ -84,6 +102,7 @@ export function claimDocumentGesture(kind: DocumentGestureKind, pointerId: numbe
   if (openGesture !== null) return false;
 
   openGesture = { kind, pointerId };
+  notifyDocumentGestureListeners();
 
   return true;
 }
@@ -102,6 +121,7 @@ export function releaseDocumentGesture(kind: DocumentGestureKind, pointerId: num
   if (openGesture.kind !== kind || openGesture.pointerId !== pointerId) return;
 
   openGesture = null;
+  notifyDocumentGestureListeners();
 }
 
 /** Whether a document-committing gesture is open. This is the keyboard gate's whole question. */
@@ -125,5 +145,7 @@ export function readDocumentGesture(): DocumentGesture | null {
  * claim, and the one that goes away takes its claim with it.
  */
 export function resetDocumentGestures(): void {
+  if (openGesture === null) return;
   openGesture = null;
+  notifyDocumentGestureListeners();
 }

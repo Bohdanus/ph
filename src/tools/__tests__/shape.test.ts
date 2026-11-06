@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_POLYGON_SIDES,
+  DEFAULT_SHAPE_LINE_JOIN,
+  DEFAULT_SHAPE_MITER_LIMIT,
   DEFAULT_STAR_RATIO,
   drawShape,
   isFigureType,
@@ -366,6 +368,52 @@ describe('shapeGeometryBounds', () => {
   it('pads the geometry by half the stroke plus one pixel on each side', () => {
     const bounds = shapeGeometryBounds({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } }, 2);
     expect(bounds).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+  });
+
+  it.each(['triangle', 'polygon', 'star'] as const)('includes the maximum miter overhang for %s', (figure) => {
+    const bounds = shapeGeometryBounds({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } }, 2, {
+      figure,
+    });
+    expect(bounds).toEqual({ x: -1, y: 9, width: 62, height: 62 });
+  });
+
+  it('keeps axis-aligned rectangle bounds at half-stroke padding', () => {
+    const bounds = shapeGeometryBounds({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } }, 2, {
+      figure: 'rectangle',
+    });
+    expect(bounds).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+  });
+
+  it('uses the active join style when measuring bounds', () => {
+    const geometry = { start: { x: 10, y: 20 }, end: { x: 50, y: 60 } };
+    expect(shapeGeometryBounds(geometry, 2, { figure: 'triangle', lineJoin: 'bevel' })).toEqual({
+      x: 8,
+      y: 18,
+      width: 44,
+      height: 44,
+    });
+    expect(shapeGeometryBounds(geometry, 2, { figure: 'rectangle' })).toEqual({
+      x: 8,
+      y: 18,
+      width: 44,
+      height: 44,
+    });
+  });
+
+  it('accounts for the diagonal overhang of square caps on lines', () => {
+    const bounds = shapeGeometryBounds({ start: { x: 0, y: 0 }, end: { x: 100, y: 100 } }, 20, {
+      figure: 'line',
+      lineCap: 'square',
+    });
+    expect(bounds).toEqual({ x: -16, y: -16, width: 132, height: 132 });
+  });
+
+  it('uses projected square-cap overhang for lines below 45 degrees', () => {
+    const bounds = shapeGeometryBounds({ start: { x: 0, y: 0 }, end: { x: 100, y: 50 } }, 20, {
+      figure: 'line',
+      lineCap: 'square',
+    });
+    expect(bounds).toEqual({ x: -15, y: -15, width: 130, height: 80 });
   });
 
   it('handles a negative drag direction', () => {
@@ -1049,6 +1097,8 @@ describe('setShapeCtx', () => {
     expect(ctx.fillStyle).toBe('#445566');
     expect(ctx.lineWidth).toBe(7);
     expect(ctx.lineCap).toBe('round');
+    expect(ctx.lineJoin).toBe(DEFAULT_SHAPE_LINE_JOIN);
+    expect(ctx.miterLimit).toBe(DEFAULT_SHAPE_MITER_LIMIT);
     expect(ctx.globalAlpha).toBe(0.5);
     expect(ctx.setLineDash).toHaveBeenCalledWith([2, 4]);
   });
@@ -1114,6 +1164,8 @@ function createBracketedCtx() {
     fillStyle: string;
     lineWidth: number;
     lineCap: CanvasLineCap;
+    lineJoin: CanvasLineJoin;
+    miterLimit: number;
     dash: number[];
   };
 
@@ -1123,6 +1175,8 @@ function createBracketedCtx() {
     fillStyle: '',
     lineWidth: 1,
     lineCap: 'butt',
+    lineJoin: 'round',
+    miterLimit: 4,
     dash: [],
   };
   const stack: State[] = [];
@@ -1132,15 +1186,25 @@ function createBracketedCtx() {
    * here — after the call the context holds the caller's value whether or not anything was written,
    * so a post-hoc read of `strokeStyle` is always `''` and would pass for any colour at all.
    */
-  const observedAtPaint: { globalAlpha: number; strokeStyle: string; fillStyle: string } = {
+  const observedAtPaint: {
+    globalAlpha: number;
+    strokeStyle: string;
+    fillStyle: string;
+    lineJoin: CanvasLineJoin;
+    miterLimit: number;
+  } = {
     globalAlpha: 1,
     strokeStyle: '',
     fillStyle: '',
+    lineJoin: 'round',
+    miterLimit: 4,
   };
   const recordPaint = () => {
     observedAtPaint.globalAlpha = state.globalAlpha;
     observedAtPaint.strokeStyle = state.strokeStyle;
     observedAtPaint.fillStyle = state.fillStyle;
+    observedAtPaint.lineJoin = state.lineJoin;
+    observedAtPaint.miterLimit = state.miterLimit;
   };
 
   const ctx = {
@@ -1174,6 +1238,18 @@ function createBracketedCtx() {
     },
     set lineCap(value: CanvasLineCap) {
       state.lineCap = value;
+    },
+    get lineJoin() {
+      return state.lineJoin;
+    },
+    set lineJoin(value: CanvasLineJoin) {
+      state.lineJoin = value;
+    },
+    get miterLimit() {
+      return state.miterLimit;
+    },
+    set miterLimit(value: number) {
+      state.miterLimit = value;
     },
     setLineDash: vi.fn((dash: number[]) => {
       state.dash = dash;
@@ -1265,10 +1341,14 @@ describe('shape processor', () => {
     // read where the paint happened, because a `globalAlpha = 1` at the top of the writer would
     // still leave the context at 1 after the call and pass a post-hoc assertion.
     expect(observedAtPaint.globalAlpha).toBe(0.4);
+    expect(observedAtPaint.lineJoin).toBe(DEFAULT_SHAPE_LINE_JOIN);
+    expect(observedAtPaint.miterLimit).toBe(DEFAULT_SHAPE_MITER_LIMIT);
     // And the state that survives the call is the context `shape()` found, not the tool's.
     expect(state.globalAlpha).toBe(1);
     expect(state.strokeStyle).toBe('');
     expect(state.lineWidth).toBe(1);
+    expect(state.lineJoin).toBe('round');
+    expect(state.miterLimit).toBe(4);
     expect(state.dash).toEqual([]);
   });
 

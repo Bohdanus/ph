@@ -13,7 +13,8 @@ import {
   isYamlCommentFile,
 } from './lib/citations/added-comments.mjs';
 
-const git = (args, options = {}) => execFileSync('git', args, { encoding: 'utf8', ...options });
+const git = (args, options = {}) =>
+  execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...options });
 
 const baseIndex = process.argv.indexOf('--base');
 let diff;

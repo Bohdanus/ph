@@ -32,7 +32,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, isAbsolute, join, relative as relativePath } from 'node:path';
 
 import {
   OPERATION_MARKERS,
@@ -1038,22 +1038,47 @@ describe('the cross-check must not invent worktrees either', () => {
     // permanently, and `records` exceeded the roster so the worktree was counted twice.
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const relative = join(scratch(), 'rel');
-    git(repo, 'worktree', 'add', '-q', '--relative-paths', '-b', 'wt/rel', relative);
+    const add = spawnSync('git', ['worktree', 'add', '-q', '--relative-paths', '-b', 'wt/rel', relative], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: GIT_ENV,
+    });
+    const hasRelativeWriter = add.status === 0;
+    if (!hasRelativeWriter) {
+      expect(`${add.stdout ?? ''}${add.stderr ?? ''}`).toMatch(/unknown option[\s\S]*relative-paths/);
+      git(repo, 'worktree', 'add', '-q', '-b', 'wt/rel', relative);
+    }
     git(relative, 'checkout', '-q', '-B', 'wt/rel');
     mergeThatConflicts(relative, 'theirs');
 
-    // The precondition, asserted: git really did write a relative path here.
-    const gitdir = readFileSync(join(repo, '.git', 'worktrees', 'rel', 'gitdir'), 'utf8').trim();
+    const adminDir = join(repo, '.git', 'worktrees', 'rel');
+    const adminGitdir = join(adminDir, 'gitdir');
+    if (!hasRelativeWriter) {
+      // Apple Git 2.39 predates both the writer and the roster reader for this shape.
+      // Build the same administrative link after Git has created the real worktree and
+      // conflict, then exercise our resolver directly instead of asking that old Git to
+      // parse a format it does not support.
+      writeFileSync(adminGitdir, `${relativePath(adminDir, join(relative, '.git'))}\n`);
+    }
+
+    // The precondition, asserted: the administrative link really is relative here.
+    const gitdir = readFileSync(adminGitdir, 'utf8').trim();
     expect(isAbsolute(gitdir)).toBe(false);
 
-    const scanned = scanRepository(repo);
-    // No invented record, and no double count.
-    expect(scanned.worktrees).toHaveLength(scanned.roster);
-    const found = scanned.worktrees.find((w) => w.name === 'rel');
-    expect(found.present).toBe(true);
-    expect(found.readError).toBeNull();
-    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
-    expect(findings(scanned.worktrees)).toHaveLength(1);
+    const resolved = resolveAdminDirFor(resolveCommonDir(repo), relative);
+    expect(realpathSync(resolved)).toBe(realpathSync(adminDir));
+    expect(readOperations(resolved).map((o) => o.operation)).toEqual(['merge']);
+
+    if (hasRelativeWriter) {
+      const scanned = scanRepository(repo);
+      // No invented record, and no double count.
+      expect(scanned.worktrees).toHaveLength(scanned.roster);
+      const found = scanned.worktrees.find((w) => w.name === 'rel');
+      expect(found.present).toBe(true);
+      expect(found.readError).toBeNull();
+      expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+      expect(findings(scanned.worktrees)).toHaveLength(1);
+    }
   });
 
   it('does not report a stray directory under the admin root as a lost worktree', () => {

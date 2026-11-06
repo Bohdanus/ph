@@ -301,6 +301,8 @@ describe('SidebarLeft flyout hardening', () => {
       'py-1',
       'px-2',
       'text-[11px]',
+      'text-gray-700',
+      'dark:text-gray-200',
       'rounded-sm',
       '[&_svg]:!h-4',
       '[&_svg]:!w-4'
@@ -308,6 +310,7 @@ describe('SidebarLeft flyout hardening', () => {
     expect(row.querySelector('kbd'), 'the shortcut hint is part of the row, and it has a size too').toHaveClass(
       'text-[9px]'
     );
+    expect(row.querySelector('kbd')).not.toHaveClass('opacity-65');
 
     // ONE stale class per `not.toHaveClass` call, deliberately. The matcher takes a list and
     // requires ALL of them, so `not.toHaveClass('p-1.5', 'min-w-48')` cannot fire unless both

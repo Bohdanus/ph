@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { useLayers } from '../useLayer.ts';
 import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
-import type { Layer, LayersRecord } from '../layer-types.ts';
+import type { Layer, LayerSource, LayersRecord } from '../layer-types.ts';
 import type { BlankImageParams, ToolArgs } from '../tool-types.ts';
 import { toolProcessors, type ToolResult } from '../../tools/toolProcessors.ts';
 import { createMockCanvasContext } from '../../__tests__/fixtures/canvas.ts';
@@ -260,6 +260,95 @@ describe('useLayers createBlankLayer', () => {
 });
 
 describe('useLayers createLayerFromTool geometry', () => {
+  it('serializes the Shape Tool source before the typed durable create remains ownership-gated', () => {
+    const raster = new OffscreenCanvas(20, 10);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup();
+    const openingSource: LayerSource = {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      isBedrock: false,
+      pos: frame,
+    };
+    const openingLayer = makeLayer('opening', 0, {
+      bitmap: null,
+      pos: frame,
+      source: openingSource,
+    });
+
+    act(() => {
+      result.current.dispatch({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'shape-history-producer',
+          history: [
+            {
+              id: 'opening',
+              actionName: NEW_LAYER_ACTION,
+              layerId: openingLayer.id,
+              layerSource: openingSource,
+              disabled: true,
+            },
+          ],
+          historyIndex: 0,
+          updates: {
+            layers: { [openingLayer.id]: openingLayer },
+            activeLayerId: openingLayer.id,
+            totalSize: size,
+            documentFrame: frame,
+          },
+        },
+      });
+    });
+
+    const inputArgs = shapeArgs({ rect: { x1: 5, y1: 6, x2: 25, y2: 16 } });
+    const normalizedArgs = {
+      toolName: 'shape',
+      figure: 'rectangle',
+      alpha: 1,
+      color: '#000000',
+      backgroundColor: null,
+      lineWidth: 2,
+      rect: { x1: 0, y1: 0, x2: 20, y2: 10 },
+    } as ToolArgs;
+    const pos = { x: 5, y: 6, width: 20, height: 10 };
+    let created: Layer | null = null;
+    act(() => {
+      created = result.current.layers.createLayerFromTool({ args: inputArgs });
+    });
+
+    const layer = created as Layer | null;
+    expect(layer).not.toBeNull();
+    expect(layer!.pos).toEqual(pos);
+    const { store } = result.current;
+    const historyItem = store.history.at(-1);
+    expect(historyItem).toMatchObject({ actionName: NEW_LAYER_ACTION, layerId: layer!.id });
+    const serializedSource = historyItem?.layerSource;
+    expect(serializedSource).toMatchObject({ kind: 'tool', args: normalizedArgs, pos });
+    expect(serializedSource).not.toBe(layer!.source);
+    if (serializedSource?.kind !== 'tool' || layer!.source?.kind !== 'tool') {
+      throw new Error('Expected the Shape Tool source in both the layer and its history item');
+    }
+    expect(serializedSource.args).toEqual(layer!.source.args);
+    expect(serializedSource.args).not.toBe(inputArgs);
+    expect(serializedSource.args).not.toBe(layer!.source.args);
+
+    expect(store.durableStatus).toBe('current');
+    const durableEntry = store.durableDocument?.history.find((entry) => entry.id === historyItem?.id);
+    expect(durableEntry?.operation.kind).toBe('create-layer');
+    if (durableEntry?.operation.kind !== 'create-layer') {
+      throw new Error('Expected the serialized Shape Tool create to map to a durable create');
+    }
+    expect(durableEntry.operation.layer).toMatchObject({
+      id: layer!.id,
+      source: { kind: 'vector', toolName: 'shape', args: normalizedArgs, sourcePos: pos },
+    });
+    expect(store.durablePresentation.status).toBe('unpublished');
+    expect(store.renderSelector.source).toBe('legacy');
+    processor.mockRestore();
+  });
+
   it('keeps an explicit document position and clears the tool overlay', () => {
     const raster = new OffscreenCanvas(20, 10);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);

@@ -1,6 +1,9 @@
 import type { ToolDescription } from './types.ts';
 
-export const transformDescriptions: Record<'reposition' | 'transform' | 'levels' | 'color', ToolDescription> = {
+export const transformDescriptions: Record<
+  'reposition' | 'transform' | 'levels' | 'invert' | 'color',
+  ToolDescription
+> = {
   reposition: {
     photoshopName: 'Move Tool',
     summary:
@@ -426,6 +429,40 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf',
       'https://glensmith.co.uk/photoshop/tools',
       'https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview',
+    ],
+  },
+
+  invert: {
+    photoshopName: 'Invert — the Image > Adjustments command, not a Tools panel Tool',
+    summary:
+      "Photoshop's Invert replaces every channel value with its inverse on the 256-step scale, turning the layer into its negative.",
+    purpose:
+      "Invert turns an image into its negative: each pixel's brightness in every channel is replaced by its inverse on the 256-step scale, so 255 becomes 0 and 5 becomes 250. It has no dialog and no settings, which is why it is bound to a single chord, Cmd+I. It is used as a creative effect and as a step in building masks, and it is the command that swaps the hidden and revealed areas of a selected layer mask. Chosen from Image > Adjustments it changes the layer's pixels directly; the non-destructive route is an Invert adjustment layer. With an active selection it inverts only the selected pixels.",
+    options: [],
+    modifiers: [],
+    shortcuts: [
+      {
+        keys: 'Cmd+I',
+        action: 'Apply Invert to the active layer, or to the selected pixels when a selection is active.',
+      },
+    ],
+    implementation: 'implemented',
+    implementationRefs: [
+      'src/tools/invert.ts:34',
+      'src/tools/invert.ts:46',
+      'src/tools/toolProcessors.ts:286',
+      'src/hooks/useInvertLayer.ts:29',
+      'src/components/Common/AdjustmentShortcuts.tsx:20',
+      'src/components/DesktopHeader/DesktopHeader.tsx:258',
+      'toolbar-mapping.ts:247',
+    ],
+    appNotes:
+      "Invert is a one-shot command here as in Photoshop: Image > Adjustments > Invert and Cmd+I both call the same command, which commits one raster history state and never becomes the current tool, so it has no options bar and no rail tile. Alpha is left as it is; only the colour channels are inverted. An active selection clips the inversion, and a feathered or anti-aliased edge blends each pixel toward its inverse by its selection coverage rather than stepping. Two differences from Photoshop are deliberate. First, the command refuses the bedrock layer, which is the document's backing image and which no raster edit in this app targets; Photoshop inverts its Background layer. Second, there are no adjustment layers and no layer masks, so the Invert adjustment layer and inverting a selected mask have nothing to act on. While another tool's live preview (Levels, Color, Free Transform) is still uncommitted on the layer, Invert does nothing rather than discard that preview; switching tools commits it.",
+    sources: [
+      'https://helpx.adobe.com/ca/photoshop/using/applying-special-color-effects-images.html',
+      'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
+      'https://community.adobe.com/questions-712/where-is-the-invert-command-1172919',
+      'https://www.adobe.com/products/photoshop/invert-mask.html',
     ],
   },
 
