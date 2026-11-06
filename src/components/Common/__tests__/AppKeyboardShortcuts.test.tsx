@@ -215,6 +215,43 @@ describe('Move tool layer nudge shortcuts', () => {
     });
   });
 
+  it('keeps the ten-pixel step for a repeated Shift+Arrow event', () => {
+    enableNudging();
+    renderShortcuts();
+
+    expect(press('ArrowLeft', { shiftKey: true, repeat: true })).toBe(true);
+    expect(updateLayerByTool).toHaveBeenCalledExactlyOnceWith({
+      id: 'layer-1',
+      toolArgs: { move: { x: 10, y: 30 }, toolName: 'reposition' },
+    });
+  });
+
+  it('uses the latest active layer on a repeated key after a render', () => {
+    enableNudging();
+    const view = renderShortcuts();
+
+    expect(press('ArrowRight')).toBe(true);
+    updateLayerByTool.mockClear();
+    storeState.layers['layer-2'] = {
+      id: 'layer-2',
+      pos: { x: 40, y: 50 },
+      isBedrock: false,
+      locked: false,
+    };
+    storeState.activeLayerId = 'layer-2';
+    view.rerender(
+      <KeyboardEventsProvider>
+        <AppKeyboardShortcuts />
+      </KeyboardEventsProvider>
+    );
+
+    expect(press('ArrowLeft', { repeat: true })).toBe(true);
+    expect(updateLayerByTool).toHaveBeenCalledExactlyOnceWith({
+      id: 'layer-2',
+      toolArgs: { move: { x: 39, y: 50 }, toolName: 'reposition' },
+    });
+  });
+
   it('only binds arrow nudging while the Move tool is active', () => {
     renderShortcuts();
 
