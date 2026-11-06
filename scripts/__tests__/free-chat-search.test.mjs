@@ -1022,12 +1022,20 @@ describe('summarizeSearchResults', () => {
         updated: '2026-10-30',
         snippet: 'Authorization: Bearer snippetSecret123',
       },
+      {
+        session_id: 'ses_boundary',
+        title: `${'x'.repeat(295)} sk-${'a'.repeat(24)}`,
+        updated: '2026-10-30',
+        snippet: `${'x'.repeat(289)} ghp_${'1'.repeat(24)}`,
+      },
     ];
     await summarizeSearchResults('token=querySecret123', sessions, { completeImpl });
     const sentPrompt = completeImpl.mock.calls[0][0];
     expect(sentPrompt).not.toContain('querySecret123');
     expect(sentPrompt).not.toContain('titleSecret123');
     expect(sentPrompt).not.toContain('snippetSecret123');
+    expect(sentPrompt).not.toContain('sk-a');
+    expect(sentPrompt).not.toContain('ghp_111111');
     expect(sentPrompt).toContain('[REDACTED]');
   });
 });

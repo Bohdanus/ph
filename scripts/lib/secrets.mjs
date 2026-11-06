@@ -54,19 +54,24 @@ function redactObject(obj, depth = 0) {
 
 function isSecretKey(key) {
   const lowerKey = key.toLowerCase();
+  const normalizedKey = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  const keyParts = new Set(normalizedKey.split(/[^a-z0-9]+/).filter(Boolean));
   return (
     lowerKey.includes('apikey') ||
     lowerKey.includes('api_key') ||
     lowerKey.includes('access_token') ||
     lowerKey.includes('accesstoken') ||
     lowerKey.includes('authorization') ||
-    lowerKey.includes('auth') ||
+    keyParts.has('auth') ||
+    keyParts.has('authentication') ||
+    keyParts.has('authtoken') ||
     lowerKey.includes('credential') ||
     lowerKey.includes('password') ||
     lowerKey.includes('secret') ||
     lowerKey.includes('signature') ||
-    lowerKey.includes('sig') ||
-    lowerKey === 'token' ||
+    keyParts.has('sig') ||
+    keyParts.has('sigv4') ||
+    keyParts.has('token') ||
     lowerKey === 'key' ||
     lowerKey === 'hmac' ||
     lowerKey === 'keyid' ||
@@ -98,6 +103,26 @@ export function sanitizeErrorStack(stack) {
 
 export function sanitizeForOutput(data) {
   return sanitizeForLogging(data);
+}
+
+export function redactSensitiveText(value) {
+  if (typeof value !== 'string') return value;
+  return sanitizeForOutput(
+    value
+      .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]')
+      .replace(
+        /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
+        '[REDACTED]'
+      )
+      .replace(
+        /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
+        (_match, prefix, replacementValue) => {
+          const quote = replacementValue.startsWith('"') || replacementValue.startsWith("'") ? replacementValue[0] : '';
+          return `${prefix}${quote}[REDACTED]${quote}`;
+        }
+      )
+      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]')
+  );
 }
 
 export { REDACTED_MARKER, isSecretKey, redactString, redactObject };

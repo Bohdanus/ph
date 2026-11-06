@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import { open, stat, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { completeWithFreeModel } from './free-model-pool.mjs';
-import { sanitizeErrorMessage, sanitizeForOutput } from './lib/secrets.mjs';
+import { redactSensitiveText, sanitizeErrorMessage } from './lib/secrets.mjs';
+
+export { redactSensitiveText };
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_PROMPT_FILE_BYTES = 4 * 1024;
@@ -94,26 +96,6 @@ const SUMMARIZE_PROMPT =
   'Search query: {PROMPT}\n\n' +
   'Results (JSON):\n' +
   '{SNIPPETS}';
-
-export function redactSensitiveText(value) {
-  if (typeof value !== 'string') return value;
-  return sanitizeForOutput(
-    value
-      .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]')
-      .replace(
-        /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
-        '[REDACTED]'
-      )
-      .replace(
-        /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
-        (_match, prefix, value) => {
-          const quote = value.startsWith('"') || value.startsWith("'") ? value[0] : '';
-          return `${prefix}${quote}[REDACTED]${quote}`;
-        }
-      )
-      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]')
-  );
-}
 
 function escapeSqlValue(value) {
   return String(value).replace(/'/g, "''");
@@ -663,9 +645,9 @@ export async function summarizeSearchResults(
   const sanitizedQuery = redactSensitiveText(prompt);
   const candidates = sessions.map((session) => ({
     session_id: session.session_id,
-    title: redactSensitiveText((session.title || '').slice(0, 300)),
+    title: redactSensitiveText(session.title || '').slice(0, 300),
     updated: session.updated,
-    snippet: redactSensitiveText((session.snippet || '').slice(0, MAX_SNIPPET_CHARS)),
+    snippet: redactSensitiveText(session.snippet || '').slice(0, MAX_SNIPPET_CHARS),
   }));
   let included = candidates;
   let snippets;
