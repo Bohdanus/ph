@@ -18,6 +18,7 @@ const pasteSelectionClipboard = vi.hoisted(() => vi.fn());
 const pasteSystemClipboardImage = vi.hoisted(() => vi.fn());
 const layerViaCopy = vi.hoisted(() => vi.fn());
 const arrangeLayer = vi.hoisted(() => vi.fn());
+const updateLayerByTool = vi.hoisted(() => vi.fn(async () => undefined));
 const undo = vi.hoisted(() => vi.fn());
 const redo = vi.hoisted(() => vi.fn());
 const canUndo = vi.hoisted(() => vi.fn(() => false));
@@ -39,12 +40,23 @@ const storeState = vi.hoisted(
       documentFrame: { x: 0, y: 0, width: 800, height: 600 },
       hasImage: true,
       toolName: 'brush' as ToolName,
+      activeLayerId: 'layer-1' as string | null,
+      layers: {
+        'layer-1': {
+          id: 'layer-1',
+          pos: { x: 20, y: 30 },
+          isBedrock: false,
+          locked: false,
+        },
+      } as Record<string, { id: string; pos: { x: number; y: number }; isBedrock: boolean; locked: boolean }>,
     }) as {
       fileName: string;
       totalSize: { width: number; height: number };
       documentFrame: { x: number; y: number; width: number; height: number };
       hasImage: boolean;
       toolName: ToolName;
+      activeLayerId: string | null;
+      layers: Record<string, { id: string; pos: { x: number; y: number }; isBedrock: boolean; locked: boolean }>;
     }
 );
 
@@ -76,7 +88,7 @@ vi.mock('../../../contexts/useFile.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useLayer.ts', () => ({
-  useLayers: () => ({ arrangeLayer, commitDirtyTool }),
+  useLayers: () => ({ arrangeLayer, commitDirtyTool, updateLayerByTool }),
 }));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
@@ -149,7 +161,100 @@ beforeEach(() => {
   storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
   storeState.hasImage = true;
   storeState.toolName = 'brush';
+  storeState.activeLayerId = 'layer-1';
+  storeState.layers['layer-1'] = {
+    id: 'layer-1',
+    pos: { x: 20, y: 30 },
+    isBedrock: false,
+    locked: false,
+  };
   toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
+});
+
+describe('Move tool layer nudge shortcuts', () => {
+  const enableNudging = () => {
+    storeState.toolName = 'reposition';
+    clipboardState.hasActiveSelection = false;
+  };
+
+  it.each([
+    ['ArrowLeft', {}, { x: 19, y: 30 }],
+    ['ArrowRight', {}, { x: 21, y: 30 }],
+    ['ArrowUp', {}, { x: 20, y: 29 }],
+    ['ArrowDown', {}, { x: 20, y: 31 }],
+  ] as const)('%s nudges the active layer by one document pixel', (key, modifiers, move) => {
+    enableNudging();
+    renderShortcuts();
+
+    expect(press(key, modifiers)).toBe(true);
+    expect(updateLayerByTool).toHaveBeenCalledExactlyOnceWith({
+      id: 'layer-1',
+      toolArgs: { move, toolName: 'reposition' },
+    });
+  });
+
+  it('uses a ten-pixel step for Shift+Arrow', () => {
+    enableNudging();
+    renderShortcuts();
+
+    expect(press('ArrowDown', { shiftKey: true })).toBe(true);
+    expect(updateLayerByTool).toHaveBeenCalledExactlyOnceWith({
+      id: 'layer-1',
+      toolArgs: { move: { x: 20, y: 40 }, toolName: 'reposition' },
+    });
+  });
+
+  it('continues nudging while the arrow key repeats', () => {
+    enableNudging();
+    renderShortcuts();
+
+    expect(press('ArrowRight', { repeat: true })).toBe(true);
+    expect(updateLayerByTool).toHaveBeenCalledExactlyOnceWith({
+      id: 'layer-1',
+      toolArgs: { move: { x: 21, y: 30 }, toolName: 'reposition' },
+    });
+  });
+
+  it('only binds arrow nudging while the Move tool is active', () => {
+    renderShortcuts();
+
+    expect(press('ArrowLeft')).toBe(false);
+    expect(updateLayerByTool).not.toHaveBeenCalled();
+  });
+
+  it('allows native modified and editable-target arrow keys', () => {
+    enableNudging();
+    renderShortcuts();
+
+    expect(press('ArrowLeft', { ctrlKey: true })).toBe(false);
+    expect(press('ArrowRight', {}, document.createElement('input'))).toBe(false);
+    expect(updateLayerByTool).not.toHaveBeenCalled();
+  });
+
+  it('does not move the layer when a focused control already claimed the arrow key', () => {
+    enableNudging();
+    renderShortcuts();
+    const control = document.createElement('button');
+    control.addEventListener('keydown', (event) => event.preventDefault());
+
+    expect(press('ArrowRight', {}, control)).toBe(true);
+    expect(updateLayerByTool).not.toHaveBeenCalled();
+  });
+
+  it.each(['active selection', 'locked layer', 'bedrock layer', 'missing active layer'] as const)(
+    'does not consume or move the active layer with %s',
+    (reason) => {
+      enableNudging();
+      if (reason === 'active selection') clipboardState.hasActiveSelection = true;
+      if (reason === 'locked layer') storeState.layers['layer-1']!.locked = true;
+      if (reason === 'bedrock layer') storeState.layers['layer-1']!.isBedrock = true;
+      if (reason === 'missing active layer') storeState.activeLayerId = null;
+      renderShortcuts();
+
+      expect(press('ArrowLeft')).toBe(false);
+      expect(updateLayerByTool).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('layer Arrange shortcuts', () => {
