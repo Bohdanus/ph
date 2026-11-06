@@ -39,9 +39,9 @@ describe('Kilo CLI discovery', () => {
           home: join(directory, 'home'),
         })
       ).resolves.toBe(pathKilo);
-      await expect(
-        resolveKiloCli({ command: '', pathValue: '', home: join(directory, 'home'), platform: 'darwin' })
-      ).resolves.toBe(extensionKilo);
+      await expect(resolveKiloCli({ command: '', pathValue: '', home: join(directory, 'home') })).resolves.toBe(
+        extensionKilo
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
