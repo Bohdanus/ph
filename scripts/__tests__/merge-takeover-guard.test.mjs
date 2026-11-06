@@ -442,6 +442,93 @@ describe('the shape a whole-file resolution loses silently', () => {
 });
 
 describe('criss-cross merge-base handling', () => {
+  it('accepts a clean merge when the virtual merge base is also clean', () => {
+    write('left.txt', 'base left\n');
+    write('right.txt', 'base right\n');
+    write('stable.txt', 'stable\n');
+    commit('common ancestor');
+
+    git(['checkout', '-qb', 'left']);
+    write('left.txt', 'left edit\n');
+    commit('left side');
+    const left = sha();
+
+    git(['checkout', '-q', 'main']);
+    write('right.txt', 'right edit\n');
+    commit('right side');
+    const right = sha();
+
+    git(['checkout', '-q', 'left']);
+    write('right.txt', 'right edit\n');
+    git(['add', 'right.txt']);
+    const combinedTree = git(['write-tree']);
+    const leftMerge = git(['commit-tree', combinedTree, '-p', left, '-p', right, '-m', 'left criss-cross merge']);
+    const rightMerge = git(['commit-tree', combinedTree, '-p', right, '-p', left, '-m', 'right criss-cross merge']);
+    git(['update-ref', 'refs/heads/main', leftMerge]);
+    git(['checkout', '-q', 'main']);
+    git(['update-ref', 'refs/heads/feat', rightMerge]);
+
+    expect(git(['merge-base', '--all', 'main', 'feat']).split(/\r?\n/)).toHaveLength(2);
+
+    const seen = mergeAndInspect('feat');
+
+    expect(seen.conflicted).toBe(false);
+    expect(seen.takeovers).toEqual([]);
+    expect(git(['show', 'HEAD:left.txt'])).toBe('left edit');
+    expect(git(['show', 'HEAD:right.txt'])).toBe('right edit');
+  });
+
+  it('refuses to guess when more than two best merge bases exist', () => {
+    write('base.txt', 'base\n');
+    commit('common ancestor');
+
+    const tips = [];
+    for (const [branch, filename] of [
+      ['left', 'left.txt'],
+      ['middle', 'middle.txt'],
+      ['right', 'right.txt'],
+    ]) {
+      git(['checkout', '-q', 'main']);
+      git(['checkout', '-qb', branch]);
+      write(filename, `${branch} edit\n`);
+      commit(`${branch} side`);
+      tips.push({ sha: sha(), tree: git(['rev-parse', 'HEAD^{tree}']) });
+    }
+
+    const leftMerge = git([
+      'commit-tree',
+      tips[0].tree,
+      '-p',
+      tips[0].sha,
+      '-p',
+      tips[1].sha,
+      '-p',
+      tips[2].sha,
+      '-m',
+      'left three-base merge',
+    ]);
+    const rightMerge = git([
+      'commit-tree',
+      tips[2].tree,
+      '-p',
+      tips[2].sha,
+      '-p',
+      tips[1].sha,
+      '-p',
+      tips[0].sha,
+      '-m',
+      'right three-base merge',
+    ]);
+    git(['update-ref', 'refs/heads/main', leftMerge]);
+    git(['checkout', '-q', 'main']);
+    git(['update-ref', 'refs/heads/feat', rightMerge]);
+
+    expect(git(['merge-base', '--all', 'main', 'feat']).split(/\r?\n/)).toHaveLength(3);
+    expect(() => findTakeovers({ cwd: dir, head: leftMerge, incoming: rightMerge, resultTree: tips[0].tree })).toThrow(
+      /have 3 best merge-bases; refusing to compare an ambiguous virtual base/
+    );
+  });
+
   it('accepts resolve-undo stages from Git virtual merge bases', () => {
     write('f with space.txt', 'base\n');
     write('safe.txt', 'base safe\n');
