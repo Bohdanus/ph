@@ -242,25 +242,49 @@ describe('Move tool layer nudge shortcuts', () => {
     renderShortcuts();
     const control = document.createElement('button');
     control.addEventListener('keydown', (event) => event.preventDefault());
+    document.body.append(control);
 
-    expect(press('ArrowRight', {}, control)).toBe(true);
-    expect(updateLayerByTool).not.toHaveBeenCalled();
+    try {
+      expect(press('ArrowRight', {}, control)).toBe(true);
+      expect(updateLayerByTool).not.toHaveBeenCalled();
+    } finally {
+      control.remove();
+    }
   });
 
-  it.each(['active selection', 'locked layer', 'bedrock layer', 'missing active layer'] as const)(
-    'does not consume or move the active layer with %s',
-    (reason) => {
-      enableNudging();
-      if (reason === 'active selection') clipboardState.hasActiveSelection = true;
-      if (reason === 'locked layer') storeState.layers['layer-1']!.locked = true;
-      if (reason === 'bedrock layer') storeState.layers['layer-1']!.isBedrock = true;
-      if (reason === 'missing active layer') storeState.activeLayerId = null;
-      renderShortcuts();
+  it('does not consume nudge keys during an open document gesture', () => {
+    enableNudging();
+    renderShortcuts();
+    claimDocumentGesture('brush-stroke', 1);
 
+    try {
       expect(press('ArrowLeft')).toBe(false);
       expect(updateLayerByTool).not.toHaveBeenCalled();
+    } finally {
+      releaseDocumentGesture('brush-stroke', 1);
     }
-  );
+  });
+
+  it.each([
+    'active selection',
+    'no document',
+    'locked layer',
+    'bedrock layer',
+    'missing active layer',
+    'missing layer record',
+  ] as const)('does not consume or move the active layer with %s', (reason) => {
+    enableNudging();
+    if (reason === 'active selection') clipboardState.hasActiveSelection = true;
+    if (reason === 'no document') storeState.hasImage = false;
+    if (reason === 'locked layer') storeState.layers['layer-1']!.locked = true;
+    if (reason === 'bedrock layer') storeState.layers['layer-1']!.isBedrock = true;
+    if (reason === 'missing active layer') storeState.activeLayerId = null;
+    if (reason === 'missing layer record') storeState.activeLayerId = 'missing-layer';
+    renderShortcuts();
+
+    expect(press('ArrowLeft')).toBe(false);
+    expect(updateLayerByTool).not.toHaveBeenCalled();
+  });
 });
 
 describe('layer Arrange shortcuts', () => {
