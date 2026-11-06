@@ -225,10 +225,16 @@ describe('Move tool layer nudge shortcuts', () => {
   it('allows native modified and editable-target arrow keys', () => {
     enableNudging();
     renderShortcuts();
+    const input = document.createElement('input');
+    document.body.append(input);
 
-    expect(press('ArrowLeft', { ctrlKey: true })).toBe(false);
-    expect(press('ArrowRight', {}, document.createElement('input'))).toBe(false);
-    expect(updateLayerByTool).not.toHaveBeenCalled();
+    try {
+      expect(press('ArrowLeft', { ctrlKey: true })).toBe(false);
+      expect(press('ArrowRight', {}, input)).toBe(false);
+      expect(updateLayerByTool).not.toHaveBeenCalled();
+    } finally {
+      input.remove();
+    }
   });
 
   it('does not move the layer when a focused control already claimed the arrow key', () => {
