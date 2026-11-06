@@ -30,7 +30,7 @@ function redactString(input) {
     result = result.replace(pattern, replacement);
   }
   return result.replace(
-    /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
+    /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
     (_match, prefix, replacementValue) => {
       const quote = replacementValue.startsWith('"') || replacementValue.startsWith("'") ? replacementValue[0] : '';
       return `${prefix}${quote}[REDACTED]${quote}`;

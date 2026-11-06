@@ -322,6 +322,20 @@ describe('buildCodexSearchQuery', () => {
       expect(redacted).toContain(`${openAiKey}="[REDACTED]"`);
     });
 
+    it('redacts SigV4 signature values in URLs and standalone text assignments', () => {
+      const signature = 'fixtureSignature0123456789abcdef';
+      const sigv4 = 'fixtureSigV40123456789abcdef';
+      const redactedUrl = redactSensitiveText(
+        `https://example.invalid/?X-Amz-Signature=${signature}&X-Amz-Date=fixtureDate`
+      );
+      const redactedSigv4 = redactSensitiveText(`sigv4=${sigv4}`);
+
+      expect(redactedUrl).not.toContain(signature);
+      expect(redactedUrl).toContain('X-Amz-Signature=[REDACTED]');
+      expect(redactedSigv4).not.toContain(sigv4);
+      expect(redactedSigv4).toContain('sigv4=[REDACTED]');
+    });
+
     it('uses the shared secret sanitizer for Kilo CLI credentials', () => {
       const redacted = redactSensitiveText('KILO_CLI=fixtureSecretValue123');
       expect(redacted).not.toContain('fixtureSecretValue123');
