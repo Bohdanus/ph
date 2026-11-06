@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures/extended-test';
+import { expect, test, type Locator, type Page } from './fixtures/extended-test';
 import {
   type ClipOptions,
   drawLine,
@@ -50,6 +50,40 @@ type TraceWindow = Window & {
   __tabletLayerPointerTrace?: PointerTraceEntry[];
   __clearTabletLayerPointerTrace?: () => void;
 };
+type DragOverTraceWindow = Window & {
+  __layerDragOverEvent?: Event;
+  __captureLayerDragOver?: EventListener;
+};
+
+async function dispatchDragOverAndExpectPrevented(page: Page, target: Locator, eventInit: object): Promise<void> {
+  await page.evaluate(() => {
+    const traceWindow = window as DragOverTraceWindow;
+    traceWindow.__layerDragOverEvent = undefined;
+    traceWindow.__captureLayerDragOver = (event) => {
+      traceWindow.__layerDragOverEvent = event;
+    };
+    // Capture the dispatched event before the application stops propagation; its
+    // defaultPrevented value is checked after all dragover handlers have run.
+    document.addEventListener('dragover', traceWindow.__captureLayerDragOver, { capture: true, once: true });
+  });
+
+  try {
+    await target.dispatchEvent('dragover', { ...eventInit, cancelable: true });
+    const defaultPrevented = await page.evaluate(
+      () => (window as DragOverTraceWindow).__layerDragOverEvent?.defaultPrevented ?? false
+    );
+    expect(defaultPrevented, 'a valid layer dragover must prevent the browser from rejecting its drop').toBe(true);
+  } finally {
+    await page.evaluate(() => {
+      const traceWindow = window as DragOverTraceWindow;
+      if (traceWindow.__captureLayerDragOver) {
+        document.removeEventListener('dragover', traceWindow.__captureLayerDragOver, true);
+      }
+      delete traceWindow.__layerDragOverEvent;
+      delete traceWindow.__captureLayerDragOver;
+    });
+  }
+}
 
 test.describe('Layers', () => {
   test.beforeEach(async ({ page }) => {
@@ -99,7 +133,13 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
+      await dispatchDragOverAndExpectPrevented(page, target, { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
       // The drop is applied asynchronously: the moved layer only reaches the top of the
@@ -258,7 +298,13 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
+      await dispatchDragOverAndExpectPrevented(page, target, { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
       await expect.poll(() => layerRows.allTextContents()).not.toEqual(previousOrder);
@@ -395,7 +441,9 @@ test.describe('Layers', () => {
     await expect(bottomZone).toBeVisible();
 
     await source.dispatchEvent('dragstart', { dataTransfer });
-    await bottomZone.dispatchEvent('dragover', { dataTransfer });
+    await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+    await dispatchDragOverAndExpectPrevented(page, bottomZone, { dataTransfer });
+    await expect(bottomZone.locator('xpath=preceding-sibling::div[contains(@class, "bg-blue-500")]')).toBeVisible();
     await bottomZone.dispatchEvent('drop', { dataTransfer });
     await source.dispatchEvent('dragend', { dataTransfer });
 
@@ -469,7 +517,13 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
+      await dispatchDragOverAndExpectPrevented(page, target, { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
       await expect(layerRows.first()).toContainText(sourceName);
@@ -573,7 +627,13 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
+      await dispatchDragOverAndExpectPrevented(page, target, { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
       await expect.poll(() => layerNames.allTextContents()).toEqual(expectedOrder);
@@ -655,7 +715,13 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
+      await dispatchDragOverAndExpectPrevented(page, target, { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
       await expect(layerRows.first()).toContainText(sourceName);

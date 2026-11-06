@@ -334,3 +334,191 @@ test.describe('Mobile shell', () => {
     await expect(page.getByTestId('mobile-delete-layer-button'), 'retracted after removal').toBeHidden();
   });
 });
+
+test.describe('Tablet touch bottom bar', () => {
+  // This is iPad mini portrait, not a phone viewport; touch is enabled while mobile emulation stays off.
+  test.use({
+    viewport: { width: 744, height: 1133 },
+    deviceScaleFactor: 2,
+    hasTouch: true,
+    isMobile: false,
+  });
+
+  test('pointer scroll buttons reveal the Layers tile and return to the color controls', async ({ page }) => {
+    await page.goto('/');
+    const bar = bottomBar(page);
+    const left = page.getByRole('button', { name: 'Scroll tools left' });
+    const right = page.getByRole('button', { name: 'Scroll tools right' });
+    await expect(bar).toBeVisible();
+    await expect(left).toHaveAttribute('aria-disabled', 'true');
+    await expect(right).toHaveAttribute('aria-disabled', 'false');
+
+    const overflow = await bar.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow, 'the supported tablet toolbar must overflow before pointer navigation').toBeGreaterThan(0);
+
+    const waitForScrollToSettle = async () => {
+      let previousScrollLeft = -1;
+      let stablePolls = 0;
+      await expect
+        .poll(async () => {
+          const scrollLeft = await bar.evaluate((element) => element.scrollLeft);
+          stablePolls = Math.abs(scrollLeft - previousScrollLeft) < 1 ? stablePolls + 1 : 0;
+          previousScrollLeft = scrollLeft;
+          return stablePolls >= 2;
+        })
+        .toBe(true);
+    };
+
+    for (let step = 0; step < 5 && (await right.getAttribute('aria-disabled')) !== 'true'; step += 1) {
+      const before = await bar.evaluate((element) => element.scrollLeft);
+      await right.click();
+      await expect
+        .poll(() => bar.evaluate((element) => element.scrollLeft), {
+          message: 'the right scroll button advances the tablet toolbar',
+        })
+        .toBeGreaterThan(before);
+      await waitForScrollToSettle();
+    }
+
+    await expect(right).toHaveAttribute('aria-disabled', 'true');
+    const layers = page.getByTestId('mobile-bottom-layers-button');
+    await expect
+      .poll(async () => {
+        const [tile, box] = await Promise.all([layers.boundingBox(), bar.boundingBox()]);
+        return Boolean(tile && box && tile.x >= box.x - 1 && tile.x + tile.width <= box.x + box.width + 1);
+      })
+      .toBe(true);
+
+    for (let step = 0; step < 5 && (await left.getAttribute('aria-disabled')) !== 'true'; step += 1) {
+      const before = await bar.evaluate((element) => element.scrollLeft);
+      await left.click();
+      await expect
+        .poll(() => bar.evaluate((element) => element.scrollLeft), {
+          message: 'the left scroll button returns to the first toolbar controls',
+        })
+        .toBeLessThan(before);
+      await waitForScrollToSettle();
+    }
+
+    await expect(left).toHaveAttribute('aria-disabled', 'true');
+    const firstControl = bar.getByRole('button').first();
+    await expect
+      .poll(async () => {
+        const [tile, box] = await Promise.all([firstControl.boundingBox(), bar.boundingBox()]);
+        return Boolean(tile && box && tile.x >= box.x - 1 && tile.x + tile.width <= box.x + box.width + 1);
+      })
+      .toBe(true);
+  });
+
+  test('horizontal touch swipes reach the Layers tile', async ({ page }) => {
+    await page.goto('/');
+    const bar = bottomBar(page);
+    await expect(bar).toBeVisible();
+    expect(await page.evaluate(() => window.innerWidth), 'this is the iPad mini portrait tablet viewport').toBe(744);
+    expect(
+      await page.evaluate(() => navigator.maxTouchPoints),
+      'the browser context must expose touch input'
+    ).toBeGreaterThan(0);
+
+    const overflow = await bar.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow, 'the tablet bottom bar must overflow before the swipe').toBeGreaterThan(0);
+
+    const barBox = await bar.boundingBox();
+    if (!barBox) throw new Error('The tablet bottom bar has no bounding box');
+    const y = Math.round(barBox.y + barBox.height / 2);
+    const startX = Math.round(barBox.x + barBox.width - 24);
+    const endX = Math.round(barBox.x + 24);
+    const cdp = await page.context().newCDPSession(page);
+    let touchActive = false;
+
+    const sendTouch = async (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', x?: number) => {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: x === undefined ? [] : [{ id: 1, x, y, radiusX: 1, radiusY: 1, force: 1 }],
+      });
+    };
+
+    const swipeLeft = async () => {
+      touchActive = true;
+      await sendTouch('touchStart', startX);
+      for (const fraction of [0.2, 0.4, 0.6, 0.8, 1]) {
+        const x = Math.round(startX + (endX - startX) * fraction);
+        await sendTouch('touchMove', x);
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) => {
+              requestAnimationFrame(() => resolve());
+            })
+        );
+      }
+      await sendTouch('touchEnd');
+      touchActive = false;
+    };
+
+    const layersFitWithinBar = async () =>
+      bar.evaluate((element) => {
+        const tile = element.querySelector<HTMLElement>('[data-testid="mobile-bottom-layers-button"]');
+        const barRect = element.getBoundingClientRect();
+        const tileRect = tile?.getBoundingClientRect();
+        return Boolean(tileRect && tileRect.left >= barRect.left - 1 && tileRect.right <= barRect.right + 1);
+      });
+
+    try {
+      // The two fixed 44px scroll buttons narrow the touch scrollport. Allow up to three swipes,
+      // and stop early if the Layers tile is already fully visible.
+      for (let swipe = 0; swipe < 3; swipe += 1) {
+        if (await layersFitWithinBar()) break;
+        const scrollLeftBeforeSwipe = await bar.evaluate((element) => element.scrollLeft);
+        await swipeLeft();
+        await expect
+          .poll(() => bar.evaluate((element) => element.scrollLeft), {
+            message: `tablet touch swipe ${swipe + 1} must advance the bottom bar`,
+          })
+          .toBeGreaterThan(scrollLeftBeforeSwipe);
+      }
+    } finally {
+      try {
+        if (touchActive) {
+          try {
+            await sendTouch('touchCancel');
+          } catch {
+            // The page or CDP target may already have closed after a failed assertion.
+          }
+        }
+      } finally {
+        await cdp.detach();
+      }
+    }
+
+    await expect
+      .poll(
+        async () => {
+          const metrics = await bar.evaluate((element) => {
+            const tile = element.querySelector<HTMLElement>('[data-testid="mobile-bottom-layers-button"]');
+            const barRect = element.getBoundingClientRect();
+            const tileRect = tile?.getBoundingClientRect();
+            const tileLeft = tileRect?.left ?? null;
+            const tileRight = tileRect?.right ?? null;
+            return {
+              fullyVisible:
+                tileLeft !== null &&
+                tileRight !== null &&
+                tileLeft >= barRect.left - 1 &&
+                tileRight <= barRect.right + 1,
+              scrollLeft: element.scrollLeft,
+              maxScrollLeft: element.scrollWidth - element.clientWidth,
+              tileLeft,
+              tileRight,
+              barLeft: barRect.left,
+              barRight: barRect.right,
+            };
+          });
+          return metrics.fullyVisible ? true : JSON.stringify(metrics);
+        },
+        {
+          message: 'the Layers tile must fit inside the visible bottom bar after the swipe',
+        }
+      )
+      .toBe(true);
+  });
+});

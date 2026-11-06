@@ -79,12 +79,17 @@ not vector eligibility.
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
    covers two retained affine layer transforms across two successive non-quarter frame transforms
-   with fractional origins and extents, including exact per-layer bounds and pixels at each tested
-   affine or frame-transition cursor and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
-   affine and a two-frame sequence with exact per-layer comparisons. A three-transition mixed-source
-   frame sequence applies two sequential retained affines to an opaque blank, one retained affine to a
-   45%-opacity blank, and one each to vector, paint, and point text, comparing exact per-layer bounds,
-   bitmap dimensions, and pixels at all six affine cursors and after each frame transition. These
+   with fractional origins and extents. It keeps exact per-layer bounds and allows at most two
+   differing pixels per frame raster at partial-alpha boundaries and per tight raster at alpha
+   boundaries with identical RGB values. A transparent/one-alpha pair also needs adjacent samples
+   of the same color in both rasters. Composites remain byte-identical at each tested cursor, and
+   the frame-only
+   control remains byte-identical. A styled, bold-italic serif paragraph passes through a retained
+   affine and a two-frame sequence with exact premultiplied tight-raster pixels and exact alpha,
+   frame, and composite pixels. A three-transition mixed-source frame sequence applies two sequential
+   retained affines to an opaque blank, one retained affine to a 45%-opacity blank, and one each to
+   vector, paint, and point text, preserving exact bounds and bitmap dimensions at all six affine
+   cursors and after each frame transition. These
    fixtures close only their listed combinations: other transform combinations, angles, text
    styling/rotation variants, other blank opacity values, and exact fractional
    bounds across the wider source matrix remain open. An exploratory mixed-source fractional-frame
@@ -110,13 +115,16 @@ priority or dependency. They may be pursued in either order or in parallel.
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
 3. Continue parity-only frame work. The raster fixture in `e2e/crop-history.spec.ts` covers two
    retained affine layer transforms and two successive non-quarter frame transforms with fractional
-   origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
-   control, and byte-identical composites. A styled paragraph-text fixture covers its retained
-   affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. The mixed-source
-   three-transition fixture applies two sequential retained affines to an opaque blank, one retained
-   affine to a 45%-opacity blank, and one each to vector, paint, and point text, then checks exact
-   per-layer pixels, bounds, and bitmap dimensions at all six affine cursors and after each frame
-   transition. A fractional-frame probe of this mix preserved per-layer parity but found a one-pixel
+   origins and extents. It asserts exact per-layer bounds, at most two partial-alpha boundary pixels
+   in frame comparisons, at most two internal-alpha-gradient pixels in tight comparisons, and
+   byte-identical composites at each cursor and frame-only control. A styled paragraph-text fixture
+   covers its retained affine cursor plus a two-frame sequence with exact premultiplied tight-raster
+   pixels, alpha, frame pixels, and composites. The
+   mixed-source three-transition fixture applies two sequential retained affines to an opaque blank,
+   one retained affine to a 45%-opacity blank, and one each to vector, paint, and point text, then
+   checks per-layer bounds and bitmap dimensions at all six affine cursors and after each frame
+   transition, with exact premultiplied tight pixels and exact frame pixels. A fractional-frame
+   probe of this mix preserved per-layer parity but found a one-pixel
    composite mismatch at the first transition; investigate it before broadening fractional coverage.
    These fixtures close only their listed combinations. Next cover the
    open angles, additional retained-affine combinations, other text styling/rotation, blank opacity

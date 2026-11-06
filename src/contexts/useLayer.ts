@@ -56,7 +56,6 @@ import { clearTextDraftArgs, renderText, type TextToolArgs } from '../tools/text
 import { normalizeColorsToolArgs } from '../tools/colors.ts';
 import { normalizeLevelsToolArgs } from '../tools/levels.ts';
 import { canvasRectToLocal } from '../util/rect.ts';
-import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { EraserToolArgs } from '../tools/eraser.ts';
@@ -145,48 +144,6 @@ type EditableToolLayerSource = {
   args: ToolArgs;
   pos: Layer['pos'];
   isBedrock?: false;
-};
-
-/**
- * Extend only a stroked draw path or block-stamp path from the previous preview.
- *
- * A stroked segment needs the previous endpoint as its first point to stay connected;
- * a block stamp deposits an independent square at each point, so re-stamping the shared
- * endpoint would double-deposit it. Stroked paths therefore keep the shared endpoint
- * in the delta, while block-stamp paths return only the newly added points.
- *
- * A spray stroke keeps the full-raster fallback: each point carries a time-tagged dab
- * and the delta contract does not generalise to it.
- */
-export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: ToolArgs): DrawToolArgs | null => {
-  if (toolArgs.toolName !== 'draw' || !previousToolArgs || previousToolArgs.toolName !== 'draw') return null;
-
-  const drawArgs = toolArgs as DrawToolArgs;
-  const previousDrawArgs = previousToolArgs as DrawToolArgs;
-  if (drawArgs.penType === 'spray') return null;
-  if (previousDrawArgs.penType !== drawArgs.penType || previousDrawArgs.blockStamp !== drawArgs.blockStamp) return null;
-
-  const currentPoints = drawArgs.points;
-  const previousPoints = previousDrawArgs.points;
-  if (
-    !currentPoints ||
-    !previousPoints ||
-    previousPoints.length === 0 ||
-    currentPoints.length <= previousPoints.length
-  ) {
-    return null;
-  }
-  if (
-    !previousPoints.every((point, index) => point.x === currentPoints[index]?.x && point.y === currentPoints[index]?.y)
-  ) {
-    return null;
-  }
-
-  // Block stamps deposit an independent square at every point, so re-stamping the shared
-  // endpoint would double-deposit it: return only the newly added points. A stroked segment
-  // needs the previous endpoint as its first point to remain connected.
-  const deltaStart = drawArgs.blockStamp ? previousPoints.length : previousPoints.length - 1;
-  return { ...drawArgs, points: currentPoints.slice(deltaStart) };
 };
 
 /**
@@ -1406,13 +1363,11 @@ export const useLayers = () => {
     }
 
     const preview = previewLayersRef.current[id];
-    const processorArgs = preview?.layer.tmpCanvas ? getIncrementalStrokeArgs(toolArgs, preview.toolArgs) : null;
-    const canAppendStroke = processorArgs !== null;
 
     // Check for incremental eraser brush-mode
     let incrementalEraserArgs: EraserToolArgs | null = null;
     let canIncrementalEraser = false;
-    if (!canAppendStroke && toolArgs.toolName === 'eraser' && preview?.layer.tmpCanvas) {
+    if (toolArgs.toolName === 'eraser' && preview?.layer.tmpCanvas) {
       incrementalEraserArgs = getIncrementalEraserArgs(toolArgs, preview.toolArgs);
       canIncrementalEraser = incrementalEraserArgs !== null;
     }
@@ -1420,7 +1375,6 @@ export const useLayers = () => {
     // Check for incremental dodge/burn
     let incrementalDodgeBurnArgs: DodgeBurnToolArgs | null = null;
     if (
-      !canAppendStroke &&
       !canIncrementalEraser &&
       (toolArgs.toolName === 'dodge' || toolArgs.toolName === 'burn') &&
       preview?.layer.tmpCanvas
@@ -1432,7 +1386,6 @@ export const useLayers = () => {
     // Check for incremental sponge
     let incrementalSpongeArgs: SpongeToolArgs | null = null;
     if (
-      !canAppendStroke &&
       !canIncrementalEraser &&
       !canIncrementalDodgeBurn &&
       toolArgs.toolName === 'sponge' &&
@@ -1443,11 +1396,9 @@ export const useLayers = () => {
     const canIncrementalSponge = incrementalSpongeArgs !== null;
 
     const processorLayer =
-      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
-        ? preview!.layer
-        : layer;
+      canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge ? preview!.layer : layer;
     const bitmap =
-      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
+      canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
         ? preview!.layer.tmpCanvas
         : (layer.tmpCanvas ?? layer.bitmap);
     if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
@@ -1481,7 +1432,7 @@ export const useLayers = () => {
         (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
       }
       result = processor.imageProcessor(processorParams)(
-        processorArgs ?? incrementalEraserArgs ?? incrementalDodgeBurnArgs ?? incrementalSpongeArgs ?? toolArgs
+        incrementalEraserArgs ?? incrementalDodgeBurnArgs ?? incrementalSpongeArgs ?? toolArgs
       );
     } catch (error) {
       console.error(error);

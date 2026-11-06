@@ -203,13 +203,23 @@ variant or an equivalent atomic history action.
    -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
-   mixed-source fixture pin exact materialized bounds; the latter also checks bitmap dimensions and
+   pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and allows
+   at most two partial-alpha boundary pixels in frame comparisons and two tight-bitmap pixels
+   at alpha boundaries where both paths preserve identical RGB values. A transparent/one-alpha
+   pair also needs adjacent samples of that same color in both neighborhoods; composites remain
+   byte-identical.
+   The three-transition
+   mixed-source fixture pins exact bounds and checks per-layer frame and tight bitmaps exactly in
+   premultiplied space. The styled-text fixture also compares tight bitmaps exactly after
+   premultiplying readback color channels; alpha, frame pixels, and composites remain byte-identical.
+   Premultiplication preserves the exact color values used in compositing while avoiding false
+   differences from unpremultiplied canvas readback rounding.
+   The mixed-source fixture also checks bitmap dimensions and
    pixels for its blank, vector, paint, and point-text layers at each affine cursor and after each
    transition. It applies two sequential retained affines to an opaque blank, one affine to a 45%-
-   opacity blank, and one each to the other layers, checking per-layer bounds, dimensions, and pixels
-   at all nine changed cursors. The other source-only cases assert
-   byte-identical pixels and materialized-layer presence. The
+   opacity blank, and one each to the other layers, checking per-layer bounds and dimensions at all
+   nine changed cursors. The other source-only cases assert byte-identical composites and
+   materialized-layer presence. The
    mixed-source fixture uses integer frame origins and extents; a fractional-frame probe retained
    exact per-layer bounds and pixels but its first composite transition differed at canvas pixel
    (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not count that mixed-source
@@ -233,7 +243,8 @@ variant or an equivalent atomic history action.
 
    The retained-affine/frame proof now covers two transformed raster layers across two successive
    non-quarter frame transforms with fractional origins and extents, checking exact per-layer bounds
-   and pixels at both affine cursors, both frame cursors, and a frame-only control. A separate styled
+   and allowing at most two tight per-layer alpha-boundary pixels with identical RGB values at both
+   affine cursors, both frame cursors, and a frame-only control. A separate styled
    paragraph-text fixture checks its affine cursor and two frame cursors against exact per-layer
    bounds and pixels. Both fixtures also require byte-identical composites, and their frame-only
    controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not

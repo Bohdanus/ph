@@ -151,6 +151,42 @@ describe('MobileBottomBar', () => {
     expect(goToToolMock).not.toHaveBeenCalled();
   });
 
+  it('exposes named scroll buttons and updates their disabled state from toolbar scrolling', async () => {
+    const user = userEvent.setup();
+    render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
+
+    const toolbar = screen.getByRole('toolbar', { name: 'Mobile Bottom Toolbar' });
+    const scrollBy = vi.fn();
+    Object.defineProperties(toolbar, {
+      scrollBy: { configurable: true, value: scrollBy },
+      clientWidth: { configurable: true, value: 200 },
+      scrollWidth: { configurable: true, value: 400 },
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+    });
+
+    const left = screen.getByRole('button', { name: 'Scroll tools left' });
+    const right = screen.getByRole('button', { name: 'Scroll tools right' });
+    expect(left).toHaveAttribute('aria-controls', 'mobile-bottom-bar-scroll');
+    expect(right).toHaveAttribute('aria-controls', 'mobile-bottom-bar-scroll');
+    expect(left).toHaveAttribute('aria-disabled', 'true');
+    expect(right).toHaveAttribute('aria-disabled', 'false');
+
+    await user.click(left);
+    expect(scrollBy).not.toHaveBeenCalled();
+    await user.click(right);
+    expect(scrollBy).toHaveBeenCalledWith({ left: 150, behavior: 'smooth' });
+
+    Object.defineProperty(toolbar, 'scrollLeft', { configurable: true, writable: true, value: 100 });
+    fireEvent.scroll(toolbar);
+    expect(left).toHaveAttribute('aria-disabled', 'false');
+    expect(right).toHaveAttribute('aria-disabled', 'false');
+
+    Object.defineProperty(toolbar, 'scrollLeft', { configurable: true, writable: true, value: 200 });
+    fireEvent.scroll(toolbar);
+    expect(left).toHaveAttribute('aria-disabled', 'false');
+    expect(right).toHaveAttribute('aria-disabled', 'true');
+  });
+
   it('provides touch-sized foreground and background color swatches with native pickers', async () => {
     const user = userEvent.setup();
     render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
@@ -197,6 +233,11 @@ describe('MobileBottomBar', () => {
     }
     for (const name of ['Tool options', 'Layers']) {
       expect(screen.getByRole('button', { name }).className).toMatch(/min-w-16/);
+    }
+    for (const name of ['Scroll tools left', 'Scroll tools right']) {
+      const scrollControl = screen.getByRole('button', { name });
+      expect(scrollControl.className).toContain('min-h-11');
+      expect(scrollControl.className).toContain('min-w-11');
     }
   });
 
