@@ -35,8 +35,6 @@ export type ProcessorToolParams = {
   size: Size;
   bitmap: BitmapSource;
   previousCanvas?: BitmapSource;
-  /** Transient preview metadata: skip the shared first square while appending a block-stamp segment. */
-  skipInitialBlockStamp?: boolean;
 };
 
 export type CreatorToolParams = {
