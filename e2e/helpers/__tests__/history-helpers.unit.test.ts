@@ -15,7 +15,7 @@ import {
   wholeCanvasBand,
   type CanvasBand,
 } from '../history-helpers';
-import { type BoundingBox, type ClipOptions, type ImageDataResult } from '../canvas-helpers';
+import { type BoundingBox, type ImageDataResult, viewportClip, type ViewportClip } from '../canvas-helpers';
 import {
   BLACK,
   DARK_GRAY,
@@ -43,7 +43,7 @@ function bands(): CanvasBand[] {
   return canvasBands(BOX, BAND_COUNT);
 }
 
-function unionClip(): Required<ClipOptions> {
+function unionClip(): ViewportClip {
   return bandUnionClip(bands());
 }
 
@@ -300,8 +300,8 @@ describe('bandUnionClip', () => {
     // Neither band's own x/width nor its own y/height is the envelope, so a
     // union built from either band's first edge is a different rect.
     const apart: CanvasBand[] = [
-      { index: 0, clip: { x: 100, y: 30, width: 50, height: 10 } },
-      { index: 1, clip: { x: 20, y: 100, width: 200, height: 10 } },
+      { index: 0, clip: viewportClip({ x: 100, y: 30, width: 50, height: 10 }) },
+      { index: 1, clip: viewportClip({ x: 20, y: 100, width: 200, height: 10 }) },
     ];
     expect(bandUnionClip(apart)).toEqual({ x: 20, y: 30, width: 200, height: 80 });
   });
@@ -336,13 +336,13 @@ describe('bandRows', () => {
 
   it('gives a band that rounds away a single row rather than none', () => {
     // Zero rows would report "clean" for a strip of the capture that was never read.
-    const hairline: CanvasBand[] = [{ index: 0, clip: { x: 0, y: 0, width: 10, height: 0.4 } }];
+    const hairline: CanvasBand[] = [{ index: 0, clip: viewportClip({ x: 0, y: 0, width: 10, height: 0.4 }) }];
     const [row] = bandRows(hairline, 3);
     expect(row.bottom).toBeGreaterThan(row.top);
   });
 
   it('never hands back a row past the end of the image', () => {
-    const overhanging: CanvasBand[] = [{ index: 0, clip: { x: 0, y: 0, width: 10, height: 10_000 } }];
+    const overhanging: CanvasBand[] = [{ index: 0, clip: viewportClip({ x: 0, y: 0, width: 10, height: 10_000 }) }];
     expect(bandRows(overhanging, 50)).toEqual([{ top: 0, bottom: 50 }]);
   });
 
@@ -396,8 +396,8 @@ describe('bandInkFlags', () => {
     // has to read as clean in both bands: a slice bounded by the whole image would
     // report it as inked and let a stroke in an unsampled strip pass for a failure.
     const gapped: CanvasBand[] = [
-      { index: 0, clip: { x: 0, y: 0, width: 20, height: 10 } },
-      { index: 1, clip: { x: 0, y: 20, width: 20, height: 10 } },
+      { index: 0, clip: viewportClip({ x: 0, y: 0, width: 20, height: 10 }) },
+      { index: 1, clip: viewportClip({ x: 0, y: 20, width: 20, height: 10 }) },
     ];
     const gapInk = createImageData(20, 30);
     fillAll(gapInk, WHITE, OPAQUE);
@@ -554,7 +554,7 @@ describe('known gaps (it.fails tripwires)', () => {
   });
 
   it.fails('throws on a non-finite band clip value in bandRows', () => {
-    const badBand: CanvasBand = { index: 0, clip: { ...BOX, y: Number.NaN } };
+    const badBand: CanvasBand = { index: 0, clip: viewportClip({ ...BOX, y: Number.NaN }) };
     expect(() => bandRows([badBand], BOX.height)).toThrow();
   });
 });

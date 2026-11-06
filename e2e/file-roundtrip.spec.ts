@@ -15,10 +15,11 @@ import {
   LINE_END_Y,
   LINE_START_X,
   LINE_START_Y,
+  viewportClip,
+  type ViewportClip,
   type ImageDataResult,
   type BoundingBox,
   type CanvasPixelPredicate,
-  type ClipOptions,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
@@ -111,28 +112,28 @@ function isExactly(actual: Rgb | null, expected: Rgb): boolean {
  * but cannot invent a passing result - the exact values and the 0.5 split are the
  * claims, and neither is derived from this function.
  */
-function documentContentRect(box: BoundingBox, documentSize: number): Required<ClipOptions> {
+function documentContentRect(box: BoundingBox, documentSize: number): ViewportClip {
   const scale = Math.min(box.width / documentSize, box.height / documentSize);
   const width = documentSize * scale;
   const height = documentSize * scale;
-  return {
+  return viewportClip({
     x: Math.round(box.x + (box.width - width) / 2),
     y: Math.round(box.y + (box.height - height) / 2),
     width: Math.round(width),
     height: Math.round(height),
-  };
+  });
 }
 
 /** Clips `rect` to whole device-independent pixels; `page.screenshot` needs integers. */
-function integralClip(rect: Required<ClipOptions>): Required<ClipOptions> {
+function integralClip(rect: ViewportClip): ViewportClip {
   const x = Math.max(0, Math.round(rect.x));
   const y = Math.max(0, Math.round(rect.y));
-  return {
+  return viewportClip({
     x,
     y,
     width: Math.max(1, Math.round(rect.width)),
     height: Math.max(1, Math.round(rect.height)),
-  };
+  });
 }
 
 /** Reads the fixture's colour at a fractional position inside a capture of its content rect. */

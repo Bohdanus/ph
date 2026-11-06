@@ -25,9 +25,10 @@ import {
   hasDarkPixels,
   isBuffer,
   loadImageData,
+  viewportClip,
   type BoundingBox,
-  type ClipOptions,
   type ImageDataResult,
+  type ViewportClip,
 } from './canvas-helpers';
 
 export const UNDO_BUTTON_TEST_ID = 'undo-button';
@@ -44,15 +45,15 @@ export function getRedoButton(page: Page): Locator {
 export interface CanvasBand {
   /** Zero-based position of this band within its stack, top to bottom. */
   readonly index: number;
-  /** The band in page coordinates, ready for `page.screenshot({ clip })`. */
-  readonly clip: Required<ClipOptions>;
+  /** The band in viewport coordinates, ready for `page.screenshot({ clip })`. */
+  readonly clip: ViewportClip;
 }
 
 /**
  * The part of a canvas box a clipped screenshot can actually read.
  *
  * WHY THE INTERSECTION. `page.screenshot({ clip })` intersects the clip with the
- * VISIBLE page rect and hands back that intersection without mentioning it, in
+ * VISIBLE viewport rect and hands back that intersection without mentioning it, in
  * BOTH axes. Measured on this Playwright build at a 1280x720 window:
  *
  * | clip requested                       | image returned |
@@ -74,8 +75,8 @@ export interface CanvasBand {
  * the workspace canvas overflows the page and therefore needed a taller window —
  * stopped being true. It is now a GUARD rather than a correction. `min-h-0
  * overflow-y-auto` on the left sidebar's `<aside>`
- * (`src/components/SidebarLeft/SidebarLeft.tsx:459`) is what bounds the grid row,
- * `e2e/sidebar-layout.spec.ts:21` pins that the default page does not scroll, and
+ * (`src/components/SidebarLeft/SidebarLeft.tsx`) is what bounds the grid row,
+ * `e2e/sidebar-layout.spec.ts` pins that the default page does not scroll, and
  * the measured canvas box and page heights for both toolbar layouts live in P1 of
  * `e2e/OPEN_PROBLEMS.md` — deliberately not restated here, because a number
  * written next to the code is the number that goes stale.
@@ -100,7 +101,7 @@ export interface CanvasBand {
  * before a single screenshot is taken.
  *
  * The viewport is taken at the page origin because screenshot clips are
- * page-relative and this suite never scrolls the document: at scroll 0 the
+ * viewport-relative and this suite never scrolls the document: at scroll 0 the
  * intersection above is with the window, and Playwright does not scroll to reach a
  * clip, which is why the last table row is a refusal rather than a capture.
  */
@@ -118,7 +119,7 @@ export function visibleCanvasBox(box: BoundingBox, viewport: { width: number; he
 }
 
 /**
- * The horizontal edge between two bands, in page coordinates.
+ * The horizontal edge between two bands, in viewport coordinates.
  *
  * Every band boundary is derived from this one expression, so consecutive bands
  * share an edge exactly rather than to within a rounding step, and the stack
@@ -145,19 +146,19 @@ function assertBandGeometry(bandCount: number, band: number): void {
 }
 
 /**
- * Page-coordinate clip of one horizontal band of `box`.
+ * Viewport-coordinate clip of one horizontal band of `box`.
  *
- * `box` is a workspace-canvas bounding box; the result is a PAGE clip, the space
+ * `box` is a workspace-canvas bounding box; the result is a viewport clip, the space
  * `page.screenshot({ clip })` and `waitForCanvasPixels` both take. The whole box
  * width is used, so a band is "this horizontal strip of the canvas" and nothing
  * else — a band that also cropped X could be read as clean simply because the
  * stroke was outside the crop.
  */
-export function bandClip(box: BoundingBox, band: number, bandCount: number): Required<ClipOptions> {
+export function bandClip(box: BoundingBox, band: number, bandCount: number): ViewportClip {
   assertBandGeometry(bandCount, band);
   const top = bandEdge(box, band, bandCount);
   const bottom = bandEdge(box, band + 1, bandCount);
-  return { x: box.x, y: top, width: box.width, height: bottom - top };
+  return viewportClip({ x: box.x, y: top, width: box.width, height: bottom - top });
 }
 
 /**
@@ -193,7 +194,7 @@ export function wholeCanvasBand(box: BoundingBox): CanvasBand {
  * screenshots once per tick, so a per-band assertion costs one capture per poll
  * rather than one per band.
  */
-export function bandUnionClip(bands: readonly CanvasBand[]): Required<ClipOptions> {
+export function bandUnionClip(bands: readonly CanvasBand[]): ViewportClip {
   if (bands.length === 0) {
     throw new Error('bandUnionClip: needs at least one band');
   }
@@ -201,7 +202,7 @@ export function bandUnionClip(bands: readonly CanvasBand[]): Required<ClipOption
   const top = Math.min(...bands.map((band) => band.clip.y));
   const right = Math.max(...bands.map((band) => band.clip.x + band.clip.width));
   const bottom = Math.max(...bands.map((band) => band.clip.y + band.clip.height));
-  return { x: left, y: top, width: right - left, height: bottom - top };
+  return viewportClip({ x: left, y: top, width: right - left, height: bottom - top });
 }
 
 /**

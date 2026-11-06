@@ -2,7 +2,6 @@ import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   type BoundsResult,
-  type ClipOptions,
   drawLine,
   getColorAtPoint,
   getWorkspaceCanvas,
@@ -11,6 +10,8 @@ import {
   loadImageData,
   scanPixelsForBounds,
   screenshotBoundsToCss,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
@@ -128,16 +129,16 @@ function inCanvas(box: BoundingBox, rect: PageRect): PageRect {
  * offscreen area. Every clip here is therefore built from a rectangle this spec chose to
  * be in view, not from the whole box.
  */
-function clipAround(box: BoundingBox, rect: PageRect, margin: number): Required<ClipOptions> {
+function clipAround(box: BoundingBox, rect: PageRect, margin: number): ViewportClip {
   const absolute = inCanvas(box, rect);
   const left = Math.round(absolute.left - margin);
   const top = Math.round(absolute.top - margin);
-  return {
+  return viewportClip({
     x: left,
     y: top,
     width: Math.round(absolute.width + margin * 2),
     height: Math.round(absolute.height + margin * 2),
-  };
+  });
 }
 
 /**
@@ -149,14 +150,14 @@ function clipAround(box: BoundingBox, rect: PageRect, margin: number): Required<
  * brush over it — come from ONE capture. It is wide enough that a region which grew out of
  * the band is read at its real size, rather than landing outside the capture entirely.
  */
-async function visibleCanvasClip(page: Page, box: BoundingBox): Promise<Required<ClipOptions>> {
+async function visibleCanvasClip(page: Page, box: BoundingBox): Promise<ViewportClip> {
   const viewportHeight = await page.evaluate(() => window.innerHeight);
-  return {
+  return viewportClip({
     x: Math.round(box.x),
     y: Math.round(box.y),
     width: Math.round(box.width),
     height: Math.round(Math.max(0, Math.min(box.height, viewportHeight - box.y))),
-  };
+  });
 }
 
 /**
@@ -168,11 +169,7 @@ async function visibleCanvasClip(page: Page, box: BoundingBox): Promise<Required
  * origin is subtracted first, so a caller can hand over a page coordinate it already has
  * (a canvas-box measurement) without having to re-derive where the capture started.
  */
-function toImagePoint(
-  image: { width: number; height: number },
-  clip: Required<ClipOptions>,
-  pagePoint: PagePoint
-): PagePoint {
+function toImagePoint(image: { width: number; height: number }, clip: ViewportClip, pagePoint: PagePoint): PagePoint {
   return {
     x: ((pagePoint.x - clip.x) * image.width) / clip.width,
     y: ((pagePoint.y - clip.y) * image.height) / clip.height,
@@ -420,12 +417,12 @@ test.describe('Eyedropper', () => {
     // band is sampled off a capture, so the later assertion compares the app's answer
     // against an independent reading of the same pixel rather than against a constant this
     // spec wrote down.
-    const probeClip = {
+    const probeClip = viewportClip({
       x: Math.round(probe.x - PROBE_CLIP_PX),
       y: Math.round(probe.y - PROBE_CLIP_PX),
       width: PROBE_CLIP_PX * 2,
       height: PROBE_CLIP_PX * 2,
-    };
+    });
     await waitForCanvasPixels(page, probeClip, hasRedPixels, { description: 'the red band under the probe' });
     const image = await loadImageData(await captureCanvasScreenshot(page, probeClip, testInfo, 'eyedropper-source'));
     const probeImagePoint = toImagePoint(image, probeClip, probe);

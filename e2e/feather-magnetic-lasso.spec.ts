@@ -1,11 +1,12 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
-  type ClipOptions,
   getSelectionBounds,
   getWorkspaceCanvas,
   hasMagnetSnapPixels,
   hasManualSnapPixels,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
@@ -122,14 +123,14 @@ const workspaceBox = async (page: Page): Promise<BoundingBox> => {
 };
 
 /** The whole canvas element, intersected with the viewport so a capture is never silently truncated. */
-const canvasClip = (page: Page, box: BoundingBox): Required<ClipOptions> => {
+const canvasClip = (page: Page, box: BoundingBox): ViewportClip => {
   const viewport = page.viewportSize() ?? { width: 0, height: 0 };
-  return {
+  return viewportClip({
     x: box.x,
     y: box.y,
     width: Math.min(box.width, viewport.width - box.x),
     height: Math.min(box.height, viewport.height - box.y),
-  };
+  });
 };
 
 /** A fraction of the canvas box, in the box's own coordinates. */
@@ -156,7 +157,7 @@ const fraction = (box: BoundingBox, point: { x: number; y: number }) => ({
 type PaintPredicate = (screenshot: Buffer) => Promise<boolean>;
 
 /** Resolves once the predicate accepts the canvas. The suite's poll loop, not a sleep. */
-const waitForPaint = (page: Page, clip: Required<ClipOptions>, accepts: PaintPredicate, description: string) =>
+const waitForPaint = (page: Page, clip: ViewportClip, accepts: PaintPredicate, description: string) =>
   waitForCanvasPixels(page, clip, accepts, { description });
 
 /** Reads the app's own draft/selection outline, on the suite's pinned thresholds. */

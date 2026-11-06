@@ -7,6 +7,7 @@ import {
   drawLine,
   getDarkPixelBounds,
   getWorkspaceCanvas,
+  viewportClip,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import {
@@ -77,7 +78,7 @@ async function measureAtViewport(
   await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 20 });
   // Sample a band around the stroke: this line sits outside the shared redraw clip.
   await waitForCanvasRedraw(page, box, {
-    clip: { x: start.x - 20, y: start.y - 20, width: end.x - start.x + 40, height: 40 },
+    clip: viewportClip({ x: start.x - 20, y: start.y - 20, width: end.x - start.x + 40, height: 40 }),
   });
 
   // Mark endpoints visibly (browser doesn't include system cursor in screenshots)

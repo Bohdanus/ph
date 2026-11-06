@@ -6,9 +6,10 @@ import {
   documentToCanvasOffset,
   getDarkPixelBounds,
   takeLineScreenshot,
+  viewportClip,
   waitForCanvasRedraw,
   type BoundingBox,
-  type ClipOptions,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
@@ -51,8 +52,8 @@ const BRUSH_SIZE = 24;
 const TAPER = 85;
 
 interface Bands {
-  readonly top: Required<ClipOptions>;
-  readonly bottom: Required<ClipOptions>;
+  readonly top: ViewportClip;
+  readonly bottom: ViewportClip;
 }
 
 type DarkBounds = NonNullable<Awaited<ReturnType<typeof getDarkPixelBounds>>>;
@@ -76,17 +77,17 @@ const centreY = (bounds: DarkBounds): number => (bounds.top + bounds.bottom) / 2
  * a drawn rectangle rather than the transform.
  */
 function bands(box: BoundingBox): Bands {
-  const band = (yRatio: number): Required<ClipOptions> => {
+  const band = (yRatio: number): ViewportClip => {
     const documentY = Math.round(DEFAULT_DOCUMENT_SIZE.height * yRatio);
     const start = documentToCanvasOffset(box, BAR_START_X, documentY, DEFAULT_DOCUMENT_SIZE);
     const end = documentToCanvasOffset(box, BAR_END_X, documentY, DEFAULT_DOCUMENT_SIZE);
     const margin = 40;
-    return {
+    return viewportClip({
       x: box.x + start.x - margin,
       y: box.y + start.y - margin,
       width: end.x - start.x + margin * 2,
       height: 90,
-    };
+    });
   };
   return { top: band(TOP_BAR_Y_RATIO), bottom: band(BOTTOM_BAR_Y_RATIO) };
 }
@@ -129,12 +130,12 @@ test.describe('Transform tool', () => {
     const box = canvasBox!;
     // Full canvas clip: a 90 degree rotation moves the bar to a different band, so
     // measuring a fixed band would read the rotation as "the ink disappeared".
-    const wholeCanvas: Required<ClipOptions> = {
+    const wholeCanvas = viewportClip({
       x: box.x,
       y: box.y,
       width: Math.floor(box.width),
       height: Math.floor(box.height),
-    };
+    });
 
     await clickToolButton(page, 'draw');
     await page.locator('#size-slider').fill(String(BRUSH_SIZE));
@@ -213,12 +214,12 @@ test.describe('Transform tool', () => {
     // Full canvas clip for every read, for the reason the first test gives: a 90 degree rotation
     // moves the bar into a different band, so a fixed band would read a correct rotation as "the
     // ink disappeared".
-    const wholeCanvas: Required<ClipOptions> = {
+    const wholeCanvas: ViewportClip = viewportClip({
       x: box.x,
       y: box.y,
       width: Math.floor(box.width),
       height: Math.floor(box.height),
-    };
+    });
 
     await clickToolButton(page, 'draw');
     await page.locator('#size-slider').fill(String(BRUSH_SIZE));
@@ -357,12 +358,12 @@ test.describe('Transform tool', () => {
     const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
     expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
     const box = canvasBox!;
-    const wholeCanvas: Required<ClipOptions> = {
+    const wholeCanvas: ViewportClip = viewportClip({
       x: box.x,
       y: box.y,
       width: Math.floor(box.width),
       height: Math.floor(box.height),
-    };
+    });
 
     await clickToolButton(page, 'draw');
     await page.locator('#size-slider').fill(String(BRUSH_SIZE));
@@ -428,12 +429,12 @@ test.describe('Transform tool', () => {
     const canvasBox = await page.getByTestId('workspace-canvas').boundingBox();
     expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
     const canvas = canvasBox!;
-    const clip: Required<ClipOptions> = {
+    const clip: ViewportClip = viewportClip({
       x: Math.floor(canvas.x),
       y: Math.floor(canvas.y),
       width: Math.floor(canvas.width),
       height: Math.floor(canvas.height),
-    };
+    });
 
     // The uneven squiggle makes both mirrors visible: a pentagon is horizontally symmetric and
     // cannot prove that the left-to-right mirror button did anything.

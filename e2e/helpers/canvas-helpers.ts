@@ -6,7 +6,10 @@ import {
   type ClipOptions,
   type CssBounds,
   type CssBox as BoundingBox,
+  type ViewportClip,
+  type ViewportClipOptions,
   imageBoundsToCss,
+  viewportClip,
   viewportRectToPageRect,
 } from './screenshot-scale';
 
@@ -17,7 +20,8 @@ import {
  * './helpers/canvas-helpers'`; what it must not do is own a private copy of the shape,
  * which is what the three-way duplication this replaces was.
  */
-export type { ClipOptions, CssBounds, BoundingBox };
+export type { ClipOptions, CssBounds, BoundingBox, ViewportClip, ViewportClipOptions };
+export { viewportClip };
 
 /**
  * THE COORDINATE SPACES, and the tag every export below carries.
@@ -30,9 +34,9 @@ export type { ClipOptions, CssBounds, BoundingBox };
  * - `[BOX]`      CSS px from the workspace canvas element's own origin — its `boundingBox()`.
  *                Box-relative is the space the standard test line is DRAWN in (`drawLine`) and
  *                the space `LINE_*` and `CANVAS_REDRAW_CLIP` are expressed in.
- * - `[PAGE]`     CSS px from the viewport origin, which is what `page.screenshot({ clip })`
- *                and `page.mouse` take. A page rect becomes a viewport rect by subtracting the
- *                window scroll; `onScreenClip` does that and undoes it.
+ * - `[VIEWPORT]` CSS px from the viewport origin, which is what `page.screenshot({ clip })`
+ *                and `page.mouse` take. `onScreenClip` translates through page coordinates
+ *                when it scrolls a region into view, then restores the original scroll.
  * - `[IMAGE]`    Device pixels of a DECODED CAPTURE, origin at its top-left pixel. Not CSS: a
  *                capture is `scale: 'device'`, so it is as many pixels per CSS pixel as the
  *                host has. Divide by `imageWidth / region.width` to get back to `[CSS]`.
@@ -46,7 +50,7 @@ export type { ClipOptions, CssBounds, BoundingBox };
  * its results then carries is on the `boundingBox()` the CALLER takes.
  *
  * A fifth real hazard is not a tag at all: `CANVAS_REDRAW_CLIP` is `[BOX]` while the clip it
- * feeds is `[PAGE]`. Two of the four spaces, one function, and the difference is the box
+ * feeds is `[VIEWPORT]`. Two of the four spaces, one function, and the difference is the box
  * origin. `canvasRedrawClip`'s JSDoc is where that is stated.
  */
 
@@ -104,7 +108,7 @@ export const DEFAULT_LINE_CLIP = { x: 120, y: 120, width: 260, height: 80 };
  * waiting for a stroke to reach the backing store.
  *
  * `[BOX]`, and ONLY this constant and the `LINE_*` pair below are: `canvasRedrawClip` is the
- * one function that turns these `[BOX]` numbers into the `[PAGE]` rect a capture needs, and it
+ * one function that turns these `[BOX]` numbers into the `[VIEWPORT]` rect a capture needs, and it
  * is also the one that clamps them into the letterboxed document. Read either half of this
  * comment as applying to that function and it is wrong.
  */
@@ -380,24 +384,17 @@ export interface DominantColor {
 }
 
 /**
- * Merges a caller's clip with the default, field by field. A NO-OP on the coordinate space:
- * it returns every field of `defaultClip` that `clip` omits and every field `clip` names, in
- * whatever space the caller wrote them.
- *
- * That is the whole hazard, and it is why the space is the CALLER's to state: the default is
- * `[PAGE]` at both call sites (`canvasRedrawClip` and `takeLineScreenshot`) and an explicit
- * clip is taken exactly as given, so a `[BOX]` clip reaches `page.screenshot` unconverted and
- * photographs the app's own chrome. This function cannot tell the two apart — the shapes are
- * identical — which is also why a branded `ClipOptions` per space would be the stronger
- * signature and why this one is not yet what it is.
+ * Merges a caller's viewport-relative clip with the default, field by field. The branded
+ * input makes the caller state that its coordinates use the viewport origin; this function
+ * fills omitted values but does not convert from box-relative coordinates.
  */
-export function buildClip(clip: ClipOptions | undefined, defaultClip: Required<ClipOptions>): Required<ClipOptions> {
-  return {
+export function buildClip(clip: ViewportClipOptions | undefined, defaultClip: ViewportClip): ViewportClip {
+  return viewportClip({
     x: clip?.x ?? defaultClip.x,
     y: clip?.y ?? defaultClip.y,
     width: clip?.width ?? defaultClip.width,
     height: clip?.height ?? defaultClip.height,
-  };
+  });
 }
 
 /**
@@ -584,7 +581,7 @@ export async function loadImageData(screenshot: Buffer): Promise<ImageDataResult
  * whatever scrolling that took.
  */
 interface OnScreenClip {
-  clip: Required<ClipOptions>;
+  clip: ViewportClip;
   restore: () => Promise<void>;
 }
 
@@ -618,7 +615,7 @@ function clamp(value: number, min: number, max: number): number {
  * `page.screenshot({ clip })` can only photograph what is on screen: Playwright trims the
  * clip against the viewport, and a region that is entirely above or below it collapses to
  * zero height and throws `Clipped area is either empty or outside the resulting image`.
- * The clip this takes and returns is VIEWPORT-relative (see `ClipOptions`); the scroll is
+ * The clip this takes and returns is VIEWPORT-relative (see `ViewportClip`); the scroll is
  * undone afterwards rather than left in place, because a caller's later `page.mouse`
  * coordinates are viewport-relative and were built against the window it expects to still
  * be in. A `Page.captureScreenshot` clip is document-relative and needs the opposite
@@ -642,7 +639,7 @@ function clamp(value: number, min: number, max: number): number {
  * `HANDOFF.md` §242. Refusing is the only honest answer: the caller asked for a region the
  * page cannot render, and a smaller image is a wrong answer wearing a plausible shape.
  */
-async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
+async function onScreenClip(page: Page, clip: ViewportClip): Promise<OnScreenClip> {
   const viewport = await readPageViewport(page);
   if (clip.height > viewport.height) {
     throw new Error(
@@ -663,7 +660,7 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
   const scrolledTo = await page.evaluate(() => window.scrollY);
 
   return {
-    clip: { ...clip, y: pageRect.y - scrolledTo },
+    clip: viewportClip({ ...clip, y: pageRect.y - scrolledTo }),
     restore: async () => {
       await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x: viewport.scrollX, y: viewport.scrollY });
     },
@@ -706,30 +703,31 @@ export function getWorkspaceCanvas(page: Page): Locator {
 }
 
 /**
- * Screenshots the standard test line and attaches it to the test report. PAGE output.
+ * Screenshots the standard test line and attaches it to the test report. VIEWPORT output.
  *
  * `box` is BOX-relative geometry — the workspace canvas element's own `boundingBox()` — and is
- * added to `DEFAULT_LINE_CLIP`, which is BOX-relative, so the DEFAULT clip is PAGE-relative.
+ * added to `DEFAULT_LINE_CLIP`, which is BOX-relative, so the DEFAULT clip is viewport-relative.
  *
- * `clip`, when given, is PAGE-relative and is used EXACTLY as given: `buildClip` fills only
+ * `clip`, when given, is viewport-relative and is used EXACTLY as given: `buildClip` fills only
  * the fields the caller omitted from its own default, so a partial clip keeps the default's
  * origin on the axes it did not name. Passing box-relative numbers here photographs the app's
  * own chrome 100px down and 100px right of where the caller meant — the same trap
- * `canvasRedrawClip`'s name invites, and `e2e/export/helpers.ts:354-361` spells out.
+ * `canvasRedrawClip`'s name invites. The required `ViewportClipOptions` tag makes the chosen
+ * coordinate space explicit at each call site.
  */
 export async function takeLineScreenshot(
   page: Page,
   box: BoundingBox,
   name: string,
   testInfo: TestInfo,
-  clip?: ClipOptions
+  clip?: ViewportClipOptions
 ): Promise<Buffer> {
-  const defaultClip: Required<ClipOptions> = {
+  const defaultClip = viewportClip({
     x: box.x + DEFAULT_LINE_CLIP.x,
     y: box.y + DEFAULT_LINE_CLIP.y,
     width: DEFAULT_LINE_CLIP.width,
     height: DEFAULT_LINE_CLIP.height,
-  };
+  });
   const actualClip = buildClip(clip, defaultClip);
 
   const outputDir = testInfo.outputDir;
@@ -910,8 +908,8 @@ function interpolationSteps(steps: number): number {
  * measured from the `box` the caller measured — which is the `boundingBox()` of the element
  * `getWorkspaceCanvas` returns.
  *
- * The result is a PAGE-relative client coordinate, so this is the one place in the module where
- * `[BOX]` is converted to `[PAGE]`: `box.x + startX` is what `page.mouse.move` takes, and the
+ * The result is a viewport-relative client coordinate, so this is the one place in the module where
+ * `[BOX]` is converted to `[VIEWPORT]`: `box.x + startX` is what `page.mouse.move` takes, and the
  * app maps it back through `getLocalCoords`. Which document pixel that lands on depends on the
  * box's contain fit — `documentToCanvasOffset` is the forward statement of the same fact for a
  * caller that wants to specify the document pixel instead.
@@ -979,13 +977,13 @@ export async function drawLineFromDocument(
 }
 
 /**
- * Clip region of the standard test line, PAGE-relative.
+ * Clip region of the standard test line, viewport-relative.
  *
- * PAGE, not BOX: the box is added, and the result is handed straight to `page.screenshot`
- * (or through `onScreenClip`, which treats a clip as VIEWPORT-relative and re-adds the scroll).
+ * VIEWPORT, not BOX: the box is added, and the result is handed straight to `page.screenshot`
+ * (or through `onScreenClip`, which translates through page coordinates if scrolling is needed).
  * `CANVAS_REDRAW_CLIP` is the only part of it that is box-relative. So the name is a trap for
  * a reader who takes it literally: passing `{ x: 100, y: 100, ... }` to `waitForCanvasPixels`
- * photographs PAGE (100,100) — the app's own left rail and top bar — and reports on whatever
+ * photographs VIEWPORT (100,100) — the app's own left rail and top bar — and reports on whatever
  * happens to be dark there. `e2e/OPEN_PROBLEMS.md` records the hazard. No live call site makes
  * the mistake today; `buildClip` is what makes it available, because it returns an explicit
  * clip EXACTLY as given and only its own DEFAULT carries the origin.
@@ -1011,16 +1009,16 @@ export async function drawLineFromDocument(
  * `containFit` is called with the DEFAULT document size, which is the same assumption the rest
  * of this module makes and the one the standard line is drawn under. It is a default, not a
  * measurement: a spec working at a different document size must pass its own clip, which is
- * what `waitForCanvasRedraw`'s `clip` option and `e2e/export/helpers.ts:354-361` both do.
+ * what `waitForCanvasRedraw`'s `clip` option and the export helpers do.
  */
-export function canvasRedrawClip(box: BoundingBox): Required<ClipOptions> {
+export function canvasRedrawClip(box: BoundingBox): ViewportClip {
   const { offsetX, offsetY } = containFit(box);
-  return {
+  return viewportClip({
     x: box.x + Math.max(CANVAS_REDRAW_CLIP.x, offsetX),
     y: box.y + Math.max(CANVAS_REDRAW_CLIP.y, offsetY),
     width: CANVAS_REDRAW_CLIP.width,
     height: CANVAS_REDRAW_CLIP.height,
-  };
+  });
 }
 
 /**
@@ -1041,16 +1039,16 @@ export interface WaitForCanvasPixelsOptions {
  * post-draw timeouts: a one-shot screenshot can land before the repaint and make a
  * pixel assertion flaky. Throws with a descriptive message if it never does.
  *
- * `clip` is `[PAGE]` and is used exactly as given, for all 10 seconds — see the comment inside
- * the loop, which is the difference between what this function re-reads (the window) and what
- * it takes on trust (the box).
+ * `clip` is a branded `[VIEWPORT]` rectangle and is used exactly as given, for all 10 seconds —
+ * see the comment inside the loop, which is the difference between what this function re-reads
+ * (the window) and what it takes on trust (the box).
  *
  * The single poll loop: every redraw wait below is a specialization of it, so the
  * timeout, the interval and the error wording can only be changed in one place.
  */
 export async function waitForCanvasPixels(
   page: Page,
-  clip: Required<ClipOptions>,
+  clip: ViewportClip,
   predicate: CanvasPixelPredicate,
   options: WaitForCanvasPixelsOptions = {}
 ): Promise<void> {
@@ -1062,7 +1060,7 @@ export async function waitForCanvasPixels(
   for (;;) {
     pollCount += 1;
     // What is re-derived every poll is the WINDOW, not the box. `clip` is a by-value
-    // argument, so the loop reads the same PAGE rect on every attempt for the whole timeout —
+    // argument, so the loop reads the same VIEWPORT rect on every attempt for the whole timeout —
     // `canvas-redraw.unit.test.ts` pins that the identical object reaches `page.screenshot`
     // each time. That is only correct while the region itself has not moved, and making the
     // BOX the caller's to re-measure is the arrangement two specs already use:
@@ -1095,15 +1093,15 @@ export async function waitForCanvasPixels(
  * stroke reaches the backing store, then returns. Throws if it never renders.
  * Dark-pixel special case of `waitForCanvasPixels`, so specs can keep calling it.
  *
- * `box` is `[BOX]` and is read only to derive the DEFAULT clip, which comes out `[PAGE]`; an
- * explicit `options.clip` is `[PAGE]` and is used as given. So the two arguments of one call are
+ * `box` is `[BOX]` and is read only to derive the DEFAULT clip, which comes out `[VIEWPORT]`; an
+ * explicit `options.clip` is `[VIEWPORT]` and is used as given. So the two arguments of one call are
  * in different spaces, and that is deliberate — see `canvasRedrawClip` for what happens when a
  * caller supplies the box-relative numbers instead.
  */
 export async function waitForCanvasRedraw(
   page: Page,
   box: BoundingBox,
-  options: { clip?: ClipOptions; timeoutMs?: number; pollIntervalMs?: number } = {}
+  options: { clip?: ViewportClipOptions; timeoutMs?: number; pollIntervalMs?: number } = {}
 ): Promise<void> {
   await waitForCanvasPixels(page, buildClip(options.clip, canvasRedrawClip(box)), hasDarkPixels, {
     timeoutMs: options.timeoutMs,

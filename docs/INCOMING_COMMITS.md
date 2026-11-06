@@ -322,7 +322,7 @@ The local main worktree is importing the 101 remote-only commits between merge b
 
 ## 2026-11-06 — origin/main (fetch + merge into local main)
 
-The local main worktree is importing these 155 remote-only commits between merge base `482bc08e0ae1b78fbb4d7b50697e7bae8bef22c0` and fetched `origin/main` `f5f45be817ffafdcc3ed0bb48d5c1f09fca7cf30`:
+The previous local-main landing imported these 155 remote-only commits between merge base `482bc08e0ae1b78fbb4d7b50697e7bae8bef22c0` and fetched `origin/main` `f5f45be817ffafdcc3ed0bb48d5c1f09fca7cf30`:
 
 - 5e0c27f0 (5e0c27f04c70316beaca59b8a036523bf4d1116e) "hand tool feature add" - Bogdan Kalynovskyi
 - 74d6950f (74d6950f828e34e8c416a542470937276069e5b2) "Merge origin/main into feat/hand-tool-view-transform" - Bogdan Kalynovskyi
@@ -479,3 +479,35 @@ The local main worktree is importing these 155 remote-only commits between merge
 - af682983 (af682983d951abb842cf6a7fca2ca6aedd2e415a) "Classify crop alpha-boundary parity precisely" - Bohdan Kalynovskyi (Dan)
 - a0b759bb (a0b759bb1e5cdfcdc4c629e77a68288db15ba4c7) "docs(e2e): correct tablet touch coverage inventory" - Bohdan Kalynovskyi (Dan)
 - f5f45be8 (f5f45be817ffafdcc3ed0bb48d5c1f09fca7cf30) "Merge task/e2e-hardening-landing-20261106 into main" - Bohdan Kalynovskyi (Dan)
+
+## 2026-11-06 — origin/main (second fetch + merge into local main)
+
+This sync imports 27 additional remote-only commits after local `main` `4b780fd4ccf9e9316d05277d777b356de633e84d` through fetched `origin/main` `bba53dbb8f6f887cc5af3deac4ed2bad3a014b3e`:
+
+- 6c166015 (6c1660154ce26b2e5ef35c952c4165c48471f098) "test: verify redo after source-backed branch" — Bohdan Kalynovskyi (Dan)
+- 0490d6ec (0490d6ec167949da4471e66eec3bc82ccd91ba5b) "test(e2e): brand viewport screenshot clips" — Bohdan Kalynovskyi (Dan)
+- c48630ad (c48630adf8733049320437c7f8559ad0352b08ba) "test(e2e): require viewport clip brands at wait boundary" — Bohdan Kalynovskyi (Dan)
+- 6a914c66 (6a914c664133bd8d2d7ac571fcad9036250fc276) "docs(e2e): retire viewport clip coordinate issue" — Bohdan Kalynovskyi (Dan)
+- ae5ba62c (ae5ba62c219ac6578b16ab227fe965d953d4a2c6) "docs(e2e): clarify viewport clip coordinate language" — Bohdan Kalynovskyi (Dan)
+- 0c038a5c (0c038a5ce1f4b0e892d99f3b02312e74e0ede0eb) "fix: make block-stamp previews append safely" — Bohdan Kalynovskyi (Dan)
+- 4eddd06c (4eddd06cca42bd273b727b30c885a4a0adf97edd) "Merge task/incremental-preview-settings-guard-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- b87c5238 (b87c52380928a71909604867ca4a200c368dddb4) "docs: retire fixed tablet slider issue from handoff" — Bohdan Kalynovskyi (Dan)
+- a3f4b223 (a3f4b22312bac64a3d1204d8ee3d72c57bfbc694) "Merge task/handoff-152-canvas-input-only-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- ec59d7a5 (ec59d7a56ff68ef9fe1e4a2670f5daa44d096211) "fix: add pointer scroll cues to mobile toolbar" — Bohdan Kalynovskyi (Dan)
+- 270b346c (270b346cd3cfa63427dcadd0c25528d49a366220) "fix: remove unreachable draw preview path" — Bohdan Kalynovskyi (Dan)
+- 1f1981fa (1f1981fa921c1821e39cef01bff0656ab7631b8d) "Merge fix/mobile-toolbar-scroll-cues-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- ef51cf71 (ef51cf71cf0e0bc826ad6f05ba109f105d33ee79) "Merge main into fix/remove-unreachable-draw-preview-20261106" — Bohdan Kalynovskyi (Dan)
+- f25b12a3 (f25b12a307d143f685cecac17c936933fe3325fe) "docs: refine draw preview coverage handoff" — Bohdan Kalynovskyi (Dan)
+- ad529193 (ad529193800ce5e271fd9dbcfeeeee6258cb68e7) "Sync current main into viewport clip guard candidate" — Bohdan Kalynovskyi (Dan)
+- 34d69134 (34d691343395fc4d2a2e20f9ff8189e3e528766b) "Merge fix/remove-unreachable-draw-preview-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- 02770538 (02770538c0306eba0b7163df0b491cd7fc688258) "Sync current local main into origin documentation candidate" — Bohdan Kalynovskyi (Dan)
+- 0434dc2a (0434dc2a3611ca9254ee3913e47e0209a4191ec1) "Merge origin main documentation update into main" — Bohdan Kalynovskyi (Dan)
+- 6ab516ed (6ab516eddd1fa581a34bf0329a60017648e167ae) "Sync current main into source-backed history E2E candidate" — Bohdan Kalynovskyi (Dan)
+- 5e43ec63 (5e43ec63ca4601685e6e0887b490b889708bb756) "Merge source-backed history branch undo E2E into main" — Bohdan Kalynovskyi (Dan)
+- d3a38d86 (d3a38d860579ad05cd6af8948be61d07037367b2) "Sync current main into viewport clip guard candidate" — Bohdan Kalynovskyi (Dan)
+- fca55de6 (fca55de62629a038eecfe4a20921291ee1d9433e) "fix(e2e): wait for hand wheel zoom render" — Bohdan Kalynovskyi (Dan)
+- de855319 (de8553195f9475cb55e4c7fd26821dc381c56c72) "fix(e2e): wait for hand wheel pan render" — Bohdan Kalynovskyi (Dan)
+- 3376e9a8 (3376e9a81b4d343e560f1b71c006fbdb856ad4ea) "Merge task/clip-space-guard-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- 273d2f62 (273d2f6277412aec0372d41533d7e3fa1fa5f835) "Sync main into fix/hand-wheel-zoom-wait-20261106 for landing" — Bohdan Kalynovskyi (Dan)
+- b72e1bc7 (b72e1bc7dc95737b05a7579c9b1075195330ebec) "test(e2e): guard workspace wheel scroll" — Bohdan Kalynovskyi (Dan)
+- bba53dbb (bba53dbb8f6f887cc5af3deac4ed2bad3a014b3e) "Merge fix/hand-wheel-zoom-wait-20261106 into main" — Bohdan Kalynovskyi (Dan)
