@@ -990,18 +990,16 @@ test.describe('the Red Eye Tool (reachability)', () => {
   test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
   test('selects from the toolbar and executes a click on a red area', async ({ page }) => {
+    await openWorkspace(page);
+
     // Draw a red circle on the canvas for the red-eye tool to target
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, RED, true);
-    const canvas = getWorkspaceCanvas(page);
-    await canvas.click({ position: { x: 300, y: 200 } });
-    await canvas.click({ position: { x: 320, y: 200 } });
-    await canvas.click({ position: { x: 310, y: 220 } });
-    await canvas.click({ position: { x: 290, y: 220 } });
-    await canvas.click({ position: { x: 300, y: 200 } });
-
-    // Commit the draw stroke to create a layer with red pixels
-    await clickToolButton(page, 'draw'); // commit by switching tools
+    await clickAt(page, { x: 300, y: 200 });
+    await clickAt(page, { x: 320, y: 200 });
+    await clickAt(page, { x: 310, y: 220 });
+    await clickAt(page, { x: 290, y: 220 });
+    await clickAt(page, { x: 300, y: 200 });
 
     // Select the red-eye tool
     await clickToolButton(page, 'red-eye');
@@ -1009,7 +1007,7 @@ test.describe('the Red Eye Tool (reachability)', () => {
 
     // Click on the red area - the tool should execute without throwing
     const redEyeCanvas = getWorkspaceCanvas(page);
-    await redEyeCanvas.click({ position: { x: 310, y: 210 } });
+    await clickAt(page, { x: 310, y: 210 });
 
     // Verify the tool executed (no error thrown, canvas still responsive)
     await expect(redEyeCanvas).toBeVisible();
