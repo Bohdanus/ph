@@ -444,7 +444,7 @@ test.describe('the view commands', () => {
     await page.mouse.wheel(0, -240);
     await page.keyboard.up('Control');
 
-    expect(scaleOf(await viewTransform(page))).toBeGreaterThan(before);
+    await expect.poll(async () => scaleOf(await viewTransform(page))).toBeGreaterThan(before);
     // The browser's own Ctrl+wheel page zoom must not have fired.
     expect(await page.evaluate(() => window.devicePixelRatio)).toBe(pageZoomBefore);
   });
