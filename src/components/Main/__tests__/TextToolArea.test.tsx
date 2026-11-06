@@ -818,7 +818,7 @@ describe('TextToolArea', () => {
       const ctx = makeMockCtx();
       const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
       const affine = { a: 2, b: 0, c: 0, d: 2, e: 3, f: 4 };
-      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true, editingLayerId: 'locked-text' });
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true, angle: 30, editingLayerId: 'locked-text' });
       h.layers = {
         'locked-text': {
           locked: true,
@@ -832,6 +832,10 @@ describe('TextToolArea', () => {
 
       expect(ctx.translate).toHaveBeenCalledWith(rect.x1, rect.y1);
       expect(ctx.transform).toHaveBeenCalledWith(2, 0, 0, 2, 3, 4);
+      expect(ctx.rotate).toHaveBeenCalledWith(Math.PI / 6);
+      expect(vi.mocked(ctx.transform).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(ctx.rotate).mock.invocationCallOrder[0]
+      );
       expect(renderText).toHaveBeenCalledWith(
         ctx,
         expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 45, y2: 24 } }),
