@@ -415,7 +415,9 @@ test.describe('the view commands', () => {
     const box = await getWorkspaceCanvas(page).boundingBox();
     if (box === null) throw new Error('workspace canvas has no box');
 
+    const workspace = page.getByTestId('workspace-container');
     const scrollBefore = await page.evaluate(() => window.scrollY);
+    const workspaceScrollBefore = await workspace.evaluate((node) => node.scrollTop);
 
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, 120);
@@ -425,6 +427,7 @@ test.describe('the view commands', () => {
     // if the browser logged the passive-cancel warning.
     await expect.poll(async () => translateOf(await viewTransform(page)).y).toBeLessThan(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+    expect(await workspace.evaluate((node) => node.scrollTop)).toBe(workspaceScrollBefore);
   });
 
   test('Ctrl and a wheel zoom at the pointer instead of zooming the page', async ({ page }) => {
