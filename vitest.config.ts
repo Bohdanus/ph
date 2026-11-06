@@ -25,20 +25,24 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov'],
       reportsDirectory: './coverage',
-      // `e2e/**` is listed so app coverage stays a measure of `src/`. The e2e helper
-      // modules have their own coverage report from `vitest.e2e.config.ts`.
+      include: ['src/**/*.ts', 'src/**/*.tsx'],
+      reportOnFailure: true,
+      // Include unloaded app files so an unimported module is visible at zero. The e2e
+      // helper modules have a separate report from `vitest.e2e.config.ts`.
       exclude: [
         'node_modules/',
+        'src/**/*.d.ts',
         'src/**/*.{test,spec}.{ts,tsx}',
         'src/**/__tests__/**',
         'src/**/fixtures/**',
+        'src/test/setup.ts',
         'e2e/**',
       ],
       thresholds: {
-        lines: 30,
-        functions: 30,
-        branches: 30,
-        statements: 30,
+        lines: 90,
+        functions: 85,
+        branches: 80,
+        statements: 85,
       },
     },
   },
