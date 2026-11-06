@@ -5,6 +5,7 @@ import {
   getWorkspaceCanvas,
   hasDarkPixels,
   takeLineScreenshot,
+  viewportClip,
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
@@ -20,12 +21,12 @@ test('screenshot of canvas area contains drawn black line', async ({ page }, tes
 
   const start = documentToCanvasOffset(box!, 150, 150);
   const end = documentToCanvasOffset(box!, 350, 150);
-  const lineClip = {
+  const lineClip = viewportClip({
     x: box!.x + Math.min(start.x, end.x) - 20,
     y: box!.y + Math.min(start.y, end.y) - 20,
     width: Math.abs(end.x - start.x) + 40,
     height: Math.abs(end.y - start.y) + 40,
-  };
+  });
 
   await clickToolButton(page, 'draw');
   await drawLine(page, box!, start.x, start.y, end.x, end.y);

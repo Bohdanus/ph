@@ -1,6 +1,6 @@
 /**
  * Single scaling rule for converting coordinates between screenshot/image pixel
- * space and CSS page space: map them proportionally onto the target element's
+ * space and the target element's CSS space: map them proportionally onto its
  * bounding box, with scaleX = box.width / image.width and scaleY = box.height /
  * image.height, and box origin added in the image -> CSS direction. Dividing by
  * devicePixelRatio is deliberately not supported — capture scaling and rounding
@@ -56,8 +56,8 @@ export interface CssBounds {
 }
 
 /**
- * A rectangle in CSS page space. `canvas-helpers.ts` re-exports this as `BoundingBox`,
- * the name the specs import, and `cdp-helpers.ts` calls it `BoundingBox` too.
+ * A CSS rectangle with no coordinate-space brand. `canvas-helpers.ts` re-exports this as
+ * `BoundingBox`, the name the specs import, and `cdp-helpers.ts` calls it `BoundingBox` too.
  */
 export interface CssBox {
   x: number;
@@ -90,6 +90,25 @@ export interface ClipOptions {
   y?: number;
   width?: number;
   height?: number;
+}
+
+declare const viewportClipBrand: unique symbol;
+
+/** A clip whose coordinates have been explicitly identified as viewport-relative. */
+export type ViewportClipOptions = ClipOptions & { readonly [viewportClipBrand]: true };
+
+/** A complete viewport-relative clip. */
+export type ViewportClip = Required<ViewportClipOptions>;
+
+/**
+ * Mark a rectangle whose origin and dimensions were computed in viewport CSS space.
+ * This is an explicit type boundary and does not convert coordinates. Use
+ * `canvasRedrawClip` when the rectangle is relative to the workspace canvas box.
+ */
+export function viewportClip(clip: Required<ClipOptions>): ViewportClip;
+export function viewportClip(clip: ClipOptions): ViewportClipOptions;
+export function viewportClip(clip: ClipOptions): ViewportClipOptions {
+  return clip as ViewportClipOptions;
 }
 
 /** `window.scrollX` / `window.scrollY`, read at the moment a clip is built. */
@@ -137,7 +156,8 @@ export function viewportRectToPageRect(rect: CssBox, scroll: ScrollOffset): CssB
 }
 
 /**
- * Maps an image point to CSS page space. `image.width` and `image.height` must be positive;
+ * Maps an image point into the supplied box's CSS coordinates. `image.width` and
+ * `image.height` must be positive;
  * this is deliberately raw arithmetic, so invalid dimensions preserve their NaN/Infinity
  * result. Callers using a potentially empty capture must validate it before mapping. The
  * `screenshotBoundsToCss` wrapper is the guarded entry point for screenshot bounds.
@@ -150,8 +170,8 @@ export function imagePointToCss(image: ImageSize, box: CssBox, point: Point): Po
 }
 
 /**
- * Inverse of `imagePointToCss`: maps a CSS page point back onto image pixels of a
- * capture of `box`. Divides by the box extent, so a zero-area box yields NaN/Infinity
+ * Inverse of `imagePointToCss`: maps a point in the supplied box's CSS coordinates back
+ * onto image pixels of a capture of `box`. Divides by the box extent, so a zero-area box yields NaN/Infinity
  * rather than throwing, exactly like a zero-sized image does in the forward direction;
  * callers pass the result to pixel samplers, which surface that as "no pixel found".
  */
@@ -163,8 +183,8 @@ export function cssPointToImage(image: ImageSize, box: CssBox, point: Point): Po
 }
 
 /**
- * Maps a captured image's pixel bounds onto the CSS page. Each corner goes through
- * `imagePointToCss`, so this is the point rule with one added convention, and the
+ * Maps a captured image's pixel bounds into the supplied box's CSS coordinates. Each
+ * corner goes through `imagePointToCss`, so this is the point rule with one added convention, and the
  * convention is the caller's, not the arithmetic's.
  *
  * `left` / `top` / `right` / `bottom` are INCLUSIVE image pixel indices -- the shape

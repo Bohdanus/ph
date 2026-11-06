@@ -15,8 +15,10 @@ import {
   getPageScroll,
   getWorkspaceCanvas,
   takeLineScreenshot,
+  viewportClip,
   type BoundingBox,
   type ClipOptions,
+  type ViewportClipOptions,
 } from '../canvas-helpers';
 import {
   canvasElement,
@@ -146,7 +148,7 @@ describe('takeLineScreenshot', () => {
     const outputDir = await makeOutputDir('custom-clip');
     const capture = createScreenshotSpy(Buffer.from('png'));
     const { testInfo } = createTestInfoMock(outputDir);
-    const custom: ClipOptions = { x: 10, y: 20, width: 30, height: 40 };
+    const custom: ViewportClipOptions = viewportClip({ x: 10, y: 20, width: 30, height: 40 });
 
     await takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'custom', testInfo, custom);
 
@@ -158,7 +160,13 @@ describe('takeLineScreenshot', () => {
     const capture = createScreenshotSpy(Buffer.from('png'));
     const { testInfo } = createTestInfoMock(outputDir);
 
-    await takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'partial', testInfo, { x: 10 });
+    await takeLineScreenshot(
+      createPageMock({ screenshot: capture }),
+      BOX,
+      'partial',
+      testInfo,
+      viewportClip({ x: 10 })
+    );
 
     expect(capture.mock.calls[0][0].clip).toEqual({
       x: 10,

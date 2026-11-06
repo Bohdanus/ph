@@ -1,7 +1,6 @@
 import { expect, type Page, type TestInfo, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
-  type ClipOptions,
   canvasOffsetToDocument,
   documentToCanvasOffset,
   drawLine,
@@ -10,6 +9,8 @@ import {
   getStrokeAnalysis,
   getWorkspaceCanvas,
   loadImageData,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
@@ -97,7 +98,7 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
 }
 
 /** A page clip over a rectangle named in DOCUMENT coordinates, with a margin in document units. */
-function documentClip(box: BoundingBox, rect: Rect, margin = 20): Required<ClipOptions> {
+function documentClip(box: BoundingBox, rect: Rect, margin = 20): ViewportClip {
   const topLeft = documentToCanvasOffset(
     box,
     Math.min(rect.from.x, rect.to.x) - margin,
@@ -108,12 +109,12 @@ function documentClip(box: BoundingBox, rect: Rect, margin = 20): Required<ClipO
     Math.max(rect.from.x, rect.to.x) + margin,
     Math.max(rect.from.y, rect.to.y) + margin
   );
-  return {
+  return viewportClip({
     x: box.x + topLeft.x,
     y: box.y + topLeft.y,
     width: bottomRight.x - topLeft.x,
     height: bottomRight.y - topLeft.y,
-  };
+  });
 }
 
 /**
@@ -131,12 +132,12 @@ async function sampleDocumentPoint(
   const offset = documentToCanvasOffset(box, documentX, documentY);
   const half = 8;
   const documentPointOnPage = { x: box.x + offset.x, y: box.y + offset.y };
-  const clip = {
+  const clip = viewportClip({
     x: documentPointOnPage.x - half,
     y: documentPointOnPage.y - half,
     width: half * 2 + 1,
     height: half * 2 + 1,
-  };
+  });
   const screenshot = await page.screenshot({
     clip,
   });
@@ -214,7 +215,7 @@ function boxBlurProfile(profile: readonly number[], radius: number): number[] {
 
 function documentPointToCapturePixel(
   box: BoundingBox,
-  clip: Required<ClipOptions>,
+  clip: ViewportClip,
   image: CaptureImage,
   documentPoint: Point,
   deviceScale: number
@@ -686,7 +687,7 @@ test.describe('Shape tools', () => {
  * Both moments must be captured with the dialog CLOSED, because the open dialog paints a
  * `bg-black bg-opacity-25` backdrop over the whole viewport and dims every pixel under it.
  */
-const regionChanged = async (page: Page, clip: Required<ClipOptions>, baseline: Buffer): Promise<boolean> =>
+const regionChanged = async (page: Page, clip: ViewportClip, baseline: Buffer): Promise<boolean> =>
   !(await page.screenshot({ clip })).equals(baseline);
 
 /**
