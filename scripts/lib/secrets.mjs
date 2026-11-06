@@ -29,7 +29,13 @@ function redactString(input) {
   for (const { pattern, replacement } of SECRET_PATTERNS) {
     result = result.replace(pattern, replacement);
   }
-  return result;
+  return result.replace(
+    /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
+    (_match, prefix, replacementValue) => {
+      const quote = replacementValue.startsWith('"') || replacementValue.startsWith("'") ? replacementValue[0] : '';
+      return `${prefix}${quote}[REDACTED]${quote}`;
+    }
+  );
 }
 
 function redactObject(obj, depth = 0) {
@@ -113,13 +119,6 @@ export function redactSensitiveText(value) {
       .replace(
         /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
         '[REDACTED]'
-      )
-      .replace(
-        /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
-        (_match, prefix, replacementValue) => {
-          const quote = replacementValue.startsWith('"') || replacementValue.startsWith("'") ? replacementValue[0] : '';
-          return `${prefix}${quote}[REDACTED]${quote}`;
-        }
       )
       .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]')
   );

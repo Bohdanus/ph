@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSecretKey, sanitizeForOutput } from '../lib/secrets.mjs';
+import { isSecretKey, sanitizeErrorMessage, sanitizeForOutput } from '../lib/secrets.mjs';
 
 describe('secret key redaction', () => {
   it('preserves ordinary design and author fields', () => {
@@ -45,5 +45,13 @@ describe('secret key redaction', () => {
       author: 'Ada',
       design: 'canvas',
     });
+  });
+
+  it('redacts quoted credential assignments from error messages', () => {
+    const sanitized = sanitizeErrorMessage(`GROQ_API_KEY='fixture-secret-value-123' token="fixture-token-456"`);
+
+    expect(sanitized).toBe(`GROQ_API_KEY='[REDACTED]' token="[REDACTED]"`);
+    expect(sanitized).not.toContain('fixture-secret-value-123');
+    expect(sanitized).not.toContain('fixture-token-456');
   });
 });

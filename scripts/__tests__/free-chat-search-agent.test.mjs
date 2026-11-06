@@ -127,13 +127,13 @@ describe('SQLite CLI output', () => {
 
   it('preserves nonzero SQLite exit diagnostics and redacts secret values', async () => {
     const secret = 'abcdefghijklmnopqrstuvwxyz012345';
-    const script = '#!/usr/bin/env node\nprocess.stderr.write("GROQ_API_KEY=' + secret + '");\nprocess.exitCode = 1;\n';
+    const script = `#!/usr/bin/env node\nprocess.stderr.write("GROQ_API_KEY='${secret}'");\nprocess.exitCode = 1;\n`;
     const result = await runWithFakeSqlite(script, 'searchAll');
     expect(result.status).toBe(0);
     const response = JSON.parse(result.stdout);
     expect(response.errors).toHaveLength(2);
     expect(response.errors[0].message).toContain('sqlite3 exited with code 1');
-    expect(response.errors[0].message).toContain('GROQ_API_KEY=***REDACTED***');
+    expect(response.errors[0].message).toContain("GROQ_API_KEY='[REDACTED]'");
     expect(JSON.stringify(response.errors)).not.toContain(secret);
   });
 
