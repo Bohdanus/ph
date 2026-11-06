@@ -327,23 +327,28 @@ describe('buildCodexSearchQuery', () => {
       const sigv4 = 'fixtureSigV40123456789abcdef';
       const securityToken = 'fixtureSecurityToken0123456789abcdef';
       const redactedUrl = redactSensitiveText(
-        `https://example.invalid/?note=price$&X-Amz-Signature=${signature}&X-Amz-Date=fixtureDate&X-Amz-Security-Token=${securityToken}&X-Amz-Expires=3600&custom=${securityToken}`
+        `https://example.invalid/$&/path?X-Amz-Date=fixtureDate&custom=${securityToken}&X-Amz-Signature=${signature}&X-Amz-Security-Token=${securityToken}&X-Amz-Expires=3600&other=${securityToken}`
       );
       const redactedSigv4 = redactSensitiveText(`sigv4=${sigv4}`);
       const redactedUnquotedAssignment = redactSensitiveText('password=fixturePassword&tail=fixtureTail');
+      const redactedEncodedSignature = redactSensitiveText(
+        `https://example.invalid/?sig%6eature=${signature}&X-Amz-Date=fixtureDate`
+      );
 
       expect(redactedUrl).not.toContain(signature);
       expect(redactedUrl).not.toContain(securityToken);
-      expect(redactedUrl).toContain('note=price$&X-Amz-Signature=[REDACTED]');
+      expect(redactedUrl).toContain('/$&/path?X-Amz-Date=fixtureDate&custom=[REDACTED]');
       expect(redactedUrl).toContain('X-Amz-Signature=[REDACTED]');
       expect(redactedUrl).toContain('X-Amz-Date=fixtureDate');
       expect(redactedUrl).toContain('X-Amz-Security-Token=[REDACTED]');
       expect(redactedUrl).toContain('X-Amz-Expires=3600');
-      expect(redactedUrl).toContain('custom=[REDACTED]');
+      expect(redactedUrl).toContain('other=[REDACTED]');
       expect(redactedSigv4).not.toContain(sigv4);
       expect(redactedSigv4).toContain('sigv4=[REDACTED]');
       expect(redactedUnquotedAssignment).not.toContain('fixturePassword');
       expect(redactedUnquotedAssignment).not.toContain('fixtureTail');
+      expect(redactedEncodedSignature).not.toContain(signature);
+      expect(redactedEncodedSignature).toContain('sig%6eature=[REDACTED]');
     });
 
     it('uses the shared secret sanitizer for Kilo CLI credentials', () => {

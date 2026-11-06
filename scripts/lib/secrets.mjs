@@ -27,6 +27,7 @@ const SECRET_ASSIGNMENT_KEY_PATTERN =
 const SECRET_ASSIGNMENT_PATTERN =
   /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi;
 const SENSITIVE_URL_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/gi;
+// Preserve only public SigV4 metadata after a sensitive field; unknown query values remain fail-closed.
 const SAFE_SIGV4_QUERY_KEYS = new Set(['x-amz-algorithm', 'x-amz-date', 'x-amz-expires', 'x-amz-signedheaders']);
 
 function redactTextAssignments(input) {
@@ -36,33 +37,37 @@ function redactTextAssignments(input) {
   });
 }
 
-function isSensitiveAssignmentKey(rawKey) {
-  let key = rawKey;
+function decodeUrlQueryKey(rawKey) {
   try {
-    key = decodeURIComponent(rawKey.replace(/\+/g, ' '));
+    return decodeURIComponent(rawKey.replace(/\+/g, ' '));
   } catch {
     // Keep the raw key when it is not valid percent-encoding.
+    return rawKey;
   }
+}
+
+function isSensitiveAssignmentKey(rawKey) {
+  const key = decodeUrlQueryKey(rawKey);
   return isSecretKey(key) || SECRET_ASSIGNMENT_KEY_PATTERN.test(key);
 }
 
 function redactUrlQueryAssignments(query, redactUnknownTail = false) {
-  let secretSeen = redactUnknownTail;
-  let foundSecret = redactUnknownTail;
-  const value = query
-    .split('&')
+  const parameters = query.split('&');
+  const hasSensitiveParameter =
+    redactUnknownTail ||
+    parameters.some((parameter) => {
+      const separator = parameter.indexOf('=');
+      return separator >= 0 && isSensitiveAssignmentKey(parameter.slice(0, separator));
+    });
+  let secretSeen = hasSensitiveParameter;
+  let foundSecret = hasSensitiveParameter;
+  const value = parameters
     .map((parameter) => {
       const separator = parameter.indexOf('=');
       if (separator < 0) return parameter;
 
       const rawKey = parameter.slice(0, separator);
-      const key = (() => {
-        try {
-          return decodeURIComponent(rawKey.replace(/\+/g, ' '));
-        } catch {
-          return rawKey;
-        }
-      })();
+      const key = decodeUrlQueryKey(rawKey);
       if (isSensitiveAssignmentKey(rawKey)) {
         secretSeen = true;
         foundSecret = true;
