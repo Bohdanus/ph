@@ -135,7 +135,6 @@ export const draw = (params: CreatorToolParams | ProcessorToolParams) => (args: 
     drawLine({
       args,
       ctx,
-      skipInitialBlockStamp: 'skipInitialBlockStamp' in params ? params.skipInitialBlockStamp : false,
     });
   } finally {
     ctx.restore();
