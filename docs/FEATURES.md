@@ -311,8 +311,8 @@ Help.
 **This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
 (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
-Adobe's item list with **two enabled** — `Brightness/Contrast` and `Desaturate` — and
-twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
+Adobe's item list with **three enabled** — `Brightness/Contrast`, `Desaturate` and
+`Invert` — and nineteen **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
 records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,
 which is where Adobe puts it (`DesktopHeader.tsx` — `handleFreeTransform`). Window
@@ -324,7 +324,7 @@ has Reset Workspace.
 Image and Edit are each a stub — Image has no Mode, Image Size, Canvas Size, Crop,
 Trim or Canvas Rotation, and Edit has nothing but Free Transform. So Undo, Cut, Copy,
 Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask, Group, Merge, Select All,
-Deselect, Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
+Deselect (both on the keyboard only), Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
 unreachable from the menu bar — several are unreachable entirely.
 
 Undo and Redo exist as buttons (`HistoryControls.tsx` — its `undo-button` and
@@ -347,7 +347,10 @@ View tools now keep transient `ViewState` (`src/contexts/view-state.ts`) and
 apply the same presentation transform to the canvas and overlays (`Main.tsx` —
 `renderContent()`). `usePointerPosition` inverts that transform before returning
 document-space coordinates, so pixel tools continue to target the document rather
-than the screen. View changes do not enter history or durable replay.
+than the screen. View changes do not enter history or durable replay. Photoshop's three
+screen modes are modelled as shell state (`ScreenMode.tsx` — `chromeVisibility()`): Full Screen
+With Menu Bar hides the status bar, and Full Screen hides every region and asks the browser for
+fullscreen, keeping the in-window hide when the browser refuses.
 
 **Status:** `partial`
 
@@ -362,8 +365,10 @@ absent. The implementation deliberately caps the options-bar zoom control at
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 58 `useKeyDownShortcut` call sites: 49 in
-`AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
+**This app:** 64 `useKeyDownShortcut` call sites: 49 in
+`AppKeyboardShortcuts.tsx`; six in three small command modules — `SelectionShortcuts.tsx`
+(two), `AdjustmentShortcuts.tsx` (one) and `ScreenModeShortcuts.tsx` (three); eight in the two
+polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
 `useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
 These are hook call sites, not a count of unique key chords; modifiers and enabled states share the
@@ -372,21 +377,26 @@ same registration path.
 **Status:** `partial`
 
 **Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O, H, Z, R; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `[` and `]` for brush size; `0` and `1`
-for opacity; `X` and `D` for Switch Foreground and Background Colors and Default
-Foreground and Background Colors; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's
-Desaturate and Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows
-on the Dodge and the Burn, so the Sponge must be the active tool.
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `Ctrl+A` (Select All, replacing any
+selection), `Ctrl+D` (Deselect) and `Ctrl+I` (`Image > Adjustments > Invert` on the active
+non-bedrock layer, clipped by the active selection); `Tab` to hide or show the Tools panel,
+options bar and panels; `F` / `Shift+F` to cycle Standard, Full Screen With Menu Bar and Full
+Screen; `Esc` to leave Full Screen; `[` and `]` for brush size; `0` and `1`
+for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
+Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
+and the Burn, so the Sponge must be the active tool; `X` and `D` for Switch Foreground and
+Background Colors and Default Foreground and Background Colors.
 
 Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
 only save is Save As, which is what `File > Save` opens
 (`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
 `Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two.
 
-**Gap:** `A` is unbound — Automatic Select. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
-`Ctrl+Shift+I` — Select All, Deselect, Invert — are unbound, which follows from the
-selection model above rather than from the keyboard layer. `Tab`, `F`,
-`Ctrl++`, `Ctrl+-` and `Ctrl+0` are unbound, and Space does not pan.
+**Gap:** `A` is unbound — Automatic Select. `Ctrl+Shift+I` (Select > Inverse) is unbound; the
+app has no inverse-selection operation. `Ctrl+I` refuses the bedrock layer, as every raster tool
+does, where Photoshop inverts a Background layer. `Shift+Tab` (panels only) is unbound, and `Tab`
+does nothing in Full Screen, where Photoshop shows the panels over the image. `Ctrl++`, `Ctrl+-`
+and `Ctrl+0` are unbound, and Space does not pan.
 
 ## Colour management
 

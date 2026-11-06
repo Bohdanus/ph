@@ -10,15 +10,18 @@ import type { SelectionSnapshot } from './history-model.ts';
 import { selectionSnapshot } from './selection-baseline.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
+import { createCommittedRectangleSelection } from '../util/selection.ts';
 
 /**
  * Which raw selection action a gesture used to dispatch.
  *
  * `'create'` appends a new committed selection and activates it (the reducer's
  * `commitSelection`); `'move'` replaces the geometry of an already-committed
- * selection (the reducer's `updateCommittedSelection`).
+ * selection (the reducer's `updateCommittedSelection`); `'replace'` discards
+ * every existing selection and leaves this one as the only, active entry
+ * (Select All, which has no raw reducer action).
  */
-export type SelectionCommitMode = 'create' | 'move';
+export type SelectionCommitMode = 'create' | 'move' | 'replace';
 
 type SelectionCommitUpdate = {
   selections: Selection[];
@@ -46,6 +49,12 @@ function committedSelectionUpdate(
   activeSelectionId: string | null,
   selection: Selection
 ): SelectionCommitUpdate {
+  if (mode === 'replace') {
+    return {
+      selections: [{ ...selection, isActive: true, lifecycle: 'committed', geometry: selection.geometry ?? 'polygon' }],
+      activeSelectionId: selection.id,
+    };
+  }
   if (mode === 'create') {
     return {
       selections: [
@@ -303,9 +312,10 @@ export const useSelectionHistory = () => {
         activeSelectionId: next.activeSelectionId,
         selectionDraft: { status: 'idle' as const },
         // A create retires a pending "cleared" repaint marker, exactly as
-        // `commitSelection` does. A move omits the field entirely so the store
-        // keeps the current marker, exactly as `updateCommittedSelection` does.
-        ...(mode === 'create' ? { selectionCleared: null } : {}),
+        // `commitSelection` does, and a replace is a create of the only entry.
+        // A move omits the field entirely so the store keeps the current
+        // marker, exactly as `updateCommittedSelection` does.
+        ...(mode === 'move' ? {} : { selectionCleared: null }),
       };
 
       try {
@@ -344,5 +354,37 @@ export const useSelectionHistory = () => {
     [activeSelectionId, dispatch, documentFrame, history, historyIndex, branchRevision, selections]
   );
 
-  return { clearSelections, commitSelection };
+  /**
+   * Photoshop's Select All: one rectangle over the whole canvas, replacing every
+   * existing selection as one undoable edit.
+   *
+   * Built exactly as a marquee drag builds its rectangle — canvas-local through
+   * `createCommittedRectangleSelection`, then shifted by the document frame — so
+   * the result is indistinguishable from dragging the marquee edge to edge.
+   * Selecting all again when the canvas is already the only selection is
+   * `commitSelection`'s unchanged-state no-op, so it appends nothing.
+   */
+  const selectAll = useCallback(() => {
+    const activeSelection = (Array.isArray(selections) ? selections : []).find(
+      (selection) => selection.id === activeSelectionId
+    );
+    const local = createCommittedRectangleSelection({
+      // Reusing the active id is what lets a repeated Select All compare equal
+      // to the state it would produce; a fresh id would always look like a change.
+      id: activeSelection?.id ?? uuidv4(),
+      rect: { x1: 0, y1: 0, x2: totalSize.width, y2: totalSize.height },
+      imageSize: totalSize,
+    });
+    if (!local) return;
+
+    commitSelection(
+      {
+        ...local,
+        pos: { ...local.pos, x: local.pos.x + documentFrame.x, y: local.pos.y + documentFrame.y },
+      },
+      'replace'
+    );
+  }, [activeSelectionId, commitSelection, documentFrame.x, documentFrame.y, selections, totalSize]);
+
+  return { clearSelections, commitSelection, selectAll };
 };

@@ -15,6 +15,7 @@ import { ellipticalSelection } from './ellipticalSelection.ts';
 import { eraser } from './eraser.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
 import { gradient } from './gradient.ts';
+import { invert } from './invert.ts';
 import { levels } from './levels.ts';
 import { magicEraser, paintBucket } from './fill.ts';
 import { magicWand } from './magicWand.ts';
@@ -281,6 +282,12 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: gradient,
+  },
+  invert: {
+    maxStagingPixelCount: MAX_RASTER_SELECTION_PIXELS,
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    imageProcessor: invert,
   },
   sharpen: {
     commit: 'raster',

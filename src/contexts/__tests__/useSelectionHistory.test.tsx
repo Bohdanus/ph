@@ -537,3 +537,60 @@ describe('useSelectionHistory recorded baseline is a value, not a live reference
     expect(before.selections).toHaveLength(1);
   });
 });
+
+describe('useSelectionHistory selectAll', () => {
+  it('replaces every existing selection with one active canvas-sized rectangle in one edit', () => {
+    const first = makeSelection('first', { isActive: false });
+    const second = makeSelection('second');
+    seed([first, second], second.id);
+
+    mountWriter().selectAll();
+
+    const action = onlyDispatch();
+    const selections = action.payload.updates.selections as Selection[];
+    expect(selections).toHaveLength(1);
+    expect(selections[0]).toMatchObject({
+      isActive: true,
+      lifecycle: 'committed',
+      geometry: 'rectangle',
+      pos: { x: 0, y: 0, width: size.width, height: size.height },
+    });
+    expect(action.payload.updates.activeSelectionId).toBe(selections[0].id);
+    expect(action.payload.updates.selectionCleared).toBeNull();
+
+    const { previous, next } = selectionArgs(action.payload.historyItem);
+    expect(previous).toEqual({ selections: [first, second], activeSelectionId: second.id });
+    expect(next).toEqual({ selections, activeSelectionId: selections[0].id });
+  });
+
+  it('offsets the rectangle by the document frame, as a marquee drag does', () => {
+    seed([], null);
+    storeStateMock.documentFrame = { x: 10, y: -4, ...size };
+
+    mountWriter().selectAll();
+
+    const [selection] = onlyDispatch().payload.updates.selections as Selection[];
+    expect(selection.pos).toEqual({ x: 10, y: -4, width: size.width, height: size.height });
+  });
+
+  it('appends nothing when the whole canvas is already the only selection', () => {
+    seed([], null);
+    mountWriter().selectAll();
+    const [selection] = onlyDispatch().payload.updates.selections as Selection[];
+
+    dispatchMock.mockClear();
+    seed([selection], selection.id);
+    mountWriter().selectAll();
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('appends nothing for an empty canvas, which has no rectangle to select', () => {
+    seed([], null);
+    storeStateMock.totalSize = { width: 0, height: 0 };
+
+    mountWriter().selectAll();
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+});

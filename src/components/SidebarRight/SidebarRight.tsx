@@ -277,7 +277,7 @@ const SidebarRight = () => {
   // without them, and that is not true.
   if (!isOpen) {
     const dockPlacement = edgePlacement(layout.dockSide, 'full');
-    return <aside id="right-panel" className={`hidden ${dockPlacement}`} />;
+    return <aside id="right-panel" data-chrome="panels" className={`hidden ${dockPlacement}`} />;
   }
 
   if (!toolName || !hasImage) {
@@ -285,6 +285,7 @@ const SidebarRight = () => {
     return (
       <aside
         id="right-panel"
+        data-chrome="panels"
         className={`relative bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
           layout.dockSide === 'left' ? 'border-r border-gray-300' : 'border-l border-gray-300'
         } ${dockPlacement}`}
@@ -349,6 +350,7 @@ const SidebarRight = () => {
   return (
     <aside
       id="right-panel"
+      data-chrome="panels"
       // Two `complementary` landmarks with no names is a screen reader announcing two
       // indistinguishable regions, so both sides name theirs. `SidebarLeft` names the rail.
       aria-label="History and Layers panels"
