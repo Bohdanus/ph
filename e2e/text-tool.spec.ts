@@ -1885,7 +1885,7 @@ test.describe('Text tool', () => {
     expect(resizedHeight, 'text height did not track the transformed layer').toBeGreaterThan(beforeHeight);
   });
 
-  test('a Free Transform-rotated Type layer can re-enter Small Caps editing without OffscreenCanvas', async ({
+  test('a Free Transform-rotated Type layer can re-enter Small Caps editing with OffscreenCanvas unavailable during preview', async ({
     page,
   }, testInfo) => {
     test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
@@ -1894,7 +1894,6 @@ test.describe('Text tool', () => {
     const canvasClip = canvasBoxClip(box);
 
     await setTextToolColor(page, TEXT_COLOR);
-    await styleToggle(page, 'Small Caps').click();
     await dragDraftRect(page, box);
     await replaceDraftText(page, 'MMMM');
     await commitDraft(page);
@@ -1987,10 +1986,12 @@ test.describe('Text tool', () => {
     expect(clickPoint.y).toBeGreaterThanOrEqual(overlayBox!.y - 2);
     expect(clickPoint.y).toBeLessThanOrEqual(overlayBox!.y + overlayBox!.height + 2);
 
-    // The live preview must keep using the compositor's HTML canvas fallback; an Offscreen-only
-    // preview path would silently switch to different overlay geometry on this capability gap.
+    // No Small Caps preview canvas has been cached yet. Hiding OffscreenCanvas now forces the
+    // transformed edit preview to allocate the HTML canvas fallback; restore it for commit, whose
+    // text source materialization still uses OffscreenCanvas.
     await setOffscreenCanvasAvailable(page, false);
     expect(await page.evaluate(() => typeof OffscreenCanvas)).toBe('undefined');
+    await styleToggle(page, 'Small Caps').click();
     await replaceDraftText(page, 'i');
     await hideDraftCaret(page);
     await expect(commitButton(page)).toBeEnabled();
