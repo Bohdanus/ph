@@ -18,6 +18,7 @@ type TextArgs = {
   allCaps?: boolean;
   angle?: number;
   kind?: 'point' | 'paragraph';
+  editingLayerId?: string;
   lineHeight: number;
   text?: string;
   rect: { x1: number; y1: number; x2: number; y2: number } | null;
@@ -28,6 +29,8 @@ const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
   setActiveLayer: vi.fn(),
   beginTextLayerEdit: vi.fn(),
+  publishSmallCapsTextDraftPreview: vi.fn(() => true),
+  clearSmallCapsTextDraftPreview: vi.fn(),
   requestTextEditFocus: vi.fn(),
   commitDirtyTool: vi.fn(),
   dispatch: vi.fn(),
@@ -112,6 +115,12 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
     get beginTextLayerEdit() {
       return h.beginTextLayerEdit;
     },
+    get publishSmallCapsTextDraftPreview() {
+      return h.publishSmallCapsTextDraftPreview;
+    },
+    get clearSmallCapsTextDraftPreview() {
+      return h.clearSmallCapsTextDraftPreview;
+    },
   }),
 }));
 
@@ -194,6 +203,9 @@ describe('TextToolArea', () => {
     h.setToolArgs.mockReset();
     h.setActiveLayer.mockReset();
     h.beginTextLayerEdit.mockReset();
+    h.publishSmallCapsTextDraftPreview.mockReset();
+    h.publishSmallCapsTextDraftPreview.mockReturnValue(true);
+    h.clearSmallCapsTextDraftPreview.mockReset();
     h.requestTextEditFocus.mockReset();
     h.commitDirtyTool.mockReset();
     h.dispatch.mockReset();
@@ -771,21 +783,79 @@ describe('TextToolArea', () => {
       expect(ctx.fill).not.toHaveBeenCalled();
     });
 
-    it('paints Small Caps drafts with the committed Canvas renderer', () => {
+    it('publishes Small Caps drafts through the document layer compositor', () => {
       const ctx = makeMockCtx();
       const modelRect = { x1: 5, y1: 6, x2: 50, y2: 30 };
       const previewRect = { x1: 10, y1: 12, x2: 60, y2: 42 };
       toolArgs = makeTextArgs({ text: 'Wave', rect: modelRect, color: '#0000ff', smallCaps: true });
-      vi.mocked(layoutText).mockReturnValue({ lines: ['Wave'], overflow: false });
+      vi.mocked(layoutText).mockReturnValue({ lines: ['Wave'], overflow: true });
 
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!({ ...previewRect }));
 
-      expect(vi.mocked(ctx.fillText).mock.calls.map(([text]) => text)).toEqual(['W', 'AVE']);
-      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
-      expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ rect: previewRect, smallCaps: true }), {
+      expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledWith(toolArgs, previewRect);
+      expect(renderText).not.toHaveBeenCalled();
+      expect(ctx.drawImage).not.toHaveBeenCalled();
+      expect(drawOverflowIndicator).toHaveBeenCalledWith(ctx, previewRect, '#0000ff');
+    });
+
+    it('keeps Small Caps ink on the overlay when the shared preview renderer is unavailable', () => {
+      const ctx = makeMockCtx();
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true });
+      h.publishSmallCapsTextDraftPreview.mockReturnValue(false);
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+
+      expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledWith(toolArgs, rect);
+      expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ smallCaps: true }), {
         overflowIndicator: true,
       });
+    });
+
+    it('matches the committed point-text origin when compositor publication is refused', () => {
+      const ctx = makeMockCtx();
+      const rect = { x1: 105, y1: 206, x2: 150, y2: 230 };
+      const measuredRect = { x1: 110, y1: 215, x2: 132, y2: 239 };
+      const affine = { a: 2, b: 0, c: 0, d: 2, e: 3, f: 4 };
+      toolArgs = makeTextArgs({
+        text: 'i',
+        rect,
+        smallCaps: true,
+        angle: 30,
+        kind: 'point',
+        editingLayerId: 'text-1',
+      });
+      h.layers = {
+        'text-1': {
+          pos: { x: 100, y: 200, width: 50, height: 30 },
+          operations: [{ id: 'affine-1', kind: 'affine-transform', transform: affine, enabled: true }],
+        },
+      };
+      h.publishSmallCapsTextDraftPreview.mockReturnValue(false);
+      vi.mocked(calculateNewRect).mockReturnValue(measuredRect);
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ rect, text: 'i', kind: 'point' }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(ctx.translate).toHaveBeenCalledWith(110, 215);
+      expect(ctx.transform).toHaveBeenCalledWith(2, 0, 0, 2, 3, 4);
+      expect(ctx.rotate).toHaveBeenCalledWith(Math.PI / 6);
+      expect(vi.mocked(ctx.transform).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(ctx.rotate).mock.invocationCallOrder[0]
+      );
+      expect(renderText).toHaveBeenCalledWith(
+        ctx,
+        expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 22, y2: 24 } }),
+        { overflowIndicator: true }
+      );
+      expect(ctx.restore).toHaveBeenCalled();
     });
 
     it('draws the overflow indicator in the tool colour when layoutText reports overflow', () => {
