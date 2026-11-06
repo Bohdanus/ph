@@ -1085,8 +1085,8 @@ alone; `transform.notes.md` records those as separate divergences/product questi
 **Problem.** The normal Draw, Brush and Pencil gesture does not pass through `tempUpdateLayer`.
 `Main.tsx` dispatches those tools to `DrawToolArea`, which stores the full point list, clears the
 overlay, and calls `drawLine` with the whole path on each animation frame. Pointer-up commits that
-path once with `createLayerFromTool`. The processor path therefore has no incremental Draw behavior;
-tests of a Draw helper alone would not cover the gesture or its cost.
+path once with `createLayerFromTool`. The processor path therefore has no incremental Draw behavior. A `DrawToolArea` test verifies that a
+coalesced repaint receives all points accumulated for that frame, but it does not characterize the repeated work over a long stroke.
 
 `tempUpdateLayer` does reuse prior previews for Eraser brush mode, Dodge, Burn and Sponge when their
 tool-specific settings remain compatible and the new points extend the previous path. Other
@@ -1097,10 +1097,11 @@ Sharpen and Red Eye are discrete actions, not accumulating pointer strokes.
 **Reproduce.** Drag a long Draw stroke and profile `DrawToolArea.flushDrawingFrame`. Compare the
 number of points sent to `drawLine` over successive frames; it grows with the entire path.
 
-**Coverage.** Existing Draw tests pin raster output and block-stamp spacing, not whether normal
-pointer gestures accumulate only new segments. E2E pixel checks establish visible output, not the
-per-frame work shape. Incremental helper tests must exercise the actual gesture lifecycle before
-being treated as evidence for that path.
+**Coverage.** `DrawToolArea.test.tsx` drives eight pointer moves and verifies that the next coalesced repaint sends
+all nine accumulated points to `drawLine`. That proves full-path input for that frame; it does not
+quantify cost over a long stroke or assert per-frame work across many successive frames. Existing Draw
+tests pin raster output and block-stamp spacing. E2E pixel checks establish visible output, not
+per-frame cost. The removed incremental-helper tests did not exercise the actual gesture lifecycle.
 
 **Fix.** If profiling justifies incremental Draw rendering, accumulate segments in transient
 gesture-owned state in `DrawToolArea`, preserving shared-endpoint spacing and reset behavior on
