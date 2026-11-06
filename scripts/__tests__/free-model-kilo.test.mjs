@@ -4,8 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveKiloCli, runKiloCompletion } from '../lib/free-model-kilo.mjs';
 
-async function writeExecutable(filePath, source) {
+async function writeExecutable(filePath, source, { windowsShim = process.platform === 'win32' } = {}) {
   await mkdir(join(filePath, '..'), { recursive: true });
+  if (windowsShim) {
+    const scriptPath = `${filePath}.cjs`;
+    const commandPath = `${filePath}.cmd`;
+    await writeFile(scriptPath, `${source}\n`, 'utf8');
+    await writeFile(commandPath, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`, 'utf8');
+    return commandPath;
+  }
   await writeFile(filePath, `#!/usr/bin/env node\n${source}\n`, { encoding: 'utf8', mode: 0o700 });
   return filePath;
 }
@@ -21,7 +28,7 @@ describe('Kilo CLI discovery', () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-discovery-'));
     const pathKilo = await writeExecutable(join(directory, 'path', 'kilo'), 'process.exit(0);');
     const extensionKilo = await writeExecutable(
-      join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-8.0.0-darwin-arm64', 'bin', 'kilo'),
+      join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-8.0.0-test', 'bin', 'kilo'),
       'process.exit(0);'
     );
     try {
@@ -30,12 +37,11 @@ describe('Kilo CLI discovery', () => {
           command: '',
           pathValue: join(directory, 'path'),
           home: join(directory, 'home'),
-          platform: 'darwin',
         })
       ).resolves.toBe(pathKilo);
-      await expect(
-        resolveKiloCli({ command: '', pathValue: '', home: join(directory, 'home'), platform: 'darwin' })
-      ).resolves.toBe(extensionKilo);
+      await expect(resolveKiloCli({ command: '', pathValue: '', home: join(directory, 'home') })).resolves.toBe(
+        extensionKilo
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -45,9 +51,8 @@ describe('Kilo CLI discovery', () => {
 describe('authenticated Kilo CLI completion', () => {
   it('uses the logged-in provider, private stdin prompt, no-tools agent, and strict JSON completion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = join(directory, 'fake-kilo');
-    await writeExecutable(
-      command,
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
       `const fs = require('node:fs');
 const args = process.argv.slice(2);
 const message = fs.readFileSync(0, 'utf8');
@@ -105,8 +110,7 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 
   it('refuses OpenRouter so it cannot use Kilo-managed credentials', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = join(directory, 'fake-kilo');
-    await writeExecutable(command, 'process.exit(12);');
+    const command = await writeExecutable(join(directory, 'fake-kilo'), 'process.exit(12);');
 
     try {
       await expect(
@@ -119,9 +123,8 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 
   it('rejects any attempted tool call even when the model later emits final text', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = join(directory, 'fake-kilo');
-    await writeExecutable(
-      command,
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
       `console.log(JSON.stringify({ type: 'tool_use', part: { type: 'tool' } }));
 console.log(JSON.stringify({ type: 'text', part: { text: 'not accepted' } }));
 console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }));`
@@ -139,9 +142,8 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 
 
   it('does not accept an earlier stopped step when the last step was truncated', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = join(directory, 'fake-kilo');
-    await writeExecutable(
-      command,
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
       `console.log(JSON.stringify({ type: 'text', part: { text: 'earlier response' } }));
 console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0 } }));
 console.log(JSON.stringify({ type: 'text', part: { text: 'truncated tail' } }));
@@ -159,9 +161,8 @@ console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'length', cost
 
   it('exhausts a Kilo source after an authentication or quota status and hides provider bodies', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = join(directory, 'fake-kilo');
-    await writeExecutable(
-      command,
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
       `console.log('\u001b[0;91mError: Too Many Requests\u001b[0m');
 console.log(JSON.stringify({ type: 'error', error: { status: 429, message: 'private provider details' } }));
 process.exit(1);`
@@ -178,9 +179,8 @@ process.exit(1);`
 
   it('detects quota errors written only to stderr without exposing the provider message', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = join(directory, 'fake-kilo');
-    await writeExecutable(
-      command,
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
       "console.error('Free model usage limit reached (HTTP 429): private provider body'); process.exit(1);"
     );
 
@@ -195,9 +195,8 @@ process.exit(1);`
 
   it('rejects a reported non-zero cost and stops that provider for the run', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-completion-'));
-    const command = join(directory, 'fake-kilo');
-    await writeExecutable(
-      command,
+    const command = await writeExecutable(
+      join(directory, 'fake-kilo'),
       `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
 console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`
     );

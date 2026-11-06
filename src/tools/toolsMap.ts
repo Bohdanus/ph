@@ -53,6 +53,9 @@ const placeholderTool = (
   return () => React.createElement(PlaceholderTool, { title, options: placeholderToolGroups[key], showTodoBadge });
 };
 
+/** A one-shot command such as Invert applies on invocation and never becomes the current tool. */
+const NoOptionsBar: ToolbarRightComponent = () => null;
+
 type ToolsMap = Record<
   ToolName,
   Partial<ToolProcessorDefinition> & {
@@ -69,6 +72,7 @@ export const toolsMap: ToolsMap = {
   blur: { ...toolProcessors.blur, icon: 'blur', toolboxComponent: Blur },
   color: { ...toolProcessors.color, icon: 'color', toolboxComponent: Color },
   levels: { ...toolProcessors.levels, icon: 'levels', toolboxComponent: Levels },
+  invert: { ...toolProcessors.invert, icon: 'invert', toolboxComponent: NoOptionsBar },
   transform: { ...toolProcessors.transform, icon: 'transform', toolboxComponent: Transform },
   crop: { ...toolProcessors.crop, icon: 'crop', toolboxComponent: Crop },
   draw: { ...toolProcessors.draw, icon: 'draw', toolboxComponent: Draw },

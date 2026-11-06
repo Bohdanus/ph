@@ -53,18 +53,39 @@ describe('SidebarLeft color pickers', () => {
     });
   });
 
-  it('swaps foreground and background colors', () => {
+  it('swaps foreground and background colors with one SWAP_COLORS dispatch', () => {
     render(<SidebarLeft />);
 
     act(() => {
       fireEvent.click(screen.getByTestId('swap-colors-button'));
     });
 
-    expect(storeState.dispatch).toHaveBeenCalledWith({ type: 'SET_COLOR', payload: '#ffffff' });
-    expect(storeState.dispatch).toHaveBeenCalledWith({
-      type: 'SET_BACKGROUND_COLOR',
-      payload: '#000000',
+    expect(storeState.dispatch).toHaveBeenCalledTimes(1);
+    expect(storeState.dispatch).toHaveBeenCalledWith({ type: 'SWAP_COLORS' });
+  });
+
+  it('restores the default colours with one RESET_COLORS dispatch', () => {
+    render(<SidebarLeft />);
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Default Foreground and Background Colors' }));
     });
+
+    expect(storeState.dispatch).toHaveBeenCalledTimes(1);
+    expect(storeState.dispatch).toHaveBeenCalledWith({ type: 'RESET_COLORS' });
+    expect(screen.getByTestId('default-colors-button')).toHaveAttribute(
+      'title',
+      'Default Foreground and Background Colors (D)'
+    );
+  });
+
+  it("titles the swap control with Photoshop's name and its X shortcut", () => {
+    render(<SidebarLeft />);
+
+    expect(screen.getByTestId('swap-colors-button')).toHaveAttribute(
+      'title',
+      'Switch Foreground and Background Colors (X)'
+    );
   });
 
   it('clicking foreground swatch triggers the foreground color input click', () => {

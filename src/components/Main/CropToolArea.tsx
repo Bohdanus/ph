@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { isEqual } from 'lodash-es';
 import { ROTATE_HANDLE_OFFSET, useRect } from '../../hooks/useRect.ts';
 import { MAX_DOCUMENT_FRAME_SIDE, useLayers } from '../../contexts/useLayer.ts';
@@ -323,9 +323,10 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
    * The two actions go through a ref rather than closing over the values because the crop args are
    * replaced on every pointer move and `applyDocumentCrop` is rebuilt on every render; depending on
    * either would tear the window listener down and re-add it on every frame of a drag. The ref is
-   * refreshed in an effect, the same shape `TextToolArea` uses for its own args ref.
+   * refreshed in a layout effect after each render so the next keyboard event sees the committed
+   * crop state.
    */
-  const cropKeysRef = useRef({ commit: () => {}, cancel: () => {} });
+  const cropKeysRef = useRef({ commit: () => {}, cancel: () => {}, hasDraft: false });
   const overlayKeysRef = useRef({ args, overlayType, overlayOrientation });
   const setCurrentCropArgs = (nextArgs: typeof args) => {
     overlayKeysRef.current = { ...overlayKeysRef.current, args: nextArgs };
@@ -336,8 +337,9 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     overlayKeysRef.current = { args, overlayType, overlayOrientation };
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     cropKeysRef.current = {
+      hasDraft: Boolean(args.rect || args.preRatioRect),
       commit: () => {
         if (
           args.rect &&
@@ -393,6 +395,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
         event.stopPropagation();
         cropKeysRef.current.commit();
       } else if (event.key === 'Escape') {
+        if (!cropKeysRef.current.hasDraft) return;
         event.preventDefault();
         event.stopPropagation();
         cropKeysRef.current.cancel();

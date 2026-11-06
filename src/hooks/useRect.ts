@@ -15,6 +15,7 @@ import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
+import { isTemporaryHandActive } from './temporary-hand.ts';
 import type { Layer } from '../contexts/layer-types.ts';
 import type { CropOverlayOrientation, CropOverlayType, CropOverlayVisibility } from '../tools/crop.ts';
 
@@ -45,6 +46,8 @@ export type UseRectProps = {
   constrainToSquare?: boolean;
   /** Alt: grow a fresh drag out from the press point instead of away from it. */
   fromCentre?: boolean;
+  /** Space moves a marquee that is being created without replacing its pointer-owning surface. */
+  moveFreshDragWithSpace?: boolean;
 
   /**
    * When the `#007bff` dashed border is stroked. `'always'` is the default and is correct for
@@ -323,6 +326,7 @@ export function useRect({
   hideRotationHandle = false,
   constrainToSquare = false,
   fromCentre = false,
+  moveFreshDragWithSpace = false,
   borderMode = 'always',
   allowOutsideCanvas = false,
   handlesOutside = false,
@@ -353,6 +357,7 @@ export function useRect({
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
 
   const startPointRef = useRef<Point | null>(null);
+  const lastPointerPointRef = useRef<Point | null>(null);
   const currentEdgeRef = useRef<string | null>(null);
   const customAspectRatioRef = useRef<number | null>(null);
   const freshDragModifiersRef = useRef<FreshDragModifiers>({ ...NO_MODIFIERS });
@@ -1166,6 +1171,7 @@ export function useRect({
 
     const point = getLocalCoords(event);
     startPointRef.current = point;
+    lastPointerPointRef.current = point;
 
     const selectionRect = startRectRef.current;
 
@@ -1238,6 +1244,17 @@ export function useRect({
     if (!isPointerMoveValid(event)) return false;
     if (isMoveTool && !startRectRef.current) return false;
 
+    const point = getLocalCoords(event);
+    const previousPoint = lastPointerPointRef.current;
+    if (moveFreshDragWithSpace && isTemporaryHandActive() && previousPoint && !currentEdgeRef.current) {
+      const dx = point.x - previousPoint.x;
+      const dy = point.y - previousPoint.y;
+      if (startPointRef.current) {
+        startPointRef.current = { x: startPointRef.current.x + dx, y: startPointRef.current.y + dy };
+      }
+    }
+    lastPointerPointRef.current = point;
+
     sampleFreshDragModifiers(event);
     pendingClientXRef.current = event.clientX;
     pendingClientYRef.current = event.clientY;
@@ -1281,11 +1298,20 @@ export function useRect({
     sampleFreshDragModifiers(event);
 
     const point = getLocalCoords(event);
+    const previousPoint = lastPointerPointRef.current;
+    if (moveFreshDragWithSpace && isTemporaryHandActive() && previousPoint && !currentEdgeRef.current) {
+      const dx = point.x - previousPoint.x;
+      const dy = point.y - previousPoint.y;
+      if (startPointRef.current) {
+        startPointRef.current = { x: startPointRef.current.x + dx, y: startPointRef.current.y + dy };
+      }
+    }
     const sortedRect = sortRect(calculateMaskRect(point));
     onChangeEnd(sortedRect);
 
     startRectRef.current = { ...sortedRect };
     startPointRef.current = null;
+    lastPointerPointRef.current = null;
     currentEdgeRef.current = null;
     customAspectRatioRef.current = null;
     gesturePointerIdRef.current = null;
@@ -1318,6 +1344,7 @@ export function useRect({
       onRotationChange?.(startRotationRef.current);
     }
     startPointRef.current = null;
+    lastPointerPointRef.current = null;
     currentEdgeRef.current = null;
     gesturePointerIdRef.current = null;
     customAspectRatioRef.current = null;

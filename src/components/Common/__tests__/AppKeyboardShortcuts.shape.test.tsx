@@ -37,6 +37,8 @@ vi.mock('../../../contexts/useHistory.ts', () => ({
 vi.mock('../../../hooks/useApp.ts', () => ({
   useApp: () => ({ goToTool: goToToolMock, handleImageSave: vi.fn() }),
 }));
+vi.mock('../../../hooks/useWorkspaceFitScale.ts', () => ({ useWorkspaceFitScale: () => 1 }));
+vi.mock('../../../hooks/useDevicePixelRatio.ts', () => ({ useDevicePixelRatio: () => 1 }));
 
 vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => ({ openSaveImageDialog: vi.fn() }) }));
 

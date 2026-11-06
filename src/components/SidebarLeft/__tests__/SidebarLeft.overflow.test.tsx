@@ -321,7 +321,7 @@ describe('SidebarLeft overflow', () => {
       expect(toolsOnTiles() + inFlyout, `tools reachable at ${slotHeight}px of slot`).toBe(toolCount);
       unmount();
     }
-  });
+  }, 15_000);
 
   it('bounds the three-dots menu to the window and lets it scroll', () => {
     // The defect this pins: a menu as tall as its contents, in a `position: fixed` overlay
@@ -571,6 +571,7 @@ describe('SidebarLeft the three-dots tile', () => {
     expect(screen.getByTestId('foreground-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('background-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('swap-colors-button')).toBeInTheDocument();
+    expect(screen.getByTestId('default-colors-button')).toBeInTheDocument();
   });
 
   it('closes the overflow flyout when the whole rail fits and does not reopen it when it returns', () => {

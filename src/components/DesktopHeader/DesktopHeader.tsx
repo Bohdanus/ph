@@ -13,6 +13,7 @@ import { extraTools, slugifyToolLabel } from '../../../toolbar-mapping.ts';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
+import { useInvertLayer } from '../../hooks/useInvertLayer.ts';
 import type { FigureType } from '../../tools/shape.ts';
 
 /**
@@ -25,19 +26,19 @@ import type { FigureType } from '../../tools/shape.ts';
  * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
  * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
  *
- * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly six
+ * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly seven
  * tools, for two separate reasons.**
  *
  * Add Anchor Point, Delete Anchor Point and Convert Point are absent because they are absent
  * from Photoshop's own Tools panel too — they modify a path rather than paint, and Photoshop
  * reaches them from the Pen's context menu and the path-modification commands, not from the
- * Tools panel or the Tools menu. `color`, `levels` and `transform` are absent for the other
+ * Tools panel or the Tools menu. `color`, `levels`, `invert` and `transform` are absent for the other
  * reason: they are `Image ▸ Adjustments` and `Edit ▸ Free Transform` COMMANDS, which are the
  * same defect one level up from a missing tool — a command is not a tool, and a Tools-panel
  * entry for one is a falsehood in the list whose own header calls a missing tool "a visible
  * inconsistency the user has to notice and work around." They are in `ADJUSTMENTS_ITEMS` and
  * in the `Edit` menu below instead, and `toolbar-mapping.ts`'s `extraTools` names them as the
- * registered tool ids with no rail entry. All six are in `availableTools` because they are
+ * registered tool ids with no rail entry. All seven are in `availableTools` because they are
  * selectable tools; none of them is a Tools-menu item.
  *
  * Every OTHER `availableTools` name must produce a row. That was not true until the test
@@ -52,14 +53,14 @@ import type { FigureType } from '../../tools/shape.ts';
  *
  * Two groups, two mechanisms, and they are not interchangeable. The three pen point-tools
  * modify a path, which Photoshop reaches from the Pen's context menu rather than from a
- * Tools panel. The three adjustment commands are not tools at all: they left the rail in
+ * Tools panel. The adjustment commands are not tools at all: they left the rail in
  * `4037463b`, which is also where they were added to this list — `MENUS_EXCLUDE` itself is
  * older, introduced by `dd234bad` with the pen tools alone — and they are hosted by
  * `Image ▸ Adjustments` and `Edit ▸ Free Transform`. See the note at the top of this file,
  * which is the authority for both.
  *
  * The second group is SPREAD from `toolbar-mapping.ts`'s `extraTools` rather than written
- * out, so the rail and this menu cannot disagree about which ids are commands: a fourth
+ * out, so the rail and this menu cannot disagree about which ids are commands: another
  * id that leaves the rail is added to that export, and `toolbar-mapping.test.ts` fails
  * until it is.
  */
@@ -156,9 +157,13 @@ const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
  * becomes enabled by having a `toolName` and nothing else. Removing a disabled item needs
  * the capability to land, not a decision.
  */
+/** One-shot `Image ▸ Adjustments` commands that apply on click instead of opening a tool's bar. */
+type AdjustmentCommand = 'invert';
+
 type MenuHostItem = {
   label: string;
   toolName?: ToolName;
+  command?: AdjustmentCommand;
 };
 
 /**
@@ -187,7 +192,7 @@ type MenuHostItem = {
  *   are `Image` items rather than submenu items (Adobe, `…/using/making-quick-tonal-adjustments.html`),
  *   and `Color Blindness Simulation` is not in this menu at all.
  *
- * Two items are enabled, and each is enabled because its computation is the Adobe command
+ * Three items are enabled, and each is enabled because its computation is the Adobe command
  * it is named for:
  *
  * - **`Brightness/Contrast` → the `levels` id.** `LevelsToolArgs` is
@@ -217,8 +222,14 @@ type MenuHostItem = {
  *   it is what keeps `color` reachable at all: it is in `extraTools`, so it has no rail tile
  *   and no `tools-menu-color-button`, and this submenu is the only path into the panel.
  *
+ * - **`Invert` → the `invert` command.** Adobe: "a pixel … with a value of 255 is changed to 0,
+ *   and a pixel with a value of 5 is changed to 250", which is `invertPixels` per RGB channel
+ *   (same page as above). It is the one item that applies on click, as Adobe's does, through
+ *   `useInvertLayer` — the same call `mod+I` makes — and so it carries a `command` rather than
+ *   a `toolName`.
+ *
  * **`Levels`, `Curves`, `Exposure`, `Black and White`, `Hue/Saturation`, `Vibrance`,
- * `Color Balance`, `Channel Mixer`, `Selective Color`, `Photo Filter`, `Invert`,
+ * `Color Balance`, `Channel Mixer`, `Selective Color`, `Photo Filter`,
  * `Posterize`, `Threshold`, `Gradient Map`, `Equalize`, `Shadows/Highlights`, `HDR Toning`,
  * `Match Color`, `Replace Color` and `Color Lookup` are all disabled**, which is the
  * accurate state of this app: it has no adjustment layers at all, and
@@ -244,7 +255,7 @@ const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
   { label: 'Desaturate', toolName: 'color' },
   { label: 'Match Color' },
   { label: 'Replace Color' },
-  { label: 'Invert' },
+  { label: 'Invert', command: 'invert' },
   { label: 'Equalize' },
   { label: 'Gradient Map' },
   { label: 'Posterize' },
@@ -258,6 +269,7 @@ const DesktopHeader = () => {
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
   const { confirmDiscard } = useUnsavedChanges();
   const { patchToolArgs } = useCurrentTool();
+  const { invertActiveLayer } = useInvertLayer();
 
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -318,6 +330,15 @@ const DesktopHeader = () => {
   };
 
   const handleFreeTransform = () => handleToolSelection('transform');
+
+  const adjustmentCommands: Record<AdjustmentCommand, () => void> = {
+    invert: () => void invertActiveLayer(),
+  };
+
+  const handleAdjustmentCommand = (command: AdjustmentCommand) => {
+    adjustmentCommands[command]();
+    closeMenus();
+  };
 
   const handleResetWorkspace = () => {
     resetWorkspace();
@@ -380,7 +401,10 @@ const DesktopHeader = () => {
   });
 
   return (
-    <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950">
+    <header
+      data-chrome="header"
+      className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950"
+    >
       {/* The document's top-level heading, so a screen-reader user has something to
           navigate by and axe's `page-has-heading-one` has something to find. It sits
           INSIDE the header landmark: a bare grid child would fail axe's `region` rule
@@ -555,13 +579,17 @@ const DesktopHeader = () => {
                       // Bound to a `const` before the closure so the check is one read and
                       // the handler carries no narrowing of its own.
                       const toolName = item.toolName;
+                      const command = item.command;
                       return (
                         <li key={slug}>
                           <button
                             className={MENU_ITEM_BUTTON}
                             type="button"
-                            disabled={toolName === undefined}
-                            onClick={() => toolName !== undefined && handleToolSelection(toolName)}
+                            disabled={toolName === undefined && command === undefined}
+                            onClick={() => {
+                              if (command !== undefined) handleAdjustmentCommand(command);
+                              else if (toolName !== undefined) handleToolSelection(toolName);
+                            }}
                             data-testid={`image-menu-adjustments-${slug}-button`}
                           >
                             {item.label}

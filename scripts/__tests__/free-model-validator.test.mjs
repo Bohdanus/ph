@@ -20,6 +20,7 @@ function catalogFetch({
   kilo = [kiloRow(NEMOTRON)],
   openrouter = [openRouterRow(NEMOTRON)],
   groq = [{ id: 'openai/gpt-oss-120b' }],
+  groqStatusByKey = {},
   quota = { data: { free_model_daily_requests: { used: 1, limit: 10, remaining: 9 } } },
 } = {}) {
   const calls = [];
@@ -29,7 +30,11 @@ function catalogFetch({
     if (requestUrl === 'https://api.kilo.ai/api/gateway/models') return jsonResponse(kilo);
     if (requestUrl === 'https://openrouter.ai/api/v1/models') return jsonResponse({ data: openrouter });
     if (requestUrl === 'https://openrouter.ai/api/v1/key') return jsonResponse(quota);
-    if (requestUrl === 'https://api.groq.com/openai/v1/models') return jsonResponse({ data: groq });
+    if (requestUrl === 'https://api.groq.com/openai/v1/models') {
+      const key = options.headers?.Authorization?.replace(/^Bearer\s+/, '') ?? '';
+      const status = groqStatusByKey[key] ?? 200;
+      return jsonResponse({ data: groq }, status);
+    }
     if (requestUrl === 'https://opencode.ai/inference/v1/models') return jsonResponse({ data: [] });
     throw new Error(`Unexpected catalog request: ${requestUrl}`);
   });
@@ -193,6 +198,26 @@ describe('free model validation', () => {
     ).resolves.toMatchObject({ model: 'openai/gpt-oss-120b', provider: 'groq', validated: true });
   });
 
+  it('tries every explicitly configured Groq key when validating a model', async () => {
+    const { fetchImpl, calls } = catalogFetch({ groqStatusByKey: { rejected: 401 } });
+    await expect(
+      validateFreeModel({
+        model: 'openai/gpt-oss-120b',
+        provider: 'groq',
+        ...validationOptions(fetchImpl, {
+          groqApiKeys: ['rejected', 'accepted'],
+          groqFreePlan: true,
+        }),
+      })
+    ).resolves.toMatchObject({ model: 'openai/gpt-oss-120b', provider: 'groq', validated: true });
+
+    expect(
+      calls
+        .filter(({ url }) => url === 'https://api.groq.com/openai/v1/models')
+        .map(({ options }) => options.headers.Authorization)
+    ).toEqual(['Bearer rejected', 'Bearer accepted']);
+  });
+
   it('validates every provider/model pair in one bounded batch', async () => {
     const { fetchImpl, calls } = catalogFetch({
       kilo: [kiloRow(NEMOTRON), kiloRow(XING)],
@@ -247,5 +272,26 @@ describe('free model validation', () => {
       provider: 'groq',
       name: 'openai/gpt-oss-120b',
     });
+  });
+
+  it('tries every explicitly configured Groq key when listing model options', async () => {
+    const { fetchImpl, calls } = catalogFetch({ groqStatusByKey: { rejected: 401 } });
+    const options = await getFreeModelOptions(
+      validationOptions(fetchImpl, {
+        groqApiKeys: ['rejected', 'accepted'],
+        groqFreePlan: true,
+      })
+    );
+
+    expect(options).toContainEqual({
+      model: 'openai/gpt-oss-120b',
+      provider: 'groq',
+      name: 'openai/gpt-oss-120b',
+    });
+    expect(
+      calls
+        .filter(({ url }) => url === 'https://api.groq.com/openai/v1/models')
+        .map(({ options: requestOptions }) => requestOptions.headers.Authorization)
+    ).toEqual(['Bearer rejected', 'Bearer accepted']);
   });
 });

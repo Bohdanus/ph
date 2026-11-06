@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   claimDocumentGesture,
   isDocumentGestureOpen,
   readDocumentGesture,
   releaseDocumentGesture,
   resetDocumentGestures,
+  subscribeDocumentGesture,
 } from '../document-gesture';
 
 describe('document-gesture', () => {
@@ -26,6 +27,32 @@ describe('document-gesture', () => {
 
     expect(isDocumentGestureOpen()).toBe(true);
     expect(readDocumentGesture()).toEqual({ kind: 'rectangular-selection', pointerId: 7 });
+  });
+
+  it('notifies subscribers after ownership changes without notifying inside the pointer handler', async () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeDocumentGesture(listener);
+    claimDocumentGesture('elliptical-selection', 12);
+    expect(listener).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    releaseDocumentGesture('elliptical-selection', 12);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it('tracks a live elliptical marquee as a document gesture', () => {
+    expect(claimDocumentGesture('elliptical-selection', 11)).toBe(true);
+
+    expect(readDocumentGesture()).toEqual({ kind: 'elliptical-selection', pointerId: 11 });
+
+    releaseDocumentGesture('elliptical-selection', 11);
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('refuses a second claim, so the document has one owner at a time', () => {

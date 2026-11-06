@@ -84,6 +84,7 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     // square centred on it.
     constrainToSquare: true,
     fromCentre: true,
+    moveFreshDragWithSpace: true,
     // The ants are this selection's border (`Main.tsx:63`), so `useRect`'s own stroke is the same
     // rectangle one canvas below it. It is kept for the drag only, and the hook is the only thing
     // that knows when the drag starts and ends, so it is also the only thing that can tell the ants

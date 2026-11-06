@@ -2,8 +2,11 @@
 import { spawn } from 'node:child_process';
 import { open, stat, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { completeWithFreeModel } from './free-model-pool.mjs';
-import { sanitizeErrorMessage, sanitizeForOutput } from './lib/secrets.mjs';
+import { redactSensitiveText, sanitizeErrorMessage } from './lib/secrets.mjs';
+
+export { redactSensitiveText };
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_PROMPT_FILE_BYTES = 4 * 1024;
@@ -95,43 +98,34 @@ const SUMMARIZE_PROMPT =
   'Results (JSON):\n' +
   '{SNIPPETS}';
 
-export function redactSensitiveText(value) {
-  if (typeof value !== 'string') return value;
-  return sanitizeForOutput(
-    value
-      .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]')
-      .replace(
-        /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
-        '[REDACTED]'
-      )
-      .replace(
-        /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
-        (_match, prefix, value) => {
-          const quote = value.startsWith('"') || value.startsWith("'") ? value[0] : '';
-          return `${prefix}${quote}[REDACTED]${quote}`;
-        }
-      )
-      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]')
-  );
-}
-
 function escapeSqlValue(value) {
   return String(value).replace(/'/g, "''");
 }
 
-export function resolveKiloDbCandidates({ kiloDbPath, homeDir, xdgDataHome, platform: plat } = {}) {
+export function resolveKiloDbCandidates({
+  kiloDbPath,
+  homeDir,
+  xdgDataHome,
+  appData,
+  localAppData,
+  platform: plat,
+} = {}) {
   if (kiloDbPath) return [kiloDbPath];
   const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
   const xdg = xdgDataHome ?? process.env.XDG_DATA_HOME;
+  const runtimePlatform = plat ?? platform();
   const candidates = [];
   if (xdg) candidates.push(`${xdg}/kilo/kilo.db`);
   if (home) {
-    const appData = process.env.APPDATA;
-    const localAppData = process.env.LOCALAPPDATA;
-    if (appData) candidates.push(`${appData}\\kilo\\kilo.db`);
-    if (localAppData) candidates.push(`${localAppData}\\kilo\\kilo.db`);
-    candidates.push(`${home}/.local/share/kilo/kilo.db`);
-    if (plat === 'darwin') {
+    if (runtimePlatform === 'win32') {
+      const roamingAppData = appData ?? process.env.APPDATA;
+      const roamingLocalAppData = localAppData ?? process.env.LOCALAPPDATA;
+      if (roamingAppData) candidates.push(`${roamingAppData}\\kilo\\kilo.db`);
+      if (roamingLocalAppData) candidates.push(`${roamingLocalAppData}\\kilo\\kilo.db`);
+    } else {
+      candidates.push(`${home}/.local/share/kilo/kilo.db`);
+    }
+    if (runtimePlatform === 'darwin') {
       candidates.push(`${home}/Library/Application Support/kilo/kilo.db`);
     }
   }
@@ -663,9 +657,9 @@ export async function summarizeSearchResults(
   const sanitizedQuery = redactSensitiveText(prompt);
   const candidates = sessions.map((session) => ({
     session_id: session.session_id,
-    title: redactSensitiveText((session.title || '').slice(0, 300)),
+    title: redactSensitiveText(session.title || '').slice(0, 300),
     updated: session.updated,
-    snippet: redactSensitiveText((session.snippet || '').slice(0, MAX_SNIPPET_CHARS)),
+    snippet: redactSensitiveText(session.snippet || '').slice(0, MAX_SNIPPET_CHARS),
   }));
   let included = candidates;
   let snippets;
@@ -1048,7 +1042,7 @@ export async function main(
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;

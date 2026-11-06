@@ -32,7 +32,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, isAbsolute, join, relative as relativePath } from 'node:path';
 
 import {
   OPERATION_MARKERS,
@@ -884,77 +884,85 @@ describe("the third review's findings, pinned", () => {
 });
 
 describe('the roster cannot be trusted on its own', () => {
-  it('reports a worktree whose administrative directory git can no longer describe', () => {
-    // Found by a review with a single `chmod`, and it is the worst failure this module
-    // can have: `chmod 000 <gitdir>/worktrees/<name>` makes `git worktree list
-    // --porcelain` OMIT the registration entirely — the roster silently shrank from
-    // three entries to two — while `MERGE_HEAD` sat in the directory that had just
-    // become unreadable. The report said "clean" and exited 0, which is the one output
-    // this module exists to never produce, and it falsified both `scanRepository`'s
-    // docstring and the sentence in `docs/ORCHESTRATION.md` about reporting a worktree
-    // it could not describe as unreadable rather than clean.
-    //
-    // `chmod` rather than a stub because the whole point is that git's OWN roster
-    // command loses the entry; an injected reader could only prove the cross-check runs,
-    // not that it has anything to catch.
-    const repo = addConflictingBranch(makeRepo(), 'theirs');
-    const path = addWorktree(repo, 'hidden');
-    git(path, 'checkout', '-B', 'wt/hidden');
-    mergeThatConflicts(path, 'theirs');
+  // Windows ignores POSIX chmod mode bits, so this cannot hide the admin directory there.
+  it.skipIf(process.platform === 'win32')(
+    'reports a worktree whose administrative directory git can no longer describe',
+    () => {
+      // Found by a review with a single `chmod`, and it is the worst failure this module
+      // can have: `chmod 000 <gitdir>/worktrees/<name>` makes `git worktree list
+      // --porcelain` OMIT the registration entirely — the roster silently shrank from
+      // three entries to two — while `MERGE_HEAD` sat in the directory that had just
+      // become unreadable. The report said "clean" and exited 0, which is the one output
+      // this module exists to never produce, and it falsified both `scanRepository`'s
+      // docstring and the sentence in `docs/ORCHESTRATION.md` about reporting a worktree
+      // it could not describe as unreadable rather than clean.
+      //
+      // `chmod` rather than a stub because the whole point is that git's OWN roster
+      // command loses the entry; an injected reader could only prove the cross-check runs,
+      // not that it has anything to catch.
+      const repo = addConflictingBranch(makeRepo(), 'theirs');
+      const path = addWorktree(repo, 'hidden');
+      git(path, 'checkout', '-B', 'wt/hidden');
+      mergeThatConflicts(path, 'theirs');
 
-    const before = scanRepository(repo).worktrees;
-    expect(before.map((w) => w.name)).toContain('hidden');
+      const before = scanRepository(repo).worktrees;
+      expect(before.map((w) => w.name)).toContain('hidden');
 
-    const adminDir = join(repo, '.git', 'worktrees', 'hidden');
-    chmodSync(adminDir, 0o000);
-    try {
-      // git itself has now lost it. Asserted, because the rest of the case means nothing
-      // if the roster were still complete.
-      expect(
-        spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo, encoding: 'utf8' }).stdout
-      ).not.toContain('hidden\n');
+      const adminDir = join(repo, '.git', 'worktrees', 'hidden');
+      chmodSync(adminDir, 0o000);
+      try {
+        // git itself has now lost it. Asserted, because the rest of the case means nothing
+        // if the roster were still complete.
+        expect(
+          spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo, encoding: 'utf8' }).stdout
+        ).not.toContain('hidden\n');
 
-      const after = scanRepository(repo);
-      const found = after.worktrees.find((w) => w.name === 'hidden');
-      expect(found, 'the cross-check must re-add what git dropped').toBeDefined();
-      // A `chmod 000` makes the state genuinely unreadable, so the honest answer is NOT
-      // a recovered `MERGE_HEAD` — it is "here is a registration, and I could not read
-      // it". Claiming the merge was found when it was not would be the same defect in
-      // the opposite direction.
-      expect(found.operations).toEqual([]);
-      // The message names the read that actually failed. It used to be inferred from
-      // `readdirSync`, which at mode 0111 throws while the markers read perfectly — so
-      // it printed "its git state could not be read" directly above the `MERGE_HEAD`
-      // it had just read.
-      expect(found.readError).toMatch(/gitdir file could not be read/);
-      const reported = findings(after.worktrees);
-      expect(reported).toHaveLength(1);
-      expect(reported[0].name).toBe('hidden');
-    } finally {
-      chmodSync(adminDir, 0o755);
+        const after = scanRepository(repo);
+        const found = after.worktrees.find((w) => w.name === 'hidden');
+        expect(found, 'the cross-check must re-add what git dropped').toBeDefined();
+        // A `chmod 000` makes the state genuinely unreadable, so the honest answer is NOT
+        // a recovered `MERGE_HEAD` — it is "here is a registration, and I could not read
+        // it". Claiming the merge was found when it was not would be the same defect in
+        // the opposite direction.
+        expect(found.operations).toEqual([]);
+        // The message names the read that actually failed. It used to be inferred from
+        // `readdirSync`, which at mode 0111 throws while the markers read perfectly — so
+        // it printed "its git state could not be read" directly above the `MERGE_HEAD`
+        // it had just read.
+        expect(found.readError).toMatch(/gitdir file could not be read/);
+        const reported = findings(after.worktrees);
+        expect(reported).toHaveLength(1);
+        expect(reported[0].name).toBe('hidden');
+      } finally {
+        chmodSync(adminDir, 0o755);
+      }
     }
-  });
+  );
 
-  it('round-trips a worktree path containing a newline, which the roster does not quote', () => {
-    // `git worktree list --porcelain` does NOT quote its paths, so a worktree at
-    // `…/wt\nwith-newline` came back as two records and the path was truncated at the
-    // newline. The live worktree then read as absent, the tool stated as FACT that git
-    // had dropped state still sitting on disk, and the record for the worktree actually
-    // holding the merge never existed. This is the trap `unmergedPaths` documents for
-    // `git status --porcelain`, in the same module, and the first version had both.
-    const repo = addConflictingBranch(makeRepo(), 'theirs');
-    const path = join(scratch(), 'wt\nwith-newline');
-    git(repo, 'worktree', 'add', '-qb', 'wt/newline', path);
-    git(path, 'checkout', '-q', '-B', 'wt/newline');
-    mergeThatConflicts(path, 'theirs');
+  // Windows filenames cannot contain newlines; POSIX CI exercises this Git-roster edge case.
+  it.skipIf(process.platform === 'win32')(
+    'round-trips a worktree path containing a newline, which the roster does not quote',
+    () => {
+      // `git worktree list --porcelain` does NOT quote its paths, so a worktree at
+      // `…/wt\nwith-newline` came back as two records and the path was truncated at the
+      // newline. The live worktree then read as absent, the tool stated as FACT that git
+      // had dropped state still sitting on disk, and the record for the worktree actually
+      // holding the merge never existed. This is the trap `unmergedPaths` documents for
+      // `git status --porcelain`, in the same module, and the first version had both.
+      const repo = addConflictingBranch(makeRepo(), 'theirs');
+      const path = join(scratch(), 'wt\nwith-newline');
+      git(repo, 'worktree', 'add', '-qb', 'wt/newline', path);
+      git(path, 'checkout', '-q', '-B', 'wt/newline');
+      mergeThatConflicts(path, 'theirs');
 
-    const found = scanRepository(repo).worktrees.find((w) => w.path.includes('\n'));
-    expect(found, 'the newline path must survive parsing').toBeDefined();
-    expect(found.path).toBe(realpathSync(path));
-    expect(found.present).toBe(true);
-    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
-    expect(found.unmerged).toEqual(['f.txt']);
-  });
+      const found = scanRepository(repo).worktrees.find((w) => w.path.includes('\n'));
+      expect(found, 'the newline path must survive parsing').toBeDefined();
+      expect(found.path).toBe(realpathSync(path));
+      expect(found.present).toBe(true);
+      expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+      expect(found.unmerged).toEqual(['f.txt']);
+    }
+  );
 
   it('reports how many administrative directories the roster accounted for', () => {
     // The cross-check needs a floor to compare against, and a reader that wants to know
@@ -1030,22 +1038,47 @@ describe('the cross-check must not invent worktrees either', () => {
     // permanently, and `records` exceeded the roster so the worktree was counted twice.
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const relative = join(scratch(), 'rel');
-    git(repo, 'worktree', 'add', '-q', '--relative-paths', '-b', 'wt/rel', relative);
+    const add = spawnSync('git', ['worktree', 'add', '-q', '--relative-paths', '-b', 'wt/rel', relative], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: GIT_ENV,
+    });
+    const hasRelativeWriter = add.status === 0;
+    if (!hasRelativeWriter) {
+      expect(`${add.stdout ?? ''}${add.stderr ?? ''}`).toMatch(/unknown option[\s\S]*relative-paths/);
+      git(repo, 'worktree', 'add', '-q', '-b', 'wt/rel', relative);
+    }
     git(relative, 'checkout', '-q', '-B', 'wt/rel');
     mergeThatConflicts(relative, 'theirs');
 
-    // The precondition, asserted: git really did write a relative path here.
-    const gitdir = readFileSync(join(repo, '.git', 'worktrees', 'rel', 'gitdir'), 'utf8').trim();
+    const adminDir = join(repo, '.git', 'worktrees', 'rel');
+    const adminGitdir = join(adminDir, 'gitdir');
+    if (!hasRelativeWriter) {
+      // Apple Git 2.39 predates both the writer and the roster reader for this shape.
+      // Build the same administrative link after Git has created the real worktree and
+      // conflict, then exercise our resolver directly instead of asking that old Git to
+      // parse a format it does not support.
+      writeFileSync(adminGitdir, `${relativePath(adminDir, join(relative, '.git'))}\n`);
+    }
+
+    // The precondition, asserted: the administrative link really is relative here.
+    const gitdir = readFileSync(adminGitdir, 'utf8').trim();
     expect(isAbsolute(gitdir)).toBe(false);
 
-    const scanned = scanRepository(repo);
-    // No invented record, and no double count.
-    expect(scanned.worktrees).toHaveLength(scanned.roster);
-    const found = scanned.worktrees.find((w) => w.name === 'rel');
-    expect(found.present).toBe(true);
-    expect(found.readError).toBeNull();
-    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
-    expect(findings(scanned.worktrees)).toHaveLength(1);
+    const resolved = resolveAdminDirFor(resolveCommonDir(repo), relative);
+    expect(realpathSync(resolved)).toBe(realpathSync(adminDir));
+    expect(readOperations(resolved).map((o) => o.operation)).toEqual(['merge']);
+
+    if (hasRelativeWriter) {
+      const scanned = scanRepository(repo);
+      // No invented record, and no double count.
+      expect(scanned.worktrees).toHaveLength(scanned.roster);
+      const found = scanned.worktrees.find((w) => w.name === 'rel');
+      expect(found.present).toBe(true);
+      expect(found.readError).toBeNull();
+      expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+      expect(findings(scanned.worktrees)).toHaveLength(1);
+    }
   });
 
   it('does not report a stray directory under the admin root as a lost worktree', () => {

@@ -458,9 +458,11 @@ describe('FeatherMagneticLassoToolArea', () => {
     const toolArea = container.firstElementChild as HTMLDivElement;
 
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
-    h.shortcutHandlers.get('Escape')?.();
+    expect(h.rawShortcuts.get('Escape')?.enabled).toBe(true);
+    act(() => h.shortcutHandlers.get('Escape')?.());
 
     expect(h.dispatch).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    expect(h.rawShortcuts.get('Escape')?.enabled).toBe(false);
   });
 
   it('throttles magnetic pointer-move preview work to one requestAnimationFrame', () => {
@@ -588,6 +590,7 @@ describe('FeatherMagneticLassoToolArea', () => {
       const mockCtx = createMockContext();
       renderArea({ current: mockCtx });
 
+      expect(h.rawShortcuts.get('Escape')?.enabled).toBe(false);
       h.shortcutHandlers.get('Enter')?.();
       h.shortcutHandlers.get('Escape')?.();
 

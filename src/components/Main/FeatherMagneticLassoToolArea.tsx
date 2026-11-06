@@ -561,6 +561,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   useKeyDownShortcut({
     key: 'Escape',
     preventDefault: true,
+    enabled: hasDraftAnchors,
     allowInInput: true,
     mutatesDocument: false,
     onKeyDown: cancelSelectionDraft,

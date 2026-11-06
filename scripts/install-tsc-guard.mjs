@@ -1,5 +1,5 @@
 /**
- * Links the tsc guard into `node_modules/.bin`, so a typecheck that checks
+ * Installs the tsc guard into `node_modules/.bin`, so a typecheck that checks
  * nothing cannot report success.
  * -----------------------------------------------------------------------
  * Runs from `npm install` through the `prepare` script, alongside
@@ -9,17 +9,20 @@
  *
  * WHAT IT DOES
  * ------------
- * `node_modules/.bin/tsc` is npm's symlink to `typescript/bin/tsc`. This
- * replaces it with a symlink to `scripts/tsc-guard.mjs`, which refuses to run
- * without build mode and hands off to the real compiler when build mode is
- * present. Every spelling of `tsc` resolves through that one file.
+ * On POSIX, `node_modules/.bin/tsc` is a symlink; this replaces it with a
+ * symlink to `scripts/tsc-guard.mjs`. On Windows, npm creates `.cmd` and
+ * `.ps1` launchers instead. This replaces them and adds the extensionless bin
+ * marker `npm exec` searches for, with all three dispatching to that reviewed
+ * file. The guard refuses to run without build mode and hands
+ * off to the real compiler when build mode is present.
  *
- * WHY A SYMLINK AND NOT A GENERATED FILE
+ * WHY A LINK OR THIN LAUNCHER, NOT A GENERATED GUARD
  * --------------------------------------
  * A generated copy of the decision logic would be a second implementation of
  * the rules, and this repository has already been bitten by exactly that shape
  * (`e2e/global-setup.ts` records a deleted unreachable branch as "a second code
- * path a reader has to verify"). The link points at the real, reviewed file.
+ * path a reader has to verify"). Every launcher executes the real, reviewed
+ * file; none duplicates its decision logic.
  *
  * WHY `prepare` IS NOT ENOUGH ON ITS OWN
  * --------------------------------------
@@ -39,8 +42,8 @@
  *
  * A shim cannot be made un-removeable inside node_modules, so this does not
  * pretend otherwise. The defence is that the absence is LOUD rather than
- * invisible: `scripts/__tests__/tsc-guard.test.mjs` resolves the same link
- * npm would resolve and fails when it is the wrong file, so a worktree whose
+ * invisible: `scripts/__tests__/tsc-guard.test.mjs` resolves the same launcher
+ * npm would resolve and fails when it is the wrong target, so a worktree whose
  * guard was clobbered reports a red test rather than a false green. That is the
  * same stance `install-git-hooks.js` takes on a missing hook — a gate that
  * cannot run must not let a commit through.
@@ -50,12 +53,14 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,25 +71,69 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 /** Where npm puts the executable it links for every bin field. */
 const BIN_DIR = path.join(REPO_ROOT, 'node_modules', '.bin');
 
-/** The link this script manages, and the file it must point at. */
-const LINK = path.join(BIN_DIR, 'tsc');
-
-/** Built here first, then renamed onto LINK, so LINK is never absent. */
-const TEMP_LINK = path.join(BIN_DIR, '.tsc-guard.tmp');
+const IS_WINDOWS = process.platform === 'win32';
+const LINK = path.join(BIN_DIR, IS_WINDOWS ? 'tsc.cmd' : 'tsc');
+const POWERSHELL_LINK = path.join(BIN_DIR, 'tsc.ps1');
+const NODE_LINK = path.join(BIN_DIR, 'tsc');
+const TEMP_LINK = path.join(BIN_DIR, IS_WINDOWS ? '.tsc-guard.tmp.cmd' : '.tsc-guard.tmp');
+const TEMP_POWERSHELL_LINK = path.join(BIN_DIR, '.tsc-guard.tmp.ps1');
+const TEMP_NODE_LINK = path.join(BIN_DIR, '.tsc-guard.tmp');
 const TARGET = path.join(REPO_ROOT, 'scripts', 'tsc-guard.mjs');
 
 /** The real compiler. Its absence is the "no TypeScript installed" case. */
 const REAL_COMPILER = path.join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
 
+function windowsLaunchers(target) {
+  const relativeTarget = path.relative(BIN_DIR, target).split(path.sep).join('\\');
+  return {
+    node: [
+      "const { spawnSync } = require('node:child_process');",
+      "const path = require('node:path');",
+      `const target = path.resolve(__dirname, ${JSON.stringify(relativeTarget)});`,
+      "const result = spawnSync(process.execPath, [target, ...process.argv.slice(2)], { stdio: 'inherit' });",
+      'if (result.error) { process.stderr.write(`${result.error.message}\\n`); process.exit(1); }',
+      'process.exit(result.status ?? 1);',
+      '',
+    ].join('\r\n'),
+    cmd: [
+      '@ECHO off',
+      'SETLOCAL',
+      'SET "NODE_EXE=%~dp0\\node.exe"',
+      'IF NOT EXIST "%NODE_EXE%" SET "NODE_EXE=node"',
+      `"%NODE_EXE%" "%~dp0\\${relativeTarget}" %*`,
+      'EXIT /b %ERRORLEVEL%',
+      '',
+    ].join('\r\n'),
+    powershell: [
+      '$basedir = Split-Path $MyInvocation.MyCommand.Definition -Parent',
+      `$target = Join-Path $basedir '${relativeTarget}'`,
+      "$node = if (Test-Path (Join-Path $basedir 'node.exe')) { Join-Path $basedir 'node.exe' } else { 'node' }",
+      '& $node $target @args',
+      'exit $LASTEXITCODE',
+      '',
+    ].join('\r\n'),
+  };
+}
+
 /**
- * Whether the link is already the guard.
+ * Whether the platform's launcher already invokes the guard.
  *
- * Compares the link's own target, not its contents, so a stub that merely
- * mentions the guard still counts as wrong. `lstatSync` first because a plain
- * npm symlink and a real file are both valid things to find here, and only the
- * link is a link.
+ * POSIX compares the symlink target. Windows compares its generated launchers
+ * byte-for-byte, including the extensionless bin marker npm exec checks.
  */
 function alreadyGuarded() {
+  if (IS_WINDOWS) {
+    const expected = windowsLaunchers(TARGET);
+    try {
+      return (
+        readFileSync(NODE_LINK, 'utf8') === expected.node &&
+        readFileSync(LINK, 'utf8') === expected.cmd &&
+        readFileSync(POWERSHELL_LINK, 'utf8') === expected.powershell
+      );
+    } catch {
+      return false;
+    }
+  }
   try {
     if (!lstatSync(LINK).isSymbolicLink()) return false;
     return path.resolve(BIN_DIR, readlinkSync(LINK)) === TARGET;
@@ -104,10 +153,25 @@ function alreadyGuarded() {
  */
 function resolvesToAFile() {
   try {
-    return statSync(LINK).isFile();
+    return (
+      statSync(LINK).isFile() && (!IS_WINDOWS || (statSync(POWERSHELL_LINK).isFile() && statSync(NODE_LINK).isFile()))
+    );
   } catch {
     return false;
   }
+}
+
+function replaceWindowsLaunchers(target) {
+  const launchers = windowsLaunchers(target);
+  rmSync(TEMP_LINK, { force: true });
+  rmSync(TEMP_POWERSHELL_LINK, { force: true });
+  rmSync(TEMP_NODE_LINK, { force: true });
+  writeFileSync(TEMP_LINK, launchers.cmd);
+  writeFileSync(TEMP_POWERSHELL_LINK, launchers.powershell);
+  writeFileSync(TEMP_NODE_LINK, launchers.node);
+  renameSync(TEMP_LINK, LINK);
+  renameSync(TEMP_POWERSHELL_LINK, POWERSHELL_LINK);
+  renameSync(TEMP_NODE_LINK, NODE_LINK);
 }
 
 export function install() {
@@ -126,12 +190,15 @@ export function install() {
     return { installed: true, changed: false };
   }
 
+  if (IS_WINDOWS) {
+    replaceWindowsLaunchers(TARGET);
+    return { installed: true, changed: true };
+  }
+
   // Built at a temporary name and renamed into place, NOT removed and recreated.
-  // An `rm` followed by a `symlink` has a window in which a failure — Windows
-  // without symlink privileges raises EPERM — leaves the checkout with no `tsc`
-  // at all, which `npx` answers by fetching a package named `tsc` from the
-  // registry. A rename cannot lose the old link, so the guard can only ever be
-  // replaced by a working one.
+  // An `rm` followed by a `symlink` has a window in which a failure leaves the
+  // checkout with no `tsc` at all, which `npx` answers by fetching a package
+  // named `tsc` from the registry.
   rmSync(TEMP_LINK, { force: true });
   symlinkSync(path.relative(BIN_DIR, TARGET), TEMP_LINK);
   renameSync(TEMP_LINK, LINK);
@@ -149,12 +216,15 @@ export function install() {
 }
 
 /**
- * Puts npm's plain symlink back, for the case where this script cannot install
- * its own and must not leave the bin entry missing.
+ * Puts npm's compiler launcher back if the guard launcher cannot be installed.
  */
 function restoreNpmLink() {
   const npmTarget = path.join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
   if (!existsSync(npmTarget)) return;
+  if (IS_WINDOWS) {
+    replaceWindowsLaunchers(npmTarget);
+    return;
+  }
   rmSync(LINK, { force: true });
   symlinkSync(path.relative(BIN_DIR, npmTarget), LINK);
 }

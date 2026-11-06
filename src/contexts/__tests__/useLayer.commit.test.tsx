@@ -856,6 +856,34 @@ describe('useLayers deferred commit ownership', () => {
 });
 
 describe('useLayers text commit boundary', () => {
+  it('commits a one-shot raster command run while the Type tool is current, so it can run again', async () => {
+    // Invert is the one raster edit that runs without becoming the current tool. With the Type tool
+    // current and no draft open, its scoped commit must not take the text branch, which returns
+    // before the owned preview is consumed: the pixels would stay a preview and a second Invert
+    // would be refused as "another tool's pending preview".
+    const { result } = setup({ layers: { a: makeLayer('a', 0) }, activeLayerId: 'a' });
+    act(() => {
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
+      result.current.store.currentArgs.current = { toolName: 'text', text: '' } as ToolArgs;
+    });
+    const processor = vi
+      .spyOn(toolProcessors.invert, 'imageProcessor')
+      .mockReturnValue(() => [new OffscreenCanvas(40, 20)]);
+
+    for (let press = 0; press < 2; press += 1) {
+      await act(async () => {
+        await result.current.layers.updateLayerByTool({ id: 'a', toolArgs: { toolName: 'invert' } as ToolArgs });
+      });
+      expect(result.current.store.previewLayers.current.a).toBeUndefined();
+    }
+
+    expect(result.current.store.history.map((entry) => [entry.actionName, entry.layerId])).toEqual([
+      [TOOL_ACTION, 'a'],
+      [TOOL_ACTION, 'a'],
+    ]);
+    processor.mockRestore();
+  });
+
   it('short-circuits a text commit whose draft text has been cleared', () => {
     const { result } = setup();
     act(() => {

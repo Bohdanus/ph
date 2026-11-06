@@ -115,6 +115,19 @@ describe('resolveKiloDbCandidates', () => {
     const candidates = resolveKiloDbCandidates({ homeDir: '/home/user', platform: 'linux' });
     expect(candidates).toEqual(['/home/user/.local/share/kilo/kilo.db']);
   });
+
+  it('uses Windows application data paths only on Windows', () => {
+    const candidates = resolveKiloDbCandidates({
+      homeDir: 'C:\\Users\\user',
+      appData: 'C:\\Users\\user\\AppData\\Roaming',
+      localAppData: 'C:\\Users\\user\\AppData\\Local',
+      platform: 'win32',
+    });
+    expect(candidates).toEqual([
+      'C:\\Users\\user\\AppData\\Roaming\\kilo\\kilo.db',
+      'C:\\Users\\user\\AppData\\Local\\kilo\\kilo.db',
+    ]);
+  });
 });
 
 describe('findExistingDbPath', () => {
@@ -1022,12 +1035,20 @@ describe('summarizeSearchResults', () => {
         updated: '2026-10-30',
         snippet: 'Authorization: Bearer snippetSecret123',
       },
+      {
+        session_id: 'ses_boundary',
+        title: `${'x'.repeat(295)} sk-${'a'.repeat(24)}`,
+        updated: '2026-10-30',
+        snippet: `${'x'.repeat(289)} ghp_${'1'.repeat(24)}`,
+      },
     ];
     await summarizeSearchResults('token=querySecret123', sessions, { completeImpl });
     const sentPrompt = completeImpl.mock.calls[0][0];
     expect(sentPrompt).not.toContain('querySecret123');
     expect(sentPrompt).not.toContain('titleSecret123');
     expect(sentPrompt).not.toContain('snippetSecret123');
+    expect(sentPrompt).not.toContain('sk-a');
+    expect(sentPrompt).not.toContain('ghp_111111');
     expect(sentPrompt).toContain('[REDACTED]');
   });
 });
