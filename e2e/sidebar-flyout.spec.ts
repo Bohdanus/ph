@@ -1,5 +1,11 @@
 import { expect, test, type Page } from './fixtures/extended-test';
-import { getWorkspaceCanvas, hasDarkPixels, loadImageData, waitForCanvasPixels } from './helpers/canvas-helpers';
+import {
+  getWorkspaceCanvas,
+  hasDarkPixels,
+  loadImageData,
+  viewportClip,
+  waitForCanvasPixels,
+} from './helpers/canvas-helpers';
 import {
   clickToolButton,
   generateSlug,
@@ -438,12 +444,13 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     const top = box.y + box.height / 2 - SHAPE_DRAG_HEIGHT / 2;
     const right = left + SHAPE_DRAG_WIDTH;
     const bottom = top + SHAPE_DRAG_HEIGHT;
-    const patch = (centreX: number, centreY: number) => ({
-      x: centreX - SAMPLE_HALF_SIZE,
-      y: centreY - SAMPLE_HALF_SIZE,
-      width: SAMPLE_HALF_SIZE * 2,
-      height: SAMPLE_HALF_SIZE * 2,
-    });
+    const patch = (centreX: number, centreY: number) =>
+      viewportClip({
+        x: centreX - SAMPLE_HALF_SIZE,
+        y: centreY - SAMPLE_HALF_SIZE,
+        width: SAMPLE_HALF_SIZE * 2,
+        height: SAMPLE_HALF_SIZE * 2,
+      });
 
     await page.mouse.move(left, top);
     await page.mouse.down();

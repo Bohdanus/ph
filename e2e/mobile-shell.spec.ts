@@ -344,6 +344,72 @@ test.describe('Tablet touch bottom bar', () => {
     isMobile: false,
   });
 
+  test('pointer scroll buttons reveal the Layers tile and return to the color controls', async ({ page }) => {
+    await page.goto('/');
+    const bar = bottomBar(page);
+    const left = page.getByRole('button', { name: 'Scroll tools left' });
+    const right = page.getByRole('button', { name: 'Scroll tools right' });
+    await expect(bar).toBeVisible();
+    await expect(left).toHaveAttribute('aria-disabled', 'true');
+    await expect(right).toHaveAttribute('aria-disabled', 'false');
+
+    const overflow = await bar.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow, 'the supported tablet toolbar must overflow before pointer navigation').toBeGreaterThan(0);
+
+    const waitForScrollToSettle = async () => {
+      let previousScrollLeft = -1;
+      let stablePolls = 0;
+      await expect
+        .poll(async () => {
+          const scrollLeft = await bar.evaluate((element) => element.scrollLeft);
+          stablePolls = Math.abs(scrollLeft - previousScrollLeft) < 1 ? stablePolls + 1 : 0;
+          previousScrollLeft = scrollLeft;
+          return stablePolls >= 2;
+        })
+        .toBe(true);
+    };
+
+    for (let step = 0; step < 5 && (await right.getAttribute('aria-disabled')) !== 'true'; step += 1) {
+      const before = await bar.evaluate((element) => element.scrollLeft);
+      await right.click();
+      await expect
+        .poll(() => bar.evaluate((element) => element.scrollLeft), {
+          message: 'the right scroll button advances the tablet toolbar',
+        })
+        .toBeGreaterThan(before);
+      await waitForScrollToSettle();
+    }
+
+    await expect(right).toHaveAttribute('aria-disabled', 'true');
+    const layers = page.getByTestId('mobile-bottom-layers-button');
+    await expect
+      .poll(async () => {
+        const [tile, box] = await Promise.all([layers.boundingBox(), bar.boundingBox()]);
+        return Boolean(tile && box && tile.x >= box.x - 1 && tile.x + tile.width <= box.x + box.width + 1);
+      })
+      .toBe(true);
+
+    for (let step = 0; step < 5 && (await left.getAttribute('aria-disabled')) !== 'true'; step += 1) {
+      const before = await bar.evaluate((element) => element.scrollLeft);
+      await left.click();
+      await expect
+        .poll(() => bar.evaluate((element) => element.scrollLeft), {
+          message: 'the left scroll button returns to the first toolbar controls',
+        })
+        .toBeLessThan(before);
+      await waitForScrollToSettle();
+    }
+
+    await expect(left).toHaveAttribute('aria-disabled', 'true');
+    const firstControl = bar.getByRole('button').first();
+    await expect
+      .poll(async () => {
+        const [tile, box] = await Promise.all([firstControl.boundingBox(), bar.boundingBox()]);
+        return Boolean(tile && box && tile.x >= box.x - 1 && tile.x + tile.width <= box.x + box.width + 1);
+      })
+      .toBe(true);
+  });
+
   test('horizontal touch swipes reach the Layers tile', async ({ page }) => {
     await page.goto('/');
     const bar = bottomBar(page);
@@ -389,9 +455,19 @@ test.describe('Tablet touch bottom bar', () => {
       touchActive = false;
     };
 
+    const layersFitWithinBar = async () =>
+      bar.evaluate((element) => {
+        const tile = element.querySelector<HTMLElement>('[data-testid="mobile-bottom-layers-button"]');
+        const barRect = element.getBoundingClientRect();
+        const tileRect = tile?.getBoundingClientRect();
+        return Boolean(tileRect && tileRect.left >= barRect.left - 1 && tileRect.right <= barRect.right + 1);
+      });
+
     try {
-      // The full bar does not fit within one tablet-width finger travel, so use two real swipes.
-      for (let swipe = 0; swipe < 2; swipe += 1) {
+      // The two fixed 44px scroll buttons narrow the touch scrollport. Allow up to three swipes,
+      // and stop early if the Layers tile is already fully visible.
+      for (let swipe = 0; swipe < 3; swipe += 1) {
+        if (await layersFitWithinBar()) break;
         const scrollLeftBeforeSwipe = await bar.evaluate((element) => element.scrollLeft);
         await swipeLeft();
         await expect

@@ -1,5 +1,11 @@
 import { expect, test, type Page } from './fixtures/extended-test';
-import { drawLine, getDarkPixelBounds, getWorkspaceCanvas, waitForCanvasRedraw } from './helpers/canvas-helpers';
+import {
+  drawLine,
+  getDarkPixelBounds,
+  getWorkspaceCanvas,
+  viewportClip,
+  waitForCanvasRedraw,
+} from './helpers/canvas-helpers';
 import { toleranceFor } from './helpers/viewport-tolerance';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
@@ -87,7 +93,7 @@ test.describe('Device pixel ratio', () => {
     await drawLine(page, box, start.x - box.x, start.y - box.y, end.x - box.x, end.y - box.y, { steps: 20 });
     // This line sits outside the shared redraw clip, so it samples its own band.
     await waitForCanvasRedraw(page, box, {
-      clip: { x: start.x - 20, y: start.y - 20, width: end.x - start.x + 40, height: 40 },
+      clip: viewportClip({ x: start.x - 20, y: start.y - 20, width: end.x - start.x + 40, height: 40 }),
     });
 
     // `imageBoundsToCss` derives the scale from the decoded image against the element's CSS

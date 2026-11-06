@@ -10,9 +10,10 @@ import {
   LINE_START_X,
   LINE_START_Y,
   loadImageData,
+  viewportClip,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { cssPointToImage, type CssBox, type Point } from './helpers/screenshot-scale';
+import { cssPointToImage, type Point } from './helpers/screenshot-scale';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
@@ -231,12 +232,12 @@ test.describe('Layers panel', () => {
      * carries a commented-out `transform: scale(zoom)` (`Main.tsx:236`) that would put the
      * element box outside the viewport again.
      */
-    const region: CssBox = {
+    const region = viewportClip({
       x: Math.max(box.x, 0),
       y: Math.max(box.y, 0),
       width: Math.min(box.x + box.width, viewport.width) - Math.max(box.x, 0),
       height: Math.min(box.y + box.height, viewport.height) - Math.max(box.y, 0),
-    };
+    });
 
     /** Screenshot of `region`, captured and attached by the CDP helper. */
     const capture = (name: string, testInfo: TestInfo) => captureCanvasScreenshot(page, region, testInfo, name);

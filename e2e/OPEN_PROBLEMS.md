@@ -265,25 +265,6 @@ Two specs are `test.skip` by declaration:
   `vite build` output renders byte-identically, so a future switch to serving
   `dist/` should be treated as a possible baseline-affecting change.
 
-## P2 — an explicit redraw clip is in page coordinates, and a canvas-relative one passes for the wrong reason
-
-`e2e/helpers/canvas-helpers.ts`, `buildClip`
-
-`buildClip` returns an explicit `clip` exactly as given; only its own default,
-`canvasRedrawClip`, adds the canvas box origin. A caller that passes canvas-relative
-offsets therefore polls the wrong region of the page.
-
-The failure mode is the dangerous shape rather than an obvious one: the wrong region is
-still a region, and `hasDarkPixels` may be satisfied by something that was already dark —
-the app's `#212529` header, for one. The wait returns, the stroke is not what was observed,
-and the test continues on a false positive. A clip that lands on empty canvas instead fails
-loudly, which is the better of the two outcomes and is not guaranteed.
-
-`setupExportTest` hit this while being decoupled and passed anyway, which is why
-`e2e/export/__tests__/helpers.unit.test.ts` pins the clip in page coordinates with literal
-values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
-differ by the box origin and nothing in the types distinguishes them.
-
 ## P2 — document-space gesture audits must be specific to the oracle
 
 `e2e/helpers/canvas-helpers.ts` — `LINE_START_X`, `LINE_START_Y`, `LINE_END_X`, `LINE_END_Y`
@@ -576,37 +557,6 @@ decision between "widen the row" and "the floor was derived correctly all along"
 can say which, so this entry stays open rather than being deleted on a green run.
 
 ---
-
-## P2 — most bottom-bar tool groups start off-screen, without a visible cue for pointer users
-
-`src/components/Mobile/MobileBottomBar.tsx`, `e2e/mobile-shell.spec.ts`, `e2e/no-document-overflow.spec.ts`
-
-`div[role="toolbar"][data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
-`mobileToolGroups` entry in one row. It has `scrollbar-none`, so the visible tool tiles
-give no cue that more are off-screen. A user with a mouse and no trackpad has nothing
-left to drag: the bar is `position: fixed`, so the document behind it does not scroll
-either. Keep the measurements tied to the supported tablet viewport; phone-size behavior
-is outside the product boundary.
-
-Unlike the left tool rail, which has documented wheel, arrow and touch navigation, this
-bar has no visible scroll cue for pointer users. The tablet test checks that content
-extends beyond the bar's client width without pinning the amount to a historical pixel
-count or a phone-sized layout.
-
-**Tablet touch reachability is exercised by** `mobile-shell.spec.ts` — `horizontal touch
-swipes reach the Layers tile`. It checks that the bar overflows before sending Chromium
-touch events at the 744×1133 iPad mini portrait size, requires each swipe to advance
-`scrollLeft`, and checks that the Layers tile ends fully inside the visible bar bounds.
-A CSS-only overflow assertion would not prove the touch gesture reaches the last tool group.
-
-The product question remains open: a user with a mouse and no trackpad has nothing to drag,
-and the fixed bar prevents the page behind it from scrolling. The touch test establishes
-tablet reachability; it does not decide whether to add a visible scroll cue, pointer-drag
-support, or a different layout.
-
-**Exact remaining verification:** decide the non-touch affordance, implement the selected
-behavior, and add an input-level test for that path. Keep the tablet touch test as the
-reachability control while that product decision is open.
 
 ## Checked here and rejected
 

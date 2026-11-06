@@ -415,7 +415,9 @@ test.describe('the view commands', () => {
     const box = await getWorkspaceCanvas(page).boundingBox();
     if (box === null) throw new Error('workspace canvas has no box');
 
+    const workspace = page.getByTestId('workspace-container');
     const scrollBefore = await page.evaluate(() => window.scrollY);
+    const workspaceScrollBefore = await workspace.evaluate((node) => node.scrollTop);
 
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, 120);
@@ -423,8 +425,9 @@ test.describe('the view commands', () => {
     // The listener is attached directly with `{ passive: false }`; a React `onWheel` could not
     // cancel the default, and `Ctrl+wheel` would zoom the PAGE. `consolePolice` fails this test
     // if the browser logged the passive-cancel warning.
-    expect(translateOf(await viewTransform(page)).y).toBeLessThan(0);
+    await expect.poll(async () => translateOf(await viewTransform(page)).y).toBeLessThan(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+    expect(await workspace.evaluate((node) => node.scrollTop)).toBe(workspaceScrollBefore);
   });
 
   test('Ctrl and a wheel zoom at the pointer instead of zooming the page', async ({ page }) => {
@@ -444,7 +447,7 @@ test.describe('the view commands', () => {
     await page.mouse.wheel(0, -240);
     await page.keyboard.up('Control');
 
-    expect(scaleOf(await viewTransform(page))).toBeGreaterThan(before);
+    await expect.poll(async () => scaleOf(await viewTransform(page))).toBeGreaterThan(before);
     // The browser's own Ctrl+wheel page zoom must not have fired.
     expect(await page.evaluate(() => window.devicePixelRatio)).toBe(pageZoomBefore);
   });

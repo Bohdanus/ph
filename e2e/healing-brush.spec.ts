@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures/extended-test';
-import { drawLine, getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
+import { drawLine, getWorkspaceCanvas, loadImageData, viewportClip } from './helpers/canvas-helpers';
 import { waitForCanvasPixels, type CanvasPixelPredicate } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
 import { clickToolButton, openToolFlyout } from './helpers/toolbar-helpers';
@@ -34,7 +34,7 @@ test.describe('Healing Brush Tool', () => {
     await expect(drawSize).toHaveValue('3');
     await setForegroundColor(page, '#0000ff', true);
     await drawLine(page, box, 260, 200, 355, 200, { steps: 16 });
-    let sourceClip = { x: box.x + 340, y: box.y + 190, width: 20, height: 20 };
+    let sourceClip = viewportClip({ x: box.x + 340, y: box.y + 190, width: 20, height: 20 });
     await waitForCanvasPixels(page, sourceClip, hasBlueDominantPixel, { description: 'the blue sample source' });
 
     await clickToolButton(page, 'eraser');
@@ -47,8 +47,8 @@ test.describe('Healing Brush Tool', () => {
     box = await getCanvasBox();
     // Leave only the small blue source patch around the Alt-click, within the same layer raster.
     await drawLine(page, box, 260, 200, 335, 200, { steps: 14 });
-    sourceClip = { x: box.x + 340, y: box.y + 190, width: 20, height: 20 };
-    let targetClip = { x: box.x + 284, y: box.y + 197, width: 6, height: 6 };
+    sourceClip = viewportClip({ x: box.x + 340, y: box.y + 190, width: 20, height: 20 });
+    let targetClip = viewportClip({ x: box.x + 284, y: box.y + 197, width: 6, height: 6 });
     const hasNoBluePixels: CanvasPixelPredicate = async (screenshot) => !(await hasBlueDominantPixel(screenshot));
     await waitForCanvasPixels(page, sourceClip, hasBlueDominantPixel, {
       description: 'the surviving blue sample source',
@@ -60,8 +60,8 @@ test.describe('Healing Brush Tool', () => {
 
     await expect(page.locator('#healing-brush-size')).toBeVisible();
     box = await getCanvasBox();
-    sourceClip = { x: box.x + 340, y: box.y + 190, width: 20, height: 20 };
-    targetClip = { x: box.x + 284, y: box.y + 197, width: 6, height: 6 };
+    sourceClip = viewportClip({ x: box.x + 340, y: box.y + 190, width: 20, height: 20 });
+    targetClip = viewportClip({ x: box.x + 284, y: box.y + 197, width: 6, height: 6 });
     await waitForCanvasPixels(page, sourceClip, hasBlueDominantPixel, { description: 'the sample after tool switch' });
     await waitForCanvasPixels(page, targetClip, hasNoBluePixels, { description: 'the erased hole after tool switch' });
     await page.keyboard.down('Alt');

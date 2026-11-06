@@ -1,12 +1,13 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
-  type ClipOptions,
   documentToCanvasOffset,
   drawLine,
   getStrokeAnalysis,
   getWorkspaceCanvas,
   hasDarkPixels,
   loadImageData,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
@@ -17,13 +18,13 @@ const STROKE_END_X = 400;
 const STROKE_STEPS = 20;
 
 /** Synchronizes with the backing store before the one-shot capture that is analyzed below. */
-type PenWait = (page: Page, clip: Required<ClipOptions>) => Promise<void>;
+type PenWait = (page: Page, clip: ViewportClip) => Promise<void>;
 
 /** Pen and dashed pen lay down dark pixels, so the shared dark-pixel wait is enough. */
 const waitForDarkPixels: PenWait = (page, clip) =>
   waitForCanvasPixels(page, clip, hasDarkPixels, { description: 'dark pixels' });
 
-const getSprayAnalysis = (screenshot: Buffer, clip: Required<ClipOptions>) =>
+const getSprayAnalysis = (screenshot: Buffer, clip: ViewportClip) =>
   getStrokeAnalysis(screenshot, clip, { tool: 'spray' });
 
 /**
@@ -95,12 +96,12 @@ for (const { label, test: testTitle, value, name, y, expect: exp, wait } of PEN_
 
       await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: STROKE_STEPS });
 
-      const clip = {
+      const clip = viewportClip({
         x: box.x + Math.min(start.x, end.x) - 50,
         y: box.y + Math.min(start.y, end.y) - 50,
         width: Math.abs(end.x - start.x) + 70,
         height: Math.abs(end.y - start.y) + 120,
-      };
+      });
       // The screenshot below is a one-shot read, so synchronize with the
       // backing store first or a slow frame silently weakens the assertions.
       await wait(page, clip);
