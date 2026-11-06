@@ -205,8 +205,10 @@ variant or an equivalent atomic history action.
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
    pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and allows
    at most two partial-alpha boundary pixels in frame comparisons and two tight-bitmap pixels
-   whose same unpremultiplied color has a one-step alpha difference inside a gradient; its
-   composites remain byte-identical. The three-transition
+   at alpha boundaries where both paths preserve identical RGB values. A transparent/one-alpha
+   pair also needs adjacent samples of that same color in both neighborhoods; composites remain
+   byte-identical.
+   The three-transition
    mixed-source fixture pins exact bounds and checks per-layer frame and tight bitmaps exactly in
    premultiplied space. The styled-text fixture also compares tight bitmaps exactly after
    premultiplying readback color channels; alpha, frame pixels, and composites remain byte-identical.
@@ -241,7 +243,8 @@ variant or an equivalent atomic history action.
 
    The retained-affine/frame proof now covers two transformed raster layers across two successive
    non-quarter frame transforms with fractional origins and extents, checking exact per-layer bounds
-   and pixels at both affine cursors, both frame cursors, and a frame-only control. A separate styled
+   and allowing at most two tight per-layer alpha-boundary pixels with identical RGB values at both
+   affine cursors, both frame cursors, and a frame-only control. A separate styled
    paragraph-text fixture checks its affine cursor and two frame cursors against exact per-layer
    bounds and pixels. Both fixtures also require byte-identical composites, and their frame-only
    controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not

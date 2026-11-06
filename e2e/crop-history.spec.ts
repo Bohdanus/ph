@@ -1472,61 +1472,6 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             if (durableTightSurfaces.offscreenContext !== durableTightSurfaces.htmlContext) {
               durableTightSurfaces.offscreenContext.drawImage(materializedLayer.bitmap as CanvasImageSource, 0, 0);
             }
-            const isInternalAlphaGradientPixel = (
-              pixels: Uint8ClampedArray,
-              pixel: number,
-              width: number,
-              height: number
-            ) => {
-              if (pixel < 0 || pixel >= width * height) return false;
-              const x = pixel % width;
-              const y = Math.floor(pixel / width);
-              const alphaAt = (sampleX: number, sampleY: number) => pixels[(sampleY * width + sampleX) * 4 + 3] ?? 0;
-              const alpha = alphaAt(x, y);
-              if (alpha === 0 || alpha === 255) return false;
-              let hasLowerAlphaNeighbor = false;
-              let hasHigherAlphaNeighbor = false;
-              for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
-                for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-                  if (offsetX === 0 && offsetY === 0) continue;
-                  const neighborX = x + offsetX;
-                  const neighborY = y + offsetY;
-                  // A clipped edge or a transparent/opaque neighbor makes this an alpha boundary,
-                  // not an internal ramp eligible for the tight-bitmap exception.
-                  if (neighborX < 0 || neighborY < 0 || neighborX >= width || neighborY >= height) return false;
-                  const neighborAlpha = alphaAt(neighborX, neighborY);
-                  if (neighborAlpha === 0 || neighborAlpha === 255) return false;
-                  if (neighborAlpha < alpha) hasLowerAlphaNeighbor = true;
-                  if (neighborAlpha > alpha) hasHigherAlphaNeighbor = true;
-                }
-              }
-              return hasLowerAlphaNeighbor && hasHigherAlphaNeighbor;
-            };
-            const isTightAlphaGradientDifference = (
-              expected: Uint8ClampedArray,
-              materialized: Uint8ClampedArray,
-              pixel: number,
-              width: number,
-              height: number
-            ) => {
-              if (
-                !isInternalAlphaGradientPixel(expected, pixel, width, height) ||
-                !isInternalAlphaGradientPixel(materialized, pixel, width, height)
-              ) {
-                return false;
-              }
-              const offset = pixel * 4;
-              const expectedAlpha = expected[offset + 3] ?? 0;
-              const materializedAlpha = materialized[offset + 3] ?? 0;
-              // Only excuse one 8-bit alpha quantization step when both renderers preserve
-              // the exact same unpremultiplied color inside an alpha gradient.
-              return (
-                expected[offset] === materialized[offset] &&
-                expected[offset + 1] === materialized[offset + 1] &&
-                expected[offset + 2] === materialized[offset + 2] &&
-                Math.abs(expectedAlpha - materializedAlpha) === 1
-              );
-            };
             const isFrameAlphaBoundaryPixel = (
               pixels: Uint8ClampedArray,
               pixel: number,
@@ -1559,6 +1504,70 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             ) =>
               isFrameAlphaBoundaryPixel(expected, pixel, width, height) ||
               isFrameAlphaBoundaryPixel(materialized, pixel, width, height);
+            const hasAdjacentAlphaColor = (
+              pixels: Uint8ClampedArray,
+              pixel: number,
+              width: number,
+              height: number,
+              color: readonly [number, number, number]
+            ) => {
+              const x = pixel % width;
+              const y = Math.floor(pixel / width);
+              for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+                for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+                  if (offsetX === 0 && offsetY === 0) continue;
+                  const neighborX = x + offsetX;
+                  const neighborY = y + offsetY;
+                  if (neighborX < 0 || neighborY < 0 || neighborX >= width || neighborY >= height) continue;
+                  const offset = (neighborY * width + neighborX) * 4;
+                  if (
+                    (pixels[offset + 3] ?? 0) > 1 &&
+                    pixels[offset] === color[0] &&
+                    pixels[offset + 1] === color[1] &&
+                    pixels[offset + 2] === color[2]
+                  ) {
+                    return true;
+                  }
+                }
+              }
+              return false;
+            };
+            const isTightAlphaBoundaryDifference = (
+              expected: Uint8ClampedArray,
+              materialized: Uint8ClampedArray,
+              pixel: number,
+              width: number,
+              height: number
+            ) => {
+              const offset = pixel * 4;
+              const expectedAlpha = expected[offset + 3] ?? 0;
+              const materializedAlpha = materialized[offset + 3] ?? 0;
+              const sameColor =
+                expected[offset] === materialized[offset] &&
+                expected[offset + 1] === materialized[offset + 1] &&
+                expected[offset + 2] === materialized[offset + 2];
+              if (expectedAlpha > 0 && expectedAlpha < 255 && materializedAlpha > 0 && materializedAlpha < 255) {
+                return (
+                  sameColor &&
+                  isFrameAlphaBoundaryPixel(expected, pixel, width, height) &&
+                  isFrameAlphaBoundaryPixel(materialized, pixel, width, height)
+                );
+              }
+              const isOneAlphaSliver =
+                (expectedAlpha === 0 && materializedAlpha === 1) || (expectedAlpha === 1 && materializedAlpha === 0);
+              if (!isOneAlphaSliver) return false;
+              const colorSource = expectedAlpha === 1 ? expected : materialized;
+              const color: [number, number, number] = [
+                colorSource[offset] ?? 0,
+                colorSource[offset + 1] ?? 0,
+                colorSource[offset + 2] ?? 0,
+              ];
+              return (
+                isFrameAlphaBoundaryPixel(colorSource, pixel, width, height) &&
+                hasAdjacentAlphaColor(expected, pixel, width, height, color) &&
+                hasAdjacentAlphaColor(materialized, pixel, width, height, color)
+              );
+            };
             const alphaNeighborhood = (
               pixels: Uint8ClampedArray,
               x: number,
@@ -1607,7 +1616,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                 if (pixel !== lastTightDifferingPixel) {
                   tightDifferingPixels += 1;
                   if (
-                    !isTightAlphaGradientDifference(
+                    !isTightAlphaBoundaryDifference(
                       expectedBytes,
                       materializedBytes,
                       pixel,
@@ -3779,19 +3788,19 @@ test.describe('Crop history', () => {
         ).toBeLessThanOrEqual(2);
         expect(
           comparison.tightBitmapNonEdgeDifferingPixels,
-          `${comparison.layerId} full tight bitmap at ${comparison.stage} differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.tightBitmapDifferingPixels,
-          `${comparison.layerId} full tight bitmap at ${comparison.stage} may differ at no more than two pixels whose same-color alpha differs by one step; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} may differ at no more than two alpha-boundary pixels with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
         ).toBeLessThanOrEqual(2);
         expect(
           comparison.offscreenTightBitmapNonEdgeDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.offscreenTightBitmapDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} may differ at no more than two pixels whose same-color alpha differs by one step`
+          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} may differ at no more than two alpha-boundary pixels with identical RGB values`
         ).toBeLessThanOrEqual(2);
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
@@ -3827,19 +3836,19 @@ test.describe('Crop history', () => {
           ).toBeLessThanOrEqual(2);
           expect(
             comparison.tightBitmapNonEdgeDifferingPixels,
-            `frame-only ${comparison.layerId} tight bitmap differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+            `frame-only ${comparison.layerId} tight bitmap differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.tightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} full tight bitmap may differ at no more than two pixels whose same-color alpha differs by one step; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+            `frame-only ${comparison.layerId} full tight bitmap may differ at no more than two alpha-boundary pixels with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
           ).toBeLessThanOrEqual(2);
           expect(
             comparison.offscreenTightBitmapNonEdgeDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.offscreenTightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap may differ at no more than two pixels whose same-color alpha differs by one step`
+            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap may differ at no more than two alpha-boundary pixels with identical RGB values`
           ).toBeLessThanOrEqual(2);
         }
       }

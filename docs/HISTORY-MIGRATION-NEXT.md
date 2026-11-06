@@ -80,8 +80,10 @@ not vector eligibility.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
    covers two retained affine layer transforms across two successive non-quarter frame transforms
    with fractional origins and extents. It keeps exact per-layer bounds and allows at most two
-   differing pixels per frame raster at partial-alpha boundaries and per tight raster at internal
-   alpha gradients. Composites remain byte-identical at each tested cursor, and the frame-only
+   differing pixels per frame raster at partial-alpha boundaries and per tight raster at alpha
+   boundaries with identical RGB values. A transparent/one-alpha pair also needs adjacent samples
+   of the same color in both rasters. Composites remain byte-identical at each tested cursor, and
+   the frame-only
    control remains byte-identical. A styled, bold-italic serif paragraph passes through a retained
    affine and a two-frame sequence with exact premultiplied tight-raster pixels and exact alpha,
    frame, and composite pixels. A three-transition mixed-source frame sequence applies two sequential

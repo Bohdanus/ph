@@ -101,8 +101,11 @@ per-layer bounds and pixels after two sequential retained affines on an opaque b
 affine on a 45%-opacity blank, and one each on vector, paint, and point text, at all six affine cursors
 and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
-with fractional origins and extents, including composite parity and exact per-layer bounds and
-pixels at each tested affine or frame-transition cursor plus a frame-only control.
+with fractional origins and extents, including composite parity and exact per-layer bounds. Tight
+per-layer comparisons allow at most two tight-bitmap alpha-boundary pixels with identical RGB
+values. The transparent/one-alpha case also needs adjacent same-color samples in both rasters.
+Frame comparisons allow at most two partial-alpha boundary pixels. Both limits are separate from
+the byte-identical composites and frame-only control.
 A second fixture applies a retained affine to a bold-italic serif
 paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
@@ -137,9 +140,11 @@ Windows had exact 800x600 preview/commit backing pixels, while the 974x583 CSS s
 at 834 pixels by at most one channel value. Keep the exact backing-pixel assertion as the document
 gate and do not treat screenshot-resampling deltas as document-raster differences.
 These are preview-interleaving and rollback proofs; they do not move previews to durable authority or permit removal of legacy logical replay. The
-retained-affine/frame differentials now establish exact layer bounds and pixel parity for two raster
-layers across successive fractional frame transforms, and for a styled paragraph-text layer across
-two frame transforms. A three-transition mixed-source differential also checks exact per-layer bounds
+retained-affine/frame differentials now establish exact layer bounds and composite parity for two
+raster layers across successive fractional frame transforms, with the bounded identical-RGB
+alpha-boundary exception in per-layer tight bitmaps, and exact per-layer bounds and pixel parity for
+a styled paragraph-text layer across two frame transforms. A three-transition mixed-source
+differential also checks exact per-layer bounds
 and pixels after two sequential affines on an opaque blank, one affine on a 45%-opacity blank, and one
 each on vector, paint, and point text, at all six affine cursors and after each frame transition. A
 separate raster differential also pins the composite with non-default layer opacity and `multiply`
