@@ -146,24 +146,41 @@ type EditableToolLayerSource = {
   isBedrock?: false;
 };
 
+type IncrementalStrokeUpdate = {
+  args: DrawToolArgs;
+  skipInitialBlockStamp: true;
+};
+
 /**
- * Extend only a stroked draw path or block-stamp path from the previous preview.
+ * Append only an unchanged, unsmoothed block-stamp path to the previous preview.
  *
- * A stroked segment needs the previous endpoint as its first point to stay connected;
- * a block stamp deposits an independent square at each point, so re-stamping the shared
- * endpoint would double-deposit it. Stroked paths therefore keep the shared endpoint
- * in the delta, while block-stamp paths return only the newly added points.
- *
- * A spray stroke keeps the full-raster fallback: each point carries a time-tagged dab
- * and the delta contract does not generalise to it.
+ * Ordinary strokes must be replayed whole: smoothing and the single stroke path can change
+ * the already-previewed pixels when another point arrives. Block stamps are emitted in path
+ * order as independent rectangles. Keeping the shared endpoint lets the new segment reproduce
+ * its exact spacing, while `skipInitialBlockStamp` avoids emitting that endpoint twice.
+ * Spray and all changed raster settings keep the full-raster fallback.
  */
-export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: ToolArgs): DrawToolArgs | null => {
+export const getIncrementalStrokeArgs = (
+  toolArgs: ToolArgs,
+  previousToolArgs?: ToolArgs
+): IncrementalStrokeUpdate | null => {
   if (toolArgs.toolName !== 'draw' || !previousToolArgs || previousToolArgs.toolName !== 'draw') return null;
 
   const drawArgs = toolArgs as DrawToolArgs;
   const previousDrawArgs = previousToolArgs as DrawToolArgs;
-  if (drawArgs.penType === 'spray') return null;
-  if (previousDrawArgs.penType !== drawArgs.penType || previousDrawArgs.blockStamp !== drawArgs.blockStamp) return null;
+  if (
+    drawArgs.penType === 'spray' ||
+    previousDrawArgs.penType !== drawArgs.penType ||
+    drawArgs.blockStamp !== true ||
+    previousDrawArgs.blockStamp !== true ||
+    drawArgs.color !== previousDrawArgs.color ||
+    drawArgs.lineWidth !== previousDrawArgs.lineWidth ||
+    drawArgs.composite !== previousDrawArgs.composite ||
+    (drawArgs.smoothing ?? 0) !== 0 ||
+    (previousDrawArgs.smoothing ?? 0) !== 0
+  ) {
+    return null;
+  }
 
   const currentPoints = drawArgs.points;
   const previousPoints = previousDrawArgs.points;
@@ -181,11 +198,12 @@ export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: 
     return null;
   }
 
-  // Block stamps deposit an independent square at every point, so re-stamping the shared
-  // endpoint would double-deposit it: return only the newly added points. A stroked segment
-  // needs the previous endpoint as its first point to remain connected.
-  const deltaStart = drawArgs.blockStamp ? previousPoints.length : previousPoints.length - 1;
-  return { ...drawArgs, points: currentPoints.slice(deltaStart) };
+  // Keep the prior endpoint for the segment-spacing calculation, and have the renderer omit
+  // its duplicate initial square. This preserves the exact block-stamp sequence of a full replay.
+  return {
+    args: { ...drawArgs, points: currentPoints.slice(previousPoints.length - 1) },
+    skipInitialBlockStamp: true,
+  };
 };
 
 /**
@@ -1384,8 +1402,8 @@ export const useLayers = () => {
     }
 
     const preview = previewLayersRef.current[id];
-    const processorArgs = preview?.layer.tmpCanvas ? getIncrementalStrokeArgs(toolArgs, preview.toolArgs) : null;
-    const canAppendStroke = processorArgs !== null;
+    const incrementalStroke = preview?.layer.tmpCanvas ? getIncrementalStrokeArgs(toolArgs, preview.toolArgs) : null;
+    const canAppendStroke = incrementalStroke !== null;
 
     // Check for incremental eraser brush-mode
     let incrementalEraserArgs: EraserToolArgs | null = null;
@@ -1444,7 +1462,11 @@ export const useLayers = () => {
     try {
       input = bitmap ? stageProcessorInputForTool(processorLayer, bitmap, processor) : null;
       const processorParams: ProcessorToolParams | CreatorToolParams = input
-        ? ({ bitmap: input.bitmap, size: input.rasterSize } as ProcessorToolParams)
+        ? ({
+            bitmap: input.bitmap,
+            size: input.rasterSize,
+            ...(incrementalStroke ? { skipInitialBlockStamp: incrementalStroke.skipInitialBlockStamp } : {}),
+          } as ProcessorToolParams)
         : ({ size: layer.pos } as CreatorToolParams);
       // Pass previousCanvas for incremental eraser brush-mode
       if (canIncrementalEraser && preview?.layer.tmpCanvas) {
@@ -1458,9 +1480,13 @@ export const useLayers = () => {
       if (canIncrementalSponge && preview?.layer.tmpCanvas) {
         (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
       }
-      result = processor.imageProcessor(processorParams)(
-        processorArgs ?? incrementalEraserArgs ?? incrementalDodgeBurnArgs ?? incrementalSpongeArgs ?? toolArgs
-      );
+      const processorArgs =
+        incrementalStroke?.args ??
+        incrementalEraserArgs ??
+        incrementalDodgeBurnArgs ??
+        incrementalSpongeArgs ??
+        toolArgs;
+      result = processor.imageProcessor(processorParams)(processorArgs);
     } catch (error) {
       console.error(error);
       return false;

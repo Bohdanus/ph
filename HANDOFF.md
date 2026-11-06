@@ -101,8 +101,11 @@ per-layer bounds and pixels after two sequential retained affines on an opaque b
 affine on a 45%-opacity blank, and one each on vector, paint, and point text, at all six affine cursors
 and after each frame transition. The retained-affine raster
 fixture checks two transformed layers through two successive non-quarter frame transforms
-with fractional origins and extents, including composite parity and exact per-layer bounds and
-pixels at each tested affine or frame-transition cursor plus a frame-only control.
+with fractional origins and extents, including composite parity and exact per-layer bounds. Tight
+per-layer comparisons allow at most two tight-bitmap alpha-boundary pixels with identical RGB
+values. The transparent/one-alpha case also needs adjacent same-color samples in both rasters.
+Frame comparisons allow at most two partial-alpha boundary pixels. Both limits are separate from
+the byte-identical composites and frame-only control.
 A second fixture applies a retained affine to a bold-italic serif
 paragraph text layer through a two-frame sequence, with exact per-layer
 comparisons. These fixtures pin fractional bounds only for the listed raster and styled-text
@@ -137,9 +140,11 @@ Windows had exact 800x600 preview/commit backing pixels, while the 974x583 CSS s
 at 834 pixels by at most one channel value. Keep the exact backing-pixel assertion as the document
 gate and do not treat screenshot-resampling deltas as document-raster differences.
 These are preview-interleaving and rollback proofs; they do not move previews to durable authority or permit removal of legacy logical replay. The
-retained-affine/frame differentials now establish exact layer bounds and pixel parity for two raster
-layers across successive fractional frame transforms, and for a styled paragraph-text layer across
-two frame transforms. A three-transition mixed-source differential also checks exact per-layer bounds
+retained-affine/frame differentials now establish exact layer bounds and composite parity for two
+raster layers across successive fractional frame transforms, with the bounded identical-RGB
+alpha-boundary exception in per-layer tight bitmaps, and exact per-layer bounds and pixel parity for
+a styled paragraph-text layer across two frame transforms. A three-transition mixed-source
+differential also checks exact per-layer bounds
 and pixels after two sequential affines on an opaque blank, one affine on a 45%-opacity blank, and one
 each on vector, paint, and point text, at all six affine cursors and after each frame transition. A
 separate raster differential also pins the composite with non-default layer opacity and `multiply`
@@ -1079,9 +1084,10 @@ alone; `transform.notes.md` records those as separate divergences/product questi
 
 **Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress. The
 Draw pen path, Draw block-stamp, Eraser brush mode, Dodge, Burn and Sponge paths now use
-processor-specific incremental helpers. The earlier claim that Draw block-stamp still re-rasterizes
-the full bounds is stale. Spray, Eraser pencil/block modes, Brush, Pencil, Smudge, Clone Stamp,
-Gradient, and other raster processors still lack incremental accumulation:
+processor-specific incremental helpers. Draw block-stamp appends only when both previews use the
+same color, width, composite mode and unsmoothed path; ordinary pen paths and spray replay in full.
+Spray, Eraser pencil/block modes, Brush, Pencil, Smudge, Clone Stamp, Gradient, and other raster
+processors still lack incremental accumulation:
 
 `src/contexts/useLayer.ts` calls incremental helpers only when their tool-specific settings remain
 compatible and the new points extend the previous path. Draw spray is excluded; eraser incremental
@@ -1097,9 +1103,10 @@ actions, not accumulating pointer strokes.
 **Reproduce.** Drag one continuous stroke across a large canvas and profile `tempUpdateLayer`. Cost
 per event grows with the bounding box covered SO FAR, not with the delta.
 
-**Coverage.** `useLayer.incremental.test.ts` currently covers `getIncrementalStrokeArgs`, but not the
-eraser, Dodge/Burn, or Sponge helper contracts. Existing Smudge and Gradient tests document their
-full-source/full-layer behavior rather than pinning the cost shape.
+**Coverage.** `useLayer.incremental.test.ts` covers the Draw block-stamp, eraser, Dodge/Burn, and
+Sponge helper contracts. Paint-tool tests compare the appended block-stamp rectangle sequence with
+a full replay. Existing Smudge and Gradient tests document their full-source/full-layer behavior
+rather than pinning the cost shape.
 
 **Fix.** Extend the remaining gesture processors with safe per-tool accumulation, or document the
 cost as a known limit. A persistent canvas handle must NOT go in durable `args`: conversion
@@ -1303,32 +1310,26 @@ runs on a concurrent render that yielded — neither is a pre-paint refit).
 
 ---
 
-## 152. Canvas input lacks a stylus and gesture policy; options sliders have narrow touch targets
+## 152. Canvas input lacks a stylus and gesture policy
 
 **Problem.** Canvas tools do not distinguish pen from touch, consume stylus pressure, or support
-pinch-zoom and two-finger pan. The Draw, Levels, Smudge, and Transform options sliders expose only
-4–6px tracks and have no larger touch target. These gaps affect tablet input and remain separate
-from the layer list's implemented pointer-based touch reorder path.
+pinch-zoom and two-finger pan. These gaps affect tablet input and remain separate from the layer
+list's implemented pointer-based touch reorder path.
 
 **Evidence.** `LayersTab.tsx` uses `pointerType` for touch reordering, and `usePointerPosition` now
 stores and returns `pointerTypeRef`, but no canvas tool consumes it for filtering. No tool processor
-consumes pointer pressure. The named options components still use small native range tracks and no
-shared `TouchSlider` wrapper. `docs/FEATURES.md` records pinch-zoom and two-finger pan as absent.
-Touch E2E coverage is not zero (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in
-per test), but the suite has no dedicated touch project or shared slider-target contract.
+consumes pointer pressure. `docs/FEATURES.md` records pinch-zoom and two-finger pan as absent.
+The slider hit-target gap has a separate shared `TouchSlider` implementation and the
+`e2e/touch-slider-target.spec.ts` contract; it is no longer part of this open item. Touch E2E
+coverage is not zero (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in per
+test), but the suite has no dedicated touch project.
 
 **Next work.** Decide how canvas tools should handle pen, touch, and pressure before adding palm
-rejection; add touch gestures for canvas zoom and pan; and design a larger target for range controls
-without changing their visual thickness. Do not claim the native sliders are frozen by the canvas
-`touch-action` ancestor without a reproducer; desktop options live outside that canvas boundary and
-the mobile tool sheet permits panning. Keep this work within the desktop and tablet/touch product
-boundary.
+rejection; add touch gestures for canvas zoom and pan. Keep this work within the desktop and
+tablet/touch product boundary.
 
-**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors,
-`src/components/SidebarRight/LayersTab.tsx`, `src/components/Mobile/MobileLayersDrawer.tsx`,
-`src/components/ToolbarsRight/Draw/Draw.tsx`, `src/components/ToolbarsRight/Levels/Levels.tsx`,
-`src/components/ToolbarsRight/Smudge/Smudge.tsx`, `src/components/ToolbarsRight/Transform/Transform.tsx`,
-and the three test-scoped touch E2E specs.
+**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors, canvas
+zoom/pan handling, and their touch E2E coverage.
 
 ---
 

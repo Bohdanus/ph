@@ -695,8 +695,25 @@ describe('mirror remote and dispatch selection', () => {
         'Chat: ses_rootBaselineFixture',
       ]);
       const rootSha = runGit(rootRepo, ['rev-parse', 'HEAD']);
-      runGit(fixture.root, ['--git-dir', fixture.mirror, 'fetch', '--quiet', rootRepo, 'refs/heads/main']);
-      runGit(fixture.root, ['--git-dir', fixture.mirror, 'update-ref', `refs/heads/${fixture.branch}`, rootSha]);
+      runGit(fixture.root, [
+        '-c',
+        'safe.bareRepository=all',
+        '--git-dir',
+        fixture.mirror,
+        'fetch',
+        '--quiet',
+        rootRepo,
+        'refs/heads/main',
+      ]);
+      runGit(fixture.root, [
+        '-c',
+        'safe.bareRepository=all',
+        '--git-dir',
+        fixture.mirror,
+        'update-ref',
+        `refs/heads/${fixture.branch}`,
+        rootSha,
+      ]);
 
       const remoteSha = readMirrorBranchSha(fixture.branch, fixture.source);
       expect(() =>

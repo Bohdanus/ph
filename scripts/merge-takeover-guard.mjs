@@ -128,7 +128,7 @@
  * The latter is reported unless resolve-undo proves an explicit modify/delete resolution.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -232,14 +232,16 @@ export function resolveIncomingRef(cwd) {
  * moved it off the merge base.
  *
  * @param {{ cwd?: string, head?: string, incoming?: string, resultTree?: string }} options
- * @returns {{ takeovers: Takeover[], scanned: number, incoming: string, base: string }}
+ * @returns {{ takeovers: Takeover[], scanned: number, incoming: string, base: string, baseLabel: string }}
  */
 export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree } = {}) {
   const headRef = head ?? tryGit(['rev-parse', 'HEAD'], { cwd });
   if (!headRef) throw new GuardError('not a git repository, or HEAD does not resolve');
 
   const incomingRef = incoming ?? resolveIncomingRef(cwd);
-  const base = tryGit(['merge-base', headRef, incomingRef], { cwd });
+  const mergeBasesOutput = tryGit(['merge-base', '--all', headRef, incomingRef], { cwd });
+  const mergeBases = mergeBasesOutput?.split(/\r?\n/).filter(Boolean) ?? [];
+  const base = mergeBases[0];
   if (!base) {
     throw new GuardError(`${headRef} and ${incomingRef} share no merge-base; nothing to compare`);
   }
@@ -251,8 +253,6 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     throw new GuardError('git write-tree failed; cannot read the staged merge result');
   }
 
-  // `-m` diffs merge-base against each side, so this is precisely "what each side changed
-  // since they diverged" and needs no parent arithmetic.
   const listPaths = (args, side) => {
     // `-z` makes paths NUL-delimited. Do not trim this output: a legal path may begin
     // with spaces or tabs, and trim() would silently change the first path before the
@@ -263,8 +263,32 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     }
     return splitNulRecords(output, `git diff ${side}`).map((path) => decodeGitPath(path, `git diff ${side}`));
   };
-  const toHead = listPaths(['diff', '--name-only', '-z', '-m', base, headRef], 'HEAD-side');
-  const toIncoming = listPaths(['diff', '--name-only', '-z', '-m', base, incomingRef], 'incoming-side');
+
+  if (mergeBases.length > 2) {
+    throw new GuardError(
+      `${headRef} and ${incomingRef} have ${mergeBases.length} best merge-bases; refusing to compare an ambiguous virtual base`
+    );
+  }
+  const mergeTreeResult = mergeBases.length > 1 ? readMergeTreeResult(cwd, headRef, incomingRef) : null;
+
+  // Four trees, four subprocesses, whatever the merge size. The per-path `rev-parse` this
+  // replaced cost four spawns EACH, which measured 3.6s of a commit hook on a 513-path
+  // merge here and grows linearly without bound; a commit hook has a budget.
+  const trees = {
+    base: mergeTreeResult ? readVirtualMergeBaseBlobs(cwd, mergeBases, mergeTreeResult) : readTreeBlobs(base, cwd),
+    head: readTreeBlobs(headRef, cwd),
+    incoming: readTreeBlobs(incomingRef, cwd),
+    result: readTreeBlobs(result, cwd),
+  };
+  // `-m` diffs a commit against each parent; for a single base that is precisely what each
+  // side changed since divergence. Criss-cross histories need the recursively merged base
+  // tree instead of arbitrarily choosing one of their best base commits.
+  const toHead = mergeTreeResult
+    ? changedTreePaths(trees.base, trees.head)
+    : listPaths(['diff', '--name-only', '-z', '-m', base, headRef], 'HEAD-side');
+  const toIncoming = mergeTreeResult
+    ? changedTreePaths(trees.base, trees.incoming)
+    : listPaths(['diff', '--name-only', '-z', '-m', base, incomingRef], 'incoming-side');
   const resultVsHead = listPaths(['diff', '--name-only', '-z', headRef, result], 'result');
 
   const changedByHead = new Set(toHead);
@@ -272,16 +296,9 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
   const movedByMerge = resultVsHead;
   const moved = new Set(movedByMerge);
 
-  // Four trees, four subprocesses, whatever the merge size. The per-path `rev-parse` this
-  // replaced cost four spawns EACH, which measured 3.6s of a commit hook on a 513-path
-  // merge here and grows linearly without bound; a commit hook has a budget.
-  const trees = {
-    base: readTreeBlobs(base, cwd),
-    head: readTreeBlobs(headRef, cwd),
-    incoming: readTreeBlobs(incomingRef, cwd),
-    result: readTreeBlobs(result, cwd),
-  };
-  const resolvedModifyDeletePaths = readResolvedModifyDeletePaths(cwd, trees);
+  const mergeTreeStages = mergeTreeResult?.stagesByPath ?? null;
+  const resolvedModifyDeletePaths = readResolvedModifyDeletePaths(cwd, trees, mergeTreeStages);
+  const baseLabel = mergeBases.length > 1 ? `virtual(${mergeBases.map(truncate).join(',')})` : truncate(base);
 
   /** @type {{ path: string, kind: string, reason: (n: number) => string }[]} */
   const suspects = [];
@@ -328,8 +345,8 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
         losing: headBlob ?? absent(),
         reason: (n) =>
           headBlob
-            ? `the result is byte-for-byte the pre-divergence content from ${truncate(base)}, so main's committed change to it was undone (${n} line(s) of its own are absent)`
-            : `the result is byte-for-byte the pre-divergence content from ${truncate(base)}, undoing the deletion the merged-into side had committed here`,
+            ? `the result is byte-for-byte the pre-divergence content from ${baseLabel}, so main's committed change to it was undone (${n} line(s) of its own are absent)`
+            : `the result is byte-for-byte the pre-divergence content from ${baseLabel}, undoing the deletion the merged-into side had committed here`,
       });
     } else if (sameEntry(resultBlob, incomingBlob)) {
       // `git checkout --theirs <file>`, or any resolution that keeps one whole side.
@@ -511,6 +528,7 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     scanned: new Set([...movedByMerge, ...changedByIncoming]).size,
     incoming: incomingRef,
     base,
+    baseLabel,
     head: headRef,
   };
 }
@@ -588,7 +606,111 @@ function decodeGitPath(bytes, source) {
   return path;
 }
 
-function readResolvedModifyDeletePaths(cwd, trees) {
+function readMergeTreeResult(cwd, headRef, incomingRef) {
+  const source = 'git merge-tree --write-tree -z';
+  const result = spawnSync('git', ['merge-tree', '--write-tree', '-z', headRef, incomingRef], {
+    cwd,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (
+    result.error ||
+    result.signal ||
+    (result.status !== 0 && result.status !== 1) ||
+    !Buffer.isBuffer(result.stdout)
+  ) {
+    throw new GuardError(`${source} failed; cannot validate criss-cross resolve-undo metadata`);
+  }
+
+  const records = [];
+  let start = 0;
+  while (start < result.stdout.length) {
+    const end = result.stdout.indexOf(0, start);
+    if (end < 0) {
+      throw new GuardError(`${source} returned an unterminated record; refusing to parse partial conflict stages`);
+    }
+    records.push(result.stdout.subarray(start, end));
+    start = end + 1;
+  }
+  const tree = records[0] ? decodeGitMetadata(records[0], source) : '';
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(tree)) {
+    throw new GuardError(`${source} returned an invalid result tree; refusing to validate resolve-undo metadata`);
+  }
+
+  const stagesByPath = new Map();
+  let messageSectionStarted = false;
+  for (const record of records.slice(1)) {
+    if (record.length === 0) {
+      messageSectionStarted = true;
+      break;
+    }
+    const pathSeparator = record.indexOf(0x09);
+    if (pathSeparator < 0) {
+      throw new GuardError(`${source} returned invalid conflict-stage metadata; refusing to guess`);
+    }
+    const metadata = decodeGitMetadata(record.subarray(0, pathSeparator), source);
+    const fields = /^(100644|100755|120000|160000) ([0-9a-f]{40}|[0-9a-f]{64}) ([123])$/.exec(metadata);
+    if (!fields) {
+      throw new GuardError(`${source} returned invalid conflict-stage metadata; refusing to guess`);
+    }
+    const [, mode, oid, stageText] = fields;
+    const stage = Number(stageText);
+    const filePath = decodeGitPath(record.subarray(pathSeparator + 1), source);
+    if (!filePath) throw new GuardError(`${source} returned an invalid conflict path; refusing to guess`);
+    const stages = stagesByPath.get(filePath) ?? new Map();
+    if (stages.has(stage)) {
+      throw new GuardError(`${source} returned a duplicate path/stage record; refusing to guess`);
+    }
+    stages.set(stage, { mode, oid });
+    stagesByPath.set(filePath, stages);
+  }
+  if ((result.status === 1) !== messageSectionStarted) {
+    throw new GuardError(
+      `${source} returned an incomplete conflict-stage section; refusing to validate resolve-undo metadata`
+    );
+  }
+  return { tree, status: result.status, stagesByPath };
+}
+
+function readVirtualMergeBaseBlobs(cwd, mergeBases, mergeTreeResult) {
+  if (mergeBases.length !== 2) {
+    throw new GuardError('cannot establish a virtual merge-base tree from more than two best bases; refusing to guess');
+  }
+
+  const [firstBase, secondBase] = mergeBases;
+  const forward = readMergeTreeResult(cwd, firstBase, secondBase);
+  const reverse = readMergeTreeResult(cwd, secondBase, firstBase);
+  const blobs = readTreeBlobs(forward.tree, cwd);
+  const reverseBlobs = readTreeBlobs(reverse.tree, cwd);
+  const paths = new Set([...blobs.keys(), ...reverseBlobs.keys()]);
+
+  for (const filePath of paths) {
+    if (sameEntry(blobs.get(filePath), reverseBlobs.get(filePath))) continue;
+    const stages = mergeTreeResult.stagesByPath.get(filePath);
+    if (!stages) {
+      throw new GuardError(
+        `virtual merge-base trees disagree at ${JSON.stringify(filePath)} without a final conflict stage; refusing to guess`
+      );
+    }
+  }
+
+  // A final conflict's stage 1 is the exact virtual-base entry Git used for that path.
+  // It takes precedence over the two independently constructed trees, which can differ
+  // when the merge bases themselves conflict and merge order affects conflict markers.
+  for (const [filePath, stages] of mergeTreeResult.stagesByPath) {
+    if (stages.has(1)) blobs.set(filePath, stages.get(1));
+    else blobs.delete(filePath);
+  }
+
+  return blobs;
+}
+
+function changedTreePaths(before, after) {
+  const paths = new Set([...before.keys(), ...after.keys()]);
+  return [...paths].filter((filePath) => !sameEntry(before.get(filePath), after.get(filePath)));
+}
+
+function readResolvedModifyDeletePaths(cwd, trees, mergeTreeStages = null) {
   const raw = tryGitRaw(['ls-files', '--resolve-undo', '-z'], { cwd });
   if (raw === null) {
     throw new GuardError(
@@ -626,8 +748,9 @@ function readResolvedModifyDeletePaths(cwd, trees) {
 
   for (const [filePath, stages] of stagesByPath) {
     for (const [stage, entry] of stages) {
-      const tree = stage === 1 ? trees.base : stage === 2 ? trees.head : trees.incoming;
-      const expected = tree.get(filePath);
+      const expected = mergeTreeStages
+        ? mergeTreeStages.get(filePath)?.get(stage)
+        : (stage === 1 ? trees.base : stage === 2 ? trees.head : trees.incoming).get(filePath);
       if (!expected || expected.mode !== entry.mode || expected.oid !== entry.oid) {
         throw new GuardError(
           'git ls-files --resolve-undo returned metadata inconsistent with the merge trees; refusing to infer an explicit resolution'
@@ -882,7 +1005,7 @@ function nonBlankLines(buf) {
   return n;
 }
 
-function report({ takeovers, scanned, incoming, base, head, preparedMerge }) {
+function report({ takeovers, scanned, incoming, base, baseLabel = truncate(base), head, preparedMerge }) {
   const lines = [];
   if (takeovers.length === 0) {
     // "examined", not "moved by the merge": a `-s ours` merge moves NOTHING and discards
@@ -893,7 +1016,7 @@ function report({ takeovers, scanned, incoming, base, head, preparedMerge }) {
   lines.push('');
   lines.push(`merge-takeover-guard: REFUSING this merge — ${takeovers.length} path(s) would drop committed work.`);
   lines.push('');
-  lines.push(`  merged into ${truncate(head)}   incoming ${truncate(incoming)}   merge-base ${truncate(base)}`);
+  lines.push(`  merged into ${truncate(head)}   incoming ${truncate(incoming)}   merge-base ${baseLabel}`);
   lines.push('');
   // The listing is bounded and the COUNT is not. A `-s ours` merge of a branch with hundreds
   // of changed paths is one refusal, and printing two lines per path buried the advice that

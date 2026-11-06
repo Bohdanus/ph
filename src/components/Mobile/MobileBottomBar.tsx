@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -23,147 +23,216 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
   const selectTool = makeSelectTool(goToTool, patchToolArgs);
   const foregroundColorInputRef = useRef<HTMLInputElement>(null);
   const backgroundColorInputRef = useRef<HTMLInputElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [scrollEdges, setScrollEdges] = useState({ left: false, right: true });
+
+  const updateScrollEdges = useCallback((toolbar: HTMLDivElement) => {
+    const { scrollLeft, scrollWidth, clientWidth } = toolbar;
+    const nextLeft = scrollLeft > 1;
+    const nextRight = scrollWidth - clientWidth - scrollLeft > 1;
+    setScrollEdges((previous) =>
+      previous.left === nextLeft && previous.right === nextRight ? previous : { left: nextLeft, right: nextRight }
+    );
+  }, []);
+
+  const handleToolbarScroll = (event: React.UIEvent<HTMLDivElement>) => updateScrollEdges(event.currentTarget);
+
+  useEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => updateScrollEdges(toolbar));
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [updateScrollEdges]);
+
+  const scrollToolbar = (direction: -1 | 1) => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar) return;
+
+    const maxScrollLeft = Math.max(0, toolbar.scrollWidth - toolbar.clientWidth);
+    if ((direction < 0 && toolbar.scrollLeft <= 0) || (direction > 0 && toolbar.scrollLeft >= maxScrollLeft)) return;
+
+    toolbar.scrollBy({ left: direction * Math.max(toolbar.clientWidth * 0.75, 44), behavior: 'smooth' });
+  };
 
   return (
-    <div
-      role="toolbar"
-      aria-label="Mobile Bottom Toolbar"
-      aria-orientation="horizontal"
-      data-testid="mobile-bottom-bar"
-      className="[grid-area:bottom] md:hidden safe-area-bottom fixed bottom-0 left-0 right-0 z-30 flex h-16 items-stretch gap-1 overflow-x-auto overscroll-x-contain scrollbar-none touch-pan-x border-t border-gray-200 bg-white/95 px-1 backdrop-blur-md select-none dark:border-gray-800 dark:bg-gray-900/95"
-    >
-      <div className="relative flex shrink-0 items-center gap-1 px-1" data-testid="mobile-color-pickers">
-        <button
-          type="button"
-          onClick={() => foregroundColorInputRef.current?.click()}
-          aria-label="Foreground Color"
-          title="Foreground Color"
-          data-testid="mobile-foreground-color-swatch"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-        >
-          <span
+    <div className="[grid-area:bottom] md:hidden safe-area-bottom fixed bottom-0 left-0 right-0 z-30 flex h-16 items-stretch gap-1 border-t border-gray-200 bg-white/95 px-1 backdrop-blur-md select-none dark:border-gray-800 dark:bg-gray-900/95">
+      <button
+        type="button"
+        onClick={() => scrollToolbar(-1)}
+        aria-label="Scroll tools left"
+        aria-controls="mobile-bottom-bar-scroll"
+        aria-disabled={!scrollEdges.left}
+        title="Scroll tools left"
+        className={`flex min-h-11 min-w-11 shrink-0 items-center justify-center self-center rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 ${
+          scrollEdges.left ? '' : 'cursor-default opacity-40'
+        }`}
+      >
+        <span aria-hidden="true" className="text-2xl leading-none">
+          ‹
+        </span>
+      </button>
+
+      <div
+        ref={toolbarRef}
+        id="mobile-bottom-bar-scroll"
+        role="toolbar"
+        aria-label="Mobile Bottom Toolbar"
+        aria-orientation="horizontal"
+        data-testid="mobile-bottom-bar"
+        onScroll={handleToolbarScroll}
+        className="flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto overscroll-x-contain scrollbar-none touch-pan-x select-none"
+      >
+        <div className="relative flex shrink-0 items-center gap-1 px-1" data-testid="mobile-color-pickers">
+          <button
+            type="button"
+            onClick={() => foregroundColorInputRef.current?.click()}
+            aria-label="Foreground Color"
+            title="Foreground Color"
+            data-testid="mobile-foreground-color-swatch"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            <span
+              aria-hidden="true"
+              className="h-8 w-8 rounded border border-gray-400 shadow-sm dark:border-gray-500"
+              style={{ backgroundColor: color }}
+            />
+          </button>
+          <button
+            type="button"
+            onClick={() => backgroundColorInputRef.current?.click()}
+            aria-label="Background Color"
+            title="Background Color"
+            data-testid="mobile-background-color-swatch"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            <span
+              aria-hidden="true"
+              className="h-8 w-8 rounded border border-gray-400 shadow-sm dark:border-gray-500"
+              style={{ backgroundColor }}
+            />
+          </button>
+          <input
+            ref={foregroundColorInputRef}
+            type="color"
+            value={color}
+            onChange={(event) => dispatch({ type: 'SET_COLOR', payload: event.target.value })}
             aria-hidden="true"
-            className="h-8 w-8 rounded border border-gray-400 shadow-sm dark:border-gray-500"
-            style={{ backgroundColor: color }}
+            tabIndex={-1}
+            className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+            data-testid="mobile-foreground-color-input"
           />
-        </button>
-        <button
-          type="button"
-          onClick={() => backgroundColorInputRef.current?.click()}
-          aria-label="Background Color"
-          title="Background Color"
-          data-testid="mobile-background-color-swatch"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-        >
-          <span
+          <input
+            ref={backgroundColorInputRef}
+            type="color"
+            value={backgroundColor}
+            onChange={(event) => dispatch({ type: 'SET_BACKGROUND_COLOR', payload: event.target.value })}
             aria-hidden="true"
-            className="h-8 w-8 rounded border border-gray-400 shadow-sm dark:border-gray-500"
-            style={{ backgroundColor }}
+            tabIndex={-1}
+            className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+            data-testid="mobile-background-color-input"
           />
-        </button>
-        <input
-          ref={foregroundColorInputRef}
-          type="color"
-          value={color}
-          onChange={(event) => dispatch({ type: 'SET_COLOR', payload: event.target.value })}
-          aria-hidden="true"
-          tabIndex={-1}
-          className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
-          data-testid="mobile-foreground-color-input"
-        />
-        <input
-          ref={backgroundColorInputRef}
-          type="color"
-          value={backgroundColor}
-          onChange={(event) => dispatch({ type: 'SET_BACKGROUND_COLOR', payload: event.target.value })}
-          aria-hidden="true"
-          tabIndex={-1}
-          className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
-          data-testid="mobile-background-color-input"
-        />
-        <button
-          type="button"
-          onClick={() => dispatch({ type: 'SWAP_COLORS' })}
-          aria-label="Swap foreground and background colors"
-          title="Swap Colors"
-          data-testid="mobile-swap-colors-button"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-        >
-          ⇅
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => dispatch({ type: 'SWAP_COLORS' })}
+            aria-label="Swap foreground and background colors"
+            title="Swap Colors"
+            data-testid="mobile-swap-colors-button"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            ⇅
+          </button>
+        </div>
 
-      <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
+        <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
 
-      {mobileToolGroups.map((group, index) => {
-        const isActive = group.matchingTools.includes(toolName as ToolName);
-        const isSectionStart = index > 0 && group.sectionIndex !== mobileToolGroups[index - 1].sectionIndex;
+        {mobileToolGroups.map((group, index) => {
+          const isActive = group.matchingTools.includes(toolName as ToolName);
+          const isSectionStart = index > 0 && group.sectionIndex !== mobileToolGroups[index - 1].sectionIndex;
 
-        return (
-          <React.Fragment key={group.id}>
-            {isSectionStart && (
-              <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
-            )}
-            <button
-              type="button"
-              disabled={!hasImage}
-              onClick={() => selectTool(group.primary)}
-              data-testid={group.id}
-              aria-label={group.tools[0].label}
-              aria-pressed={isActive}
-              className={`flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 transition-colors ${
-                isActive
-                  ? 'bg-blue-50 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'
-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
-              } disabled:pointer-events-none disabled:opacity-30`}
-            >
-              <span className="max-w-full truncate text-[11px] leading-tight">{group.label}</span>
-            </button>
-          </React.Fragment>
-        );
-      })}
+          return (
+            <React.Fragment key={group.id}>
+              {isSectionStart && (
+                <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
+              )}
+              <button
+                type="button"
+                disabled={!hasImage}
+                onClick={() => selectTool(group.primary)}
+                data-testid={group.id}
+                aria-label={group.tools[0].label}
+                aria-pressed={isActive}
+                className={`flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 transition-colors ${
+                  isActive
+                    ? 'bg-blue-50 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
+                } disabled:pointer-events-none disabled:opacity-30`}
+              >
+                <span className="max-w-full truncate text-[11px] leading-tight">{group.label}</span>
+              </button>
+            </React.Fragment>
+          );
+        })}
 
-      <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
+        <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
 
-      {/* The options sheet has its own control. A tool tile selecting its own tool
+        {/* The options sheet has its own control. A tool tile selecting its own tool
           is a different concern: the tile that grouped the adjustments compared
           `matchingTools` against the current tool and, on a match, opened the sheet
           instead of selecting, so with `levels` active a tap on Adjust never reached
           `color`. That tile left the rail with the other adjustment commands, so no
           mobile group holds two ids that can collide here any more; the rule stays
           because a group can hold two again. */}
-      <button
-        type="button"
-        disabled={!hasImage}
-        onClick={onToggleToolSheet}
-        data-testid="mobile-tool-options-toggle"
-        aria-label="Tool options"
-        aria-expanded={isToolSheetOpen}
-        aria-controls="mobile-tool-options"
-        className={`flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 transition-colors ${
-          isToolSheetOpen
-            ? 'bg-blue-50 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'
-            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
-        } disabled:pointer-events-none disabled:opacity-30`}
-      >
-        <span aria-hidden="true" className="text-base leading-none">
-          ⚙
-        </span>
-        <span className="text-[11px] leading-tight">Options</span>
-      </button>
+        <button
+          type="button"
+          disabled={!hasImage}
+          onClick={onToggleToolSheet}
+          data-testid="mobile-tool-options-toggle"
+          aria-label="Tool options"
+          aria-expanded={isToolSheetOpen}
+          aria-controls="mobile-tool-options"
+          className={`flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 transition-colors ${
+            isToolSheetOpen
+              ? 'bg-blue-50 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'
+              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
+          } disabled:pointer-events-none disabled:opacity-30`}
+        >
+          <span aria-hidden="true" className="text-base leading-none">
+            ⚙
+          </span>
+          <span className="text-[11px] leading-tight">Options</span>
+        </button>
+
+        <button
+          type="button"
+          disabled={!hasImage}
+          onClick={onOpenLayers}
+          data-testid="mobile-bottom-layers-button"
+          aria-label="Layers"
+          className="flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:pointer-events-none disabled:opacity-30 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+        >
+          <span aria-hidden="true" className="text-base leading-none">
+            📑
+          </span>
+          <span className="text-[11px] leading-tight">Layers</span>
+        </button>
+      </div>
 
       <button
         type="button"
-        disabled={!hasImage}
-        onClick={onOpenLayers}
-        data-testid="mobile-bottom-layers-button"
-        aria-label="Layers"
-        className="flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:pointer-events-none disabled:opacity-30 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+        onClick={() => scrollToolbar(1)}
+        aria-label="Scroll tools right"
+        aria-controls="mobile-bottom-bar-scroll"
+        aria-disabled={!scrollEdges.right}
+        title="Scroll tools right"
+        className={`flex min-h-11 min-w-11 shrink-0 items-center justify-center self-center rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 ${
+          scrollEdges.right ? '' : 'cursor-default opacity-40'
+        }`}
       >
-        <span aria-hidden="true" className="text-base leading-none">
-          📑
+        <span aria-hidden="true" className="text-2xl leading-none">
+          ›
         </span>
-        <span className="text-[11px] leading-tight">Layers</span>
       </button>
     </div>
   );

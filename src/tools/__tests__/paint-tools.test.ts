@@ -9,7 +9,13 @@ import { drawLine, drawPen, drawSpray } from '../../util/draw.ts';
 import { hexToRgb } from '../../util/rect.ts';
 import { toolbarMap } from '../../../toolbar-mapping.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
-import { setupDrawCtx, type DrawToolArgs, type PaintToolArgs, type PaintToolName } from '../draw.ts';
+import {
+  draw as drawRaster,
+  setupDrawCtx,
+  type DrawToolArgs,
+  type PaintToolArgs,
+  type PaintToolName,
+} from '../draw.ts';
 import type { FigureType } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -750,6 +756,39 @@ describe('shape figure dispatch fall-through', () => {
     ]) {
       expect(call).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('incremental block-stamp rendering', () => {
+  it('reproduces the full stamp sequence without duplicating the shared endpoint', () => {
+    const points = [
+      { x: 2, y: 3 },
+      { x: 8, y: 9 },
+      { x: 14, y: 15 },
+    ];
+    const args: DrawToolArgs = {
+      toolName: 'draw',
+      penType: 'pen',
+      blockStamp: true,
+      color: '#336699',
+      alpha: 1,
+      lineWidth: 4,
+      points,
+    };
+    const [fullCanvas] = drawRaster({ size: documentSize })(args);
+    const [previousCanvas] = drawRaster({ size: documentSize })({ ...args, points: points.slice(0, 2) });
+    const [appendedCanvas] = drawRaster({
+      size: documentSize,
+      bitmap: previousCanvas,
+      skipInitialBlockStamp: true,
+    })({ ...args, points: points.slice(1) });
+
+    const fullContext = (fullCanvas as unknown as RecordingOffscreenCanvas).ctx;
+    const previousContext = (previousCanvas as unknown as RecordingOffscreenCanvas).ctx;
+    const appendedContext = (appendedCanvas as unknown as RecordingOffscreenCanvas).ctx;
+    expect([...previousContext.fillRect.mock.calls, ...appendedContext.fillRect.mock.calls]).toEqual(
+      fullContext.fillRect.mock.calls
+    );
   });
 });
 

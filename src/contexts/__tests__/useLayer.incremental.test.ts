@@ -18,14 +18,11 @@ const baseArgs = (overrides: Partial<DrawToolArgs> = {}): DrawToolArgs => ({
 });
 
 describe('getIncrementalStrokeArgs', () => {
-  it('keeps the previous endpoint so a stroked segment remains connected', () => {
+  it('falls back for stroked paths because their full path must be replayed as one stroke', () => {
     const previous = baseArgs();
     const current = baseArgs({ points: [...previous.points!, { x: 14, y: 15 }] });
 
-    expect(getIncrementalStrokeArgs(current, previous)?.points).toEqual([
-      { x: 8, y: 9 },
-      { x: 14, y: 15 },
-    ]);
+    expect(getIncrementalStrokeArgs(current, previous)).toBeNull();
   });
 
   it.each([['spray', { penType: 'spray' as const }]])(
@@ -58,14 +55,17 @@ describe('getIncrementalStrokeArgs', () => {
     const blockArgs = (overrides: Partial<DrawToolArgs> = {}): DrawToolArgs =>
       baseArgs({ blockStamp: true, ...overrides });
 
-    it('returns only newly added points without the shared endpoint', () => {
+    it('keeps the shared segment start and marks its initial stamp to be skipped', () => {
       const previous = blockArgs();
       const current = blockArgs({ points: [...previous.points!, { x: 14, y: 15 }] });
 
       const result = getIncrementalStrokeArgs(current, previous);
       expect(result).not.toBeNull();
-      expect(result!.points).toEqual([{ x: 14, y: 15 }]);
-      expect(result!.blockStamp).toBe(true);
+      expect(result!.args.points).toEqual([
+        { x: 8, y: 9 },
+        { x: 14, y: 15 },
+      ]);
+      expect(result!.skipInitialBlockStamp).toBe(true);
     });
 
     it('returns multiple new points when several were added', () => {
@@ -76,14 +76,15 @@ describe('getIncrementalStrokeArgs', () => {
 
       const result = getIncrementalStrokeArgs(current, previous);
       expect(result).not.toBeNull();
-      expect(result!.points).toEqual([
+      expect(result!.args.points).toEqual([
+        { x: 8, y: 9 },
         { x: 14, y: 15 },
         { x: 20, y: 21 },
       ]);
     });
 
     it('preserves all non-point settings from the current args', () => {
-      const previous = blockArgs();
+      const previous = blockArgs({ alpha: 0.5, color: '#ff0000', lineWidth: 10 });
       const current = blockArgs({
         alpha: 0.5,
         color: '#ff0000',
@@ -93,15 +94,23 @@ describe('getIncrementalStrokeArgs', () => {
 
       const result = getIncrementalStrokeArgs(current, previous);
       expect(result).not.toBeNull();
-      expect(result!.alpha).toBe(0.5);
-      expect(result!.color).toBe('#ff0000');
-      expect(result!.lineWidth).toBe(10);
-      expect(result!.penType).toBe('pen');
-      expect(result!.blockStamp).toBe(true);
-      expect(result!.points).toEqual([
+      expect(result!.args.alpha).toBe(0.5);
+      expect(result!.args.color).toBe('#ff0000');
+      expect(result!.args.lineWidth).toBe(10);
+      expect(result!.args.penType).toBe('pen');
+      expect(result!.args.blockStamp).toBe(true);
+      expect(result!.args.points).toEqual([
+        { x: 8, y: 9 },
         { x: 20, y: 30 },
         { x: 40, y: 50 },
       ]);
+    });
+
+    it('allows alpha changes because block stamps render at full opacity', () => {
+      const previous = blockArgs({ alpha: 0.25 });
+      const current = blockArgs({ alpha: 0.75, points: [...previous.points!, { x: 14, y: 15 }] });
+
+      expect(getIncrementalStrokeArgs(current, previous)?.args.alpha).toBe(0.75);
     });
 
     it('returns a new object that does not share the points array reference with current', () => {
@@ -111,8 +120,8 @@ describe('getIncrementalStrokeArgs', () => {
 
       const result = getIncrementalStrokeArgs(current, previous);
       expect(result).not.toBeNull();
-      expect(result!.points).not.toBe(currentPoints);
-      expect(result).not.toBe(current);
+      expect(result!.args.points).not.toBe(currentPoints);
+      expect(result!.args).not.toBe(current);
     });
 
     it('falls back when switching from a non-block to a block stroke', () => {
@@ -143,6 +152,33 @@ describe('getIncrementalStrokeArgs', () => {
     it('falls back when penType changes between block-stamp previews', () => {
       const previous = blockArgs();
       expect(getIncrementalStrokeArgs(blockArgs({ penType: 'pen-dashed' }), previous)).toBeNull();
+    });
+
+    it.each([
+      { setting: 'color', overrides: { color: '#ff0000' } },
+      { setting: 'line width', overrides: { lineWidth: 10 } },
+      { setting: 'composite operation', overrides: { composite: 'destination-out' as const } },
+      { setting: 'smoothing', overrides: { smoothing: 20 } },
+      { setting: 'pen type', overrides: { penType: 'spray' as const } },
+    ])('falls back when the $setting changes', ({ overrides }) => {
+      const previous = blockArgs();
+      const current = blockArgs({ points: [...previous.points!, { x: 14, y: 15 }], ...overrides });
+
+      expect(getIncrementalStrokeArgs(current, previous)).toBeNull();
+    });
+
+    it('accepts absent and zero smoothing as the same unsmoothed path', () => {
+      const previous = blockArgs();
+      const current = blockArgs({ smoothing: 0, points: [...previous.points!, { x: 14, y: 15 }] });
+
+      expect(getIncrementalStrokeArgs(current, previous)).not.toBeNull();
+    });
+
+    it('falls back when smoothing can change already-previewed points', () => {
+      const previous = blockArgs({ smoothing: 20 });
+      const current = blockArgs({ smoothing: 20, points: [...previous.points!, { x: 14, y: 15 }] });
+
+      expect(getIncrementalStrokeArgs(current, previous)).toBeNull();
     });
   });
 });
