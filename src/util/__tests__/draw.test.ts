@@ -617,6 +617,37 @@ describe('degenerate stroke rendering', () => {
   });
 });
 
+describe('block-stamp spacing', () => {
+  it('stamps every line width along a horizontal and vertical full path', () => {
+    const ctx = makeMockCtx();
+    drawPen({
+      args: {
+        points: [
+          { x: 0, y: 0 },
+          { x: 12, y: 0 },
+          { x: 12, y: 8 },
+        ],
+        alpha: 1,
+        color: '#336699',
+        penType: 'pen',
+        lineWidth: 4,
+        toolName: 'draw',
+        blockStamp: true,
+      },
+      ctx,
+    });
+
+    expect(vi.mocked(ctx.fillRect).mock.calls).toEqual([
+      [-2, -2, 4, 4],
+      [2, -2, 4, 4],
+      [6, -2, 4, 4],
+      [10, -2, 4, 4],
+      [10, 2, 4, 4],
+      [10, 6, 4, 4],
+    ]);
+  });
+});
+
 describe('non-finite lineWidth in renderers', () => {
   it('clamps a non-finite block-stamp width to the minimum line width', () => {
     const ctx = makeMockCtx();

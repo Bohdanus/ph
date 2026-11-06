@@ -577,37 +577,6 @@ can say which, so this entry stays open rather than being deleted on a green run
 
 ---
 
-## P2 — most bottom-bar tool groups start off-screen, without a visible cue for pointer users
-
-`src/components/Mobile/MobileBottomBar.tsx`, `e2e/mobile-shell.spec.ts`, `e2e/no-document-overflow.spec.ts`
-
-`div[role="toolbar"][data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
-`mobileToolGroups` entry in one row. It has `scrollbar-none`, so the visible tool tiles
-give no cue that more are off-screen. A user with a mouse and no trackpad has nothing
-left to drag: the bar is `position: fixed`, so the document behind it does not scroll
-either. Keep the measurements tied to the supported tablet viewport; phone-size behavior
-is outside the product boundary.
-
-Unlike the left tool rail, which has documented wheel, arrow and touch navigation, this
-bar has no visible scroll cue for pointer users. The tablet test checks that content
-extends beyond the bar's client width without pinning the amount to a historical pixel
-count or a phone-sized layout.
-
-**Tablet touch reachability is exercised by** `mobile-shell.spec.ts` — `horizontal touch
-swipes reach the Layers tile`. It checks that the bar overflows before sending Chromium
-touch events at the 744×1133 iPad mini portrait size, requires each swipe to advance
-`scrollLeft`, and checks that the Layers tile ends fully inside the visible bar bounds.
-A CSS-only overflow assertion would not prove the touch gesture reaches the last tool group.
-
-The product question remains open: a user with a mouse and no trackpad has nothing to drag,
-and the fixed bar prevents the page behind it from scrolling. The touch test establishes
-tablet reachability; it does not decide whether to add a visible scroll cue, pointer-drag
-support, or a different layout.
-
-**Exact remaining verification:** decide the non-touch affordance, implement the selected
-behavior, and add an input-level test for that path. Keep the tablet touch test as the
-reachability control while that product decision is open.
-
 ## Checked here and rejected
 
 Recorded so the same ground is not re-audited. Each was re-derived against this tree
