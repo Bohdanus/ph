@@ -1310,32 +1310,26 @@ runs on a concurrent render that yielded — neither is a pre-paint refit).
 
 ---
 
-## 152. Canvas input lacks a stylus and gesture policy; options sliders have narrow touch targets
+## 152. Canvas input lacks a stylus and gesture policy
 
 **Problem.** Canvas tools do not distinguish pen from touch, consume stylus pressure, or support
-pinch-zoom and two-finger pan. The Draw, Levels, Smudge, and Transform options sliders expose only
-4–6px tracks and have no larger touch target. These gaps affect tablet input and remain separate
-from the layer list's implemented pointer-based touch reorder path.
+pinch-zoom and two-finger pan. These gaps affect tablet input and remain separate from the layer
+list's implemented pointer-based touch reorder path.
 
 **Evidence.** `LayersTab.tsx` uses `pointerType` for touch reordering, and `usePointerPosition` now
 stores and returns `pointerTypeRef`, but no canvas tool consumes it for filtering. No tool processor
-consumes pointer pressure. The named options components still use small native range tracks and no
-shared `TouchSlider` wrapper. `docs/FEATURES.md` records pinch-zoom and two-finger pan as absent.
-Touch E2E coverage is not zero (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in
-per test), but the suite has no dedicated touch project or shared slider-target contract.
+consumes pointer pressure. `docs/FEATURES.md` records pinch-zoom and two-finger pan as absent.
+The slider hit-target gap has a separate shared `TouchSlider` implementation and the
+`e2e/touch-slider-target.spec.ts` contract; it is no longer part of this open item. Touch E2E
+coverage is not zero (`layers.spec.ts`, `text-edit.spec.ts`, `canvas-growth.spec.ts` opt in per
+test), but the suite has no dedicated touch project.
 
 **Next work.** Decide how canvas tools should handle pen, touch, and pressure before adding palm
-rejection; add touch gestures for canvas zoom and pan; and design a larger target for range controls
-without changing their visual thickness. Do not claim the native sliders are frozen by the canvas
-`touch-action` ancestor without a reproducer; desktop options live outside that canvas boundary and
-the mobile tool sheet permits panning. Keep this work within the desktop and tablet/touch product
-boundary.
+rejection; add touch gestures for canvas zoom and pan. Keep this work within the desktop and
+tablet/touch product boundary.
 
-**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors,
-`src/components/SidebarRight/LayersTab.tsx`, `src/components/Mobile/MobileLayersDrawer.tsx`,
-`src/components/ToolbarsRight/Draw/Draw.tsx`, `src/components/ToolbarsRight/Levels/Levels.tsx`,
-`src/components/ToolbarsRight/Smudge/Smudge.tsx`, `src/components/ToolbarsRight/Transform/Transform.tsx`,
-and the three test-scoped touch E2E specs.
+**Files.** `src/hooks/usePointerPosition.ts`, canvas tool input handlers and processors, canvas
+zoom/pan handling, and their touch E2E coverage.
 
 ---
 
