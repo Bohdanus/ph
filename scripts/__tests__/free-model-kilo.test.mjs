@@ -26,13 +26,10 @@ describe('Kilo CLI discovery', () => {
 
   it('finds Kilo Code in PATH before editor extension directories', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'kilo-cli-discovery-'));
-    const pathKilo = await writeExecutable(join(directory, 'path', 'kilo'), 'process.exit(0);', {
-      windowsShim: false,
-    });
+    const pathKilo = await writeExecutable(join(directory, 'path', 'kilo'), 'process.exit(0);');
     const extensionKilo = await writeExecutable(
-      join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-8.0.0-darwin-arm64', 'bin', 'kilo'),
-      'process.exit(0);',
-      { windowsShim: false }
+      join(directory, 'home', '.vscode', 'extensions', 'kilocode.kilo-code-8.0.0-test', 'bin', 'kilo'),
+      'process.exit(0);'
     );
     try {
       await expect(
@@ -40,7 +37,6 @@ describe('Kilo CLI discovery', () => {
           command: '',
           pathValue: join(directory, 'path'),
           home: join(directory, 'home'),
-          platform: 'darwin',
         })
       ).resolves.toBe(pathKilo);
       await expect(
