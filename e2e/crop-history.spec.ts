@@ -923,6 +923,15 @@ type CropParityFramePixelSample = Readonly<
   PixelDifference['differingSamples'][number] & { documentX: number; documentY: number }
 >;
 
+type CropParityTightPixelSample = Readonly<
+  CropParityFramePixelSample & {
+    expectedAlpha: number | null;
+    materializedAlpha: number | null;
+    expectedAlphaNeighborhood: readonly (number | null)[];
+    materializedAlphaNeighborhood: readonly (number | null)[];
+  }
+>;
+
 type CropParityAffineTransform = Readonly<{ a: number; b: number; c: number; d: number; e: number; f: number }>;
 
 type CropParityLayerComparison = Readonly<{
@@ -953,8 +962,8 @@ type CropParityLayerComparison = Readonly<{
   offscreenTightBitmapDifferingBytes: number;
   offscreenTightBitmapDifferingPixels: number;
   offscreenTightBitmapNonEdgeDifferingPixels: number;
-  tightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
-  offscreenTightBitmapDifferingSamples: readonly CropParityFramePixelSample[];
+  tightBitmapDifferingSamples: readonly CropParityTightPixelSample[];
+  offscreenTightBitmapDifferingSamples: readonly CropParityTightPixelSample[];
 }>;
 
 function expectTightBitmapAlphaGradientParity(comparison: CropParityLayerComparison, context: string): void {
@@ -1505,12 +1514,33 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             ) =>
               isInternalAlphaGradientPixel(expected, pixel, width, height) ||
               isInternalAlphaGradientPixel(materialized, pixel, width, height);
+            const alphaNeighborhood = (
+              pixels: Uint8ClampedArray,
+              x: number,
+              y: number,
+              width: number,
+              height: number
+            ) => {
+              const values: (number | null)[] = [];
+              for (let offsetY = -2; offsetY <= 2; offsetY += 1) {
+                for (let offsetX = -2; offsetX <= 2; offsetX += 1) {
+                  const sampleX = x + offsetX;
+                  const sampleY = y + offsetY;
+                  values.push(
+                    sampleX < 0 || sampleY < 0 || sampleX >= width || sampleY >= height
+                      ? null
+                      : (pixels[(sampleY * width + sampleX) * 4 + 3] ?? 0)
+                  );
+                }
+              }
+              return values;
+            };
             const compareTightPixels = (expectedBytes: Uint8ClampedArray, materializedBytes: Uint8ClampedArray) => {
               let diffCount = 0;
               let tightDifferingPixels = 0;
               let tightNonEdgeDifferingPixels = 0;
               let lastTightDifferingPixel = -1;
-              const diffSamples: CropParityFramePixelSample[] = [];
+              const diffSamples: CropParityTightPixelSample[] = [];
               for (let byte = 0; byte < Math.max(expectedBytes.length, materializedBytes.length); byte += 1) {
                 const legacy = expectedBytes[byte] ?? null;
                 const durable = materializedBytes[byte] ?? null;
@@ -1543,6 +1573,22 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                     channel: frameChannels[byte % 4],
                     legacy,
                     durable,
+                    expectedAlpha: expectedBytes[pixel * 4 + 3] ?? null,
+                    materializedAlpha: materializedBytes[pixel * 4 + 3] ?? null,
+                    expectedAlphaNeighborhood: alphaNeighborhood(
+                      expectedBytes,
+                      x,
+                      y,
+                      expectedBounds.width,
+                      expectedBounds.height
+                    ),
+                    materializedAlphaNeighborhood: alphaNeighborhood(
+                      materializedBytes,
+                      x,
+                      y,
+                      expectedBounds.width,
+                      expectedBounds.height
+                    ),
                   });
                 }
               }
