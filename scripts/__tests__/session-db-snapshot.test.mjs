@@ -95,7 +95,6 @@ describe('createSessionDbSnapshot', () => {
         updated: NOW - 1 * DAY,
       }
     );
-    source.exec('BEGIN');
     for (let i = 0; i < 1_500; i += 1) {
       addSession(source, `old-${i}`, { at: NOW - 30 * DAY });
       addPart(

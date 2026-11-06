@@ -41,8 +41,9 @@ const REVIEWED = {
     patterns: `database-open:DatabaseSync:write-capable=2 filesystem-write:mkdtempSync=18 filesystem-write:rmSync=18`,
   },
   'free-chat-search-agent.test.mjs': {
-    scope: 'Subprocess invocation is part of the agent-runner contract; review its command and cwd.',
-    patterns: `subprocess:spawnSync=2`,
+    scope:
+      'Fake SQLite, database, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
+    patterns: `filesystem-write:mkdir=1 filesystem-write:mkdtemp=1 filesystem-write:rm=1 filesystem-write:writeFile=3 subprocess:spawnSync=6`,
   },
   'free-chat-search.test.mjs': {
     scope: 'Search database fixtures use unique OS temporary directories and are removed after the test.',
@@ -50,15 +51,16 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope: 'Mock CLI and configuration fixtures use temporary directories.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=1 filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
   },
   'free-model-pool-external.test.mjs': {
     scope: 'External-provider fixtures use unique OS temporary directories.',
     patterns: `filesystem-write:mkdtemp=2 filesystem-write:rm=2`,
   },
   'free-model-pool.test.mjs': {
-    scope: 'Model/provider fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=10 filesystem-write:rm=10 filesystem-write:writeFile=13`,
+    scope:
+      'Model/provider fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
+    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
@@ -83,7 +85,7 @@ const REVIEWED = {
   'main-worktree-guard.test.mjs': {
     scope:
       'Git and hook fixtures use temporary repositories; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:spawnSync=51 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=43 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -129,7 +131,7 @@ const REVIEWED = {
   'tsc-guard.test.mjs': {
     scope:
       'Fixtures are temporary; shared node_modules is read for resolution and writes are gated by physical checkout ownership.',
-    patterns: `subprocess:spawnSync=4 filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=4 filesystem-write:rmSync=7 filesystem-write:mkdirSync=2 filesystem-write:symlinkSync=3`,
+    patterns: `subprocess:spawnSync=6 filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=10 filesystem-write:rmSync=9 filesystem-write:mkdirSync=2 filesystem-write:symlinkSync=3`,
   },
   'worktree-inventory.test.mjs': {
     scope: 'Writable databases are test fixtures; the machine session database is explicitly opened read-only.',
@@ -155,6 +157,10 @@ const REVIEWED = {
     scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
     patterns: '',
   },
+  'secrets.test.mjs': {
+    scope: 'In-memory secret-key and redaction assertions; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
   'suite-budgets.test.mjs': {
     scope: 'Unit tests with mocked data; no filesystem mutations, subprocesses, or database access.',
     patterns: '',
@@ -165,6 +171,10 @@ const REVIEWED = {
   },
   'tool-descriptions.test.mjs': {
     scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
+  'windows-command-shim.test.mjs': {
+    scope: 'Pure command-argument assertions; no filesystem mutations, subprocesses, or database access.',
     patterns: '',
   },
 };
