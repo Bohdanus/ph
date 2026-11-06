@@ -174,7 +174,7 @@ const REVIEWED = {
     patterns: '',
   },
   'windows-command-shim.test.mjs': {
-    scope: 'Pure command-argument assertions; no filesystem mutations, subprocesses, or database access.',
+    scope: 'Pure command-line argument assertions; no filesystem mutations, subprocesses, or database access.',
     patterns: '',
   },
 };
@@ -201,6 +201,12 @@ const SHARED_READS = [
 ];
 
 const PROCESS_ENV_WRITES = [
+  {
+    file: 'free-model-pool.test.mjs',
+    keys: ['PATH'],
+    evidence: 'const previousPath = process.env.PATH;',
+    rule: 'The Windows PATH fixture restores the previous value in a finally block, deleting PATH if it was originally absent.',
+  },
   {
     file: 'merge-takeover-guard.test.mjs',
     keys: ['PATH', 'REAL_GIT_PATH'],

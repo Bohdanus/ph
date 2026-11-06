@@ -203,13 +203,20 @@ variant or an equivalent atomic history action.
    -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
-   mixed-source fixture pin exact materialized bounds; the latter also checks bitmap dimensions and
+   pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and allows
+   at most two partial-alpha boundary pixels in frame comparisons and two internal alpha-gradient
+   pixels in tight-bitmap comparisons; its composites remain byte-identical. The three-transition
+   mixed-source fixture pins exact bounds and checks per-layer frame and tight bitmaps exactly in
+   premultiplied space. The styled-text fixture also compares tight bitmaps exactly after
+   premultiplying readback color channels; alpha, frame pixels, and composites remain byte-identical.
+   Premultiplication preserves the exact color values used in compositing while avoiding false
+   differences from unpremultiplied canvas readback rounding.
+   The mixed-source fixture also checks bitmap dimensions and
    pixels for its blank, vector, paint, and point-text layers at each affine cursor and after each
    transition. It applies two sequential retained affines to an opaque blank, one affine to a 45%-
-   opacity blank, and one each to the other layers, checking per-layer bounds, dimensions, and pixels
-   at all nine changed cursors. The other source-only cases assert
-   byte-identical pixels and materialized-layer presence. The
+   opacity blank, and one each to the other layers, checking per-layer bounds and dimensions at all
+   nine changed cursors. The other source-only cases assert byte-identical composites and
+   materialized-layer presence. The
    mixed-source fixture uses integer frame origins and extents; a fractional-frame probe retained
    exact per-layer bounds and pixels but its first composite transition differed at canvas pixel
    (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not count that mixed-source

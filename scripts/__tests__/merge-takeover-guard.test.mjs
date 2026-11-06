@@ -441,6 +441,47 @@ describe('the shape a whole-file resolution loses silently', () => {
   });
 });
 
+describe('criss-cross merge-base handling', () => {
+  it('accepts resolve-undo stages from Git virtual merge bases', () => {
+    write('f with space.txt', 'base\n');
+    write('safe.txt', 'base safe\n');
+    write('other.txt', 'stable\n');
+    commit('common ancestor');
+
+    git(['checkout', '-qb', 'left']);
+    write('f with space.txt', 'left edit\n');
+    commit('left side');
+    const left = sha();
+    const leftTree = git(['rev-parse', `${left}^{tree}`]);
+
+    git(['checkout', '-q', 'main']);
+    write('f with space.txt', 'right edit\n');
+    write('safe.txt', 'right safe\n');
+    commit('right side');
+    const right = sha();
+    const rightTree = git(['rev-parse', `${right}^{tree}`]);
+
+    const leftMerge = git(['commit-tree', leftTree, '-p', left, '-p', right, '-m', 'left criss-cross merge']);
+    const rightMerge = git(['commit-tree', rightTree, '-p', right, '-p', left, '-m', 'right criss-cross merge']);
+    git(['reset', '-q', '--hard', leftMerge]);
+    git(['update-ref', 'refs/heads/feat', rightMerge]);
+
+    expect(git(['merge-base', '--all', 'main', 'feat']).split(/\r?\n/)).toHaveLength(2);
+
+    const seen = mergeAndInspect('feat', {
+      resolve: () => {
+        write('f with space.txt', 'left edit\nright edit\n');
+        git(['add', 'f with space.txt']);
+      },
+    });
+
+    expect(seen.conflicted).toBe(true);
+    expect(seen.takeovers).toEqual([]);
+    expect(git(['show', ':0:f with space.txt'])).toBe('left edit\nright edit');
+    expect(git(['show', ':0:safe.txt'])).toBe('base safe');
+  });
+});
+
 describe('the shapes it must NOT report', () => {
   it('stays silent when the branch never touched a path main changed', () => {
     // Measured before the detector was written: this merge is SAFE. git's three-way merge
