@@ -32,7 +32,7 @@ import {
 const BOX: BoundingBox = { x: 40, y: 15, width: 320, height: 200 };
 const BOX_CLIP: Required<ClipOptions> = { x: 140, y: 115, width: 300, height: 100 };
 
-const STANDALONE_CLIP: Required<ClipOptions> = { x: 7, y: 9, width: 120, height: 80 };
+const STANDALONE_CLIP = viewportClip({ x: 7, y: 9, width: 120, height: 80 });
 
 /** The poll loop only ever needs to know the buffer came back; contents are up to the predicate. */
 const SCREENSHOT = Buffer.from('fake-png-data');
@@ -210,7 +210,7 @@ describe('waitForCanvasPixels', () => {
 
   it('reuses the same clip object for every attempt of one call', async () => {
     const harness = createPollingPage();
-    const clip = { ...STANDALONE_CLIP };
+    const clip = viewportClip({ ...STANDALONE_CLIP });
 
     await waitForCanvasPixels(harness.page, clip, sequence(false, true));
 
@@ -363,7 +363,7 @@ describe('waitForCanvasPixels', () => {
 
   it('tolerates a zero-size clip and defers to the predicate', async () => {
     const harness = createPollingPage();
-    const zeroClip: Required<ClipOptions> = { x: 0, y: 0, width: 0, height: 0 };
+    const zeroClip = viewportClip({ x: 0, y: 0, width: 0, height: 0 });
 
     await expect(waitForCanvasPixels(harness.page, zeroClip, always(true))).resolves.toBeUndefined();
 
@@ -420,7 +420,7 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
   const DOCUMENT_HEIGHT = 1177;
 
   /** The clip fixture: page y 748..908, initially below the 720px viewport. */
-  const BELOW_THE_FOLD: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
+  const BELOW_THE_FOLD = viewportClip({ x: 176, y: 748, width: 320, height: 160 });
 
   function scrolledPage(overrides: Parameters<typeof createScrollablePage>[0] = {}) {
     // The clock is faked for this file, and the deadline is read from `Date.now()`. A
@@ -456,7 +456,7 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
     // window at 457 is at page 477, well inside the 457..1177 the viewport covers, and is
     // correctly left alone.
     const harness = scrolledPage({ initialScrollY: 440 });
-    const aboveTheFold: Required<ClipOptions> = { x: 156, y: -240, width: 320, height: 120 };
+    const aboveTheFold = viewportClip({ x: 156, y: -240, width: 320, height: 120 });
 
     await waitForCanvasPixels(harness.page, aboveTheFold, always(true), { timeoutMs: 1_000 });
 
@@ -472,7 +472,7 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
 
   it('leaves a clip that is off neither edge alone, even with the window scrolled', async () => {
     const harness = scrolledPage({ initialScrollY: 440 });
-    const inView: Required<ClipOptions> = { x: 176, y: 372, width: 320, height: 80 };
+    const inView = viewportClip({ x: 176, y: 372, width: 320, height: 80 });
 
     await waitForCanvasPixels(harness.page, inView, always(true), { timeoutMs: 1_000 });
 
@@ -528,7 +528,7 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
 
   it('asks for no scroll at all when the region is already fully in view', async () => {
     const harness = scrolledPage();
-    const inView: Required<ClipOptions> = { x: 176, y: 372, width: 320, height: 80 };
+    const inView = viewportClip({ x: 176, y: 372, width: 320, height: 80 });
 
     await waitForCanvasPixels(harness.page, inView, always(true), { timeoutMs: 1_000 });
 
@@ -540,7 +540,7 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
     // 700 + 80 = 780, past the 720px window. Trimming would silently return a 20px-tall
     // capture, which is a wrong answer rather than an error.
     const harness = scrolledPage();
-    const straddling: Required<ClipOptions> = { x: 176, y: 700, width: 320, height: 80 };
+    const straddling = viewportClip({ x: 176, y: 700, width: 320, height: 80 });
 
     await waitForCanvasPixels(harness.page, straddling, always(true), { timeoutMs: 1_000 });
 
@@ -555,7 +555,7 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
     // before the visibility check and before any scroll, so the refusal names both numbers
     // and no scroll request is made.
     const harness = scrolledPage();
-    const tallerThanTheWindow: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
+    const tallerThanTheWindow = viewportClip({ x: 0, y: 0, width: 1280, height: 900 });
 
     await expect(
       waitForCanvasPixels(harness.page, tallerThanTheWindow, always(true), { timeoutMs: 1_000 })

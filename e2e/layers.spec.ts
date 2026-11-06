@@ -1,10 +1,11 @@
 import { expect, test } from './fixtures/extended-test';
 import {
-  type ClipOptions,
   drawLine,
   getColorAtPoint,
   getWorkspaceCanvas,
   loadImageData,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { cssPointToImage } from './helpers/screenshot-scale';
@@ -225,12 +226,12 @@ test.describe('Layers', () => {
       matches: (colour: { red: number; green: number; blue: number }) => boolean,
       description: string
     ) => {
-      const clip: Required<ClipOptions> = {
+      const clip: ViewportClip = viewportClip({
         x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
         y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
         width: OVERLAP_SAMPLE_RADIUS * 2,
         height: OVERLAP_SAMPLE_RADIUS * 2,
-      };
+      });
       await waitForCanvasPixels(
         page,
         clip,
@@ -480,12 +481,12 @@ test.describe('Layers', () => {
       description: string
     ): Promise<{ red: number; green: number; blue: number }> => {
       const matchedColour: { value: { red: number; green: number; blue: number } | null } = { value: null };
-      const clip = {
+      const clip = viewportClip({
         x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
         y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
         width: OVERLAP_SAMPLE_RADIUS * 2,
         height: OVERLAP_SAMPLE_RADIUS * 2,
-      };
+      });
       await waitForCanvasPixels(
         page,
         clip,
@@ -583,12 +584,12 @@ test.describe('Layers', () => {
       matches: (colour: { red: number; green: number; blue: number }) => boolean,
       description: string
     ) => {
-      const clip = {
+      const clip = viewportClip({
         x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
         y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
         width: OVERLAP_SAMPLE_RADIUS * 2,
         height: OVERLAP_SAMPLE_RADIUS * 2,
-      };
+      });
       await waitForCanvasPixels(
         page,
         clip,
@@ -665,12 +666,12 @@ test.describe('Layers', () => {
       matches: (colour: { red: number; green: number; blue: number }) => boolean,
       description: string
     ) => {
-      const clip = {
+      const clip = viewportClip({
         x: box.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
         y: box.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
         width: OVERLAP_SAMPLE_RADIUS * 2,
         height: OVERLAP_SAMPLE_RADIUS * 2,
-      };
+      });
       await waitForCanvasPixels(
         page,
         clip,
@@ -775,12 +776,12 @@ test.describe('Tablet touch layer reordering', () => {
         { x: canvasBox.x + 440, y: canvasBox.y + 260 }
       );
 
-      const overlapClip = {
+      const overlapClip = viewportClip({
         x: canvasBox.x + LAYER_OVERLAP_X - OVERLAP_SAMPLE_RADIUS,
         y: canvasBox.y + LAYER_OVERLAP_Y - OVERLAP_SAMPLE_RADIUS,
         width: OVERLAP_SAMPLE_RADIUS * 2,
         height: OVERLAP_SAMPLE_RADIUS * 2,
-      };
+      });
       const waitForOverlap = async (
         matches: (color: { red: number; green: number; blue: number }) => boolean,
         description: string

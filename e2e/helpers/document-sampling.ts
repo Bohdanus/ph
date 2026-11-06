@@ -7,8 +7,10 @@ import {
   getColorAtPoint,
   getWorkspaceCanvas,
   loadImageData,
+  viewportClip,
+  type ViewportClip,
 } from './canvas-helpers';
-import { type ClipOptions, type ImageSize, type Point, cssPointToImage } from './screenshot-scale';
+import { type ImageSize, type Point, cssPointToImage } from './screenshot-scale';
 
 /**
  * Sampling a DOCUMENT point, in the two coordinate spaces a capture lives in.
@@ -70,7 +72,7 @@ export function sampleWindowCss(radius: number = SAMPLE_RADIUS): number {
 
 export interface DocumentSampleRegion {
   /** Page-relative CSS rect, ready for `page.screenshot({ clip })`. */
-  clip: Required<ClipOptions>;
+  clip: ViewportClip;
   /** The rect's CSS size — the denominator the capture's own scale comes from. */
   size: ImageSize;
 }
@@ -107,7 +109,7 @@ export function documentSampleRegion(
   const centreCssY = box.y + offsetY + documentY * scale;
   const half = windowCss / 2;
   return {
-    clip: { x: centreCssX - half, y: centreCssY - half, width: windowCss, height: windowCss },
+    clip: viewportClip({ x: centreCssX - half, y: centreCssY - half, width: windowCss, height: windowCss }),
     size: { width: windowCss, height: windowCss },
   };
 }
@@ -160,17 +162,14 @@ export function sampleCentreInImage(image: ImageSize, cssSize: { width: number; 
  * `documentSize * scale` no larger than either box axis). So polling this rect instead is
  * the spec-side statement that the pixels being waited for are pixels of the document.
  */
-export function documentClipInBox(
-  box: BoundingBox,
-  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE
-): Required<ClipOptions> {
+export function documentClipInBox(box: BoundingBox, documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE): ViewportClip {
   const { scale, offsetX, offsetY } = containFit(box, documentSize);
-  return {
+  return viewportClip({
     x: box.x + offsetX,
     y: box.y + offsetY,
     width: documentSize.width * scale,
     height: documentSize.height * scale,
-  };
+  });
 }
 
 async function canvasBox(page: Page): Promise<BoundingBox> {

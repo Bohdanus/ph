@@ -581,7 +581,7 @@ export async function loadImageData(screenshot: Buffer): Promise<ImageDataResult
  * whatever scrolling that took.
  */
 interface OnScreenClip {
-  clip: Required<ClipOptions>;
+  clip: ViewportClip;
   restore: () => Promise<void>;
 }
 
@@ -615,7 +615,7 @@ function clamp(value: number, min: number, max: number): number {
  * `page.screenshot({ clip })` can only photograph what is on screen: Playwright trims the
  * clip against the viewport, and a region that is entirely above or below it collapses to
  * zero height and throws `Clipped area is either empty or outside the resulting image`.
- * The clip this takes and returns is VIEWPORT-relative (see `ClipOptions`); the scroll is
+ * The clip this takes and returns is VIEWPORT-relative (see `ViewportClip`); the scroll is
  * undone afterwards rather than left in place, because a caller's later `page.mouse`
  * coordinates are viewport-relative and were built against the window it expects to still
  * be in. A `Page.captureScreenshot` clip is document-relative and needs the opposite
@@ -639,7 +639,7 @@ function clamp(value: number, min: number, max: number): number {
  * `HANDOFF.md` §242. Refusing is the only honest answer: the caller asked for a region the
  * page cannot render, and a smaller image is a wrong answer wearing a plausible shape.
  */
-async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
+async function onScreenClip(page: Page, clip: ViewportClip): Promise<OnScreenClip> {
   const viewport = await readPageViewport(page);
   if (clip.height > viewport.height) {
     throw new Error(
@@ -660,7 +660,7 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
   const scrolledTo = await page.evaluate(() => window.scrollY);
 
   return {
-    clip: { ...clip, y: pageRect.y - scrolledTo },
+    clip: viewportClip({ ...clip, y: pageRect.y - scrolledTo }),
     restore: async () => {
       await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x: viewport.scrollX, y: viewport.scrollY });
     },
@@ -1039,16 +1039,16 @@ export interface WaitForCanvasPixelsOptions {
  * post-draw timeouts: a one-shot screenshot can land before the repaint and make a
  * pixel assertion flaky. Throws with a descriptive message if it never does.
  *
- * `clip` is `[PAGE]` and is used exactly as given, for all 10 seconds — see the comment inside
- * the loop, which is the difference between what this function re-reads (the window) and what
- * it takes on trust (the box).
+ * `clip` is a branded `[PAGE]` rectangle and is used exactly as given, for all 10 seconds —
+ * see the comment inside the loop, which is the difference between what this function re-reads
+ * (the window) and what it takes on trust (the box).
  *
  * The single poll loop: every redraw wait below is a specialization of it, so the
  * timeout, the interval and the error wording can only be changed in one place.
  */
 export async function waitForCanvasPixels(
   page: Page,
-  clip: Required<ClipOptions>,
+  clip: ViewportClip,
   predicate: CanvasPixelPredicate,
   options: WaitForCanvasPixelsOptions = {}
 ): Promise<void> {

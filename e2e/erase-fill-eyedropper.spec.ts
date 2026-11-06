@@ -13,6 +13,8 @@ import {
   LINE_START_X,
   loadImageData,
   scanPixelsForBounds,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
@@ -195,14 +197,14 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
 const CLIP_MARGIN_X = 30;
 const CLIP_MARGIN_Y = 20;
 
-async function slabClip(page: Page): Promise<Required<ClipOptions>> {
+async function slabClip(page: Page): Promise<ViewportClip> {
   const box = await canvasBox(page);
-  return {
+  return viewportClip({
     x: box.x + LINE_START_X - CLIP_MARGIN_X,
     y: box.y + LINE_Y - SLAB_CAP - CLIP_MARGIN_Y,
     width: ERASE_LINE_END_X - LINE_START_X + CLIP_MARGIN_X * 2,
     height: SLAB + CLIP_MARGIN_Y * 2,
-  };
+  });
 }
 
 /** The name the seeded base layer carries in the Layers panel: `layer-utils.ts:160,181`. */

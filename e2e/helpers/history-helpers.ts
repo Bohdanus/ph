@@ -25,9 +25,10 @@ import {
   hasDarkPixels,
   isBuffer,
   loadImageData,
+  viewportClip,
   type BoundingBox,
-  type ClipOptions,
   type ImageDataResult,
+  type ViewportClip,
 } from './canvas-helpers';
 
 export const UNDO_BUTTON_TEST_ID = 'undo-button';
@@ -45,7 +46,7 @@ export interface CanvasBand {
   /** Zero-based position of this band within its stack, top to bottom. */
   readonly index: number;
   /** The band in page coordinates, ready for `page.screenshot({ clip })`. */
-  readonly clip: Required<ClipOptions>;
+  readonly clip: ViewportClip;
 }
 
 /**
@@ -153,11 +154,11 @@ function assertBandGeometry(bandCount: number, band: number): void {
  * else — a band that also cropped X could be read as clean simply because the
  * stroke was outside the crop.
  */
-export function bandClip(box: BoundingBox, band: number, bandCount: number): Required<ClipOptions> {
+export function bandClip(box: BoundingBox, band: number, bandCount: number): ViewportClip {
   assertBandGeometry(bandCount, band);
   const top = bandEdge(box, band, bandCount);
   const bottom = bandEdge(box, band + 1, bandCount);
-  return { x: box.x, y: top, width: box.width, height: bottom - top };
+  return viewportClip({ x: box.x, y: top, width: box.width, height: bottom - top });
 }
 
 /**
@@ -193,7 +194,7 @@ export function wholeCanvasBand(box: BoundingBox): CanvasBand {
  * screenshots once per tick, so a per-band assertion costs one capture per poll
  * rather than one per band.
  */
-export function bandUnionClip(bands: readonly CanvasBand[]): Required<ClipOptions> {
+export function bandUnionClip(bands: readonly CanvasBand[]): ViewportClip {
   if (bands.length === 0) {
     throw new Error('bandUnionClip: needs at least one band');
   }
@@ -201,7 +202,7 @@ export function bandUnionClip(bands: readonly CanvasBand[]): Required<ClipOption
   const top = Math.min(...bands.map((band) => band.clip.y));
   const right = Math.max(...bands.map((band) => band.clip.x + band.clip.width));
   const bottom = Math.max(...bands.map((band) => band.clip.y + band.clip.height));
-  return { x: left, y: top, width: right - left, height: bottom - top };
+  return viewportClip({ x: left, y: top, width: right - left, height: bottom - top });
 }
 
 /**

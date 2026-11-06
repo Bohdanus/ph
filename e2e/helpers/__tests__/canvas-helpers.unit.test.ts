@@ -19,6 +19,7 @@ import {
   STROKE_ANALYSIS,
   takeLineScreenshot,
   waitForCanvasPixels,
+  waitForCanvasRedraw,
   viewportClip,
   type BoundingBox,
   type ClipOptions,
@@ -126,6 +127,25 @@ describe('buildClip', () => {
 
     // @ts-expect-error An untagged rectangle could be relative to the canvas box.
     acceptsViewportClip(rawClip);
+
+    // The adapter parameters are extracted from the public APIs. They keep these assertions
+    // compile-time-only without calling browser helpers from this pure type contract test.
+    const acceptsPixelsClip = (value: Parameters<typeof waitForCanvasPixels>[1]) => value;
+    const acceptsRedrawClip = (value: NonNullable<NonNullable<Parameters<typeof waitForCanvasRedraw>[2]>['clip']>) =>
+      value;
+    const acceptsScreenshotClip = (value: NonNullable<Parameters<typeof takeLineScreenshot>[4]>) => value;
+
+    expect(acceptsPixelsClip(clip)).toEqual(rawClip);
+    // @ts-expect-error Raw rectangles can still be canvas-box-relative.
+    expect(acceptsPixelsClip(rawClip)).toEqual(rawClip);
+
+    expect(acceptsRedrawClip(clip)).toEqual(rawClip);
+    // @ts-expect-error Redraw clips must name their viewport coordinate space.
+    expect(acceptsRedrawClip(rawClip)).toEqual(rawClip);
+
+    expect(acceptsScreenshotClip(clip)).toEqual(rawClip);
+    // @ts-expect-error Screenshot clips must name their viewport coordinate space.
+    expect(acceptsScreenshotClip(rawClip)).toEqual(rawClip);
   });
 });
 
@@ -458,7 +478,7 @@ describe('getSelectionBounds default thresholds', () => {
  */
 describe('onScreenClip refuses an over-tall clip', () => {
   const SHORT_VIEWPORT = 720;
-  const overTall: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
+  const overTall = viewportClip({ x: 0, y: 0, width: 1280, height: 900 });
 
   it('throws naming the requested height and the viewport height', async () => {
     const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
@@ -506,7 +526,7 @@ describe('onScreenClip refuses an over-tall clip', () => {
 
   it('admits a clip exactly the viewport height', async () => {
     const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
-    const exact: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: SHORT_VIEWPORT };
+    const exact = viewportClip({ x: 0, y: 0, width: 1280, height: SHORT_VIEWPORT });
 
     await expect(
       waitForCanvasPixels(harness.page, exact, async () => true, { timeoutMs: 1_000 })
@@ -517,7 +537,7 @@ describe('onScreenClip refuses an over-tall clip', () => {
 
   it('admits a clip shorter than the viewport and photographs it as given', async () => {
     const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
-    const short: Required<ClipOptions> = { x: 10, y: 20, width: 120, height: 100 };
+    const short = viewportClip({ x: 10, y: 20, width: 120, height: 100 });
 
     await waitForCanvasPixels(harness.page, short, async () => true, { timeoutMs: 1_000 });
     expect(harness.clips()).toEqual([short]);
@@ -531,7 +551,7 @@ describe('onScreenClip refuses an over-tall clip', () => {
       documentHeight: 1_177,
       initialScrollY: 0,
     });
-    const belowTheFold: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
+    const belowTheFold = viewportClip({ x: 176, y: 748, width: 320, height: 160 });
 
     await expect(
       waitForCanvasPixels(harness.page, belowTheFold, async () => true, { timeoutMs: 1_000 })
