@@ -318,7 +318,7 @@ describe('project main worktree detection', () => {
     expect(isProjectMainWorktree(checkout)).toBe(true);
   });
 
-  it('preserves trailing whitespace in the designated project root path', () => {
+  it.skipIf(process.platform === 'win32')('preserves trailing whitespace in the designated project root path', () => {
     const source = join(dir, 'source');
     const checkout = join(dir, 'project-with-trailing-space ');
     const commonGitDir = join(dir, 'project-with-trailing-space.git');
