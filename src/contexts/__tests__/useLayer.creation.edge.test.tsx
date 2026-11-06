@@ -196,6 +196,44 @@ describe('useLayers beginTextLayerEdit', () => {
     expect(preview?.toolArgs).toBeUndefined();
     processor.mockRestore();
   });
+
+  it('does not publish the transient hidden visibility override when committing previews', () => {
+    const processor = vi
+      .spyOn(toolProcessors.text, 'imageProcessor')
+      .mockReturnValue(() => [new OffscreenCanvas(40, 20)] as unknown as ToolResult);
+    const { result } = setup();
+    const textArgs = {
+      toolName: 'text',
+      align: 'left' as const,
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 64,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'Hello',
+      rect: { x1: 0, y1: 0, x2: 40, y2: 20 },
+    } as ToolArgs;
+
+    let created: Layer | null = null;
+    act(() => {
+      created = result.current.layers.createLayerFromTool({ args: textArgs });
+    });
+    const textLayer = created as Layer | null;
+    if (!textLayer) throw new Error('text layer was not created');
+
+    act(() => result.current.layers.beginTextLayerEdit(textLayer.id));
+    expect(result.current.store.previewLayers.current[textLayer.id]?.layer.visible).toBe(false);
+
+    act(() => {
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'shape' });
+    });
+    act(() => result.current.layers.commitDirtyTool());
+
+    expect(result.current.store.layers[textLayer.id]?.visible).toBe(true);
+    expect(result.current.store.previewLayers.current[textLayer.id]).toBeUndefined();
+    processor.mockRestore();
+  });
 });
 
 describe('useLayers createBlankLayer append', () => {

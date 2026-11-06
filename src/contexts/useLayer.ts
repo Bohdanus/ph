@@ -1003,7 +1003,14 @@ export const useLayers = () => {
         console.error(previewRefusal);
         continue;
       }
-      const layer = { ...preview.layer, pos: { ...preview.layer.pos }, operations: [...preview.layer.operations] };
+      const layer = {
+        ...preview.layer,
+        // Text edit previews have no tool args. Their visibility override hides retained source
+        // pixels during editing, but must never replace the committed layer's visibility.
+        ...(!preview.toolArgs && layers[id] ? { visible: layers[id].visible } : {}),
+        pos: { ...preview.layer.pos },
+        operations: [...preview.layer.operations],
+      };
       committedLayers[id] = layer;
       hasPreviewLayers = true;
       if (preview.toolArgs) {
