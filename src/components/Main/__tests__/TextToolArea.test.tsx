@@ -28,6 +28,8 @@ const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
   setActiveLayer: vi.fn(),
   beginTextLayerEdit: vi.fn(),
+  publishSmallCapsTextDraftPreview: vi.fn(() => true),
+  clearSmallCapsTextDraftPreview: vi.fn(),
   requestTextEditFocus: vi.fn(),
   commitDirtyTool: vi.fn(),
   dispatch: vi.fn(),
@@ -112,6 +114,12 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
     get beginTextLayerEdit() {
       return h.beginTextLayerEdit;
     },
+    get publishSmallCapsTextDraftPreview() {
+      return h.publishSmallCapsTextDraftPreview;
+    },
+    get clearSmallCapsTextDraftPreview() {
+      return h.clearSmallCapsTextDraftPreview;
+    },
   }),
 }));
 
@@ -194,6 +202,9 @@ describe('TextToolArea', () => {
     h.setToolArgs.mockReset();
     h.setActiveLayer.mockReset();
     h.beginTextLayerEdit.mockReset();
+    h.publishSmallCapsTextDraftPreview.mockReset();
+    h.publishSmallCapsTextDraftPreview.mockReturnValue(true);
+    h.clearSmallCapsTextDraftPreview.mockReset();
     h.requestTextEditFocus.mockReset();
     h.commitDirtyTool.mockReset();
     h.dispatch.mockReset();
@@ -771,29 +782,35 @@ describe('TextToolArea', () => {
       expect(ctx.fill).not.toHaveBeenCalled();
     });
 
-    it('paints Small Caps drafts with the committed Canvas renderer', () => {
+    it('publishes Small Caps drafts through the document layer compositor', () => {
       const ctx = makeMockCtx();
       const modelRect = { x1: 5, y1: 6, x2: 50, y2: 30 };
       const previewRect = { x1: 10, y1: 12, x2: 60, y2: 42 };
       toolArgs = makeTextArgs({ text: 'Wave', rect: modelRect, color: '#0000ff', smallCaps: true });
-      vi.mocked(layoutText).mockReturnValue({ lines: ['Wave'], overflow: false });
+      vi.mocked(layoutText).mockReturnValue({ lines: ['Wave'], overflow: true });
 
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!({ ...previewRect }));
 
-      const previewCtx = vi.mocked(renderText).mock.calls[0]?.[0];
-      if (!previewCtx) throw new Error('Small Caps preview did not call the Canvas renderer');
-      expect(previewCtx).not.toBe(ctx);
-      expect(vi.mocked(previewCtx.fillText).mock.calls.map(([text]) => text)).toEqual(['W', 'AVE']);
-      expect(previewCtx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
-      expect(renderText).toHaveBeenCalledWith(
-        previewCtx,
-        expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 50, y2: 30 }, smallCaps: true }),
-        {
-          overflowIndicator: true,
-        }
-      );
-      expect(ctx.drawImage).toHaveBeenCalledWith(expect.any(OffscreenCanvas), 10, 12, 50, 30);
+      expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledWith(toolArgs, previewRect);
+      expect(renderText).not.toHaveBeenCalled();
+      expect(ctx.drawImage).not.toHaveBeenCalled();
+      expect(drawOverflowIndicator).toHaveBeenCalledWith(ctx, previewRect, '#0000ff');
+    });
+
+    it('keeps Small Caps ink on the overlay when the shared preview renderer is unavailable', () => {
+      const ctx = makeMockCtx();
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true });
+      h.publishSmallCapsTextDraftPreview.mockReturnValue(false);
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+
+      expect(h.publishSmallCapsTextDraftPreview).toHaveBeenCalledWith(toolArgs, rect);
+      expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ smallCaps: true }), {
+        overflowIndicator: true,
+      });
     });
 
     it('draws the overflow indicator in the tool colour when layoutText reports overflow', () => {

@@ -1,7 +1,7 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
-import type { BitmapSource } from './general-types.ts';
+import type { BitmapSource, Ctx2D, RectXY } from './general-types.ts';
 import { useSetToolArgs } from './set-tool-args.ts';
 import {
   isLayerBlendMode,
@@ -17,6 +17,7 @@ import {
   createLayerOperation,
   createAffineLayerOperation,
   createLayerSource,
+  deriveLayerNameAndOrder,
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
@@ -51,7 +52,7 @@ import {
   TOOL_ACTION,
   UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
-import { clearTextDraftArgs, type TextToolArgs } from '../tools/text.ts';
+import { clearTextDraftArgs, renderText, type TextToolArgs } from '../tools/text.ts';
 import { normalizeColorsToolArgs } from '../tools/colors.ts';
 import { normalizeLevelsToolArgs } from '../tools/levels.ts';
 import { canvasRectToLocal } from '../util/rect.ts';
@@ -460,6 +461,8 @@ export const useLayers = () => {
   const setToolArgs = useSetToolArgs();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
   const dpr = useDevicePixelRatio();
+  const smallCapsDraftCanvasRef = useRef<OffscreenCanvas | null>(null);
+  const smallCapsDraftLayerIdRef = useRef<LayerId | null>(null);
 
   /**
    * Hands adopted rasters to the presentation scope. It has to run *after* the
@@ -489,6 +492,16 @@ export const useLayers = () => {
   const requestPresentation = (layer: Layer) => requestPresentations([layer]);
 
   function clearOverlay() {
+    const draftLayerId = smallCapsDraftLayerIdRef.current;
+    if (draftLayerId) {
+      delete previewLayersRef.current[draftLayerId];
+      smallCapsDraftLayerIdRef.current = null;
+      const draftCanvas = smallCapsDraftCanvasRef.current;
+      if (draftCanvas) {
+        draftCanvas.width = 0;
+        draftCanvas.height = 0;
+      }
+    }
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
     if (!overlayCtx) return;
     overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
@@ -892,6 +905,7 @@ export const useLayers = () => {
       if (!args.text && args.rect) {
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
         const closed = clearTextDraftArgs(persistedArgs);
+        clearSmallCapsTextDraftPreview(args.editingLayerId);
         if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(closed);
         else currentArgsRef.current = closed;
@@ -909,6 +923,7 @@ export const useLayers = () => {
       if (args.placeholderUntouched === true) {
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
         const discarded = clearTextDraftArgs(persistedArgs);
+        clearSmallCapsTextDraftPreview(args.editingLayerId);
         if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(discarded);
         else currentArgsRef.current = discarded;
@@ -1598,6 +1613,155 @@ export const useLayers = () => {
     renderSelector,
   ]);
 
+  const clearSmallCapsTextDraftPreview = useCallback(
+    (editingLayerId?: LayerId): boolean => {
+      let changed = false;
+      const draftLayerId = smallCapsDraftLayerIdRef.current;
+      if (draftLayerId) {
+        delete previewLayersRef.current[draftLayerId];
+        smallCapsDraftLayerIdRef.current = null;
+        changed = true;
+      }
+
+      if (editingLayerId) {
+        const preview = previewLayersRef.current[editingLayerId];
+        const layer = layers[editingLayerId];
+        if (preview && layer && preview.layer.tmpCanvas === smallCapsDraftCanvasRef.current) {
+          previewLayersRef.current[editingLayerId] = {
+            layer: {
+              ...layer,
+              visible: false,
+              bitmap: null,
+              tmpCanvas: null,
+              presentationBounds: null,
+            },
+            toolArgs: undefined,
+          };
+          changed = true;
+        }
+      }
+
+      const draftCanvas = smallCapsDraftCanvasRef.current;
+      if (draftCanvas) {
+        draftCanvas.width = 0;
+        draftCanvas.height = 0;
+      }
+      if (changed) drawAllLayers();
+      return changed;
+    },
+    [drawAllLayers, layers, previewLayersRef]
+  );
+
+  function publishSmallCapsTextDraftPreview(args: TextToolArgs, repaintRect: RectXY): boolean {
+    const editingLayer = args.editingLayerId ? layers[args.editingLayerId] : undefined;
+    if (
+      !args.smallCaps ||
+      args.allCaps ||
+      !args.text ||
+      !args.rect ||
+      !Number.isFinite(repaintRect.x1) ||
+      !Number.isFinite(repaintRect.y1) ||
+      !Number.isFinite(repaintRect.x2) ||
+      !Number.isFinite(repaintRect.y2) ||
+      (args.editingLayerId &&
+        (!editingLayer ||
+          editingLayer.source?.kind !== 'tool' ||
+          editingLayer.source.args.toolName !== 'text' ||
+          isLayerLocked(editingLayer))) ||
+      typeof OffscreenCanvas === 'undefined'
+    ) {
+      clearSmallCapsTextDraftPreview(args.editingLayerId);
+      return false;
+    }
+
+    let draftCanvas: OffscreenCanvas;
+    let measuredRect: RectXY;
+    let position: Layer['pos'];
+    let localRect: ReturnType<typeof sortRect>;
+    const sourceArgs: TextToolArgs = { ...args };
+    delete sourceArgs.editingLayerId;
+    try {
+      const candidateRect = sortRect(repaintRect);
+      measuredRect = calculateNewRect({ ...args, rect: candidateRect }, canvasRef, totalSize) ?? candidateRect;
+      position = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
+      localRect = sortRect(canvasRectToLocal(measuredRect, position, documentFrame));
+
+      const width = Math.trunc(position.width);
+      const height = Math.trunc(position.height);
+      if (width <= 0 || height <= 0) {
+        clearSmallCapsTextDraftPreview(args.editingLayerId);
+        return false;
+      }
+
+      draftCanvas = smallCapsDraftCanvasRef.current ?? new OffscreenCanvas(width, height);
+      if (draftCanvas.width !== width) draftCanvas.width = width;
+      if (draftCanvas.height !== height) draftCanvas.height = height;
+      smallCapsDraftCanvasRef.current = draftCanvas;
+      const draftContext = draftCanvas.getContext('2d');
+      if (!draftContext) {
+        clearSmallCapsTextDraftPreview(args.editingLayerId);
+        return false;
+      }
+      draftContext.clearRect(0, 0, draftCanvas.width, draftCanvas.height);
+      renderText(draftContext as Ctx2D, { ...sourceArgs, rect: localRect }, { overflowIndicator: false });
+    } catch {
+      clearSmallCapsTextDraftPreview(args.editingLayerId);
+      return false;
+    }
+
+    const source: ToolLayerSource = {
+      kind: 'tool',
+      args: { ...sourceArgs, rect: localRect },
+      pos: { ...position },
+    };
+    let layerId = args.editingLayerId;
+    let layer = layerId ? editingLayer : undefined;
+
+    if (!layerId) {
+      layerId = smallCapsDraftLayerIdRef.current ?? undefined;
+      layer = layerId ? previewLayersRef.current[layerId]?.layer : undefined;
+      if (!layer) {
+        const { name, order } = deriveLayerNameAndOrder(layers, source);
+        layerId = uuidv4();
+        layer = {
+          id: layerId,
+          name,
+          isBedrock: false,
+          tmpCanvas: draftCanvas,
+          bitmap: null,
+          visible: true,
+          opacity: 1,
+          locked: false,
+          blendMode: 'source-over',
+          order,
+          pos: { ...position },
+          presentationBounds: null,
+          source,
+          operations: [],
+        };
+        smallCapsDraftLayerIdRef.current = layerId;
+      }
+    }
+
+    if (!layerId || !layer) {
+      clearSmallCapsTextDraftPreview(args.editingLayerId);
+      return false;
+    }
+    previewLayersRef.current[layerId] = {
+      layer: {
+        ...layer,
+        pos: { ...position },
+        source,
+        bitmap: null,
+        tmpCanvas: draftCanvas,
+        presentationBounds: null,
+      },
+      toolArgs: undefined,
+    };
+    drawAllLayers();
+    return true;
+  }
+
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }, angle = 0): boolean => {
     if (![rect.x1, rect.y1, rect.x2, rect.y2, angle].every((value) => Number.isFinite(value))) {
       console.warn('applyDocumentCrop refused a non-finite crop rectangle');
@@ -1829,5 +1993,7 @@ export const useLayers = () => {
     mergeAllLayers,
     convertBedrockLayer,
     applyDocumentCrop,
+    publishSmallCapsTextDraftPreview,
+    clearSmallCapsTextDraftPreview,
   };
 };
