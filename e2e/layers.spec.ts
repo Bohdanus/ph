@@ -99,6 +99,12 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
@@ -258,6 +264,12 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
@@ -395,7 +407,9 @@ test.describe('Layers', () => {
     await expect(bottomZone).toBeVisible();
 
     await source.dispatchEvent('dragstart', { dataTransfer });
+    await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
     await bottomZone.dispatchEvent('dragover', { dataTransfer });
+    await expect(bottomZone.locator('xpath=preceding-sibling::div[contains(@class, "bg-blue-500")]')).toBeVisible();
     await bottomZone.dispatchEvent('drop', { dataTransfer });
     await source.dispatchEvent('dragend', { dataTransfer });
 
@@ -469,6 +483,12 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
@@ -573,6 +593,12 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
@@ -655,6 +681,12 @@ test.describe('Layers', () => {
       const targetBox = await target.boundingBox();
       if (!targetBox) throw new Error(`Layer row ${targetName} not found`);
       await source.dispatchEvent('dragstart', { dataTransfer });
+      await expect(source.locator('xpath=..')).toHaveCSS('opacity', '0.17');
+      await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
+      const dropIndicator = target.locator('xpath=..').locator('.bg-blue-500');
+      await expect(dropIndicator).toBeVisible();
+      // The first dragover renders the drop target. A second event sees that committed state
+      // and calls preventDefault, as the browser's native drag event stream would.
       await target.dispatchEvent('dragover', { dataTransfer, clientY: targetBox.y + 5 });
       await target.dispatchEvent('drop', { dataTransfer, clientY: targetBox.y + 5 });
       await source.dispatchEvent('dragend', { dataTransfer });
