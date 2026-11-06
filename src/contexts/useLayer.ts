@@ -418,7 +418,7 @@ export const useLayers = () => {
   const setToolArgs = useSetToolArgs();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
   const dpr = useDevicePixelRatio();
-  const smallCapsDraftCanvasRef = useRef<OffscreenCanvas | null>(null);
+  const smallCapsDraftCanvasRef = useRef<OffscreenCanvas | HTMLCanvasElement | null>(null);
   const smallCapsDraftLayerIdRef = useRef<LayerId | null>(null);
 
   /**
@@ -1618,14 +1618,13 @@ export const useLayers = () => {
         (!editingLayer ||
           editingLayer.source?.kind !== 'tool' ||
           editingLayer.source.args.toolName !== 'text' ||
-          isLayerLocked(editingLayer))) ||
-      typeof OffscreenCanvas === 'undefined'
+          isLayerLocked(editingLayer)))
     ) {
       clearSmallCapsTextDraftPreview(args.editingLayerId);
       return false;
     }
 
-    let draftCanvas: OffscreenCanvas;
+    let draftCanvas: OffscreenCanvas | HTMLCanvasElement;
     let measuredRect: RectXY;
     let position: Layer['pos'];
     let localRect: ReturnType<typeof sortRect>;
@@ -1644,7 +1643,7 @@ export const useLayers = () => {
         return false;
       }
 
-      draftCanvas = smallCapsDraftCanvasRef.current ?? new OffscreenCanvas(width, height);
+      draftCanvas = smallCapsDraftCanvasRef.current ?? createPresentationCanvas(width, height);
       if (draftCanvas.width !== width) draftCanvas.width = width;
       if (draftCanvas.height !== height) draftCanvas.height = height;
       smallCapsDraftCanvasRef.current = draftCanvas;

@@ -1478,6 +1478,24 @@ async function colourBoundsIn(page: Page, region: Rect, predicate: PixelPredicat
   );
 }
 
+async function setOffscreenCanvasAvailable(page: Page, available: boolean): Promise<void> {
+  await page.evaluate((nextAvailable) => {
+    const descriptorKey = '__smallCapsTestOffscreenCanvasDescriptor';
+    if (!nextAvailable) {
+      const descriptor = Object.getOwnPropertyDescriptor(window, 'OffscreenCanvas');
+      if (!descriptor) throw new Error('OffscreenCanvas has no property descriptor to preserve');
+      Object.defineProperty(window, descriptorKey, { configurable: true, value: descriptor });
+      Object.defineProperty(window, 'OffscreenCanvas', { configurable: true, writable: true, value: undefined });
+      return;
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(window, descriptorKey)?.value as PropertyDescriptor | undefined;
+    if (!descriptor) throw new Error('Saved OffscreenCanvas property descriptor is missing');
+    Object.defineProperty(window, 'OffscreenCanvas', descriptor);
+    Reflect.deleteProperty(window, descriptorKey);
+  }, available);
+}
+
 async function redBoundsIn(page: Page, region: Rect): Promise<CssBounds | null> {
   return colourBoundsIn(page, region, isRedInk);
 }
@@ -1867,7 +1885,7 @@ test.describe('Text tool', () => {
     expect(resizedHeight, 'text height did not track the transformed layer').toBeGreaterThan(beforeHeight);
   });
 
-  test('a Free Transform-rotated Type layer can re-enter editing without rasterizing its source', async ({
+  test('a Free Transform-rotated Type layer can re-enter Small Caps editing without OffscreenCanvas', async ({
     page,
   }, testInfo) => {
     test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
@@ -1969,11 +1987,16 @@ test.describe('Text tool', () => {
     expect(clickPoint.y).toBeGreaterThanOrEqual(overlayBox!.y - 2);
     expect(clickPoint.y).toBeLessThanOrEqual(overlayBox!.y + overlayBox!.height + 2);
 
+    // The live preview must keep using the compositor's HTML canvas fallback; an Offscreen-only
+    // preview path would silently switch to different overlay geometry on this capability gap.
+    await setOffscreenCanvasAvailable(page, false);
+    expect(await page.evaluate(() => typeof OffscreenCanvas)).toBe('undefined');
     await replaceDraftText(page, 'i');
     await hideDraftCaret(page);
     await expect(commitButton(page)).toBeEnabled();
     const editPreviewCapture = await captureCanvasScreenshot(page, box, testInfo, 'small-caps-affine-edit-preview');
     const editPreviewImage = await loadImageData(editPreviewCapture);
+    await setOffscreenCanvasAvailable(page, true);
     await commitDraft(page);
     await expect(draftOverlay(page), 'the committed re-entry left a second draft overlay').toHaveCount(0);
     await expect(layerRows, 'editing transformed Type created a duplicate layer').toHaveCount(layerCountBeforeEdit);
