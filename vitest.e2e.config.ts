@@ -39,6 +39,7 @@ export default defineConfig({
       provider: 'istanbul',
       include: ['e2e/**/*.ts'],
       exclude: ['e2e/**/*.spec.ts', 'e2e/**/*.test.ts', 'e2e/**/__tests__/**'],
+      reportOnFailure: true,
       reporter: ['text', 'json', 'html'],
       thresholds: {
         perFile: true,

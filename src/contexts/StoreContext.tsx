@@ -23,7 +23,7 @@ import {
 import { readClientViewportRect } from '../util/client-viewport.ts';
 
 import type { ReactNode, RefObject } from 'react';
-import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
+import type { Layer, LayerId, LayerPreviewRecord, LayersRecord } from './layer-types.ts';
 import type {
   BitmapSource,
   ClearedSelectionState,
@@ -263,7 +263,7 @@ export type StoreData = {
   finalizeHistoryReplayPresentation: (token: HistoryReplayPresentationToken) => boolean;
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
-  previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
+  previewLayers: React.MutableRefObject<Record<LayerId, LayerPreviewRecord>>;
 
   // file / image state
   hasImage: boolean;
@@ -1409,7 +1409,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
-  const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
+  const previewLayersRef = useRef<Record<LayerId, LayerPreviewRecord>>({});
   const clearPreviewLayers = () => {
     previewLayersRef.current = {};
   };
