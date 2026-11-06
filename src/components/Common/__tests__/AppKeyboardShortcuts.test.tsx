@@ -226,6 +226,40 @@ describe('Move tool layer nudge shortcuts', () => {
     });
   });
 
+  it('accumulates repeated arrow events before React renders the updated layer position', () => {
+    enableNudging();
+    renderShortcuts();
+
+    expect(press('ArrowRight', { repeat: true })).toBe(true);
+    expect(press('ArrowRight', { repeat: true })).toBe(true);
+
+    expect(updateLayerByTool).toHaveBeenNthCalledWith(1, {
+      id: 'layer-1',
+      toolArgs: { move: { x: 21, y: 30 }, toolName: 'reposition' },
+    });
+    expect(updateLayerByTool).toHaveBeenNthCalledWith(2, {
+      id: 'layer-1',
+      toolArgs: { move: { x: 22, y: 30 }, toolName: 'reposition' },
+    });
+  });
+
+  it('accumulates repeated Shift+Arrow events before React renders the updated layer position', () => {
+    enableNudging();
+    renderShortcuts();
+
+    expect(press('ArrowRight', { repeat: true, shiftKey: true })).toBe(true);
+    expect(press('ArrowRight', { repeat: true, shiftKey: true })).toBe(true);
+
+    expect(updateLayerByTool).toHaveBeenNthCalledWith(1, {
+      id: 'layer-1',
+      toolArgs: { move: { x: 30, y: 30 }, toolName: 'reposition' },
+    });
+    expect(updateLayerByTool).toHaveBeenNthCalledWith(2, {
+      id: 'layer-1',
+      toolArgs: { move: { x: 40, y: 30 }, toolName: 'reposition' },
+    });
+  });
+
   it('uses the latest active layer on a repeated key after a render', () => {
     enableNudging();
     const view = renderShortcuts();
@@ -249,6 +283,26 @@ describe('Move tool layer nudge shortcuts', () => {
     expect(updateLayerByTool).toHaveBeenCalledExactlyOnceWith({
       id: 'layer-2',
       toolArgs: { move: { x: 39, y: 50 }, toolName: 'reposition' },
+    });
+  });
+
+  it('re-seeds the nudge position when the active layer moves between renders', () => {
+    enableNudging();
+    const view = renderShortcuts();
+
+    press('ArrowRight');
+    updateLayerByTool.mockClear();
+    storeState.layers['layer-1']!.pos = { x: 50, y: 70 };
+    view.rerender(
+      <KeyboardEventsProvider>
+        <AppKeyboardShortcuts />
+      </KeyboardEventsProvider>
+    );
+
+    expect(press('ArrowLeft', { repeat: true })).toBe(true);
+    expect(updateLayerByTool).toHaveBeenCalledExactlyOnceWith({
+      id: 'layer-1',
+      toolArgs: { move: { x: 49, y: 70 }, toolName: 'reposition' },
     });
   });
 

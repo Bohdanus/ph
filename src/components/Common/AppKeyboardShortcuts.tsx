@@ -146,6 +146,12 @@ export const AppKeyboardShortcuts = () => {
     !!activeLayer &&
     !activeLayer.isBedrock &&
     !activeLayer.locked;
+  // Shortcut closures share this pending position until React renders the committed layer.
+  // A render seeds a fresh value from the store, including external layer moves or a new active layer.
+  const nudgeState = {
+    position: activeLayer ? { layerId: activeLayer.id, x: activeLayer.pos.x, y: activeLayer.pos.y } : null,
+    requestSequence: 0,
+  };
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -338,27 +344,37 @@ export const AppKeyboardShortcuts = () => {
     patchToolArgs(tool, { [field]: next } as unknown as ToolPatch<typeof tool>);
   };
 
-  const nudgeActiveLayer = (deltaX: number, deltaY: number, shiftKey: boolean) => {
-    if (!activeLayer || !canNudgeActiveLayer) return;
-
-    const distance = shiftKey ? MOVE_NUDGE_SHIFT_STEP : MOVE_NUDGE_STEP;
-    void updateLayerByTool({
-      id: activeLayer.id,
-      toolArgs: {
-        move: {
-          x: activeLayer.pos.x + deltaX * distance,
-          y: activeLayer.pos.y + deltaY * distance,
-        },
-        toolName: 'reposition',
-      },
-    }).catch((error: unknown) => console.error('Unable to nudge the active layer', error));
-  };
-
   const handleLayerNudge = (deltaX: number, deltaY: number) => (event: KeyboardEvent) => {
     // Preserve arrow keys already claimed by a focused toolbar or other control.
     if (event.defaultPrevented) return;
     event.preventDefault();
-    nudgeActiveLayer(deltaX, deltaY, event.shiftKey);
+    if (!activeLayer || !canNudgeActiveLayer) return;
+
+    const distance = event.shiftKey ? MOVE_NUDGE_SHIFT_STEP : MOVE_NUDGE_STEP;
+    const currentPosition =
+      nudgeState.position?.layerId === activeLayer.id
+        ? nudgeState.position
+        : { layerId: activeLayer.id, x: activeLayer.pos.x, y: activeLayer.pos.y };
+    const nextPosition = {
+      layerId: activeLayer.id,
+      x: currentPosition.x + deltaX * distance,
+      y: currentPosition.y + deltaY * distance,
+    };
+    nudgeState.position = nextPosition;
+    const requestSequence = ++nudgeState.requestSequence;
+
+    void updateLayerByTool({
+      id: activeLayer.id,
+      toolArgs: {
+        move: { x: nextPosition.x, y: nextPosition.y },
+        toolName: 'reposition',
+      },
+    }).catch((error: unknown) => {
+      if (nudgeState.requestSequence === requestSequence) {
+        nudgeState.position = { layerId: activeLayer.id, x: activeLayer.pos.x, y: activeLayer.pos.y };
+      }
+      console.error('Unable to nudge the active layer', error);
+    });
   };
 
   /** `0` is Opacity 100% and `1` is Opacity 10%, exactly as Adobe documents them. */
