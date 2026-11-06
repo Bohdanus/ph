@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { KeyboardEventsProvider } from '../../../../hooks/useKeyboardEvents.tsx';
+import { AUTO_LEADING } from '../../../../tools/text.ts';
 import Text from '../Text.tsx';
 import type { DocumentFrame } from '../../../../contexts/document-frame.ts';
 
@@ -1318,7 +1319,7 @@ describe('Text toolbar', () => {
   });
 
   describe('keyboard navigation', () => {
-    it('walks the bar left to right, with the style toggles between Italic and Commit', async () => {
+    it('walks the bar left to right, including the line-height preset', async () => {
       // The pair is Adobe's edit-mode tell, so it is on the tab path only while a draft is open —
       // and the fixture this renders already carries one, which is why Commit and Cancel are stops
       // here at all. A `disabled` control is not focusable, so presenting no draft would drop both
@@ -1334,6 +1335,9 @@ describe('Text toolbar', () => {
         screen.getByLabelText('Font'),
         screen.getByRole('spinbutton', { name: /Font Size/ }),
         screen.getByLabelText(/Line Height/),
+        screen.getByRole('button', {
+          name: `Set line height to ${AUTO_LEADING} (${Math.round(AUTO_LEADING * 100)}%)`,
+        }),
         screen.getByRole('slider', { name: /Tracking/ }),
         screen.getByLabelText('Color'),
         screen.getByLabelText('Align'),
@@ -1351,10 +1355,8 @@ describe('Text toolbar', () => {
       expect(stops[0]).toHaveFocus();
 
       // The bar's own left-to-right order is the tab order: no positive `tabIndex` anywhere, so
-      // the sequence is the DOM sequence, and the tab stops a sighted user sees with the focus
-      // ring are the ones a keyboard user walks. It used to skip the four toggles that Adobe
-      // puts in the middle of this bar, and a control that exists but cannot be reached is not
-      // reachable.
+      // the sequence is the DOM sequence. The preset follows its slider, and all visible controls
+      // remain reachable without a pointer.
       for (const stop of stops.slice(1)) {
         await user.tab();
         expect(stop).toHaveFocus();
@@ -1452,6 +1454,36 @@ describe('Text toolbar', () => {
 
       pressArrowOnRange(lineHeightSlider, 'ArrowDown');
       expect(lastToolArgs().lineHeight).toBeCloseTo(initialHeight - 0.05, 10);
+    });
+
+    it('sets the 120% line-height preset and refreshes the readout', () => {
+      resetToolArgs({ lineHeight: 2 });
+      const { rerender } = renderWithProvider(<Text />);
+      const readout = screen.getByTestId('line-height-readout');
+      const autoLeadingPercent = Math.round(AUTO_LEADING * 100);
+      const preset = screen.getByRole('button', {
+        name: `Set line height to ${AUTO_LEADING} (${autoLeadingPercent}%)`,
+      });
+
+      expect(readout).toHaveTextContent('2.0');
+      expect(preset).toHaveTextContent(`${autoLeadingPercent}%`);
+      expect(preset).toHaveAttribute(
+        'title',
+        `Set line height to ${AUTO_LEADING} (${autoLeadingPercent}% of type size)`
+      );
+
+      fireEvent.click(preset);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lineHeight: AUTO_LEADING }));
+
+      resetToolArgs({ lineHeight: AUTO_LEADING });
+      rerender(
+        <KeyboardEventsProvider>
+          <Text />
+        </KeyboardEventsProvider>
+      );
+
+      expect(readout).toHaveTextContent(AUTO_LEADING.toFixed(1));
     });
 
     it('changes alignment through the native select and reports it to the store', async () => {
