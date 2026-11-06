@@ -194,7 +194,7 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(result.current.store.layers).not.toHaveProperty(draftLayerId);
   });
 
-  it('renders existing Small Caps edits through the same transient layer and restores hidden-source state', () => {
+  it('renders existing Small Caps edits transiently and restores the source when cancelled', () => {
     const result = setupTextTool();
     act(() => {
       result.current.store.currentArgs.current = makeTextArgs();
@@ -225,6 +225,12 @@ describe('useLayers text commit idempotency boundary', () => {
       tmpCanvas: null,
     });
     expect(result.current.store.layers[layer.id]?.source).toEqual(layer.source);
+
+    act(() => {
+      result.current.layers.cancelLayerPreview(layer.id);
+    });
+    expect(result.current.store.previewLayers.current).toEqual({});
+    expect(result.current.store.layers[layer.id]).toMatchObject({ visible: true, source: layer.source });
   });
 
   it('reports refusal when an uncommittable text edit blocks bitmap layer creation', async () => {
