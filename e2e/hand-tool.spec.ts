@@ -423,7 +423,7 @@ test.describe('the view commands', () => {
     // The listener is attached directly with `{ passive: false }`; a React `onWheel` could not
     // cancel the default, and `Ctrl+wheel` would zoom the PAGE. `consolePolice` fails this test
     // if the browser logged the passive-cancel warning.
-    expect(translateOf(await viewTransform(page)).y).toBeLessThan(0);
+    await expect.poll(async () => translateOf(await viewTransform(page)).y).toBeLessThan(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
   });
 
