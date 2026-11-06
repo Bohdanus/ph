@@ -14,13 +14,18 @@ import {
   type TextToolArgs,
 } from '../../tools/text.ts';
 import { useRect } from '../../hooks/useRect.ts';
-import { calculateNewRect, sortRect } from '../../util/rect.ts';
+import { calculateNewRect, canvasRectToLocal, sortRect, sortedRectToPos } from '../../util/rect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import { getLayerAffineTransform, isPointInLayer } from '../../contexts/affine-transform.ts';
-import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPos } from '../../contexts/document-frame.ts';
+import {
+  canvasToDocumentPoint,
+  canvasToDocumentPos,
+  documentFrameFromSize,
+  documentToCanvasPos,
+} from '../../contexts/document-frame.ts';
 import { isTextLayerSource, textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import type { Ctx2D, RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
@@ -301,13 +306,11 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
         const editingLayer = currentArgs.editingLayerId ? layers[currentArgs.editingLayerId] : undefined;
         if (editingLayer) {
           const fallbackRect = sortRect(rect);
-          const canvasPos = documentToCanvasPos(editingLayer.pos, documentFrame);
-          const localRect = {
-            x1: fallbackRect.x1 - canvasPos.x,
-            y1: fallbackRect.y1 - canvasPos.y,
-            x2: fallbackRect.x2 - canvasPos.x,
-            y2: fallbackRect.y2 - canvasPos.y,
-          };
+          const measuredRect =
+            calculateNewRect({ ...currentArgs, rect: fallbackRect }, toolOverlayRef, totalSize) ?? fallbackRect;
+          const position = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
+          const canvasPos = documentToCanvasPos(position, documentFrame);
+          const localRect = sortRect(canvasRectToLocal(measuredRect, position, documentFrame));
           const affine = getLayerAffineTransform(editingLayer);
           ctx.save();
           try {

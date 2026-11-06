@@ -814,11 +814,19 @@ describe('TextToolArea', () => {
       });
     });
 
-    it('draws an edited layer fallback from its own local origin when compositor publication is refused', () => {
+    it('matches the committed point-text origin when compositor publication is refused', () => {
       const ctx = makeMockCtx();
       const rect = { x1: 105, y1: 206, x2: 150, y2: 230 };
+      const measuredRect = { x1: 110, y1: 215, x2: 132, y2: 239 };
       const affine = { a: 2, b: 0, c: 0, d: 2, e: 3, f: 4 };
-      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true, angle: 30, editingLayerId: 'text-1' });
+      toolArgs = makeTextArgs({
+        text: 'i',
+        rect,
+        smallCaps: true,
+        angle: 30,
+        kind: 'point',
+        editingLayerId: 'text-1',
+      });
       h.layers = {
         'text-1': {
           pos: { x: 100, y: 200, width: 50, height: 30 },
@@ -826,11 +834,17 @@ describe('TextToolArea', () => {
         },
       };
       h.publishSmallCapsTextDraftPreview.mockReturnValue(false);
+      vi.mocked(calculateNewRect).mockReturnValue(measuredRect);
 
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!(rect));
 
-      expect(ctx.translate).toHaveBeenCalledWith(100, 200);
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ rect, text: 'i', kind: 'point' }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(ctx.translate).toHaveBeenCalledWith(110, 215);
       expect(ctx.transform).toHaveBeenCalledWith(2, 0, 0, 2, 3, 4);
       expect(ctx.rotate).toHaveBeenCalledWith(Math.PI / 6);
       expect(vi.mocked(ctx.transform).mock.invocationCallOrder[0]).toBeLessThan(
@@ -838,7 +852,7 @@ describe('TextToolArea', () => {
       );
       expect(renderText).toHaveBeenCalledWith(
         ctx,
-        expect.objectContaining({ rect: { x1: 5, y1: 6, x2: 50, y2: 30 } }),
+        expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 22, y2: 24 } }),
         { overflowIndicator: true }
       );
       expect(ctx.restore).toHaveBeenCalled();
