@@ -12,6 +12,7 @@ import {
   inkHeight,
   INK_LUMA_FLOOR,
   measureInk,
+  viewportClip,
   waitForCanvasRedraw,
 } from '../helpers/canvas-helpers';
 import { clickToolButton, toggleToolbarLayout } from '../helpers/toolbar-helpers';
@@ -486,12 +487,12 @@ export async function setupExportTest(
   // legitimately dark for another reason and so report success without the stroke ever
   // having reached the backing store.
   await waitForCanvasRedraw(page, box, {
-    clip: {
+    clip: viewportClip({
       x: box.x + Math.floor(start.x) - 20,
       y: box.y + Math.floor(start.y) - 20,
       width: Math.ceil(end.x - start.x) + 40,
       height: 40,
-    },
+    }),
   });
 
   const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
@@ -1298,12 +1299,12 @@ export async function setupIcoTest(page: Page): Promise<string> {
   // a region the stroke never touched and could report success without it having reached
   // the backing store.
   await waitForCanvasRedraw(page, iconBox, {
-    clip: {
+    clip: viewportClip({
       x: iconBox.x + Math.floor(start.x) - 20,
       y: iconBox.y + Math.floor(start.y) - 20,
       width: Math.ceil(end.x - start.x) + 40,
       height: 40,
-    },
+    }),
   });
 
   return await iconCanvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));

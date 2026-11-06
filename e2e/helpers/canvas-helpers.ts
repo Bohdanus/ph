@@ -6,7 +6,10 @@ import {
   type ClipOptions,
   type CssBounds,
   type CssBox as BoundingBox,
+  type ViewportClip,
+  type ViewportClipOptions,
   imageBoundsToCss,
+  viewportClip,
   viewportRectToPageRect,
 } from './screenshot-scale';
 
@@ -17,7 +20,8 @@ import {
  * './helpers/canvas-helpers'`; what it must not do is own a private copy of the shape,
  * which is what the three-way duplication this replaces was.
  */
-export type { ClipOptions, CssBounds, BoundingBox };
+export type { ClipOptions, CssBounds, BoundingBox, ViewportClip, ViewportClipOptions };
+export { viewportClip };
 
 /**
  * THE COORDINATE SPACES, and the tag every export below carries.
@@ -380,24 +384,17 @@ export interface DominantColor {
 }
 
 /**
- * Merges a caller's clip with the default, field by field. A NO-OP on the coordinate space:
- * it returns every field of `defaultClip` that `clip` omits and every field `clip` names, in
- * whatever space the caller wrote them.
- *
- * That is the whole hazard, and it is why the space is the CALLER's to state: the default is
- * `[PAGE]` at both call sites (`canvasRedrawClip` and `takeLineScreenshot`) and an explicit
- * clip is taken exactly as given, so a `[BOX]` clip reaches `page.screenshot` unconverted and
- * photographs the app's own chrome. This function cannot tell the two apart — the shapes are
- * identical — which is also why a branded `ClipOptions` per space would be the stronger
- * signature and why this one is not yet what it is.
+ * Merges a caller's viewport-relative clip with the default, field by field. The branded
+ * input makes the caller state that its coordinates use the viewport origin; this function
+ * fills omitted values but does not convert from box-relative coordinates.
  */
-export function buildClip(clip: ClipOptions | undefined, defaultClip: Required<ClipOptions>): Required<ClipOptions> {
-  return {
+export function buildClip(clip: ViewportClipOptions | undefined, defaultClip: ViewportClip): ViewportClip {
+  return viewportClip({
     x: clip?.x ?? defaultClip.x,
     y: clip?.y ?? defaultClip.y,
     width: clip?.width ?? defaultClip.width,
     height: clip?.height ?? defaultClip.height,
-  };
+  });
 }
 
 /**
@@ -711,25 +708,26 @@ export function getWorkspaceCanvas(page: Page): Locator {
  * `box` is BOX-relative geometry — the workspace canvas element's own `boundingBox()` — and is
  * added to `DEFAULT_LINE_CLIP`, which is BOX-relative, so the DEFAULT clip is PAGE-relative.
  *
- * `clip`, when given, is PAGE-relative and is used EXACTLY as given: `buildClip` fills only
+ * `clip`, when given, is viewport-relative and is used EXACTLY as given: `buildClip` fills only
  * the fields the caller omitted from its own default, so a partial clip keeps the default's
  * origin on the axes it did not name. Passing box-relative numbers here photographs the app's
  * own chrome 100px down and 100px right of where the caller meant — the same trap
- * `canvasRedrawClip`'s name invites, and `e2e/export/helpers.ts:354-361` spells out.
+ * `canvasRedrawClip`'s name invites. The required `ViewportClipOptions` tag makes the chosen
+ * coordinate space explicit at each call site.
  */
 export async function takeLineScreenshot(
   page: Page,
   box: BoundingBox,
   name: string,
   testInfo: TestInfo,
-  clip?: ClipOptions
+  clip?: ViewportClipOptions
 ): Promise<Buffer> {
-  const defaultClip: Required<ClipOptions> = {
+  const defaultClip = viewportClip({
     x: box.x + DEFAULT_LINE_CLIP.x,
     y: box.y + DEFAULT_LINE_CLIP.y,
     width: DEFAULT_LINE_CLIP.width,
     height: DEFAULT_LINE_CLIP.height,
-  };
+  });
   const actualClip = buildClip(clip, defaultClip);
 
   const outputDir = testInfo.outputDir;
@@ -1011,16 +1009,16 @@ export async function drawLineFromDocument(
  * `containFit` is called with the DEFAULT document size, which is the same assumption the rest
  * of this module makes and the one the standard line is drawn under. It is a default, not a
  * measurement: a spec working at a different document size must pass its own clip, which is
- * what `waitForCanvasRedraw`'s `clip` option and `e2e/export/helpers.ts:354-361` both do.
+ * what `waitForCanvasRedraw`'s `clip` option and the export helpers do.
  */
-export function canvasRedrawClip(box: BoundingBox): Required<ClipOptions> {
+export function canvasRedrawClip(box: BoundingBox): ViewportClip {
   const { offsetX, offsetY } = containFit(box);
-  return {
+  return viewportClip({
     x: box.x + Math.max(CANVAS_REDRAW_CLIP.x, offsetX),
     y: box.y + Math.max(CANVAS_REDRAW_CLIP.y, offsetY),
     width: CANVAS_REDRAW_CLIP.width,
     height: CANVAS_REDRAW_CLIP.height,
-  };
+  });
 }
 
 /**
@@ -1103,7 +1101,7 @@ export async function waitForCanvasPixels(
 export async function waitForCanvasRedraw(
   page: Page,
   box: BoundingBox,
-  options: { clip?: ClipOptions; timeoutMs?: number; pollIntervalMs?: number } = {}
+  options: { clip?: ViewportClipOptions; timeoutMs?: number; pollIntervalMs?: number } = {}
 ): Promise<void> {
   await waitForCanvasPixels(page, buildClip(options.clip, canvasRedrawClip(box)), hasDarkPixels, {
     timeoutMs: options.timeoutMs,

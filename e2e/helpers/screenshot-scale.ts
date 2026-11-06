@@ -92,6 +92,25 @@ export interface ClipOptions {
   height?: number;
 }
 
+declare const viewportClipBrand: unique symbol;
+
+/** A clip whose coordinates have been explicitly identified as viewport-relative. */
+export type ViewportClipOptions = ClipOptions & { readonly [viewportClipBrand]: true };
+
+/** A complete viewport-relative clip. */
+export type ViewportClip = Required<ViewportClipOptions>;
+
+/**
+ * Mark a rectangle whose origin and dimensions were computed in viewport CSS space.
+ * This is an explicit type boundary and does not convert coordinates. Use
+ * `canvasRedrawClip` when the rectangle is relative to the workspace canvas box.
+ */
+export function viewportClip(clip: Required<ClipOptions>): ViewportClip;
+export function viewportClip(clip: ClipOptions): ViewportClipOptions;
+export function viewportClip(clip: ClipOptions): ViewportClipOptions {
+  return clip as ViewportClipOptions;
+}
+
 /** `window.scrollX` / `window.scrollY`, read at the moment a clip is built. */
 export interface ScrollOffset {
   x: number;

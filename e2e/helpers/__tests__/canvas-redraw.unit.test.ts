@@ -13,6 +13,7 @@ import {
   LINE_START_Y,
   containFit,
   hasDarkPixels,
+  viewportClip,
   waitForCanvasRedraw,
   type BoundingBox,
   type ClipOptions,
@@ -914,7 +915,7 @@ describe('waitForCanvasRedraw', () => {
 
   it('lets an explicit clip option override the derived region entirely', async () => {
     const harness = createPollingPage(await createTestImage(BLACK));
-    const clip: ClipOptions = { x: 5, y: 6, width: 70, height: 80 };
+    const clip = viewportClip({ x: 5, y: 6, width: 70, height: 80 });
 
     await waitForCanvasRedraw(harness.page, BOX, { clip });
 
@@ -924,7 +925,7 @@ describe('waitForCanvasRedraw', () => {
   it('keeps the derived region for the fields a partial clip option omits', async () => {
     const harness = createPollingPage(await createTestImage(BLACK));
 
-    await waitForCanvasRedraw(harness.page, BOX, { clip: { x: 5, width: 70 } });
+    await waitForCanvasRedraw(harness.page, BOX, { clip: viewportClip({ x: 5, width: 70 }) });
 
     expect(harness.clips()).toEqual([{ x: 5, y: BOX.y + CANVAS_REDRAW_CLIP.y, width: 70, height: 100 }]);
   });
