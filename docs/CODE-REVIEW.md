@@ -46,12 +46,14 @@ durable text.
   removes code, or touches a boundary named in `AGENTS.md`; it is not a one-line
   typo fix and not a doc edit. Not "self-reviewed", not "I re-read it twice", and
   not "the gates are green".
-- **Brief it like a fresh context.** Worktree path, branch, the files in play, the
-  diff range against `main` (`git diff main...HEAD`), and what the final message
-  must contain. Do not paste the diff; the reviewer opens it.
+- **Brief it like a fresh context.** Worktree path, branch, the files in play,
+  the exact base SHA captured when syncing `main` into the task branch, the
+  candidate SHA, and what the final message must contain. Define the committed
+  review range with those immutable SHAs (`git diff <base-sha>...<candidate-sha>`),
+  not a mutable or stale branch name. Do not paste the diff; the reviewer opens it.
 - **Review the exact candidate that will land.** Record the base SHA, reviewed
   candidate SHA and tree, and whether the worktree has staged or unstaged changes.
-  `main...HEAD` does not include uncommitted changes. Commit the candidate before
+  The committed range does not include uncommitted changes. Commit the candidate before
   review, or explicitly include and inspect both `git diff` and
   `git diff --cached`; do not treat an omitted working-tree diff as reviewed.
   If `main` changes or the branch is rebased after review, review the final
@@ -62,8 +64,11 @@ durable text.
   a later commit or resolution has reverted its behavior.
 - **Ask for `file:line` per finding**, each with the concrete failure it causes.
   "Consider extracting this helper" is not a finding.
-- **Split by concern and fan out** — one reviewer per file group. Two reviewers on
-  the same file produce two opinions and no review. Same rule as delegation.
+- **Fan out only for independent coverage.** Keep one reviewer on a cohesive,
+  bounded diff; do not split it by labels or subsystems just to add reviewers.
+  When multiple reviewers are required under [`ORCHESTRATION.md`](ORCHESTRATION.md),
+  assign disjoint file groups or distinct load-bearing claims. Two reviewers
+  given the same scope produce overlapping opinions, not broader coverage.
 - **Read-only.** Pass the `edit: deny` profile through; a subagent launched with edit
   rights will fix what it finds and silently skip the parts it dislikes.
 - **Re-run the load-bearing claims yourself.** A review you did not verify is a

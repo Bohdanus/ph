@@ -949,6 +949,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   useKeyDownShortcut({
     key: 'Escape',
     preventDefault: true,
+    enabled: hasDraftAnchors,
     allowInInput: true,
     mutatesDocument: false,
     onKeyDown: cancelSelectionDraft,

@@ -334,3 +334,115 @@ test.describe('Mobile shell', () => {
     await expect(page.getByTestId('mobile-delete-layer-button'), 'retracted after removal').toBeHidden();
   });
 });
+
+test.describe('Tablet touch bottom bar', () => {
+  // This is iPad mini portrait, not a phone viewport; touch is enabled while mobile emulation stays off.
+  test.use({
+    viewport: { width: 744, height: 1133 },
+    deviceScaleFactor: 2,
+    hasTouch: true,
+    isMobile: false,
+  });
+
+  test('horizontal touch swipes reach the Layers tile', async ({ page }) => {
+    await page.goto('/');
+    const bar = bottomBar(page);
+    await expect(bar).toBeVisible();
+    expect(await page.evaluate(() => window.innerWidth), 'this is the iPad mini portrait tablet viewport').toBe(744);
+    expect(
+      await page.evaluate(() => navigator.maxTouchPoints),
+      'the browser context must expose touch input'
+    ).toBeGreaterThan(0);
+
+    const overflow = await bar.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow, 'the tablet bottom bar must overflow before the swipe').toBeGreaterThan(0);
+
+    const barBox = await bar.boundingBox();
+    if (!barBox) throw new Error('The tablet bottom bar has no bounding box');
+    const y = Math.round(barBox.y + barBox.height / 2);
+    const startX = Math.round(barBox.x + barBox.width - 24);
+    const endX = Math.round(barBox.x + 24);
+    const cdp = await page.context().newCDPSession(page);
+    let touchActive = false;
+
+    const sendTouch = async (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', x?: number) => {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: x === undefined ? [] : [{ id: 1, x, y, radiusX: 1, radiusY: 1, force: 1 }],
+      });
+    };
+
+    const swipeLeft = async () => {
+      touchActive = true;
+      await sendTouch('touchStart', startX);
+      for (const fraction of [0.2, 0.4, 0.6, 0.8, 1]) {
+        const x = Math.round(startX + (endX - startX) * fraction);
+        await sendTouch('touchMove', x);
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) => {
+              requestAnimationFrame(() => resolve());
+            })
+        );
+      }
+      await sendTouch('touchEnd');
+      touchActive = false;
+    };
+
+    try {
+      // The full bar does not fit within one tablet-width finger travel, so use two real swipes.
+      for (let swipe = 0; swipe < 2; swipe += 1) {
+        const scrollLeftBeforeSwipe = await bar.evaluate((element) => element.scrollLeft);
+        await swipeLeft();
+        await expect
+          .poll(() => bar.evaluate((element) => element.scrollLeft), {
+            message: `tablet touch swipe ${swipe + 1} must advance the bottom bar`,
+          })
+          .toBeGreaterThan(scrollLeftBeforeSwipe);
+      }
+    } finally {
+      try {
+        if (touchActive) {
+          try {
+            await sendTouch('touchCancel');
+          } catch {
+            // The page or CDP target may already have closed after a failed assertion.
+          }
+        }
+      } finally {
+        await cdp.detach();
+      }
+    }
+
+    await expect
+      .poll(
+        async () => {
+          const metrics = await bar.evaluate((element) => {
+            const tile = element.querySelector<HTMLElement>('[data-testid="mobile-bottom-layers-button"]');
+            const barRect = element.getBoundingClientRect();
+            const tileRect = tile?.getBoundingClientRect();
+            const tileLeft = tileRect?.left ?? null;
+            const tileRight = tileRect?.right ?? null;
+            return {
+              fullyVisible:
+                tileLeft !== null &&
+                tileRight !== null &&
+                tileLeft >= barRect.left - 1 &&
+                tileRight <= barRect.right + 1,
+              scrollLeft: element.scrollLeft,
+              maxScrollLeft: element.scrollWidth - element.clientWidth,
+              tileLeft,
+              tileRight,
+              barLeft: barRect.left,
+              barRight: barRect.right,
+            };
+          });
+          return metrics.fullyVisible ? true : JSON.stringify(metrics);
+        },
+        {
+          message: 'the Layers tile must fit inside the visible bottom bar after the swipe',
+        }
+      )
+      .toBe(true);
+  });
+});

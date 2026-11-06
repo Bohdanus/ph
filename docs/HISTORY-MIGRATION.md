@@ -187,8 +187,10 @@ variant or an equivalent atomic history action.
    adapter parity, and atomic failure fallback are closed; supported committed
    eligible append/reorder presentation now composes in the background with legacy
    as the immediate selector. Image/blank layer creates also request background presentation
-   after asset finalization. Tool-source creates, source replacements, merge and frame-changing
-   commits retain their independent ownership or frame-parity gates. A
+   after asset finalization. A Shape Tool create converts to a typed vector entry, but its
+   presentation remains behind the `NEW_LAYER_ACTION` ownership gate. Other tool-source creates,
+   source replacements, merge and frame-changing commits retain their independent ownership or
+   frame-parity gates. A
    rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
    operation, and legacy plus durable logical replay both transform every extant layer.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
@@ -201,13 +203,23 @@ variant or an equivalent atomic history action.
    -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. Within this source/tool matrix, the 90-degree fixture and the three-transition
-   mixed-source fixture pin exact materialized bounds; the latter also checks bitmap dimensions and
+   pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and allows
+   at most two partial-alpha boundary pixels in frame comparisons and two tight-bitmap pixels
+   at alpha boundaries where both paths preserve identical RGB values. A transparent/one-alpha
+   pair also needs adjacent samples of that same color in both neighborhoods; composites remain
+   byte-identical.
+   The three-transition
+   mixed-source fixture pins exact bounds and checks per-layer frame and tight bitmaps exactly in
+   premultiplied space. The styled-text fixture also compares tight bitmaps exactly after
+   premultiplying readback color channels; alpha, frame pixels, and composites remain byte-identical.
+   Premultiplication preserves the exact color values used in compositing while avoiding false
+   differences from unpremultiplied canvas readback rounding.
+   The mixed-source fixture also checks bitmap dimensions and
    pixels for its blank, vector, paint, and point-text layers at each affine cursor and after each
    transition. It applies two sequential retained affines to an opaque blank, one affine to a 45%-
-   opacity blank, and one each to the other layers, checking per-layer bounds, dimensions, and pixels
-   at all nine changed cursors. The other source-only cases assert
-   byte-identical pixels and materialized-layer presence. The
+   opacity blank, and one each to the other layers, checking per-layer bounds and dimensions at all
+   nine changed cursors. The other source-only cases assert byte-identical composites and
+   materialized-layer presence. The
    mixed-source fixture uses integer frame origins and extents; a fractional-frame probe retained
    exact per-layer bounds and pixels but its first composite transition differed at canvas pixel
    (5, 26), with legacy red/alpha 188/122 and durable 190/121. Do not count that mixed-source
@@ -231,7 +243,8 @@ variant or an equivalent atomic history action.
 
    The retained-affine/frame proof now covers two transformed raster layers across two successive
    non-quarter frame transforms with fractional origins and extents, checking exact per-layer bounds
-   and pixels at both affine cursors, both frame cursors, and a frame-only control. A separate styled
+   and allowing at most two tight per-layer alpha-boundary pixels with identical RGB values at both
+   affine cursors, both frame cursors, and a frame-only control. A separate styled
    paragraph-text fixture checks its affine cursor and two frame cursors against exact per-layer
    bounds and pixels. Both fixtures also require byte-identical composites, and their frame-only
    controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not
@@ -246,12 +259,17 @@ variant or an equivalent atomic history action.
    `NEW_LAYER_ACTION`: it is permitted only after asset reconciliation and only when the preceding
    active cursor prefix passes the ownership and frame gates. The create cursor itself still uses the
    full legacy navigation fallback. `StoreContext.source-backed-presentation.test.tsx` pins stale,
-   incomplete, and failed finalization behavior; `e2e/source-backed-history.spec.ts` pins paste,
-   Background conversion, exact legacy undo/redo pixels, and PNG/PSD output. On the current app
-   boot path, the initial blank baseline is itself a `NEW_LAYER_ACTION`, so the source-backed
-   cursor gate prevents those UI flows from reaching this exception. The eligible prefix is
-   unit-tested with a gate-free blank `OPEN_DOCUMENT_ACTION`, but is not yet product-reachable.
-   This is presentation progress, not a logical authority change.
+   incomplete, and failed finalization behavior; `e2e/source-backed-history.spec.ts` proves a
+   product-reachable disabled-root path for raster paste and transparent blank creation with exact
+   canvas/PNG/PSD pixels and legacy undo/redo fallback. The default active root remains gated.
+   A Shape Tool `NEW_LAYER_ACTION` converts to a typed vector entry, but its presentation remains
+   unpublished: planner and StoreContext tests prove conversion is current without invoking the
+   compositor. The desktop E2E uses the real Shape Tool from the disabled opening row, observes a
+   new `shape` history row and legacy-only presentation, and compares the full canvas, PNG, PSD
+   composite, and PSD layer crop to an independent rectangle pixel oracle through undo/redo. That
+   browser test does not inspect its `HistoryItem` payload; source emission and typed conversion are
+   separate evidence. This is a characterization boundary only; it does not authorize vector-source
+   publication or change logical history authority.
 
    Adobe distinguishes a layer transform, which leaves other layers in place, from image rotation,
    which reorients every layer at once ([rotate a layer](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/transform-manipulate-layers/rotate-a-layer.html),

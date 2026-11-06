@@ -2,7 +2,14 @@ import { act, render, renderHook } from '@testing-library/react';
 import { useEffect } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { StoreProvider, useStore, type StoreData, type StoreDispatch } from '../StoreContext.tsx';
+import {
+  DEFAULT_BACKGROUND_COLOR,
+  DEFAULT_FOREGROUND_COLOR,
+  StoreProvider,
+  useStore,
+  type StoreData,
+  type StoreDispatch,
+} from '../StoreContext.tsx';
 import type { Selection } from '../general-types.ts';
 import { deriveSetDocumentFrameEntry, deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
 import type { DurableHistoryEntry } from '../history-model.ts';
@@ -223,6 +230,78 @@ describe('StoreContext scalar and tool actions', () => {
     });
     expect(store().color).toBe('#123456');
     expect(store().backgroundColor).toBe('#abcdef');
+  });
+
+  it('SWAP_COLORS exchanges the pair, and two swaps in one batch compose back to the start', () => {
+    const { store, dispatch } = renderWithProbe();
+
+    act(() => {
+      dispatch()({ type: 'SET_COLOR', payload: '#123456' });
+      dispatch()({ type: 'SET_BACKGROUND_COLOR', payload: '#abcdef' });
+    });
+
+    const beforeSwap = store();
+    act(() => {
+      dispatch()({ type: 'SWAP_COLORS' });
+    });
+    expect(store().color).toBe('#abcdef');
+    expect(store().backgroundColor).toBe('#123456');
+    // The provider re-creates its callbacks on every render, so only data fields are compared.
+    const afterSwap = store() as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(beforeSwap)) {
+      if (key === 'color' || key === 'backgroundColor' || typeof value === 'function') continue;
+      expect(afterSwap[key], key).toBe(value);
+    }
+
+    act(() => {
+      dispatch()({ type: 'SWAP_COLORS' });
+      dispatch()({ type: 'SWAP_COLORS' });
+    });
+    expect(store().color).toBe('#abcdef');
+    expect(store().backgroundColor).toBe('#123456');
+    // A colour is not a document edit: no history entry, no unsaved-changes flag.
+    expect(store().history).toHaveLength(0);
+    expect(store().hasUnsavedChanges).toBe(false);
+  });
+
+  it('RESET_COLORS restores black over white and keeps the state identity when already default', () => {
+    const { store, dispatch } = renderWithProbe();
+    const pristine = store();
+
+    act(() => {
+      dispatch()({ type: 'RESET_COLORS' });
+    });
+    expect(store()).toBe(pristine);
+
+    act(() => {
+      dispatch()({ type: 'SET_COLOR', payload: '#123456' });
+      dispatch()({ type: 'SET_BACKGROUND_COLOR', payload: '#abcdef' });
+    });
+    act(() => {
+      dispatch()({ type: 'RESET_COLORS' });
+    });
+    expect(store().color).toBe(DEFAULT_FOREGROUND_COLOR);
+    expect(store().backgroundColor).toBe(DEFAULT_BACKGROUND_COLOR);
+    expect(store().history).toHaveLength(0);
+    expect(store().hasUnsavedChanges).toBe(false);
+  });
+
+  it.each([
+    ['only the foreground', { color: '#123456', backgroundColor: DEFAULT_BACKGROUND_COLOR }],
+    ['only the background', { color: DEFAULT_FOREGROUND_COLOR, backgroundColor: '#abcdef' }],
+  ])('RESET_COLORS restores the pair when %s differs', (_label, { color, backgroundColor }) => {
+    const { store, dispatch } = renderWithProbe();
+
+    act(() => {
+      dispatch()({ type: 'SET_COLOR', payload: color });
+      dispatch()({ type: 'SET_BACKGROUND_COLOR', payload: backgroundColor });
+    });
+    act(() => {
+      dispatch()({ type: 'RESET_COLORS' });
+    });
+
+    expect(store().color).toBe(DEFAULT_FOREGROUND_COLOR);
+    expect(store().backgroundColor).toBe(DEFAULT_BACKGROUND_COLOR);
   });
 });
 

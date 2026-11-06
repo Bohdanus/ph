@@ -88,6 +88,24 @@ describe('history append retained tool translation', () => {
     ['brush', { toolName: 'brush', color: '#123456', size: 4 }],
     ['pencil', { toolName: 'pencil', color: '#123456', lineWidth: 3 }],
     ['sponge', { toolName: 'sponge', mode: 'desaturate', size: 4 }],
+    ['invert', { toolName: 'invert' }],
+    [
+      'invert clipped by a selection',
+      {
+        toolName: 'invert',
+        selection: {
+          points: [
+            [
+              { x: 0, y: 0 },
+              { x: 4, y: 0 },
+              { x: 4, y: 4 },
+            ],
+          ],
+          featherRadius: 0,
+          antiAlias: true,
+        },
+      },
+    ],
   ])('retains %s from canonical tool arguments without a bitmap snapshot', (_label, args) => {
     const result = plan(args);
 

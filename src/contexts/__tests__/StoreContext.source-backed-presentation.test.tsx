@@ -7,6 +7,7 @@ import { getAssetRegistry } from '../asset-registry.ts';
 import * as compositor from '../durable-compositor.ts';
 import type { DurableComposite } from '../durable-compositor.ts';
 import type { MaterializedLayer } from '../materialization.ts';
+import type { ToolArgsFor } from '../tool-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -31,6 +32,61 @@ function added(kind: 'image' | 'blank', id = 'added', order = 1): Layer {
     source: bitmap
       ? { kind: 'image', bitmap, pos, isBedrock: false }
       : { kind: 'blank', pos, color: '#ff0000', opacity: 1, isBedrock: false },
+  };
+}
+
+function toolArgsFor(toolName: 'shape' | 'text' | 'pencil') {
+  if (toolName === 'shape') {
+    return {
+      toolName,
+      figure: 'rectangle',
+      alpha: 1,
+      color: '#000000',
+      backgroundColor: null,
+      lineWidth: 4,
+      start: { x: 3, y: 3 },
+      end: { x: 21, y: 15 },
+    } satisfies ToolArgsFor<'shape'>;
+  }
+  if (toolName === 'text') {
+    return {
+      toolName,
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1,
+      text: 'Source-backed text',
+    } satisfies ToolArgsFor<'text'>;
+  }
+  return {
+    toolName,
+    alpha: 1,
+    color: '#000000',
+    penType: 'pen',
+    lineWidth: 3,
+    points: [
+      { x: 2, y: 2 },
+      { x: 22, y: 16 },
+    ],
+    smoothing: 0,
+    blendMode: 'source-over',
+  } satisfies ToolArgsFor<'pencil'>;
+}
+
+function toolAdded(toolName: 'shape' | 'text' | 'pencil', id = `${toolName}-added`, order = 1): Layer {
+  const pos = { x: 22, y: 28, width: 24, height: 18 };
+  return {
+    ...createMockLayer({ id, pos, order, name: `Layer ${order + 1}` }),
+    bitmap: null,
+    source: {
+      kind: 'tool',
+      args: toolArgsFor(toolName),
+      isBedrock: false,
+      pos,
+    },
   };
 }
 
@@ -194,6 +250,52 @@ describe('source-backed create presentation', () => {
     probe.unmount();
     for (const record of Object.values(composite.layers)) expect(record.lease.release).toHaveBeenCalledTimes(1);
     if (layer.bitmap) expect((layer.bitmap as ImageBitmap).close).not.toHaveBeenCalled();
+  });
+
+  it('keeps a typed vector create unpublished until its ownership gate is proven', () => {
+    const compose = vi.spyOn(compositor, 'composeDurableDocument');
+    const probe = mount();
+    const layer = toolAdded('shape');
+
+    probe.create(layer);
+
+    expect(probe.store().durableStatus).toBe('current');
+    expect(probe.store().durableDiagnostics).toEqual([]);
+    const entry = probe.store().durableDocument!.history[0];
+    expect(entry?.operation.kind).toBe('create-layer');
+    if (entry?.operation.kind !== 'create-layer') throw new Error('Expected a durable vector create entry');
+    expect(entry.operation.layer.source).toMatchObject({
+      kind: 'vector',
+      toolName: 'shape',
+      args: layer.source?.kind === 'tool' ? layer.source.args : undefined,
+      sourcePos: layer.pos,
+    });
+    expect(compose).not.toHaveBeenCalled();
+    expect(probe.store().durablePresentation.status).toBe('unpublished');
+    expect(probe.store().renderSelector.source).toBe('legacy');
+    expect(probe.store().history).toHaveLength(2);
+    probe.unmount();
+  });
+
+  it.each([
+    { toolName: 'text', sourceKind: 'text' },
+    { toolName: 'pencil', sourceKind: 'paint' },
+  ] as const)('keeps the supported $toolName source family gated', ({ toolName, sourceKind }) => {
+    const compose = vi.spyOn(compositor, 'composeDurableDocument');
+    const probe = mount();
+    const layer = toolAdded(toolName);
+
+    probe.create(layer);
+
+    expect(probe.store().durableStatus).toBe('current');
+    const entry = probe.store().durableDocument!.history[0];
+    expect(entry?.operation.kind).toBe('create-layer');
+    if (entry?.operation.kind !== 'create-layer') throw new Error('Expected a durable tool create entry');
+    expect(entry.operation.layer.source.kind).toBe(sourceKind);
+    expect(compose).not.toHaveBeenCalled();
+    expect(probe.store().durablePresentation.status).toBe('unpublished');
+    expect(probe.store().renderSelector.source).toBe('legacy');
+    probe.unmount();
   });
 
   it('does not let a later create bypass an earlier source-backed cursor gate', async () => {

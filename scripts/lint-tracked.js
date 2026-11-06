@@ -63,12 +63,9 @@ const ESLINT_GLOBS = ['*.ts', '*.tsx'];
  * `.yml`, `.scss` and the config files are formatted but never linted, because
  * no ESLint config covers them and adding one breaks Markdown and SCSS commits.
  *
- * `*.html` is deliberately absent. `index.html` is tracked and hand-maintained,
- * but it carries a Google Tag Manager snippet pasted in by a human and by
- * whatever injects it later; Prettier rewrites that block, and its HTML
- * attribute style disagrees with the rest of the file. This is a named
- * exception with a reason, which is what `.prettierignore`'s `index.html` entry
- * was, minus the seven generated-output band-aids that sat beside it.
+ * `*.html` is deliberately absent. `index.html` is tracked and hand-maintained;
+ * the prior GTM-specific formatting rationale no longer applies. Keep HTML
+ * formatting outside this script until that scope is assessed separately.
  */
 const PRETTIER_GLOBS = [
   ...ESLINT_GLOBS,

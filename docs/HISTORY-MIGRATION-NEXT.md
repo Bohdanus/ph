@@ -38,8 +38,10 @@ is for this review closeout.
   the already-visible legacy selector active while composition runs so transient previews are not
   blocked. Image/blank layer creates can request that presentation after asset finalization only if
   the preceding active cursor prefix passes the existing ownership and frame gates; their own
-  navigation cursor remains on the legacy fallback. Tool-source creates, later source-backed edits,
-  source replacements, merge and frame-changing commits retain their gates.
+  navigation cursor remains on the legacy fallback. Shape Tool creates convert to typed vector
+  entries but remain unpublished behind the `NEW_LAYER_ACTION` ownership gate. Other tool-source
+  creates, later source-backed edits, source replacements, merge and frame-changing commits retain
+  their gates.
 
 The default active UI prefix remains gated: `App.tsx` boots a blank document through
 `setBlankImage()`, and `useLayer.ts` stores its initial blank layer as a `NEW_LAYER_ACTION` that the
@@ -52,6 +54,13 @@ legacy fallback while the root stays disabled. This proves only the user-disable
 default active prefix, imported-raster starts, later source-backed edits, and frame-changing commits
 remain gated. Do not broaden the exception to bypass the active-prefix gate.
 
+A Shape Tool create is also characterized on that disabled-root route. Its durable conversion is
+current, but the append presentation remains unpublished and the canvas uses legacy paint because
+its typed vector source is outside the image/blank exception. The headless test compares the
+transparent baseline, visible rectangle, PNG, and PSD composite/layer pixels against an independent
+pixel oracle, then checks exact undo/redo; redo reports `ownership-unproven`. This pins the gate,
+not vector eligibility.
+
 ## Loose Ends
 
 1. **Authority cutover.** Legacy `HistoryItem[]` remains logical authority. Durable navigation is a
@@ -59,7 +68,8 @@ remain gated. Do not broaden the exception to bypass the active-prefix gate.
    the background. A new image/blank layer create may request composition after asset finalization
    only if the prior active prefix passes the ownership and frame gates; its own navigation cursor
    and later appends still use the complete legacy fallback. Other source-backed commits and
-   frame-changing commits remain on the complete legacy path.
+   frame-changing commits remain on the complete legacy path. A typed vector Shape Tool create is
+   characterized but remains unpublished; it does not widen the image/blank exception.
    The image/blank exception is reachable only after disabling the default blank History row, as
    the raster-paste and tablet blank-layer tests now prove. The default active new-document prefix
    and imported-raster starts remain gated; keep those paths unproven until their baseline ownership
@@ -69,12 +79,17 @@ remain gated. Do not broaden the exception to bypass the active-prefix gate.
    surface. Keep the existing identity, coverage, freshness, lease, fallback, and failure gates.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates. The browser differential
    covers two retained affine layer transforms across two successive non-quarter frame transforms
-   with fractional origins and extents, including exact per-layer bounds and pixels at each tested
-   affine or frame-transition cursor and a frame-only control. A styled, bold-italic serif paragraph also passes through a retained
-   affine and a two-frame sequence with exact per-layer comparisons. A three-transition mixed-source
-   frame sequence applies two sequential retained affines to an opaque blank, one retained affine to a
-   45%-opacity blank, and one each to vector, paint, and point text, comparing exact per-layer bounds,
-   bitmap dimensions, and pixels at all six affine cursors and after each frame transition. These
+   with fractional origins and extents. It keeps exact per-layer bounds and allows at most two
+   differing pixels per frame raster at partial-alpha boundaries and per tight raster at alpha
+   boundaries with identical RGB values. A transparent/one-alpha pair also needs adjacent samples
+   of the same color in both rasters. Composites remain byte-identical at each tested cursor, and
+   the frame-only
+   control remains byte-identical. A styled, bold-italic serif paragraph passes through a retained
+   affine and a two-frame sequence with exact premultiplied tight-raster pixels and exact alpha,
+   frame, and composite pixels. A three-transition mixed-source frame sequence applies two sequential
+   retained affines to an opaque blank, one retained affine to a 45%-opacity blank, and one each to
+   vector, paint, and point text, preserving exact bounds and bitmap dimensions at all six affine
+   cursors and after each frame transition. These
    fixtures close only their listed combinations: other transform combinations, angles, text
    styling/rotation variants, other blank opacity values, and exact fractional
    bounds across the wider source matrix remain open. An exploratory mixed-source fractional-frame
@@ -100,13 +115,16 @@ priority or dependency. They may be pursued in either order or in parallel.
    `e2e/undo-redo.spec.ts` pins live Brush preview pixels while durable status is current.
 3. Continue parity-only frame work. The raster fixture in `e2e/crop-history.spec.ts` covers two
    retained affine layer transforms and two successive non-quarter frame transforms with fractional
-   origins and extents. It asserts exact per-layer bounds and pixels at each cursor and frame-only
-   control, and byte-identical composites. A styled paragraph-text fixture covers its retained
-   affine cursor plus a two-frame sequence with exact per-layer bounds and pixels. The mixed-source
-   three-transition fixture applies two sequential retained affines to an opaque blank, one retained
-   affine to a 45%-opacity blank, and one each to vector, paint, and point text, then checks exact
-   per-layer pixels, bounds, and bitmap dimensions at all six affine cursors and after each frame
-   transition. A fractional-frame probe of this mix preserved per-layer parity but found a one-pixel
+   origins and extents. It asserts exact per-layer bounds, at most two partial-alpha boundary pixels
+   in frame comparisons, at most two internal-alpha-gradient pixels in tight comparisons, and
+   byte-identical composites at each cursor and frame-only control. A styled paragraph-text fixture
+   covers its retained affine cursor plus a two-frame sequence with exact premultiplied tight-raster
+   pixels, alpha, frame pixels, and composites. The
+   mixed-source three-transition fixture applies two sequential retained affines to an opaque blank,
+   one retained affine to a 45%-opacity blank, and one each to vector, paint, and point text, then
+   checks per-layer bounds and bitmap dimensions at all six affine cursors and after each frame
+   transition, with exact premultiplied tight pixels and exact frame pixels. A fractional-frame
+   probe of this mix preserved per-layer parity but found a one-pixel
    composite mismatch at the first transition; investigate it before broadening fractional coverage.
    These fixtures close only their listed combinations. Next cover the
    open angles, additional retained-affine combinations, other text styling/rotation, blank opacity
@@ -116,9 +134,13 @@ priority or dependency. They may be pursued in either order or in parallel.
 4. Keep the image/blank create exception scoped to the current append. It may request background
    composition after asset finalization only when the preceding active cursor prefix passes the
    ownership and frame gates. The create's own navigation cursor and later appends remain on the
-   current legacy fallback until the broader source-ownership proof is explicit. Continue source-backed
-   import/replacement ownership and parity as the other independent gate; keep unsupported-source
-   refusal explicit and do not use either gate's differential to promote broader surfaces.
+   current legacy fallback until the broader source-ownership proof is explicit. Preserve the shared
+   bitmap lifetime proofs in `src/contexts/__tests__/layer-presentation.test.ts` and
+   `src/contexts/__tests__/StoreContext.retirement.test.tsx`: a cross-document bitmap remains live
+   until its last owner releases it, and same-id replacement retires against the replacement record.
+   Continue source-backed import/replacement ownership and parity as the other independent gate; keep
+   unsupported-source refusal explicit and do not use either gate's differential to promote broader
+   surfaces.
 5. Only after every surface has explicit identity, coverage, freshness, lease, preview, and fallback
    proofs, decide whether durable replay can become logical undo/redo authority. Retire boundary
    tests for deleted coordination modules only in the same architectural change that replaces their
@@ -154,6 +176,16 @@ priority or dependency. They may be pursued in either order or in parallel.
   describes rebuilding module state by replaying history through its cursor. These examples support
   keeping timeline state, command execution, and preview presentation explicit, but do not define
   this app's gates.
+  Other primary-source implementations differ on redo-tail and failure ordering:
+  [miniPaint's action state](https://github.com/viliusle/miniPaint/blob/master/src/js/core/base-state.js)
+  executes a new action before pruning redo, while
+  [Pinta's document history](https://github.com/PintaProject/Pinta/blob/master/Pinta.Core/Classes/DocumentHistory.cs)
+  prunes before appending; [LazPaint's image history](https://github.com/bgrabitmap/lazpaint/blob/master/lazpaint/image/uimage.pas)
+  clears its history when replay fails, whereas
+  [Pikado's snapshot history](https://github.com/koneb71/pikado/blob/main/src/core/history.js)
+  advances its cursor before restoring a snapshot. These differences are implementation analogies,
+  not Photoshop requirements or a contract for this migration. Keep the repository's branch,
+  replay-failure, rollback, and ownership tests as the authority for local behavior.
 
 ## Validation Evidence
 

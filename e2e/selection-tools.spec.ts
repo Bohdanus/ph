@@ -19,6 +19,7 @@ import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { committedAntsOutline, hasNoCommittedAnts, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
+  expectToolSelected,
   navigateAndSelectInFlyout,
   openToolFlyout,
   openToolFlyoutViaKeyboard,
@@ -569,6 +570,57 @@ test.describe('Elliptical marquee', () => {
       )
       .toBe(true);
     await expect(page.getByTestId('undo-button')).toBeDisabled();
+  });
+
+  test('Space repositions a live elliptical marquee before size adjustment resumes', async ({ page }) => {
+    await selectEllipticalMarqueeFromSidebar(page);
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+    const start = marqueeTopLeft(box, rect);
+    const end = marqueeBottomRight(box, rect);
+    const pan = { x: 26, y: 18 };
+    const resize = { x: 34, y: 22 };
+
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 8 });
+    await page.keyboard.down('Space');
+    await page.mouse.move(end.x + pan.x, end.y + pan.y, { steps: 8 });
+    await page.keyboard.up('Space');
+    await page.mouse.move(end.x + pan.x + resize.x, end.y + pan.y + resize.y, { steps: 8 });
+    await page.mouse.up();
+
+    await waitForCommittedAnts(page, 'the repositioned elliptical marquee');
+    const outline = await committedOutline(page);
+    expect(outline).not.toBeNull();
+    expect(Math.abs(outline!.left - (start.x + pan.x))).toBeLessThanOrEqual(OUTLINE_BOUNDS_TOLERANCE_PX);
+    expect(Math.abs(outline!.top - (start.y + pan.y))).toBeLessThanOrEqual(OUTLINE_BOUNDS_TOLERANCE_PX);
+    expect(Math.abs(outline!.right - (end.x + pan.x + resize.x))).toBeLessThanOrEqual(OUTLINE_BOUNDS_TOLERANCE_PX);
+    expect(Math.abs(outline!.bottom - (end.y + pan.y + resize.y))).toBeLessThanOrEqual(OUTLINE_BOUNDS_TOLERANCE_PX);
+    await expect(page.getByTestId('workspace-container')).toHaveAttribute('data-view-pan-x', '0');
+    await expect(page.getByTestId('workspace-container')).toHaveAttribute('data-view-pan-y', '0');
+  });
+
+  test('Space activates Hand after an unchanged selection drag releases ownership', async ({ page }) => {
+    await selectEllipticalMarqueeFromSidebar(page);
+    const box = await measureCanvas(page);
+    const rect = marqueeRect(box);
+    await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), { steps: 8 });
+    await waitForCommittedAnts(page, 'the selection used for the no-op drag');
+    const before = await committedOutline(page);
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.keyboard.down('Space');
+    await page.mouse.up();
+    await expect(page.getByTestId('hand-tool-area')).toBeVisible();
+    await page.keyboard.up('Space');
+    await expect(page.getByTestId('hand-tool-area')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'elliptical-selection tool options' })).toBeVisible();
+    await expectToolSelected(page, 'elliptical-selection');
+
+    await waitForCommittedAnts(page, 'the unchanged selection after returning from Hand');
+    expect(await committedOutline(page)).toEqual(before);
   });
 
   test('the committed elliptical marquee is an ellipse inscribed in the drag, not the drag itself', async ({

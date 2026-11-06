@@ -601,6 +601,7 @@ describe('PolygonClickToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 10 });
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
 
+      expect(rawShortcuts.get('Escape')?.enabled).toBe(true);
       expect(dispatchMock).toHaveBeenCalledWith({
         type: 'START_SELECTION_DRAFT',
         payload: { sourceTool: 'polygonal-lasso' },
@@ -616,6 +617,7 @@ describe('PolygonClickToolArea', () => {
       const mockCtx = createMockContext();
       render(<PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />);
 
+      expect(rawShortcuts.get('Escape')?.enabled).toBe(false);
       dispatchMock.mockClear();
       shortcutHandlers.get('Escape')?.();
 

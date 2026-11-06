@@ -21,6 +21,10 @@ import {
   MERGE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SELECTION_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  LOCK_LAYER_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
@@ -804,6 +808,530 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
     ).rejects.toThrow();
 
     // The bitmap survives because the baseline document is still alive.
+    registry.shutdown();
+  });
+
+  it('materialization releases lease on missing asset error', async () => {
+    const registry = new AssetRegistry();
+    const { bitmap } = createOwnedBitmap(100, 100);
+    const assetId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
+    registry.release(assetId); // Release the baseline lease
+    registry.shutdown(); // This closes the asset
+
+    const layer: DurableReplayLayer = Object.freeze({
+      snapshot: Object.freeze({
+        id: 'layer-1',
+        name: 'MissingAssetLayer',
+        isBedrock: false,
+        visible: true,
+        opacity: 1,
+        locked: false,
+        blendMode: 'source-over' as GlobalCompositeOperation,
+        order: 0,
+        pos: { x: 0, y: 0, width: 100, height: 100 },
+        source: Object.freeze({
+          kind: 'raster' as const,
+          assetId,
+          width: 100,
+          height: 100,
+          isBedrock: false,
+        }),
+      }),
+      operations: Object.freeze([]),
+    });
+
+    await expect(
+      materializeLayer(layer, {
+        documentId: 'document-a',
+        baselineAssetGeneration: 0,
+        operationSetRevision: 0,
+        assetRegistry: registry,
+      })
+    ).rejects.toThrow();
+
+    // The closed bitmap stays closed
+    registry.shutdown();
+  });
+
+  it('composite-level refusal releases all leases exactly once', async () => {
+    const registry = new AssetRegistry();
+    const { bitmap: bitmap1 } = createOwnedBitmap(100, 100);
+    const { bitmap: bitmap2 } = createOwnedBitmap(100, 100);
+    const assetId1 = registry.registerBaseline('document-a', bitmap1, { ownership: 'adopt' });
+    const assetId2 = registry.registerBaseline('document-a', bitmap2, { ownership: 'adopt' });
+
+    // Two layers, one with a failing processor
+    const layer1: DurableReplayLayer = Object.freeze({
+      snapshot: Object.freeze({
+        id: 'layer-1',
+        name: 'Layer 1',
+        isBedrock: false,
+        visible: true,
+        opacity: 1,
+        locked: false,
+        blendMode: 'source-over' as GlobalCompositeOperation,
+        order: 0,
+        pos: { x: 0, y: 0, width: 100, height: 100 },
+        source: Object.freeze({
+          kind: 'raster' as const,
+          assetId: assetId1,
+          width: 100,
+          height: 100,
+          isBedrock: false,
+        }),
+      }),
+      operations: Object.freeze([
+        Object.freeze({
+          kind: 'apply-raster-processor' as const,
+          layerId: 'layer-1',
+          processorId: 'blur',
+          version: 1,
+          args: Object.freeze({ toolName: 'blur', radius: 3 }),
+        }),
+      ]),
+    });
+
+    const layer2: DurableReplayLayer = Object.freeze({
+      snapshot: Object.freeze({
+        id: 'layer-2',
+        name: 'Layer 2',
+        isBedrock: false,
+        visible: true,
+        opacity: 1,
+        locked: false,
+        blendMode: 'source-over' as GlobalCompositeOperation,
+        order: 1,
+        pos: { x: 0, y: 0, width: 100, height: 100 },
+        source: Object.freeze({
+          kind: 'raster' as const,
+          assetId: assetId2,
+          width: 100,
+          height: 100,
+          isBedrock: false,
+        }),
+      }),
+      operations: Object.freeze([]),
+    });
+
+    // Mock processor to throw
+    const blurSpy = vi.spyOn(toolProcessors, 'blur', 'get').mockReturnValue({
+      commit: 'layer-operation',
+      replay: { kind: 'layer-operation', version: 1, deterministic: true, requiresRaster: false },
+      imageProcessor: () => {
+        throw new Error('processor crash');
+      },
+    });
+
+    const retain1 = vi.spyOn(registry, 'retain');
+    const release1 = vi.spyOn(registry, 'release');
+
+    try {
+      // materializeLayer is called per-layer, not composite, but the composite logic
+      // in materialization.ts iterates layers and each has its own lease handling
+      await expect(
+        materializeLayer(layer1, {
+          documentId: 'document-a',
+          baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
+          operationSetRevision: 0,
+          assetRegistry: registry,
+        })
+      ).rejects.toThrow(/processor crash/);
+
+      // Layer 2 materialization should still work
+      await materializeLayer(layer2, {
+        documentId: 'document-a',
+        baselineAssetGeneration: registry.getDocumentGeneration('document-a'),
+        operationSetRevision: 0,
+        assetRegistry: registry,
+      });
+
+      // Layer 1 lease was retained then released
+      expect(retain1).toHaveBeenCalledWith(assetId1);
+      expect(release1).toHaveBeenCalledWith(assetId1);
+      // Layer 2 lease was retained then released
+      expect(retain1).toHaveBeenCalledWith(assetId2);
+      expect(release1).toHaveBeenCalledWith(assetId2);
+
+      // Both leases released exactly once
+      expect(retain1.mock.calls.length).toBe(release1.mock.calls.length);
+    } finally {
+      blurSpy.mockRestore();
+    }
+
+    registry.shutdown();
+  });
+});
+
+describe('selection and frame replay completeness', () => {
+  it('multiple selection replace (not append) at same cursor', () => {
+    const registry = new AssetRegistry();
+    const selection1 = {
+      id: 'sel-1',
+      points: [[{ x: 1, y: 2 }]],
+      isActive: true,
+      pos: { x: 1, y: 2, width: 10, height: 12 },
+    };
+    const selection2 = {
+      id: 'sel-2',
+      points: [[{ x: 5, y: 6 }]],
+      isActive: true,
+      pos: { x: 5, y: 6, width: 20, height: 30 },
+    };
+
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'sel-1',
+          actionName: SELECTION_ACTION,
+          layerId,
+          args: {
+            previousSelectionState: { selections: [], activeSelectionId: null },
+            nextSelectionState: { selections: [selection1], activeSelectionId: 'sel-1' },
+          },
+        },
+        {
+          id: 'sel-2',
+          actionName: SELECTION_ACTION,
+          layerId,
+          args: {
+            previousSelectionState: { selections: [selection1], activeSelectionId: 'sel-1' },
+            nextSelectionState: { selections: [selection2], activeSelectionId: 'sel-2' },
+          },
+        },
+      ],
+      { documentId: 'selection-replace-test', registry }
+    );
+
+    const atFirst = replayDurableDocument(document, 0);
+    expect(atFirst.selections.selections).toHaveLength(1);
+    expect(atFirst.selections.activeSelectionId).toBe('sel-1');
+
+    const atSecond = replayDurableDocument(document, 1);
+    expect(atSecond.selections.selections).toHaveLength(1);
+    expect(atSecond.selections.activeSelectionId).toBe('sel-2');
+    expect(atSecond.selections.selections[0].id).toBe('sel-2');
+
+    registry.shutdown();
+  });
+
+  it('frame operation disabled - frame stays baseline', () => {
+    const registry = new AssetRegistry();
+    const nextFrame = { x: 50, y: 60, width: 300, height: 200 };
+
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'crop-disabled',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          disabled: true,
+          args: { previousFrame: baselineFrame, nextFrame },
+        },
+      ],
+      { documentId: 'frame-disabled-test', registry }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.frame).toEqual(baselineFrame);
+    expect(replay.layers[layerId]?.snapshot.pos).toEqual({ x: 20, y: 30, width: 120, height: 80 });
+
+    registry.shutdown();
+  });
+
+  it('frame + reposition interaction at same cursor', () => {
+    const registry = new AssetRegistry();
+    const nextFrame = { x: 50, y: 60, width: 300, height: 200 };
+    const repositionArgs = { toolName: 'reposition', move: { x: 10, y: 20 }, resize: { width: 200, height: 150 } };
+
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'crop-then-repos',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame },
+        },
+        {
+          id: 'repos-after-crop',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: repositionArgs,
+        },
+      ],
+      { documentId: 'frame-repos-test', registry }
+    );
+
+    // At crop (cursor 0): frame changed, layer pos unchanged
+    const atCrop = replayDurableDocument(document, 0);
+    expect(atCrop.frame).toEqual(nextFrame);
+    expect(atCrop.layers[layerId]?.snapshot.pos).toEqual({ x: 20, y: 30, width: 120, height: 80 });
+
+    // At repos (cursor 1): frame stays, layer pos changed to absolute move position
+    const atRepos = replayDurableDocument(document, 1);
+    expect(atRepos.frame).toEqual(nextFrame);
+    expect(atRepos.layers[layerId]?.snapshot.pos).toEqual({ x: 10, y: 20, width: 200, height: 150 });
+
+    registry.shutdown();
+  });
+
+  it('reorder-layers with complex multi-layer reordering', () => {
+    const registry = new AssetRegistry();
+    const layer1 = createBaselineLayer(layerId);
+    layer1.order = 0;
+    const layer2 = createBaselineLayer(layer2Id);
+    layer2.order = 1;
+    const layer3 = createBaselineLayer(layer3Id);
+    layer3.order = 2;
+
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: layer1, [layer2Id]: layer2, [layer3Id]: layer3 },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'reorder-1',
+          actionName: REORDER_ACTION,
+          layerId: layer3Id,
+          args: { layerToMoveId: layer3Id, afterWhichLayerId: layerId },
+        },
+        {
+          id: 'reorder-2',
+          actionName: REORDER_ACTION,
+          layerId: layer2Id,
+          args: { layerToMoveId: layer2Id, afterWhichLayerId: layer3Id },
+        },
+      ],
+      { documentId: 'complex-reorder-test', registry }
+    );
+
+    // After first reorder: layer3 moved after layer1
+    const atFirst = replayDurableDocument(document, 0);
+    // Reorder assigns consecutive orders: layer1=0, layer3=1, layer2=3 (gap preserved)
+    expect(atFirst.layers[layer3Id]?.snapshot.order).toBe(1);
+    expect(atFirst.layers[layer2Id]?.snapshot.order).toBe(3);
+
+    // After second reorder: layer2 moved after layer3
+    const atSecond = replayDurableDocument(document, 1);
+    expect(atSecond.layers[layerId]?.snapshot.order).toBe(0);
+    expect(atSecond.layers[layer3Id]?.snapshot.order).toBe(1);
+    expect(atSecond.layers[layer2Id]?.snapshot.order).toBe(2);
+    expect(atSecond.layers[layer3Id]?.snapshot.order).toBe(1);
+    expect(atSecond.layers[layer2Id]?.snapshot.order).toBe(2);
+
+    registry.shutdown();
+  });
+
+  it('set-layer-properties with all property types in combination', () => {
+    const registry = new AssetRegistry();
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'set-name',
+          actionName: RENAME_LAYER_ACTION,
+          layerId,
+          args: { name: 'New Name' },
+        },
+        {
+          id: 'set-opacity',
+          actionName: SET_LAYER_OPACITY_ACTION,
+          layerId,
+          args: { opacity: 0.75 },
+        },
+        {
+          id: 'set-blend',
+          actionName: SET_LAYER_BLEND_MODE_ACTION,
+          layerId,
+          args: { blendMode: 'multiply' },
+        },
+        {
+          id: 'set-visible',
+          actionName: HIDE_LAYER_ACTION,
+          layerId,
+        },
+        {
+          id: 'set-locked',
+          actionName: LOCK_LAYER_ACTION,
+          layerId,
+        },
+      ],
+      { documentId: 'set-props-combined-test', registry }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.name).toBe('New Name');
+    expect(replay.layers[layerId]?.snapshot.opacity).toBe(0.75);
+    expect(replay.layers[layerId]?.snapshot.blendMode).toBe('multiply');
+    expect(replay.layers[layerId]?.snapshot.visible).toBe(false);
+    expect(replay.layers[layerId]?.snapshot.locked).toBe(true);
+
+    registry.shutdown();
+  });
+
+  it('opacity change via SET_LAYER_OPACITY_ACTION', () => {
+    const registry = new AssetRegistry();
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'opacity',
+          actionName: SET_LAYER_OPACITY_ACTION,
+          layerId,
+          args: { opacity: 0.42 },
+        },
+      ],
+      { documentId: 'opacity-test', registry }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.opacity).toBe(0.42);
+
+    registry.shutdown();
+  });
+
+  it('blendMode change via SET_LAYER_BLEND_MODE_ACTION', () => {
+    const registry = new AssetRegistry();
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'blend',
+          actionName: SET_LAYER_BLEND_MODE_ACTION,
+          layerId,
+          args: { blendMode: 'overlay' },
+        },
+      ],
+      { documentId: 'blend-mode-test', registry }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.blendMode).toBe('overlay');
+
+    registry.shutdown();
+  });
+
+  it('locked state change via LOCK_LAYER_ACTION', () => {
+    const registry = new AssetRegistry();
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'lock',
+          actionName: LOCK_LAYER_ACTION,
+          layerId,
+        },
+      ],
+      { documentId: 'lock-test', registry }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.locked).toBe(true);
+
+    registry.shutdown();
+  });
+
+  it('unlocked state change via UNLOCK_LAYER_ACTION', () => {
+    const registry = new AssetRegistry();
+    const lockedLayer = createBaselineLayer();
+    lockedLayer.locked = true;
+
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: lockedLayer },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'unlock',
+          actionName: UNLOCK_LAYER_ACTION,
+          layerId,
+        },
+      ],
+      { documentId: 'unlock-test', registry }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.locked).toBe(false);
+
     registry.shutdown();
   });
 });

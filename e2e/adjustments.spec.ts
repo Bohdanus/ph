@@ -241,7 +241,7 @@ test.describe('Colors adjustment', () => {
 
     const grayscale = page.getByRole('slider', { name: /Grayscale/ });
     await expect(grayscale).toBeVisible();
-    await grayscale.fill('100');
+    await grayscale.press('End');
     await expect(grayscale).toHaveValue('100');
     await expect(reset, 'Moving the slider creates the live preview Reset is gated on').toBeEnabled();
 

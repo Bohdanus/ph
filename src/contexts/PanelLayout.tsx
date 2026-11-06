@@ -84,10 +84,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
  *    work rather than a flag here. `toolsSide` deliberately has no third value: a Tools panel
  *    that could FLOAT is a different state from one docked to either edge, and a `PanelSide`
  *    with a `'floating'` member would let a drag commit a state with no rendering for it.
- *  - **`Tab` / `Shift+Tab`.** "Press Tab to hide all panels... Press Shift + Tab to hide all
- *    panels except the Tools panel and Options bar." (hide-show-panels) This app already binds
- *    Tab to leave an open flyout (`SidebarLeft.tsx`), and a global hide is a different feature
- *    from a drag one.
+ *  - **`Tab` / `Shift+Tab` as layout state.** "Press Tab to hide all panels... Press Shift + Tab
+ *    to hide all panels except the Tools panel and Options bar." (hide-show-panels) `Tab` is a
+ *    screen-level hide, not a dock arrangement, so it lives in `ScreenMode.tsx` and hides whole
+ *    regions without touching anything here; a hidden dock keeps its side, width and split.
+ *    `Shift+Tab` is not modelled.
  *  - **Panel tab GROUPS** (Layers/Channels/Paths as one tabbed group). That is a second axis of
  *    the same drag, and the group model only pays off once a third panel exists.
  *

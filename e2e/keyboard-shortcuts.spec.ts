@@ -37,6 +37,15 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
   return box;
 }
 
+function boxesOverlap(first: BoundingBox, second: BoundingBox): boolean {
+  return (
+    first.x < second.x + second.width &&
+    second.x < first.x + first.width &&
+    first.y < second.y + second.height &&
+    second.y < first.y + first.height
+  );
+}
+
 /** The standard test line, black, with the wait that proves it reached the backing store. */
 async function drawBlackStroke(page: Page, box: BoundingBox): Promise<void> {
   await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
@@ -226,6 +235,9 @@ test.describe('Keyboard shortcuts', () => {
     }
 
     test('E selects the eraser tile', async ({ page }) => {
+      await expectToolSelected(page, 'draw');
+      await expectToolSelected(page, 'eraser', false);
+
       await page.keyboard.press('v');
       await expectToolSelected(page, 'eraser', false);
 
@@ -448,6 +460,59 @@ test.describe('Keyboard shortcuts', () => {
       await expect(name, 'the letter belongs to the name').toContainText('v');
       await expect(textOptions).toBeVisible();
       await expectToolSelected(page, 'reposition', false);
+    });
+  });
+
+  test.describe('colour swatch keys', () => {
+    test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
+
+    test('the tablet layout keeps the default-colors control in the rail', async ({ page }) => {
+      await page.setViewportSize({ width: 768, height: 1024 });
+
+      await expect(page.getByTestId('default-colors-button')).toBeVisible();
+      await expect(page.getByTestId('mobile-bottom-bar')).toBeHidden();
+    });
+
+    test('X swaps the swatch pair and D restores black over white', async ({ page }) => {
+      const foreground = page.getByTestId('foreground-color-swatch');
+      const background = page.getByTestId('background-color-swatch');
+
+      await setForegroundColor(page, '#ff0000', true);
+      await expect(background).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+
+      await page.keyboard.press('x');
+      await expect(foreground, 'X moves the background colour to the front').toHaveCSS(
+        'background-color',
+        'rgb(255, 255, 255)'
+      );
+      await expect(background, 'and the foreground colour to the back').toHaveCSS('background-color', 'rgb(255, 0, 0)');
+
+      await page.keyboard.press('d');
+      await expect(foreground, 'D restores the default foreground').toHaveCSS('background-color', 'rgb(0, 0, 0)');
+      await expect(background, 'and the default background').toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    });
+
+    test('the rail button beside the swatches restores black over white', async ({ page }) => {
+      const foreground = page.getByTestId('foreground-color-swatch');
+      const background = page.getByTestId('background-color-swatch');
+      const reset = page.getByRole('button', { name: 'Default Foreground and Background Colors' });
+
+      await setForegroundColor(page, '#ff0000', true);
+      const hitArea = await reset.boundingBox();
+      const foregroundArea = await foreground.boundingBox();
+      const backgroundArea = await background.boundingBox();
+      if (!hitArea || !foregroundArea || !backgroundArea) {
+        throw new Error('The color controls need measurable hit areas');
+      }
+      expect(hitArea.width).toBeGreaterThanOrEqual(24);
+      expect(hitArea.height).toBeGreaterThanOrEqual(24);
+      expect(boxesOverlap(hitArea, foregroundArea)).toBe(false);
+      expect(boxesOverlap(hitArea, backgroundArea)).toBe(false);
+      // A real click, so Playwright's actionability check fails if a swatch ever covers the button.
+      await reset.click();
+
+      await expect(foreground).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+      await expect(background).toHaveCSS('background-color', 'rgb(255, 255, 255)');
     });
   });
 });

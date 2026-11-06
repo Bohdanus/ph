@@ -44,6 +44,7 @@ const toolIconNames = [
   'red-eye',
   'spot-healing',
   'healing-brush',
+  'invert',
   'patch',
   'paint-bucket',
   'gradient',

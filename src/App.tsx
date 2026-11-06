@@ -14,6 +14,9 @@ import { CurrentToolProvider } from './contexts/useCurrentTool.tsx';
 import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
 import { AppKeyboardShortcuts } from './components/Common/AppKeyboardShortcuts.tsx';
+import { SelectionShortcuts } from './components/Common/SelectionShortcuts.tsx';
+import { AdjustmentShortcuts } from './components/Common/AdjustmentShortcuts.tsx';
+import { ScreenModeShortcuts } from './components/Common/ScreenModeShortcuts.tsx';
 import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
 import { FirstUseProvider } from './contexts/FirstUseContext.tsx';
 import { FirstUseTour, hasSeenFirstUseTour } from './components/Common/FirstUseTour.tsx';
@@ -21,6 +24,7 @@ import { useApp } from './hooks/useApp.ts';
 import { useIsMobileViewport } from './hooks/useMediaQuery.ts';
 import { RightPanelVisibilityProvider, useRightPanelVisibility } from './contexts/RightPanelVisibility.tsx';
 import { PanelLayoutProvider, usePanelLayout } from './contexts/PanelLayout.tsx';
+import { ScreenModeProvider, useScreenMode, type ChromeRegion } from './contexts/ScreenMode.tsx';
 import { edgePlacement } from './util/edge-placement.ts';
 
 const DEFAULT_BLANK_IMAGE = {
@@ -29,6 +33,20 @@ const DEFAULT_BLANK_IMAGE = {
   size: { width: 800, height: 600 },
   isBedrock: true,
 } as const;
+
+/**
+ * Each region hides from the grid container rather than from inside its component, so the five
+ * components carry one `data-chrome` attribute and no knowledge of screen modes. A hidden item is
+ * `display: none`, which an `auto` track collapses to nothing, so the canvas takes the space.
+ * Whole literals, because Tailwind only generates classes it finds spelled out in the source.
+ */
+const HIDE_CHROME_CLASS: Readonly<Record<ChromeRegion, string>> = {
+  header: '[&>[data-chrome=header]]:hidden',
+  options: '[&>[data-chrome=options]]:hidden',
+  tools: '[&>[data-chrome=tools]]:hidden',
+  panels: '[&>[data-chrome=panels]]:hidden',
+  footer: '[&>[data-chrome=footer]]:hidden',
+};
 
 function BlankImageStarter() {
   const [{ hasImage }] = useStore();
@@ -64,6 +82,11 @@ function AppContainer() {
   const isFirstUseTourVisible = shouldOfferFirstUseTour && hasImage && !isMobile && !autosaveMetadata;
   const completeFirstUseTour = useCallback(() => setShouldOfferFirstUseTour(false), []);
   const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
+  const { visibility } = useScreenMode();
+  const hiddenChromeClasses = (Object.keys(HIDE_CHROME_CLASS) as ChromeRegion[])
+    .filter((region) => !visibility[region])
+    .map((region) => HIDE_CHROME_CLASS[region])
+    .join(' ');
   const rightPanelPlacement = edgePlacement(
     layout.dockSide,
     !toolName || !hasImage || layout.dockSide !== layout.toolsSide ? 'full' : 'bottom'
@@ -107,9 +130,12 @@ function AppContainer() {
     <>
       <div
         aria-hidden={isFirstUseTourVisible || undefined}
-        className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900"
+        className={`grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900 ${hiddenChromeClasses}`}
       >
         <AppKeyboardShortcuts />
+        <SelectionShortcuts />
+        <AdjustmentShortcuts />
+        <ScreenModeShortcuts />
         <BlankImageStarter />
         <Menu />
         <SidebarLeft />
@@ -129,7 +155,7 @@ function AppContainer() {
           label="Right sidebar"
           fallbackClassName={`relative flex min-h-0 flex-col overflow-y-auto bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
             layout.dockSide === 'left' ? 'border-r border-gray-300' : 'border-l border-gray-300'
-          } ${isRightPanelOpen ? rightPanelPlacement : 'hidden'}`}
+          } ${isRightPanelOpen && visibility.panels ? rightPanelPlacement : 'hidden'}`}
           fallbackStyle={{ width: layout.effectiveDockWidth }}
         >
           <SidebarRight />
@@ -175,21 +201,23 @@ function App() {
               replace the document — the desktop header, the mobile drawer, `Main`'s drop
               handler — and below nothing that needs it. */}
           <UnsavedChangesProvider>
-            <AutoSaveProvider>
-              <KeyboardEventsProvider>
-                <CurrentToolProvider>
+            <KeyboardEventsProvider>
+              <CurrentToolProvider>
+                <AutoSaveProvider>
                   {/* Above `RightPanelVisibilityProvider` and beside it: both are shell state, and
                        neither reads the store. Order between them does not matter. */}
                   <PanelLayoutProvider>
-                    <RightPanelVisibilityProvider>
-                      <FirstUseProvider>
-                        <AppContainer />
-                      </FirstUseProvider>
-                    </RightPanelVisibilityProvider>
+                    <ScreenModeProvider>
+                      <RightPanelVisibilityProvider>
+                        <FirstUseProvider>
+                          <AppContainer />
+                        </FirstUseProvider>
+                      </RightPanelVisibilityProvider>
+                    </ScreenModeProvider>
                   </PanelLayoutProvider>
-                </CurrentToolProvider>
-              </KeyboardEventsProvider>
-            </AutoSaveProvider>
+                </AutoSaveProvider>
+              </CurrentToolProvider>
+            </KeyboardEventsProvider>
           </UnsavedChangesProvider>
         </StoreProvider>
       </ThemeProvider>

@@ -35,6 +35,18 @@ describe('pointsBoundingPos', () => {
     expect(result).toEqual({ x: -3, y: -3, width: 16, height: 16 });
   });
 
+  it('preserves zero lineWidth for unpadded geometry bounds', () => {
+    const result = pointsBoundingPos({
+      points: [
+        { x: 0, y: 0 },
+        { x: 4, y: 4 },
+      ],
+      lineWidth: 0,
+    });
+
+    expect(result).toEqual({ x: 0, y: 0, width: 4, height: 4 });
+  });
+
   // The degenerate input, and the only reachable one: a click with the Draw tool pushes exactly
   // one point on pointerdown (`DrawToolArea.tsx:129`) and bounds that array on release
   // (`:133`-`:134`), so `pos` is the whole layer crop of a single-point gesture. The extent is
@@ -60,6 +72,18 @@ describe('pointsBoundingPos', () => {
     });
 
     expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
+  });
+
+  it('pads zero-width raster bounds for renderers that clamp to the minimum dab size', () => {
+    const result = pointsBoundingPosOutward({ points: [{ x: 5, y: 5 }], lineWidth: 0 });
+
+    expect(result).toEqual({ x: 4, y: 4, width: 2, height: 2 });
+  });
+
+  it('preserves subpixel widths in raster bounds', () => {
+    const result = pointsBoundingPosOutward({ points: [{ x: 5.25, y: 5.25 }], lineWidth: 0.5 });
+
+    expect(result).toEqual({ x: 4, y: 4, width: 2, height: 2 });
   });
 
   it('rounds outward for every fractional drag, never inward', () => {
@@ -477,12 +501,12 @@ describe('pointsBoundingPos edge cases', () => {
     expect(result.height).toBe(6);
   });
 
-  it.fails('does not throw on empty points and returns a zero-sized box (draw.ts:7)', () => {
-    expect(() => pointsBoundingPos({ points: [] })).not.toThrow();
+  it('returns a zero-sized box for empty points', () => {
+    expect(pointsBoundingPos({ points: [] })).toEqual({ x: 0, y: 0, width: 0, height: 0 });
   });
 
-  it.fails('clamps a non-finite lineWidth rather than letting it poison the box (draw.ts:25)', () => {
-    for (const lineWidth of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+  it('clamps invalid line widths before calculating bounds', () => {
+    for (const lineWidth of [-2, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
       const result = pointsBoundingPos({
         points: [
           { x: 0, y: 0 },
@@ -491,18 +515,18 @@ describe('pointsBoundingPos edge cases', () => {
         lineWidth,
       });
 
-      expect(Number.isFinite(result.width), `lw=${lineWidth}`).toBe(true);
+      expect(result, `lw=${lineWidth}`).toEqual({ x: -1, y: -1, width: 6, height: 6 });
     }
   });
 });
 
 describe('pointsBoundingPosOutward edge cases', () => {
-  it.fails('does not throw on empty points and returns a zero-sized box (draw.ts:37)', () => {
-    expect(() => pointsBoundingPosOutward({ points: [] })).not.toThrow();
+  it('returns a zero-sized box for empty points', () => {
+    expect(pointsBoundingPosOutward({ points: [] })).toEqual({ x: 0, y: 0, width: 0, height: 0 });
   });
 
-  it.fails('clamps a non-finite lineWidth rather than emitting NaN or infinite raster dimensions (draw.ts:37)', () => {
-    for (const lineWidth of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+  it('clamps invalid line widths before calculating raster bounds', () => {
+    for (const lineWidth of [-2, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
       const result = pointsBoundingPosOutward({
         points: [
           { x: 0, y: 0 },
@@ -511,12 +535,11 @@ describe('pointsBoundingPosOutward edge cases', () => {
         lineWidth,
       });
 
-      expect(Number.isFinite(result.width), `lw=${lineWidth}`).toBe(true);
-      expect(Number.isInteger(result.width), `lw=${lineWidth}`).toBe(true);
+      expect(result, `lw=${lineWidth}`).toEqual({ x: -1, y: -1, width: 6, height: 6 });
     }
   });
 
-  it.fails('sanitizes non-finite coordinates instead of emitting a NaN box (draw.ts:37)', () => {
+  it('sanitizes non-finite coordinates before calculating raster bounds', () => {
     const result = pointsBoundingPosOutward({
       points: [
         { x: Number.NaN, y: Number.NaN },
@@ -524,7 +547,7 @@ describe('pointsBoundingPosOutward edge cases', () => {
       ],
     });
 
-    expect(Number.isFinite(result.width)).toBe(true);
+    expect(result).toEqual({ x: -1, y: -1, width: 6, height: 6 });
   });
 });
 
@@ -595,7 +618,7 @@ describe('degenerate stroke rendering', () => {
 });
 
 describe('non-finite lineWidth in renderers', () => {
-  it('passes a NaN lineWidth straight through to the block stamp size (known behaviour)', () => {
+  it('clamps a non-finite block-stamp width to the minimum line width', () => {
     const ctx = makeMockCtx();
     drawPen({
       args: {
@@ -611,29 +634,10 @@ describe('non-finite lineWidth in renderers', () => {
     });
 
     const stampWidth = vi.mocked(ctx.fillRect).mock.calls[0][2];
-    expect(Number.isNaN(stampWidth)).toBe(true);
+    expect(stampWidth).toBe(1);
   });
 
-  it.fails('clamps a non-finite lineWidth for block stamps instead of stamping a NaN-sized tile (draw.ts:138)', () => {
-    const ctx = makeMockCtx();
-    drawPen({
-      args: {
-        points: [{ x: 0, y: 0 }],
-        alpha: 1,
-        color: '#000000',
-        penType: 'pen',
-        lineWidth: Number.NaN,
-        toolName: 'draw',
-        blockStamp: true,
-      },
-      ctx,
-    });
-
-    const stampWidth = vi.mocked(ctx.fillRect).mock.calls[0][2];
-    expect(Number.isFinite(stampWidth)).toBe(true);
-  });
-
-  it.fails('clamps a non-finite lineWidth to a finite spray radius (draw.ts:221)', () => {
+  it('clamps a non-finite lineWidth to a finite spray radius', () => {
     const ctx = makeMockCtx();
     drawSpray({
       args: {
@@ -649,5 +653,22 @@ describe('non-finite lineWidth in renderers', () => {
 
     const radius = vi.mocked(ctx.arc).mock.calls[0][2];
     expect(Number.isFinite(radius)).toBe(true);
+  });
+
+  it('preserves supported subpixel spray widths', () => {
+    const ctx = makeMockCtx();
+    drawSpray({
+      args: {
+        points: [{ x: 5, y: 5 }],
+        alpha: 0.8,
+        color: '#ff0000',
+        penType: 'spray',
+        lineWidth: 0.5,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    expect(vi.mocked(ctx.arc).mock.calls[0][2]).toBe(0.25);
   });
 });

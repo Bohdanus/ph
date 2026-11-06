@@ -95,15 +95,29 @@ const REPO_ROOT = join(import.meta.dirname, '..', '..');
  * in the common git dir. The repository itself is NOT faked: path normalization is
  * lexical but the git home and worktree list are real.
  *
- * `CI` is deleted rather than left inherited, because GitHub Actions sets it for
- * every step and `run()` reads it as "no queue, default port, default output dir" —
- * correct for a CI job, wrong for most of these tests, and invisible locally. An
- * earlier version inherited `process.env` wholesale and went 7-red in the `ci` job.
+ * `CI` and the wrapper controls are cleared rather than inherited. GitHub Actions sets
+ * `CI` for every step, while port, remote-target, queue, and output flags change which
+ * branch `run()` takes. Tests supply those values explicitly, so host settings cannot
+ * silently change the behavior under test.
  */
 function tempBoard() {
   const dir = mkdtempSync(join(tmpdir(), 'e2e-run-test-'));
   const env = { ...process.env, AGENT_BOARD_DIR: dir };
   delete env.CI;
+  for (const name of [
+    'PLAYWRIGHT_PORT',
+    'PLAYWRIGHT_BASE_URL',
+    'PLAYWRIGHT_REUSE_EXISTING_SERVER',
+    'PLAYWRIGHT_HTML_OUTPUT_DIR',
+    'E2E_ALLOW_REMOTE',
+    'E2E_SKIP_LOCK',
+    'E2E_LOCK_TIMEOUT',
+    'E2E_LOCK_POLL',
+    'E2E_LOCK_LEASE',
+    'E2E_QUIET',
+  ]) {
+    delete env[name];
+  }
   return { dir, env, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -169,6 +183,12 @@ function recorder() {
 const LIVE_RUN_RECORD = join(REPO_ROOT, '.kilo', 'e2e-last-run.json');
 
 let recordDir = null;
+const UNIT_TEST_PORT = 5392;
+
+/** Keep wrapper tests deterministic; the production allocator has a real-socket test below. */
+async function reserveUnitTestPort() {
+  return { port: UNIT_TEST_PORT, attempt: 1 };
+}
 
 /** A temp directory for this test's run records, created on first use. */
 function tempRecordDir() {
@@ -192,9 +212,11 @@ afterEach(() => {
  * than the import, and that is the point: the shared path is unreachable from here by
  * construction rather than by remembering, because a test that forgot to pass the
  * option would be the exact regression this exists to prevent.
+ * Most tests also use a deterministic port allocator; the real-socket test below
+ * exercises the production allocator without making unrelated wrapper tests contend.
  */
 function run(argv, options = {}) {
-  return runUnderTest(argv, { runRecordPath: runRecordPath(), ...options });
+  return runUnderTest(argv, { runRecordPath: runRecordPath(), reservePort: reserveUnitTestPort, ...options });
 }
 
 /**
@@ -291,13 +313,22 @@ describe('e2e-run: the own-server guarantee', () => {
     boardDir.cleanup();
   });
 
-  it('picks a port for the run and hands it to Playwright', async () => {
+  it('passes the selected port to Playwright and reports retries accurately', async () => {
     const suite = fakeSuite();
-    await run([], { env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' }, log: recorder().log, runPlaywright: suite });
+    const log = recorder();
+    const allocatePort = vi.fn(async () => ({ port: UNIT_TEST_PORT, attempt: 2 }));
+    await run([], {
+      env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
+      log: log.log,
+      runPlaywright: suite,
+      reservePort: allocatePort,
+    });
 
     const { env } = suite.calls[0];
-    expect(env.PLAYWRIGHT_PORT, 'a port of its own, never the shared 5173').toMatch(/^\d+$/);
-    expect(Number(env.PLAYWRIGHT_PORT)).toBeGreaterThan(0);
+    expect(allocatePort, 'the wrapper uses its port allocator').toHaveBeenCalledOnce();
+    expect(env.PLAYWRIGHT_PORT, 'the allocator-selected port reaches Playwright').toBe(String(UNIT_TEST_PORT));
+    expect(log.text(), 'attempt 2 means one retry after the initial pick').toContain('1 retry');
+    expect(log.text(), 'the retry count is not off by one').not.toContain('2 times');
   });
 
   it('runs with a port even when the board is completely unavailable', async () => {
@@ -320,7 +351,7 @@ describe('e2e-run: the own-server guarantee', () => {
 
     expect(code, 'an unreachable board is not a failure').toBe(0);
     expect(suite.calls, 'the suite still starts').toHaveLength(1);
-    expect(suite.calls[0].env.PLAYWRIGHT_PORT, 'on a port of its own').toMatch(/^\d+$/);
+    expect(suite.calls[0].env.PLAYWRIGHT_PORT, 'on a port of its own').toBe(String(UNIT_TEST_PORT));
     expect(log.text(), 'and the loss of scheduling is stated').toMatch(/board is unavailable/);
   });
 

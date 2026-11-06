@@ -466,6 +466,34 @@ test.describe('Selection tools', () => {
     expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
   });
 
+  test('Space repositions a live rectangular marquee before size adjustment resumes', async ({ page }) => {
+    const box = await workspaceBox(page);
+    const start = { x: Math.round(box.width * 0.3), y: Math.round(box.height * 0.32) };
+    const firstEnd = { x: Math.round(box.width * 0.52), y: Math.round(box.height * 0.54) };
+    const pan = { x: 32, y: 24 };
+    const resize = { x: 38, y: 28 };
+
+    await clickToolButton(page, 'rectangular-selection');
+    await page.mouse.move(box.x + start.x, box.y + start.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + firstEnd.x, box.y + firstEnd.y, { steps: 8 });
+    await page.keyboard.down('Space');
+    await page.mouse.move(box.x + firstEnd.x + pan.x, box.y + firstEnd.y + pan.y, { steps: 8 });
+    await page.keyboard.up('Space');
+    await page.mouse.move(box.x + firstEnd.x + pan.x + resize.x, box.y + firstEnd.y + pan.y + resize.y, { steps: 8 });
+    await page.mouse.up();
+
+    await waitForCommittedAnts(page, 'the repositioned rectangular marquee');
+    const outline = await committedAntsOutline(page);
+    expect(outline).not.toBeNull();
+    expect(Math.abs(outline!.left - (box.x + start.x + pan.x))).toBeLessThanOrEqual(2.5);
+    expect(Math.abs(outline!.top - (box.y + start.y + pan.y))).toBeLessThanOrEqual(2.5);
+    expect(Math.abs(outline!.right - (box.x + firstEnd.x + pan.x + resize.x))).toBeLessThanOrEqual(2.5);
+    expect(Math.abs(outline!.bottom - (box.y + firstEnd.y + pan.y + resize.y))).toBeLessThanOrEqual(2.5);
+    await expect(page.getByTestId('workspace-container')).toHaveAttribute('data-view-pan-x', '0');
+    await expect(page.getByTestId('workspace-container')).toHaveAttribute('data-view-pan-y', '0');
+  });
+
   test('Deselect removes the selection outline', async ({ page }) => {
     const box = await workspaceBox(page);
     const clip = await overlayClip(page, box);

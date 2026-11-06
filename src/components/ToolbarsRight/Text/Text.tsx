@@ -273,7 +273,7 @@ const Text: React.FC<{}> = () => {
   };
 
   return (
-    <div className="flex flex-row items-center gap-4 h-full min-w-[1100px]">
+    <div className="flex flex-row items-center gap-4 h-full w-full min-w-0 overflow-x-auto [&>*]:shrink-0">
       {/*
        * Adobe's ONE visible tell for edit mode, and the reason there is no text field here any more.
        *
