@@ -1084,9 +1084,10 @@ alone; `transform.notes.md` records those as separate divergences/product questi
 
 **Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress. The
 Draw pen path, Draw block-stamp, Eraser brush mode, Dodge, Burn and Sponge paths now use
-processor-specific incremental helpers. The earlier claim that Draw block-stamp still re-rasterizes
-the full bounds is stale. Spray, Eraser pencil/block modes, Brush, Pencil, Smudge, Clone Stamp,
-Gradient, and other raster processors still lack incremental accumulation:
+processor-specific incremental helpers. Draw block-stamp appends only when both previews use the
+same color, width, composite mode and unsmoothed path; ordinary pen paths and spray replay in full.
+Spray, Eraser pencil/block modes, Brush, Pencil, Smudge, Clone Stamp, Gradient, and other raster
+processors still lack incremental accumulation:
 
 `src/contexts/useLayer.ts` calls incremental helpers only when their tool-specific settings remain
 compatible and the new points extend the previous path. Draw spray is excluded; eraser incremental
@@ -1102,9 +1103,10 @@ actions, not accumulating pointer strokes.
 **Reproduce.** Drag one continuous stroke across a large canvas and profile `tempUpdateLayer`. Cost
 per event grows with the bounding box covered SO FAR, not with the delta.
 
-**Coverage.** `useLayer.incremental.test.ts` currently covers `getIncrementalStrokeArgs`, but not the
-eraser, Dodge/Burn, or Sponge helper contracts. Existing Smudge and Gradient tests document their
-full-source/full-layer behavior rather than pinning the cost shape.
+**Coverage.** `useLayer.incremental.test.ts` covers the Draw block-stamp, eraser, Dodge/Burn, and
+Sponge helper contracts. Paint-tool tests compare the appended block-stamp rectangle sequence with
+a full replay. Existing Smudge and Gradient tests document their full-source/full-layer behavior
+rather than pinning the cost shape.
 
 **Fix.** Extend the remaining gesture processors with safe per-tool accumulation, or document the
 cost as a known limit. A persistent canvas handle must NOT go in durable `args`: conversion

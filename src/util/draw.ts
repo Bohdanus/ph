@@ -121,6 +121,8 @@ export function catmullRomToBezier(ctx: CanvasRenderingContext2D, pts: Point[], 
 export type DrawStrokeParams = {
   args: DrawToolArgs;
   ctx: Ctx2D; // overlay ctx
+  /** Preview-only: omit the shared first square when appending a block-stamp segment. */
+  skipInitialBlockStamp?: boolean;
 };
 
 export const drawLine = (params: DrawStrokeParams) => {
@@ -151,7 +153,7 @@ export const drawLine = (params: DrawStrokeParams) => {
  * Options bar hides the slider for this mode, and honouring its last value would silently fade
  * the block. Drawn as `fillRect` rather than a path, so no `beginPath`/`stroke` is issued.
  */
-const drawBlockStamps = ({ args, ctx }: DrawStrokeParams) => {
+const drawBlockStamps = ({ args, ctx, skipInitialBlockStamp }: DrawStrokeParams) => {
   const points = args.points ?? [];
   if (points.length === 0) return;
 
@@ -161,7 +163,9 @@ const drawBlockStamps = ({ args, ctx }: DrawStrokeParams) => {
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.fillStyle = args.color;
-  ctx.fillRect(points[0].x - half, points[0].y - half, size, size);
+  if (!skipInitialBlockStamp) {
+    ctx.fillRect(points[0].x - half, points[0].y - half, size, size);
+  }
 
   for (let i = 1; i < points.length; i++) {
     const from = points[i - 1];
@@ -180,12 +184,13 @@ const drawBlockStamps = ({ args, ctx }: DrawStrokeParams) => {
   ctx.restore();
 };
 
-export const drawPen = ({ args, ctx }: DrawStrokeParams) => {
+export const drawPen = (params: DrawStrokeParams) => {
+  const { args, ctx } = params;
   const points = args.points ?? [];
   if (points.length === 0) return;
 
   if (args.blockStamp) {
-    drawBlockStamps({ args, ctx });
+    drawBlockStamps(params);
     return;
   }
 
