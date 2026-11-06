@@ -18,6 +18,7 @@ type TextArgs = {
   allCaps?: boolean;
   angle?: number;
   kind?: 'point' | 'paragraph';
+  editingLayerId?: string;
   lineHeight: number;
   text?: string;
   rect: { x1: number; y1: number; x2: number; y2: number } | null;
@@ -811,6 +812,32 @@ describe('TextToolArea', () => {
       expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ smallCaps: true }), {
         overflowIndicator: true,
       });
+    });
+
+    it('preserves an edited layer affine transform when compositor publication is refused', () => {
+      const ctx = makeMockCtx();
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      const affine = { a: 2, b: 0, c: 0, d: 2, e: 3, f: 4 };
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true, editingLayerId: 'locked-text' });
+      h.layers = {
+        'locked-text': {
+          locked: true,
+          operations: [{ id: 'affine-1', kind: 'affine-transform', transform: affine, enabled: true }],
+        },
+      };
+      h.publishSmallCapsTextDraftPreview.mockReturnValue(false);
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+
+      expect(ctx.translate).toHaveBeenCalledWith(rect.x1, rect.y1);
+      expect(ctx.transform).toHaveBeenCalledWith(2, 0, 0, 2, 3, 4);
+      expect(renderText).toHaveBeenCalledWith(
+        ctx,
+        expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 45, y2: 24 } }),
+        { overflowIndicator: true }
+      );
+      expect(ctx.restore).toHaveBeenCalled();
     });
 
     it('draws the overflow indicator in the tool colour when layoutText reports overflow', () => {
