@@ -1486,6 +1486,25 @@ describe('Text toolbar', () => {
       expect(readout).toHaveTextContent(AUTO_LEADING.toFixed(1));
     });
 
+    it.each([
+      ['Enter', '{Enter}'],
+      ['Space', ' '],
+    ])('activates the line-height preset with %s', async (_key, keyboardInput) => {
+      resetToolArgs({ lineHeight: 2 });
+      renderWithProvider(<Text />);
+      const user = userEvent.setup();
+      const preset = screen.getByRole('button', {
+        name: `Set line height to ${AUTO_LEADING} (${Math.round(AUTO_LEADING * 100)}%)`,
+      });
+
+      preset.focus();
+      expect(preset).toHaveFocus();
+
+      await user.keyboard(keyboardInput);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lineHeight: AUTO_LEADING }));
+    });
+
     it('changes alignment through the native select and reports it to the store', async () => {
       resetToolArgs({ kind: 'paragraph' });
       renderWithProvider(<Text />);
