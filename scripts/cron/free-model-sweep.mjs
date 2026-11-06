@@ -565,7 +565,7 @@ export async function scanCodexFailures(
     try {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) throw new Error('Codex scan exceeded its time bound');
-      if (typeof row.rollout_path !== 'string' || !row.rollout_path.startsWith('/')) {
+      if (typeof row.rollout_path !== 'string' || !isAbsolute(row.rollout_path)) {
         throw new Error('Codex rollout path is not absolute');
       }
       const rolloutPath = await realpathPath(resolve(row.rollout_path));

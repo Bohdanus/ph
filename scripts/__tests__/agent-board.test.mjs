@@ -1591,8 +1591,12 @@ describe('the schema this script writes', () => {
     board.migrationSteps = () => ({ 1: () => false, 2: () => true, 3: () => true });
     expect(() => board.open()).not.toThrow();
     const after = new DatabaseSync(join(dir, 'board.db'));
-    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
-    after.close();
+    try {
+      expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    } finally {
+      after.close();
+      board.close();
+    }
   });
 
   it('still migrates the version it does have a step for', () => {

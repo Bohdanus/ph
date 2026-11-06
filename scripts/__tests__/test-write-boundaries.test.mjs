@@ -50,7 +50,7 @@ const REVIEWED = {
   },
   'free-model-kilo.test.mjs': {
     scope: 'Mock CLI and configuration fixtures use temporary directories.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=1 filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
+    patterns: `filesystem-write:mkdir=1 filesystem-write:writeFile=3 filesystem-write:mkdtemp=9 filesystem-write:rm=9`,
   },
   'free-model-pool-external.test.mjs': {
     scope: 'External-provider fixtures use unique OS temporary directories.',
@@ -58,7 +58,7 @@ const REVIEWED = {
   },
   'free-model-pool.test.mjs': {
     scope: 'Model/provider fixtures use unique OS temporary directories.',
-    patterns: `filesystem-write:mkdtemp=10 filesystem-write:rm=10 filesystem-write:writeFile=13`,
+    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
@@ -83,7 +83,7 @@ const REVIEWED = {
   'main-worktree-guard.test.mjs': {
     scope:
       'Git and hook fixtures use temporary repositories; review child cwd and any environment passed to subprocesses.',
-    patterns: `subprocess:spawnSync=51 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
+    patterns: `subprocess:execFileSync=1 subprocess:spawnSync=43 filesystem-write:mkdtempSync=8 filesystem-write:writeFileSync=20 filesystem-write:rmSync=11 filesystem-write:mkdirSync=3`,
   },
   'merge-release.test.mjs': {
     scope: 'Git and filesystem fixtures use a unique temporary repository.',
@@ -129,7 +129,7 @@ const REVIEWED = {
   'tsc-guard.test.mjs': {
     scope:
       'Fixtures are temporary; shared node_modules is read for resolution and writes are gated by physical checkout ownership.',
-    patterns: `subprocess:spawnSync=4 filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=4 filesystem-write:rmSync=7 filesystem-write:mkdirSync=2 filesystem-write:symlinkSync=3`,
+    patterns: `subprocess:spawnSync=6 filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=10 filesystem-write:rmSync=9 filesystem-write:mkdirSync=2 filesystem-write:symlinkSync=3`,
   },
   'worktree-inventory.test.mjs': {
     scope: 'Writable databases are test fixtures; the machine session database is explicitly opened read-only.',
@@ -167,6 +167,10 @@ const REVIEWED = {
     scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
     patterns: '',
   },
+  'windows-command-shim.test.mjs': {
+    scope: 'Pure command-line argument tests; no filesystem mutations, subprocesses, or database access.',
+    patterns: '',
+  },
 };
 
 const SHARED_READS = [
@@ -191,6 +195,12 @@ const SHARED_READS = [
 ];
 
 const PROCESS_ENV_WRITES = [
+  {
+    file: 'free-model-pool.test.mjs',
+    keys: ['PATH'],
+    evidence: 'const previousPath = process.env.PATH;',
+    rule: 'The Windows PATH fixture restores the previous value in a finally block, deleting PATH if it was originally absent.',
+  },
   {
     file: 'merge-takeover-guard.test.mjs',
     keys: ['PATH', 'REAL_GIT_PATH'],

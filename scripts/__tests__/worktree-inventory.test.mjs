@@ -73,9 +73,10 @@ import { Board } from '../lib/agent-board/db.mjs';
 /**
  * Git integration tests use temporary repositories; inventory classification
  * uses synthetic worktree records and never enumerates the operator's fleet.
- * The 15s timeout accommodates process-spawning cases without changing assertions.
+ * Windows full-suite Git cases can take over 35s, so allow a minute without
+ * changing their assertions.
  */
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: 60_000 });
 
 const NOW = 1_790_000_000_000;
 
@@ -1132,29 +1133,30 @@ describe('the pinned clock', () => {
 });
 
 describe('the inventory output target', () => {
+  const repo = resolve('/repo');
+  const linkedMain = join(repo, '.kilo', 'worktrees', 'main');
+
   it('requires a resolvable canonical path for the default output', () => {
-    expect(() => inventoryTarget('/repo', undefined)).toThrow(/canonical inventory path/);
-    expect(inventoryTarget('/repo', 'reports/WORKTREES.json')).toBe('/repo/reports/WORKTREES.json');
-    expect(inventoryTarget('/repo', '/tmp/WORKTREES.json')).toBe('/tmp/WORKTREES.json');
+    expect(() => inventoryTarget(repo, undefined)).toThrow(/canonical inventory path/);
+    expect(inventoryTarget(repo, 'reports/WORKTREES.json')).toBe(resolve(repo, 'reports/WORKTREES.json'));
+    expect(inventoryTarget(repo, resolve('/tmp', 'WORKTREES.json'))).toBe(resolve('/tmp', 'WORKTREES.json'));
   });
 
   it('writes the default inventory beside linked main, not beside the primary checkout', () => {
     const run = (_cwd, args) => ({
       stdout:
         args[0] === 'worktree'
-          ? 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n'
-          : '/repo/.git\n',
+          ? `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`
+          : `${join(repo, '.git')}\n`,
     });
-    expect(inventoryTarget('/repo', undefined, { run, realpath: (p) => p })).toBe(
-      '/repo/.kilo/worktrees/main/WORKTREES.json'
-    );
+    expect(inventoryTarget(repo, undefined, { run, realpath: (p) => p })).toBe(join(linkedMain, 'WORKTREES.json'));
   });
 
   it('uses the primary checkout only when a readable roster confirms no main worktree', () => {
     const run = (_cwd, args) => ({
-      stdout: args[0] === 'worktree' ? 'worktree /repo\nbare\n' : '/repo/.git\n',
+      stdout: args[0] === 'worktree' ? `worktree ${repo}\nbare\n` : `${join(repo, '.git')}\n`,
     });
-    expect(inventoryTarget('/repo', null, { run, realpath: (p) => p })).toBe('/repo/WORKTREES.json');
+    expect(inventoryTarget(repo, null, { run, realpath: (p) => p })).toBe(join(repo, 'WORKTREES.json'));
   });
 
   it('rejects an empty output path before attempting to write', () => {
@@ -4282,6 +4284,9 @@ describe('the call history', () => {
 
 describe('shared inventory-path resolver', () => {
   const identityRealpath = (p) => p;
+  const repo = resolve('/repo');
+  const taskWorktree = join(repo, '.kilo', 'worktrees', 'task');
+  const linkedMain = join(repo, '.kilo', 'worktrees', 'main');
 
   it('parseWorktreeListing: splits porcelain output into records', () => {
     const porcelain = [
@@ -4345,19 +4350,16 @@ describe('shared inventory-path resolver', () => {
   });
 
   it('resolveInventoryPath: returns the main checkout path', () => {
-    const run = (cwd, args) => ({ stdout: 'worktree /repo\nbranch refs/heads/main\n' });
-    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
-      '/repo/WORKTREES.json'
-    );
+    const run = (cwd, args) => ({ stdout: `worktree ${repo}\nbranch refs/heads/main\n` });
+    expect(resolveInventoryPath(taskWorktree, { run, realpath: identityRealpath })).toBe(join(repo, 'WORKTREES.json'));
   });
 
   it('resolveInventoryPath: returns the linked main worktree when main is not the primary', () => {
     const run = (cwd, args) => ({
-      stdout:
-        'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n',
+      stdout: `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
     });
-    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
-      '/repo/.kilo/worktrees/main/WORKTREES.json'
+    expect(resolveInventoryPath(taskWorktree, { run, realpath: identityRealpath })).toBe(
+      join(linkedMain, 'WORKTREES.json')
     );
   });
 
@@ -4368,14 +4370,12 @@ describe('shared inventory-path resolver', () => {
       return {
         stdout:
           calls === 1
-            ? 'worktree /repo\nbranch refs/heads/feature\n'
-            : 'worktree /repo\nbranch refs/heads/feature\n\nworktree /repo/.kilo/worktrees/main\nbranch refs/heads/main\n',
+            ? `worktree ${repo}\nbranch refs/heads/feature\n`
+            : `worktree ${repo}\nbranch refs/heads/feature\n\nworktree ${linkedMain}\nbranch refs/heads/main\n`,
       };
     };
 
-    expect(resolveInventoryPath('/repo/.kilo/worktrees/task', { run, realpath: identityRealpath })).toBe(
-      '/repo/WORKTREES.json'
-    );
+    expect(resolveInventoryPath(taskWorktree, { run, realpath: identityRealpath })).toBe(join(repo, 'WORKTREES.json'));
     expect(calls).toBe(1);
   });
 

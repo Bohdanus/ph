@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { open, stat, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { sanitizeErrorMessage, sanitizeForOutput } from './lib/secrets.mjs';
 
@@ -119,19 +120,30 @@ function escapeSqlValue(value) {
   return String(value).replace(/'/g, "''");
 }
 
-export function resolveKiloDbCandidates({ kiloDbPath, homeDir, xdgDataHome, platform: plat } = {}) {
+export function resolveKiloDbCandidates({
+  kiloDbPath,
+  homeDir,
+  xdgDataHome,
+  appData,
+  localAppData,
+  platform: plat,
+} = {}) {
   if (kiloDbPath) return [kiloDbPath];
   const home = (homeDir ?? process.env.HOME) || process.env.USERPROFILE || '';
   const xdg = xdgDataHome ?? process.env.XDG_DATA_HOME;
+  const runtimePlatform = plat ?? platform();
   const candidates = [];
   if (xdg) candidates.push(`${xdg}/kilo/kilo.db`);
   if (home) {
-    const appData = process.env.APPDATA;
-    const localAppData = process.env.LOCALAPPDATA;
-    if (appData) candidates.push(`${appData}\\kilo\\kilo.db`);
-    if (localAppData) candidates.push(`${localAppData}\\kilo\\kilo.db`);
-    candidates.push(`${home}/.local/share/kilo/kilo.db`);
-    if (plat === 'darwin') {
+    if (runtimePlatform === 'win32') {
+      const roamingAppData = appData ?? process.env.APPDATA;
+      const roamingLocalAppData = localAppData ?? process.env.LOCALAPPDATA;
+      if (roamingAppData) candidates.push(`${roamingAppData}\\kilo\\kilo.db`);
+      if (roamingLocalAppData) candidates.push(`${roamingLocalAppData}\\kilo\\kilo.db`);
+    } else {
+      candidates.push(`${home}/.local/share/kilo/kilo.db`);
+    }
+    if (runtimePlatform === 'darwin') {
       candidates.push(`${home}/Library/Application Support/kilo/kilo.db`);
     }
   }
@@ -1048,7 +1060,7 @@ export async function main(
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;

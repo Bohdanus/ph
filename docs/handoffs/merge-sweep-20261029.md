@@ -334,3 +334,100 @@ sync wrote to the worktree at `2026-10-30 06:37 +01:00`. Preserve it until the
 four-hour inactivity threshold has passed, then regenerate inventory and run
 the full disposal preflight; do not treat its older checkout creation time as
 proof that the recent activity is stale.
+
+## Continued salvage sweep (2026-10-30 09:54 +01:00)
+
+### Archived dirty snapshots
+
+Six inactive dirty snapshots passed fresh inventory, repository-state, swarm,
+ownership, ignored-content, and per-worktree `--keep-branch --dry-run` checks.
+Their branches were retained and tracked/untracked edits were archived under
+`.git/worktree-salvage/`:
+
+- `e2e-harden-origin-main` / `e2e/harden-origin-main`: `tracked.patch` (18,306
+  bytes, SHA-256 `0434A1C24BDC3C5647EF9DBBD6F847C1F58C154398A81FB20183135E9F7E72EA`)
+  and `untracked.tar` (14,848 bytes; viewport helper and test).
+- `landing-fix` / `fix/landing-text-toolbar`: `tracked.patch` (7,471,945 bytes,
+  664 file diffs; SHA-256
+  `0D9F076445B16E0AE27282D868513711FC1956A8A1E064C2EE802BDF3AE02B92`).
+- `origin-main-review` / `fix/origin-main-review`: `tracked.patch` (67,131
+  bytes, 10 files; SHA-256
+  `EA5151D497BC5A0502F0F797AEC7DE964A90E3DB18CD6EFD270FD1F4A0285316`).
+  `git apply --stat` parses as 1,579 insertions and 46 deletions. Keep
+  unmerged; earlier review found autosave recovery/data-loss hazards.
+- `test-scan` / `audit/test-scan`: `tracked.patch` (94,211 bytes, both audit
+  reports; SHA-256
+  `439DA29495E5B410737240617F6129F081BDFDD40B72FC615C761299E9EC2BBD`).
+- `text-toolbar-ux` / `fix/text-toolbar-ux`: `tracked.patch` (26,715 bytes,
+  four files; SHA-256
+  `189BDC826205E6FA4FA9ED738919CB140BC2A8651FD5232A640D9C3DCDEE0528`) and
+  `untracked.tar` (6,656 bytes containing `docs/PS-TYPE-TOOLBAR-UX.md`).
+  Keep unmerged pending fixes to the previously reviewed UX defects.
+
+`merge-origin-main-review` did not fully dispose. Its tracked diff was empty;
+`untracked.tar` (2,048 bytes, SHA-256
+`05255E647ABC7D4EDAD62E6D0E33F41E2382C8DD51A6E4ABF5A62C5D9FCD7BB5`)
+preserves `fix-crlf.ps1`. Removal reported `Filename too long`; Git no longer
+registers it, but the unregistered directory remains with tracked files also
+present on `main` and 101 test-result files (~8.4 MB). Do not run the script or
+manually remove this directory. The `test-scan` removal also left an
+unregistered directory containing only a `node_modules` junction to main.
+The disposer disables recursive removal of unregistered directories; preserve
+both residuals pending a reviewed cleanup path.
+
+### Current blockers and next eligibility
+
+- `systemic-hardening` is in use and must not be changed or disposed. Its
+  branch has 13 unique commits, four dirty files, and merge-tree conflicts in
+  `scripts/free-model-pool.mjs` and
+  `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`. `npm run tsc`
+  passed. The focused run had 4 failures (three hook tests could not find
+  `tr` in the restricted test PATH; one newline-path fixture failed on
+  Windows), 186 passed, and 2 skipped. Do not land the branch wholesale.
+- `activity-analyzer` is not safe to land: tests fail at import, foreground
+  overlap is double-counted, and its real-database exploration prints raw
+  activity payloads. Preserve it for repair rather than trusting the
+  inventory's `land` label.
+- Preserve the detached `e2e-hardening-plan` (24,507-byte ignored plan) and
+  pooled `mewing-perfume` (387,576-byte recovery patch documented in
+  `RECOVERY.md`).
+- The clean landed `e2e-input-guards` and `merge-sweep-20261029-2220` checkouts
+  remain inside the four-hour inactivity window. Their last writes were
+  06:37:28 and 06:46:29 local time; do not dispose before 10:37:28 and
+  10:46:29 respectively. Regenerate inventory and rerun every disposal gate
+  immediately before either removal.
+
+The latest inventory is based on clean `main` at
+`589a60b2448b27f6cdf83546459488a55ae35dae`. It reports 8 registered worktrees:
+3 in use, 2 undecided, 2 clean landed disposal candidates, and the unsafe
+analyzer candidate; no at-risk worktree remains. `repo:state` is clean, the
+orphan-branch report is empty, and `swarm doctor --dry-run` reports no stale
+claims or locks. Main remains in use; no landing was attempted.
+
+## Age-gated cleanup completed (2026-10-30 10:52 +01:00)
+
+- Removed `e2e-input-guards` only after more than four hours since its last
+  commit (`7f1501bb01cc4d830b04857e94dcbd4545b899e8`). The fresh inventory
+  classified it as clean, landed, unprotected, and not live; the guarded
+  dry-run passed. Its commit is anchored at
+  `refs/keep/disposed/fix-e2e-input-guards`; the worktree and branch were
+  removed.
+- Removed `merge-sweep-20261029-2220` under the same checks, after more than
+  four hours since its last commit (`95207d48e7174332f7cf09ce405cdb73a8debd69`).
+  Its commit is anchored at
+  `refs/keep/disposed/audit-merge-sweep-20261029-2220`; the worktree and branch
+  were removed.
+- Regenerated the inventory after both removals. It reports 6 worktrees, no
+  disposal candidates, 1 at-risk worktree, 2 in-use, 2 undecided, and
+  `activity-analyzer` as ready to land. Do not treat that analyzer label as
+  approval: its import-failing tests, overlapping-interval double counting,
+  and raw activity-payload output still block landing.
+- Preserve `systemic-hardening` (13 commits ahead, 39 behind, four dirty files),
+  detached `e2e-hardening-plan`, pooled `mewing-perfume`, and the unique
+  `task/wsl-files` branch-only patch. No additional worktree was safe to land
+  or remove.
+- Main remained clean at
+  `589a60b2448b27f6cdf83546459488a55ae35dae`, equal to `origin/main`; no
+  landing was attempted. Post-cleanup `repo:state` was clean, the orphan-branch
+  report was empty, swarm status showed no claims or locks, and
+  `swarm doctor --dry-run` found no stale signals.
