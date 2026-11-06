@@ -26,9 +26,11 @@ platform artifacts.
 Branch: `task/e2e-hardening-next-20261105`
 
 The E2E changes add tablet touch reachability coverage at 744×1133 and harden crop-history parity.
-Mixed-source tight raster checks retain the two-pixel internal-alpha-gradient allowance. Styled-text
-tight rasters compare exactly in premultiplied channel space with exact alpha; frame comparisons keep
-their own partial-alpha boundary rule. Materialized bounds and final composites remain exact.
+The two-layer retained affine/frame fixture limits frame-boundary differences to two partial-alpha
+pixels and tight-raster differences to two internal-alpha-gradient pixels. Mixed-source and
+styled-text tight rasters compare exactly in premultiplied channel space with exact alpha; frame
+comparisons keep their own partial-alpha boundary rule. Materialized bounds and final composites
+remain exact.
 
 ## Current validation
 
