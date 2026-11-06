@@ -814,14 +814,14 @@ describe('TextToolArea', () => {
       });
     });
 
-    it('preserves an edited layer affine transform when compositor publication is refused', () => {
+    it('draws an edited layer fallback from its own local origin when compositor publication is refused', () => {
       const ctx = makeMockCtx();
-      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      const rect = { x1: 105, y1: 206, x2: 150, y2: 230 };
       const affine = { a: 2, b: 0, c: 0, d: 2, e: 3, f: 4 };
-      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true, angle: 30, editingLayerId: 'locked-text' });
+      toolArgs = makeTextArgs({ text: 'Wave', rect, smallCaps: true, angle: 30, editingLayerId: 'text-1' });
       h.layers = {
-        'locked-text': {
-          locked: true,
+        'text-1': {
+          pos: { x: 100, y: 200, width: 50, height: 30 },
           operations: [{ id: 'affine-1', kind: 'affine-transform', transform: affine, enabled: true }],
         },
       };
@@ -830,7 +830,7 @@ describe('TextToolArea', () => {
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!(rect));
 
-      expect(ctx.translate).toHaveBeenCalledWith(rect.x1, rect.y1);
+      expect(ctx.translate).toHaveBeenCalledWith(100, 200);
       expect(ctx.transform).toHaveBeenCalledWith(2, 0, 0, 2, 3, 4);
       expect(ctx.rotate).toHaveBeenCalledWith(Math.PI / 6);
       expect(vi.mocked(ctx.transform).mock.invocationCallOrder[0]).toBeLessThan(
@@ -838,7 +838,7 @@ describe('TextToolArea', () => {
       );
       expect(renderText).toHaveBeenCalledWith(
         ctx,
-        expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 45, y2: 24 } }),
+        expect.objectContaining({ rect: { x1: 5, y1: 6, x2: 50, y2: 30 } }),
         { overflowIndicator: true }
       );
       expect(ctx.restore).toHaveBeenCalled();

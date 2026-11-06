@@ -20,7 +20,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import { getLayerAffineTransform, isPointInLayer } from '../../contexts/affine-transform.ts';
-import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPos } from '../../contexts/document-frame.ts';
 import { isTextLayerSource, textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import type { Ctx2D, RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
@@ -301,21 +301,23 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
         const editingLayer = currentArgs.editingLayerId ? layers[currentArgs.editingLayerId] : undefined;
         if (editingLayer) {
           const fallbackRect = sortRect(rect);
+          const canvasPos = documentToCanvasPos(editingLayer.pos, documentFrame);
+          const localRect = {
+            x1: fallbackRect.x1 - canvasPos.x,
+            y1: fallbackRect.y1 - canvasPos.y,
+            x2: fallbackRect.x2 - canvasPos.x,
+            y2: fallbackRect.y2 - canvasPos.y,
+          };
           const affine = getLayerAffineTransform(editingLayer);
           ctx.save();
           try {
-            ctx.translate(fallbackRect.x1, fallbackRect.y1);
+            ctx.translate(canvasPos.x, canvasPos.y);
             ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
             renderText(
               ctx as Ctx2D,
               {
                 ...currentArgs,
-                rect: {
-                  x1: 0,
-                  y1: 0,
-                  x2: fallbackRect.x2 - fallbackRect.x1,
-                  y2: fallbackRect.y2 - fallbackRect.y1,
-                },
+                rect: localRect,
               },
               { overflowIndicator: true }
             );
