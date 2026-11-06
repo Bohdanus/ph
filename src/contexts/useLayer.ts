@@ -449,15 +449,24 @@ export const useLayers = () => {
   const requestPresentation = (layer: Layer) => requestPresentations([layer]);
 
   function clearOverlay() {
-    const draftLayerId = smallCapsDraftLayerIdRef.current;
-    if (draftLayerId) {
-      delete previewLayersRef.current[draftLayerId];
-      smallCapsDraftLayerIdRef.current = null;
-      const draftCanvas = smallCapsDraftCanvasRef.current;
-      if (draftCanvas) {
+    // Preview records are shared by the document store, but each hook call has
+    // its own draft refs. A tool switch commits through useApp's hook instance,
+    // so the record's tag is the cross-scope ownership signal.
+    for (const [id, preview] of Object.entries(previewLayersRef.current)) {
+      if (preview.previewType !== 'small-caps-text-draft') continue;
+      const canvas = preview.layer.tmpCanvas;
+      if (canvas && 'getContext' in canvas) {
+        const draftCanvas = canvas as HTMLCanvasElement | OffscreenCanvas;
         draftCanvas.width = 0;
         draftCanvas.height = 0;
       }
+      delete previewLayersRef.current[id];
+    }
+    smallCapsDraftLayerIdRef.current = null;
+    const localDraftCanvas = smallCapsDraftCanvasRef.current;
+    if (localDraftCanvas) {
+      localDraftCanvas.width = 0;
+      localDraftCanvas.height = 0;
     }
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
     if (!overlayCtx) return;
@@ -1707,6 +1716,7 @@ export const useLayers = () => {
         presentationBounds: null,
       },
       toolArgs: undefined,
+      previewType: 'small-caps-text-draft',
     };
     drawAllLayers();
     return true;

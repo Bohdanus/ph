@@ -95,3 +95,9 @@ export type Layer = {
 };
 
 export type LayersRecord = Record<LayerId, Layer>;
+
+export type LayerPreviewRecord = {
+  layer: Layer;
+  toolArgs?: ToolArgs;
+  previewType?: 'small-caps-text-draft';
+};

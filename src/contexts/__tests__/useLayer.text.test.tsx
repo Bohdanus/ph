@@ -78,6 +78,11 @@ function useLayerHarness() {
   return { store, dispatch, layers: useLayers() };
 }
 
+function useLayerCommitScopesHarness() {
+  const [store, dispatch] = useStore();
+  return { store, dispatch, publisher: useLayers(), committer: useLayers() };
+}
+
 function useSharedDraftHarness() {
   const [store, dispatch] = useStore();
   return { store, dispatch, layers: useLayers(), tool: useCurrentTool() };
@@ -192,6 +197,42 @@ describe('useLayers text commit idempotency boundary', () => {
     });
     expect(result.current.store.previewLayers.current).toEqual({});
     expect(result.current.store.layers).not.toHaveProperty(draftLayerId);
+  });
+
+  it('clears a Small Caps draft when a different hook scope commits text', () => {
+    const { result } = renderHook(useLayerCommitScopesHarness, { wrapper: StoreProvider });
+    act(() => {
+      result.current.dispatch({
+        type: 'BATCH_UPDATES',
+        payload: {
+          totalSize: { width: 800, height: 600 },
+          documentFrame: documentFrameFromSize({ width: 800, height: 600 }),
+          hasImage: true,
+        },
+      });
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
+    });
+
+    const rect = { x1: 12, y1: 8, x2: 112, y2: 58 };
+    const args = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+    act(() => {
+      result.current.store.currentArgs.current = args;
+      expect(result.current.publisher.publishSmallCapsTextDraftPreview(args, rect)).toBe(true);
+    });
+
+    const [[draftLayerId, preview]] = Object.entries(result.current.store.previewLayers.current);
+    if (!preview?.layer.tmpCanvas) throw new Error('the Small Caps preview canvas was not published');
+    const draftCanvas = preview.layer.tmpCanvas;
+    expect(preview.previewType).toBe('small-caps-text-draft');
+
+    act(() => {
+      result.current.committer.commitDirtyTool();
+    });
+
+    expect(result.current.store.layers).toHaveProperty('mock-layer-1');
+    expect(result.current.store.previewLayers.current).not.toHaveProperty(draftLayerId);
+    expect(draftCanvas.width).toBe(0);
+    expect(draftCanvas.height).toBe(0);
   });
 
   it('renders existing Small Caps edits transiently and restores the source when cancelled', () => {

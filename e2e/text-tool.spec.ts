@@ -2469,6 +2469,32 @@ test.describe('Text tool', () => {
     expectInkInsideRect(committed, rect, 'the small-caps commit');
   });
 
+  test('switching tools commits a Small Caps draft without leaving its preview', async ({ page }, testInfo) => {
+    const box = await canvasBox(page);
+    const rect = CAPS_RECTS.smallCaps;
+    const layerRows = page.getByTitle('Drag to reorder');
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box, rect);
+    await styleToggle(page, 'Small Caps').click();
+    await replaceDraftText(page, 'Wave');
+    await hideDraftCaret(page);
+
+    const preview = await measureInk(page, testInfo, box, rect, 'small-caps before switching tools');
+    await clickToolButton(page, 'draw');
+    await expect(draftOverlay(page), 'the tool switch left the Type editor mounted').toHaveCount(0);
+    await expect(layerRows, 'the tool switch did not commit the Small Caps layer').toHaveCount(2);
+
+    const committed = await measureInk(page, testInfo, box, rect, 'small-caps after switching tools');
+    const agreement = inkMaskAgreement(preview.mask, committed.mask);
+    expect(
+      agreement.score,
+      `tool-switch commit diverged from the preview at (${agreement.offsetX}, ${agreement.offsetY})`
+    ).toBe(1);
+    expect(agreement.offsetX, 'tool-switch commit shifted Small Caps horizontally').toBe(0);
+    expect(agreement.offsetY, 'tool-switch commit shifted Small Caps vertically').toBe(0);
+    expect(countDifferentPixels(preview.redPixels, committed.redPixels)).toBe(0);
+  });
+
   test('Small Caps preview matches its commit when Canvas lacks fontVariantCaps and rejects shorthand', async ({
     page,
   }, testInfo) => {
