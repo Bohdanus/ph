@@ -204,8 +204,9 @@ variant or an equivalent atomic history action.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
    pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and allows
-   at most two partial-alpha boundary pixels in frame comparisons and two internal alpha-gradient
-   pixels in tight-bitmap comparisons; its composites remain byte-identical. The three-transition
+   at most two partial-alpha boundary pixels in frame comparisons and two tight-bitmap pixels
+   whose same unpremultiplied color has a one-step alpha difference inside a gradient; its
+   composites remain byte-identical. The three-transition
    mixed-source fixture pins exact bounds and checks per-layer frame and tight bitmaps exactly in
    premultiplied space. The styled-text fixture also compares tight bitmaps exactly after
    premultiplying readback color channels; alpha, frame pixels, and composites remain byte-identical.

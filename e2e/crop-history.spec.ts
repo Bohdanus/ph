@@ -1508,9 +1508,25 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
               pixel: number,
               width: number,
               height: number
-            ) =>
-              isInternalAlphaGradientPixel(expected, pixel, width, height) ||
-              isInternalAlphaGradientPixel(materialized, pixel, width, height);
+            ) => {
+              if (
+                !isInternalAlphaGradientPixel(expected, pixel, width, height) ||
+                !isInternalAlphaGradientPixel(materialized, pixel, width, height)
+              ) {
+                return false;
+              }
+              const offset = pixel * 4;
+              const expectedAlpha = expected[offset + 3] ?? 0;
+              const materializedAlpha = materialized[offset + 3] ?? 0;
+              // Only excuse one 8-bit alpha quantization step when both renderers preserve
+              // the exact same unpremultiplied color inside an alpha gradient.
+              return (
+                expected[offset] === materialized[offset] &&
+                expected[offset + 1] === materialized[offset + 1] &&
+                expected[offset + 2] === materialized[offset + 2] &&
+                Math.abs(expectedAlpha - materializedAlpha) === 1
+              );
+            };
             const isFrameAlphaBoundaryPixel = (
               pixels: Uint8ClampedArray,
               pixel: number,
@@ -3763,19 +3779,19 @@ test.describe('Crop history', () => {
         ).toBeLessThanOrEqual(2);
         expect(
           comparison.tightBitmapNonEdgeDifferingPixels,
-          `${comparison.layerId} full tight bitmap at ${comparison.stage} differs outside an internal alpha gradient; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.tightBitmapDifferingPixels,
-          `${comparison.layerId} full tight bitmap at ${comparison.stage} may differ only at two internal alpha-gradient pixels; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} may differ at no more than two pixels whose same-color alpha differs by one step; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
         ).toBeLessThanOrEqual(2);
         expect(
           comparison.offscreenTightBitmapNonEdgeDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs outside an internal alpha gradient; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.offscreenTightBitmapDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} may differ only at two internal alpha-gradient pixels`
+          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} may differ at no more than two pixels whose same-color alpha differs by one step`
         ).toBeLessThanOrEqual(2);
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
@@ -3811,19 +3827,19 @@ test.describe('Crop history', () => {
           ).toBeLessThanOrEqual(2);
           expect(
             comparison.tightBitmapNonEdgeDifferingPixels,
-            `frame-only ${comparison.layerId} tight bitmap differs outside an internal alpha gradient; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+            `frame-only ${comparison.layerId} tight bitmap differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.tightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} full tight bitmap may differ only at two internal alpha-gradient pixels; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+            `frame-only ${comparison.layerId} full tight bitmap may differ at no more than two pixels whose same-color alpha differs by one step; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
           ).toBeLessThanOrEqual(2);
           expect(
             comparison.offscreenTightBitmapNonEdgeDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs outside an internal alpha gradient; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs outside a same-color alpha gradient with a one-step alpha difference; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.offscreenTightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap may differ only at two internal alpha-gradient pixels`
+            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap may differ at no more than two pixels whose same-color alpha differs by one step`
           ).toBeLessThanOrEqual(2);
         }
       }
