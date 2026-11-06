@@ -482,7 +482,7 @@ The previous local-main landing imported these 155 remote-only commits between m
 
 ## 2026-11-06 — origin/main (second fetch + merge into local main)
 
-This sync imports 27 additional remote-only commits after local `main` `4b780fd4ccf9e9316d05277d777b356de633e84d` through fetched `origin/main` `bba53dbb8f6f887cc5af3deac4ed2bad3a014b3e`:
+This sync imported 27 additional remote-only commits after local `main` `4b780fd4ccf9e9316d05277d777b356de633e84d` through fetched `origin/main` `bba53dbb8f6f887cc5af3deac4ed2bad3a014b3e`:
 
 - 6c166015 (6c1660154ce26b2e5ef35c952c4165c48471f098) "test: verify redo after source-backed branch" — Bohdan Kalynovskyi (Dan)
 - 0490d6ec (0490d6ec167949da4471e66eec3bc82ccd91ba5b) "test(e2e): brand viewport screenshot clips" — Bohdan Kalynovskyi (Dan)
@@ -511,3 +511,10 @@ This sync imports 27 additional remote-only commits after local `main` `4b780fd4
 - 273d2f62 (273d2f6277412aec0372d41533d7e3fa1fa5f835) "Sync main into fix/hand-wheel-zoom-wait-20261106 for landing" — Bohdan Kalynovskyi (Dan)
 - b72e1bc7 (b72e1bc7dc95737b05a7579c9b1075195330ebec) "test(e2e): guard workspace wheel scroll" — Bohdan Kalynovskyi (Dan)
 - bba53dbb (bba53dbb8f6f887cc5af3deac4ed2bad3a014b3e) "Merge fix/hand-wheel-zoom-wait-20261106 into main" — Bohdan Kalynovskyi (Dan)
+
+## 2026-11-06 — origin/main (third fetch + merge into local main)
+
+Local `main` at `ebb27af3286b5f2ca2ea113179314135a91c5a9f` and fetched `origin/main` at `8c3acd6a970a0c30e37ebfc25a4513d804366d40` shared merge base `bba53dbb8f6f887cc5af3deac4ed2bad3a014b3e`. This landing imports the two commits not yet in local `main`:
+
+- 99b46dd7 (99b46dd7d101639de511ed489dea2e2ca9f0594c) "Merge origin/main into sync candidate" — Test
+- 8c3acd6a (8c3acd6a970a0c30e37ebfc25a4513d804366d40) "Merge sync/core-remote-bba53-20261106 into main" — bohdan

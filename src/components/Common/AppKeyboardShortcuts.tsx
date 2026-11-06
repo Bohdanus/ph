@@ -111,6 +111,8 @@ type OpacityTool = keyof typeof opacityField;
 
 /** One pixel per press, and `repeat: true` is what turns that into a scrub while the key is held. */
 const TIP_SIZE_STEP = 1;
+const MOVE_NUDGE_STEP = 1;
+const MOVE_NUDGE_SHIFT_STEP = 10;
 
 /** Photoshop's `0` and `1`, in the 0-1 the sliders and every args type already use. */
 const OPACITY_FULL = 1;
@@ -123,7 +125,10 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ fileName, totalSize, documentFrame, hasImage, toolName, viewState, setViewState }, dispatch] = useStore();
+  const [
+    { fileName, totalSize, documentFrame, hasImage, toolName, viewState, setViewState, activeLayerId, layers },
+    dispatch,
+  ] = useStore();
   const fitScale = useWorkspaceFitScale();
   const devicePixelRatio = useDevicePixelRatio();
   const { canUndo, undo, canRedo, redo } = useHistory();
@@ -132,7 +137,21 @@ export const AppKeyboardShortcuts = () => {
   const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, pasteSystemClipboardImage, layerViaCopy } =
     useSelectionClipboard();
   const { openSaveImageDialog } = useFile();
-  const { arrangeLayer, commitDirtyTool } = useLayers();
+  const { arrangeLayer, commitDirtyTool, updateLayerByTool } = useLayers();
+  const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+  const canNudgeActiveLayer =
+    hasImage &&
+    toolName === 'reposition' &&
+    !hasActiveSelection &&
+    !!activeLayer &&
+    !activeLayer.isBedrock &&
+    !activeLayer.locked;
+  // Shortcut closures share this pending position until React renders the committed layer.
+  // A render seeds a fresh value from the store, including external layer moves or a new active layer.
+  const nudgeState = {
+    position: activeLayer ? { layerId: activeLayer.id, x: activeLayer.pos.x, y: activeLayer.pos.y } : null,
+    requestSequence: 0,
+  };
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -325,6 +344,39 @@ export const AppKeyboardShortcuts = () => {
     patchToolArgs(tool, { [field]: next } as unknown as ToolPatch<typeof tool>);
   };
 
+  const handleLayerNudge = (deltaX: number, deltaY: number) => (event: KeyboardEvent) => {
+    // Preserve arrow keys already claimed by a focused toolbar or other control.
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    if (!activeLayer || !canNudgeActiveLayer) return;
+
+    const distance = event.shiftKey ? MOVE_NUDGE_SHIFT_STEP : MOVE_NUDGE_STEP;
+    const currentPosition =
+      nudgeState.position?.layerId === activeLayer.id
+        ? nudgeState.position
+        : { layerId: activeLayer.id, x: activeLayer.pos.x, y: activeLayer.pos.y };
+    const nextPosition = {
+      layerId: activeLayer.id,
+      x: currentPosition.x + deltaX * distance,
+      y: currentPosition.y + deltaY * distance,
+    };
+    nudgeState.position = nextPosition;
+    const requestSequence = ++nudgeState.requestSequence;
+
+    void updateLayerByTool({
+      id: activeLayer.id,
+      toolArgs: {
+        move: { x: nextPosition.x, y: nextPosition.y },
+        toolName: 'reposition',
+      },
+    }).catch((error: unknown) => {
+      if (nudgeState.requestSequence === requestSequence) {
+        nudgeState.position = { layerId: activeLayer.id, x: activeLayer.pos.x, y: activeLayer.pos.y };
+      }
+      console.error('Unable to nudge the active layer', error);
+    });
+  };
+
   /** `0` is Opacity 100% and `1` is Opacity 10%, exactly as Adobe documents them. */
   const setOpacity = (value: number) => {
     const tool = opacityTool(toolName);
@@ -448,6 +500,46 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage,
     onKeyDown: () => arrangeLayer('send-to-back'),
+  });
+
+  useKeyDownShortcut({
+    key: 'ArrowLeft',
+    ctrl: false,
+    meta: false,
+    alt: false,
+    repeat: true,
+    enabled: canNudgeActiveLayer,
+    onKeyDown: handleLayerNudge(-1, 0),
+  });
+
+  useKeyDownShortcut({
+    key: 'ArrowRight',
+    ctrl: false,
+    meta: false,
+    alt: false,
+    repeat: true,
+    enabled: canNudgeActiveLayer,
+    onKeyDown: handleLayerNudge(1, 0),
+  });
+
+  useKeyDownShortcut({
+    key: 'ArrowUp',
+    ctrl: false,
+    meta: false,
+    alt: false,
+    repeat: true,
+    enabled: canNudgeActiveLayer,
+    onKeyDown: handleLayerNudge(0, -1),
+  });
+
+  useKeyDownShortcut({
+    key: 'ArrowDown',
+    ctrl: false,
+    meta: false,
+    alt: false,
+    repeat: true,
+    enabled: canNudgeActiveLayer,
+    onKeyDown: handleLayerNudge(0, 1),
   });
 
   useKeyDownShortcut({

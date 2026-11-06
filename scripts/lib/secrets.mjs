@@ -22,6 +22,107 @@ const SECRET_PATTERNS = [
 ];
 
 const REDACTED_MARKER = '***REDACTED***';
+const SECRET_ASSIGNMENT_KEY_PATTERN =
+  /^(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*$/i;
+const SECRET_ASSIGNMENT_PATTERN =
+  /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|signature|sigv4|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi;
+const SENSITIVE_URL_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/gi;
+// Preserve only public SigV4 metadata after a sensitive field; unknown query values remain fail-closed.
+const SAFE_SIGV4_QUERY_KEYS = new Set(['x-amz-algorithm', 'x-amz-date', 'x-amz-expires', 'x-amz-signedheaders']);
+
+function redactTextAssignments(input) {
+  return input.replace(SECRET_ASSIGNMENT_PATTERN, (_match, prefix, replacementValue) => {
+    const quote = replacementValue.startsWith('"') || replacementValue.startsWith("'") ? replacementValue[0] : '';
+    return `${prefix}${quote}[REDACTED]${quote}`;
+  });
+}
+
+function decodeUrlQueryKey(rawKey) {
+  try {
+    return decodeURIComponent(rawKey.replace(/\+/g, ' '));
+  } catch {
+    // Keep the raw key when it is not valid percent-encoding.
+    return rawKey;
+  }
+}
+
+function isSensitiveAssignmentKey(rawKey) {
+  const key = decodeUrlQueryKey(rawKey);
+  return isSecretKey(key) || SECRET_ASSIGNMENT_KEY_PATTERN.test(key);
+}
+
+function redactUrlQueryAssignments(query, redactUnknownTail = false) {
+  const parameters = query.split('&');
+  const hasSensitiveParameter =
+    redactUnknownTail ||
+    parameters.some((parameter) => {
+      const separator = parameter.indexOf('=');
+      return separator >= 0 && isSensitiveAssignmentKey(parameter.slice(0, separator));
+    });
+  let secretSeen = hasSensitiveParameter;
+  let foundSecret = hasSensitiveParameter;
+  const value = parameters
+    .map((parameter) => {
+      const separator = parameter.indexOf('=');
+      if (separator < 0) return parameter;
+
+      const rawKey = parameter.slice(0, separator);
+      const key = decodeUrlQueryKey(rawKey);
+      if (isSensitiveAssignmentKey(rawKey)) {
+        secretSeen = true;
+        foundSecret = true;
+        return `${rawKey}=[REDACTED]`;
+      }
+      if (secretSeen && !SAFE_SIGV4_QUERY_KEYS.has(key.toLowerCase())) {
+        return `${rawKey}=[REDACTED]`;
+      }
+      return parameter;
+    })
+    .join('&');
+
+  return { value, foundSecret };
+}
+
+function protectSensitiveUrlAssignments(input) {
+  const replacements = [];
+  const value = input.replace(SENSITIVE_URL_PATTERN, (url) => {
+    const queryStart = url.indexOf('?');
+    const hashStart = url.indexOf('#');
+    const hasQuery = queryStart >= 0 && (hashStart < 0 || queryStart < hashStart);
+    const pathEnd = hasQuery ? queryStart : hashStart < 0 ? url.length : hashStart;
+    const path = url.slice(0, pathEnd);
+    const redactedPath = redactTextAssignments(path);
+    const pathContainsSecret = redactedPath !== path;
+
+    let query = '';
+    let queryContainsSecret = false;
+    if (hasQuery) {
+      const queryEnd = hashStart < 0 ? url.length : hashStart;
+      const redactedQuery = redactUrlQueryAssignments(url.slice(queryStart + 1, queryEnd), pathContainsSecret);
+      query = redactedQuery.value;
+      queryContainsSecret = redactedQuery.foundSecret;
+    }
+
+    const fragment = hashStart < 0 ? '' : url.slice(hashStart);
+    const redactedFragment = redactTextAssignments(fragment);
+    const fragmentContainsSecret = redactedFragment !== fragment;
+    if (!pathContainsSecret && !queryContainsSecret && !fragmentContainsSecret) return url;
+
+    const sanitizedUrl = hasQuery
+      ? `${redactedPath}?${query}${redactedFragment}`
+      : `${redactedPath}${redactedFragment}`;
+    let markerIndex = replacements.length;
+    let marker = `__PH_SANITIZED_URL_${markerIndex}__`;
+    while (input.includes(marker) || replacements.some((replacement) => replacement.marker === marker)) {
+      markerIndex += 1;
+      marker = `__PH_SANITIZED_URL_${markerIndex}__`;
+    }
+    replacements.push({ marker, url: sanitizedUrl });
+    return marker;
+  });
+
+  return { value, replacements };
+}
 
 function redactString(input) {
   if (typeof input !== 'string') return input;
@@ -29,13 +130,12 @@ function redactString(input) {
   for (const { pattern, replacement } of SECRET_PATTERNS) {
     result = result.replace(pattern, replacement);
   }
-  return result.replace(
-    /(?<![\w])(["']?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|client[_-]?secret|credentials?|password|passwd|secret|token)(?:[_-][A-Za-z0-9]+)*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
-    (_match, prefix, replacementValue) => {
-      const quote = replacementValue.startsWith('"') || replacementValue.startsWith("'") ? replacementValue[0] : '';
-      return `${prefix}${quote}[REDACTED]${quote}`;
-    }
-  );
+  const protectedUrls = protectSensitiveUrlAssignments(result);
+  result = redactTextAssignments(protectedUrls.value);
+  for (const { marker, url } of protectedUrls.replacements) {
+    result = result.replace(marker, () => url);
+  }
+  return result;
 }
 
 function redactObject(obj, depth = 0) {
