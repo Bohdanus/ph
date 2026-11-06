@@ -123,6 +123,29 @@ export const waitForCommittedAnts = async (page: Page, description: string): Pro
  */
 export const hasNoCommittedAnts = async (page: Page): Promise<boolean> => (await committedAntsOutline(page)) === null;
 
+/**
+ * Wait until the ants canvas holds NO border (selection is cleared).
+ */
+export const waitForNoCommittedAnts = async (page: Page, description: string): Promise<void> => {
+  const deadline = Date.now() + CANVAS_REDRAW_TIMEOUT_MS;
+  let last: unknown = null;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      last = await committedAntsOutline(page);
+      lastError = null;
+      if (last === null) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await page.waitForTimeout(CANVAS_REDRAW_POLL_INTERVAL_MS);
+  }
+  throw new Error(
+    `Timed out waiting for ${description} (last read: ${JSON.stringify(last)}, ` +
+      `last error: ${lastError instanceof Error ? lastError.message : String(lastError)})`
+  );
+};
+
 /** An inclusive `[from, to]` run of painted ant pixels in DOCUMENT pixels along one scan line. */
 export type AntRun = readonly [number, number];
 
