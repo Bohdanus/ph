@@ -131,7 +131,6 @@ export async function run(argv, options = {}) {
   const playwrightArgv = ['test', ...forwardedArgs];
 
   if (isHelpRequest(playwrightArgv)) {
-    assertOwnServer(env);
     return spawnSuite(playwrightArgv, { ...options, env, quiet: false });
   }
 

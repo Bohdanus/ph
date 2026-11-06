@@ -7,6 +7,7 @@ import {
   planWarmup,
   runWarmup,
   readIndexHtml,
+  resolvedBaseUrls,
   resolvedBaseUrl,
   resolvedWebServerUrl,
   WARMUP_TIMEOUT_MS,
@@ -26,6 +27,7 @@ export {
   planWarmup,
   runWarmup,
   readIndexHtml,
+  resolvedBaseUrls,
   resolvedBaseUrl,
   resolvedWebServerUrl,
   WARMUP_TIMEOUT_MS,
@@ -38,11 +40,18 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   refuseOpeningHtmlReport(checkHtmlOpenEnv(process.env));
   refuseOpeningHtmlReport(checkHtmlReporterSelection({ argv: config.argv, env: process.env }));
 
-  const baseUrl = resolvedBaseUrl(config);
+  const baseUrls = resolvedBaseUrls(config);
+  const baseUrl = baseUrls[0];
   const webServerUrl = resolvedWebServerUrl(config);
-  const ownServer = checkOwnServer({ baseUrl, webServerUrl, allowRemote: process.env[ALLOW_REMOTE_ENV] });
-  refuseForeignOrigin(ownServer);
-  console.log(`[global-setup] ${ownServer.reason}`);
+  for (const projectBaseUrl of baseUrls.length > 0 ? baseUrls : [undefined]) {
+    const ownServer = checkOwnServer({
+      baseUrl: projectBaseUrl,
+      webServerUrl,
+      allowRemote: process.env[ALLOW_REMOTE_ENV],
+    });
+    refuseForeignOrigin(ownServer);
+    console.log(`[global-setup] ${ownServer.reason}`);
+  }
 
   const plan = planWarmup({
     baseUrl,

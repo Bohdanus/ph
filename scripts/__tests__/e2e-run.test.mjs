@@ -447,6 +447,19 @@ describe('e2e-run: the own-server guarantee', () => {
     expect(observeHeld(boardDir.env).status, 'and no queue taken').toBe(0);
   });
 
+  it('keeps help available when test-only environment guards would reject a run', async () => {
+    const suite = fakeSuite();
+    await run(['--help'], {
+      env: { ...boardDir.env, PLAYWRIGHT_BASE_URL: 'https://staging.example.com' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
+
+    expect(suite.calls[0].args).toEqual(['test', '--help']);
+    expect(suite.calls[0].quiet).toBe(false);
+    expect(suite.calls[0].env.PLAYWRIGHT_BASE_URL).toBe('https://staging.example.com');
+  });
+
   it('does not read a grep pattern after -- as a help request', async () => {
     // Playwright reads everything after a bare `--` as a filter, so
     // `e2e/x.spec.ts -- --help` is a filtered RUN whose pattern is the string

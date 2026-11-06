@@ -25,14 +25,17 @@ export function checkOwnServer(options: {
   allowRemote: string | undefined;
 }): OwnServerCheck {
   const baseUrl = options.baseUrl?.trim();
-  if (!baseUrl) {
-    return { permitted: true, reason: 'no base URL is configured, so there is no origin to verify' };
-  }
-
   if (options.allowRemote === '1') {
     return {
       permitted: true,
-      reason: `${ALLOW_REMOTE_ENV}=1: this run tests ${baseUrl}, which is NOT this checkout`,
+      reason: `${ALLOW_REMOTE_ENV}=1: this run tests ${baseUrl ?? 'an unspecified URL'}, which is NOT this checkout`,
+    };
+  }
+
+  if (!baseUrl) {
+    return {
+      permitted: false,
+      reason: 'no base URL is configured, so this run cannot verify that the tests load its own server',
     };
   }
 
@@ -49,8 +52,8 @@ export function checkOwnServer(options: {
   const webServer = parseHttpUrl(options.webServerUrl);
   if (!webServer) {
     return {
-      permitted: true,
-      reason: 'no webServer is configured, so this run could not verify the origin the tests will load',
+      permitted: false,
+      reason: 'no webServer URL is configured, so this run could not verify that the tests load its own server',
     };
   }
 

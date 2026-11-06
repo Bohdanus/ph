@@ -185,12 +185,19 @@ export function readIndexHtml(): string | null {
   }
 }
 
-export function resolvedBaseUrl(config: Pick<import('@playwright/test').FullConfig, 'projects'>): string | undefined {
+export function resolvedBaseUrls(config: Pick<import('@playwright/test').FullConfig, 'projects'>): string[] {
+  const baseUrls = new Set<string>();
   for (const project of config.projects) {
     const baseURL = project.use.baseURL;
-    if (typeof baseURL === 'string' && baseURL !== '') return baseURL;
+    if (typeof baseURL === 'string' && baseURL.trim() !== '') baseUrls.add(baseURL.trim());
   }
-  return process.env.PLAYWRIGHT_BASE_URL;
+  if (baseUrls.size > 0) return [...baseUrls];
+  const envBaseUrl = process.env.PLAYWRIGHT_BASE_URL?.trim();
+  return envBaseUrl ? [envBaseUrl] : [];
+}
+
+export function resolvedBaseUrl(config: Pick<import('@playwright/test').FullConfig, 'projects'>): string | undefined {
+  return resolvedBaseUrls(config)[0];
 }
 
 export function resolvedWebServerUrl(

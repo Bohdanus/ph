@@ -8,6 +8,7 @@ import globalSetup, {
   PER_ATTEMPT_TIMEOUT_MS,
   planWarmup,
   readIndexHtml,
+  resolvedBaseUrls,
   resolvedBaseUrl,
   resolvedWebServerUrl,
   runWarmup,
@@ -109,6 +110,21 @@ describe('resolvedBaseUrl', () => {
     } finally {
       if (previous !== undefined) process.env.PLAYWRIGHT_BASE_URL = previous;
     }
+  });
+});
+
+describe('resolvedBaseUrls', () => {
+  const project = (use: Record<string, unknown>) => ({ use }) as unknown as FullConfig['projects'][number];
+
+  it('returns every distinct configured project base URL for origin checks', () => {
+    const config = {
+      projects: [
+        project({ baseURL: 'http://localhost:5173' }),
+        project({ baseURL: 'https://staging.example.com' }),
+        project({ baseURL: 'http://localhost:5173' }),
+      ],
+    };
+    expect(resolvedBaseUrls(config)).toEqual(['http://localhost:5173', 'https://staging.example.com']);
   });
 });
 
@@ -571,12 +587,37 @@ describe('checkOwnServer', () => {
     expect(check.reason).toMatch(/NOT this checkout/);
   });
 
-  it('does not claim a guarantee it could not check', () => {
-    // No `webServer` block means nothing was started, so there is no origin to
-    // compare against. Saying so beats reporting a verification that never happened.
-    expect(
-      checkOwnServer({ baseUrl: 'https://staging.example.com', webServerUrl: undefined, allowRemote: undefined })
-    ).toMatchObject({ permitted: true, reason: expect.stringMatching(/could not verify/) });
+  it('refuses an unverified base URL when no owned server is configured', () => {
+    const check = checkOwnServer({
+      baseUrl: 'https://staging.example.com',
+      webServerUrl: undefined,
+      allowRemote: undefined,
+    });
+    expect(check.permitted).toBe(false);
+    expect(check.reason).toMatch(/could not verify/);
+  });
+
+  it('refuses when no base URL is configured unless remote testing is explicit', () => {
+    const check = checkOwnServer({ baseUrl: undefined, webServerUrl: 'http://localhost:5173', allowRemote: undefined });
+    expect(check.permitted).toBe(false);
+    expect(check.reason).toMatch(/no base URL is configured/);
+  });
+
+  it('permits an unspecified target only when remote testing is explicit', () => {
+    const check = checkOwnServer({ baseUrl: undefined, webServerUrl: undefined, allowRemote: '1' });
+    expect(check.permitted).toBe(true);
+    expect(check.reason).toMatch(/E2E_ALLOW_REMOTE=1/);
+    expect(check.reason).toMatch(/unspecified URL/);
+  });
+
+  it('allows a missing webServer only when the remote build is explicit', () => {
+    const check = checkOwnServer({
+      baseUrl: 'https://staging.example.com',
+      webServerUrl: undefined,
+      allowRemote: '1',
+    });
+    expect(check.permitted).toBe(true);
+    expect(check.reason).toMatch(/E2E_ALLOW_REMOTE=1/);
   });
 });
 
@@ -820,6 +861,20 @@ describe('globalSetup', () => {
     });
 
     await expect(globalSetup(foreign)).rejects.toThrow(/Refusing to start a run against a server it did not start/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a foreign origin in any configured project before warming the server', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const matrix = config({
+      projects: [
+        { name: 'Chromium', use: { baseURL: 'http://localhost:5173', headless: true } },
+        { name: 'Firefox', use: { baseURL: 'https://staging.example.com', headless: true } },
+      ],
+    });
+
+    await expect(globalSetup(matrix)).rejects.toThrow(/staging\.example\.com/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
