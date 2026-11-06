@@ -22,11 +22,13 @@ import { formatReport, releaseBlocker, releaseMerged, releaseWorktree } from '..
  * warm machine, so this is 5x the real cost rather than a number tuned to today's load.
  */
 vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ hookTimeout: 30_000 });
 
 let dir;
 let repo;
 let boardDir;
 let clock;
+const openBoards = [];
 
 const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -40,8 +42,11 @@ const identityFor = (agentId, worktree = repo, branch = agentId) => ({
   meta: {},
 });
 
-const boardFor = (agentId, worktree = repo) =>
-  new Board({ dir: boardDir, identity: identityFor(agentId, worktree), now: () => clock }).open();
+const boardFor = (agentId, worktree = repo) => {
+  const board = new Board({ dir: boardDir, identity: identityFor(agentId, worktree), now: () => clock }).open();
+  openBoards.push(board);
+  return board;
+};
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'merge-release-test-'));
@@ -60,6 +65,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  while (openBoards.length > 0) openBoards.pop().close();
   rmSync(dir, { recursive: true, force: true });
 });
 

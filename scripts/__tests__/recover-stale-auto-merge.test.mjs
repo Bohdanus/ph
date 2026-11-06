@@ -183,108 +183,111 @@ describe('recover-stale-auto-merge', () => {
     expect(readFileSync(join(root, 'tracked.txt'), 'utf8')).toBe('changed after AUTO_MERGE\n');
   });
 
-  it.each([
+  it.each(
     [
-      'changed HEAD pin',
-      (root) => {
-        const { head } = makeMarker(root);
-        return `${head.slice(0, -1)}${head.endsWith('0') ? '1' : '0'}`;
-      },
-    ],
-    [
-      'untracked file',
-      (root) => (
-        makeMarker(root),
-        writeFileSync(join(root, 'untracked.txt'), 'pending\n'),
-        git(root, 'rev-parse', 'HEAD')
-      ),
-    ],
-    [
-      'modified tracked file',
-      (root) => (
-        makeMarker(root),
-        writeFileSync(join(root, 'tracked.txt'), 'changed\n'),
-        git(root, 'rev-parse', 'HEAD')
-      ),
-    ],
-    [
-      'another operation marker',
-      (root) => (
-        makeMarker(root),
-        writeFileSync(join(git(root, 'rev-parse', '--absolute-git-dir'), 'MERGE_HEAD'), 'deadbeef\n'),
-        git(root, 'rev-parse', 'HEAD')
-      ),
-    ],
-    [
-      'orphan merge message',
-      (root) => (
-        makeMarker(root),
-        writeFileSync(join(git(root, 'rev-parse', '--absolute-git-dir'), 'MERGE_MSG'), 'merge in progress\n'),
-        git(root, 'rev-parse', 'HEAD')
-      ),
-    ],
-    ...['MERGE_MODE', 'SQUASH_MSG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'REBASE_HEAD', 'BISECT_LOG'].map(
-      (markerName) => [
-        `orphan ${markerName}`,
+      [
+        'changed HEAD pin',
+        (root) => {
+          const { head } = makeMarker(root);
+          return `${head.slice(0, -1)}${head.endsWith('0') ? '1' : '0'}`;
+        },
+      ],
+      [
+        'untracked file',
         (root) => (
           makeMarker(root),
-          writeFileSync(join(git(root, 'rev-parse', '--absolute-git-dir'), markerName), 'operation state\n'),
+          writeFileSync(join(root, 'untracked.txt'), 'pending\n'),
           git(root, 'rev-parse', 'HEAD')
         ),
-      ]
-    ),
-    ...['rebase-merge', 'rebase-apply', 'sequencer'].map((markerName) => [
-      `orphan ${markerName} directory`,
-      (root) => (
-        makeMarker(root),
-        mkdirSync(join(git(root, 'rev-parse', '--absolute-git-dir'), markerName)),
-        git(root, 'rev-parse', 'HEAD')
+      ],
+      [
+        'modified tracked file',
+        (root) => (
+          makeMarker(root),
+          writeFileSync(join(root, 'tracked.txt'), 'changed\n'),
+          git(root, 'rev-parse', 'HEAD')
+        ),
+      ],
+      [
+        'another operation marker',
+        (root) => (
+          makeMarker(root),
+          writeFileSync(join(git(root, 'rev-parse', '--absolute-git-dir'), 'MERGE_HEAD'), 'deadbeef\n'),
+          git(root, 'rev-parse', 'HEAD')
+        ),
+      ],
+      [
+        'orphan merge message',
+        (root) => (
+          makeMarker(root),
+          writeFileSync(join(git(root, 'rev-parse', '--absolute-git-dir'), 'MERGE_MSG'), 'merge in progress\n'),
+          git(root, 'rev-parse', 'HEAD')
+        ),
+      ],
+      ...['MERGE_MODE', 'SQUASH_MSG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'REBASE_HEAD', 'BISECT_LOG'].map(
+        (markerName) => [
+          `orphan ${markerName}`,
+          (root) => (
+            makeMarker(root),
+            writeFileSync(join(git(root, 'rev-parse', '--absolute-git-dir'), markerName), 'operation state\n'),
+            git(root, 'rev-parse', 'HEAD')
+          ),
+        ]
       ),
-    ]),
-    [
-      'marker tree mismatch',
-      (root) => {
-        const info = makeMarker(root);
-        const tree = git(root, 'rev-parse', 'HEAD^{tree}');
-        writeFileSync(info.marker, `${'0'.repeat(tree.length)}\n`);
-        return info.head;
-      },
-    ],
-    [
-      'malformed marker',
-      (root) => {
-        const info = makeMarker(root);
-        writeFileSync(info.marker, 'not-an-object-id\n');
-        return info.head;
-      },
-    ],
-    [
-      'commit object marker',
-      (root) => {
-        const info = makeMarker(root);
-        writeFileSync(info.marker, `${info.head}\n`);
-        return info.head;
-      },
-    ],
-    [
-      'symlink marker',
-      (root) => {
-        const info = makeMarker(root);
-        rmSync(info.marker);
-        symlinkSync(join(root, 'tracked.txt'), info.marker);
-        return info.head;
-      },
-    ],
-    [
-      'directory marker',
-      (root) => {
-        const info = makeMarker(root);
-        rmSync(info.marker);
-        mkdirSync(info.marker);
-        return info.head;
-      },
-    ],
-  ])('refuses %s without removing the marker', (_label, prepare) => {
+      ...['rebase-merge', 'rebase-apply', 'sequencer'].map((markerName) => [
+        `orphan ${markerName} directory`,
+        (root) => (
+          makeMarker(root),
+          mkdirSync(join(git(root, 'rev-parse', '--absolute-git-dir'), markerName)),
+          git(root, 'rev-parse', 'HEAD')
+        ),
+      ]),
+      [
+        'marker tree mismatch',
+        (root) => {
+          const info = makeMarker(root);
+          const tree = git(root, 'rev-parse', 'HEAD^{tree}');
+          writeFileSync(info.marker, `${'0'.repeat(tree.length)}\n`);
+          return info.head;
+        },
+      ],
+      [
+        'malformed marker',
+        (root) => {
+          const info = makeMarker(root);
+          writeFileSync(info.marker, 'not-an-object-id\n');
+          return info.head;
+        },
+      ],
+      [
+        'commit object marker',
+        (root) => {
+          const info = makeMarker(root);
+          writeFileSync(info.marker, `${info.head}\n`);
+          return info.head;
+        },
+      ],
+      [
+        'symlink marker',
+        (root) => {
+          const info = makeMarker(root);
+          rmSync(info.marker);
+          symlinkSync(join(root, 'tracked.txt'), info.marker);
+          return info.head;
+        },
+      ],
+      [
+        'directory marker',
+        (root) => {
+          const info = makeMarker(root);
+          rmSync(info.marker);
+          mkdirSync(info.marker);
+          return info.head;
+        },
+      ],
+      // Windows may require Developer Mode or elevation to create file symlinks.
+    ].filter(([label]) => process.platform !== 'win32' || label !== 'symlink marker')
+  )('refuses %s without removing the marker', (_label, prepare) => {
     const root = repo();
     const expectedHead = prepare(root);
     const marker = join(git(root, 'rev-parse', '--absolute-git-dir'), 'AUTO_MERGE');
