@@ -428,7 +428,8 @@ below.
 
 **Four `## P…` entries appear below this line, and only two of them are those two** —
 `P2 — Chrome stable remains unpinned and can drift from the visual baselines` and
-`P3 — no mobile or HiDPI project, and no touch anywhere`. The other two,
+`P3 — no dedicated mobile/HiDPI project; touch coverage and the full 2x suite remain partial`.
+The other two,
 `P3 — re-verification: the tablet band's option-row floor…` and
 `P2 — the mobile bottom bar scrolls 615px with no affordance…`, were filed by later passes
 against this tree and are not among the 33. They are here rather than above the section
