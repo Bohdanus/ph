@@ -19,7 +19,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
-import { isPointInLayer } from '../../contexts/affine-transform.ts';
+import { getLayerAffineTransform, isPointInLayer } from '../../contexts/affine-transform.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { isTextLayerSource, textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import type { Ctx2D, RectXY, RectXYSorted } from '../../contexts/general-types.ts';
@@ -37,6 +37,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
 
   const args = toolArgs as TextToolArgs;
   const argsRef = useRef(args);
+  const smallCapsPreviewCanvasRef = useRef<OffscreenCanvas | null>(null);
   useEffect(() => {
     argsRef.current = args;
   }, [args]);
@@ -286,7 +287,59 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     if (!ctx) return;
 
     if (currentArgs.smallCaps && !currentArgs.allCaps) {
-      renderText(ctx as Ctx2D, { ...currentArgs, rect: rect as RectXYSorted }, { overflowIndicator: true });
+      const width = rect.x2 - rect.x1;
+      const height = rect.y2 - rect.y1;
+      const canvasWidth = Math.trunc(width);
+      const canvasHeight = Math.trunc(height);
+      if (canvasWidth <= 0 || canvasHeight <= 0 || typeof OffscreenCanvas === 'undefined') {
+        renderText(ctx as Ctx2D, { ...currentArgs, rect: rect as RectXYSorted }, { overflowIndicator: true });
+        return;
+      }
+
+      // A committed type layer is rasterized in its own pixel-aligned canvas and then composited
+      // into the document. Drawing the same glyphs directly into the document overlay changes
+      // antialiasing at fractional layer origins, so make the draft take the same two-stage path.
+      // The canvas is reused across keystrokes; unlike the committed layer cache, it must not keep
+      // one full raster per intermediate draft string alive.
+      let previewCanvas = smallCapsPreviewCanvasRef.current;
+      if (!previewCanvas) {
+        previewCanvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+        smallCapsPreviewCanvasRef.current = previewCanvas;
+      } else {
+        if (previewCanvas.width !== canvasWidth) previewCanvas.width = canvasWidth;
+        if (previewCanvas.height !== canvasHeight) previewCanvas.height = canvasHeight;
+      }
+      const previewCtx = previewCanvas.getContext('2d');
+      if (!previewCtx) {
+        renderText(ctx as Ctx2D, { ...currentArgs, rect: rect as RectXYSorted }, { overflowIndicator: true });
+        return;
+      }
+
+      previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      renderText(
+        previewCtx as Ctx2D,
+        {
+          ...currentArgs,
+          rect: { x1: 0, y1: 0, x2: width, y2: height },
+        },
+        { overflowIndicator: true }
+      );
+
+      ctx.save();
+      try {
+        ctx.imageSmoothingEnabled = false;
+        const editingLayer = currentArgs.editingLayerId ? layers[currentArgs.editingLayerId] : undefined;
+        if (editingLayer) {
+          const affine = getLayerAffineTransform(editingLayer);
+          ctx.translate(rect.x1, rect.y1);
+          ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
+          ctx.drawImage(previewCanvas, 0, 0, width, height);
+        } else {
+          ctx.drawImage(previewCanvas, rect.x1, rect.y1, width, height);
+        }
+      } finally {
+        ctx.restore();
+      }
       return;
     }
 

@@ -155,7 +155,7 @@ describe('useLayers createLayerFromTool rect validation', () => {
 });
 
 describe('useLayers beginTextLayerEdit', () => {
-  it('starts an edit session on a text layer by clearing its raster preview', () => {
+  it('hides the retained source while starting a text edit preview', () => {
     const raster = new OffscreenCanvas(40, 20);
     const processor = vi
       .spyOn(toolProcessors.text, 'imageProcessor')
@@ -190,6 +190,7 @@ describe('useLayers beginTextLayerEdit', () => {
     const preview = result.current.store.previewLayers.current[textLayer!.id];
     expect(preview).toBeDefined();
     expect(preview?.layer.id).toBe(textLayer!.id);
+    expect(preview?.layer.visible).toBe(false);
     expect(preview?.layer.bitmap).toBeNull();
     expect(preview?.layer.tmpCanvas).toBeNull();
     expect(preview?.toolArgs).toBeUndefined();

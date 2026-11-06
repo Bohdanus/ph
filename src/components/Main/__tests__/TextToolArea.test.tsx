@@ -781,11 +781,19 @@ describe('TextToolArea', () => {
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!({ ...previewRect }));
 
-      expect(vi.mocked(ctx.fillText).mock.calls.map(([text]) => text)).toEqual(['W', 'AVE']);
-      expect(ctx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
-      expect(renderText).toHaveBeenCalledWith(ctx, expect.objectContaining({ rect: previewRect, smallCaps: true }), {
-        overflowIndicator: true,
-      });
+      const previewCtx = vi.mocked(renderText).mock.calls[0]?.[0];
+      if (!previewCtx) throw new Error('Small Caps preview did not call the Canvas renderer');
+      expect(previewCtx).not.toBe(ctx);
+      expect(vi.mocked(previewCtx.fillText).mock.calls.map(([text]) => text)).toEqual(['W', 'AVE']);
+      expect(previewCtx.scale).toHaveBeenCalledWith(0.703125, 0.703125);
+      expect(renderText).toHaveBeenCalledWith(
+        previewCtx,
+        expect.objectContaining({ rect: { x1: 0, y1: 0, x2: 50, y2: 30 }, smallCaps: true }),
+        {
+          overflowIndicator: true,
+        }
+      );
+      expect(ctx.drawImage).toHaveBeenCalledWith(expect.any(OffscreenCanvas), 10, 12, 50, 30);
     });
 
     it('draws the overflow indicator in the tool colour when layoutText reports overflow', () => {

@@ -1500,10 +1500,13 @@ export const useLayers = () => {
     const layer = layers[id];
     if (!layer || isLayerLocked(layer)) return;
     previewLayersRef.current[id] = {
-      // Remove only the runtime raster from this preview. The contenteditable overlay is the sole
-      // visible representation while the source is being edited; the marker is never persisted.
+      // Hide the committed source while its live editor preview is visible. Clearing only the
+      // runtime raster lets drawLayerSource recreate retained text from its source args, which
+      // leaves the old glyphs underneath newly typed text; the visibility override exists only in
+      // this transient preview record and is never persisted.
       layer: {
         ...layer,
+        visible: false,
         bitmap: null,
         tmpCanvas: null,
         presentationBounds: null,

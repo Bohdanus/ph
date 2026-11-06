@@ -709,6 +709,39 @@ function inkMask(image: ImageDataResult, predicate: PixelPredicate): InkMask {
   return { width: image.width, height: image.height, pixels };
 }
 
+/** Visible red RGB pixels, with non-red page chrome zeroed out for exact preview/commit checks. */
+function redInkPixels(image: ImageDataResult): Uint8Array {
+  const pixels = new Uint8Array(image.width * image.height * 4);
+  for (let source = 0; source < image.data.length; source += 4) {
+    const red = image.data[source];
+    if (image.data[source + 3] === 0 || red <= image.data[source + 1] || red <= image.data[source + 2]) {
+      continue;
+    }
+    const target = source;
+    pixels[target] = red;
+    pixels[target + 1] = image.data[source + 1];
+    pixels[target + 2] = image.data[source + 2];
+    pixels[target + 3] = image.data[source + 3];
+  }
+  return pixels;
+}
+
+function countDifferentPixels(first: Uint8Array, second: Uint8Array): number {
+  if (first.length !== second.length) return Math.ceil(Math.max(first.length, second.length) / 4);
+  let differing = 0;
+  for (let index = 0; index < first.length; index += 4) {
+    if (
+      first[index] !== second[index] ||
+      first[index + 1] !== second[index + 1] ||
+      first[index + 2] !== second[index + 2] ||
+      first[index + 3] !== second[index + 3]
+    ) {
+      differing += 1;
+    }
+  }
+  return differing;
+}
+
 /** Exact mask F1 after one shared offset; no per-pixel neighborhood can hide a changed glyph feature. */
 function inkMaskAgreement(first: InkMask, second: InkMask): { score: number; offsetX: number; offsetY: number } {
   if (first.width !== second.width || first.height !== second.height) {
@@ -834,6 +867,8 @@ interface InkMeasurement {
   pixelCount: number;
   /** Pixel-level glyph shape, retained for preview/commit comparisons. */
   mask: InkMask;
+  /** Exact RGBA values of visible red pixels; all other page pixels are zeroed. */
+  redPixels: Uint8Array;
   fullest: ReturnType<typeof fullestRow>;
   ends: ReturnType<typeof bandEnds>;
   /** {@link bandLean}: the band's shape, sampled inside the letterforms rather than at its edge. */
@@ -912,6 +947,7 @@ async function measureInk(
     },
     pixelCount: rows.reduce((total, row) => total + row.count, 0),
     mask: inkMask(crop, isRedInk),
+    redPixels: redInkPixels(crop),
     fullest: fullestRow(rows),
     ends: bandEnds(rows),
     lean: bandLean(rows),
@@ -955,9 +991,13 @@ function expectInkInsideRect(measurement: InkMeasurement, rect: DraftRect, label
     .toBeGreaterThanOrEqual(-INK_MARGIN);
 }
 
-async function expectSmallCapsPreviewAndCommitMatch(page: Page, testInfo: TestInfo, label: string): Promise<void> {
+async function expectSmallCapsPreviewAndCommitMatch(
+  page: Page,
+  testInfo: TestInfo,
+  label: string,
+  rect: DraftRect = CAPS_RECTS.smallCaps
+): Promise<void> {
   const box = await canvasBox(page);
-  const rect = CAPS_RECTS.smallCaps;
   await setTextToolColor(page, TEXT_COLOR);
   await dragDraftRect(page, box, rect);
   await styleToggle(page, 'Small Caps').click();
@@ -972,9 +1012,12 @@ async function expectSmallCapsPreviewAndCommitMatch(page: Page, testInfo: TestIn
   expect(
     agreement.score,
     `preview and commit exact ink masks diverged at global offset (${agreement.offsetX}, ${agreement.offsetY})`
-  ).toBeGreaterThanOrEqual(0.95);
-  expect(Math.abs(preview.width - committed.width), 'preview and commit advances differ').toBeLessThanOrEqual(2);
-  expect(Math.abs(preview.height - committed.height), 'preview and commit glyph heights differ').toBeLessThanOrEqual(2);
+  ).toBe(1);
+  expect(agreement.offsetX, 'preview and commit ink masks require a horizontal shift').toBe(0);
+  expect(agreement.offsetY, 'preview and commit ink masks require a vertical shift').toBe(0);
+  expect(preview.width, 'preview and commit advances differ').toBe(committed.width);
+  expect(preview.height, 'preview and commit glyph heights differ').toBe(committed.height);
+  expect(countDifferentPixels(preview.redPixels, committed.redPixels), 'preview and commit red pixels differ').toBe(0);
   expectInkInsideRect(preview, rect, 'the small-caps preview');
   expectInkInsideRect(committed, rect, 'the small-caps commit');
 }
@@ -1826,10 +1869,12 @@ test.describe('Text tool', () => {
     page,
   }, testInfo) => {
     test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
+    await emulateCanvasCaps(page, { hideFontVariantCaps: true, ignoreSmallCapsShorthand: true });
     const box = await canvasBox(page);
     const canvasClip = canvasBoxClip(box);
 
     await setTextToolColor(page, TEXT_COLOR);
+    await styleToggle(page, 'Small Caps').click();
     await dragDraftRect(page, box);
     await replaceDraftText(page, 'MMMM');
     await commitDraft(page);
@@ -1922,15 +1967,33 @@ test.describe('Text tool', () => {
     expect(clickPoint.y).toBeGreaterThanOrEqual(overlayBox!.y - 2);
     expect(clickPoint.y).toBeLessThanOrEqual(overlayBox!.y + overlayBox!.height + 2);
 
-    await replaceDraftText(page, 'I');
+    await replaceDraftText(page, 'i');
+    await hideDraftCaret(page);
     await expect(commitButton(page)).toBeEnabled();
+    const editPreviewCapture = await captureCanvasScreenshot(page, box, testInfo, 'small-caps-affine-edit-preview');
+    const editPreviewImage = await loadImageData(editPreviewCapture);
     await commitDraft(page);
     await expect(draftOverlay(page), 'the committed re-entry left a second draft overlay').toHaveCount(0);
     await expect(layerRows, 'editing transformed Type created a duplicate layer').toHaveCount(layerCountBeforeEdit);
     await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'edited Type after affine re-entry' });
 
     const editedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-reentered-and-edited');
-    const editedInk = await scanPixelsForBounds(await loadImageData(editedCapture), isRedInk);
+    const editedImage = await loadImageData(editedCapture);
+    const editPreviewMask = inkMask(editPreviewImage, isRedInk);
+    const editedMask = inkMask(editedImage, isRedInk);
+    const previewCommitAgreement = inkMaskAgreement(editPreviewMask, editedMask);
+    expect(
+      previewCommitAgreement.score,
+      `transformed Small Caps preview and commit differ at (${previewCommitAgreement.offsetX}, ${previewCommitAgreement.offsetY})`
+    ).toBe(1);
+    expect(previewCommitAgreement.offsetX, 'transformed Small Caps preview is horizontally shifted').toBe(0);
+    expect(previewCommitAgreement.offsetY, 'transformed Small Caps preview is vertically shifted').toBe(0);
+    expect(
+      countDifferentPixels(redInkPixels(editPreviewImage), redInkPixels(editedImage)),
+      'transformed Small Caps preview and commit red pixels differ'
+    ).toBe(0);
+
+    const editedInk = await scanPixelsForBounds(editedImage, isRedInk);
     expect(editedInk.found, 'the transformed Type source disappeared after re-entry').toBe(true);
     const transformedHeight = transformedInk.bottom - transformedInk.top + 1;
     const editedHeight = editedInk.bottom - editedInk.top + 1;
@@ -2368,15 +2431,14 @@ test.describe('Text tool', () => {
     expect(
       agreement.score,
       `preview and commit exact ink masks diverged at global offset (${agreement.offsetX}, ${agreement.offsetY})`
-    ).toBeGreaterThanOrEqual(0.95);
-    expect(
-      Math.abs(preview.width - committed.width),
-      'preview and committed small caps have different advances'
-    ).toBeLessThanOrEqual(2);
-    expect(
-      Math.abs(preview.height - committed.height),
-      'preview and committed small caps have different glyph heights'
-    ).toBeLessThanOrEqual(2);
+    ).toBe(1);
+    expect(agreement.offsetX, 'preview and commit ink masks require a horizontal shift').toBe(0);
+    expect(agreement.offsetY, 'preview and commit ink masks require a vertical shift').toBe(0);
+    expect(preview.width, 'preview and committed small caps have different advances').toBe(committed.width);
+    expect(preview.height, 'preview and committed small caps have different glyph heights').toBe(committed.height);
+    expect(countDifferentPixels(preview.redPixels, committed.redPixels), 'preview and commit red pixels differ').toBe(
+      0
+    );
     expectInkInsideRect(preview, rect, 'the small-caps preview');
     expectInkInsideRect(committed, rect, 'the small-caps commit');
   });
@@ -2410,10 +2472,13 @@ test.describe('Text tool', () => {
     expect(
       agreement.score,
       `preview and commit exact ink masks diverged at global offset (${agreement.offsetX}, ${agreement.offsetY})`
-    ).toBeGreaterThanOrEqual(0.95);
-    expect(Math.abs(preview.width - committed.width), 'preview and commit advances differ').toBeLessThanOrEqual(2);
-    expect(Math.abs(preview.height - committed.height), 'preview and commit glyph heights differ').toBeLessThanOrEqual(
-      2
+    ).toBe(1);
+    expect(agreement.offsetX, 'preview and commit ink masks require a horizontal shift').toBe(0);
+    expect(agreement.offsetY, 'preview and commit ink masks require a vertical shift').toBe(0);
+    expect(preview.width, 'preview and commit advances differ').toBe(committed.width);
+    expect(preview.height, 'preview and commit glyph heights differ').toBe(committed.height);
+    expect(countDifferentPixels(preview.redPixels, committed.redPixels), 'preview and commit red pixels differ').toBe(
+      0
     );
   });
 
@@ -2432,6 +2497,16 @@ test.describe('Text tool', () => {
     ).toBe(true);
 
     await expectSmallCapsPreviewAndCommitMatch(page, testInfo, 'metric-only Canvas caps');
+  });
+
+  test('Small Caps preview matches its commit for fractional layer bounds', async ({ page }, testInfo) => {
+    await emulateCanvasCaps(page, { hideFontVariantCaps: true });
+    await expectSmallCapsPreviewAndCommitMatch(page, testInfo, 'fractional layer geometry', {
+      x1: 550.25,
+      y1: 220.25,
+      x2: 800.75,
+      y2: 340.75,
+    });
   });
 
   /**
