@@ -7,6 +7,7 @@ import globalSetup, {
   checkOwnServer,
   PER_ATTEMPT_TIMEOUT_MS,
   planWarmup,
+  readIndexHtml,
   resolvedBaseUrl,
   resolvedWebServerUrl,
   runWarmup,
@@ -74,6 +75,10 @@ function plan(overrides: Partial<Parameters<typeof planWarmup>[0]> = {}) {
     ...overrides,
   });
 }
+
+it('reads the repository index.html used to discover the warmup entry', () => {
+  expect(readIndexHtml()).toContain('<script type="module" src="/src/main.tsx"></script>');
+});
 
 describe('resolvedBaseUrl', () => {
   const project = (use: Record<string, unknown>) => ({ use }) as unknown as FullConfig['projects'][number];
