@@ -1,7 +1,6 @@
 import { expect, type Page, test, type TestInfo } from './fixtures/extended-test';
 import {
   type BoundingBox,
-  type ClipOptions,
   drawLine,
   getColorAtPoint,
   getDarkPixelBounds,
@@ -9,6 +8,8 @@ import {
   hasDarkPixels,
   loadImageData,
   takeLineScreenshot,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
@@ -135,13 +136,13 @@ function rowY(box: BoundingBox, row: number): number {
 }
 
 /** Clip around one stroke row, in page coordinates like every other clip in the suite. */
-function rowClip(box: BoundingBox, row: number, height: number): Required<ClipOptions> {
-  return {
+function rowClip(box: BoundingBox, row: number, height: number): ViewportClip {
+  return viewportClip({
     x: box.x + CLIP_X,
     y: box.y + rowY(box, row) - Math.round(height / 2),
     width: CLIP_WIDTH,
     height,
-  };
+  });
 }
 
 /**
@@ -172,7 +173,7 @@ async function measureStrokeHeight(
   box: BoundingBox,
   testInfo: TestInfo,
   name: string,
-  clip: Required<ClipOptions>
+  clip: ViewportClip
 ): Promise<number> {
   await waitForCanvasPixels(page, clip, hasDarkPixels, { description: `the ${name} stroke` });
   const bounds = await getDarkPixelBounds(await takeLineScreenshot(page, box, name, testInfo, clip));

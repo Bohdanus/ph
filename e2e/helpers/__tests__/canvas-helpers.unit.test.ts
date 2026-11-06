@@ -19,9 +19,12 @@ import {
   STROKE_ANALYSIS,
   takeLineScreenshot,
   waitForCanvasPixels,
+  waitForCanvasRedraw,
+  viewportClip,
   type BoundingBox,
   type ClipOptions,
   type ImageDataResult,
+  type ViewportClipOptions,
 } from '../canvas-helpers';
 import { imageBoundsToCss, type CssBox, type ImageSize } from '../screenshot-scale';
 import {
@@ -43,7 +46,7 @@ import {
   type Color,
 } from './canvas-helpers.fixtures';
 
-const DEFAULT_CLIP = { x: 10, y: 20, width: 100, height: 200 };
+const DEFAULT_CLIP = viewportClip({ x: 10, y: 20, width: 100, height: 200 });
 
 /** The app's selection colour as documented by getSelectionBounds: RGB ~ (0, 120, 255). */
 const SELECTION_CYAN: Color = { red: 0, green: 120, blue: 255 };
@@ -67,15 +70,19 @@ function redPixelImage(
   return image;
 }
 
-const PARTIAL_CLIPS: { name: string; clip: ClipOptions; expected: Required<ClipOptions> }[] = [
-  { name: 'x only', clip: { x: 50 }, expected: { ...DEFAULT_CLIP, x: 50 } },
-  { name: 'y only', clip: { y: 60 }, expected: { ...DEFAULT_CLIP, y: 60 } },
-  { name: 'width only', clip: { width: 150 }, expected: { ...DEFAULT_CLIP, width: 150 } },
-  { name: 'height only', clip: { height: 250 }, expected: { ...DEFAULT_CLIP, height: 250 } },
-  { name: 'y set with x explicitly undefined', clip: { y: 60, x: undefined }, expected: { ...DEFAULT_CLIP, y: 60 } },
+const PARTIAL_CLIPS: { name: string; clip: ViewportClipOptions; expected: Required<ClipOptions> }[] = [
+  { name: 'x only', clip: viewportClip({ x: 50 }), expected: { ...DEFAULT_CLIP, x: 50 } },
+  { name: 'y only', clip: viewportClip({ y: 60 }), expected: { ...DEFAULT_CLIP, y: 60 } },
+  { name: 'width only', clip: viewportClip({ width: 150 }), expected: { ...DEFAULT_CLIP, width: 150 } },
+  { name: 'height only', clip: viewportClip({ height: 250 }), expected: { ...DEFAULT_CLIP, height: 250 } },
+  {
+    name: 'y set with x explicitly undefined',
+    clip: viewportClip({ y: 60, x: undefined }),
+    expected: { ...DEFAULT_CLIP, y: 60 },
+  },
   {
     name: 'every field explicitly undefined',
-    clip: { x: undefined, y: undefined, width: undefined, height: undefined },
+    clip: viewportClip({ x: undefined, y: undefined, width: undefined, height: undefined }),
     expected: DEFAULT_CLIP,
   },
 ];
@@ -86,7 +93,7 @@ describe('buildClip', () => {
   });
 
   it('returns the default when clip is empty', () => {
-    expect(buildClip({}, DEFAULT_CLIP)).toEqual(DEFAULT_CLIP);
+    expect(buildClip(viewportClip({}), DEFAULT_CLIP)).toEqual(DEFAULT_CLIP);
   });
 
   it.each(PARTIAL_CLIPS)('keeps every other field for a partial clip: $name', ({ clip, expected }) => {
@@ -94,11 +101,51 @@ describe('buildClip', () => {
   });
 
   it('overrides all fields when all are provided', () => {
-    expect(buildClip({ x: 1, y: 2, width: 3, height: 4 }, DEFAULT_CLIP)).toEqual({ x: 1, y: 2, width: 3, height: 4 });
+    expect(buildClip(viewportClip({ x: 1, y: 2, width: 3, height: 4 }), DEFAULT_CLIP)).toEqual({
+      x: 1,
+      y: 2,
+      width: 3,
+      height: 4,
+    });
   });
 
   it('keeps explicit zeros instead of falling back to the default', () => {
-    expect(buildClip({ x: 0, y: 0, width: 0, height: 0 }, DEFAULT_CLIP)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    expect(buildClip(viewportClip({ x: 0, y: 0, width: 0, height: 0 }), DEFAULT_CLIP)).toEqual({
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    });
+  });
+
+  it('requires callers to mark a clip as viewport-relative', () => {
+    const acceptsViewportClip = (clip: ViewportClipOptions) => clip;
+    const rawClip = { x: 1, y: 2, width: 3, height: 4 };
+    const clip = viewportClip(rawClip);
+
+    expect(acceptsViewportClip(clip)).toEqual(rawClip);
+
+    // @ts-expect-error An untagged rectangle could be relative to the canvas box.
+    acceptsViewportClip(rawClip);
+
+    // The adapter parameters are extracted from the public APIs. They keep these assertions
+    // compile-time-only without calling browser helpers from this pure type contract test.
+    const acceptsPixelsClip = (value: Parameters<typeof waitForCanvasPixels>[1]) => value;
+    const acceptsRedrawClip = (value: NonNullable<NonNullable<Parameters<typeof waitForCanvasRedraw>[2]>['clip']>) =>
+      value;
+    const acceptsScreenshotClip = (value: NonNullable<Parameters<typeof takeLineScreenshot>[4]>) => value;
+
+    expect(acceptsPixelsClip(clip)).toEqual(rawClip);
+    // @ts-expect-error Raw rectangles can still be canvas-box-relative.
+    expect(acceptsPixelsClip(rawClip)).toEqual(rawClip);
+
+    expect(acceptsRedrawClip(clip)).toEqual(rawClip);
+    // @ts-expect-error Redraw clips must name their viewport coordinate space.
+    expect(acceptsRedrawClip(rawClip)).toEqual(rawClip);
+
+    expect(acceptsScreenshotClip(clip)).toEqual(rawClip);
+    // @ts-expect-error Screenshot clips must name their viewport coordinate space.
+    expect(acceptsScreenshotClip(rawClip)).toEqual(rawClip);
   });
 });
 
@@ -431,7 +478,7 @@ describe('getSelectionBounds default thresholds', () => {
  */
 describe('onScreenClip refuses an over-tall clip', () => {
   const SHORT_VIEWPORT = 720;
-  const overTall: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
+  const overTall = viewportClip({ x: 0, y: 0, width: 1280, height: 900 });
 
   it('throws naming the requested height and the viewport height', async () => {
     const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
@@ -461,19 +508,25 @@ describe('onScreenClip refuses an over-tall clip', () => {
     const { testInfo } = createTestInfoMock(outputDir);
 
     await expect(
-      takeLineScreenshot(harness.page, { x: 0, y: 0, width: 1280, height: 1280 }, 'over-tall', testInfo, {
-        x: 0,
-        y: 0,
-        width: 1280,
-        height: 900,
-      })
+      takeLineScreenshot(
+        harness.page,
+        { x: 0, y: 0, width: 1280, height: 1280 },
+        'over-tall',
+        testInfo,
+        viewportClip({
+          x: 0,
+          y: 0,
+          width: 1280,
+          height: 900,
+        })
+      )
     ).rejects.toThrow(/cannot be taller than the viewport/);
     expect(harness.screenshot).not.toHaveBeenCalled();
   });
 
   it('admits a clip exactly the viewport height', async () => {
     const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
-    const exact: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: SHORT_VIEWPORT };
+    const exact = viewportClip({ x: 0, y: 0, width: 1280, height: SHORT_VIEWPORT });
 
     await expect(
       waitForCanvasPixels(harness.page, exact, async () => true, { timeoutMs: 1_000 })
@@ -484,7 +537,7 @@ describe('onScreenClip refuses an over-tall clip', () => {
 
   it('admits a clip shorter than the viewport and photographs it as given', async () => {
     const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
-    const short: Required<ClipOptions> = { x: 10, y: 20, width: 120, height: 100 };
+    const short = viewportClip({ x: 10, y: 20, width: 120, height: 100 });
 
     await waitForCanvasPixels(harness.page, short, async () => true, { timeoutMs: 1_000 });
     expect(harness.clips()).toEqual([short]);
@@ -498,7 +551,7 @@ describe('onScreenClip refuses an over-tall clip', () => {
       documentHeight: 1_177,
       initialScrollY: 0,
     });
-    const belowTheFold: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
+    const belowTheFold = viewportClip({ x: 176, y: 748, width: 320, height: 160 });
 
     await expect(
       waitForCanvasPixels(harness.page, belowTheFold, async () => true, { timeoutMs: 1_000 })

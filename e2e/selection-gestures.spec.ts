@@ -9,6 +9,8 @@ import {
   type BoundingBox,
   type ClipOptions,
   type SelectionBounds,
+  viewportClip,
+  type ViewportClip,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
@@ -203,17 +205,17 @@ const maxDarkening = async (before: Buffer, after: Buffer): Promise<number> => {
 
 type Rect = { x: number; y: number; width: number; height: number };
 
-const selectionBlue = async (page: Page, clip: Required<ClipOptions>): Promise<SelectionBounds | null> =>
+const selectionBlue = async (page: Page, clip: ViewportClip): Promise<SelectionBounds | null> =>
   getSelectionBounds(await page.screenshot({ clip }), SELECTION_COLOR_THRESHOLDS);
 
 /** Resolves once selection blue is inside `clip`. The suite's single poll loop. */
-const waitForSelectionBlue = (page: Page, clip: Required<ClipOptions>, description: string) =>
+const waitForSelectionBlue = (page: Page, clip: ViewportClip, description: string) =>
   waitForCanvasPixels(page, clip, async (png) => (await getSelectionBounds(png, SELECTION_COLOR_THRESHOLDS)) !== null, {
     description,
   });
 
 /** Resolves once selection blue has left `clip`. Same poll loop, negated predicate. */
-const waitForNoSelectionBlue = (page: Page, clip: Required<ClipOptions>, description: string) =>
+const waitForNoSelectionBlue = (page: Page, clip: ViewportClip, description: string) =>
   waitForCanvasPixels(page, clip, async (png) => (await getSelectionBounds(png, SELECTION_COLOR_THRESHOLDS)) === null, {
     description,
   });
@@ -227,31 +229,32 @@ const waitForNoSelectionBlue = (page: Page, clip: Required<ClipOptions>, descrip
  * the intersection stays even though `VIEWPORT` is tall enough for it to be a no-op here: it
  * is the floor under every clip in this file, not a measurement of the current layout.
  */
-const overlayClip = async (page: Page, box: BoundingBox): Promise<Required<ClipOptions>> => {
+const overlayClip = async (page: Page, box: BoundingBox): Promise<ViewportClip> => {
   const viewport = page.viewportSize() ?? { width: 0, height: 0 };
   const width = Math.min(box.width, viewport.width - box.x);
   const height = Math.min(box.height, viewport.height - box.y);
-  return { x: box.x, y: box.y, width, height };
+  return viewportClip({ x: box.x, y: box.y, width, height });
 };
 
 /** A `PROBE_HALF_PX` window centred on a box-relative point, inside the overlay. */
-const probeClip = (overlay: Required<ClipOptions>, cx: number, cy: number): Required<ClipOptions> => ({
-  x: Math.max(overlay.x, Math.min(overlay.x + cx, overlay.x + overlay.width) - PROBE_HALF_PX),
-  y: Math.max(overlay.y, Math.min(overlay.y + cy, overlay.y + overlay.height) - PROBE_HALF_PX),
-  width: PROBE_HALF_PX * 2,
-  height: PROBE_HALF_PX * 2,
-});
+const probeClip = (overlay: ViewportClip, cx: number, cy: number): ViewportClip =>
+  viewportClip({
+    x: Math.max(overlay.x, Math.min(overlay.x + cx, overlay.x + overlay.width) - PROBE_HALF_PX),
+    y: Math.max(overlay.y, Math.min(overlay.y + cy, overlay.y + overlay.height) - PROBE_HALF_PX),
+    width: PROBE_HALF_PX * 2,
+    height: PROBE_HALF_PX * 2,
+  });
 
 /** A box-relative region, clipped to the overlay so it never runs off the captured area. */
-const regionClip = (overlay: Required<ClipOptions>, rect: Rect): Required<ClipOptions> => {
+const regionClip = (overlay: ViewportClip, rect: Rect): ViewportClip => {
   const x = Math.max(overlay.x, overlay.x + rect.x);
   const y = Math.max(overlay.y, overlay.y + rect.y);
-  return {
+  return viewportClip({
     x,
     y,
     width: Math.min(overlay.x + overlay.width, overlay.x + rect.x + rect.width) - x,
     height: Math.min(overlay.y + overlay.height, overlay.y + rect.y + rect.height) - y,
-  };
+  });
 };
 
 const workspaceBox = async (page: Page): Promise<BoundingBox> => {
@@ -303,12 +306,13 @@ const boxRect = (box: BoundingBox, left: number, top: number, right: number, bot
  * relative to the canvas box, and mixing the two frames silently moves every bound by the box
  * origin.
  */
-const toPage = (box: BoundingBox, rect: Rect): Required<ClipOptions> => ({
-  x: box.x + rect.x,
-  y: box.y + rect.y,
-  width: rect.width,
-  height: rect.height,
-});
+const toPage = (box: BoundingBox, rect: Rect): ViewportClip =>
+  viewportClip({
+    x: box.x + rect.x,
+    y: box.y + rect.y,
+    width: rect.width,
+    height: rect.height,
+  });
 
 /**
  * `HANDLE_SIZE` (`src/util/constants.ts`), copied rather than imported because nothing under
@@ -336,14 +340,14 @@ const HANDLE_SIZE = 12;
  * geometry, not a tolerance, and folding it into the slack would hide the same 2px on any future
  * regression.
  */
-const overlayChromeAtRest = (box: BoundingBox, rect: Rect): Required<ClipOptions> => {
+const overlayChromeAtRest = (box: BoundingBox, rect: Rect): ViewportClip => {
   const page = toPage(box, rect);
-  return {
+  return viewportClip({
     x: page.x - HANDLE_SIZE,
     y: page.y - HANDLE_SIZE,
     width: page.width + HANDLE_SIZE * 2,
     height: page.height + HANDLE_SIZE * 2,
-  };
+  });
 };
 
 /**
@@ -352,7 +356,7 @@ const overlayChromeAtRest = (box: BoundingBox, rect: Rect): Required<ClipOptions
  * so it passes a zero origin. Saying that explicitly keeps the two coordinate spaces from being
  * mixed in a reader's head, which is the mistake the clip argument exists to prevent.
  */
-const ORIGIN_CLIP: Required<ClipOptions> = { x: 0, y: 0, width: 0, height: 0 };
+const ORIGIN_CLIP = viewportClip({ x: 0, y: 0, width: 0, height: 0 });
 
 /**
  * Asserts that the selection border found in `clip` outlines `expected`, both in page coordinates.
@@ -367,7 +371,7 @@ const expectOutlineAround = (
   // `imageWidth`/`centerX` to offer, and a parameter that required fields it never uses would be
   // padding the read with values computed for a different purpose.
   found: Pick<SelectionBounds, 'left' | 'top' | 'right' | 'bottom'> | null,
-  clip: Required<ClipOptions>,
+  clip: ViewportClip,
   expected: Required<ClipOptions>,
   slackPx = OUTLINE_SLACK_PX
 ) => {
@@ -789,7 +793,7 @@ test.describe('Selection tools', () => {
     await page.mouse.up();
     await waitForCanvasPixels(
       page,
-      { x: document.x + loop.x, y: document.y + loop.y, width: loop.width, height: loop.height },
+      viewportClip({ x: document.x + loop.x, y: document.y + loop.y, width: loop.width, height: loop.height }),
       hasDarkPixels,
       { description: 'the black loop drawn around the Magic Wand target' }
     );
