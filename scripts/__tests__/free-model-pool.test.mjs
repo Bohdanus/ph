@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 import {
   catalogCandidates,
   completeWithFreeModel as completeWithFreeModelImplementation,
@@ -37,6 +37,19 @@ const completeWithFreeModel = async (prompt, options = {}) => {
     if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
   }
 };
+
+async function writeFakeOpenCode(directory, source) {
+  const commandPath = join(directory, 'fake-opencode');
+  if (process.platform === 'win32') {
+    const scriptPath = `${commandPath}.cjs`;
+    const shimPath = `${commandPath}.cmd`;
+    await writeFile(scriptPath, `${source}\n`, 'utf8');
+    await writeFile(shimPath, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`, 'utf8');
+    return shimPath;
+  }
+  await writeFile(commandPath, `#!/usr/bin/env node\n${source}\n`, { encoding: 'utf8', mode: 0o700 });
+  return commandPath;
+}
 const kiloRow = (id) => ({ id, isFree: true, pricing: { prompt: '0', completion: '0' } });
 const openRouterRow = (id) => ({ id: `${id}:free`, pricing: { prompt: '0', completion: '0' } });
 
@@ -575,7 +588,7 @@ describe('free model rotation', () => {
       const { discoverGroqKeyFiles } = await import('../free-model-pool.mjs');
       const files = await discoverGroqKeyFiles(dir);
       expect(files.length).toBe(4);
-      expect(files.map((f) => f.split('/').pop())).toEqual([
+      expect(files.map((file) => basename(file))).toEqual([
         'api_key',
         'api_key_account2',
         'api_key_account3',
@@ -610,11 +623,14 @@ describe('free model rotation', () => {
 
   it('runs OpenCode with every tool denied and accepts clean-exit V2 text without a final event', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
-    const command = join(directory, 'fake-opencode');
-    await writeFile(
-      command,
-      `#!/usr/bin/env node\nconst fs = require('node:fs');\nconst args = process.argv.slice(2);\nif (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);\nif (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);\nconsole.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));\nconsole.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));\n`,
-      { encoding: 'utf8', mode: 0o700 }
+    const command = await writeFakeOpenCode(
+      directory,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (!process.env.OPENCODE_CONFIG_CONTENT.includes('tool.use')) process.exit(9);
+if (!fs.readFileSync(args[args.indexOf('--file') + 1], 'utf8').includes('private prompt')) process.exit(8);
+console.log(JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }));
+console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));`
     );
 
     try {
@@ -626,13 +642,36 @@ describe('free model rotation', () => {
     }
   });
 
+  it.skipIf(process.platform !== 'win32')('launches a bare OpenCode command from PATH on Windows', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
+    const commandPath = await writeFakeOpenCode(
+      directory,
+      "console.log(JSON.stringify({ type: 'text', part: { text: 'complete answer' } }));"
+    );
+    const previousPath = process.env.PATH;
+    try {
+      process.env.PATH = `${directory}${delimiter}${previousPath ?? ''}`;
+      await expect(
+        runOpenCodeCompletion({
+          command: basename(commandPath, '.cmd'),
+          model: 'beam-free',
+          prompt: 'prompt',
+          maxTokens: 64,
+        })
+      ).resolves.toMatchObject({ content: 'complete answer', finishReason: 'stop', model: 'beam-free' });
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('surfaces OpenCode provider errors and status without exposing response bodies', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
-    const command = join(directory, 'fake-opencode');
-    await writeFile(
-      command,
-      `#!/usr/bin/env node\nconsole.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));\nprocess.exit(1);\n`,
-      { encoding: 'utf8', mode: 0o700 }
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'error', error: { type: 'provider.free-limit', status: 429, message: 'Free usage limit reached' } }));
+process.exit(1);`
     );
 
     try {
@@ -652,11 +691,10 @@ describe('free model rotation', () => {
 
   it('rejects an explicit non-zero OpenCode cost even for a free catalog ID', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-test-'));
-    const command = join(directory, 'fake-opencode');
-    await writeFile(
-      command,
-      `#!/usr/bin/env node\nconsole.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));\nconsole.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));\n`,
-      { encoding: 'utf8', mode: 0o700 }
+    const command = await writeFakeOpenCode(
+      directory,
+      `console.log(JSON.stringify({ type: 'text', part: { text: 'answer' } }));
+console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', cost: 0.001 } }));`
     );
 
     try {

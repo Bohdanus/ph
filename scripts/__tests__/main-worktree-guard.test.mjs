@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,14 +9,14 @@ import { decide, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-gua
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
  *
- * The spawns here are `git init` and `git worktree add` into a temp directory,
- * measured at tens of milliseconds each against a 5s default, so the budget is
- * headroom for a cold or a loaded machine rather than a description of the work.
+ * The spawns here are `git init` and `git worktree add` into a temp directory.
+ * A Windows full-gate run took 73s for the path-reuse case, so the budget leaves
+ * headroom without changing its assertions.
  * `scripts/__tests__/suite-budgets.test.mjs` derives which suites in this
  * directory need one — a file that spawns and declares none fails that guard,
  * which is how this file came to be included after being missed once.
  */
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: 120_000 });
 
 /**
  * Two things are under test, and the second is the one that cannot be read off
@@ -36,6 +36,13 @@ vi.setConfig({ testTimeout: 20_000 });
  */
 
 const REPO_ROOT = realpathSync(join(import.meta.dirname, '..', '..'));
+
+function runHook(dispatcher, args, options) {
+  if (process.platform !== 'win32') return spawnSync(dispatcher, args, options);
+  const gitExecPath = execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim();
+  const gitRoot = resolve(gitExecPath, '..', '..', '..');
+  return spawnSync(join(gitRoot, 'bin', 'sh.exe'), [dispatcher, ...args], options);
+}
 
 /** A `git` that cannot answer is the fail-open arm, and it is a real directory. */
 function git(cwd, args) {
@@ -374,10 +381,10 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(install.status).toBe(0);
-      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir'])).toBe(
-        git(fixture, ['rev-parse', '--absolute-git-dir'])
+      expect(realpathSync(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreeGitDir']))).toBe(
+        realpathSync(git(fixture, ['rev-parse', '--absolute-git-dir']))
       );
-      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(fixture);
+      expect(realpathSync(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath']))).toBe(fixture);
 
       // Upgrade the earlier path/gitdir-only registration while main is checked out.
       // An absent identity token must be seeded even when both old config values match.
@@ -406,7 +413,7 @@ describe('the guard is actually installed', () => {
       expect(beforeRecord).toBeLessThan(trackedHook);
       expect(afterRecord).toBeGreaterThan(trackedHook);
 
-      const mainCall = spawnSync(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
+      const mainCall = runHook(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
       expect(mainCall.status).toBe(1);
       expect(mainCall.stderr).toContain('commit-msg is missing');
 
@@ -415,7 +422,7 @@ describe('the guard is actually installed', () => {
         encoding: 'utf8',
       });
       expect(detachedMain.status, detachedMain.stderr).toBe(0);
-      const detachedMainCall = spawnSync(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
+      const detachedMainCall = runHook(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
       expect(detachedMainCall.status).toBe(1);
       expect(detachedMainCall.stderr).toContain('commit-msg is missing');
 
@@ -435,11 +442,11 @@ describe('the guard is actually installed', () => {
       });
       expect(reinstallWithSavedIdentity.status, reinstallWithSavedIdentity.stderr).toBe(0);
       writeFileSync(join(featureWorktree, 'message-file'), 'Feature change\n');
-      const featureCall = spawnSync(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
+      const featureCall = runHook(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
       expect(featureCall.status).toBe(1);
       expect(featureCall.stderr).toContain('exactly one non-empty Chat: trailer');
       writeFileSync(join(featureWorktree, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
-      const attributedFeatureCall = spawnSync(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
+      const attributedFeatureCall = runHook(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
       expect(attributedFeatureCall.status).toBe(0);
 
       const scripts = join(fixture, 'scripts');
@@ -453,7 +460,7 @@ describe('the guard is actually installed', () => {
           '}\n'
       );
       writeFileSync(join(featureWorktree, 'message-file'), 'run-current-final-guard\n\nChat: fixture-session\n');
-      const finalGuardCall = spawnSync(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
+      const finalGuardCall = runHook(dispatcher, ['message-file'], { cwd: featureWorktree, encoding: 'utf8' });
       expect(finalGuardCall.status).toBe(1);
       expect(finalGuardCall.stderr).toContain('designated main final guard evaluated the linked worktree');
     } finally {
@@ -636,7 +643,7 @@ describe('the guard is actually installed', () => {
       expect(installWithStaleIdentity.stderr).toContain('cannot identify the designated main worktree');
 
       writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
-      const staleDetachedMainCall = spawnSync(dispatcher, ['message-file'], { cwd: detachedMain, encoding: 'utf8' });
+      const staleDetachedMainCall = runHook(dispatcher, ['message-file'], { cwd: detachedMain, encoding: 'utf8' });
       expect(staleDetachedMainCall.status).toBe(1);
       expect(staleDetachedMainCall.stderr).toContain('cannot locate the designated main commit-msg guard');
 
@@ -672,14 +679,14 @@ describe('the guard is actually installed', () => {
       mkdirSync(staleGuardScripts, { recursive: true });
       writeFileSync(join(staleGuardScripts, 'commit-reviewed-landing-message-guard.mjs'), 'process.exit(0);\n');
       writeFileSync(join(detachedMain, 'message-file'), 'Feature change without attribution\n');
-      const staleGuardSourceCall = spawnSync(dispatcher, ['message-file'], {
+      const staleGuardSourceCall = runHook(dispatcher, ['message-file'], {
         cwd: detachedMain,
         encoding: 'utf8',
       });
       expect(staleGuardSourceCall.status).toBe(1);
       expect(staleGuardSourceCall.stderr).toContain('cannot locate the designated main commit-msg guard');
       writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
-      const featureAtOldMainPathCall = spawnSync(dispatcher, ['message-file'], {
+      const featureAtOldMainPathCall = runHook(dispatcher, ['message-file'], {
         cwd: detachedMain,
         encoding: 'utf8',
       });
@@ -716,7 +723,7 @@ describe('the guard is actually installed', () => {
       });
       expect(decide({ worktree: detachedFeatureAtOldMainPath })).toEqual({ action: 'refuse' });
       writeFileSync(join(detachedMain, 'message-file'), 'Feature change\n\nChat: fixture-session\n');
-      const detachedFeatureAtOldMainPathCall = spawnSync(dispatcher, ['message-file'], {
+      const detachedFeatureAtOldMainPathCall = runHook(dispatcher, ['message-file'], {
         cwd: detachedMain,
         encoding: 'utf8',
       });
@@ -773,7 +780,9 @@ describe('the guard is actually installed', () => {
         env: { ...process.env, CI: 'true' },
       });
       expect(reinstall.status, reinstall.stderr).toBe(0);
-      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(movedMainPath);
+      expect(git(fixture, ['config', '--local', '--get', 'ph.mainWorktreePath'])).toBe(
+        movedMainPath.replace(/\\/g, '/')
+      );
       const movedMainWorktree = resolveWorktree(movedMainPath);
       expect(movedMainWorktree).toMatchObject({ isDesignatedMainWorktree: true, isProtectedWorktree: true });
       expect(decide({ worktree: movedMainWorktree }).action).toBe('refuse');
@@ -786,7 +795,7 @@ describe('the guard is actually installed', () => {
       );
       const dispatcher = resolve(fixture, git(fixture, ['config', '--get', 'core.hooksPath']), 'commit-msg');
       writeFileSync(join(fixture, 'message-file'), 'sentinel\n\nChat: fixture-session\n');
-      const finalGuardCall = spawnSync(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
+      const finalGuardCall = runHook(dispatcher, ['message-file'], { cwd: fixture, encoding: 'utf8' });
       expect(finalGuardCall.status).toBe(1);
       expect(finalGuardCall.stderr).toContain('moved designated main guard evaluated');
     } finally {

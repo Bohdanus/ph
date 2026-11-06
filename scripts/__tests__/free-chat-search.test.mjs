@@ -115,6 +115,19 @@ describe('resolveKiloDbCandidates', () => {
     const candidates = resolveKiloDbCandidates({ homeDir: '/home/user', platform: 'linux' });
     expect(candidates).toEqual(['/home/user/.local/share/kilo/kilo.db']);
   });
+
+  it('uses Windows application data paths only on Windows', () => {
+    const candidates = resolveKiloDbCandidates({
+      homeDir: 'C:\\Users\\user',
+      appData: 'C:\\Users\\user\\AppData\\Roaming',
+      localAppData: 'C:\\Users\\user\\AppData\\Local',
+      platform: 'win32',
+    });
+    expect(candidates).toEqual([
+      'C:\\Users\\user\\AppData\\Roaming\\kilo\\kilo.db',
+      'C:\\Users\\user\\AppData\\Local\\kilo\\kilo.db',
+    ]);
+  });
 });
 
 describe('findExistingDbPath', () => {

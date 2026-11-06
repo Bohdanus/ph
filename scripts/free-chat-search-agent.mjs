@@ -15,6 +15,7 @@
 import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { platform } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { completeWithFreeModel } from './free-model-pool.mjs';
 import { redactSensitiveText, sanitizeErrorMessage } from './lib/secrets.mjs';
 
@@ -870,7 +871,7 @@ function resolveCodexDbCandidates(opts = {}) {
 }
 
 // Run CLI if executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => process.exit(code))
     .catch((err) => {

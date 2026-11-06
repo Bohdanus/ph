@@ -321,7 +321,7 @@ describe('SidebarLeft overflow', () => {
       expect(toolsOnTiles() + inFlyout, `tools reachable at ${slotHeight}px of slot`).toBe(toolCount);
       unmount();
     }
-  });
+  }, 15_000);
 
   it('bounds the three-dots menu to the window and lets it scroll', () => {
     // The defect this pins: a menu as tall as its contents, in a `position: fixed` overlay

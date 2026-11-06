@@ -4,7 +4,9 @@ import { readdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { COMPLETION_TIMEOUT_MS, resolveKiloCli, runKiloCompletion } from './lib/free-model-kilo.mjs';
+import { resolveCommandShim } from './lib/windows-command-shim.mjs';
 import { sanitizeForLogging, sanitizeErrorMessage, sanitizeErrorStack } from './lib/secrets.mjs';
 import {
   activeQuarantineKeys,
@@ -571,8 +573,11 @@ const OPENCODE_TOOL_DENY_CONFIG = JSON.stringify({
 });
 
 export async function runOpenCodeCompletion({ command = 'opencode', model, prompt, maxTokens = 1200 }) {
-  if (typeof model !== 'string' || !model.endsWith('-free')) {
+  if (typeof model !== 'string' || !/^[A-Za-z0-9._/-]+-free$/.test(model)) {
     return { error: 'OpenCode model is not an eligible free catalog ID' };
+  }
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4000) {
+    return { error: 'Invalid token limit' };
   }
   const directory = await mkdtemp(join(tmpdir(), 'free-model-opencode-'));
   const promptPath = join(directory, 'request.txt');
@@ -586,21 +591,25 @@ export async function runOpenCodeCompletion({ command = 'opencode', model, promp
       OPENCODE_DISABLE_PRUNE: '1',
     };
     const events = await new Promise((resolve, reject) => {
-      const child = spawn(
-        command,
-        [
-          '--standalone',
-          'run',
-          '--format',
-          'json',
-          '--model',
-          `opencode/${model}`,
-          '--file',
-          promptPath,
-          `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
-        ],
-        { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false }
-      );
+      const args = [
+        '--standalone',
+        'run',
+        '--format',
+        'json',
+        '--model',
+        `opencode/${model}`,
+        '--file',
+        promptPath,
+        `Answer the attached request concisely (about ${maxTokens} tokens or fewer). Do not use tools.`,
+      ];
+      const commandShim = resolveCommandShim(command, args);
+      const child = spawn(commandShim.command, commandShim.args, {
+        cwd: directory,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+        ...commandShim.spawnOptions,
+      });
       const chunks = [];
       let outputBytes = 0;
       let killTimer;
@@ -1321,7 +1330,7 @@ export async function main(
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .then((code) => {
       process.exitCode = code;

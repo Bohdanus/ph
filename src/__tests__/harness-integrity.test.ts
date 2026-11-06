@@ -894,7 +894,8 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
       patterns.every((pattern) => typeof pattern === 'string'),
       'a function matcher is accepted by the watcher but is not a glob, and would throw here instead of failing'
     ).toBe(true);
-    const isIgnored = (absolutePath: string) => patterns.some((pattern) => matchesGlob(pattern, absolutePath));
+    const isIgnored = (absolutePath: string) =>
+      patterns.some((pattern) => matchesGlob(pattern.replaceAll('\\', '/'), absolutePath.replaceAll('\\', '/')));
 
     // Everything this checkout actually serves stays watched.
     for (const served of ['src/main.tsx', 'index.html', 'tsconfig.json', 'vite.config.ts', 'src/index.scss']) {
@@ -951,6 +952,7 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
   let playwrightConfig: PlaywrightConfig;
   let playwrightTestIgnore: readonly string[] = [];
 
+  // The full Windows gate can push this filesystem/config scan past Vitest's 10s hook default.
   beforeAll(async () => {
     e2eSpecFiles = walkTestFiles(join(REPO_ROOT, 'e2e'), /\.spec\.ts$/);
     e2eUnitTestFiles = walkTestFiles(join(REPO_ROOT, 'e2e'), /\.unit\.test\.ts$/);
@@ -974,7 +976,7 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
     e2eNonSpecTsFiles = walkTestFiles(join(REPO_ROOT, 'e2e'), /\.tsx?$/).filter(
       (file) => !e2eSpecFiles.includes(file) && !playwrightTestIgnore.some((pattern) => matchesGlob(pattern, file))
     );
-  });
+  }, 30_000);
 
   it('locates the repository root from this file, not from the working directory', () => {
     expect(

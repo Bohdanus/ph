@@ -1499,7 +1499,7 @@ describe('unregistered worktree directories', () => {
 
     const validatedKilo = join(root, '.kilo-validated');
     renameSync(join(root, '.kilo'), validatedKilo);
-    symlinkSync(outsideKilo, join(root, '.kilo'), 'dir');
+    symlinkSync(outsideKilo, join(root, '.kilo'), process.platform === 'win32' ? 'junction' : 'dir');
 
     expect(orphanRemovalRefusal(orphan)).toMatchObject({ removed: false, code: 'orphan-removal-unsupported' });
     expect(readFileSync(join(outsideVictim, 'keep.txt'), 'utf8')).toBe('outside data\n');
