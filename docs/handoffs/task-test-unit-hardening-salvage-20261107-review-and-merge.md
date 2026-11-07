@@ -3,7 +3,7 @@
 **Branch:** `task/test-unit-hardening-salvage-20261107`
 **Base main:** `b5df9dbc272e208dc04768259228e13abdad33fb`
 **Source commits:** `6badc372ea1e21bc0482bc63c56047e2dddd826f`, `b218b555f156045f59af278c43036a71f82c11df`
-**Status:** Validation passes; independent review and the final repository-state check remain before landing.
+**Status:** Validation passes; the final pinned landing check remains.
 
 ## Provenance and scope
 
@@ -13,9 +13,9 @@ Current `main` already contains the bitmap test's global-stub cleanup, so that s
 
 ## Review and validation
 
-The complete unit suite passes: 421 files, 12,231 passed, 207 expected failures, and 2 skipped. The E2E helper unit suite passes: 22 files, 1,565 passed, and 12 expected failures. Typecheck, lint, and production build pass. The citation test was also corrected to classify HANDOFF section 148 as retired, matching the current deleted-number heading; its focused test passes.
+The complete unit suite passes on the synchronized candidate: 421 files, 12,231 passed, 207 expected failures, and 2 skipped. The E2E helper unit suite passes: 22 files, 1,565 passed, and 12 expected failures. Typecheck, lint, and production build pass; lint reports 78 warnings and zero errors. The citation test classifies HANDOFF section 148 as retired, matching its deleted-number heading.
 
-Independent read-only review of the committed candidate and the final repository-state check remain pending. The older source branch's review and test counts are not treated as evidence for this candidate.
+Two independent full-diff Kilo reviews of source candidate `05056df26a9b749936a2eab496a0ef811bf0f5ce` returned no actionable findings. Focused reviews found that the history-panel fallback test did not exercise a redo-side row; that assertion was strengthened in the reviewed candidate to use a one-entry safe prefix and preserve the later row. Root verification confirmed the cursor-map expectation includes the helper's prepended baseline row. Main later advanced to `b5df9dbc272e208dc04768259228e13abdad33fb`; the merge into this branch changed none of the reviewed source paths. Post-sync model review attempts ended in Kilo 429s or incomplete OpenRouter responses and are not counted as review evidence. The final source diff remains the reviewed diff; the handoff base-SHA correction was checked against the live refs.
 
 ## Landing gate
 
