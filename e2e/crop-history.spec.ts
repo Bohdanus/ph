@@ -4047,32 +4047,32 @@ test.describe('Crop history', () => {
         ).toBe(0);
         expect(
           comparison.frameDifferingPixels,
-          `${comparison.layerId} frame raster at ${comparison.stage} may differ only at two antialiased edge pixels; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} frame raster at ${comparison.stage} differs; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
+        ).toBe(0);
         expect(
           comparison.offscreenFrameNonEdgeDifferingPixels,
           `${comparison.layerId} OffscreenCanvas frame raster at ${comparison.stage} differs away from an alpha boundary; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.offscreenFrameDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas frame raster at ${comparison.stage} may differ only at two antialiased edge pixels`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} OffscreenCanvas frame raster at ${comparison.stage} differs; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
+        ).toBe(0);
         expect(
           comparison.tightBitmapNonEdgeDifferingPixels,
           `${comparison.layerId} full tight bitmap at ${comparison.stage} differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.tightBitmapDifferingPixels,
-          `${comparison.layerId} full tight bitmap at ${comparison.stage} may differ at no more than two alpha-boundary pixels with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} full tight bitmap at ${comparison.stage} differs; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+        ).toBe(0);
         expect(
           comparison.offscreenTightBitmapNonEdgeDifferingPixels,
           `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
         ).toBe(0);
         expect(
           comparison.offscreenTightBitmapDifferingPixels,
-          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} may differ at no more than two alpha-boundary pixels with identical RGB values`
-        ).toBeLessThanOrEqual(2);
+          `${comparison.layerId} OffscreenCanvas tight bitmap at ${comparison.stage} differs; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+        ).toBe(0);
       }
       expect(untransformedControl.transitionResults).toHaveLength(fixture.transitions.length);
       for (const [index, transition] of untransformedControl.transitionResults.entries()) {
@@ -4095,32 +4095,32 @@ test.describe('Crop history', () => {
           ).toBe(0);
           expect(
             comparison.frameDifferingPixels,
-            `frame-only ${comparison.layerId} raster may differ only at two antialiased edge pixels; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} raster differs; samples ${JSON.stringify(comparison.frameDifferingSamples)}`
+          ).toBe(0);
           expect(
             comparison.offscreenFrameNonEdgeDifferingPixels,
             `frame-only ${comparison.layerId} OffscreenCanvas raster differs away from an alpha boundary; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.offscreenFrameDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas raster may differ only at two antialiased edge pixels`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} OffscreenCanvas raster differs; samples ${JSON.stringify(comparison.offscreenFrameDifferingSamples)}`
+          ).toBe(0);
           expect(
             comparison.tightBitmapNonEdgeDifferingPixels,
             `frame-only ${comparison.layerId} tight bitmap differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.tightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} full tight bitmap may differ at no more than two alpha-boundary pixels with identical RGB values; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} full tight bitmap differs; samples ${JSON.stringify(comparison.tightBitmapDifferingSamples)}`
+          ).toBe(0);
           expect(
             comparison.offscreenTightBitmapNonEdgeDifferingPixels,
             `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs outside an alpha boundary with identical RGB values; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
           ).toBe(0);
           expect(
             comparison.offscreenTightBitmapDifferingPixels,
-            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap may differ at no more than two alpha-boundary pixels with identical RGB values`
-          ).toBeLessThanOrEqual(2);
+            `frame-only ${comparison.layerId} OffscreenCanvas tight bitmap differs; samples ${JSON.stringify(comparison.offscreenTightBitmapDifferingSamples)}`
+          ).toBe(0);
         }
       }
       // This control isolates the retained operation within each renderer; the broader frame-only
