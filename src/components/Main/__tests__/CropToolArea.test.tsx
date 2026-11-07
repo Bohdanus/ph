@@ -124,7 +124,7 @@ vi.mock('../../../contexts/layer-renderer.ts', () => ({
 }));
 
 vi.mock('../../../hooks/useRect.ts', () => ({
-  ROTATE_HANDLE_OFFSET: 12,
+  ROTATE_HANDLE_OFFSET: 36,
   computeOverlayColor: vi.fn(() => 'rgba(255, 255, 255, 0.8)'),
   drawCropOverlay: vi.fn(),
   useRect: (props: UseRectProps) => {

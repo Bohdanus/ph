@@ -38,6 +38,19 @@ and [`KILO.md`](KILO.md).
 - Root agent reconciles child claims against source files and required primary
   sources, performs validation, and owns the final review/landing process.
 
+## Main landing recovery
+
+Follow the 15-minute and four-hour owner alerts in
+[`ORCHESTRATION.md#main-landing-ownership-and-deadlock-recovery`](ORCHESTRATION.md#main-landing-ownership-and-deadlock-recovery).
+The user explicitly authorizes one paid recovery case: when a four-hour landing alert names a
+confirmed-dead owner chat and the recorded landing process has stopped, launch a `gpt-6-luna`
+subagent with `xhigh` reasoning to take recovery ownership. Verify liveness from structured host
+metadata and confirm the full holder process tree stopped; never inspect the dead chat transcript. The active agent that sees the alert is
+responsible for launching the delegate, since a repository script cannot invoke the host's
+subagent tool. Give Luna the recovery worktree path, current lease token, and a bounded task to
+preserve the old state and restore a clean landing worktree. The repository CLI records and checks
+the lease but cannot prove which model the host actually launched.
+
 ## Token-intensive research
 
 - Bulk web research and chat-history mining MUST use a verified free read-only

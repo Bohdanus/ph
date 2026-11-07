@@ -518,3 +518,56 @@ Local `main` at `ebb27af3286b5f2ca2ea113179314135a91c5a9f` and fetched `origin/m
 
 - 99b46dd7 (99b46dd7d101639de511ed489dea2e2ca9f0594c) "Merge origin/main into sync candidate" — Test
 - 8c3acd6a (8c3acd6a970a0c30e37ebfc25a4513d804366d40) "Merge sync/core-remote-bba53-20261106 into main" — bohdan
+
+## 2026-11-07 — origin/main (fetch + merge into local main)
+
+Local `main` at `5924024c527122cd8766431fab0bbf0fb1b0fbf2` and fetched `origin/main` at `e24fc2add4cfad7885861a847a44a021f08bcd74` shared merge base `8c3acd6a970a0c30e37ebfc25a4513d804366d40`. This landing imports the 18 remote-only commits not already on local `main`:
+
+- eb6271fe (eb6271feb70467eb9d38302c18354b473165e546) "Redact SigV4 signatures in shared text sanitization" — Bohdan Kalynovskyi (Dan)
+- 6aae328a (6aae328a791f15ff8580616bd992b71a851310ec) "Preserve safe SigV4 URL query context" — Bohdan Kalynovskyi (Dan)
+- b8e64366 (b8e64366bc88571cdd0263111ad3a2b268e55a6f) "Redact unknown URL parameters around SigV4 keys" — Bohdan Kalynovskyi (Dan)
+- 163c9cd1 (163c9cd1e2673feff37a2514c7ff10c22f9c7339) "Merge audit/overnight-hardening-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- e3d00d45 (e3d00d4573c19fb2a70430e8c00eb7a45cfdc225) "feat(move): add arrow-key layer nudging" — Bohdan Kalynovskyi (Dan)
+- 085d8e1e (085d8e1e81f09654c6aca22a4813947dcd419ae6) "test(move): attach input in nudge guard test" — Bohdan Kalynovskyi (Dan)
+- 7d2b31dc (7d2b31dc31a1331d383f0a1ffc8ca756815228c2) "test(move): harden nudge shortcut guards" — Bohdan Kalynovskyi (Dan)
+- 0f5fa22f (0f5fa22f037208d046c26c23465418008ff86604) "test(move): cover repeated nudge state" — Bohdan Kalynovskyi (Dan)
+- c765494f (c765494f0273b7ed26a1a14fb2dfb0defa97b18f) "fix(move): accumulate rapid layer nudges" — Bohdan Kalynovskyi (Dan)
+- ebb27af3 (ebb27af3286b5f2ca2ea113179314135a91c5a9f) "Merge task/move-arrow-nudge-codex-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- b7305d9b (b7305d9bbb4eef60c7711e44e30dc5ca8733dd09) "Sync origin/main into local candidate" — Bohdan Kalynovskyi (Dan)
+- 8670e04c (8670e04c0e6ca9fbf05bab9d1305d39d8be21317) "Merge sync/origin-main-20261106 into main" — Bohdan Kalynovskyi (Dan)
+- 1007111e (1007111e59c7ee813390b45ac102418e30e62d93) "fix(logging): harden shared secret sanitization" — Bohdan Kalynovskyi (Dan)
+- 720046df (720046df497f93d127e89f46ec49d618f9d0d95b) "test: enforce measured coverage floors" — Bohdan Kalynovskyi (Dan)
+- e9a5d279 (e9a5d279961854015c98ec7e3a24bb1f8483992c) "feat(text): preview Small Caps through the layer compositor" — Bohdan Kalynovskyi (Dan)
+- 6e99240a (6e99240a0358cab54291b1337e98dc169034abe8) "merge: harden CI coverage, secrets, and Small Caps preview" — Bohdan Kalynovskyi (Dan)
+- 5a70a672 (5a70a672eaae167aac80e4ff48c529b40a3a4dd7) "test(e2e): harden selection history assertions" — Bohdan Kalynovskyi (Dan)
+- e24fc2ad (e24fc2add4cfad7885861a847a44a021f08bcd74) "merge: harden selection history E2E coverage" — Bohdan Kalynovskyi (Dan)
+
+## 2026-11-07 — origin/main (fetch + merge into local main)
+
+Local `main` at `b877c79ae49d45f9bd8dbf5bebf84415cc218799` and fetched `origin/main` at `e4c0f3a90849793a77dfcc5c75a8d413809107e4` shared merge base `e24fc2add4cfad7885861a847a44a021f08bcd74`. This landing imports the 25 remote-only commits not already on local `main`:
+
+- e4c0f3a9 (e4c0f3a90849793a77dfcc5c75a8d413809107e4) "Merge sync/reconcile-main-origin-20261106 into main" — bohdan
+- db4cf787 (db4cf787f57f45b1e69fedbcb916304434a687fb) "fix: redact suffixed key credentials" — Test
+- 9ebb64af (9ebb64af3dcb4d2fd8e39247c25dd5e7646da5fe) "fix: match fractional small-caps canvas bounds" — Test
+- 7c5eca4b (7c5eca4be4a52977adf0f9bddaa26ed33d516197) "Merge latest local main for origin sync" — Test
+- 21e440fe (21e440fe861fb6cce629dc1c60bde0c0fe8d5ec5) "fix: redact passphrase values" — Test
+- c24450a9 (c24450a97be9914622231bd0ec05d80b46840a72) "Merge fix/main-landing-occupancy-20261106 into main" — bohdan
+- c423f104 (c423f10479093c4482f02ce14745b311b0846388) "Merge current main into landing occupancy task" — bohdan
+- 20d563d1 (20d563d1f38dd64cdc07ec58eb89cbb638e1d276) "fix: preserve nudge history rollback state" — Test
+- ae00bc1f (ae00bc1f542cbedcb990901da6e47f825f13dc84) "feat: guard main landing ownership" — bohdan
+- 764e5bfd (764e5bfd11e83b8aed57976449232b936b5e0cdb) "Merge live origin/main into reconciliation candidate" — Test
+- 59ed3c95 (59ed3c9552fa3f8660f52646d9d5b98720373e2d) "Merge latest local main into reconciliation candidate" — Test
+- 5924024c (5924024c527122cd8766431fab0bbf0fb1b0fbf2) "Merge feat/rotate-cursor-eight-way-20261106 into main" — bohdan
+- cc6a6bdf (cc6a6bdf14ceb2cd1c42446f8a13582720c0e5d7) "Sync main into feat/rotate-cursor-eight-way-20261106 for harvest" — bohdan
+- 415b3b02 (415b3b024b46faef49ddcf12c1d0efd487a403e9) "feat: add eight-way shape rotation cursor" — bohdan
+- 73c9593a (73c9593a5a8e4bca308a9b69ad2fd5f34f397e82) "docs: hand off pending origin-main reconciliation" — Test
+- 4b32f638 (4b32f63840f6927150ce87f1b0ac0461d083be79) "Merge cached origin/main into reconciliation candidate" — Test
+- b02eddb6 (b02eddb646c222a29aedd1c8785eede9daf692d6) "Merge e2e/tooling-land-20261106 into main" — bohdan
+- e1576a20 (e1576a209e3a81acde3b6283c08855fe1d882b8b) "fix(e2e): fail closed on unverified origins" — bohdan
+- fc34e285 (fc34e285a2bb6373c1af139289daa9da923bcef0) "refactor(e2e): split test tooling modules" — bohdan
+- 6b76be2d (6b76be2dec1c98ea9a6276ca295b83b029dd3482) "Merge task/text-toolbar-review-20261106-2021 into main" — bohdan
+- 64153bd7 (64153bd7131b70262c1e03c7bd5457503678e38a) "test(text): cover keyboard activation of line-height preset" — bohdan
+- db000fa0 (db000fa08dc34809afc50f3816f1487d011d50a3) "Sync main into task/text-toolbar-review-20261106-2021 for harvest" — bohdan
+- b69255c3 (b69255c3548af88d23d67e5e48563f4bdafef471) "fix(text): make line-height preset keyboard accessible" — bohdan
+- 1596d2f4 (1596d2f43018b3a80717675abdd594414f2830a6) "Merge task/stale-harvest-20261106 into main" — bohdan
+- 8d0b8bc4 (8d0b8bc491d440b7bb30f7085822aff56c467584) "test: make gate fixtures Windows-safe" — bohdan

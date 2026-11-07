@@ -514,10 +514,13 @@ async function rotateDraftByNinetyDegrees(page: Page, overlay: BoundingBox): Pro
   const surface = page.locator('.cursor-text');
   const centerX = overlay.x + overlay.width / 2;
   const centerY = overlay.y + overlay.height / 2;
-  const rotationGrip = { x: centerX, y: overlay.y - 12 };
+  const rotationGrip = { x: centerX, y: overlay.y - 36 };
 
   await page.mouse.move(rotationGrip.x, rotationGrip.y);
-  await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
+  await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS(
+    'cursor',
+    /url.*data:image\/svg\+xml/
+  );
 
   await page.mouse.down();
   const rotationRadius = centerY - rotationGrip.y;

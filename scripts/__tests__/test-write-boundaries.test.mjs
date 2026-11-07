@@ -29,8 +29,8 @@ const REVIEWED = {
   },
   'e2e-run.test.mjs': {
     scope:
-      'Board, run-record, and filesystem fixtures are temporary; the live run record and sentinel are read-only tripwires.',
-    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:rmSync=3 subprocess:spawnSync=2 filesystem-write:writeFileSync=1`,
+      'Board, run-record, process-tree, and filesystem fixtures are temporary; the live run record and sentinel are read-only tripwires.',
+    patterns: `filesystem-write:mkdtempSync=3 filesystem-write:rmSync=3 subprocess:spawnSync=3 filesystem-write:writeFileSync=1 subprocess:spawn=1`,
   },
   'e2e-skip-baseline.test.mjs': {
     scope: 'Baseline and report fixtures use unique OS temporary directories.',
@@ -42,8 +42,8 @@ const REVIEWED = {
   },
   'free-chat-search-agent.test.mjs': {
     scope:
-      'Fake SQLite, database, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
-    patterns: `filesystem-write:mkdir=1 filesystem-write:mkdtemp=1 filesystem-write:rm=1 filesystem-write:writeFile=3 subprocess:spawnSync=6`,
+      'Fake SQLite, failing CLI, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
+    patterns: `filesystem-write:mkdtemp=3 filesystem-write:writeFile=6 subprocess:spawnSync=7 filesystem-write:rm=3 filesystem-write:mkdir=4`,
   },
   'free-chat-search.test.mjs': {
     scope: 'Search database fixtures use unique OS temporary directories and are removed after the test.',
@@ -97,8 +97,8 @@ const REVIEWED = {
   },
   'merge-takeover-guard.test.mjs': {
     scope:
-      'Git/hook fixtures use temporary repositories; process environment changes are restored and PATH changes are explicit.',
-    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=46 filesystem-write:mkdirSync=18 filesystem-write:copyFileSync=3 filesystem-write:chmodSync=27 filesystem-write:rmSync=8 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
+      'Temporary repositories model the owner-tracked landing wrapper; project markers, installer stubs, hook scripts, and process environment changes remain isolated to each temporary repository.',
+    patterns: `subprocess:execFileSync=17 filesystem-write:writeFileSync=50 filesystem-write:mkdirSync=20 filesystem-write:copyFileSync=2 filesystem-write:chmodSync=28 filesystem-write:rmSync=7 process-env-write:assignment:KILO_EXPECTED_MAIN_SHA=3 process-env-write:assignment:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:assignment:KILO_EXPECTED_TREE_SHA=3 process-env-write:assignment:KILO_EXPECTED_BRANCH=3 process-env-write:assignment:KILO_EXPECTED_CHAT_ID=3 process-env-write:delete:KILO_EXPECTED_MAIN_SHA=3 process-env-write:delete:KILO_EXPECTED_INCOMING_SHA=3 process-env-write:delete:KILO_EXPECTED_TREE_SHA=3 process-env-write:delete:KILO_EXPECTED_BRANCH=3 process-env-write:delete:KILO_EXPECTED_CHAT_ID=3 subprocess:spawnSync=3 filesystem-write:mkdtempSync=2 process-env-write:assignment:GIT_REFLOG_ACTION=12 process-env-write:assignment:PATH=16 process-env-write:assignment:REAL_GIT_PATH=16 process-env-write:delete:PATH=8 process-env-write:delete:REAL_GIT_PATH=8 process-env-write:delete:GIT_REFLOG_ACTION=1`,
   },
   'mirror-e2e.test.mjs': {
     scope: 'Mirror and git fixtures use temporary repositories and directories.',
@@ -369,7 +369,7 @@ describe('script-test resource boundary audit', () => {
       if (!expected) continue;
 
       expect(expected.scope, `${name} needs a reviewed resource scope`).toBeTruthy();
-      const actualPatterns = summarize(findings);
+      const actualPatterns = summarize(findings).sort();
       const expectedPatterns = expected.patterns.trim() ? expected.patterns.trim().split(/\s+/).sort() : [];
       if (JSON.stringify(actualPatterns) !== JSON.stringify(expectedPatterns)) {
         stale.push(`${name}: expected [${expectedPatterns.join(', ')}], found [${findingsWithLines(findings)}]`);
