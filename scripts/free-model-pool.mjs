@@ -412,11 +412,12 @@ export function retryAfterDelayMs(response, now = Date.now()) {
   const value = response?.headers?.get?.('retry-after')?.trim();
   if (!value) return null;
 
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) {
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
     const delayMs = seconds * 1000;
     return Number.isFinite(delayMs) ? Math.ceil(delayMs) : Number.MAX_SAFE_INTEGER;
   }
+  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) return null;
 
   const retryAt = Date.parse(value);
   return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null;
