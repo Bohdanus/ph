@@ -70,6 +70,10 @@ const renderArea = (mode: ViewToolMode = 'hand') => {
   return { ...view, container, surface };
 };
 
+const setSurfaceBounds = (surface: HTMLDivElement) => {
+  surface.getBoundingClientRect = () => ({ x: 0, y: 0, width: 800, height: 600 }) as DOMRect;
+};
+
 describe('ViewToolArea', () => {
   beforeEach(() => {
     state.viewState = {
@@ -271,35 +275,37 @@ describe('ViewToolArea', () => {
       const { surface } = renderArea('zoom');
 
       fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
-      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 110, clientY: 100 });
       fireEvent.pointerUp(surface, { button: 0, pointerId: 1, clientX: 110, clientY: 100 });
 
-      expect(state.setViewState).toHaveBeenCalled();
+      expect(state.setViewState).toHaveBeenCalledTimes(1);
+      const call = state.setViewState.mock.calls[0][0] as ViewState;
+      expect(call.zoom).toBeCloseTo(Math.pow(2, 10 / 160));
     });
   });
 
   describe('Rotate-view mode gestures', () => {
     it('rotates on pointer move', () => {
       const { surface } = renderArea('rotate-view');
+      setSurfaceBounds(surface);
 
-      fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: 400, clientY: 300 });
-      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 450, clientY: 300 });
+      fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: 500, clientY: 300 });
+      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 500, clientY: 200 });
 
       expect(state.setViewState).toHaveBeenCalled();
       const call = state.setViewState.mock.calls[0][0] as ViewState;
-      expect(call.rotation).not.toBe(0);
+      expect(call.rotation).toBe(-45);
     });
 
     it('Shift key snaps rotation to 15-degree increments', () => {
       const { surface } = renderArea('rotate-view');
+      setSurfaceBounds(surface);
 
-      fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: 400, clientY: 300 });
-      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 410, clientY: 300, shiftKey: true });
+      fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: 500, clientY: 300 });
+      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 480, clientY: 280, shiftKey: true });
 
       expect(state.setViewState).toHaveBeenCalled();
       const call = state.setViewState.mock.calls[0][0] as ViewState;
-      // -0 === 0 in JS, so we check the absolute value
-      expect(Math.abs(call.rotation % 15)).toBe(0);
+      expect(call.rotation).toBe(-15);
     });
 
     it('double-click resets view', () => {
