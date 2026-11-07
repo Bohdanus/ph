@@ -1,5 +1,6 @@
 import {
   planToolbarOverflow,
+  toolbarFitThresholds,
   type ToolbarOverflowPlan,
   type ToolbarRowMetrics,
   type ToolbarSlot,
@@ -33,6 +34,8 @@ import {
  * and the store below is where that remembering happens.
  */
 export type ToolbarFitStore = {
+  readonly containerName: string;
+  readonly scopeId: string;
   /** Handed the slot and the tools box by their ref callbacks. `null` detaches. */
   attach(key: 'slot' | 'tools', element: HTMLElement | null): void;
   /**
@@ -56,6 +59,8 @@ export type ToolbarFitStore = {
   setSlots(slots: readonly ToolbarSlot[]): void;
   subscribe(onStoreChange: () => void): () => void;
   getSnapshot(): number;
+  getCurrentFit(): { version: number; plan: ToolbarOverflowPlan };
+  dispose(): void;
   /**
    *
    * The value is always the current one, and this comment exists because that is not obvious
@@ -137,14 +142,19 @@ const readRowMetrics = (
   // The tile is read from the DOM rather than from a constant, so `h-11` can become `h-12`
   // without anything here knowing. Any rendered tile answers, including the three-dots tile,
   // so the measurement survives a collapse that empties every group.
-  const tile = tools.querySelector<HTMLElement>('[data-toolbar-tile]');
+  const tile = Array.from(tools.querySelectorAll<HTMLElement>('[data-toolbar-tile]')).find(
+    (candidate) => candidate.getBoundingClientRect().height > 0
+  );
   if (!tile) return { ...UNMEASURED, availableHeight, sectionBreakHeight: rememberedSectionBreakHeight };
 
   const tileHeight = tile.getBoundingClientRect().height;
   if (tileHeight <= 0) return { ...UNMEASURED, availableHeight, sectionBreakHeight: rememberedSectionBreakHeight };
 
-  const lists = Array.from(tools.querySelectorAll<HTMLElement>(':scope > ul'));
+  const lists = Array.from(tools.querySelectorAll<HTMLElement>(':scope > ul')).filter(
+    (list) => !list.hasAttribute('data-toolbar-fit-overflow-list')
+  );
   const rowGap = lists.length > 0 ? length(getComputedStyle(lists[0]).rowGap) : 0;
+  const visibleLists = lists.filter((list) => getComputedStyle(list).display !== 'none');
 
   // The section separator is what a section boundary costs ON TOP OF the grid's row gap, and
   // the way to read it is the distance from the previous list's BOTTOM to this section's
@@ -163,13 +173,14 @@ const readRowMetrics = (
   // a collapse that empties a whole section cannot make the separator unmeasurable: an empty
   // `<ul>` is zero-height, so the distance to the section after it is unchanged either way.
   let sectionBreakHeight = 0;
-  for (let index = 1; index < lists.length; index += 1) {
-    const firstTile = lists[index].firstElementChild;
-    if (!(firstTile instanceof HTMLElement)) continue;
+  for (let index = 1; index < visibleLists.length; index += 1) {
+    const firstTile = visibleLists[index].querySelector<HTMLElement>('[data-toolbar-tile]');
+    if (!firstTile) continue;
     let previous = index - 1;
-    while (previous >= 0 && lists[previous].childElementCount === 0) previous -= 1;
+    while (previous >= 0 && visibleLists[previous].childElementCount === 0) previous -= 1;
     if (previous < 0) continue;
-    const between = firstTile.getBoundingClientRect().top - lists[previous].getBoundingClientRect().bottom - rowGap;
+    const between =
+      firstTile.getBoundingClientRect().top - visibleLists[previous].getBoundingClientRect().bottom - rowGap;
     if (between > 0) {
       sectionBreakHeight = between;
       break;
@@ -208,10 +219,53 @@ const samePlan = (a: ToolbarOverflowPlan, b: ToolbarOverflowPlan): boolean =>
   a.collapsedKeys.length === b.collapsedKeys.length &&
   a.collapsedKeys.every((key, index) => key === b.collapsedKeys[index]);
 
+let nextToolbarFitId = 0;
+
+const cssString = (value: string): string => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+const fitStyleText = (
+  scopeId: string,
+  containerName: string,
+  slots: readonly ToolbarSlot[],
+  metrics: ToolbarRowMetrics
+): string => {
+  const scope = `[data-toolbar-fit-scope="${scopeId}"]`;
+  const overflowList = `${scope} > ul[data-toolbar-fit-overflow-list]`;
+  const rules = [`${overflowList} { display: none; margin-top: ${metrics.rowGap}px; }`];
+  const thresholds = toolbarFitThresholds(slots, metrics);
+  const singleColumn = slots.some((slot) => slot.sectionIndex > 0);
+  const sections = [...new Set(slots.map((slot) => slot.sectionIndex))];
+
+  for (const [rowIndex, threshold] of thresholds.entries()) {
+    const collapsedKeys = slots.slice(rowIndex).flatMap((slot) => slot.keys);
+    const selectors = collapsedKeys.map((key) => `${scope} [data-toolbar-fit-key="${cssString(key)}"]`);
+    if (singleColumn) {
+      for (const sectionIndex of sections) {
+        const firstRow = slots.findIndex((slot) => slot.sectionIndex === sectionIndex);
+        if (firstRow >= rowIndex) {
+          selectors.push(`${scope} > ul[data-toolbar-fit-section="${sectionIndex}"]`);
+        }
+      }
+    }
+    const declarations = ['display: grid;'];
+    if (rowIndex === 0) declarations.push('margin-top: 0;');
+    rules.push(
+      `@container ${containerName} (height >= 1px) and (height < ${threshold}px) { ${selectors.join(', ')} { display: none; } ${overflowList} { ${declarations.join(' ')} } }`
+    );
+  }
+
+  return rules.join('\n');
+};
+
 export const createToolbarFitStore = (): ToolbarFitStore => {
+  const id = ++nextToolbarFitId;
+  const scopeId = `toolbar-fit-${id}`;
+  const containerName = `${scopeId}-container`;
   const elements: { slot: HTMLElement | null; tools: HTMLElement | null } = { slot: null, tools: null };
   const listeners = new Set<() => void>();
   let observer: ResizeObserver | null = null;
+  let styleElement: HTMLStyleElement | null = null;
+  let styleSignature = '';
 
   // The snapshot is a version NUMBER, and the metrics live beside it in a one-entry table
   // rather than in the snapshot itself. `useSyncExternalStore` re-reads its snapshot after every
@@ -243,6 +297,20 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
    */
   let rememberedSectionBreakHeight = 0;
 
+  const updateFitStyles = (metrics: ToolbarRowMetrics): void => {
+    if (!hasSlots || !elements.slot || !elements.tools || metrics.tileHeight <= 0) return;
+    const signature = JSON.stringify([slots, metrics.tileHeight, metrics.rowGap, metrics.sectionBreakHeight]);
+    if (signature === styleSignature) return;
+    styleSignature = signature;
+
+    if (styleElement === null) {
+      styleElement = document.createElement('style');
+      styleElement.dataset.toolbarFitStyles = scopeId;
+      document.head.append(styleElement);
+    }
+    styleElement.textContent = fitStyleText(scopeId, containerName, slots, metrics);
+  };
+
   const observe = () => {
     observer?.disconnect();
     observer = null;
@@ -255,6 +323,7 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
   function publish() {
     const next = readRowMetrics(elements.slot, elements.tools, rememberedSectionBreakHeight);
     if (next.sectionBreakHeight > 0) rememberedSectionBreakHeight = next.sectionBreakHeight;
+    updateFitStyles(next);
     // With no row model yet the measurements are what there is to compare, because there is
     // no plan to compare them through. That is the mount path, and it has to publish or the
     // rail would never be fitted at all.
@@ -271,9 +340,16 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
   }
 
   return {
+    containerName,
+    scopeId,
     attach(key, element) {
       if (elements[key] === element) return;
       elements[key] = element;
+      if (key === 'slot' && element) {
+        element.style.containerType = 'size';
+        element.style.containerName = containerName;
+      }
+      if (key === 'tools' && element) element.dataset.toolbarFitScope = scopeId;
       // The first attachment measures immediately, and it happens in a ref callback during
       // commit — so the rail is fitted before the browser paints rather than showing an
       // overflowing first frame and collapsing on the next one.
@@ -312,6 +388,21 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
       };
     },
     getSnapshot: () => version,
+    getCurrentFit() {
+      return {
+        version,
+        plan: planToolbarOverflow(slots, readRowMetrics(elements.slot, elements.tools, rememberedSectionBreakHeight)),
+      };
+    },
+    dispose() {
+      observer?.disconnect();
+      observer = null;
+      listeners.clear();
+      styleElement?.remove();
+      styleElement = null;
+      styleSignature = '';
+      hasSlots = false;
+    },
     // The metrics behind a snapshot value. The value is only ever the current one — see the
     // note where `published` is declared — so this is a lookup with one row, and saying so is
     // the honest shape of it. It stays a function rather than a property so the memo in

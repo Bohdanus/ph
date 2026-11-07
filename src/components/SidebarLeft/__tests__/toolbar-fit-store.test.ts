@@ -219,6 +219,26 @@ class ManualResizeObserver {
 describe('the toolbar fit store', () => {
   beforeEachSetup();
 
+  it('installs CSS fit rules before notifying subscribers about the measured plan', () => {
+    const rail = harness([10], 300);
+    const model = rows(10);
+    let styleAtNotification = '';
+    const release = rail.store.subscribe(() => {
+      styleAtNotification =
+        document.querySelector<HTMLStyleElement>(`style[data-toolbar-fit-styles="${rail.store.scopeId}"]`)
+          ?.textContent ?? '';
+    });
+
+    rail.store.setSlots(model);
+
+    expect(styleAtNotification).toContain(`@container ${rail.store.containerName} (height >= 1px) and (height <`);
+    expect(styleAtNotification).toContain('[data-toolbar-fit-key="s0-9"]');
+    expect(styleAtNotification).toContain('display: none;');
+
+    release();
+    rail.store.dispose();
+  });
+
   it('publishes when the plan changes, and stays silent while the plan does not', () => {
     // THE THROTTLE, as a count rather than as a description. The slot grows one pixel at a
     // time through a hundred frames, which is what a window drag is; a store that published
@@ -395,6 +415,7 @@ function beforeEachSetup(): void {
   });
   afterEach(() => {
     document.body.replaceChildren();
+    document.head.querySelectorAll('style[data-toolbar-fit-styles]').forEach((style) => style.remove());
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });

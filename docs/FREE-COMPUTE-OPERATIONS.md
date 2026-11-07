@@ -5,10 +5,9 @@ Current operating instructions for the free-model runner. Historical measurement
 
 ## Model preferences
 
-| Model                               | Rating      | Notes                                                                          |
-| ----------------------------------- | ----------- | ------------------------------------------------------------------------------ |
-| **NVIDIA Nemotron 3 Ultra (free)**  | **Best**    | Strong reasoning, reliable completions, preferred for all free inference tasks |
-| **XingChen Xing4.0 29B A4B (free)** | Alternative | Works for simple prompts; hits 429 under load                                  |
+| Model                              | Rating   | Notes                                                                          |
+| ---------------------------------- | -------- | ------------------------------------------------------------------------------ |
+| **NVIDIA Nemotron 3 Ultra (free)** | **Best** | Strong reasoning, reliable completions, preferred for all free inference tasks |
 
 ## Find credentials safely
 
@@ -49,8 +48,9 @@ protected environment setup to provide it. Check the account's daily counter wit
 node scripts/free-model-pool.mjs --openrouter-quota
 ```
 
-The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, tries Nemotron 3 Ultra
-first when it is present, then XingChen Xing4.0 as alternative. HTTP 401/402 exhaust the provider for the run; an inference HTTP 429 does
+The runner refreshes OpenRouter's public catalog, requires exact-zero pricing, and prefers Nemotron
+3 Ultra followed by XingChen only when those IDs appear in the live catalog. Other models retain
+catalog order. HTTP 401/402 exhaust the provider for the run; an inference HTTP 429 does
 so only when rate-limit headers or the daily counter show no requests remaining. Otherwise, the
 runner rotates among verified-free models within its per-run cap. A 429 from the quota endpoint is
 treated as an unknown counter, not proof that inference is exhausted. Inference gets five minutes;
@@ -76,9 +76,12 @@ tool call, or non-zero cost was reported. A provider 429 means its free quota is
 
 ## Groq
 
-The runner reads `GROQ_API_KEY` from its process environment; it does not read key files itself.
-This machine's saved-key convention is `~/.config/groq/api_key` and `~/.config/groq/api_key_*`.
-Choose the intended account; do not rotate through account files automatically. A successful
+The runner reads `GROQ_API_KEY` or comma-separated `GROQ_API_KEYS` from its process environment.
+It rotates only explicitly supplied keys after per-key 401/402/429 responses and does not read
+key files during inference. `--probe-groq` can check saved-key files separately. Use keys from
+distinct Free-plan organizations because Groq limits apply at the organization level. This
+machine's saved-key convention is `~/.config/groq/api_key` and `~/.config/groq/api_key_*`.
+A successful
 `/models` request proves the key is accepted, not that the organization is on Groq's Free plan.
 
 For a confirmed Free-plan organization, load the selected key only into the runner process:
@@ -99,7 +102,7 @@ result's provider/model before treating a run as a Groq smoke test.
 **Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
 relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
 
-**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq provides equivalent privacy with far better speed/reliability. No `--local-only` option exists; none needed — chat-history search data is already local, no secrets to hide.
+**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq is cloud inference, not local processing. Groq says inference data is not retained by default, but reliability and abuse logs may retain inputs and outputs for up to 30 days unless Zero Data Retention is enabled ([data handling](https://console.groq.com/docs/your-data)). In `scripts/free-chat-search.mjs`, `--local-only` is an alias for `--no-summarize`; both skip model inference. The `free-model-pool.mjs` runner does not accept these flags.
 
 ## Optional free-subagent wrapper
 
@@ -175,11 +178,10 @@ are also clamped to 1,024 tokens to account for hidden reasoning tokens.
 
 ### Catalog ordering
 
-Within each provider, candidate models are sorted by preference. Kilo and OpenRouter prefer
-`nvidia/nemotron-3-ultra-550b-a55b:free` first, then `xingchen-agi/xing4.0-29b-a4b:free` as alternative. Disabled model families are filtered before ordering. Without this
-preference sort, OpenRouter's catalog returns models in its default order (Flint, XingChen,
-etc.), which may not match the desired free model and can exhaust the three-per-provider
-attempt cap before reaching Nemotron 3 Ultra.
+Within each provider, the runner sorts only live, exact-free candidates by its preference list.
+Unavailable preferred IDs are skipped; the remaining models keep live catalog order. Disabled
+model families are filtered before ordering, and the runner makes at most three attempts per
+provider.
 
 ### Scheduled failure reports
 

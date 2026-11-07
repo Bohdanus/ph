@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { planToolbarOverflow, type ToolbarRowMetrics, type ToolbarSlot } from '../toolbar-overflow.ts';
+import {
+  planToolbarOverflow,
+  toolbarFitThresholds,
+  type ToolbarRowMetrics,
+  type ToolbarSlot,
+} from '../toolbar-overflow.ts';
 
 /**
  * The real tile metrics of this rail, so the numbers below are the ones the planner meets.
@@ -48,6 +53,30 @@ const renderedHeight = (fittedThrough: number, overflowTile: boolean, sectionBre
 };
 
 describe('planToolbarOverflow', () => {
+  it('produces exact CSS boundaries for every visible row', () => {
+    const slots: ToolbarSlot[] = [
+      { keys: ['a'], sectionIndex: 0 },
+      { keys: ['b'], sectionIndex: 0 },
+      { keys: ['c'], sectionIndex: 1 },
+      { keys: ['d'], sectionIndex: 1 },
+      { keys: ['e', 'f'], sectionIndex: 1 },
+    ];
+    const fitMetrics = metrics(0, { sectionBreakHeight: SECTION_BREAK });
+    const thresholds = toolbarFitThresholds(slots, fitMetrics);
+
+    expect(thresholds).toHaveLength(slots.length);
+    expect(
+      thresholds.every((threshold) => threshold > 0),
+      'zero height remains unmeasured'
+    ).toBe(true);
+    for (let height = 0; height <= 400; height += 1) {
+      const plan = planToolbarOverflow(slots, { ...fitMetrics, availableHeight: height });
+      thresholds.forEach((threshold, rowIndex) => {
+        const visibleAtHeight = height === 0 || height >= threshold;
+        expect(plan.fittedThrough > rowIndex, `row ${rowIndex} at ${height}px`).toBe(visibleAtHeight);
+      });
+    }
+  });
   it('leaves every tool visible while the whole list fits inside the budget', () => {
     // Five rows of 44 with a 6px gap between them: 244px, and the budget is the slot. At
     // 244 the list lands EXACTLY on the budget and nothing is collapsed.

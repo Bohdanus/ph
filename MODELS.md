@@ -6,7 +6,6 @@
 | ------------------------------ | -------- | ------- | --------------------------------------- |
 | Luna 6                         | `openai` | `xhigh` | Paid; keep context under 272k tokens    |
 | NVIDIA Nemotron 3 Ultra (free) | `kilo`   | `high`  | Preferred — best free model, exact-zero |
-| XingChen Xing4.0 (free)        | `kilo`   | `high`  | Alternative — 429s under load           |
 
 Use live catalogs, not stale model lists. Prefer verified free models for bounded research, text sweeps, code search, and simple reviews. If no free route is available, stop or get explicit operator authorization before using paid inference.
 
@@ -16,7 +15,7 @@ Use live catalogs, not stale model lists. Prefer verified free models for bounde
 - Refresh candidates with `node scripts/free-model-pool.mjs --list`. Check the exact model/provider pair: Kilo and OpenRouter require exact-zero prices, OpenCode requires provider-owned `-free` IDs, and Groq allows only `openai/gpt-oss-120b` after explicit Free-plan opt-in.
 - The runner sends Kilo inference through the installed Kilo Code CLI, so its saved Kilo Gateway OAuth is used. It searches `PATH` and common editor extension directories; set `KILO_CLI` only when discovery misses the executable. The child receives runtime paths but not other provider credentials or `KILO_CONFIG_CONTENT`; the tool-free `free-completion` agent and `--pure` mode block agent tools and external plugins.
 - The Kilo CLI has no `--max-tokens` option. The runner's `--max-tokens` value is a response-length instruction for Kilo; the CLI/model controls the actual generation budget. OpenRouter and Groq receive a provider-side token limit.
-- OpenRouter inference uses `OPENROUTER_API_KEY`. When Nemotron 3 Ultra appears as an exact-zero model in that live catalog, the runner tries it first, then preserves the catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
+- OpenRouter inference uses `OPENROUTER_API_KEY`. The runner prefers Nemotron 3 Ultra and XingChen only when each appears at exact-zero in the live catalog; remaining models keep catalog order. `--openrouter-quota` requires the same environment key; Kilo's locally stored OpenRouter credential is not read by the runner.
 - OpenRouter Nemotron 3 Ultra receives at least 1,024 completion tokens so reasoning does not consume a tiny caller budget before a visible answer. The other OpenRouter models receive the requested `--max-tokens` value.
 - OpenRouter 401/402 exhausts the source. On HTTP 429, a zero platform `X-RateLimit-Remaining` header exhausts it for the run; otherwise the daily counter controls model rotation. Unknown counters stay within the three-model cap. Content-policy rejections — including successful HTTP responses with `finish_reason: content_filter` — stop routing across providers so the same request is not retried elsewhere.
 - Catalog and quota requests have a 15-second timeout. Model inference has a five-minute timeout so reasoning models are not cut off by a catalog-sized deadline.
@@ -35,7 +34,7 @@ A 429 or exhausted counter applies to the provider that returned it. Stop using 
 
 ### Groq
 
-Groq serves only `openai/gpt-oss-120b` on the Free plan — no per-model pricing, so routing requires `GROQ_FREE_PLAN=1` (see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md)). The operator maintains multiple Free-plan keys rotated by account file under `~/.config/groq/`; never auto-rotate through account files. GPT-OSS reasoning is low but speed is very fast: use Groq only for bulk text sweeps (chat search, chat-history processing), never for deep reasoning or code review.
+Groq serves only `openai/gpt-oss-120b` on the Free plan — no per-model pricing, so routing requires `GROQ_FREE_PLAN=1` (see [`docs/FREE-COMPUTE-OPERATIONS.md`](docs/FREE-COMPUTE-OPERATIONS.md)). The runner rotates only keys explicitly supplied through `GROQ_API_KEY` or `GROQ_API_KEYS` after per-key 401/402/429 responses; it never reads key files during inference. Use keys from distinct Free-plan organizations because Groq limits apply at the organization level. GPT-OSS reasoning is low but speed is very fast: use Groq only for bulk text sweeps (chat search, chat-history processing), never for deep reasoning or code review.
 
 ## Free-agent boundaries
 
