@@ -237,6 +237,11 @@ describe('OpenRouter quota probe', () => {
       { used: 1, limit: 50, remaining: -1 },
       { used: 10, limit: 50 },
       { used: 10, limit: 50, remaining: null },
+      { used: 10, limit: 50, remaining: '40' },
+      { used: 10, limit: 50, remaining: true },
+      null,
+      '5',
+      5,
       { used: -1, limit: 50, remaining: 1 },
       { used: 0, limit: 0, remaining: 0 },
       { used: 'unknown', limit: 50, remaining: 50 },
@@ -565,6 +570,69 @@ describe('provider rate-limit diagnostics', () => {
     expect(completionCalls).toHaveLength(2);
     expect(JSON.parse(completionCalls[0][1].body).model).toBe('r1:free');
     expect(JSON.parse(completionCalls[1][1].body).model).toBe('r2:free');
+  });
+
+  it('honors Retry-After only while another OpenRouter candidate remains', async () => {
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const response = () =>
+      new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+        status: 429,
+        headers: { 'retry-after': '30', 'content-type': 'application/json' },
+      });
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(response())
+      .mockResolvedValueOnce(response())
+      .mockResolvedValueOnce(response());
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2'), openRouterRow('r3')],
+      keyInfo: () => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+      }),
+      chat,
+    });
+
+    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
+      /No free model completed/
+    );
+
+    expect(chat).toHaveBeenCalledTimes(3);
+    expect(waitForRetryAfter.mock.calls).toEqual([[30_000], [30_000]]);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
+  });
+
+  it('continues after a rotated OpenRouter model returns malformed completion JSON', async () => {
+    const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+          status: 429,
+          headers: { 'retry-after': '30', 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response('not-json', { status: 200, headers: { 'content-type': 'application/json' } })
+      );
+    const fetchImpl = catalogFetch({
+      kilo: [],
+      openrouter: [openRouterRow('r1'), openRouterRow('r2')],
+      keyInfo: () => ({
+        ok: true,
+        json: async () => ({ data: { free_model_daily_requests: { used: 10, limit: 50, remaining: 40 } } }),
+      }),
+      chat,
+    });
+
+    await expect(completeWithFreeModel('test', { fetchImpl, openRouterKey: 'rk', waitForRetryAfter })).rejects.toThrow(
+      /Model response is not valid JSON/
+    );
+
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(waitForRetryAfter).toHaveBeenCalledWith(30_000);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(1);
   });
 
   it('honors Retry-After when the daily quota counter is unavailable', async () => {
