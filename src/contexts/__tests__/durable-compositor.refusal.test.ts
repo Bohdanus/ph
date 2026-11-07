@@ -13,6 +13,7 @@ const frame: DocumentFrame = { x: 0, y: 0, width: 120, height: 80 };
 type RecordingContext = CanvasRenderingContext2D & {
   alphaValues: number[];
   compositeValues: GlobalCompositeOperation[];
+  setTransform: ReturnType<typeof vi.fn>;
 };
 
 const recordingContexts: RecordingContext[] = [];
@@ -42,6 +43,7 @@ class RecordingCanvas {
       clearRect: vi.fn(),
       translate: vi.fn(),
       transform: vi.fn(),
+      setTransform: vi.fn(),
       filter: 'none',
     } as unknown as RecordingContext;
     Object.defineProperties(context, {
@@ -179,7 +181,7 @@ describe('durable document refusal and composition', () => {
     registry.shutdown();
   });
 
-  it('refuses composition when a visible layer cannot materialize, without publishing a partial bitmap', async () => {
+  it('refuses composition when a visible layer cannot materialize', async () => {
     overrideCanvasFilterSupport(false);
     vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
     vi.stubGlobal('createImageBitmap', undefined);
@@ -226,6 +228,135 @@ describe('durable document refusal and composition', () => {
 
     expect(releaseSpies).toHaveLength(2);
     for (const release of releaseSpies) expect(release).toHaveBeenCalledTimes(1);
+
+    registry.shutdown();
+  });
+
+  it('handles AbortError signal in composeDurableDocument', async () => {
+    overrideCanvasFilterSupport(false);
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    controller.abort();
+
+    const abortRequest = {
+      documentId: 'test-document',
+      baselineAssetGeneration: registry.getDocumentGeneration('test-document'),
+      operationSetRevision: 0,
+      assetRegistry: registry,
+      signal: controller.signal,
+    };
+
+    let error: unknown;
+    try {
+      await composeDurableDocument(replay({ 'layer-good': layer('layer-good', 0) }), abortRequest);
+    } catch (thrown) {
+      error = thrown;
+    }
+
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe('AbortError');
+    registry.shutdown();
+  });
+
+  it('refuses composition with renderer-incompatible code when OffscreenCanvas and createImageBitmap are unavailable', async () => {
+    overrideCanvasFilterSupport(false);
+    vi.stubGlobal('OffscreenCanvas', undefined);
+    vi.stubGlobal('createImageBitmap', undefined);
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      if (tagName === 'canvas') throw new Error('No canvas implementation available');
+      return originalCreateElement(tagName);
+    });
+    const registry = new AssetRegistry();
+
+    let error: unknown;
+    try {
+      await composeDurableDocument(replay({ 'layer-good': layer('layer-good', 0) }), request(registry));
+    } catch (thrown) {
+      error = thrown;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('No canvas implementation available');
+    registry.shutdown();
+  });
+
+  it('skips invisible layers during materialization', async () => {
+    overrideCanvasFilterSupport(false);
+    vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
+    vi.stubGlobal('createImageBitmap', undefined);
+    const registry = new AssetRegistry();
+    const originalMaterialize = registry.materialize.bind(registry);
+    const mockMaterialize = vi.fn(async (input) => {
+      const lease = await originalMaterialize(input);
+      return { ...lease, release: vi.fn(lease.release) };
+    });
+    vi.spyOn(registry, 'materialize').mockImplementation(mockMaterialize);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await materializeDocument(
+      replay({
+        'layer-visible': layer('layer-visible', 0, { visible: true }),
+        'layer-hidden': layer('layer-hidden', 1, { visible: false }),
+      }),
+      request(registry)
+    );
+
+    expect(Object.keys(result.layers)).toEqual(['layer-visible']);
+    expect(result.layers['layer-hidden']).toBeUndefined();
+    expect(mockMaterialize).toHaveBeenCalledTimes(1);
+    result.release();
+    registry.shutdown();
+  });
+
+  it('keeps the returned composition canvas at frame size when bitmap transfer is unavailable', async () => {
+    overrideCanvasFilterSupport(false);
+    vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
+    vi.stubGlobal('createImageBitmap', undefined);
+    const registry = new AssetRegistry();
+    const originalMaterialize = registry.materialize.bind(registry);
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      return { ...lease, release: vi.fn(lease.release) };
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await composeDurableDocument(replay({ 'layer-good': layer('layer-good', 0) }), request(registry));
+
+    expect(result.bitmap).toBeInstanceOf(RecordingCanvas);
+    expect((result.bitmap as unknown as RecordingCanvas).width).toBe(frame.width);
+    expect((result.bitmap as unknown as RecordingCanvas).height).toBe(frame.height);
+
+    result.release();
+    registry.shutdown();
+  });
+
+  it('releases idempotently after takeLayers', async () => {
+    overrideCanvasFilterSupport(false);
+    vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
+    vi.stubGlobal('createImageBitmap', undefined);
+    const registry = new AssetRegistry();
+    const releaseSpies: ReturnType<typeof vi.fn>[] = [];
+    const originalMaterialize = registry.materialize.bind(registry);
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const release = vi.fn(lease.release);
+      releaseSpies.push(release);
+      return { ...lease, release };
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await composeDurableDocument(replay({ 'layer-good': layer('layer-good', 0) }), request(registry));
+
+    const taken = result.takeLayers();
+    taken.release();
+    taken.release();
+    expect(releaseSpies).toHaveLength(1);
+    expect(releaseSpies[0]).toHaveBeenCalledTimes(1);
+
+    result.release();
+    result.release();
+    expect(releaseSpies[0]).toHaveBeenCalledTimes(1);
 
     registry.shutdown();
   });

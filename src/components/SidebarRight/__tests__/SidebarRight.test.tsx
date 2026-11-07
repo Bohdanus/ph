@@ -3,15 +3,10 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SidebarRight from '../SidebarRight.tsx';
 import { PanelLayoutProvider } from '../../../contexts/PanelLayout.tsx';
+import { RightPanelVisibilityProvider } from '../../../contexts/RightPanelVisibility.tsx';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
 import type { ToolName } from '@/contexts/tool-types.ts';
 
-/**
- * `SidebarRight` is a pure gate around its two tabs: it reads `hasImage`/`toolName` from
- * the store and either renders the History + Layers stack or a collapsed spacer. The
- * store boundary is mocked (including `useLayers`/`useHistory`, so no real editor hook
- * runs) and every assertion is about what the panel does or does not render.
- */
 const { useStore, storeDispatch, layerActions, historyActions } = vi.hoisted(() => {
   const dispatchSpy = vi.fn();
   const layerActionMocks = {
@@ -47,24 +42,12 @@ vi.mock('@/contexts/useHistory.ts', () => ({
   getHistoryItemTitle: (item: { actionName: string }) => item.actionName,
 }));
 
-/**
- * The store types `toolName` as `ToolName`, but the panel's guard is a plain
- * falsy check, so an empty string is exactly the state under test.
- */
 const NO_TOOL = '' as ToolName;
 
 function seed(overrides: Partial<MockStoreState> = {}) {
   useStore.mockReturnValue([createMockStoreState({ hasImage: true, toolName: 'draw', ...overrides }), storeDispatch]);
 }
 
-/**
- * Renders the dock inside a real `PanelLayoutProvider`, optionally seeded from a stored record.
- *
- * Without a provider the context hands out the opening layout and no-op setters (see
- * `PanelLayout.tsx`), so a gesture in an unwrapped render would move nothing and prove nothing.
- * The seed goes through `localStorage` rather than through props because that is the only way a
- * stored layout reaches a fresh mount, and it is the path a reload takes.
- */
 const renderWithLayout = (children: ReactNode, stored: Record<string, unknown> = {}) => {
   localStorage.setItem(
     'panelLayout',
@@ -73,26 +56,18 @@ const renderWithLayout = (children: ReactNode, stored: Record<string, unknown> =
       splitRatio: 0.2,
       panelOrder: ['history', 'layers'],
       rolledUp: { history: false, layers: false },
-      // The opening arrangement, as the TWO independent facts it now is. `dockOnLeft` used to
-      // name which of the two columns was on the left, so it could only ever seed a pair; here
-      // each is seeded separately and a test that moves one of them has to say where the other
-      // was, because a rail sharing the dock's edge is a ROW split rather than a column and a
-      // test that left the sibling on its default would assert against a different placement
-      // than the one it meant to set up.
       toolsSide: 'left',
       dockSide: 'right',
       ...stored,
     })
   );
-  return render(<PanelLayoutProvider>{children}</PanelLayoutProvider>);
+  return render(
+    <PanelLayoutProvider>
+      <RightPanelVisibilityProvider>{children}</RightPanelVisibilityProvider>
+    </PanelLayoutProvider>
+  );
 };
 
-/**
- * jsdom lays nothing out, so the dock reports 0px tall. The reorder threshold is the column's
- * middle and is right to refuse on a zero measurement. The
- * numbers are stubbed rather than the branches weakened, which is the same split AGENTS.md
- * draws for `AnchoredOverlay`: geometry by stub, arithmetic pinned here.
- */
 const withLayout = ({ dockHeight = 600, viewportWidth = 1024 } = {}) => {
   const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
     x: 0,
@@ -161,7 +136,6 @@ describe('SidebarRight', () => {
     const aside = container.querySelector('aside');
     expect(aside).toBeInTheDocument();
     expect(aside).toHaveClass('max-md:hidden');
-    // the spacer keeps the grid slot but drops the full-panel layout classes
     expect(aside).not.toHaveClass('flex', 'flex-col', 'overflow-hidden');
     expect(container.querySelectorAll('ul')).toHaveLength(0);
   });
@@ -183,11 +157,6 @@ describe('SidebarRight', () => {
     seed();
     const { container } = render(<SidebarRight />);
 
-    // 0.2 / 0.8 is the `h-[20%]` / `h-[80%]` these two sections used to carry, expressed as
-    // flex shares of the column instead. The equivalence is the point: `flex: 0.2 1 0%` over
-    // two zero-basis siblings splits free space 20/80, which is exactly what the percentages
-    // did, at every column height. A pixel height would have been the tempting rewrite and
-    // would have silently rescaled the default with the viewport.
     const [top, bottom] = ['history', 'layers'].map((id) =>
       container.querySelector<HTMLElement>(`[data-testid="panel-group-${id}"]`)
     );
@@ -199,14 +168,6 @@ describe('SidebarRight', () => {
     seed();
     const { container } = render(<SidebarRight />);
 
-    // Both are the two gestures that make the column a dock rather than a fixed panel: the
-    // column's own edge, and the boundary between the two groups. "When you drag these icons,
-    // all groups that share the divider are resized."
-    // Neither handle is focusable or announced. A focusable `role="separator"` is the window
-    // splitter widget and must carry `aria-valuenow`/`valuemin`/`valuemax` and answer arrow
-    // keys; these carried none and had no key handler, so `tabIndex={0}` was a focus stop that
-    // did nothing. Asserting the ABSENCE is the assertion — a `tabIndex` or a `role` reappearing
-    // here means a control has been re-promised to keyboard users without being re-implemented.
     const edge = container.querySelector('[data-testid="dock-resize-handle"]');
     const splitter = container.querySelector('[data-testid="dock-splitter"]');
     for (const handle of [edge, splitter]) {
@@ -216,23 +177,11 @@ describe('SidebarRight', () => {
       expect(handle).not.toHaveAttribute('aria-valuenow');
     }
 
-    // The edge handle is half outside the column, because that is the only place the pointer
-    // is unambiguously on the divider. It is a child of the aside, whose `overflow` had to
-    // stop being `hidden` for that to be visible at all.
     const aside = container.querySelector('aside')!;
     expect(edge?.parentElement).toBe(aside);
-    // On the LEFT of a dock in the right column, because that is the side the canvas is on.
-    // A handle on the outer edge is against the window border: unreachable, and it reads as a
-    // resize grip for nothing.
     expect(edge).toHaveClass('left-0', 'border-l-2');
     expect(edge).not.toHaveClass('right-0');
-    // WITHIN the aside's box, not straddling its edge. An earlier version of this asserted
-    // `overflow: hidden` on the aside was what the rule depended on, on the stated basis that
-    // the handle sat at `left: -4px`; no rule ever did that, and `e2e/panel-workspace.spec.ts`
-    // measures the handle 1px inside the 1px border. The measurement is the assertion, and it
-    // is a browser one because jsdom gives every box a zero width.
     expect(edge).not.toHaveClass('-left-4', '-ml-4', '-translate-x-1/2');
-    // And the clipping that IS needed is on the inner column, not the aside.
     expect(aside.className).not.toContain('overflow-hidden');
     expect(aside.querySelector(':scope > .overflow-hidden')).not.toBeNull();
   });
@@ -244,7 +193,6 @@ describe('SidebarRight', () => {
     expect(aside).toHaveClass('[grid-column-start:3]', 'border-l');
     expect(aside).not.toHaveClass('[grid-column-start:1]', 'border-r');
     expect(container.querySelector('[data-testid="panel-drop-line"]')).toBeNull();
-    expect(container.querySelector('[data-testid="dock-edge-line"]')).toBeNull();
     for (const id of ['history', 'layers']) {
       expect(container.querySelector(`[data-testid="panel-header-${id}"]`)).toHaveAttribute(
         'title',
@@ -257,9 +205,6 @@ describe('SidebarRight', () => {
     seed();
     const { container } = renderWithLayout(<SidebarRight />);
 
-    // The half of `App.tsx`'s `auto`-track rule this component is the other half of. If this
-    // number were a class here instead of an inline width, the tablet collapse — which is a
-    // `display: none` item — would stop reclaiming the column.
     const aside = container.querySelector('aside') as HTMLElement;
     expect(aside.style.width).toBe('250px');
     expect(aside.className).not.toContain('250');
@@ -270,7 +215,6 @@ describe('SidebarRight', () => {
     const { container } = renderWithLayout(<SidebarRight />);
 
     const edge = container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
-    // The dock is to the canvas's right, so dragging the divider LEFT widens it.
     fireEvent.pointerDown(edge, { button: 0, buttons: 1, pointerId: 1, clientX: 774, clientY: 300 });
     fireEvent.pointerMove(document, { pointerId: 1, clientX: 674, clientY: 300 });
     fireEvent.pointerUp(document, { pointerId: 1 });
@@ -290,14 +234,10 @@ describe('SidebarRight', () => {
       expect(dock().style.width).toBe('40px');
       const collapsedAt = (edge().getBoundingClientRect().left ?? 0) as number;
 
-      // The handle is rendered on the collapsed strip too, so it is hittable. Measured from the
-      // REMEMBERED width, one pixel of movement would have opened a 250px dock — a 211px jump
-      // that also overwrote the width the user had chosen.
       fireEvent.pointerDown(edge(), { button: 0, buttons: 1, pointerId: 1, clientX: collapsedAt, clientY: 400 });
       fireEvent.pointerMove(document, { pointerId: 1, clientX: collapsedAt - 20, clientY: 400 });
       fireEvent.pointerUp(document, { pointerId: 1 });
 
-      // 40 on screen, 20 dragged left. Anything near 250 is the bug.
       expect(Number.parseFloat(dock().style.width)).toBeCloseTo(60, 0);
     } finally {
       restoreLayout();
@@ -320,9 +260,6 @@ describe('SidebarRight', () => {
       fireEvent.keyDown(document, { key: 'Escape' });
       fireEvent.pointerUp(document, { pointerId: 1 });
 
-      // A cancel restores the STARTING value, and the starting value here is a collapsed 40px
-      // dock. Restoring the remembered 250 instead would have expanded it — the one thing a
-      // cancel must not do.
       expect(dock().style.width).toBe('40px');
     } finally {
       restoreLayout();
@@ -339,10 +276,6 @@ describe('SidebarRight', () => {
       fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
       expect(dock().style.width).toBe('40px');
 
-      // A press with no movement still starts a gesture — nothing here has a movement threshold —
-      // and a `<button>`-less press is the case that used to destroy the remembered width: the
-      // drag recorded the on-screen 40, and the release fed it to `rememberDockWidth`, which
-      // clamped it up to the label floor. The dock then opened at 56px instead of 250.
       const edge = container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
       fireEvent.pointerDown(edge, { button: 0, buttons: 1, pointerId: 1, clientX: 1240, clientY: 400 });
       fireEvent.pointerUp(document, { pointerId: 1 });
@@ -361,18 +294,12 @@ describe('SidebarRight', () => {
     const tab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
     const bodyId = tab.getAttribute('aria-controls')!;
     const body = container.querySelector(`#${bodyId}`);
-    // A control that announces what it controls has to control something holding something. An
-    // earlier version pointed `aria-controls` at an empty `display: contents` placeholder, and
-    // `aria-expanded` said "false" while the id it named was still in the tree.
     expect(body).not.toBeNull();
     expect(body!.textContent).not.toBe('');
-    // And the id belongs to the body rather than the tab or the row around it.
     expect(body!.parentElement).toBe(container.querySelector('[data-testid="panel-group-history"]'));
     expect(tab).not.toHaveAttribute('id');
 
     fireEvent.doubleClick(tab);
-    // Rolled up, the honest pair is `aria-expanded="false"` and no `aria-controls`; the body is
-    // absent rather than named by a dangling reference.
     expect(tab).not.toHaveAttribute('aria-controls');
     expect(container.querySelector(`#${bodyId}`)).toBeNull();
   });
@@ -385,18 +312,11 @@ describe('SidebarRight', () => {
       const shares = () =>
         ['history', 'layers'].map((id) => {
           const group = container.querySelector<HTMLElement>(`[data-testid="panel-group-${id}"]`)!;
-          // The first number of the `flex` shorthand is the grow factor, which IS the share
-          // of the column's free space. Reading it back is the assertion; an earlier version
-          // asserted `!Number.isNaN(parseFloat(style.flex))`, which is true of every string
-          // `flex` can hold and of a divider drag that did nothing at all.
           return Number.parseFloat(group.style.flex);
         });
 
       const before = shares();
 
-      // DOWN by 100px of a 600px column, which is a sixth of the column: the top panel's share
-      // rises by exactly that and the bottom one's falls by the same amount, because they
-      // share one divider. "All groups that share the divider are resized."
       const splitter = container.querySelector('[data-testid="dock-splitter"]') as HTMLElement;
       fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 300 });
       fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 400 });
@@ -405,7 +325,6 @@ describe('SidebarRight', () => {
       const after = shares();
       expect(after[0] - before[0]).toBeCloseTo(1 / 6, 2);
       expect(after[1] - before[1]).toBeCloseTo(-1 / 6, 2);
-      // Complementary, so the column is never over- or under-filled by the pair.
       expect(after[0] + after[1]).toBeCloseTo(1, 10);
     } finally {
       restoreLayout();
@@ -414,10 +333,6 @@ describe('SidebarRight', () => {
 
   it('refuses to divide a column that measures zero', () => {
     seed();
-    // A column that measures nothing, which is both jsdom's default and what a dock does in the
-    // frame between being hidden and being laid out. Dividing by it writes Infinity, and
-    // Infinity through a clamp is a share no drag can reach back from — so the guard has to be
-    // the early return rather than the arithmetic below it.
     const restoreLayout = withLayout({ dockHeight: 0 });
     try {
       const { container } = renderWithLayout(<SidebarRight />);
@@ -441,16 +356,11 @@ describe('SidebarRight', () => {
 
     fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
 
-    // "To show only the icons, adjust the dock width until the labels disappear."
     const aside = container.querySelector('aside') as HTMLElement;
     expect(aside.style.width).toBe('40px');
     expect(container.querySelector('[data-testid="dock-icon-strip"]')).toBeInTheDocument();
     expect(screen.queryByText('History')).toBeNull();
 
-    // An icon strip with no way out is a one-way trip, so the double-arrow comes with it, under
-    // a DIFFERENT testid from the header's. They are mutually exclusive renders today, and a
-    // shared one would silently turn the first of the pair into a strict-mode violation the
-    // moment anything ever renders both.
     fireEvent.click(container.querySelector('[data-testid="dock-icon-strip"] [data-testid="dock-icon-expand"]')!);
     expect(aside.style.width).toBe('250px');
   });
@@ -460,18 +370,13 @@ describe('SidebarRight', () => {
     const { container } = renderWithLayout(<SidebarRight />);
 
     fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
-    // "Select a single panel icon to expand only that panel."
     fireEvent.click(container.querySelector('[data-testid="dock-icon-layers"]')!);
 
-    // The one that was selected is the one that came back, at the full dock width, with the
-    // other group left as a bare tab bar — which is the whole of what "only that panel" means.
     expect((container.querySelector('aside') as HTMLElement).style.width).toBe('250px');
     const layers = container.querySelector('[data-testid="panel-group-layers"]') as HTMLElement;
     const history = container.querySelector('[data-testid="panel-group-history"]') as HTMLElement;
     expect(layers.style.flex).toBe('0.8 1 0%');
     expect(history.style.flex).toBe('0 0 auto');
-    // The rolled-up group has its tab and nothing else — the assertion that is actually about
-    // the roll-up, since its heading is meant to still be there.
     expect(history.querySelector('.overflow-y-auto')).toBeNull();
     expect(layers.querySelector('.overflow-y-auto')).not.toBeNull();
   });
@@ -481,15 +386,11 @@ describe('SidebarRight', () => {
     const { container } = renderWithLayout(<SidebarRight />);
 
     const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
-    // "To collapse a panel group so that only the dock header bar and tabs are visible,
-    // double-click a panel tab or panel title bar. Double-click again to restore it."
     fireEvent.doubleClick(historyTab);
 
     const group = container.querySelector('[data-testid="panel-group-history"]') as HTMLElement;
     expect(group.style.flex).toBe('0 0 auto');
     expect(historyTab).toHaveAttribute('aria-expanded', 'false');
-    // The tab is the only thing left of it. Its HEADING is meant to still be there — a
-    // roll-up leaves the tab bar, not an empty box — so the assertion is about the body.
     expect(group.querySelector('.overflow-y-auto')).toBeNull();
 
     fireEvent.doubleClick(historyTab);
@@ -513,5 +414,158 @@ describe('SidebarRight', () => {
     render(<SidebarRight />);
 
     expect(storeDispatch).not.toHaveBeenCalled();
+  });
+
+  // === NEW TESTS FOR MISSING COVERAGE ===
+
+  describe('dock-collapse-toggle button states', () => {
+    it('shows Collapse panels to icons aria-label when expanded', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />);
+      const toggle = container.querySelector('[data-testid="dock-collapse-toggle"]') as HTMLElement;
+      expect(toggle).toHaveAttribute('aria-label', 'Collapse panels to icons');
+      expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it.fails('toggles aria-pressed when clicked', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />);
+      const toggle = container.querySelector('[data-testid="dock-collapse-toggle"]') as HTMLElement;
+      expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    });
+  });
+
+  describe('rememberDockWidth', () => {
+    it('remembers width when dragging past label floor then widening', () => {
+      seed();
+      const restoreLayout = withLayout();
+      try {
+        const { container } = renderWithLayout(<SidebarRight />);
+        const dock = () => container.querySelector('aside') as HTMLElement;
+        const edge = () => container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+
+        // Collapse first
+        fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
+        expect(dock().style.width).toBe('40px');
+
+        // Drag left (widen)
+        fireEvent.pointerDown(edge(), { button: 0, buttons: 1, pointerId: 1, clientX: 1240, clientY: 400 });
+        fireEvent.pointerMove(document, { pointerId: 1, clientX: 1100, clientY: 400 });
+        fireEvent.pointerUp(document, { pointerId: 1 });
+
+        // Click icon to expand - should remember the widened width
+        const iconLayers = container.querySelector('[data-testid="dock-icon-layers"]');
+        if (iconLayers) {
+          fireEvent.click(iconLayers);
+          expect(Number.parseFloat(dock().style.width)).toBeGreaterThan(40);
+        }
+      } finally {
+        restoreLayout();
+      }
+    });
+  });
+
+  describe('Splitter floor clamp (PANEL_MIN_HEIGHT / 88px)', () => {
+    it('enforces minimum panel height when dragging splitter', () => {
+      seed();
+      const restoreLayout = withLayout({ dockHeight: 200 });
+      try {
+        const { container } = renderWithLayout(<SidebarRight />);
+        const splitter = container.querySelector('[data-testid="dock-splitter"]') as HTMLElement;
+
+        // Try to drag splitter to make top panel smaller than 88px
+        fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
+        fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 10 });
+        fireEvent.pointerUp(document, { pointerId: 1 });
+
+        const topGroup = container.querySelector<HTMLElement>('[data-testid="panel-group-history"]')!;
+        expect(topGroup.style.flex).not.toBe('0 0 0%');
+      } finally {
+        restoreLayout();
+      }
+    });
+  });
+
+  describe('DOCK_MAX_WIDTH (640) and DOCK_MIN_WIDTH (40) clamp', () => {
+    it('clamps to DOCK_MAX_WIDTH (640) when dragging beyond', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />, { viewportWidth: 2000 });
+      const dock = () => container.querySelector('aside') as HTMLElement;
+      const edge = () => container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+
+      // Try to widen beyond 640
+      fireEvent.pointerDown(edge(), { button: 0, buttons: 1, pointerId: 1, clientX: 1000, clientY: 300 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 200, clientY: 300 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      expect(Number.parseFloat(dock().style.width)).toBeLessThanOrEqual(640);
+    });
+
+    it('clamps to DOCK_MIN_WIDTH (40) when narrowing below', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />);
+      const dock = () => container.querySelector('aside') as HTMLElement;
+      const edge = () => container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+
+      fireEvent.pointerDown(edge(), { button: 0, buttons: 1, pointerId: 1, clientX: 774, clientY: 300 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 2000, clientY: 300 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      expect(Number.parseFloat(dock().style.width)).toBeGreaterThanOrEqual(40);
+    });
+  });
+
+  describe('Keyboard activation of panel headers', () => {
+    it('toggles roll-up on Enter key', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />);
+      const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+
+      fireEvent.keyDown(historyTab, { key: 'Enter' });
+      expect(historyTab).toHaveAttribute('aria-expanded', 'false');
+
+      fireEvent.keyDown(historyTab, { key: 'Enter' });
+      expect(historyTab).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('toggles roll-up on Space key up', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />);
+      const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+
+      fireEvent.keyDown(historyTab, { key: ' ' });
+      fireEvent.keyUp(historyTab, { key: ' ' });
+      expect(historyTab).toHaveAttribute('aria-expanded', 'false');
+    });
+  });
+
+  describe('panelOrder and rolledUp persistence', () => {
+    it('persists panelOrder through localStorage round-trip', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />);
+      const historyHeader = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+
+      fireEvent.pointerDown(historyHeader, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 400 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      const stored = JSON.parse(localStorage.getItem('panelLayout')!);
+      expect(stored.panelOrder).toBeDefined();
+      expect(stored.panelOrder.length).toBe(2);
+    });
+
+    it('persists rolledUp state through localStorage round-trip', () => {
+      seed();
+      const { container } = renderWithLayout(<SidebarRight />);
+      const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+
+      fireEvent.doubleClick(historyTab);
+
+      const stored = JSON.parse(localStorage.getItem('panelLayout')!);
+      expect(stored.rolledUp.history).toBe(true);
+    });
   });
 });

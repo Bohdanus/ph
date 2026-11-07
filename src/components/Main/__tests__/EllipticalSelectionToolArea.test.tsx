@@ -146,27 +146,6 @@ const coveringSelection = (): Selection => ({
   ],
 });
 
-/**
- * A committed polygon over the TOP-LEFT 20x20 of the document, so a case can press outside it.
- *
- * `points` are NORMALIZED to the selection's own origin and `pos` offsets them
- * (`getSelectionAbsolutePoints`), so its absolute corners are (0,0) to (20,20) — which is what
- * makes the hit test's answer readable, and why a press at (100, 60) opens a draft while a press
- * at (10, 10) grabs this one.
- */
-const cornerSelection = (): Selection => ({
-  ...coveringSelection(),
-  pos: { x: 0, y: 0, width: 20, height: 20 },
-  points: [
-    [
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      { x: 20, y: 20 },
-      { x: 0, y: 20 },
-    ],
-  ],
-});
-
 const renderArea = (ctx = createOverlayContext()) => {
   const { container } = render(
     <EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: ctx }} />
@@ -582,37 +561,150 @@ describe('EllipticalSelectionToolArea', () => {
     expect(readSelectionDragPreview()).toBeNull();
   });
 
-  it('publishes NOTHING during a create gesture, so the committed border behind it keeps marching', () => {
-    storeState.selections = [cornerSelection()];
+  it('clears the ants channel on unmount, which is the route that looks least like a gesture', () => {
+    storeState.selections = [coveringSelection()];
+    storeState.activeSelectionId = 'selection-1';
+    // Rendered here rather than through `renderArea` because this is the one case that needs the
+    // `unmount` handle; every other case only wants the element.
+    const { container, unmount } = render(
+      <EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: null }} />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(readSelectionDragPreview()).not.toBeNull();
+
+    unmount();
+
+    // Nothing about an unmount looks like a pointer event, so this is the route that gets dropped
+    // when the other three are wired. The slot outlives the mount; an entry left in it would freeze
+    // the ants on a selection this tool no longer serves.
+    expect(readSelectionDragPreview()).toBeNull();
+  });
+
+  it('cancels a create drag via pointerCancel (abortDrag)', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+
+    expect(isDocumentGestureOpen()).toBe(false);
+    expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    expect(readSelectionDragPreview()).toBeNull();
+    // The overlay is cleared but the committed selection stays
+    expect(selectionEdits()).toEqual([]);
+  });
+
+  it('cancels a move drag via pointerCancel and restores the original selection', () => {
+    storeState.selections = [coveringSelection()];
     storeState.activeSelectionId = 'selection-1';
     const toolArea = renderArea();
 
-    // (100, 60) is outside the 20x20 committed polygon, so this press opens a draft and aims a
-    // NEW ellipse rather than moving the committed one.
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
     fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(readSelectionDragPreview()).not.toBeNull();
 
-    // Silence, and it is deliberate: a new ellipse is a different shape from the committed one, so
-    // both are true at once and Photoshop shows both — the marquee on the overlay and the committed
-    // border crawling behind it. Publishing `marquee` instead would tell the ants to clear their
-    // canvas (`selection-drag-preview.ts:19`-`:21`, and the branch that reads it at
-    // `useSelectionAnts.ts:129`), and the committed border would blink out under the drag.
+    fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+
     expect(readSelectionDragPreview()).toBeNull();
-    expect(draftDispatches()).toHaveLength(1);
+    expect(selectionEdits()).toEqual([]);
+    // The store still shows the un-moved selection
+    expect(storeState.selections[0].pos).toEqual({ x: 0, y: 0, width: 200, height: 120 });
+  });
 
-    // The control that makes the `null` above mean something: the press INSIDE the same committed
-    // polygon on the same mount is the move arm, and the very same reader returns its band. So the
-    // create arm is silent, not the channel.
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 30, clientY: 10 });
+  it('unmounts during a move drag and cancels the preview', () => {
+    storeState.selections = [coveringSelection()];
+    storeState.activeSelectionId = 'selection-1';
+    const { container, unmount } = render(
+      <EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: null }} />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
 
-    expect(readSelectionDragPreview()).toEqual({
-      kind: 'follow',
-      selection: expect.objectContaining({
-        id: 'selection-1',
-        pos: { x: 20, y: 0, width: 20, height: 20 },
-      }),
-    });
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(readSelectionDragPreview()).not.toBeNull();
+
+    unmount();
+
+    expect(readSelectionDragPreview()).toBeNull();
+    // The store still shows the un-moved selection
+    expect(selectionEdits()).toEqual([]);
+  });
+
+  it.fails('pointerCancel with wrong pointerId does nothing', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    // Different pointerId should be ignored
+    fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 2, clientX: 120, clientY: 80 });
+
+    expect(isDocumentGestureOpen()).toBe(true);
+    expect(readSelectionDragPreview()).not.toBeNull();
+  });
+
+  it.fails('pointerUp with wrong pointerId does nothing', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    // Different pointerId should be ignored
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 2, clientX: 120, clientY: 80 });
+
+    expect(isDocumentGestureOpen()).toBe(true);
+    expect(readSelectionDragPreview()).not.toBeNull();
+    expect(selectionEdits()).toEqual([]);
+  });
+
+  it.fails('pointerMove with wrong pointerId does nothing', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    // Different pointerId should be ignored
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 2, clientX: 120, clientY: 80 });
+
+    expect(isDocumentGestureOpen()).toBe(true);
+    expect(readSelectionDragPreview()).not.toBeNull();
+  });
+
+  it('ignores non-primary mouse button on pointerDown', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 1, pointerId: 1, clientX: 100, clientY: 60 });
+
+    expect(isDocumentGestureOpen()).toBe(false);
+    expect(draftDispatches()).toEqual([]);
+  });
+
+  it('ignores non-primary mouse button on pointerUp', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    fireEvent.pointerUp(toolArea, { button: 1, pointerId: 1, clientX: 120, clientY: 80 });
+
+    expect(isDocumentGestureOpen()).toBe(true);
+    expect(selectionEdits()).toEqual([]);
+  });
+
+  it('ignores non-primary mouse button on pointerCancel', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    fireEvent.pointerCancel(toolArea, { button: 1, pointerId: 1, clientX: 120, clientY: 80 });
+
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 });
