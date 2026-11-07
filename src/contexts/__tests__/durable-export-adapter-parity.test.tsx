@@ -270,22 +270,15 @@ describe('FileProvider durable export adapter parity', () => {
     expect(composite.release).not.toHaveBeenCalled();
   });
 
-  it('keeps hidden PSD layer pixels on the legacy path when retained operations lack export proof', async () => {
+  it('keeps legacy PSD pixels for hidden layers absent from durable materialization', async () => {
     const { composite, legacyLayers, replay, store } = durableFixture();
     const snapshot = replay.layers['durable-layer']!.snapshot;
-    const replayWithHiddenAffine: DurableReplayResult = {
+    const replayWithHiddenLayer: DurableReplayResult = {
       ...replay,
       layers: {
         'durable-layer': {
           ...replay.layers['durable-layer']!,
           snapshot: { ...snapshot, visible: false },
-          operations: [
-            {
-              kind: 'apply-affine-transform',
-              layerId: 'durable-layer',
-              transform: { a: 1, b: 0, c: 0, d: 1, e: 1, f: 0 },
-            },
-          ],
         },
       },
     };
@@ -293,7 +286,7 @@ describe('FileProvider durable export adapter parity', () => {
       ...legacyLayers,
       'durable-layer': { ...legacyLayers['durable-layer']!, visible: false },
     };
-    vi.mocked(replayDurableAtCursor).mockReturnValue(replayWithHiddenAffine);
+    vi.mocked(replayDurableAtCursor).mockReturnValue(replayWithHiddenLayer);
     vi.mocked(composeDurableDocument).mockResolvedValue(composite);
     vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
     renderWithStore({ ...store, layers: hiddenLegacyLayers });
@@ -304,6 +297,39 @@ describe('FileProvider durable export adapter parity', () => {
     expect(savePsd).toHaveBeenCalledWith(hiddenLegacyLayers, size, frame);
     expect(composeDurableDocument).not.toHaveBeenCalled();
     expect(composite.release).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['raster', 'image/png'],
+    ['PSD', 'psd'],
+  ] as const)('keeps legacy export when materialized bounds differ from the legacy layer for %s', async (_, format) => {
+    const { composite, legacyLayers, replay, release, store } = durableFixture();
+    const layer = composite.layers['durable-layer']!;
+    const mismatchedBounds = { ...layer.bounds, x: layer.bounds.x + 1 };
+    const mismatchedComposite = {
+      ...composite,
+      layers: {
+        ...composite.layers,
+        'durable-layer': { ...layer, bounds: mismatchedBounds },
+      },
+    } as unknown as DurableComposite;
+    vi.mocked(replayDurableAtCursor).mockReturnValue(replay);
+    vi.mocked(composeDurableDocument).mockResolvedValue(mismatchedComposite);
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
+    renderWithStore(store);
+
+    save(format);
+
+    if (format === 'psd') {
+      await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
+      expect(savePsd).toHaveBeenCalledWith(legacyLayers, size, frame);
+    } else {
+      await waitFor(() => expect(renderExportCanvas).toHaveBeenCalledTimes(1));
+      expect(renderExportCanvas).toHaveBeenCalledWith(legacyLayers, size, frame);
+    }
+    expect(composeDurableDocument).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledExactlyOnceWith();
   });
 
   it.each([

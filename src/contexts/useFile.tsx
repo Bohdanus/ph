@@ -167,38 +167,58 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       ) {
         try {
           const replay = replayDurableAtCursor(current.durableDocument, current.durableDocument.cursor);
-          // PSD preserves hidden layer pixels too, so every replay layer must pass
-          // the renderer gate before the shared durable export adapter is used.
-          const pixelApprovedForExport = Object.values(replay.layers).every((replayLayer) => {
-            const existing = layers[replayLayer.snapshot.id];
-            return (
-              existing !== undefined &&
-              durableLayerPresentationMismatch(replayLayer, existing, replayLayer.snapshot.pos) === null
-            );
-          });
+          // The compositor materializes visible layers only. PSD must keep legacy
+          // records whenever a hidden layer could otherwise lose its pixel data.
+          const hiddenLayersBlockPsd =
+            format === 'psd' && Object.values(replay.layers).some(({ snapshot }) => !snapshot.visible);
+          const pixelApprovedForExport =
+            !hiddenLayersBlockPsd &&
+            Object.values(replay.layers).every((replayLayer) => {
+              const existing = layers[replayLayer.snapshot.id];
+              return (
+                existing !== undefined &&
+                durableLayerPresentationMismatch(replayLayer, existing, replayLayer.snapshot.pos) === null
+              );
+            });
           if (pixelApprovedForExport) {
-            durableComposite = await composeDurableDocument(replay, {
+            const composite = await composeDurableDocument(replay, {
               documentId: current.documentId,
               baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
               operationSetRevision: current.durableDocument.durableRevision,
               assetRegistry: getAssetRegistry(),
             });
-            const records = durableExportRecords(replay, durableComposite);
-            const latest = latestStoreRef.current;
-            if (
-              !latest ||
-              latest.durableStatus !== 'current' ||
-              latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
-              latest.historyIndex !== current.historyIndex ||
-              latest.documentRevision !== current.documentRevision ||
-              latest.branchRevision !== current.branchRevision
-            ) {
-              durableComposite.release();
+            durableComposite = composite;
+            const materializedBoundsApprovedForExport = Object.values(replay.layers).every((replayLayer) => {
+              if (!replayLayer.snapshot.visible) return true;
+              const existing = layers[replayLayer.snapshot.id];
+              const materialized = composite.layers[replayLayer.snapshot.id];
+              return (
+                existing !== undefined &&
+                materialized !== undefined &&
+                durableLayerPresentationMismatch(replayLayer, existing, materialized.bounds) === null
+              );
+            });
+            if (!materializedBoundsApprovedForExport) {
+              composite.release();
               durableComposite = undefined;
             } else {
-              exportLayers = records.layers;
-              exportSize = records.size;
-              exportFrame = records.frame;
+              const records = durableExportRecords(replay, composite);
+              const latest = latestStoreRef.current;
+              if (
+                !latest ||
+                latest.durableStatus !== 'current' ||
+                latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
+                latest.historyIndex !== current.historyIndex ||
+                latest.documentRevision !== current.documentRevision ||
+                latest.branchRevision !== current.branchRevision
+              ) {
+                composite.release();
+                durableComposite = undefined;
+              } else {
+                exportLayers = records.layers;
+                exportSize = records.size;
+                exportFrame = records.frame;
+              }
             }
           }
         } catch {

@@ -85,15 +85,17 @@ matrices, and cross-platform parity remain unproven.
 The transformed-raster opacity/blend fixture uses opacity `0.58` and `multiply`. Its raw tight
 bitmap bytes, premultiplied tight pixels, bounds, dimensions, opacity, and blend metadata match in
 the HTML and OffscreenCanvas comparisons at the affine and fractional-frame cursors. The direct
-durable composite also matches the legacy composite exactly. However, the runtime durable
-projection and durable PNG/PSD record path differ from legacy rendering by 42 channel bytes at the
-affine cursor and 46 after the fractional frame when composed over the opaque test backdrop. The
-earlier 146-byte isolated-layer comparison over transparency is not a valid blend-mode oracle.
-Retained operations therefore remain outside the renderer parity gate. The export candidate now
-uses the same conservative eligibility check and keeps legacy records for any unsupported source,
-retained operation, metadata mismatch, missing legacy layer, or changed bounds; it checks hidden
-layers too because PSD preserves their pixels. This does not admit frame-changing commits or alter
-logical history authority.
+durable composite also matches the legacy composite exactly. A temporary diagnostic observed 42
+differing channel bytes at the affine cursor and 46 after the fractional frame in the runtime
+projection and durable export path over the opaque backdrop, but those paths are not yet asserted by
+a committed fixture; treat the counts as exploratory until that test is added. The earlier 146-byte
+isolated-layer comparison over transparency is not a valid blend-mode oracle. Retained operations
+therefore remain outside the renderer parity gate. The export candidate uses the same conservative
+eligibility check and keeps legacy records for any unsupported source, retained operation, metadata
+mismatch, missing legacy layer, or changed bounds. The compositor materializes visible layers only,
+so any hidden layer forces PSD export to keep legacy records; after composition, actual materialized
+bounds are checked before durable records are selected. This does not admit frame-changing commits
+or alter logical history authority.
 
 ## Loose Ends
 
@@ -142,11 +144,13 @@ priority or dependency. They may be pursued in either order or in parallel.
    `projectDurableRender()`, `renderExportCanvas()` using `durableExportRecords()`, and PSD layer plus
    composite pixels over the same opaque backdrop. Keep separate assertions for raw source pixels,
    tight bitmap bounds/dimensions, alpha and premultiplication, opacity/blend metadata, and the
-   composed output; do not use a transparent multiply result as the oracle. Require exact byte
-   equality with no tolerance. Trace any difference to materialization, retained-affine composition,
-   or the standard layer/export renderer before changing production code. Preserve bitmap leases and
-   release assertions. The current fallback must continue selecting legacy records for retained
-   operations, including hidden PSD layers.
+   composed output; do not use a transparent multiply result as the oracle. Pin the temporary 42/46
+   byte observation by asserting those production paths, or correct the measured result if the
+   differential does not reproduce. Require exact byte equality with no tolerance. Trace any
+   difference to materialization, retained-affine composition, or the standard layer/export renderer
+   before changing production code. Preserve bitmap leases and release assertions. The current
+   fallback must continue selecting legacy records for retained operations, hidden PSD layers, and
+   materialized bounds that do not match the legacy record.
 
    Once that slice is exact, broaden the fractional frame matrix across open angles, additional
    retained-affine combinations, text styling/rotation, blank opacity variants, and fractional

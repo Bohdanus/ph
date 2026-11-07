@@ -233,14 +233,16 @@ variant or an equivalent atomic history action.
    A separate transformed-raster fixture uses opacity `0.58` and `multiply`. Its raw tight bitmap
    bytes, premultiplied tight pixels, bounds, dimensions, opacity and blend metadata match in HTML
    and OffscreenCanvas materialization at the affine and fractional-frame cursors, and the direct
-   durable composite matches legacy exactly. Runtime durable projection and the durable PNG/PSD
-   record path nevertheless differ from legacy by 42 channel bytes at the affine cursor and 46 after
-   the fractional frame over an opaque backdrop. The earlier 146-byte isolated-layer comparison over
-   transparency is not a valid blend-mode oracle. Until output parity is exact, retained operations
-   stay outside runtime and export admission. The export preflight shares the runtime's conservative
-   source/operation/metadata/bounds check and checks hidden layers as PSD preserves their pixels;
-   unsupported, transformed, or otherwise unproven cases keep legacy records. This changes neither logical
-   history authority nor the closed frame-publication gate.
+   durable composite matches legacy exactly. A temporary diagnostic observed 42 channel-byte
+   differences at the affine cursor and 46 after the fractional frame in runtime projection and
+   durable export over an opaque backdrop, but those production paths are not asserted by the current
+   fixture; treat the counts as exploratory until directly tested. The earlier 146-byte isolated-layer
+   comparison over transparency is not a valid blend-mode oracle. Until output parity is exact,
+   retained operations stay outside runtime and export admission. The export preflight shares the
+   runtime's conservative source/operation/metadata/bounds check, blocks durable PSD export when any
+   hidden layer lacks materialized pixels, and checks actual materialized bounds before selecting
+   durable records. Unsupported, transformed, or otherwise unproven cases keep legacy records. This
+   changes neither logical history authority nor the closed frame-publication gate.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
    variants, additional text styling/rotation combinations, other frame sequences and other
    retained-affine operation combinations still need parity proof. The blank pair and 45%-opacity case
