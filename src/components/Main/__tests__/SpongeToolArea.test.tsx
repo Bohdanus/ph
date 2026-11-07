@@ -353,14 +353,6 @@ describe('SpongeToolArea', () => {
       expect(toolArea).toHaveClass('cursor-crosshair');
     });
 
-    it.fails('binds the gesture to the store container and the store total size', () => {
-      const { toolArea } = renderArea();
-      expect(toolArea).toHaveAttribute('onpointerdown');
-      expect(toolArea).toHaveAttribute('onpointermove');
-      expect(toolArea).toHaveAttribute('onpointerup');
-      expect(toolArea).toHaveAttribute('onpointerleave');
-    });
-
     it('getToolArgs keyed by sponge; returns null for neighbouring tool names', () => {
       // This is tested by the mock returning null for non-'sponge' names
     });

@@ -456,12 +456,8 @@ describe('SidebarRight', () => {
         fireEvent.pointerMove(document, { pointerId: 1, clientX: 1100, clientY: 400 });
         fireEvent.pointerUp(document, { pointerId: 1 });
 
-        // Click icon to expand - should remember the widened width
-        const iconLayers = container.querySelector('[data-testid="dock-icon-layers"]');
-        if (iconLayers) {
-          fireEvent.click(iconLayers);
-          expect(Number.parseFloat(dock().style.width)).toBeGreaterThan(40);
-        }
+        // Widening past the label floor expands the dock and stores the new width.
+        expect(dock().style.width).toBe('180px');
       } finally {
         restoreLayout();
       }
@@ -482,7 +478,7 @@ describe('SidebarRight', () => {
         fireEvent.pointerUp(document, { pointerId: 1 });
 
         const topGroup = container.querySelector<HTMLElement>('[data-testid="panel-group-history"]')!;
-        expect(topGroup.style.flex).not.toBe('0 0 0%');
+        expect(topGroup.style.flex).toBe('0.44 1 0%');
       } finally {
         restoreLayout();
       }
@@ -545,16 +541,20 @@ describe('SidebarRight', () => {
   describe('panelOrder and rolledUp persistence', () => {
     it('persists panelOrder through localStorage round-trip', () => {
       seed();
-      const { container } = renderWithLayout(<SidebarRight />);
-      const historyHeader = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+      const restoreLayout = withLayout({ dockHeight: 600 });
+      try {
+        const { container } = renderWithLayout(<SidebarRight />);
+        const historyHeader = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
 
-      fireEvent.pointerDown(historyHeader, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
-      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 400 });
-      fireEvent.pointerUp(document, { pointerId: 1 });
+        fireEvent.pointerDown(historyHeader, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
+        fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 500 });
+        fireEvent.pointerUp(document, { pointerId: 1 });
 
-      const stored = JSON.parse(localStorage.getItem('panelLayout')!);
-      expect(stored.panelOrder).toBeDefined();
-      expect(stored.panelOrder.length).toBe(2);
+        const stored = JSON.parse(localStorage.getItem('panelLayout')!);
+        expect(stored.panelOrder).toEqual(['layers', 'history']);
+      } finally {
+        restoreLayout();
+      }
     });
 
     it('persists rolledUp state through localStorage round-trip', () => {
