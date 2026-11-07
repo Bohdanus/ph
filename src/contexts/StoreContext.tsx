@@ -79,7 +79,11 @@ import {
 } from './history-append.ts';
 import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
 import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
-import { projectDurableRender, type DurableRenderProjection } from './durable-render-projection.ts';
+import {
+  durableLayerPresentationMismatch,
+  projectDurableRender,
+  type DurableRenderProjection,
+} from './durable-render-projection.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import { containFit } from '../util/contain-fit.ts';
 import { useResizeObserverRAF } from '../hooks/useResizeObserver.ts';
@@ -211,15 +215,7 @@ export function durablePresentationMismatch(
   existing: Layer,
   bounds: Layer['pos']
 ): string | null {
-  const sourceSupported =
-    replayLayer.snapshot.source.kind === 'raster' ||
-    replayLayer.snapshot.source.kind === 'blank' ||
-    replayLayer.snapshot.source.kind === 'vector';
-  if (!sourceSupported) return `source kind ${replayLayer.snapshot.source.kind} is unsupported`;
-  if (replayLayer.operations.length > 0) {
-    return `durable layer operations are not pixel-parity approved (${replayLayer.operations.map(({ kind }) => kind).join(', ')})`;
-  }
-  return isEqual(bounds, existing.pos) ? null : 'materialized bounds differ from the untransformed layer position';
+  return durableLayerPresentationMismatch(replayLayer, existing, bounds);
 }
 
 export function durablePresentationIsRendererIdentical(
