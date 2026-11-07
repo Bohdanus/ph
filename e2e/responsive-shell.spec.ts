@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, hasOwnToolTile } from './helpers/toolbar-helpers';
 import { slugifyToolLabel, toolbarMap } from '../toolbar-mapping.ts';
 import { FONT_FAMILIES } from '../src/tools/text.ts';
 
@@ -181,7 +181,7 @@ test.describe('Left tool rail reachability', () => {
     // not asserted: a budget or tile change moves it, and a loop over whatever the rail kept is
     // the claim that survives that.
     const tileBoxes = await page
-      .locator('[data-testid="left-toolbar-tools"] [data-toolbar-tile]')
+      .locator('[data-testid="left-toolbar-tools"] [data-toolbar-tile][data-toolbar-fit-plan-visible="true"]')
       .evaluateAll((tiles) =>
         tiles.map((tile) => {
           const rect = tile.getBoundingClientRect();
@@ -217,7 +217,8 @@ test.describe('Left tool rail reachability', () => {
       for (const group of section) {
         const keys = group.map((tool) => `${tool.name}-${slugifyToolLabel(tool.label)}`);
         const folded = keys.filter((key) => offered.has(key));
-        if (await page.getByTestId(`tool-button-${group[0].name}`).count()) {
+        const hasVisibleTile = (await Promise.all(group.map((tool) => hasOwnToolTile(page, tool.name)))).some(Boolean);
+        if (hasVisibleTile) {
           expect(
             folded,
             `${group[0].label} has a tile, so none of its tools may also be offered by the three-dots tile`

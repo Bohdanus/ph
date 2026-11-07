@@ -199,10 +199,10 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
   // No visible tile, so the tool is either collapsed into the three-dots flyout or the rail is
   // an older build with no such affordance. A fit plan can leave a collapsed button mounted
   // with visibility false, so count alone does not establish that the tile can be clicked.
-  // The collapse is tried first because the tile and its items are both addressed by test id;
-  // the role fallback below is only for older builds without that affordance.
+  // The collapse is tried first when the overflow tile is visible. If it is absent or hidden,
+  // the accessible-name fallback can find a visible tool tile without opening a menu.
   const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
-  if (await overflowTile.count()) {
+  if ((await overflowTile.count()) && (await overflowTile.first().isVisible())) {
     await openFlyoutFromTile(page, OVERFLOW_TILE_TESTID);
     const collapsedItem = overflowFlyoutItem(page, normalizedName).first();
     // Not a `try` with a fall-through: a tool that is neither on the rail nor in an open
@@ -546,19 +546,21 @@ export async function toggleToolbarLayout(page: Page): Promise<void> {
  */
 export async function verifyPrimaryTool(page: Page, toolName: string, expectedLabel: string): Promise<void> {
   const ownTile = getToolButton(page, toolName);
-  if ((await ownTile.count()) === 0) {
-    // Naming the cause beats asserting on a tile that will never carry the label. A caller
-    // whose subject is a TOOL wants a reachability assertion instead; one whose subject is the
-    // tile wants the window grown, and this message says which.
-    const standing = await resolveToolTile(page, toolName);
+  if (!(await hasOwnToolTile(page, toolName))) {
+    // Naming the cause beats asserting on a hidden tile. A caller whose subject is a TOOL wants
+    // a reachability assertion instead; one whose subject is the tile wants the window grown.
+    const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
+    const overflowVisible = (await overflowTile.count()) && (await overflowTile.first().isVisible());
+    const placement = overflowVisible
+      ? `the rail folded it into the three-dots tile, whose label is "More Tools" and never "${expectedLabel}". ` +
+        `Currently represented by: ${overflowTile.first().toString().slice(0, 120)}`
+      : 'neither its own tile nor the More Tools tile is visible at this window.';
     throw new Error(
-      `verifyPrimaryTool: "${toolName}" has no tile of its own at this window — the rail folded it into ` +
-        `the three-dots tile, whose label is "More Tools" and never "${expectedLabel}". ` +
-        `Assert on ${toolName}'s own options-bar control for reachability, or grow the window to test the tile. ` +
-        `Currently represented by: ${standing.toString().slice(0, 120)}`
+      `verifyPrimaryTool: "${toolName}" has no tile of its own visible at this window — ${placement} ` +
+        `Assert on ${toolName}'s own options-bar control for reachability, or grow the window to test the tile.`
     );
   }
-  await expect(ownTile).toHaveAccessibleName(expectedLabel);
+  await expect(ownTile.first()).toHaveAccessibleName(expectedLabel);
 }
 
 /**

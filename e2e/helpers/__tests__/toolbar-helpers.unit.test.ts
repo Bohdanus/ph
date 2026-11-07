@@ -1568,6 +1568,17 @@ describe('Toolbar Helpers', () => {
       expect(overflow.menu.visible).toBe(false);
     });
 
+    it('uses the accessible tool button when an overflow tile exists but is hidden', async () => {
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-crop', role: 'generic', name: 'Crop Tool', visible: false });
+      dom.add({ testId: 'tool-overflow-tile', visible: false });
+      const visibleCropButton = dom.add({ testId: 'crop-accessible-button', role: 'button', name: 'Crop Tool' });
+
+      await clickToolButton(dom.page, 'crop');
+
+      expect(dom.clicked).toEqual([visibleCropButton]);
+    });
+
     it('lands on the exact test id the app mints, for every tool in toolbarMap', async () => {
       // The slug half of the id is the app's own `slugifyToolLabel` applied to the label the
       // app shows, and this walks the real map so a respelled or renamed label cannot leave
@@ -1843,12 +1854,24 @@ describe('Toolbar Helpers', () => {
       // assertion; one whose subject is the tile wants the window grown. The message names
       // which, because "it failed" does not tell the next reader what to do.
       const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-eyedropper', visible: false });
       dom.add({ testId: 'tool-overflow-tile', text: '', attributes: { 'aria-label': 'More Tools' } });
 
       await expect(verifyPrimaryTool(dom.page, 'eyedropper', 'Eyedropper Tool')).rejects.toThrow(/no tile of its own/);
       await expect(verifyPrimaryTool(dom.page, 'eyedropper', 'Eyedropper Tool')).rejects.toThrow(/More Tools/);
       // And it must not have fallen through to a check it knows cannot pass.
       expect(textChecks).toHaveLength(0);
+      expect(accessibleNameChecks).toHaveLength(0);
+    });
+
+    it('does not claim overflow represents a tool when the overflow tile is hidden', async () => {
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-eyedropper', visible: false });
+      dom.add({ testId: 'tool-overflow-tile', visible: false, attributes: { 'aria-label': 'More Tools' } });
+
+      await expect(verifyPrimaryTool(dom.page, 'eyedropper', 'Eyedropper Tool')).rejects.toThrow(
+        /no tile of its own visible.*neither its own tile nor the More Tools tile is visible/
+      );
       expect(accessibleNameChecks).toHaveLength(0);
     });
   });

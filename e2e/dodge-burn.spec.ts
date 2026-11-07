@@ -4,6 +4,7 @@ import { setForegroundColor } from './helpers/color-helpers';
 import {
   clickToolButton,
   FLYOUT_VISIBLE_TIMEOUT_MS,
+  hasOwnToolTile,
   type FlyoutItem,
   selectFromFlyout,
   waitForFlyout,
@@ -130,7 +131,7 @@ async function strokeDocument(page: Page, geometry: Geometry, from: DocPoint, to
 async function openTonalFlyout(page: Page): Promise<void> {
   for (const name of TONAL_GROUP) {
     const tile = page.getByTestId(`tool-button-${name}`);
-    if ((await tile.count()) === 0) continue;
+    if (!(await hasOwnToolTile(page, name))) continue;
     await tile.dispatchEvent('pointerdown', { button: 0 });
     await expect(tile).toHaveAttribute('aria-expanded', 'true', { timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
     await tile.dispatchEvent('pointerup', { button: 0 });
