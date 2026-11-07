@@ -121,10 +121,12 @@ or alter logical history authority.
    transitions; it closes only those inputs and does not establish the cause of the older `(5, 26)`
    mismatch or the wider frame matrix. The transformed raster with opacity `0.58` and `multiply`
    retains exact raw materialized pixels and metadata, and its direct durable composite is exact,
-   but the runtime projection and durable export path differ from legacy over the opaque backdrop.
-   Keep retained operations out of both gates until the next proof slice establishes exact parity
-   through runtime projection, PNG, and PSD. Do not promote `SET_DOCUMENT_FRAME_ACTION` to durable
-   publication.
+   but temporary diagnostics reported 42 channel-byte differences at the affine cursor and 46 after
+   the fractional frame in runtime projection and durable export over the opaque backdrop. Those
+   production paths are not asserted by a committed fixture, so treat the counts as unverified
+   until reproduced or corrected. Keep retained operations out of both gates until the next proof
+   slice establishes exact parity through runtime projection, PNG, and PSD. Do not promote
+   `SET_DOCUMENT_FRAME_ACTION` to durable publication.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
@@ -259,6 +261,10 @@ and tree `8fff8d49d892febd6fabe55f128d9dd7fa33a10e4`, based on local main `b5df9
 - Codex had no Kilo CLI or verifiable free subagent launcher in this session, so the free reviews used
   the repository's tool-free completion runner rather than tool-using Kilo subagents. Incomplete model
   responses were not review evidence.
+- A fresh Luna 6 docs review found that the Loose Ends summary stated the reported 42/46-byte runtime
+  projection/export diagnostics as confirmed, despite the evidence and next-step sections marking
+  them unpinned. The summary now calls them reported and unverified until reproduced or corrected;
+  the follow-up review found no remaining actionable contradiction in either migration document.
 
 The actionable export layer-set finding is resolved. Keep the transformed-raster runtime/PNG/PSD
 parity proof, broader frame matrix, and source-backed ownership as independent remaining gates.
