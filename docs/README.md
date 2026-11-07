@@ -57,6 +57,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 | Document                                                                                               | Its one job                                                                                          |
 | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [WINDOWS-GOTCHAS.md](WINDOWS-GOTCHAS.md)                                                               | Windows command shims, process cleanup, and Git/WSL path mismatches                                  |
 | [`../AGENTS.md`](../AGENTS.md)                                                                         | Rules every agent reads first                                                                        |
 | [`../MODELS.md`](../MODELS.md)                                                                         | Everyday model/provider policy, safe routing, budget checks, and token-saving research               |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                                 | Worktrees, delegation, the swarm board, dead-agent recovery                                          |

@@ -78,6 +78,11 @@ function useLayerHarness() {
   return { store, dispatch, layers: useLayers() };
 }
 
+function useLayerCommitScopesHarness() {
+  const [store, dispatch] = useStore();
+  return { store, dispatch, publisher: useLayers(), committer: useLayers() };
+}
+
 function useSharedDraftHarness() {
   const [store, dispatch] = useStore();
   return { store, dispatch, layers: useLayers(), tool: useCurrentTool() };
@@ -156,6 +161,117 @@ describe('useLayers text commit idempotency boundary', () => {
       result.current.layers.commitDirtyTool();
     });
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a new Small Caps draft in one transient layer raster until it is cleared', () => {
+    const result = setupTextTool();
+    const rect = { x1: 12.25, y1: 8.5, x2: 112.75, y2: 58.25 };
+    const firstDraft = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+
+    act(() => {
+      expect(result.current.layers.publishSmallCapsTextDraftPreview(firstDraft, rect)).toBe(true);
+    });
+
+    const [[draftLayerId, firstPreview]] = Object.entries(result.current.store.previewLayers.current);
+    if (!firstPreview) throw new Error('the Small Caps draft preview was not published');
+    const previewCanvas = firstPreview.layer.tmpCanvas;
+    expect(previewCanvas).toBeInstanceOf(OffscreenCanvas);
+    expect(firstPreview.layer.source).toMatchObject({ kind: 'tool', args: { toolName: 'text', text: 'Hello' } });
+    expect(result.current.store.layers).not.toHaveProperty(draftLayerId);
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+
+    const nextDraft = { ...firstDraft, text: 'Updated' };
+    act(() => {
+      expect(result.current.layers.publishSmallCapsTextDraftPreview(nextDraft, rect)).toBe(true);
+    });
+
+    expect(Object.keys(result.current.store.previewLayers.current)).toEqual([draftLayerId]);
+    expect(result.current.store.previewLayers.current[draftLayerId]?.layer.tmpCanvas).toBe(previewCanvas);
+    expect(result.current.store.previewLayers.current[draftLayerId]?.layer.source).toMatchObject({
+      kind: 'tool',
+      args: { text: 'Updated' },
+    });
+
+    act(() => {
+      result.current.layers.clearSmallCapsTextDraftPreview();
+    });
+    expect(result.current.store.previewLayers.current).toEqual({});
+    expect(result.current.store.layers).not.toHaveProperty(draftLayerId);
+  });
+
+  it('clears a Small Caps draft when a different hook scope commits text', () => {
+    const { result } = renderHook(useLayerCommitScopesHarness, { wrapper: StoreProvider });
+    act(() => {
+      result.current.dispatch({
+        type: 'BATCH_UPDATES',
+        payload: {
+          totalSize: { width: 800, height: 600 },
+          documentFrame: documentFrameFromSize({ width: 800, height: 600 }),
+          hasImage: true,
+        },
+      });
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
+    });
+
+    const rect = { x1: 12, y1: 8, x2: 112, y2: 58 };
+    const args = makeTextArgs({ rect, smallCaps: true }) as TextToolArgs;
+    act(() => {
+      result.current.store.currentArgs.current = args;
+      expect(result.current.publisher.publishSmallCapsTextDraftPreview(args, rect)).toBe(true);
+    });
+
+    const [[draftLayerId, preview]] = Object.entries(result.current.store.previewLayers.current);
+    if (!preview?.layer.tmpCanvas) throw new Error('the Small Caps preview canvas was not published');
+    const draftCanvas = preview.layer.tmpCanvas;
+    expect(preview.previewType).toBe('small-caps-text-draft');
+
+    act(() => {
+      result.current.committer.commitDirtyTool();
+    });
+
+    expect(result.current.store.layers).toHaveProperty('mock-layer-1');
+    expect(result.current.store.previewLayers.current).not.toHaveProperty(draftLayerId);
+    expect(draftCanvas.width).toBe(0);
+    expect(draftCanvas.height).toBe(0);
+  });
+
+  it('renders existing Small Caps edits transiently and restores the source when cancelled', () => {
+    const result = setupTextTool();
+    act(() => {
+      result.current.store.currentArgs.current = makeTextArgs();
+      result.current.layers.commitDirtyTool();
+    });
+    const layer = result.current.store.layers['mock-layer-1'];
+    if (!layer) throw new Error('the committed text layer is missing');
+    const rect = editArgsForExistingLayer(layer).rect!;
+    const editedArgs = { ...editArgsForExistingLayer(layer), text: 'Updated', smallCaps: true };
+
+    act(() => {
+      result.current.layers.beginTextLayerEdit(layer.id);
+      expect(result.current.layers.publishSmallCapsTextDraftPreview(editedArgs, rect)).toBe(true);
+    });
+
+    expect(result.current.store.previewLayers.current[layer.id]?.layer).toMatchObject({
+      visible: true,
+      source: { kind: 'tool', args: { text: 'Updated' } },
+    });
+    expect(result.current.store.previewLayers.current[layer.id]?.layer.tmpCanvas).toBeInstanceOf(OffscreenCanvas);
+
+    act(() => {
+      result.current.layers.clearSmallCapsTextDraftPreview(layer.id);
+    });
+    expect(result.current.store.previewLayers.current[layer.id]?.layer).toMatchObject({
+      visible: false,
+      bitmap: null,
+      tmpCanvas: null,
+    });
+    expect(result.current.store.layers[layer.id]?.source).toEqual(layer.source);
+
+    act(() => {
+      result.current.layers.cancelLayerPreview(layer.id);
+    });
+    expect(result.current.store.previewLayers.current).toEqual({});
+    expect(result.current.store.layers[layer.id]).toMatchObject({ visible: true, source: layer.source });
   });
 
   it('reports refusal when an uncommittable text edit blocks bitmap layer creation', async () => {

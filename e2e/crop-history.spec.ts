@@ -357,13 +357,13 @@ async function cropRotationGesturePoints(page: Page): Promise<{ start: PagePoint
     const point = { x: cornerX - candidate.offsetX, y: cornerY - candidate.offsetY };
     await page.mouse.move(point.x, point.y);
     const cursor = await surface.evaluate((element) => getComputedStyle(element).cursor);
-    if (/url.*ew-resize/.test(cursor)) {
+    if (/url.*data:image\/svg\+xml/.test(cursor)) {
       start = point;
       break;
     }
   }
   if (!start) {
-    throw new Error('No point outside the visible crop corner exposed the rotation cursor');
+    throw new Error('No point outside the visible crop edge exposed the rotation cursor');
   }
 
   const center = {

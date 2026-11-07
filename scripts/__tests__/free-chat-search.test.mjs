@@ -26,6 +26,7 @@ import {
   shapeSessions,
   summarizeSearchResults,
 } from '../free-chat-search.mjs';
+import { sanitizeForLogging } from '../lib/secrets.mjs';
 
 function mockSpawnChild({ stdout = '', stderr = '', code = 0, signal = null, error = null, delay = 0 } = {}) {
   const child = new EventEmitter();
@@ -320,6 +321,219 @@ describe('buildCodexSearchQuery', () => {
       expect(redacted).not.toContain('modelFixture123');
       expect(redacted).toContain(`${awsKey}=[REDACTED]`);
       expect(redacted).toContain(`${openAiKey}="[REDACTED]"`);
+    });
+
+    it('redacts SigV4 signature values in URLs and standalone text assignments', () => {
+      const signature = 'fixtureSignature0123456789abcdef';
+      const sigv4 = 'fixtureSigV40123456789abcdef';
+      const securityToken = 'fixtureSecurityToken0123456789abcdef';
+      const redactedUrl = redactSensitiveText(
+        `https://example.invalid/$&/path?X-Amz-Date=fixtureDate&custom=${securityToken}&X-Amz-Signature=${signature}&X-Amz-Security-Token=${securityToken}&X-Amz-Expires=3600&other=${securityToken}`
+      );
+      const redactedSigv4 = redactSensitiveText(`sigv4=${sigv4}`);
+      const redactedUnquotedAssignment = redactSensitiveText('password=fixturePassword&tail=fixtureTail');
+      const redactedEncodedSignature = redactSensitiveText(
+        `https://example.invalid/?sig%6eature=${signature}&X-Amz-Date=fixtureDate`
+      );
+
+      expect(redactedUrl).not.toContain(signature);
+      expect(redactedUrl).not.toContain(securityToken);
+      expect(redactedUrl).toContain('/$&/path?X-Amz-Date=fixtureDate&custom=[REDACTED]');
+      expect(redactedUrl).toContain('X-Amz-Signature=[REDACTED]');
+      expect(redactedUrl).toContain('X-Amz-Date=fixtureDate');
+      expect(redactedUrl).toContain('X-Amz-Security-Token=[REDACTED]');
+      expect(redactedUrl).toContain('X-Amz-Expires=3600');
+      expect(redactedUrl).toContain('other=[REDACTED]');
+      expect(redactedSigv4).not.toContain(sigv4);
+      expect(redactedSigv4).toContain('sigv4=[REDACTED]');
+      expect(redactedUnquotedAssignment).not.toContain('fixturePassword');
+      expect(redactedUnquotedAssignment).not.toContain('fixtureTail');
+      expect(redactedEncodedSignature).not.toContain(signature);
+      expect(redactedEncodedSignature).toContain('sig%6eature=[REDACTED]');
+    });
+
+    it('redacts credentials in nested and encoded URLs, userinfo, and relative endpoints', () => {
+      const fixtures = [
+        'fixtureNestedSignature',
+        'fixtureDoubleEncodedPassword',
+        'fixtureUserInfoPassword',
+        'fixtureRelativeSignature',
+        'fixtureRelativeKey',
+        'fixturePlusEncodedKey',
+        'fixtureUppercaseSchemePassword',
+        'fixtureNoBoundaryEncodedPassword',
+        'fixturePriorQueryMetadata',
+        'fixturePriorFragmentMetadata',
+        'fixtureNestedFragmentToken',
+      ];
+      const nestedUrl =
+        'https://proxy.invalid/?next=https%3A%2F%2Fs3.invalid%2Ffile%3FX-Amz-Signature%3DfixtureNestedSignature';
+      const doubleEncodedKey = 'https://example.invalid/?pass%2577ord=fixtureDoubleEncodedPassword';
+      const userInfo = 'https://alice:fixtureUserInfoPassword@example.invalid/path';
+      const relativeEndpoint = '/api/endpoint?sig=fixtureRelativeSignature&key=fixtureRelativeKey';
+      const plusEncodedKey = 'https://example.invalid/?api+key=fixturePlusEncodedKey';
+      const encodedFragmentKey = 'https://example.invalid/#access%5ftoken=fixtureFragmentToken';
+      const uppercaseSchemeUserInfo = 'HTTPS://alice:fixtureUppercaseSchemePassword@example.invalid/path';
+      const concatenatedRelativeEndpoint = 'GET/api/endpoint?pass%2577ord=fixtureNoBoundaryEncodedPassword';
+      const nestedSecretAfterUnknownParameter =
+        'https://proxy.invalid/?format=fixturePriorQueryMetadata&next=https%3A%2F%2Fs3.invalid%2Ffile%3Ftoken%3DfixtureNestedSignature';
+      const fragmentSecretAfterUnknownParameter =
+        'https://example.invalid/?format=fixturePriorFragmentMetadata#access_token=fixtureFragmentToken';
+      const nestedSecretInStandaloneFragment =
+        '#next=https%3A%2F%2Fs3.invalid%2Ffile%3Ftoken%3DfixtureNestedFragmentToken';
+      let deeplyEncodedKey = [...'password']
+        .map((character) => `%${character.charCodeAt(0).toString(16).padStart(2, '0')}`)
+        .join('');
+      for (let depth = 0; depth < 12; depth += 1) {
+        deeplyEncodedKey = encodeURIComponent(deeplyEncodedKey);
+      }
+      const beyondDecodeLimit = `https://example.invalid/?${deeplyEncodedKey}=fixtureBeyondDecodeLimitPassword`;
+
+      const redactedNestedUrl = redactSensitiveText(nestedUrl);
+      const redactedDoubleEncodedKey = redactSensitiveText(doubleEncodedKey);
+      const redactedUserInfo = redactSensitiveText(userInfo);
+      const redactedRelativeEndpoint = redactSensitiveText(relativeEndpoint);
+      const redactedPlusEncodedKey = redactSensitiveText(plusEncodedKey);
+      const redactedFragment = redactSensitiveText(encodedFragmentKey);
+      const redactedBeyondDecodeLimit = redactSensitiveText(beyondDecodeLimit);
+      const redactedUppercaseScheme = redactSensitiveText(uppercaseSchemeUserInfo);
+      const redactedConcatenatedRelative = redactSensitiveText(concatenatedRelativeEndpoint);
+      const redactedPriorQuery = redactSensitiveText(nestedSecretAfterUnknownParameter);
+      const redactedPriorFragment = redactSensitiveText(fragmentSecretAfterUnknownParameter);
+      const redactedNestedFragment = redactSensitiveText(nestedSecretInStandaloneFragment);
+
+      for (const fixture of fixtures) {
+        expect(
+          [
+            redactedNestedUrl,
+            redactedDoubleEncodedKey,
+            redactedUserInfo,
+            redactedRelativeEndpoint,
+            redactedPlusEncodedKey,
+            redactedFragment,
+            redactedBeyondDecodeLimit,
+            redactedUppercaseScheme,
+            redactedConcatenatedRelative,
+            redactedPriorQuery,
+            redactedPriorFragment,
+            redactedNestedFragment,
+          ].join(' ')
+        ).not.toContain(fixture);
+      }
+      expect(redactedFragment).not.toContain('fixtureFragmentToken');
+      expect(redactedBeyondDecodeLimit).not.toContain('fixtureBeyondDecodeLimitPassword');
+      expect(redactedNestedUrl).toContain('next=[REDACTED]');
+      expect(redactedDoubleEncodedKey).toContain('pass%2577ord=[REDACTED]');
+      expect(redactedUserInfo).toContain('***REDACTED***@example.invalid');
+      expect(redactedRelativeEndpoint).toContain('sig=[REDACTED]&key=[REDACTED]');
+      expect(redactedPlusEncodedKey).toContain('api+key=[REDACTED]');
+      expect(redactedFragment).toContain('#access%5ftoken=[REDACTED]');
+      expect(redactedBeyondDecodeLimit).toContain(`${deeplyEncodedKey}=[REDACTED]`);
+      expect(redactedUppercaseScheme).toContain('HTTPS://***REDACTED***@example.invalid/path');
+      expect(redactedConcatenatedRelative).toContain('pass%2577ord=[REDACTED]');
+      expect(redactedPriorQuery).toContain('format=[REDACTED]&next=[REDACTED]');
+      expect(redactedPriorFragment).toContain('format=[REDACTED]#access_token=[REDACTED]');
+      expect(redactedNestedFragment).toContain('#next=[REDACTED]');
+      expect(redactSensitiveText('Error loading /home/user/.config/app.json')).toBe(
+        'Error loading /home/user/.config/app.json'
+      );
+      expect(redactSensitiveText('https://example.invalid/?format=png&view=full')).toBe(
+        'https://example.invalid/?format=png&view=full'
+      );
+      expect(redactSensitiveText('https://example.invalid/?token_count=42&format=png')).toBe(
+        'https://example.invalid/?token_count=42&format=png'
+      );
+      expect(redactSensitiveText('token_count=42&access_token=fixtureFollowingToken')).toBe(
+        'token_count=42&access_token=[REDACTED]'
+      );
+      expect(redactSensitiveText('auth=fixtureAuthValue&token_count=42')).toBe('auth=[REDACTED]&token_count=42');
+      expect(redactSensitiveText('https://example.invalid/?auth=fixtureAuthValue&token_count=42&format=json')).toBe(
+        'https://example.invalid/?auth=[REDACTED]&token_count=42&format=[REDACTED]'
+      );
+    });
+
+    it('redacts encoded credential names in plain text and object keys', () => {
+      const encodedAssignment = redactSensitiveText('pass%2577ord=fixtureEncodedAssignmentPassword');
+      const plusEncodedAssignment = redactSensitiveText('api+key=fixturePlusEncodedAssignmentKey');
+      const encodedJson = redactSensitiveText('{"pass%2577ord":"fixtureEncodedJsonPassword"}');
+      const encodedObject = sanitizeForLogging({ 'pass%2577ord': 'fixtureEncodedObjectPassword' });
+      const encodedCountObject = sanitizeForLogging({ 'token%5fcount': 'fixtureEncodedCountValue' });
+
+      expect(encodedAssignment).not.toContain('fixtureEncodedAssignmentPassword');
+      expect(encodedAssignment).toContain('pass%2577ord=[REDACTED]');
+      expect(plusEncodedAssignment).not.toContain('fixturePlusEncodedAssignmentKey');
+      expect(plusEncodedAssignment).toContain('api+key=[REDACTED]');
+      expect(encodedJson).not.toContain('fixtureEncodedJsonPassword');
+      expect(encodedJson).toContain('"pass%2577ord":"[REDACTED]"');
+      expect(encodedObject).toEqual({ 'pass%2577ord': '***REDACTED***' });
+      expect(encodedCountObject).toEqual({ 'token%5fcount': '***REDACTED***' });
+    });
+
+    it('redacts camel-case credential assignments and standalone nested URLs', () => {
+      const camelCasePassword = redactSensitiveText('myPassword=fixtureCamelPassword');
+      const camelCaseAuthToken = redactSensitiveText('authToken=fixtureCamelAuthToken');
+      const camelCasePrivateKey = redactSensitiveText('privateKey=fixturePrivateKey');
+      const nestedUrl = redactSensitiveText(
+        'next=https%3A%2F%2Fs3.invalid%2Ffile%3Ftoken%3DfixtureStandaloneNestedToken'
+      );
+      const separatedAssignments = redactSensitiveText('format=png&access_token=fixtureFollowingToken');
+
+      expect(camelCasePassword).not.toContain('fixtureCamelPassword');
+      expect(camelCasePassword).toBe('myPassword=[REDACTED]');
+      expect(camelCaseAuthToken).not.toContain('fixtureCamelAuthToken');
+      expect(camelCaseAuthToken).toBe('authToken=[REDACTED]');
+      expect(camelCasePrivateKey).not.toContain('fixturePrivateKey');
+      expect(camelCasePrivateKey).toBe('privateKey=[REDACTED]');
+      expect(nestedUrl).not.toContain('fixtureStandaloneNestedToken');
+      expect(nestedUrl).toBe('next=[REDACTED]');
+      expect(separatedAssignments).toBe('format=png&access_token=[REDACTED]');
+    });
+
+    it('preserves safe token-count metadata while redacting actual token values', () => {
+      const redactedText = redactSensitiveText(
+        'token_count=42 access_token=fixtureAccessToken token_count=fixtureTokenCountValue'
+      );
+      const redactedObject = sanitizeForLogging({ token_count: 42, access_token: 'fixtureAccessToken' });
+      const redactedInvalidMetadata = sanitizeForLogging({ token_count: 'fixtureTokenCountValue' });
+
+      expect(redactedText).toContain('token_count=42');
+      expect(redactedText).not.toContain('fixtureAccessToken');
+      expect(redactedText).not.toContain('fixtureTokenCountValue');
+      expect(redactedText).toContain('token_count=[REDACTED]');
+      expect(redactedObject).toEqual({ token_count: 42, access_token: '***REDACTED***' });
+      expect(redactedInvalidMetadata).toEqual({ token_count: '***REDACTED***' });
+    });
+
+    it('redacts structured secret values in JSON text, including escaped keys', () => {
+      const redacted = redactSensitiveText(
+        '{"private_key":{"pem":"fixturePEMSecret"},"nested":{"access_token":["fixtureNestedToken"]},"safe":{"name":"kept"},"token_count":42}'
+      );
+      const redactedEscapedKey = redactSensitiveText('{"private\\u005fkey":{"pem":"fixtureEscapedPEMSecret"}}');
+      const malformedStructuredText = redactSensitiveText('{"private_key":{"pem":"fixtureMalformedPEMSecret"}');
+      const numericSecret = redactSensitiveText('{"api_key":1234567890}');
+      const encodedCountObject = redactSensitiveText('{"token%5fcount":{"pem":"fixtureEncodedCountObjectSecret"}}');
+      const prettySafeMetadata = '{\n  "format": "png",\n  "token_count": 42\n}';
+      let deeplyNestedJson = '{"private_key":"fixtureDeepJsonSecret"}';
+      for (let depth = 0; depth < 12; depth += 1) {
+        deeplyNestedJson = `{"nested":${deeplyNestedJson}}`;
+      }
+      const redactedDeepJson = redactSensitiveText(deeplyNestedJson);
+
+      expect(redacted).not.toContain('fixturePEMSecret');
+      expect(redacted).not.toContain('fixtureNestedToken');
+      expect(JSON.parse(redacted)).toEqual({
+        private_key: '[REDACTED]',
+        nested: { access_token: '[REDACTED]' },
+        safe: { name: 'kept' },
+        token_count: 42,
+      });
+      expect(redactedEscapedKey).not.toContain('fixtureEscapedPEMSecret');
+      expect(JSON.parse(redactedEscapedKey)).toEqual({ private_key: '[REDACTED]' });
+      expect(malformedStructuredText).toBe('[REDACTED]');
+      expect(JSON.parse(numericSecret)).toEqual({ api_key: '[REDACTED]' });
+      expect(JSON.parse(encodedCountObject)).toEqual({ 'token%5fcount': '[REDACTED]' });
+      expect(redactSensitiveText(prettySafeMetadata)).toBe(prettySafeMetadata);
+      expect(redactedDeepJson).not.toContain('fixtureDeepJsonSecret');
     });
 
     it('uses the shared secret sanitizer for Kilo CLI credentials', () => {

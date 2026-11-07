@@ -1258,11 +1258,25 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
     ).toEqual([]);
   });
 
-  it('keeps app coverage a measure of src/ by excluding e2e/**', () => {
+  it('scopes app coverage to src/ and preserves reports when tests fail', () => {
+    expect(rootTest?.coverage?.include, 'the app coverage input must include every TypeScript source module').toEqual([
+      'src/**/*.ts',
+      'src/**/*.tsx',
+    ]);
     expect(
       coverageExcludesE2E(rootTest?.coverage?.exclude),
       'e2e/** left the app coverage exclude, so the app coverage report is no longer a measure of src/ and the two reports cannot be compared'
     ).toBe(true);
+    expect(rootTest?.coverage?.exclude).toContain('src/**/*.d.ts');
+    expect(rootTest?.coverage?.exclude).toContain('src/test/setup.ts');
+    expect(rootTest?.coverage?.reportOnFailure, 'the app artifact must be emitted after a test failure').toBe(true);
+    expect(e2eTest?.coverage?.reportOnFailure, 'the helper artifact must be emitted after a test failure').toBe(true);
+    expect(rootTest?.coverage?.thresholds, 'app coverage floors must retain the measured source baseline').toEqual({
+      lines: 90,
+      functions: 85,
+      branches: 80,
+      statements: 85,
+    });
   });
 
   it('runs the Node script tests in the root jsdom project, on the vmThreads pool', () => {

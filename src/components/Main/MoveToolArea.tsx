@@ -7,19 +7,104 @@ import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import type { Pos, RectXYSorted } from '../../contexts/general-types.ts';
 import { useMarchingAnts } from '../../hooks/useAnts.ts';
 import { useContainScale } from '../../hooks/useContainScale.ts';
-import type { LayerId } from '../../contexts/layer-types.ts';
+import type { Layer, LayerId } from '../../contexts/layer-types.ts';
 import { useRect } from '../../hooks/useRect.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
-import { posToSortedRect, sortedRectToPos } from '../../util/rect.ts';
+import { posToSortedRect, rotatePointAround, sortedRectToPos } from '../../util/rect.ts';
 import type { RepositionToolArgs } from '../../tools/reposition.ts';
+import type { TransformToolArgs } from '../../tools/transform.ts';
 import {
   canvasToDocumentPoint,
   canvasToDocumentPos,
   documentFrameFromSize,
   documentToCanvasPos,
 } from '../../contexts/document-frame.ts';
-import { getLayerPresentationBounds } from '../../contexts/affine-transform.ts';
+import {
+  getLayerAffineTransform,
+  getLayerPresentationBounds,
+  getLayerPresentationCorners,
+} from '../../contexts/affine-transform.ts';
 import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
+
+const ROTATABLE_SHAPE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'shape',
+  'rectangle',
+  'ellipse',
+  'triangle',
+  'polygon',
+  'line',
+]);
+const ROTATION_FRAME_EPSILON = 1e-8;
+
+function isRotatableShapeLayer(layer: Layer | null | undefined): layer is Layer {
+  if (layer?.source?.kind !== 'tool' || !ROTATABLE_SHAPE_TOOL_NAMES.has(layer.source.args.toolName)) return false;
+
+  const transform = getLayerAffineTransform(layer);
+  const columnScale = Math.hypot(transform.a, transform.b) * Math.hypot(transform.c, transform.d);
+  const columnDot = transform.a * transform.c + transform.b * transform.d;
+  return columnScale > 0 && Math.abs(columnDot) <= ROTATION_FRAME_EPSILON * columnScale;
+}
+
+/** Recover a transformed shape's unrotated document-space bounds from its presentation corners. */
+function getRotatableShapeFrame(layer: Layer): { rect: Pos; rotation: number } {
+  const transform = getLayerAffineTransform(layer);
+  const determinant = transform.a * transform.d - transform.b * transform.c;
+  const rotationA = determinant < 0 ? -transform.a : transform.a;
+  const rotationB = determinant < 0 ? -transform.b : transform.b;
+  const rotation = Math.atan2(rotationB - transform.c, rotationA + transform.d);
+  const cosine = Math.cos(rotation);
+  const sine = Math.sin(rotation);
+  const corners = getLayerPresentationCorners(layer);
+  const center = corners.reduce(
+    (sum, point) => ({ x: sum.x + point.x / corners.length, y: sum.y + point.y / corners.length }),
+    { x: 0, y: 0 }
+  );
+  const projectedCorners = corners.map((point) => {
+    const x = point.x - center.x;
+    const y = point.y - center.y;
+    return { x: x * cosine + y * sine, y: -x * sine + y * cosine };
+  });
+  const minX = Math.min(...projectedCorners.map(({ x }) => x));
+  const maxX = Math.max(...projectedCorners.map(({ x }) => x));
+  const minY = Math.min(...projectedCorners.map(({ y }) => y));
+  const maxY = Math.max(...projectedCorners.map(({ y }) => y));
+  const frameCenter = {
+    x: center.x + cosine * ((minX + maxX) / 2) - sine * ((minY + maxY) / 2),
+    y: center.y + sine * ((minX + maxX) / 2) + cosine * ((minY + maxY) / 2),
+  };
+
+  return {
+    rect: {
+      x: frameCenter.x - (maxX - minX) / 2,
+      y: frameCenter.y - (maxY - minY) / 2,
+      width: maxX - minX,
+      height: maxY - minY,
+    },
+    rotation: (rotation * 180) / Math.PI,
+  };
+}
+
+function getLayerRect(layer: Layer): Pos {
+  return isRotatableShapeLayer(layer) ? getRotatableShapeFrame(layer).rect : getLayerPresentationBounds(layer);
+}
+
+function getLayerRotation(layer: Layer): number {
+  return getRotatableShapeFrame(layer).rotation;
+}
+
+function getRotationToolArgs(degrees: number): TransformToolArgs {
+  return {
+    rotate: degrees,
+    mirrorH: false,
+    mirrorV: false,
+    skewX: 0,
+    skewY: 0,
+    trapezoid: 0,
+    resizeX: 100,
+    resizeY: 100,
+    toolName: 'transform',
+  };
+}
 
 type moveToolAreaProps = {
   className?: string;
@@ -37,10 +122,11 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef, scaleRef: containScale });
 
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
+  const activeLayerSupportsRotation = isRotatableShapeLayer(activeLayer);
   const activeLayerRect = useMemo(
     () =>
       activeLayer && !activeLayer.isBedrock
-        ? posToSortedRect(documentToCanvasPos(getLayerPresentationBounds(activeLayer), documentFrame))
+        ? posToSortedRect(documentToCanvasPos(getLayerRect(activeLayer), documentFrame))
         : null,
     [activeLayer, documentFrame]
   );
@@ -50,6 +136,8 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const interactionLayerIdRef = useRef<LayerId | null>(null);
   const interactionStartPosRef = useRef<Pos | null>(null);
   const interactionStartBoundsRef = useRef<Pos | null>(null);
+  const interactionStartRotationRef = useRef<number | null>(null);
+  const interactionCurrentRotationRef = useRef<number | null>(null);
   const isInteractionActiveRef = useRef(false);
   const interactionPointerIdRef = useRef<number | null>(null);
   const cancelLayerPreviewRef = useRef(cancelLayerPreview);
@@ -95,10 +183,11 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   }
 
   function getArgs(sortedRect: RectXYSorted, layerId: LayerId): RepositionToolArgs {
+    // Convert the canvas overlay once; layer positions and presentation bounds are document-space.
     const newPos = canvasToDocumentPos(sortedRectToPos(sortedRect), documentFrame);
     const layer = layers[layerId];
     if (!layer) return { move: { x: newPos.x, y: newPos.y }, toolName: 'reposition' };
-    const presentation = getLayerPresentationBounds(layer);
+    const presentation = getLayerRect(layer);
     if (!wasLayerResized(layerId, newPos)) {
       return {
         move: { x: layer.pos.x + newPos.x - presentation.x, y: layer.pos.y + newPos.y - presentation.y },
@@ -106,15 +195,76 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       };
     }
 
+    const resizeWidth = layer.pos.width * (newPos.width / presentation.width);
+    const resizeHeight = layer.pos.height * (newPos.height / presentation.height);
+    let resizePosition = {
+      x: layer.pos.x + newPos.x - presentation.x,
+      y: layer.pos.y + newPos.y - presentation.y,
+    };
+
+    if (isRotatableShapeLayer(layer)) {
+      const { rotation } = getRotatableShapeFrame(layer);
+      const originalCenter = {
+        x: presentation.x + presentation.width / 2,
+        y: presentation.y + presentation.height / 2,
+      };
+      const resizedCenter = { x: newPos.x + newPos.width / 2, y: newPos.y + newPos.height / 2 };
+      // useRect's delta is in the unrotated frame; convert it to document space, then cancel the affine source-center shift.
+      const frameCenterDelta = rotatePointAround(
+        { x: resizedCenter.x - originalCenter.x, y: resizedCenter.y - originalCenter.y },
+        { x: 0, y: 0 },
+        rotation
+      );
+      const resizedSourceCenterDelta = {
+        x: (resizeWidth - layer.pos.width) / 2,
+        y: (resizeHeight - layer.pos.height) / 2,
+      };
+      const transform = getLayerAffineTransform(layer);
+      resizePosition = {
+        x:
+          layer.pos.x +
+          frameCenterDelta.x -
+          transform.a * resizedSourceCenterDelta.x -
+          transform.c * resizedSourceCenterDelta.y,
+        y:
+          layer.pos.y +
+          frameCenterDelta.y -
+          transform.b * resizedSourceCenterDelta.x -
+          transform.d * resizedSourceCenterDelta.y,
+      };
+    }
+
     return {
       resize: {
-        x: layer.pos.x + newPos.x - presentation.x,
-        y: layer.pos.y + newPos.y - presentation.y,
-        width: layer.pos.width * (newPos.width / presentation.width),
-        height: layer.pos.height * (newPos.height / presentation.height),
+        ...resizePosition,
+        width: resizeWidth,
+        height: resizeHeight,
       },
       toolName: 'reposition',
     };
+  }
+
+  function getRotationArgsForInteraction(): TransformToolArgs | null {
+    const startRotation = interactionStartRotationRef.current;
+    const currentRotation = interactionCurrentRotationRef.current;
+    if (startRotation === null || currentRotation === null || Math.abs(currentRotation - startRotation) < 1e-6) {
+      return null;
+    }
+
+    return getRotationToolArgs(currentRotation - startRotation);
+  }
+
+  function startLayerInteraction(layerId: LayerId | null | undefined, pointerId: number | null) {
+    const layer = layerId ? layers[layerId] : null;
+    const rotation = isRotatableShapeLayer(layer) ? getLayerRotation(layer) : null;
+
+    interactionLayerIdRef.current = layerId ?? null;
+    interactionStartPosRef.current = layer ? { ...layer.pos } : null;
+    interactionStartBoundsRef.current = layer ? { ...getLayerRect(layer) } : null;
+    interactionStartRotationRef.current = rotation;
+    interactionCurrentRotationRef.current = rotation;
+    isInteractionActiveRef.current = !!layer;
+    interactionPointerIdRef.current = isInteractionActiveRef.current ? pointerId : null;
   }
 
   const {
@@ -132,6 +282,11 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     initialRect: activeLayerRect,
     hideBlend: true,
     isMoveTool: true,
+    rotationEnabled: activeLayerSupportsRotation,
+    rotation: activeLayerSupportsRotation && activeLayer ? getLayerRotation(activeLayer) : 0,
+    onRotationChange: (rotation: number) => {
+      interactionCurrentRotationRef.current = rotation;
+    },
 
     containerRef,
     overlayRef: rectOverlayRef,
@@ -139,7 +294,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       const layerId = interactionLayerIdRef.current;
       if (!isInteractionActiveRef.current || !layerId) return;
 
-      const toolArgs = getArgs(sortedRect, layerId);
+      const toolArgs = getRotationArgsForInteraction() ?? getArgs(sortedRect, layerId);
       tempUpdateLayer({ id: layerId, toolArgs });
     },
     onChangeEnd: async (sortedRect: RectXYSorted) => {
@@ -155,6 +310,12 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
         startBounds.width !== newPos.width ||
         startBounds.height !== newPos.height;
 
+      const rotationArgs = getRotationArgsForInteraction();
+      if (rotationArgs) {
+        await updateLayerByTool({ id: layerId, toolArgs: rotationArgs });
+        return;
+      }
+
       if (!didPosChange) return;
 
       const toolArgs = getArgs(sortedRect, layerId);
@@ -167,8 +328,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   }, [activeLayer]);
 
   function wasLayerResized(layerId: LayerId, newPos: Pos) {
-    const oldPos =
-      interactionStartBoundsRef.current ?? (layers[layerId] && getLayerPresentationBounds(layers[layerId]));
+    const oldPos = interactionStartBoundsRef.current ?? (layers[layerId] && getLayerRect(layers[layerId]));
     if (!oldPos) return false;
 
     return oldPos.width !== newPos.width || oldPos.height !== newPos.height;
@@ -200,15 +360,10 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
 
     const dragHandleClicked = handlePointerDown_useRect(
       event,
-      layer ? { ...layer, pos: documentToCanvasPos(getLayerPresentationBounds(layer), documentFrame) } : layer
+      layer ? { ...layer, pos: documentToCanvasPos(getLayerRect(layer), documentFrame) } : layer
     );
     if (dragHandleClicked) {
-      const layerId = selectedLayerIdRef.current;
-      interactionLayerIdRef.current = layerId;
-      interactionStartPosRef.current = layerId ? { ...layers[layerId].pos } : null;
-      interactionStartBoundsRef.current = layerId ? getLayerPresentationBounds(layers[layerId]) : null;
-      isInteractionActiveRef.current = !!layerId;
-      interactionPointerIdRef.current = isInteractionActiveRef.current ? pointerId : null;
+      startLayerInteraction(selectedLayerIdRef.current, pointerId);
       // The resize half of the gesture, and the reason this claim is taken on
       // both exits of the press rather than at the end of this function: the
       // drag-handle branch returns here, and it is a drag like any other.
@@ -222,18 +377,14 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       interactionLayerIdRef.current = null;
       interactionStartPosRef.current = null;
       interactionStartBoundsRef.current = null;
+      interactionStartRotationRef.current = null;
+      interactionCurrentRotationRef.current = null;
       isInteractionActiveRef.current = false;
       interactionPointerIdRef.current = null;
       // indicate somehow bedrock is selected
     } else {
       selectedLayerIdRef.current = layerUnderPointerId;
-      interactionLayerIdRef.current = layerUnderPointerId;
-      interactionStartPosRef.current = layerUnderPointerId ? { ...layers[layerUnderPointerId].pos } : null;
-      interactionStartBoundsRef.current = layerUnderPointerId
-        ? getLayerPresentationBounds(layers[layerUnderPointerId])
-        : null;
-      isInteractionActiveRef.current = !!layerUnderPointerId;
-      interactionPointerIdRef.current = isInteractionActiveRef.current ? pointerId : null;
+      startLayerInteraction(layerUnderPointerId, pointerId);
       containerRef.current!.classList.add('cursor-grabbing');
     }
 
@@ -312,6 +463,8 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     interactionLayerIdRef.current = null;
     interactionStartPosRef.current = null;
     interactionStartBoundsRef.current = null;
+    interactionStartRotationRef.current = null;
+    interactionCurrentRotationRef.current = null;
     interactionPointerIdRef.current = null;
 
     containerRef.current!.classList.remove('cursor-grabbing');
@@ -337,6 +490,8 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     interactionLayerIdRef.current = null;
     interactionStartPosRef.current = null;
     interactionStartBoundsRef.current = null;
+    interactionStartRotationRef.current = null;
+    interactionCurrentRotationRef.current = null;
     interactionPointerIdRef.current = null;
   }
 
@@ -387,6 +542,8 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       interactionLayerIdRef.current = null;
       interactionStartPosRef.current = null;
       interactionStartBoundsRef.current = null;
+      interactionStartRotationRef.current = null;
+      interactionCurrentRotationRef.current = null;
     };
   }, []);
 

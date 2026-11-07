@@ -1051,33 +1051,38 @@ comment above it; `src/components/Common/AppKeyboardShortcuts.tsx` — `brushGro
 `src/components/SidebarLeft/SidebarLeft.tsx` — `renderToolGroup()`;
 `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts`
 
-## 120. The Move tool has seven missing controls and four unimplemented modifiers; implementation is unprioritized
+## 120. The Move tool has seven missing controls and three unimplemented modifiers; implementation is unprioritized
 
 `docs/TOOLS.md` — "Move Tool" — gives `reposition` a written `partial` verdict and lists nine
 options-bar rows. Two are `partial`: Auto-Select and Show Transform Controls have behavior without
 their corresponding visible controls. The other seven are `missing`: Tool Preset Picker,
-Auto-Select Group/Layer, Align, Distribute, Align to, Width and Height. The modifier table also
-records four missing behaviors: Alt-drag duplicate, Shift axis constraint, Shift-click selection
-extension and arrow-key nudge. This section already tracks those gaps; the older claim that no HANDOFF
-entry named them, and the instruction to add a duplicate entry, are stale.
+Auto-Select Group/Layer, Align, Distribute, Align to, Width and Height. Three modifiers remain
+missing: Alt-drag duplicate, Shift axis constraint and Shift-click selection extension. Arrow-key
+nudge now moves one active unlocked non-bedrock layer by one document pixel, or ten with Shift, when
+no selection is active. Multi-layer and selection nudging remain unavailable. This section already
+tracks those gaps; the older claim that no HANDOFF entry named them, and the instruction to add a
+duplicate entry, are stale.
 
 **Current implementation evidence.** `Reposition.tsx` renders no Tool Preset Picker, Auto-Select,
 Group/Layer, Align/Distribute, Align-to, or numeric transform controls. `MoveToolArea.tsx` always
 hit-tests the topmost layer and draws a resize rectangle without a toggle. The code has no Move-tool
-Alt-drag duplicate, Shift axis-lock, Shift-click multi-select, or arrow-key nudge path. The
-`isLayerLocked()` checks in `useLayer.ts` now refuse edits/moves of locked layers; do not repeat older
-claims that locked layers remain draggable. Multi-layer selection remains blocked by the missing
-`selectedLayerIds` state described in `docs/LAYERS-PANEL.md` §4.
+Alt-drag duplicate, Shift axis-lock, or Shift-click multi-select path. Arrow-key nudges in `AppKeyboardShortcuts.tsx` commit through
+`updateLayerByTool` and are limited to one active unlocked non-bedrock layer when no selection is
+active. The `isLayerLocked()` checks in `useLayer.ts` now refuse edits/moves of locked layers; do not
+repeat older claims that locked layers remain draggable. Multi-layer selection remains blocked by the
+missing `selectedLayerIds` state described in `docs/LAYERS-PANEL.md` §4.
 
 **Remaining work.** This entry is the tracking item. The gaps span distinct features: preset
-management, transform-bar controls, alignment requiring multi-layer selection, and keyboard/pointer
-gestures. No implementation priority or sequencing is established here. In particular, do not
-implement alignment before the `selectedLayerIds` model exists, and do not claim Photoshop parity
-for spring-loaded V behavior, lock dialogs, or transform-box behavior from the missing-control list
-alone; `transform.notes.md` records those as separate divergences/product questions.
+management, transform-bar controls, alignment requiring multi-layer selection, and pointer gestures.
+No implementation priority or sequencing is established here. In particular, do not implement
+alignment before the `selectedLayerIds` model exists, and do not claim Photoshop parity for
+multi-layer or selection nudging, spring-loaded V behavior, lock dialogs, or transform-box behavior
+from the missing-control list alone; `transform.notes.md` records those as separate
+divergences/product questions.
 
-**Files.** `docs/TOOLS.md` — "Move Tool"; `src/components/ToolbarsRight/Move/Reposition.tsx`;
-`src/components/Main/MoveToolArea.tsx`; `src/hooks/useRect.ts`; `src/contexts/useLayer.ts`;
+**Files.** `src/tools/descriptions/transform.ts`; generated `docs/TOOLS.md` — "Move Tool";
+`src/components/ToolbarsRight/Move/Reposition.tsx`; `src/components/Main/MoveToolArea.tsx`;
+`src/hooks/useRect.ts`; `src/contexts/useLayer.ts`;
 `src/components/Common/AppKeyboardShortcuts.tsx`; `docs/LAYERS-PANEL.md`.
 
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
