@@ -3,7 +3,7 @@
 **Branch:** `task/test-unit-hardening-salvage-20261107`
 **Base main:** `b5df9dbc272e208dc04768259228e13abdad33fb`
 **Source commits:** `6badc372ea1e21bc0482bc63c56047e2dddd826f`, `b218b555f156045f59af278c43036a71f82c11df`
-**Status:** Validation passes; the final pinned landing check remains.
+**Status:** Validation passes; pinned landing is blocked by two active repository-wide merge operations.
 
 ## Provenance and scope
 
@@ -19,4 +19,4 @@ Two independent full-diff Kilo reviews of source candidate `05056df26a9b749936a2
 
 ## Landing gate
 
-The final live `npm run repo:state` check was clean before this main synchronization. Re-run repository state, ownership, inventory, ancestry, and merge-tree checks immediately before pinned landing. If `main` advances again, sync this branch and repeat review and validation against the final candidate.
+The last three live `npm run repo:state` checks refused landing because `free-models-merge-recovery-20261107` and `stale-work-followup-20261107` have active `MERGE_HEAD` operations in their own worktrees. Those operations were left untouched. Re-run repository state, ownership, inventory, ancestry, and merge-tree checks after their owners finish. If `main` advances again, sync this branch and repeat review and validation against the final candidate.
