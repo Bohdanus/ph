@@ -571,3 +571,11 @@ Local `main` at `b877c79ae49d45f9bd8dbf5bebf84415cc218799` and fetched `origin/m
 - b69255c3 (b69255c3548af88d23d67e5e48563f4bdafef471) "fix(text): make line-height preset keyboard accessible" — bohdan
 - 1596d2f4 (1596d2f43018b3a80717675abdd594414f2830a6) "Merge task/stale-harvest-20261106 into main" — bohdan
 - 8d0b8bc4 (8d0b8bc491d440b7bb30f7085822aff56c467584) "test: make gate fixtures Windows-safe" — bohdan
+
+## 2026-11-07 — origin/audit/systemic-hardening-review-20261106 (fetch + merge into local main)
+
+The audit branch was based on `origin/main` at `e4c0f3a90849793a77dfcc5c75a8d413809107e4`. Its merge into the origin-based reconciliation candidate imports one non-merge patch; the branch's two merge commits record its sync with `origin/main` and its reviewed integration:
+
+- 2134c8588 (2134c8588ed0591afa1f8a9096fd540368e8f7bf) "Windows command hardening: safe .cmd resolution, process-tree termination, inventory fail-closed" — bohdan
+- c5f24a538 (c5f24a5383565bc62fa9ce2ab21b0107606fad7b) "Merge main into systemic-hardening-review-20261106" — bohdan
+- c69fcf16f (c69fcf16f207b4a6434d0a0b282688eeaf3dbddf) "Merge systemic hardening review" — Bohdan Kalynovskyi (Dan)

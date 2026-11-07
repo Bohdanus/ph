@@ -68,6 +68,7 @@ export function buildInventory({
   // and a file that says a dead chat owns a worktree is worse than one that says
   // nothing — so the override wins, and everything it overrode is kept beside it.
   liveWritersSuppressed = null,
+  ownershipAvailable = true,
   // The curated table is a MODULE, not a parameter, so an injected reader is the
   // only way a test can place an entry against a worktree that does not exist in
   // the real table. Without it, `legacy` — a hand-written flag — could only be
@@ -125,6 +126,7 @@ export function buildInventory({
       shellHistory,
       readHistory,
       liveWritersSuppressed,
+      ownershipAvailable,
     });
 
     const claims = board.claims?.get(wt.path) ?? [];

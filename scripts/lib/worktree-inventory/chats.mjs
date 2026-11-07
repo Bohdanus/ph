@@ -43,6 +43,9 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { LIVE_WINDOW_MS } from './classify.mjs';
 import { boundSessionSinceMs } from './session-audit-limits.mjs';
 
@@ -78,8 +81,16 @@ export function isDead(session) {
 }
 
 /** Where the Kilo session database lives. `KILO_DB` overrides it for tests. */
-export function resolveSessionDb(home = process.env.HOME) {
-  return process.env.KILO_DB || `${home}/.local/share/kilo/kilo.db`;
+export function resolveSessionDb(home = process.env.HOME || process.env.USERPROFILE || homedir()) {
+  if (process.env.KILO_DB) return process.env.KILO_DB;
+  const candidates = [];
+  if (process.env.XDG_DATA_HOME) candidates.push(join(process.env.XDG_DATA_HOME, 'kilo', 'kilo.db'));
+  if (process.platform === 'win32') {
+    if (process.env.APPDATA) candidates.push(join(process.env.APPDATA, 'kilo', 'kilo.db'));
+    if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, 'kilo', 'kilo.db'));
+  }
+  candidates.push(join(home || homedir(), '.local', 'share', 'kilo', 'kilo.db'));
+  return candidates.find(existsSync) ?? candidates[0];
 }
 
 /**

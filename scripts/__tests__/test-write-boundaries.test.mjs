@@ -42,7 +42,7 @@ const REVIEWED = {
   },
   'free-chat-search-agent.test.mjs': {
     scope:
-      'Fake SQLite, failing CLI, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
+      'Fake SQLite, database, failing CLI, and Kilo home fixtures live in unique temporary directories and are cleaned; child invocations use test-controlled paths.',
     patterns: `filesystem-write:mkdtemp=3 filesystem-write:writeFile=6 subprocess:spawnSync=7 filesystem-write:rm=3 filesystem-write:mkdir=4`,
   },
   'free-chat-search.test.mjs': {
@@ -60,7 +60,7 @@ const REVIEWED = {
   'free-model-pool.test.mjs': {
     scope:
       'Model/provider fixtures use unique OS temporary directories; PATH overrides are restored in finally blocks.',
-    patterns: `filesystem-write:mkdtemp=11 filesystem-write:rm=11 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
+    patterns: `filesystem-write:mkdtemp=12 filesystem-write:rm=12 filesystem-write:writeFile=13 process-env-write:assignment:PATH=2 process-env-write:delete:PATH=1`,
   },
   'free-model-quarantine.test.mjs': {
     scope: 'Quarantine fixtures use unique OS temporary directories.',
@@ -110,7 +110,7 @@ const REVIEWED = {
   },
   'quiet-command.test.mjs': {
     scope: 'Subprocess invocation is the command-wrapper behavior under test; review command and cwd.',
-    patterns: `subprocess:spawnSync=2`,
+    patterns: `subprocess:spawnSync=2 filesystem-write:mkdtempSync=2 filesystem-write:writeFileSync=3 filesystem-write:rmSync=2`,
   },
   'recover-stale-auto-merge.test.mjs': {
     scope: 'Git and filesystem fixtures use temporary repositories and directories.',
@@ -134,8 +134,9 @@ const REVIEWED = {
     patterns: `subprocess:spawnSync=6 filesystem-write:mkdtempSync=5 filesystem-write:writeFileSync=10 filesystem-write:rmSync=9 filesystem-write:mkdirSync=2 filesystem-write:symlinkSync=3`,
   },
   'worktree-inventory.test.mjs': {
-    scope: 'Writable databases are test fixtures; the machine session database is explicitly opened read-only.',
-    patterns: `filesystem-write:mkdtempSync=13 subprocess:execFileSync=79 filesystem-write:writeFileSync=19 filesystem-write:rmSync=53 database-open:DatabaseSync:write-capable=9 database-open:DatabaseSync:readOnly=3 filesystem-write:chmodSync=2`,
+    scope:
+      'Writable databases and environment overrides are test fixtures; the machine session database is explicitly opened read-only.',
+    patterns: `filesystem-write:mkdtempSync=16 subprocess:execFileSync=80 filesystem-write:writeFileSync=25 filesystem-write:rmSync=58 database-open:DatabaseSync:write-capable=9 database-open:DatabaseSync:readOnly=3 filesystem-write:chmodSync=2 process-env-write:delete:<computed>=2 process-env-write:assignment:<computed>=2 filesystem-write:mkdirSync=3`,
   },
   'board-post-cap.test.mjs': {
     scope: 'Read-only document checks; no filesystem mutations, subprocesses, or database access.',
@@ -174,8 +175,8 @@ const REVIEWED = {
     patterns: '',
   },
   'windows-command-shim.test.mjs': {
-    scope: 'Pure command-line argument assertions; no filesystem mutations, subprocesses, or database access.',
-    patterns: '',
+    scope: 'Windows command lookup fixtures live in unique temporary directories and are removed after each test.',
+    patterns: `filesystem-write:mkdirSync=1 filesystem-write:mkdtempSync=11 filesystem-write:writeFileSync=9 filesystem-write:rmSync=11`,
   },
 };
 
