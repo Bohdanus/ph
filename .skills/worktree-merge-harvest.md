@@ -476,7 +476,7 @@ test "$MAIN_TREE" != "$MERGE_TREE"
 
 Immediately before the landing, run the fresh gates from the coordinator worktree and inspect every
 reported operation, claim, and owner. Leave unrelated operations untouched; an operation or dirty
-state in `MAIN` or `WORKTREE` is a stop. Re-read the main worktree status and ref:
+state in `MAIN` or `WORKTREE` is a stop. Re-read the main ref and occupancy:
 
 ```bash
 (cd "$TASK_WORKTREE" && npm run repo:state)
@@ -484,59 +484,35 @@ state in `MAIN` or `WORKTREE` is a stop. Re-read the main worktree status and re
 (cd "$TASK_WORKTREE" && npm run branches:orphan)
 (cd "$TASK_WORKTREE" && npm run swarm -- status)
 (cd "$TASK_WORKTREE" && npm run swarm -- doctor --dry-run)
-git -C "$MAIN" status --short
-test -z "$(git -C "$MAIN" status --porcelain)"
 test "$(git -C "$MAIN" rev-parse HEAD)" = "$REVIEWED_MAIN_SHA"
-MERGE_MESSAGE=$(printf 'Merge %s into main\n\nBranch: %s\nChat: %s' "$BRANCH" "$BRANCH" "$CHAT_ID")
-git -C "$MAIN" merge --no-commit --no-ff "$REVIEWED_CANDIDATE_SHA"
+node "$TASK_WORKTREE/scripts/main-landing.mjs" status
 ```
 
-If the merge reports a conflict or `git status` shows unmerged paths, abort this exact merge and
-resync in the candidate worktree. Never resolve it in `main`. Continue only when the prepared
-merge has no unmerged paths and its actual `MERGE_HEAD` is `REVIEWED_CANDIDATE_SHA`.
-
-If the candidate adds or changes a Git hook, refresh the shared dispatchers from the candidate
-worktree now, after the clean merge has made the hook file available in `MAIN` and before the
-landing commit. Verify the new dispatcher exists. If a non-main linked worktree has not synced
-the tracked hook yet, the shared dispatcher runs the designated main checkout's current final
-guard with that linked worktree as its Git context. The shared pre-commit entry records pending
-merge identity so `prepare-commit-msg` cannot erase Git's merge markers and skip the final
-takeover check, and the final index tree must still match the one approved by pre-commit.
-
-```bash
-(cd "$WORKTREE" && node scripts/install-git-hooks.js)
-test -x "$(git -C "$MAIN" rev-parse --path-format=absolute --git-common-dir)/hooks-gate/commit-msg"
-```
-
-Then commit the prepared result:
+The status must say the landing worktree is free. If another landing is active, report its owner in
+your current chat and continue unrelated work; do not wait or edit `MAIN`. The landing wrapper
+rechecks the pins and cleanliness, takes an exclusive lease, prepares the merge, refreshes shared
+Git hook dispatchers, and creates the reviewed commit. If the source candidate conflicts, the
+wrapper refuses before merging; if Git state changes unexpectedly after it starts, it preserves
+the worktree and lease for recovery. Never resolve a conflict in `MAIN`.
 
 ```bash
 (
   cd "$MAIN"
-  KILO_EXPECTED_MAIN_SHA="$REVIEWED_MAIN_SHA" \
-  KILO_EXPECTED_INCOMING_SHA="$REVIEWED_CANDIDATE_SHA" \
-  KILO_EXPECTED_TREE_SHA="$REVIEWED_TREE" \
-  KILO_EXPECTED_BRANCH="$BRANCH" \
-  KILO_EXPECTED_CHAT_ID="$CHAT_ID" \
-    node scripts/commit-reviewed-landing.mjs -m "$MERGE_MESSAGE"
+  node "$WORKTREE/scripts/main-landing.mjs" land \
+    --main-sha "$REVIEWED_MAIN_SHA" \
+    --incoming-sha "$REVIEWED_CANDIDATE_SHA" \
+    --tree-sha "$REVIEWED_TREE" \
+    --branch "$BRANCH" \
+    --chat "$CHAT_ID"
 )
 ```
 
-The `--no-commit` merge leaves `MERGE_HEAD` available to `pre-commit`. The landing script snapshots
-the prepared index so another process staging files in the shared main worktree cannot change the
-commit tree after the final hook check. It also writes a private workflow marker for that
-snapshot. The marker helps catch accidental alternate-index use; it is not an authentication
-boundary against a same-user caller deliberately constructing the environment and marker.
-The main-worktree guard allows that commit only when `HEAD`, `MERGE_HEAD`, the snapshot tree,
-marker, source branch, and chat ID match the reviewed record. The helper requires exactly one
-matching `Branch:` and `Chat:` trailer and verifies that the source branch still points at the
-reviewed candidate SHA. The `commit-msg` hook repeats the snapshot checks and checks the final
-message after `prepare-commit-msg` has run. Then `scripts/merge-takeover-guard.mjs` checks the
-prepared tree for lost work. If the merge conflicts,
-do not resolve it in `main`; abort the operation this command started and resync in the candidate
-worktree. The pre-merge hook refuses every direct self-committing merge, without relying on
-`GIT_REFLOG_ACTION` or Git-version-specific `MERGE_HEAD` timing. Do not substitute a branch name,
-fast-forward, squash, `--no-verify`, or the old `--ff-only || git merge` fallback.
+This command uses the candidate's wrapper because the feature branch may be the first one to add
+it to `main`. After it lands, `npm run main:landing -- land ...` is the shorter equivalent. The
+wrapper supplies all five reviewed pins and a lease token to the existing commit and hook guards.
+The guards verify `HEAD`, `MERGE_HEAD`, the staged tree, source branch, chat ID, and private index
+snapshot. Do not substitute a branch name, fast-forward, squash, `--no-verify`, or the old
+`--ff-only || git merge` fallback.
 
 After the merge, verify the recorded parents, tree and trailers:
 
@@ -549,9 +525,9 @@ git -C "$MAIN" show -s --format=%B HEAD
 
 The first parent must be `REVIEWED_MAIN_SHA`, the second `REVIEWED_CANDIDATE_SHA`, and the tree
 must equal `REVIEWED_TREE`; the message must contain both `Branch: $BRANCH` and `Chat: $CHAT_ID`.
-If the merge or guard refuses, inspect `repo:state`. Abort only an operation this command started,
-whose `MERGE_HEAD` is the pinned candidate and which has no manual resolution; if ownership or
-state is unclear, stop and leave it untouched. Never resolve a conflict in `main`.
+If the wrapper or a guard refuses, inspect `repo:state` and `main:landing status`, then preserve the
+owner lease and Git state for the recovery procedure. Do not abort or resolve the operation in
+`main`.
 
 - **Re-read `git status` and `git log --oneline -10` immediately before staging,
   every time.** Other sessions commit into `main` concurrently, and `git add -A`
