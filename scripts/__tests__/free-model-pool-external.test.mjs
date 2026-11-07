@@ -844,7 +844,7 @@ describe('provider rate-limit diagnostics', () => {
     expect(chat).toHaveBeenCalledTimes(2);
   });
 
-  it.each([429, 503])('does not wait Retry-After when HTTP %i has no next OpenRouter candidate', async (status) => {
+  it.each([429, 503])('does not query quota or wait when HTTP %i has no next OpenRouter candidate', async (status) => {
     const waitForRetryAfter = vi.fn().mockResolvedValue(undefined);
     const chat = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: { message: 'temporarily unavailable' } }), {
@@ -868,6 +868,7 @@ describe('provider rate-limit diagnostics', () => {
 
     expect(waitForRetryAfter).not.toHaveBeenCalled();
     expect(chat).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(0);
   });
 
   it('does not rotate after an OpenRouter 503 when the daily quota is exhausted', async () => {
@@ -1078,7 +1079,7 @@ describe('provider rate-limit diagnostics', () => {
       /Requests attempted: \{"kilo":0,"openrouter":3\}/
     );
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/chat/completions'))).toHaveLength(3);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(3);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/api/v1/key'))).toHaveLength(2);
   });
 
   it('preserves Retry-After when a rate-limit response body is malformed', async () => {

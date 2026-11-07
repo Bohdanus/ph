@@ -905,6 +905,8 @@ export async function completeWithFreeModel(
       }
     }
 
+    if (!hasNextCandidate) return 0;
+
     const quota = await probeOpenRouterQuota({ fetchImpl, openRouterKey });
     if (quota.reason === 'ok') {
       onOpenRouterQuota(quota);
@@ -928,7 +930,6 @@ export async function completeWithFreeModel(
       );
     }
 
-    if (!hasNextCandidate) return 0;
     const retryAfterMs = retryAfterDelayMs(response);
     if (retryAfterMs === null || retryAfterMs === 0) return 0;
     if (retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
