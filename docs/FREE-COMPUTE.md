@@ -68,7 +68,6 @@ Provider rows are docs research unless an observed result is explicitly stated.
 | Cloudflare Workers AI            | 10,000 neurons/day on Workers Free.                                    | Neurons are not tokens; some models require paid Workers. [Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)                                                                      |
 | Hugging Face Inference Providers | No free monthly credits.                                               | Requires purchased credits or PRO. [Pricing](https://huggingface.co/docs/inference-providers/pricing)                                                                                                    |
 
-**Local Jan removed** — tested 2026-10-29: ~32s for 4.1K tokens, truncated, false claims. Unusable.
 Chat-history search reads local databases, but model mode sends the query for term extraction and
 matching excerpts for summarization to the selected provider. Redaction is best-effort; do not
 summarize sensitive history with a cloud provider. In `scripts/free-chat-search.mjs`,
