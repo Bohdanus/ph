@@ -56,9 +56,9 @@ cap. For HTTP 503, it checks the daily counter before rotating because failed at
 that allowance. A 429 from the quota endpoint is treated as an unknown counter, not proof that
 inference is exhausted. The runner honors a valid `Retry-After` before another OpenRouter attempt;
 waits longer than 60 seconds skip OpenRouter for that run. OpenRouter's free variants currently allow 20 requests
-per minute and 50 requests per day by default, rising to 1,000 per day after qualifying all-time
-credit purchases. Failed attempts count toward the daily limit. The live `/api/v1/key` quota check
-reports the daily counter, not the per-minute limit; see [OpenRouter's free-model limits](https://openrouter.ai/collections/free-models)
+per minute and 50 requests per day by default, rising to 1,000 per day after a $10 credit purchase
+(the higher cap starts at $9 to account for top-up fees). Failed attempts count toward the daily limit.
+The live `/api/v1/key` quota check reports the daily counter, not the per-minute limit; see [OpenRouter's free-model limits](https://openrouter.ai/collections/free-models)
 and [API rate-limit reference](https://openrouter.ai/docs/api_reference/limits) for the current
 policy. Inference gets five minutes; catalog and quota requests keep a separate 15-second timeout.
 A quota snapshot can change when other tools use the account.
