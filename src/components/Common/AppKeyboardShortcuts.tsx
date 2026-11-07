@@ -371,7 +371,10 @@ export const AppKeyboardShortcuts = () => {
       },
     }).catch((error: unknown) => {
       if (nudgeState.requestSequence === requestSequence) {
-        nudgeState.position = { layerId: activeLayer.id, x: activeLayer.pos.x, y: activeLayer.pos.y };
+        // A previous rapid nudge may already be queued for the store but not reflected in this
+        // render's `activeLayer`. Roll back only this failed step, preserving the prior pending
+        // position so the next key event cannot overwrite an earlier successful nudge.
+        nudgeState.position = { ...currentPosition };
       }
       console.error('Unable to nudge the active layer', error);
     });

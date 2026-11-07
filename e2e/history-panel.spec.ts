@@ -330,6 +330,15 @@ test.describe('History panel', () => {
       const restoredOutline = await committedAntsOutline(page);
       expect(restoredOutline).not.toBeNull();
       expect(restoredOutline).toEqual(initialOutline);
+
+      // Redo must restore the moved selection recorded by the second history row.
+      await expect(page.getByTestId('redo-button')).toBeEnabled();
+      await page.getByTestId('redo-button').click();
+      await waitForCommittedAnts(page, 'the moved selection to be restored by redo');
+      await expect(selectionRows(page).first().getByTitle('Current state')).toBeVisible();
+      const redoneOutline = await committedAntsOutline(page);
+      expect(redoneOutline).not.toBeNull();
+      expect(redoneOutline).toEqual(movedOutline);
     });
   });
 });
