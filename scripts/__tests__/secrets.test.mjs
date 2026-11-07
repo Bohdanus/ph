@@ -18,6 +18,8 @@ describe('secret key redaction', () => {
         oauthToken: 'value',
         clientAuth: 'value',
         authentication: 'value',
+        passphrase: 'value',
+        deploymentPassphrase: 'value',
         signature: 'value',
         sigV4: 'value',
       })
@@ -26,6 +28,8 @@ describe('secret key redaction', () => {
       oauthToken: '***REDACTED***',
       clientAuth: '***REDACTED***',
       authentication: '***REDACTED***',
+      passphrase: '***REDACTED***',
+      deploymentPassphrase: '***REDACTED***',
       signature: '***REDACTED***',
       sigV4: '***REDACTED***',
     });
@@ -48,10 +52,13 @@ describe('secret key redaction', () => {
   });
 
   it('redacts quoted credential assignments from error messages', () => {
-    const sanitized = sanitizeErrorMessage(`GROQ_API_KEY='fixture-secret-value-123' token="fixture-token-456"`);
+    const sanitized = sanitizeErrorMessage(
+      `GROQ_API_KEY='fixture-secret-value-123' token="fixture-token-456" passphrase="fixture-passphrase-789"`
+    );
 
-    expect(sanitized).toBe(`GROQ_API_KEY='[REDACTED]' token="[REDACTED]"`);
+    expect(sanitized).toBe(`GROQ_API_KEY='[REDACTED]' token="[REDACTED]" passphrase="[REDACTED]"`);
     expect(sanitized).not.toContain('fixture-secret-value-123');
     expect(sanitized).not.toContain('fixture-token-456');
+    expect(sanitized).not.toContain('fixture-passphrase-789');
   });
 });
