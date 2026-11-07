@@ -134,7 +134,18 @@ describe('durable render presentation guard', () => {
     const existing = createMockLayer({ id: layerId, pos: { x: 10, y: 20, width: 100, height: 50 } });
     const replayLayer = {
       operations: [] as readonly [],
-      snapshot: { source: { kind: 'raster' as const } },
+      snapshot: {
+        id: existing.id,
+        name: existing.name,
+        isBedrock: existing.isBedrock,
+        visible: existing.visible,
+        opacity: existing.opacity,
+        locked: existing.locked,
+        blendMode: existing.blendMode,
+        order: existing.order,
+        pos: existing.pos,
+        source: { kind: 'raster' as const },
+      },
     };
 
     expect(durablePresentationIsRendererIdentical(replayLayer as never, existing, existing.pos)).toBe(true);
@@ -150,7 +161,7 @@ describe('durable render presentation guard', () => {
     ).toBe(false);
     expect(
       durablePresentationIsRendererIdentical(
-        { ...replayLayer, snapshot: { source: { kind: 'vector' as const } } } as never,
+        { ...replayLayer, snapshot: { ...replayLayer.snapshot, source: { kind: 'vector' as const } } } as never,
         existing,
         existing.pos
       )
