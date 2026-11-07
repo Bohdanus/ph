@@ -101,6 +101,10 @@ in [`E2E-MIRROR.md`](E2E-MIRROR.md).
 
 ## Notes
 
+- If you also use a Windows checkout, keep its Git operations and dependencies
+  with Windows. See [Windows Gotchas](WINDOWS-GOTCHAS.md) before using both
+  environments against a checkout.
+
 - Keep the WSL checkout, `node_modules`, and Git operations inside the Linux
   filesystem. A Windows checkout under `/mnt/c` is a separate working copy; do
   not share its `node_modules` with WSL.
