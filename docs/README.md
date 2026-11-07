@@ -128,13 +128,14 @@ and remaining unproven work.
 Three homes for an open defect, split by what broke. A defect goes in one of them, not in two —
 `handoffs/` is not one of them; it records a finished review.
 
-| Document                                                                                                           | Its one job                                                                |
-| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| [`../HANDOFF.md`](../HANDOFF.md)                                                                                   | Open defects in the code                                                   |
-| [`../TEST-FLAKES.md`](../TEST-FLAKES.md)                                                                           | Intermittent and unreliable test behaviour                                 |
-| [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md)                                                               | Latent defects in the e2e suite's own code — none fails a current run      |
-| [`handoffs/`](handoffs/)                                                                                           | One per branch review-and-merge, named `docs/handoffs/<branch>-<topic>.md` |
-| [`handoffs/docs-orchestration-review-gotchas-20261102.md`](handoffs/docs-orchestration-review-gotchas-20261102.md) | Review record for orchestration and code-review guidance                   |
+| Document                                                                                                                                           | Its one job                                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [`../HANDOFF.md`](../HANDOFF.md)                                                                                                                   | Open defects in the code                                                   |
+| [`../TEST-FLAKES.md`](../TEST-FLAKES.md)                                                                                                           | Intermittent and unreliable test behaviour                                 |
+| [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md)                                                                                               | Latent defects in the e2e suite's own code — none fails a current run      |
+| [`handoffs/`](handoffs/)                                                                                                                           | One per branch review-and-merge, named `docs/handoffs/<branch>-<topic>.md` |
+| [`handoffs/docs-orchestration-review-gotchas-20261102.md`](handoffs/docs-orchestration-review-gotchas-20261102.md)                                 | Review record for orchestration and code-review guidance                   |
+| [`handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md`](handoffs/task-test-unit-hardening-salvage-20261107-review-and-merge.md) | Review record and landing gate for the salvaged unit-test hardening branch |
 
 ## Not maintained here
 

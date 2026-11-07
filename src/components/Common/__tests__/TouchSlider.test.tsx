@@ -35,6 +35,7 @@ describe('TouchSlider', () => {
 
     fireEvent.change(slider, { target: { value: '12' } });
     expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ target: slider, type: 'change' }));
   });
 
   it('uses the existing six-pixel track size by default', () => {
