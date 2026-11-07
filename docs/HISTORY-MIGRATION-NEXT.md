@@ -62,15 +62,16 @@ not vector eligibility.
 
 ## Current-main drift and new renderer evidence
 
-At the 2026-11-07 checkpoint, local `main` was `3a1d4ad3`; `origin/main` and `mirror/main` were
-`e24fc2ad`. The local main advanced through a toolbar-fit merge and then a free-compute/chat-history
-documentation merge. The tree diff from `e24fc2ad` to `3a1d4ad3` changes toolbar files, free-compute
-policy docs, a selection-tool description, and removes an unrelated resolved handoff entry; it does
-not change history replay, compositor, renderer, export, or the crop-history fixture. This
-candidate started at `e24fc2ad` and has since been rebased onto local `main` at `3a1d4ad3`; its
-current merge base is that exact commit. `origin/main` and `mirror/main` remain at `e24fc2ad`, so
-this local synchronization is not a remote update. Before landing, recheck the live main SHA and
-tree, candidate ancestry, repository state, and ownership; this task does not include a remote push.
+At the 2026-11-07 checkpoint, local `main` is `b5df9dbc`; `origin/main` and `mirror/main` remain
+at `e24fc2ad`. Since `3a1d4ad3`, local main advanced through the stale-sweep documentation merge;
+the only change in that delta is removal of one obsolete note from `docs/FREE-COMPUTE.md`. The
+broader `e24fc2ad` to `b5df9dbc` drift includes toolbar-fit files, free-compute policy docs, a
+selection-tool description, and removal of an unrelated resolved handoff entry and stale local-model
+note. None of these commits changes history replay, compositor, renderer, export, or the
+crop-history fixture. This candidate has been rebased onto local `main` at `b5df9dbc`; its current
+merge base is that exact commit. The local rebase is not a remote update. Before landing, recheck the
+live main SHA and tree, candidate ancestry, repository state, and ownership; this task does not
+include a remote push.
 
 The historical `7cf69dca` affine-parity commit is not an ancestor of current main. Its behavior has
 evolved in the current compositor: `3ccccba0` introduced direct affine raster composition and
@@ -131,8 +132,9 @@ or alter logical history authority.
 
 ## Recommended Sequence
 
-Steps 3 and 4 are independent open gates. Their numbering organizes the work; it does not set a
-priority or dependency. They may be pursued in either order or in parallel.
+The immediate parity slice is step 3: prove the transformed raster through runtime projection,
+PNG, and PSD. Source-backed ownership in step 4 remains an independent open gate; the numbering does
+not impose a dependency between them.
 
 1. Keep `safePrefix` diagnostic-only and release its independent owner at every consumer boundary;
    never let `partial` satisfy an exact projection gate.
@@ -219,14 +221,14 @@ priority or dependency. They may be pursued in either order or in parallel.
 
 ## Validation Evidence
 
-The implementation candidate `ee589dbcad31946134013b57869ce4144478804d` (tree
-`78a91e0d7721914167750a6cfecf5c82d0d4271e`) was validated on the local macOS checkout after rebasing
-onto `main` at `3a1d4ad37fa35fca88979803fe3d3be1d42054e1`.
+Implementation commit `04f95264ed20aef5168e602409b9fd253120e4ed` (tree
+`8fff8d49d892febd6fabe55f128d9dd7fa33a10e4`) was validated on the local macOS checkout after
+rebasing onto `main` at `b5df9dbc272e208dc04768259228e13abdad33fb`.
 
 - Focused durable export/projection unit tests: 4 files, 68 passed.
 - `npm run test:e2e:unit`: 22 files, 1,564 passed and 12 expected failures.
 - Focused Chrome E2E: 2 passed (recovered fractional frame transitions and affine raster opacity/blend),
-  run `2026-11-07T01-42-15-549Z-99230`.
+  run `2026-11-07T02-06-40-691Z-35133`.
 - `npm run tsc`, `npm run build`, `npm run lint:check`, and `git diff --check` passed. Lint reported
   78 warnings and no errors; the changed implementation and E2E files pass focused ESLint checks.
 - No Linux or Windows mirror run was performed. Local browser results do not prove cross-platform or
@@ -234,17 +236,20 @@ onto `main` at `3a1d4ad37fa35fca88979803fe3d3be1d42054e1`.
 
 ## Review Findings and Dispositions
 
-Reviews covered implementation commit `ee589dbcad31946134013b57869ce4144478804d` and tree
-`78a91e0d7721914167750a6cfecf5c82d0d4271e`:
+The post-sync implementation review covered commit `04f95264ed20aef5168e602409b9fd253120e4ed`
+and tree `8fff8d49d892febd6fabe55f128d9dd7fa33a10e4`, based on local main `b5df9dbc`:
 
 - The prior Luna 6 review found that export checked replay layers individually but did not require an
   exact replay/legacy layer set. This was fixed before the reviewed commit: export now falls back when
-  either set has a missing or extra layer, with PNG and PSD regression cases. Luna's fresh follow-up
-  found no further actionable issue and confirmed the bounds and hidden-layer PSD fallbacks.
-- Four complete exact-zero OpenRouter completions gave focused review coverage: Nemotron 3 Ultra
-  checked export admission; Liquid LFM 2.5 checked export and E2E/docs; Cohere North Mini Code checked
-  runtime/export freshness and resource release. All returned `finish_reason=stop` and reported
-  `$0` cost. Length-ended, empty, and rate-limited attempts were discarded and are not counted.
+  either set has a missing or extra layer, with PNG and PSD regression cases. Luna's fresh post-sync
+  follow-up found no further actionable issue and confirmed the bounds and hidden-layer PSD fallbacks.
+- Four complete exact-zero OpenRouter completions reviewed the immediately preceding source tree
+  `78a91e0d7721914167750a6cfecf5c82d0d4271e`: Nemotron 3 Ultra checked export admission; Liquid LFM
+  2.5 checked export and E2E/docs; Cohere North Mini Code checked runtime/export freshness and
+  resource release. Rebase changed no history, export, renderer, or E2E source files; the imported
+  main delta only removed a stale note from `docs/FREE-COMPUTE.md`. All four returned
+  `finish_reason=stop` and reported `$0` cost. A separate post-sync free attempt ended with empty or
+  length-limited output and is excluded from review evidence.
 - The free reviews proposed possible hidden-layer loss, a bounds-test mismatch, and composite leak or
   double-release paths. Source and tests show these are blocked: PSD with hidden replay layers uses
   legacy records, replay/legacy visibility and metadata mismatches refuse admission, the bounds test
