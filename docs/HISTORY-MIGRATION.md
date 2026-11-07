@@ -204,11 +204,10 @@ variant or an equivalent atomic history action.
    -17-degree transform.
    The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
    origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
-   pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and allows
-   at most two partial-alpha boundary pixels in frame comparisons and two tight-bitmap pixels
-   at alpha boundaries where both paths preserve identical RGB values. A transparent/one-alpha
-   pair also needs adjacent samples of that same color in both neighborhoods; composites remain
-   byte-identical.
+   pixel grid. The retained two-layer affine/frame sequence pins exact materialized bounds and
+   requires exact frame and tight-bitmap equality, including alpha-boundary pixels. A
+   transparent/one-alpha pair also needs adjacent samples of that same color in both neighborhoods;
+   composites remain byte-identical.
    The three-transition
    mixed-source fixture pins exact bounds and checks per-layer frame and tight bitmaps exactly in
    premultiplied space. The styled-text fixture also compares tight bitmaps exactly after
@@ -233,16 +232,23 @@ variant or an equivalent atomic history action.
    A separate transformed-raster fixture uses opacity `0.58` and `multiply`. Its raw tight bitmap
    bytes, premultiplied tight pixels, bounds, dimensions, opacity and blend metadata match in HTML
    and OffscreenCanvas materialization at the affine and fractional-frame cursors, and the direct
-   durable composite matches legacy exactly. A temporary diagnostic observed 42 channel-byte
-   differences at the affine cursor and 46 after the fractional frame in runtime projection and
-   durable export over an opaque backdrop, but those production paths are not asserted by the current
-   fixture; treat the counts as exploratory until directly tested. The earlier 146-byte isolated-layer
-   comparison over transparency is not a valid blend-mode oracle. Until output parity is exact,
-   retained operations stay outside runtime and export admission. The export preflight shares the
-   runtime's exact layer-set and conservative source/operation/metadata/bounds checks, blocks durable
-   PSD export when any hidden layer lacks materialized pixels, and checks actual materialized bounds
-   before selecting durable records. Unsupported, transformed, or otherwise unproven cases keep legacy records. This
-   changes neither logical history authority nor the closed frame-publication gate.
+   durable composite matches legacy exactly. The diagnostic fixture also inspects runtime projection,
+   `durableExportRecords()`/`renderExportCanvas()`, decoded PNG, and PSD layer plus composite pixels.
+   The normal admission predicate refuses the retained affine and fractional-frame cases, so these
+   adapter outputs are recorded only as diagnostics and do not represent the product's selected
+   render/export path. When the refused adapters are invoked for diagnosis in local Chrome, runtime,
+   export-canvas, and decoded-PNG pixels differ by 42 channel bytes at the affine cursor and 46 after
+   the fractional frame. PSD has zero composite/layer differences at the affine cursor; after the
+   fractional frame, its composite differs by 8 bytes, the background layer by 7, and the foreground
+   layer by zero. The test requires the refusal reason and would require exact zero on every surface
+   if admission were allowed. These results do not establish a product-output defect; the root cause
+   remains unproven. The earlier 146-byte isolated-layer comparison over transparency is not a valid
+   blend-mode oracle. Retained operations stay outside runtime and export admission. The export
+   preflight shares the runtime's exact layer-set and conservative source/operation/metadata/bounds
+   checks, blocks durable PSD export when any hidden layer lacks materialized pixels, and checks
+   actual materialized bounds before selecting durable records. Unsupported, transformed, or
+   otherwise unproven cases keep legacy records. This changes neither logical history authority nor
+   the closed frame-publication gate.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
    variants, additional text styling/rotation combinations, other frame sequences and other
    retained-affine operation combinations still need parity proof. The blank pair and 45%-opacity case
@@ -260,8 +266,8 @@ variant or an equivalent atomic history action.
 
    The retained-affine/frame proof now covers two transformed raster layers across two successive
    non-quarter frame transforms with fractional origins and extents, checking exact per-layer bounds
-   and allowing at most two tight per-layer alpha-boundary pixels with identical RGB values at both
-   affine cursors, both frame cursors, and a frame-only control. A separate styled
+   and exact tight per-layer pixels, including alpha-boundary pixels, at both affine cursors, both
+   frame cursors, and a frame-only control. A separate styled
    paragraph-text fixture checks its affine cursor and two frame cursors against exact per-layer
    bounds and pixels. Both fixtures also require byte-identical composites, and their frame-only
    controls pass with zero differing bytes. These listed cases do not close the frame gate. Do not
