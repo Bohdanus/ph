@@ -4,15 +4,14 @@
 
 ## Model preferences
 
-| Model                               | Rating      | Notes                                                                          |
-| ----------------------------------- | ----------- | ------------------------------------------------------------------------------ |
-| **NVIDIA Nemotron 3 Ultra (free)**  | **Best**    | Strong reasoning, reliable completions, preferred for all free inference tasks |
-| **XingChen Xing4.0 29B A4B (free)** | Alternative | Works for simple prompts; hits 429 under load                                  |
+| Model                              | Rating   | Notes                                                                          |
+| ---------------------------------- | -------- | ------------------------------------------------------------------------------ |
+| **NVIDIA Nemotron 3 Ultra (free)** | **Best** | Strong reasoning, reliable completions, preferred for all free inference tasks |
 
 ## Routing
 
 1. **Prefer Kilo Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b:free`) when the live catalog verifies exact-zero pricing.** This is the operator's current strongest-free-model choice; availability and capacity still require a live check.
-2. **When Nemotron/Kilo quota is exhausted, try XingChen Xing4.0 (`xingchen-agi/xing4.0-29b-a4b:free`) as alternative free model.** Verify zero input/output price. Stop retrying a provider after quota/capacity errors; never silently fall back to paid inference.
+2. When a preferred route is unavailable or exhausted, use another candidate only if the live catalog confirms that exact model/provider pair is free. There is no fixed fallback; stop rather than silently use a paid route.
 3. Use free models for bounded research, extraction, code search, and simple reviews. Check response text and `finish_reason`; HTTP 200 can still mean empty output.
 
 The completion runner rotates across Kilo, OpenRouter, OpenCode, and Groq. Kilo and OpenRouter use live exact-zero catalogs. OpenCode's public inference catalog has no price fields, so the runner accepts provider-owned `-free` IDs and calls the headless CLI with tool use denied. Groq's catalog also omits pricing; the runner permits only GPT-OSS 120B after `GROQ_API_KEY` and an explicit Free-plan opt-in. A key alone does not establish free pricing. On 2026-10-27, all three saved Groq keys returned HTTP 200 from `/models`; with the operator confirming all three are Free-tier, one real runner completion returned `GROQ_LIVE_OK` with `finish_reason=stop` and one Groq request. OpenCode's headless CLI returned `LIVE_OK` once without the desktop UI; its V2 JSON stream omitted the final `step_finish`. A later adapter call reached OpenCode and returned `provider.free-limit` HTTP 429. The adapter now accepts a clean exit with text from a catalog-verified `-free` model and surfaces provider error codes; the OpenCode account quota was exhausted before a positive completion through the adapter could be repeated. The runner uses the CLI, not a generic HTTP API. OpenRouter 401/402 exhausts the source immediately. On model 429, the runner inspects `X-RateLimit-Remaining`; a zero value exhausts the source, while a positive value or unknown counter allows rotation to the next verified-free model within the per-run cap. Content-policy rejections — including HTTP 200 responses with `finish_reason: content_filter` — halt routing across all providers so the same request is not retried elsewhere.
@@ -69,11 +68,11 @@ Provider rows are docs research unless an observed result is explicitly stated.
 | Cloudflare Workers AI            | 10,000 neurons/day on Workers Free.                                    | Neurons are not tokens; some models require paid Workers. [Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)                                                                      |
 | Hugging Face Inference Providers | No free monthly credits.                                               | Requires purchased credits or PRO. [Pricing](https://huggingface.co/docs/inference-providers/pricing)                                                                                                    |
 
-**Local Jan removed** — tested 2026-10-29: ~32s for 4.1K tokens, truncated, false claims. Unusable.
 Chat-history search reads local databases, but model mode sends the query for term extraction and
 matching excerpts for summarization to the selected provider. Redaction is best-effort; do not
-summarize sensitive history with a cloud provider. Use `--local-only` or `--no-summarize` to skip
-model inference and keep results local. See
+summarize sensitive history with a cloud provider. In `scripts/free-chat-search.mjs`,
+`--local-only` is an alias for `--no-summarize`; both skip model inference and keep results local.
+The `free-model-pool.mjs` runner does not accept these flags. See
 [chat-search details](FREE-COMPUTE-OPERATIONS.md#chat-history-search).
 
 ## Optional free-subagent wrapper

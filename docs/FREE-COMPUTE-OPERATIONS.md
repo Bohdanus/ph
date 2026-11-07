@@ -88,10 +88,12 @@ tool call, or non-zero cost was reported. A provider 429 means its free quota is
 
 ## Groq
 
-The runner reads `GROQ_API_KEY` from its process environment; it does not read key files itself.
-This machine's saved-key convention is `~/.config/groq/api_key` and `~/.config/groq/api_key_*`.
-Choose the intended account; do not rotate through account files automatically. A successful
-`/models` request proves the key is accepted, not that the organization is on Groq's Free plan.
+The runner reads `GROQ_API_KEY` or comma-separated `GROQ_API_KEYS` from its process environment.
+It rotates only explicitly supplied keys after per-key 401/402/429 responses and does not read
+key files during inference. `--probe-groq` can check saved-key files separately. Use keys from
+distinct Free-plan organizations because Groq limits apply at the organization level. This
+machine's saved-key convention is `~/.config/groq/api_key` and `~/.config/groq/api_key_*`.
+A successful `/models` request proves the key is accepted, not that the organization is on Groq's Free plan.
 
 For a confirmed Free-plan organization, load the selected key only into the runner process:
 
@@ -111,7 +113,7 @@ result's provider/model before treating a run as a Groq smoke test.
 **Groq GPT-OSS-120B** is reasoning-capable and fast for bulk text sweeps; verify results before
 relying on them. [OpenAI overview](https://openai.com/index/introducing-gpt-oss/).
 
-**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq provides equivalent privacy with far better speed/reliability. No `--local-only` option exists; none needed — chat-history search data is already local, no secrets to hide.
+**No local-model fallback.** A local `Jan-v3.5-4B-Q4_K_XL` was tested (commit 48848017) — ~32s for 4.1K tokens, truncated output, false claims. Unusable. Groq is cloud inference, not local processing. Groq says inference data is not retained by default, but reliability and abuse logs may retain inputs and outputs for up to 30 days unless Zero Data Retention is enabled ([data handling](https://console.groq.com/docs/your-data)). In `scripts/free-chat-search.mjs`, `--local-only` is an alias for `--no-summarize`; both skip model inference. The `free-model-pool.mjs` runner does not accept these flags.
 
 ## Optional free-subagent wrapper
 
