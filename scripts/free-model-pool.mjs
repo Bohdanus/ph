@@ -28,6 +28,7 @@ const GROQ_MODELS = 'https://api.groq.com/openai/v1/models';
 const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
 export const CONTROL_PLANE_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS_PER_SOURCE = 3;
+const MAX_OPENROUTER_RETRY_AFTER_MS = 60_000;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_PROMPT_FILE_BYTES = 480 * 1024;
 const MAX_OPENCODE_OUTPUT_BYTES = 1024 * 1024;
@@ -407,6 +408,20 @@ function retryAfterHint(response) {
     .slice(0, 100);
 }
 
+export function retryAfterDelayMs(response, now = Date.now()) {
+  const value = response?.headers?.get?.('retry-after')?.trim();
+  if (!value) return null;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    const delayMs = seconds * 1000;
+    return Number.isFinite(delayMs) ? Math.ceil(delayMs) : Number.MAX_SAFE_INTEGER;
+  }
+
+  const retryAt = Date.parse(value);
+  return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null;
+}
+
 function failureReason(response, payload) {
   const message = payload?.error?.message ?? payload?.message ?? '';
   const retryAfter = retryAfterHint(response);
@@ -727,6 +742,7 @@ export async function completeWithFreeModel(
     runOpenCode = runOpenCodeCompletion,
     checkOpenRouterQuota = false,
     maxTokens = 1200,
+    waitForRetryAfter = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     quarantineFile = DEFAULT_QUARANTINE_FILE,
     initializeLegacyQuarantine = true,
     onCatalogError = () => {},
@@ -788,22 +804,24 @@ export async function completeWithFreeModel(
       );
     }
   }
-  const handleOpenRouterFailure = async (status, model, response) => {
+  const handleOpenRouterFailure = async (status, model, response, hasNextCandidate) => {
     if (status === 401 || status === 402) {
       exhausted.add('openrouter');
-      return;
+      return null;
     }
-    if (status !== 429) return;
+    if (status !== 429 && status !== 503) return 0;
 
-    const remainingHeader = response?.headers?.get?.('x-ratelimit-remaining');
-    if (typeof remainingHeader === 'string' && remainingHeader.trim() !== '') {
-      const remaining = Number(remainingHeader);
-      if (Number.isFinite(remaining) && remaining <= 0) {
-        exhausted.add('openrouter');
-        stderr.write(
-          `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping this source for the run.\n`
-        );
-        return;
+    if (status === 429) {
+      const remainingHeader = response?.headers?.get?.('x-ratelimit-remaining');
+      if (typeof remainingHeader === 'string' && remainingHeader.trim() !== '') {
+        const remaining = Number(remainingHeader);
+        if (Number.isFinite(remaining) && remaining <= 0) {
+          exhausted.add('openrouter');
+          stderr.write(
+            `OpenRouter rate-limit headers report no remaining requests for ${model}; skipping this source for the run.\n`
+          );
+          return null;
+        }
       }
     }
 
@@ -813,24 +831,37 @@ export async function completeWithFreeModel(
       if (quota.remaining <= 0) {
         exhausted.add('openrouter');
         stderr.write('OpenRouter daily free-model quota is exhausted; skipping remaining OpenRouter models.\n');
-      } else {
+        return null;
+      }
+      if (status === 429) {
         stderr.write(
           `OpenRouter model ${model} returned HTTP 429 with ${quota.remaining} daily free requests remaining; trying another verified-free model.\n`
         );
       }
-      return;
-    }
-    if (quota.reason === 'http_401' || quota.reason === 'http_402') {
+    } else if (quota.reason === 'http_401' || quota.reason === 'http_402') {
       exhausted.add('openrouter');
       stderr.write(`OpenRouter quota check returned ${quota.reason}; skipping OpenRouter for this run.\n`);
-      return;
+      return null;
+    } else {
+      stderr.write(
+        `OpenRouter model ${model} returned HTTP ${status}; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so continuing within the per-run limit.\n`
+      );
     }
 
-    stderr.write(
-      `OpenRouter model ${model} returned HTTP 429; daily quota is unknown (${quota.reason}${quota.detail ? `: ${quota.detail}` : ''}), so trying another verified-free model within the per-run limit.\n`
-    );
+    if (!hasNextCandidate) return 0;
+    const retryAfterMs = retryAfterDelayMs(response);
+    if (retryAfterMs === null || retryAfterMs === 0) return 0;
+    if (retryAfterMs > MAX_OPENROUTER_RETRY_AFTER_MS) {
+      exhausted.add('openrouter');
+      stderr.write(
+        `OpenRouter returned HTTP ${status} with Retry-After above ${MAX_OPENROUTER_RETRY_AFTER_MS / 1000}s; skipping this source for the run.\n`
+      );
+      return null;
+    }
+    stderr.write(`Honoring OpenRouter Retry-After (${Math.ceil(retryAfterMs / 1000)}s) before trying another model.\n`);
+    return retryAfterMs;
   };
-  for (const candidate of available) {
+  for (const [candidateIndex, candidate] of available.entries()) {
     if (exhausted.has(candidate.source)) continue;
     const sourceAttempts = attempts.get(candidate.source) ?? 0;
     if (sourceAttempts >= MAX_ATTEMPTS_PER_SOURCE) continue;
@@ -1027,7 +1058,13 @@ export async function completeWithFreeModel(
       errors.push(
         `${candidate.source}/${candidate.model}: ${sanitizeErrorMessage(error.message)}${retryAfter ? ` (Retry-After: ${retryAfter})` : ''}`
       );
-      if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
+      const hasNextOpenRouterCandidate =
+        available.slice(candidateIndex + 1).some((entry) => entry.source === 'openrouter') &&
+        (attempts.get('openrouter') ?? 0) < MAX_ATTEMPTS_PER_SOURCE;
+      const retryAfterMs =
+        candidate.source === 'openrouter'
+          ? await handleOpenRouterFailure(response.status, candidate.model, response, hasNextOpenRouterCandidate)
+          : 0;
       if (
         response.status === 401 ||
         (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
@@ -1035,7 +1072,8 @@ export async function completeWithFreeModel(
         exhausted.add(candidate.source);
       const attemptNumber = attempts.get(candidate.source) ?? 0;
       const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-      await delay(backoffMs);
+      if (retryAfterMs > 0) await waitForRetryAfter(Math.max(backoffMs, retryAfterMs));
+      else await delay(backoffMs);
       continue;
     }
     if (hasReportedNonZeroCost(payload?.usage)) {
@@ -1089,7 +1127,13 @@ export async function completeWithFreeModel(
       ? `empty completion${finishReason ? ` (finish_reason=${finishReason})` : ''}`
       : failureReason(response, payload);
     errors.push(`${candidate.source}/${candidate.model}: ${reason}`);
-    if (candidate.source === 'openrouter') await handleOpenRouterFailure(response.status, candidate.model, response);
+    const hasNextOpenRouterCandidate =
+      available.slice(candidateIndex + 1).some((entry) => entry.source === 'openrouter') &&
+      (attempts.get('openrouter') ?? 0) < MAX_ATTEMPTS_PER_SOURCE;
+    const retryAfterMs =
+      candidate.source === 'openrouter'
+        ? await handleOpenRouterFailure(response.status, candidate.model, response, hasNextOpenRouterCandidate)
+        : 0;
     if (
       response.status === 401 ||
       (candidate.source === 'groq' && (response.status === 402 || response.status === 429))
@@ -1097,7 +1141,8 @@ export async function completeWithFreeModel(
       exhausted.add(candidate.source);
     const attemptNumber = attempts.get(candidate.source) ?? 0;
     const backoffMs = Math.min(100 * Math.pow(2, attemptNumber - 1), 2000) + Math.random() * 100;
-    await delay(backoffMs);
+    if (retryAfterMs > 0) await waitForRetryAfter(Math.max(backoffMs, retryAfterMs));
+    else await delay(backoffMs);
   }
   throw new Error(
     `No free model completed the request. Requests attempted: ${JSON.stringify(requestCounts())}. ${errors.map((e) => sanitizeErrorMessage(e)).join(' | ') || 'No eligible free models were available.'}`
