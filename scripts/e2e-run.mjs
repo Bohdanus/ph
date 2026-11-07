@@ -871,7 +871,7 @@ export async function run(argv, options = {}) {
 
     // What the tests will actually load. On the sanctioned remote path the port is
     // still allocated and still served by this run's own dev server, so deriving
-    // `baseUrl` from it unconditionally recorded a localhost URL as the thing under
+    // `baseUrl` from it unconditionally recorded the local server URL as the thing under
     // test — in the one file whose stated job is to stop a report implying a local
     // verification. The remote target is recorded too, and `remote` is true.
     runRecord = {
@@ -879,7 +879,7 @@ export async function run(argv, options = {}) {
       pid: process.pid,
       port: childEnv.PLAYWRIGHT_PORT ?? null,
       baseUrl:
-        env.PLAYWRIGHT_BASE_URL ?? (childEnv.PLAYWRIGHT_PORT ? `http://localhost:${childEnv.PLAYWRIGHT_PORT}` : null),
+        env.PLAYWRIGHT_BASE_URL ?? (childEnv.PLAYWRIGHT_PORT ? `http://127.0.0.1:${childEnv.PLAYWRIGHT_PORT}` : null),
       remote: Boolean(remote),
       outputDir: paths.outputDir,
       queued,

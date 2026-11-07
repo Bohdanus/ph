@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
+  CANVAS_REDRAW_TIMEOUT_MS,
   drawLine,
   getWorkspaceCanvas,
   hasDarkPixels,
@@ -288,12 +289,14 @@ test.describe('History panel', () => {
       // Undo should restore the selection
       await expect(page.getByTestId('undo-button')).toBeEnabled();
       await page.getByTestId('undo-button').click();
-      await waitForCommittedAnts(page, 'the selection to be restored');
+      await expect
+        .poll(() => committedAntsOutline(page), {
+          message: 'undo restores the exact selection outline',
+          timeout: CANVAS_REDRAW_TIMEOUT_MS,
+        })
+        .toEqual(selectionOutline);
       await expect(selectionRows(page)).toHaveCount(2);
       await expect(selectionRows(page).last().getByTitle('Current state')).toBeVisible();
-      const restoredOutline = await committedAntsOutline(page);
-      expect(restoredOutline).not.toBeNull();
-      expect(restoredOutline).toEqual(selectionOutline);
     });
 
     test('selection move creates separate SELECTION_ACTION row and restores on undo', async ({ page }) => {
@@ -324,12 +327,14 @@ test.describe('History panel', () => {
       // Undo should restore the selection to original position
       await expect(page.getByTestId('undo-button')).toBeEnabled();
       await page.getByTestId('undo-button').click();
-      await waitForCommittedAnts(page, 'the selection to be restored');
+      await expect
+        .poll(() => committedAntsOutline(page), {
+          message: 'undo restores the exact original selection outline',
+          timeout: CANVAS_REDRAW_TIMEOUT_MS,
+        })
+        .toEqual(initialOutline);
       await expect(selectionRows(page)).toHaveCount(2);
       await expect(selectionRows(page).last().getByTitle('Current state')).toBeVisible();
-      const restoredOutline = await committedAntsOutline(page);
-      expect(restoredOutline).not.toBeNull();
-      expect(restoredOutline).toEqual(initialOutline);
     });
   });
 });

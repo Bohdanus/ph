@@ -143,10 +143,10 @@ export interface OwnServerCheck {
  *
  * `webServer.url` and the project `use.baseURL` are independent settings. Comparing
  * ORIGINS rather than the two strings is what makes this correct rather than
- * annoying: `PLAYWRIGHT_BASE_URL=http://localhost:5173` with a dev server on 5173
- * names the same server and is fine, while `http://localhost:5174` does not. A
- * string comparison would refuse the first and allow nothing extra, which would make
- * the guard something agents learn to work around.
+ * annoying: `playwright.config.ts` canonicalizes a same-port localhost override to
+ * the server's `127.0.0.1` address before this check, while `http://localhost:5174`
+ * still names another server and is refused. A string comparison would reject a
+ * valid alias before canonicalization and make the guard something agents work around.
  */
 export function checkOwnServer(options: {
   baseUrl: string | undefined;
@@ -804,7 +804,7 @@ export function resolvedBaseUrl(config: Pick<FullConfig, 'projects'>): string | 
  *
  * The warm-up needs this because `webServer.url` and the project `use.baseURL` are
  * INDEPENDENT settings: `playwright.config.ts` sets the second from
- * `PLAYWRIGHT_BASE_URL` and leaves the first pointing at localhost, so setting the
+ * `PLAYWRIGHT_BASE_URL` and leaves the first pointing at `127.0.0.1`, so setting the
  * documented remote override moves the tests without moving the server.
  */
 export function resolvedWebServerUrl(config: Pick<FullConfig, 'webServer'>): string | undefined {

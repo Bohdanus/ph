@@ -17,7 +17,23 @@ import { defineConfig, devices } from '@playwright/test';
  * alone when the caller has already chosen one, and under `CI`.
  */
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
-const baseUrl = `http://localhost:${port}`;
+const baseUrl = `http://127.0.0.1:${port}`;
+const configuredBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
+const testBaseUrl = (() => {
+  if (!configuredBaseUrl) return baseUrl;
+  try {
+    const url = new URL(configuredBaseUrl);
+    // Keep a same-port localhost override working while ensuring the browser uses
+    // the exact IPv4 loopback address Vite is bound to below.
+    if (url.protocol === 'http:' && url.hostname === 'localhost' && url.port === port) {
+      url.hostname = '127.0.0.1';
+      return url.toString();
+    }
+  } catch {
+    // Leave malformed values for the existing own-server guard to refuse.
+  }
+  return configuredBaseUrl;
+})();
 
 export default defineConfig({
   testDir: './e2e',
@@ -112,7 +128,7 @@ export default defineConfig({
      * for EVERY invocation, including a bare `npx playwright test`:
      *   E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test
      * The run logs which origin it loaded. See e2e/README.md. */
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? baseUrl,
+    baseURL: testBaseUrl,
     // HEADLESS IS THE DEFAULT. Do not flip this to headed-on-local.
     //
     // A headed browser puts a live, clickable window on the operator's desktop for
@@ -192,7 +208,7 @@ export default defineConfig({
     // above. `--strictPort` makes a port clash a hard failure rather than Vite's
     // default silent hop to 5174, which would leave the tests pointed at a server
     // this run never started.
-    command: `npm run dev -- --port ${port} --strictPort`,
+    command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseUrl,
     // NEVER TRUE, AND NOT CONFIGURABLE. There is no environment variable, no
     // argument and no field to turn this on, and that is the point.
