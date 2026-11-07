@@ -354,6 +354,9 @@ describe('the guard is actually installed', () => {
 
     expect(hook).toContain('commit-reviewed-landing-message-guard.mjs "$1"');
     expect(installer).toMatch(/const HOOKS = \[[^\]]*'commit-msg'/);
+    expect(installer).toContain('normalise() {');
+    expect(installer).toContain(String.raw`tr '\\\\' '/'`);
+    expect(installer).toContain('$(normalise "$current_git_dir")');
   });
 
   it('installs a working commit-msg dispatcher and tolerates older linked worktrees', () => {

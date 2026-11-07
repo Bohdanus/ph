@@ -458,23 +458,64 @@ function isMergedInto(cwd, base) {
  * deleted mid-scan — cannot be proven to be on the base either, and the safe
  * direction to be wrong in is the one that keeps the work.
  */
+const MAX_GIT_ARGUMENT_CHARS = 16_000;
+
+/** Keep serialized Git arguments below Windows' CreateProcess command-line limit. */
+export function batchPathArguments(fixedArgs, paths) {
+  const fixedChars = fixedArgs.reduce((total, arg) => total + String(arg).length * 2 + 2, 1024);
+  const batches = [];
+  let batch = [];
+  let chars = fixedChars;
+
+  for (const path of paths) {
+    const pathChars = String(path).length * 2 + 2;
+    if (fixedChars + pathChars > MAX_GIT_ARGUMENT_CHARS) return null;
+    if (batch.length > 0 && chars + pathChars > MAX_GIT_ARGUMENT_CHARS) {
+      batches.push(batch);
+      batch = [];
+      chars = fixedChars;
+    }
+    batch.push(path);
+    chars += pathChars;
+  }
+
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
+function gitPathBatches(cwd, fixedArgs, paths, runner = git) {
+  const output = [];
+  const batches = batchPathArguments(fixedArgs, paths);
+  if (batches === null) return null;
+  for (const batch of batches) {
+    const result = runner(cwd, [...fixedArgs, ...batch]);
+    if (result === null) return null;
+    if (result) output.push(result);
+  }
+  return output.join('\n');
+}
+
+async function gitPathBatchesAsync(cwd, fixedArgs, paths) {
+  const output = [];
+  const batches = batchPathArguments(fixedArgs, paths);
+  if (batches === null) return null;
+  for (const batch of batches) {
+    const result = await gitAsync(cwd, [...fixedArgs, ...batch]);
+    if (result === null) return null;
+    if (result) output.push(result);
+  }
+  return output.join('\n');
+}
+
 function notOnBase(cwd, base, { modifiedPaths, untracked }) {
   if (modifiedPaths.length === 0) return untracked;
 
-  // Two batched calls rather than two per path: a worktree can report
-  // hundreds of modified paths and this runs for every worktree in the
-  // repository.
-  //
-  // `hash-object` prints one hash per argument, in order, which pairs with
-  // `modifiedPaths` positionally. `ls-tree` prints only the paths that DO
-  // exist on the base, so a missing path is absent from the set below and
-  // counts as not-on-base, which is the correct reading: the base has no such
-  // path at all.
+  // Each command stays below Windows' per-process command-line limit.
   return countNotOnBase(
     modifiedPaths,
     untracked,
-    git(cwd, ['hash-object', '--', ...modifiedPaths]),
-    git(cwd, ['ls-tree', base, '--', ...modifiedPaths])
+    gitPathBatches(cwd, ['hash-object', '--'], modifiedPaths),
+    gitPathBatches(cwd, ['ls-tree', base, '--'], modifiedPaths)
   );
 }
 
@@ -506,8 +547,8 @@ async function notOnBaseAsync(cwd, base, { modifiedPaths, untracked }) {
   if (modifiedPaths.length === 0) return untracked;
 
   const [hashes, tree] = await Promise.all([
-    gitAsync(cwd, ['hash-object', '--', ...modifiedPaths]),
-    gitAsync(cwd, ['ls-tree', base, '--', ...modifiedPaths]),
+    gitPathBatchesAsync(cwd, ['hash-object', '--'], modifiedPaths),
+    gitPathBatchesAsync(cwd, ['ls-tree', base, '--'], modifiedPaths),
   ]);
   return countNotOnBase(modifiedPaths, untracked, hashes, tree);
 }
@@ -1209,6 +1250,7 @@ export function collectWorktreesSync(cwd, { base = 'main', baseName = base } = {
 
 export const __testables = {
   aheadBehind,
+  batchPathArguments,
   patchEquivalence,
   workingTreeState,
   tipCommit,
