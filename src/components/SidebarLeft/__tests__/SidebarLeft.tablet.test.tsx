@@ -12,7 +12,8 @@ const toolbar = () => screen.getByTestId('left-toolbar-tools');
 const layoutToggle = () => screen.queryByTestId('toolbar-layout-toggle');
 
 /** The `<ul>` grid that holds the tool groups: one per section, or a single two-column list. */
-const firstGroupList = () => toolbar().querySelector('ul') as HTMLElement;
+const groupLists = () => toolbar().querySelectorAll<HTMLElement>(':scope > ul:not([data-toolbar-fit-overflow-list])');
+const firstGroupList = () => groupLists()[0];
 
 /**
  * Put the rail into the two-column desktop preference, whichever way the default currently
@@ -35,13 +36,13 @@ const preferTwoColumns = () => {
   }
   expect(toggle).toHaveAttribute('aria-pressed', 'false');
   expect(firstGroupList()).toHaveClass('grid-cols-2');
-  expect(toolbar().querySelectorAll(':scope > ul')).toHaveLength(1);
+  expect(groupLists()).toHaveLength(1);
 };
 
 /** The tablet band's effective layout, which is forced to one column whatever the preference. */
 const expectOneColumnRail = () => {
   expect(firstGroupList()).toHaveClass('grid-cols-1');
-  expect(toolbar().querySelectorAll(':scope > ul').length).toBeGreaterThan(1);
+  expect(groupLists().length).toBeGreaterThan(1);
 };
 
 describe('SidebarLeft tablet band', () => {
@@ -75,7 +76,7 @@ describe('SidebarLeft tablet band', () => {
 
     act(() => setViewportWidth(DESKTOP_WIDTH));
     expect(firstGroupList()).toHaveClass('grid-cols-2');
-    expect(toolbar().querySelectorAll(':scope > ul')).toHaveLength(1);
+    expect(groupLists()).toHaveLength(1);
   });
 
   it('hides the layout toggle in the tablet band instead of showing it inert', () => {
