@@ -14,7 +14,7 @@ import {
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -299,6 +299,23 @@ async function measureShape(page: Page, rect: Rect, name: string): Promise<{ wid
   return { width: bounds!.width, height: bounds!.height };
 }
 
+async function rotationCursorInfo(page: Page): Promise<{ angle: number; whiteOutline: boolean } | null> {
+  return page.locator('.cursor-move').evaluate((element) => {
+    const cursor = getComputedStyle(element).cursor;
+    const encodedSvg = cursor.match(/data:image\/svg\+xml,([^"]+)/)?.[1];
+    if (!encodedSvg) return null;
+
+    const svg = decodeURIComponent(encodedSvg);
+    const angle = svg.match(/rotate\((\d+) 16 16\)/)?.[1];
+    if (!angle) return null;
+
+    return {
+      angle: Number(angle),
+      whiteOutline: svg.includes('stroke="#fff" stroke-width="6"'),
+    };
+  });
+}
+
 /** Selects a member of the Shape flyout. */
 async function selectFigure(page: Page, figure: { label: string; toolName: string }): Promise<void> {
   await openToolFlyout(page, 'shape');
@@ -363,6 +380,123 @@ test.describe('Shape tools', () => {
       Math.abs(squared.width - squared.height) / Math.max(squared.width, squared.height),
       `a Shift-constrained rectangle must be a square, measured ${squared.width}x${squared.height}`
     ).toBeLessThan(0.08);
+  });
+
+  test('the selected shape rotates with an eight-direction high-contrast cursor', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const shape: Rect = { from: { x: 150, y: 150 }, to: { x: 430, y: 310 } };
+    const searchArea: Rect = { from: { x: 80, y: 80 }, to: { x: 500, y: 400 } };
+    await dragShape(page, shape, 'the shape before rotation');
+    const before = await measureShape(page, searchArea, 'the unrotated shape');
+
+    await clickToolButton(page, 'reposition');
+    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
+    const historyRows = page.getByTitle('Click to go back to this state');
+    const historyCountBeforeRotation = await historyRows.count();
+    const box = await canvasBox(page);
+    const center = { x: (shape.from.x + shape.to.x) / 2, y: (shape.from.y + shape.to.y) / 2 };
+    const rotationSurface = page.locator('.cursor-move');
+
+    for (const cursorAngle of [0, 45, 90, 135, 180, 225, 270, 315]) {
+      const pointerAngle = ((cursorAngle - 90) * Math.PI) / 180;
+      const point = {
+        x: center.x + 160 * Math.cos(pointerAngle),
+        y: center.y + 160 * Math.sin(pointerAngle),
+      };
+      const offset = documentToCanvasOffset(box, point.x, point.y);
+      await page.mouse.move(box.x + offset.x, box.y + offset.y);
+      await expect
+        .poll(() => rotationCursorInfo(page), { message: `cursor orientation ${cursorAngle}°` })
+        .toEqual({ angle: cursorAngle, whiteOutline: true });
+    }
+
+    const handleOffset = 36;
+    const startOffset = documentToCanvasOffset(box, center.x, shape.from.y - handleOffset);
+    const radius = (shape.to.y - shape.from.y) / 2 + handleOffset;
+    const endOffset = documentToCanvasOffset(box, center.x + radius / Math.sqrt(2), center.y - radius / Math.sqrt(2));
+    await page.mouse.move(box.x + startOffset.x, box.y + startOffset.y);
+    await expect(rotationSurface, 'the rotation grip keeps its white-underlined SVG cursor').toHaveCSS(
+      'cursor',
+      /url.*data:image\/svg\+xml/
+    );
+    await page.mouse.down();
+    await page.mouse.move(box.x + endOffset.x, box.y + endOffset.y, { steps: 12 });
+    await expect
+      .poll(() => rotationCursorInfo(page), { message: 'the cursor keeps following the pointer during rotation' })
+      .toEqual({ angle: 45, whiteOutline: true });
+    await page.mouse.up();
+
+    const after = await measureShape(page, searchArea, 'the rotated shape');
+    expect(after.width, 'the diagonal rotation widens the shape').toBeGreaterThan(before.width + 20);
+    expect(after.height, 'the diagonal rotation makes the shape taller').toBeGreaterThan(before.height + 20);
+    await expect(historyRows, 'one rotation gesture commits one history entry').toHaveCount(
+      historyCountBeforeRotation + 1
+    );
+
+    await page.getByRole('button', { name: 'Undo' }).click();
+    const restored = await measureShape(page, searchArea, 'the shape after undo');
+    expect(Math.abs(restored.width - before.width), 'undo restores the original width').toBeLessThan(2);
+    expect(Math.abs(restored.height - before.height), 'undo restores the original height').toBeLessThan(2);
+
+    await page.getByRole('button', { name: 'Redo' }).click();
+    const replayed = await measureShape(page, searchArea, 'the shape after redo');
+    expect(Math.abs(replayed.width - after.width), 'redo restores the rotated width').toBeLessThan(2);
+    expect(Math.abs(replayed.height - after.height), 'redo restores the rotated height').toBeLessThan(2);
+  });
+
+  test('resizing a rotated shape keeps its opposite edge anchored', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const shape: Rect = { from: { x: 150, y: 150 }, to: { x: 430, y: 310 } };
+    const center = { x: 290, y: 230 };
+    await dragShape(page, shape, 'the shape before rotation');
+    await clickToolButton(page, 'reposition');
+    const rotationSurface = page.locator('.cursor-move');
+    const beforeRotation = await measureShape(page, shape, 'the unrotated shape');
+    const box = await canvasBox(page);
+    const handleOffset = 36;
+    const radius = (shape.to.y - shape.from.y) / 2 + handleOffset;
+    const rotationStart = documentToCanvasOffset(box, center.x, shape.from.y - handleOffset);
+    const rotationEnd = documentToCanvasOffset(box, center.x + radius, center.y);
+
+    await page.mouse.move(box.x + rotationStart.x, box.y + rotationStart.y);
+    await expect(rotationSurface, 'the rotation grip exposes its custom SVG cursor').toHaveCSS(
+      'cursor',
+      /url.*data:image\/svg\+xml/
+    );
+    await page.mouse.down();
+    await page.mouse.move(box.x + rotationEnd.x, box.y + rotationEnd.y, { steps: 12 });
+    await page.mouse.up();
+
+    const afterRotation = await measureShape(
+      page,
+      { from: { x: 120, y: 60 }, to: { x: 460, y: 400 } },
+      'the shape after rotation'
+    );
+    expect(afterRotation.width, 'the quarter-turn narrows the shape').toBeLessThan(beforeRotation.width);
+    expect(afterRotation.height, 'the quarter-turn makes the shape taller').toBeGreaterThan(beforeRotation.height);
+
+    const fixedEdgePoint = { x: center.x, y: center.y + (shape.to.x - shape.from.x) / 2 };
+    const beforeResize = await sampleDocumentPoint(page, fixedEdgePoint.x, fixedEdgePoint.y);
+    expect(beforeResize, 'the opposite edge is painted before resizing').not.toBeNull();
+    expect(Math.min(beforeResize!.red, beforeResize!.green, beforeResize!.blue)).toBeLessThan(250);
+
+    const rotatePoint = (point: Point) => ({
+      x: center.x - (point.y - center.y),
+      y: center.y + (point.x - center.x),
+    });
+    const rotatedResizeStart = rotatePoint({ x: shape.from.x, y: center.y });
+    const rotatedResizeEnd = rotatePoint({ x: shape.from.x + 20, y: center.y });
+    const resizeStart = documentToCanvasOffset(box, rotatedResizeStart.x, rotatedResizeStart.y);
+    const resizeEnd = documentToCanvasOffset(box, rotatedResizeEnd.x, rotatedResizeEnd.y);
+    await page.mouse.move(box.x + resizeStart.x, box.y + resizeStart.y);
+    await expect(rotationSurface, 'the rotated edge exposes the resize cursor').toHaveCSS('cursor', 'ns-resize');
+    await page.mouse.down();
+    await page.mouse.move(box.x + resizeEnd.x, box.y + resizeEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    const afterResize = await sampleDocumentPoint(page, fixedEdgePoint.x, fixedEdgePoint.y);
+    expect(afterResize, 'the opposite edge remains painted at its original location').not.toBeNull();
+    expect(Math.min(afterResize!.red, afterResize!.green, afterResize!.blue)).toBeLessThan(250);
   });
 
   test.describe('Retina backing store', () => {
