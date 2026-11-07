@@ -283,6 +283,18 @@ fractional fixture directly and keeps the opacity/blend export gap as the next b
 
 ## Current continuation plan
 
+The implementation slices and acceptance gates remain governed by the
+[durable-history continuation plan](../.kilo/plans/history-migration-continuation-20261027.md).
+The current-state audit and its resolved/open findings are recorded in
+[History Migration Audit — 2026-11-07](HISTORY-MIGRATION-AUDIT-20261107.md).
+
+The audit baseline is local `main` at `659ca8ede3be5c4f05aa0d250d63d6f394964315`, which merges
+the prior main pin `b5df9dbc272e208dc04768259228e13abdad33fb` and candidate
+`e9debc96e8620c3494632aee74fad8753157b582`. The validation counts above were recorded on the
+candidate implementation tree before landing. The candidate-to-landing delta is documentation-only;
+this audit did not rerun those gates. No Linux or Windows mirror was run, and the wider parity matrix
+remains open.
+
 The immediate implementation target is transformed-raster opacity/blend output parity and the
 legacy export fallback described above. After exact PNG, PSD, and runtime proof for that fixture,
 continue the broader fractional-frame matrix and source-backed import/replacement ownership as
