@@ -24,6 +24,8 @@ import {
   verifyHoverDoesNotOpenFlyout,
   openToolFlyoutViaKeyboard,
   navigateAndSelectInFlyout,
+  hasOwnToolTile,
+  resolveToolTile,
   type FlyoutItem,
 } from '../toolbar-helpers';
 
@@ -220,6 +222,7 @@ type MockLocator = {
   getAttribute: Mock<(name: string) => Promise<string | null>>;
   getByRole: Mock<(role: string) => MockLocator>;
   hover: Mock<() => Promise<void>>;
+  isVisible: Mock<() => Promise<boolean>>;
   nth: Mock<(index: number) => MockLocator>;
   press: Mock<(key: string) => Promise<void>>;
 };
@@ -523,6 +526,7 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
           element.onLongPress();
         }
       }),
+      isVisible: vi.fn(async () => Boolean(primary()?.visible)),
       nth: vi.fn((index: number) => locatorFor(matches[index] ? [matches[index]] : [])),
       press: vi.fn(async (key: string) => {
         const element = primary();
@@ -1300,6 +1304,19 @@ describe('Toolbar Helpers', () => {
     );
   });
 
+  describe('hasOwnToolTile', () => {
+    it('does not count a mounted but hidden fit-plan tile as being on the rail', async () => {
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-pencil', visible: false });
+      const overflow = addOverflowTile(dom, [{ name: 'pencil', label: 'Pencil Tool' }]);
+
+      expect(await hasOwnToolTile(dom.page, 'pencil')).toBe(false);
+      const tile = await resolveToolTile(dom.page, 'pencil');
+      await tile.click();
+      expect(dom.clicked).toEqual([overflow.tile]);
+    });
+  });
+
   describe('openToolFlyout', () => {
     /**
      * Builds grouped tiles whose long-press timers open THEIR OWN flyout, the way the app
@@ -1539,6 +1556,18 @@ describe('Toolbar Helpers', () => {
       expect(overflow.menu.visible).toBe(false);
     });
 
+    it('uses the three-dots flyout when the collapsed tool button remains mounted but hidden', async () => {
+      const dom = createFakeDom();
+      const hiddenButton = dom.add({ testId: 'tool-button-pencil', visible: false });
+      const overflow = addOverflowTile(dom, [PENCIL]);
+
+      await clickToolButton(dom.page, 'pencil');
+
+      expect(dom.clicked).toEqual([overflow.tile, overflow.items[0]]);
+      expect(dom.clicked).not.toContain(hiddenButton);
+      expect(overflow.menu.visible).toBe(false);
+    });
+
     it('lands on the exact test id the app mints, for every tool in toolbarMap', async () => {
       // The slug half of the id is the app's own `slugifyToolLabel` applied to the label the
       // app shows, and this walks the real map so a respelled or renamed label cannot leave
@@ -1657,18 +1686,16 @@ describe('Toolbar Helpers', () => {
       expect(overflow.menu.visible).toBe(false);
     });
 
-    it('still fails on the button when a tile exists but is hidden', async () => {
-      // Present and invisible is not collapsed. Collapsing is the absence of a tile, and
-      // treating a hidden tile as collapsed would answer a different question than the one
-      // the fallback asks.
+    it('uses the overflow flyout when a collapsed tile remains mounted but hidden', async () => {
       const dom = createFakeDom();
       dom.add({ testId: 'tool-button-pencil', visible: false });
       const overflow = addOverflowTile(dom, [PENCIL]);
 
-      await expect(openToolFlyout(dom.page, 'pencil')).rejects.toThrow(/toBeVisible\(\)/);
+      await openToolFlyout(dom.page, 'pencil');
+
       expect(dom.dispatched).toEqual([]);
-      expect(dom.clicked).toEqual([]);
-      expect(overflow.menu.visible).toBe(false);
+      expect(dom.clicked).toEqual([overflow.tile]);
+      expect(overflow.menu.visible).toBe(true);
     });
   });
 
@@ -1954,6 +1981,22 @@ describe('Toolbar Helpers', () => {
       expect(pressed).toEqual(['ArrowDown']);
       expect(menu.visible).toBe(true);
       expect(items[0].focused).toBe(true);
+    });
+
+    it('opens the overflow menu by keyboard when the collapsed tool button remains mounted but hidden', async () => {
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-pencil', visible: false });
+      const overflow = addOverflowTile(dom, [{ name: 'pencil', label: 'Pencil Tool' }]);
+      overflow.tile.onKey = (key) => {
+        if (key !== 'ArrowDown') return;
+        overflow.menu.visible = true;
+        dom.focusElement(overflow.items[0]);
+      };
+
+      await openToolFlyoutViaKeyboard(dom.page, 'pencil');
+
+      expect(overflow.menu.visible).toBe(true);
+      expect(overflow.items[0].focused).toBe(true);
     });
 
     it('rejects when the flyout opens but no item ever takes focus', async () => {

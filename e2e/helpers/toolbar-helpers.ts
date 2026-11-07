@@ -190,16 +190,17 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
   const normalizedName = resolveToolName(toolName);
 
   const testIdTool = page.getByTestId(`tool-button-${normalizedName}`);
-  if (await testIdTool.count()) {
-    await preservingScroll(page, () => testIdTool.first().click());
+  const railTool = testIdTool.first();
+  if ((await testIdTool.count()) && (await railTool.isVisible())) {
+    await preservingScroll(page, () => railTool.click());
     return;
   }
 
-  // No tile, so the tool is either collapsed into the three-dots flyout or the rail is an
-  // older build with no such affordance. The collapse is tried first because it is the exact
-  // mechanism — the tile and its items are both addressed by test id — while the role fallback
-  // below is a regex over accessible names kept only for backwards compatibility. Preferring
-  // the current mechanism over the legacy one is the same order this file has always stated.
+  // No visible tile, so the tool is either collapsed into the three-dots flyout or the rail is
+  // an older build with no such affordance. A fit plan can leave a collapsed button mounted
+  // with visibility false, so count alone does not establish that the tile can be clicked.
+  // The collapse is tried first because the tile and its items are both addressed by test id;
+  // the role fallback below is only for older builds without that affordance.
   const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
   if (await overflowTile.count()) {
     await openFlyoutFromTile(page, OVERFLOW_TILE_TESTID);
@@ -329,15 +330,12 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
   const normalizedName = resolveToolName(toolName);
 
   const button = page.getByTestId(`tool-button-${normalizedName}`);
-  if (!(await button.count())) {
-    // Absent, not merely hidden: the tool collapsed, and the gesture below is a long press
-    // ON the tile, so there is nothing to dispatch it at. The three-dots tile opens the same
-    // `openFlyout` from a right-click and its menu carries the tool, which leaves the caller's
-    // own `selectFromFlyout` to pick out of it exactly as it did for a tile's own flyout.
-    // Guarded on the tile existing so the "there is no such tool" case below still fails on
-    // the button it is about, and not on a three-dots tile that was never going to appear.
+  if (!(await hasOwnToolTile(page, normalizedName))) {
+    // The fit plan can leave a collapsed tool button mounted but hidden. The three-dots tile
+    // opens the same menu on right-click, and that menu carries the tool for the caller's
+    // selectFromFlyout step. If neither tile is visible, assert against the requested tool below.
     const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
-    if (await overflowTile.count()) {
+    if ((await overflowTile.count()) && (await overflowTile.first().isVisible())) {
       await openFlyoutFromTile(page, OVERFLOW_TILE_TESTID);
       return;
     }
@@ -414,10 +412,9 @@ export async function selectFromFlyout(page: Page, item: FlyoutItem): Promise<vo
  * This is the tool's OWN tile and nothing else, which is the right answer when a test is
  * asking a question about that tile specifically — "does hovering this tile open a flyout",
  * "what does this tile's label read". It is the WRONG answer for a test asking a question
- * about the TOOL, because a tool the rail could not fit has no tile of its own: it lives in
- * the three-dots flyout, and `getByTestId` reports zero elements rather than failing, so the
- * failure arrives at the next assertion as "element(s) not found" against a test id that is
- * correct and simply absent. Use {@link resolveToolTile} for that question.
+ * about the TOOL: the fit plan can leave a collapsed tile mounted but hidden, and a locator's
+ * count alone does not answer whether the tool has its own visible tile. Use
+ * {@link hasOwnToolTile} or {@link resolveToolTile} for those questions.
  */
 export function getToolButton(page: Page, toolName: string): Locator {
   const normalizedName = resolveToolName(toolName);
@@ -428,12 +425,13 @@ export function getToolButton(page: Page, toolName: string): Locator {
  * Whether the rail still shows this tool on a tile of its own.
  *
  * The two questions are separate on purpose, and conflating them is how a spec ends up
- * asserting against a tile the rail legitimately folded away. "Is there a tile for it" is a
- * layout claim that changes with the window; "which tile represents it" is the reachability
+ * asserting against a tile the rail legitimately folded away. "Is it shown on its own tile" is
+ * a layout claim that changes with the window; "which tile represents it" is the reachability
  * claim, and it has an answer at every window.
  */
 export async function hasOwnToolTile(page: Page, toolName: string): Promise<boolean> {
-  return (await getToolButton(page, toolName).count()) > 0;
+  const tile = getToolButton(page, toolName).first();
+  return (await tile.count()) > 0 && (await tile.isVisible());
 }
 
 /**
@@ -462,11 +460,11 @@ export async function hasOwnToolTile(page: Page, toolName: string): Promise<bool
  */
 export async function resolveToolTile(page: Page, toolName: string): Promise<Locator> {
   const ownTile = getToolButton(page, toolName);
-  if (await ownTile.count()) return ownTile.first();
+  if (await hasOwnToolTile(page, toolName)) return ownTile.first();
   const overflow = page.getByTestId(OVERFLOW_TILE_TESTID);
-  if (await overflow.count()) return overflow;
-  // Neither. Returning the tool's own id is the useful failure: the caller's assertion then
-  // names a test id that exists nowhere, which says which tool was being looked for.
+  if ((await overflow.count()) && (await overflow.first().isVisible())) return overflow.first();
+  // Neither. Returning the tool's own locator keeps the failure about the requested tool,
+  // whether its button is missing or hidden without an available overflow tile.
   return ownTile;
 }
 
@@ -632,7 +630,7 @@ export async function openToolFlyoutViaKeyboard(
 ): Promise<void> {
   const normalizedName = resolveToolName(toolName);
 
-  const button = page.getByTestId(`tool-button-${normalizedName}`);
+  const button = await resolveToolTile(page, normalizedName);
   await expect(button).toBeVisible();
 
   await button.focus();

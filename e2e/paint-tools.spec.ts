@@ -462,7 +462,7 @@ async function expectLevelWithin(
 async function longPressGroupTile(page: Page, group: readonly string[]): Promise<void> {
   for (const name of group) {
     const tile = page.getByTestId(`tool-button-${name}`);
-    if ((await tile.count()) === 0) continue;
+    if (!(await hasOwnToolTile(page, name))) continue;
     // Press, wait for THIS tile's flyout, then lift — in that order, because that is the
     // gesture the app's own handler requires.
     await tile.dispatchEvent('pointerdown', { button: 0 });
@@ -480,10 +480,9 @@ async function longPressGroupTile(page: Page, group: readonly string[]): Promise
     return;
   }
 
-  // No tile, so the group is in the three-dots menu — which lists every tool of every
+  // No visible tile, so the group is in the three-dots menu — which lists every tool of every
   // collapsed group, nested ones included, so `item` below resolves inside it exactly as it
-  // does in a tile's own flyout. Guarded on the tile existing so "there is no such group"
-  // fails on the three-dots tile rather than on a menu that was never going to open.
+  // does in a tile's own flyout. If there is no overflow tile, the assertion names that failure.
   const overflowTile = page.getByTestId('tool-overflow-tile');
   await expect(
     overflowTile,
