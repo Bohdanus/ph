@@ -36,6 +36,23 @@ export const MAX_CATALOG_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPLETION_RESPONSE_BYTES = 1024 * 1024;
 const NEMOTRON_3_ULTRA_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const XINGCHEN_XING4_MODEL = 'xingchen-agi/xing4.0-29b-a4b:free';
+const HTTP_DATE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const HTTP_SHORT_DAY_PATTERN = 'Mon|Tue|Wed|Thu|Fri|Sat|Sun';
+const HTTP_LONG_DAY_PATTERN = 'Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday';
+const HTTP_MONTH_PATTERN = '(?:' + HTTP_DATE_MONTHS.join('|') + ')';
+const IMF_FIXDATE_PATTERN = new RegExp(
+  '^(?:' + HTTP_SHORT_DAY_PATTERN + '), (\\d{2}) (' + HTTP_MONTH_PATTERN + ') (\\d{4}) (\\d{2}):(\\d{2}):(\\d{2}) GMT$'
+);
+const RFC850_DATE_PATTERN = new RegExp(
+  '^(?:' + HTTP_LONG_DAY_PATTERN + '), (\\d{2})-(' + HTTP_MONTH_PATTERN + ')-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2}) GMT$'
+);
+const ASCTIME_DATE_PATTERN = new RegExp(
+  '^(?:' +
+    HTTP_SHORT_DAY_PATTERN +
+    ') (' +
+    HTTP_MONTH_PATTERN +
+    ') (?:([0-9]{2})| ([0-9])) (\\d{2}):(\\d{2}):(\\d{2}) (\\d{4})$'
+);
 const DISABLED_MODEL_PREFIXES = ['poolside/laguna'];
 const MIN_REASONING_COMPLETION_TOKENS = 1024;
 const PREFERRED_KILO_MODELS = [NEMOTRON_3_ULTRA_MODEL, XINGCHEN_XING4_MODEL];
@@ -408,6 +425,68 @@ function retryAfterHint(response) {
     .slice(0, 100);
 }
 
+function utcHttpDateTimestamp(year, monthName, day, hour, minute, second) {
+  const month = HTTP_DATE_MONTHS.indexOf(monthName);
+  if (month < 0 || second > 60) return null;
+
+  const normalizedSecond = Math.min(second, 59);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month, day);
+  date.setUTCHours(hour, minute, normalizedSecond, 0);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month ||
+    date.getUTCDate() !== day ||
+    date.getUTCHours() !== hour ||
+    date.getUTCMinutes() !== minute ||
+    date.getUTCSeconds() !== normalizedSecond
+  ) {
+    return null;
+  }
+  return date.getTime() + (second === 60 ? 1000 : 0);
+}
+
+function parseHttpDateTimestamp(value, now) {
+  let match = value.match(IMF_FIXDATE_PATTERN);
+  if (match) {
+    return utcHttpDateTimestamp(
+      Number(match[3]),
+      match[2],
+      Number(match[1]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    );
+  }
+
+  match = value.match(RFC850_DATE_PATTERN);
+  if (match) {
+    const currentYear = new Date(now).getUTCFullYear();
+    const year = Math.floor(currentYear / 100) * 100 + Number(match[3]);
+    const dateParts = [match[2], Number(match[1]), Number(match[4]), Number(match[5]), Number(match[6])];
+    const retryAt = utcHttpDateTimestamp(year, ...dateParts);
+    if (!Number.isFinite(retryAt)) return null;
+
+    const fiftyYearsLater = new Date(now);
+    fiftyYearsLater.setUTCFullYear(currentYear + 50);
+    return retryAt > fiftyYearsLater.getTime() ? utcHttpDateTimestamp(year - 100, ...dateParts) : retryAt;
+  }
+
+  match = value.match(ASCTIME_DATE_PATTERN);
+  if (match) {
+    return utcHttpDateTimestamp(
+      Number(match[7]),
+      match[1],
+      Number(match[2] ?? match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    );
+  }
+
+  return undefined;
+}
+
 export function retryAfterDelayMs(response, now = Date.now()) {
   const value = response?.headers?.get?.('retry-after')?.trim();
   if (!value) return null;
@@ -419,7 +498,8 @@ export function retryAfterDelayMs(response, now = Date.now()) {
   }
   if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) return null;
 
-  const retryAt = Date.parse(value);
+  const parsedHttpDate = parseHttpDateTimestamp(value, now);
+  const retryAt = parsedHttpDate === undefined ? Date.parse(value) : parsedHttpDate;
   return Number.isFinite(retryAt) ? Math.max(0, retryAt - now) : null;
 }
 
