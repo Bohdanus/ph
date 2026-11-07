@@ -66,9 +66,11 @@ At the 2026-11-07 checkpoint, local `main` was `3a1d4ad3`; `origin/main` and `mi
 `e24fc2ad`. The local main advanced through a toolbar-fit merge and then a free-compute/chat-history
 documentation merge. The tree diff from `e24fc2ad` to `3a1d4ad3` changes toolbar files, free-compute
 policy docs, a selection-tool description, and removes an unrelated resolved handoff entry; it does
-not change history replay, compositor, renderer, export, or the crop-history fixture. This task
-branch still starts at `e24fc2ad` and must be synchronized to the live local `main` before final
-review and landing.
+not change history replay, compositor, renderer, export, or the crop-history fixture. This
+candidate started at `e24fc2ad` and has since been rebased onto local `main` at `3a1d4ad3`; its
+current merge base is that exact commit. `origin/main` and `mirror/main` remain at `e24fc2ad`, so
+this local synchronization is not a remote update. Before landing, recheck the live main SHA and
+tree, candidate ancestry, repository state, and ownership; this task does not include a remote push.
 
 The historical `7cf69dca` affine-parity commit is not an ancestor of current main. Its behavior has
 evolved in the current compositor: `3ccccba0` introduced direct affine raster composition and
@@ -92,7 +94,7 @@ a committed fixture; treat the counts as exploratory until that test is added. T
 isolated-layer comparison over transparency is not a valid blend-mode oracle. Retained operations
 therefore remain outside the renderer parity gate. The export candidate uses the same conservative
 eligibility check and keeps legacy records for any unsupported source, retained operation, metadata
-mismatch, missing legacy layer, or changed bounds. The compositor materializes visible layers only,
+mismatch, missing or extra legacy layer, or changed bounds. The compositor materializes visible layers only,
 so any hidden layer forces PSD export to keep legacy records; after composition, actual materialized
 bounds are checked before durable records are selected. This does not admit frame-changing commits
 or alter logical history authority.
@@ -150,7 +152,7 @@ priority or dependency. They may be pursued in either order or in parallel.
    difference to materialization, retained-affine composition, or the standard layer/export renderer
    before changing production code. Preserve bitmap leases and release assertions. The current
    fallback must continue selecting legacy records for retained operations, hidden PSD layers, and
-   materialized bounds that do not match the legacy record.
+   replay/legacy layer sets or materialized bounds that do not match the legacy record.
 
    Once that slice is exact, broaden the fractional frame matrix across open angles, additional
    retained-affine combinations, text styling/rotation, blank opacity variants, and fractional

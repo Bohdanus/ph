@@ -171,8 +171,12 @@ export const FileProvider = ({ children }: FileProviderProps) => {
           // records whenever a hidden layer could otherwise lose its pixel data.
           const hiddenLayersBlockPsd =
             format === 'psd' && Object.values(replay.layers).some(({ snapshot }) => !snapshot.visible);
+          const replayLayerIds = Object.keys(replay.layers);
+          const layerSetMatchesLegacy =
+            replayLayerIds.length === Object.keys(layers).length && replayLayerIds.every((layerId) => layers[layerId]);
           const pixelApprovedForExport =
             !hiddenLayersBlockPsd &&
+            layerSetMatchesLegacy &&
             Object.values(replay.layers).every((replayLayer) => {
               const existing = layers[replayLayer.snapshot.id];
               return (

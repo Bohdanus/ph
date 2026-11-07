@@ -239,9 +239,9 @@ variant or an equivalent atomic history action.
    fixture; treat the counts as exploratory until directly tested. The earlier 146-byte isolated-layer
    comparison over transparency is not a valid blend-mode oracle. Until output parity is exact,
    retained operations stay outside runtime and export admission. The export preflight shares the
-   runtime's conservative source/operation/metadata/bounds check, blocks durable PSD export when any
-   hidden layer lacks materialized pixels, and checks actual materialized bounds before selecting
-   durable records. Unsupported, transformed, or otherwise unproven cases keep legacy records. This
+   runtime's exact layer-set and conservative source/operation/metadata/bounds checks, blocks durable
+   PSD export when any hidden layer lacks materialized pixels, and checks actual materialized bounds
+   before selecting durable records. Unsupported, transformed, or otherwise unproven cases keep legacy records. This
    changes neither logical history authority nor the closed frame-publication gate.
    These fixtures close only their listed cases, not the frame gate: other angles and source/tool
    variants, additional text styling/rotation combinations, other frame sequences and other

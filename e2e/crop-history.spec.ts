@@ -1740,18 +1740,18 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
             );
             // The tight raster uses frame-grid pixels inside the frame and bounded pixels outside it.
             const compareRawPixels = (expected: Uint8ClampedArray, actual: Uint8ClampedArray) => {
-              let differingBytes = 0;
-              const differingSamples: CropParityFramePixelSample[] = [];
+              let rawBitmapDifferingBytes = 0;
+              const rawBitmapDifferingSamples: CropParityFramePixelSample[] = [];
               for (let byte = 0; byte < Math.max(expected.length, actual.length); byte += 1) {
                 const legacy = expected[byte] ?? null;
                 const durable = actual[byte] ?? null;
                 if (legacy === durable) continue;
-                differingBytes += 1;
-                if (differingSamples.length >= 8) continue;
+                rawBitmapDifferingBytes += 1;
+                if (rawBitmapDifferingSamples.length >= 8) continue;
                 const pixel = Math.floor(byte / 4);
                 const x = pixel % expectedBounds.width;
                 const y = Math.floor(pixel / expectedBounds.width);
-                differingSamples.push({
+                rawBitmapDifferingSamples.push({
                   x,
                   y,
                   documentX: expectedBounds.x + x,
@@ -1761,7 +1761,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
                   durable,
                 });
               }
-              return { differingBytes, differingSamples };
+              return { differingBytes: rawBitmapDifferingBytes, differingSamples: rawBitmapDifferingSamples };
             };
             const tightBitmapRawComparison = compareRawPixels(legacyHybridTightPixels, durableTightPixels);
             const offscreenTightBitmapRawComparison = compareRawPixels(
